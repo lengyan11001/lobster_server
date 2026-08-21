@@ -30,6 +30,35 @@ def test_sales_douyin_action_can_be_recovered_from_old_node_title():
     }
 
 
+def test_sales_douyin_collection_defaults_all_followup_actions():
+    payload = _sales_douyin_action_payload(
+        {"note": "抖音获客·关键词抓取精准客户"},
+        {"action": "search_collect", "params": {}},
+    )
+
+    assert payload == {
+        "action": "search_collect",
+        "params": {
+            "followup_actions": [
+                "reply_comments",
+                "mention_comment",
+                "follow_comment",
+                "direct_message",
+            ],
+            "customer_scope": "current_collection_batch",
+        },
+    }
+
+
+def test_sales_douyin_collection_preserves_explicit_empty_followup_actions():
+    payload = _sales_douyin_action_payload(
+        {"note": "抖音获客·关键词抓取精准客户"},
+        {"action": "search_collect", "params": {"followup_actions": []}},
+    )
+
+    assert payload["params"]["followup_actions"] == []
+
+
 def test_sales_douyin_stranger_message_keeps_online_runtime_params():
     node = {"ability_key": "douyin_leads", "note": "抖音私信接管"}
 
@@ -94,7 +123,17 @@ def test_all_sales_douyin_preset_titles_map_to_the_expected_action():
     assert {_sales_action_from_note(title) for title in cases} == set(cases.values())
     for title, expected in cases.items():
         legacy = {"action": "search_collect", "params": {"sales_action": "search_collect", "keyword": title}}
-        assert _sales_douyin_action_payload({"note": title}, legacy) == {"action": expected}
+        result = _sales_douyin_action_payload({"note": title}, legacy)
+        assert result["action"] == expected
+        if expected == "search_collect":
+            assert result["params"]["followup_actions"] == [
+                "reply_comments",
+                "mention_comment",
+                "follow_comment",
+                "direct_message",
+            ]
+        else:
+            assert "params" not in result
 
 
 def test_h5_sales_preset_dispatches_douyin_without_business_params():

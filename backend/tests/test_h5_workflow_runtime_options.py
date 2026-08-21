@@ -56,7 +56,7 @@ def test_native_wechat_takeover_starts_when_activation_is_inside_window():
     ) is False
 
 
-def test_non_takeover_workflow_nodes_keep_daily_schedule_on_activation():
+def test_all_client_workflow_nodes_start_inside_today_window():
     node = _node("video", "shanjian_digital_human_video")
     node["end_time"] = "23:59"
 
@@ -65,7 +65,39 @@ def test_non_takeover_workflow_nodes_keep_daily_schedule_on_activation():
         task_kind="client_workflow",
         now_utc=datetime(2026, 8, 16, 8, 21),
         timezone_offset_minutes=480,
+    ) is True
+
+
+def test_workflow_node_only_starts_now_inside_window():
+    node = _node("video", "shanjian_digital_human_video")
+    node["time"] = "10:00"
+    node["end_time"] = "11:00"
+
+    assert _workflow_node_should_start_now(
+        node,
+        task_kind="client_workflow",
+        now_utc=datetime(2026, 8, 16, 1, 30),  # 09:30 local
+        timezone_offset_minutes=480,
     ) is False
+    assert _workflow_node_should_start_now(
+        node,
+        task_kind="client_workflow",
+        now_utc=datetime(2026, 8, 16, 3, 30),  # 11:30 local
+        timezone_offset_minutes=480,
+    ) is False
+
+
+def test_workflow_node_starts_now_inside_overnight_window():
+    node = _node("wechat", "native_wechat_poll")
+    node["time"] = "23:00"
+    node["end_time"] = "01:00"
+
+    assert _workflow_node_should_start_now(
+        node,
+        task_kind="client_workflow",
+        now_utc=datetime(2026, 8, 16, 16, 30),  # 00:30 local next day
+        timezone_offset_minutes=480,
+    ) is True
 
 
 def test_digital_human_nodes_receive_distinct_sequence_slots():

@@ -477,7 +477,7 @@ def test_h5_node_save_persists_template_and_reloads_server_copy():
 def test_h5_migrates_add_friend_rows_when_loading_sales_templates():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
-    assert "return migrateSalesDouyinAddFriendChildren(normalized);" in script
+    assert "return migrateSalesDouyinAddFriendChildren(foldSalesDouyinFollowupNodes(normalized));" in script
     assert "migrateWechatGroupInviteNodes" not in script
     assert "native_wechat_group_invite" not in script
     assert "function migrateSalesDouyinAddFriendChildren(nodes)" in script

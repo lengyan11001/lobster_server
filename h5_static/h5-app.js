@@ -875,14 +875,10 @@
       { time: "10:00", endTime: "10:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "10:30", endTime: "11:00", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "11:00", endTime: "11:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
-      { time: "11:30", endTime: "12:00", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户" },
-      { time: "12:00", endTime: "12:15", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
-      { time: "12:15", endTime: "12:30", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
-      { time: "12:30", endTime: "12:45", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
+      { time: "11:30", endTime: "12:45", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { followup_actions: ["reply_comments", "mention_comment", "follow_comment", "direct_message"], customer_scope: "current_collection_batch" } },
       { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
       { time: "13:45", endTime: "14:15", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "14:15", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
-      { time: "14:30", endTime: "14:45", key: "douyin_leads", label: "抖音主动私信精准客户", note: "抖音主动私信10个精准客户" },
       { time: "14:45", endTime: "15:00", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
       { time: "15:00", endTime: "15:15", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
       { time: "15:15", endTime: "15:30", key: "wechat_channels_message", label: "视频号私信接管（敬请期待）", note: "视频号私信接管", comingSoon: true },
@@ -890,12 +886,8 @@
       { time: "16:00", endTime: "16:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
       { time: "16:30", endTime: "16:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "17:00", endTime: "17:15", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
-      { time: "17:15", endTime: "17:30", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户" },
-      { time: "17:30", endTime: "17:45", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
-      { time: "17:45", endTime: "18:00", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
-      { time: "18:00", endTime: "18:15", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
+      { time: "17:15", endTime: "18:15", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { followup_actions: ["reply_comments", "mention_comment", "follow_comment", "direct_message"], customer_scope: "current_collection_batch" } },
       { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
-      { time: "19:00", endTime: "19:15", key: "douyin_leads", label: "抖音主动私信精准客户", note: "抖音主动私信10个精准客户" },
       { time: "19:15", endTime: "19:30", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
       { time: "19:30", endTime: "20:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "20:00", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
       { time: "20:15", endTime: "20:30", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
@@ -1121,7 +1113,7 @@
         return { ...node, plan, ...(remaining.length ? { children: remaining } : {}) };
       });
       normalized.splice(0, normalized.length, ...cleaned);
-      return migrateSalesDouyinAddFriendChildren(normalized);
+      return migrateSalesDouyinAddFriendChildren(foldSalesDouyinFollowupNodes(normalized));
     }
 
     function salesWorkflowActionForNote(note) {
@@ -1134,6 +1126,55 @@
       if (text.includes("主动私信") || text.includes("私信10")) return "direct_message";
       if (text.includes("私信接管") || text.includes("私信引流")) return "stranger_message";
       return "search_collect";
+    }
+
+    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "mention_comment", "follow_comment", "direct_message"];
+
+    function normalizeSalesDouyinFollowupActions(value) {
+      const selected = new Set((Array.isArray(value) ? value : []).map((item) => String(item || "").trim().toLowerCase()));
+      return SALES_DOUYIN_FOLLOWUP_ACTIONS.filter((action) => selected.has(action));
+    }
+
+    function salesDouyinNodeAction(node) {
+      const plan = node && node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const inferred = salesWorkflowActionForNote(node && (node.note || node.ability_label) || plan.title || "");
+      const explicit = String(params.sales_action || payload.action || "").trim().toLowerCase();
+      return inferred !== "search_collect" ? inferred : (explicit || inferred);
+    }
+
+    function isSalesDouyinCollectionNode(node) {
+      return String(node && (node.ability_key || node.key) || "") === "douyin_leads"
+        && salesDouyinNodeAction(node) === "search_collect";
+    }
+
+    function foldSalesDouyinFollowupNodes(nodes) {
+      const prepared = [];
+      let currentCollection = null;
+      (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+        const action = salesDouyinNodeAction(node);
+        const isSalesDouyin = String(node && (node.ability_key || node.key) || "") === "douyin_leads"
+          && (node.sales_preset || String(node.id || "").startsWith("sales_") || String(node.department_id || "") === "sales");
+        if (isSalesDouyin && action === "search_collect") {
+          currentCollection = node;
+          prepared.push(node);
+          return;
+        }
+        if (isSalesDouyin && SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action) && currentCollection) {
+          const plan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
+          const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
+          const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+          params.followup_actions = normalizeSalesDouyinFollowupActions([...(params.followup_actions || []), action]);
+          params.customer_scope = "current_collection_batch";
+          payload.params = params;
+          plan.payload = payload;
+          currentCollection.plan = plan;
+          return;
+        }
+        prepared.push(node);
+      });
+      return prepared;
     }
     const AI_MARKETING_CREATION_ID = "ai_marketing_creation";
     const AI_MARKETING_CREATION_DEPARTMENT = {
@@ -3766,7 +3807,13 @@
         return taskFieldHtml("采集关键词", taskTextareaHtml("workflowParamDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
-          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
+          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")))
+          + taskFieldHtml("采集后继续执行", workCheckboxGroupHtml([
+            { id: "workflowParamDouyinFollowupReplyComments", label: "回复客户评论", checked: true },
+            { id: "workflowParamDouyinFollowupMentionComment", label: "评论并@客户", checked: true },
+            { id: "workflowParamDouyinFollowupFollowComment", label: "关注并评论", checked: true },
+            { id: "workflowParamDouyinFollowupDirectMessage", label: "主动私信", checked: true },
+          ]), true);
       }
       if (key === "local_bestseller") {
         return localBestsellerFieldsHtml("workflowParamLocal", false);
@@ -4172,6 +4219,13 @@
               max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
               regions: regions.length ? regions : ["全国"],
               mode: workflowParamValue("workflowParamDouyinMode") || "script",
+              followup_actions: normalizeSalesDouyinFollowupActions([
+                workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
+                workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
+                workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
+                workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
+              ]),
+              customer_scope: "current_collection_batch",
             },
           },
         };
@@ -4595,6 +4649,10 @@
             preservedParams.wechat_add_friend_enabled = workflowBoolParam(rowParams.wechat_add_friend_enabled, false);
           }
           preservedParams.wechat_add_friend_targets_source = "douyin_private_message_phone";
+        }
+        if (action === "search_collect" && Object.prototype.hasOwnProperty.call(rowParams, "followup_actions")) {
+          preservedParams.followup_actions = normalizeSalesDouyinFollowupActions(rowParams.followup_actions);
+          preservedParams.customer_scope = "current_collection_batch";
         }
         next.payload = Object.keys(preservedParams).length
           ? { action, params: preservedParams }
@@ -5348,6 +5406,13 @@
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
+        const followupActions = Object.prototype.hasOwnProperty.call(params, "followup_actions")
+          ? normalizeSalesDouyinFollowupActions(params.followup_actions)
+          : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+        setFieldValue("workflowParamDouyinFollowupReplyComments", followupActions.includes("reply_comments"));
+        setFieldValue("workflowParamDouyinFollowupMentionComment", followupActions.includes("mention_comment"));
+        setFieldValue("workflowParamDouyinFollowupFollowComment", followupActions.includes("follow_comment"));
+        setFieldValue("workflowParamDouyinFollowupDirectMessage", followupActions.includes("direct_message"));
         return;
       }
       if (payload.action === "image_studio_generate" || nodeInfo.workQuickKey === "image_composer_studio") {

@@ -392,7 +392,7 @@ def _is_legacy_group_invite_child(node: Any) -> bool:
         action_type == "native_wechat_group_invite"
         or action == "native_wechat_group_invite"
         or (action_type == "native_wechat_group_invite" and action == "native_wechat_poll")
-        or (action == "native_wechat_poll" and "??????" in label)
+        or (action == "native_wechat_poll" and "鑷姩鎷夌兢" in label)
         or _bool_param(params.get("followup_action") == "group_invite", False)
     )
 
@@ -422,8 +422,8 @@ def _is_douyin_private_sales_node(node: Any) -> bool:
     has_legacy_add_child = any(_is_legacy_add_friend_child(child) for child in _workflow_child_nodes(node))
     return task_kind == "douyin_leads" and (
         action == "stranger_message"
-        or "??????" in marker
-        or "??????" in marker
+        or "绉佷俊鎺ョ" in marker
+        or "鎶栭煶绉佷俊" in marker
         or has_legacy_add_child
     )
 
@@ -507,7 +507,50 @@ def _clean_legacy_sales_action_children(nodes: Any) -> list[dict[str, Any]]:
             item_plan["payload"] = item_payload
             item["plan"] = item_plan
         cleaned.append(item)
-    return cleaned
+    return _fold_legacy_sales_douyin_followup_nodes(cleaned)
+
+
+def _sales_douyin_node_action(node: Any) -> str:
+    if not isinstance(node, dict):
+        return ""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    inferred = _sales_action_from_note(
+        node.get("note") or node.get("ability_label") or node.get("label") or plan.get("title")
+    )
+    explicit = _clean_text(params.get("sales_action") or payload.get("action"), 64).lower()
+    return inferred if inferred != "search_collect" else (explicit or inferred)
+
+
+def _fold_legacy_sales_douyin_followup_nodes(nodes: Any) -> list[dict[str, Any]]:
+    """Move legacy standalone precision actions onto the preceding collection node."""
+    items = [item for item in (nodes if isinstance(nodes, list) else []) if isinstance(item, dict)]
+    prepared: list[dict[str, Any]] = []
+    current_collection: Optional[dict[str, Any]] = None
+    for item in items:
+        plan = item.get("plan") if isinstance(item.get("plan"), dict) else {}
+        task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+        ability_key = _clean_text(item.get("ability_key") or item.get("abilityKey"), 128).lower()
+        action = _sales_douyin_node_action(item)
+        is_sales_douyin = _is_sales_node(item) and task_kind == "douyin_leads" and ability_key == "douyin_leads"
+        if is_sales_douyin and action == "search_collect":
+            current_collection = item
+            prepared.append(item)
+            continue
+        if is_sales_douyin and action in _SALES_DOUYIN_FOLLOWUP_ACTIONS and current_collection is not None:
+            parent_plan = current_collection.get("plan") if isinstance(current_collection.get("plan"), dict) else {}
+            parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
+            parent_params = dict(parent_payload.get("params") if isinstance(parent_payload.get("params"), dict) else {})
+            selected = _sales_douyin_followup_actions([*(parent_params.get("followup_actions") or []), action])
+            parent_params["followup_actions"] = selected
+            parent_params["customer_scope"] = "current_collection_batch"
+            parent_payload["params"] = parent_params
+            parent_plan["payload"] = parent_payload
+            current_collection["plan"] = parent_plan
+            continue
+        prepared.append(item)
+    return prepared
 
 
 def _canonical_workflow_nodes(nodes: Any) -> list[dict[str, Any]]:
@@ -1100,6 +1143,20 @@ def _sales_action_from_note(note: Any) -> str:
     return "search_collect"
 
 
+_SALES_DOUYIN_FOLLOWUP_ACTIONS = (
+    "reply_comments",
+    "mention_comment",
+    "follow_comment",
+    "direct_message",
+)
+
+
+def _sales_douyin_followup_actions(value: Any) -> list[str]:
+    rows = value if isinstance(value, list) else []
+    selected = {_clean_text(item, 64).lower() for item in rows}
+    return [action for action in _SALES_DOUYIN_FOLLOWUP_ACTIONS if action in selected]
+
+
 def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Reduce a sales Douyin node to the action-only Online contract."""
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
@@ -1114,6 +1171,16 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     if not action:
         action = inferred_action
     result: dict[str, Any] = {"action": action or "search_collect"}
+    if (action or "search_collect") == "search_collect":
+        followup_actions = (
+            _sales_douyin_followup_actions(params.get("followup_actions"))
+            if "followup_actions" in params
+            else list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+        )
+        result["params"] = {
+            "followup_actions": followup_actions,
+            "customer_scope": "current_collection_batch",
+        }
     # Private-message takeover keeps add-friend behavior on the parent node.
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.
@@ -1890,13 +1957,18 @@ def _workflow_node_should_start_now(
     now_utc: datetime,
     timezone_offset_minutes: int,
 ) -> bool:
-    """Start a long-running takeover when it is enabled inside today's window."""
+    """Start a workflow node immediately when activation is inside today's window.
+
+    Daily-times scheduling normally chooses the next clock time strictly after
+    activation. For an employee enabled after a node's start but before its
+    end, that would incorrectly defer the first run until tomorrow. The first
+    activation should instead enter the current window; later recurring runs
+    continue to use the node's configured daily time.
+    """
     if task_kind != "client_workflow":
         return False
     plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
     payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
-    if str(payload.get("action") or "").strip() != "native_wechat_poll":
-        return False
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     start_text = str(node.get("time") or params.get("sales_schedule_start") or "").strip()
     end_text = str(

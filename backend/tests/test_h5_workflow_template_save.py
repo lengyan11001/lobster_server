@@ -75,6 +75,44 @@ def test_douyin_private_reply_mode_is_server_owned(db_session, test_user):
     assert params["reply_mode"] == "ai_lead"
 
 
+def test_legacy_douyin_followup_nodes_fold_into_collection_properties():
+    def node(node_id: str, time: str, label: str, action: str) -> dict:
+        return {
+            "id": node_id,
+            "time": time,
+            "department_id": "sales",
+            "ability_key": "douyin_leads",
+            "ability_label": label,
+            "note": label,
+            "sales_preset": True,
+            "plan": {
+                "title": label,
+                "task_kind": "douyin_leads",
+                "payload": {"action": action, "params": {"sales_action": action}},
+            },
+        }
+
+    cleaned = _clean_nodes(
+        [
+            node("collect", "11:30", "抖音获客·关键词抓取精准客户", "search_collect"),
+            node("reply", "12:00", "抖音回复精准客户评论10个", "reply_comments"),
+            node("mention", "12:15", "抖音自己评论区接管", "mention_comment"),
+            node("follow", "12:30", "抖音关注精准客户并评论首条作品", "follow_comment"),
+            node("dm", "12:45", "抖音主动私信精准客户", "direct_message"),
+        ]
+    )
+
+    assert [item["id"] for item in cleaned] == ["collect"]
+    params = cleaned[0]["plan"]["payload"]["params"]
+    assert params["followup_actions"] == [
+        "reply_comments",
+        "mention_comment",
+        "follow_comment",
+        "direct_message",
+    ]
+    assert params["customer_scope"] == "current_collection_batch"
+
+
 def test_legacy_sales_action_children_fold_into_parent_properties():
     nodes = [
         {
