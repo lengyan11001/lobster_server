@@ -267,7 +267,7 @@ def _visible_workflow_nodes(nodes: Any) -> list[dict[str, Any]]:
 
 def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cleaned: list[dict[str, Any]] = []
-    for raw in nodes or []:
+    for raw in _clean_legacy_sales_action_children(nodes or []):
         if not isinstance(raw, dict):
             continue
         plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else raw
@@ -379,8 +379,139 @@ def _normalize_douyin_private_switch(
     payload["params"] = params
 
 
+def _is_legacy_group_invite_child(node: Any) -> bool:
+    if not isinstance(node, dict):
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    action_type = _clean_text(node.get("action_type") or node.get("type"), 64).lower()
+    action = _clean_text(payload.get("action") or node.get("ability_key"), 128).lower()
+    label = _clean_text(node.get("ability_label") or node.get("label") or node.get("note"), 200)
+    return (
+        action_type == "native_wechat_group_invite"
+        or action == "native_wechat_group_invite"
+        or (action_type == "native_wechat_group_invite" and action == "native_wechat_poll")
+        or (action == "native_wechat_poll" and "??????" in label)
+        or _bool_param(params.get("followup_action") == "group_invite", False)
+    )
+
+
+def _is_legacy_add_friend_child(node: Any) -> bool:
+    if not isinstance(node, dict):
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    return (
+        _clean_text(node.get("action_type") or node.get("type"), 64).lower() == "native_wechat_add_friend"
+        or _clean_text(payload.get("action") or node.get("ability_key"), 128).lower() == "native_wechat_add_friend"
+    )
+
+
+def _is_douyin_private_sales_node(node: Any) -> bool:
+    if not isinstance(node, dict):
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+    action = _clean_text(payload.get("action") or node.get("ability_key"), 128).lower()
+    marker = " ".join(
+        _clean_text(value, 200)
+        for value in (node.get("ability_label"), node.get("label"), node.get("note"), plan.get("title"))
+    )
+    has_legacy_add_child = any(_is_legacy_add_friend_child(child) for child in _workflow_child_nodes(node))
+    return task_kind == "douyin_leads" and (
+        action == "stranger_message"
+        or "??????" in marker
+        or "??????" in marker
+        or has_legacy_add_child
+    )
+
+
+def _is_sales_node(node: Any) -> bool:
+    if not isinstance(node, dict):
+        return False
+    return bool(
+        node.get("sales_preset")
+        or node.get("salesPreset")
+        or _clean_text(node.get("id"), 80).startswith("sales_")
+        or _clean_text(node.get("department_id") or node.get("departmentId"), 64) == "sales"
+    )
+
+
+def _merge_legacy_sales_child_params(parent: dict[str, Any], child: dict[str, Any], *, group_invite: bool) -> None:
+    plan = parent.get("plan") if isinstance(parent.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
+    child_plan = child.get("plan") if isinstance(child.get("plan"), dict) else {}
+    child_payload = child_plan.get("payload") if isinstance(child_plan.get("payload"), dict) else {}
+    child_params = child_payload.get("params") if isinstance(child_payload.get("params"), dict) else {}
+    if group_invite:
+        params.update({
+            key: value for key, value in child_params.items()
+            if key.startswith("group_invite_") or key in {"followup_action", "trigger"}
+        })
+        params["group_invite_enabled"] = True
+        params["followup_action"] = "group_invite"
+        params.setdefault("group_invite_rule_status", "pending_rules")
+        params.setdefault("trigger", "qualified_intent")
+    else:
+        current = params.get("wechat_add_friend_enabled")
+        params["wechat_add_friend_enabled"] = _bool_param(current, True) if current is not None else True
+        params["wechat_add_friend_targets_source"] = "douyin_private_message_phone"
+        params.pop("wechat_add_friend_rules", None)
+    payload["params"] = params
+    plan["payload"] = payload
+    parent["plan"] = plan
+
+
+def _clean_legacy_sales_action_children(nodes: Any) -> list[dict[str, Any]]:
+    """Fold pre-property sales children into their parent node before validation."""
+    if not isinstance(nodes, list):
+        return []
+    items = copy.deepcopy([item for item in nodes if isinstance(item, dict)])
+    douyin_parents = [item for item in items if _is_douyin_private_sales_node(item)]
+    legacy_top_add = [item for item in items if _is_legacy_add_friend_child(item)] if douyin_parents else []
+    cleaned: list[dict[str, Any]] = []
+    for item in items:
+        if douyin_parents and _is_legacy_add_friend_child(item) and item not in douyin_parents:
+            continue
+        raw_children = item.get("children") if isinstance(item.get("children"), list) else item.get("actions")
+        if isinstance(raw_children, list):
+            remaining = []
+            for child in raw_children:
+                if not isinstance(child, dict):
+                    continue
+                if _is_sales_node(item) and _is_legacy_group_invite_child(child):
+                    _merge_legacy_sales_child_params(item, child, group_invite=True)
+                    continue
+                if _is_legacy_add_friend_child(child) and _is_douyin_private_sales_node(item):
+                    _merge_legacy_sales_child_params(item, child, group_invite=False)
+                    continue
+                remaining.append(child)
+            if remaining:
+                item["children"] = remaining
+                if "actions" in item:
+                    item.pop("actions", None)
+            else:
+                item.pop("children", None)
+                item.pop("actions", None)
+        if _is_douyin_private_sales_node(item) and legacy_top_add:
+            current = (_node_payload(item).get("params") or {}).get("wechat_add_friend_enabled")
+            if current is None:
+                _merge_legacy_sales_child_params(item, legacy_top_add[0], group_invite=False)
+        if _is_douyin_private_sales_node(item):
+            item_plan = item.get("plan") if isinstance(item.get("plan"), dict) else {}
+            item_payload = item_plan.get("payload") if isinstance(item_plan.get("payload"), dict) else {}
+            item_payload["action"] = "stranger_message"
+            item_plan["payload"] = item_payload
+            item["plan"] = item_plan
+        cleaned.append(item)
+    return cleaned
+
+
 def _canonical_workflow_nodes(nodes: Any) -> list[dict[str, Any]]:
-    prepared = _visible_workflow_nodes(nodes)
+    prepared = _clean_legacy_sales_action_children(_visible_workflow_nodes(nodes))
     for node in prepared:
         plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
         payload = copy.deepcopy(plan.get("payload")) if isinstance(plan.get("payload"), dict) else {}
@@ -869,7 +1000,7 @@ def _prepare_publish_action_nodes(
     installation_id: str,
     nodes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    prepared = copy.deepcopy(nodes)
+    prepared = _clean_legacy_sales_action_children(nodes)
     missing: list[str] = []
     for parent in prepared:
         if _is_workflow_placeholder(parent):

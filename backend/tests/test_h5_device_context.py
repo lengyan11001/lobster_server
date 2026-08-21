@@ -177,6 +177,37 @@ def test_task_and_run_lists_are_filtered_by_selected_device(db_session, test_use
     assert run_payload["pagination"]["total"] == 2
 
 
+def test_h5_task_center_can_cancel_an_active_run(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    run = ScheduledTaskRun(
+        id="run-to-cancel",
+        user_id=test_user.id,
+        installation_id="device-a",
+        title="active task",
+        task_kind="client_workflow",
+        content="working",
+        status="processing",
+        progress={"stage": "working", "text": "正在执行"},
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(run)
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "online_user_for_mobile_user", lambda _db, user: user)
+
+    payload = scheduled_tasks.cancel_scheduled_task_run(
+        "run-to-cancel",
+        current_user=test_user,
+        db=db_session,
+    )
+
+    db_session.refresh(run)
+    assert payload["cancelled"] is True
+    assert run.status == "cancelled"
+    assert run.finished_at is not None
+    assert run.progress["reason"] == "cancelled_by_user"
+
+
 def test_recorder_lists_use_selected_device_and_keep_legacy_records(db_session, test_user):
     now = datetime.utcnow()
     db_session.add_all(

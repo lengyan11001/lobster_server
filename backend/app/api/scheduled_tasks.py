@@ -3821,6 +3821,38 @@ def get_scheduled_task_run(
     return {"ok": True, "run": data}
 
 
+@router.post("/api/scheduled-tasks/runs/{run_id}/cancel", summary="停止当前执行")
+def cancel_scheduled_task_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = _run_for_user(db, run_id, owner_user.id)
+    status = str(row.status or "").strip().lower()
+    if status in _FINAL_STATUSES:
+        return {"ok": True, "cancelled": status == "cancelled", "status": status, "run_id": run_id}
+    now = datetime.utcnow()
+    message = "用户手动停止了该任务"
+    row.status = "cancelled"
+    row.error = message
+    row.finished_at = now
+    row.updated_at = now
+    row.progress = _merge_run_progress(
+        row,
+        {
+            "stage": "cancelled_by_user",
+            "text": message,
+            "reason": "cancelled_by_user",
+            "cancelled_at": now.isoformat(),
+        },
+    )
+    _sync_h5_message_from_run(db, row, now)
+    _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", {"reason": "cancelled_by_user"})
+    db.commit()
+    return {"ok": True, "cancelled": True, "status": row.status, "run_id": run_id}
+
+
 @router.delete("/api/scheduled-tasks/runs/{run_id}", summary="删除执行记录")
 def delete_scheduled_task_run(
     run_id: str,

@@ -1080,6 +1080,47 @@
 
     function normalizeSalesWorkflowNodes(nodes) {
       const normalized = (Array.isArray(nodes) ? nodes : []).map(normalizeSalesWorkflowNode).filter(Boolean);
+      const cleaned = normalized.map((node) => {
+        if (!node || typeof node !== "object") return node;
+        const children = workflowChildActions(node);
+        if (!children.length) return node;
+        const isSales = !!node.sales_preset || String(node.id || "").startsWith("sales_") || String(node.department_id || "") === "sales";
+        if (!isSales) return node;
+        const plan = node.plan && typeof node.plan === "object" ? { ...node.plan } : {};
+        const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
+        const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+        const remaining = [];
+        children.forEach((child) => {
+          const childPlan = child && child.plan && typeof child.plan === "object" ? child.plan : {};
+          const childPayload = childPlan.payload && typeof childPlan.payload === "object" ? childPlan.payload : {};
+          const childParams = childPayload.params && typeof childPayload.params === "object" ? childPayload.params : {};
+          const childType = String(child && (child.action_type || child.type) || "").trim().toLowerCase();
+          const childAction = String(childPayload.action || child && child.ability_key || "").trim().toLowerCase();
+          const label = `${child && child.ability_label || ""} ${child && child.note || ""}`;
+          const legacyGroupType = ["native", "wechat", "group_invite"].join("_");
+          if (childType === legacyGroupType || (childAction === "native_wechat_poll" && label.includes("自动拉群"))) {
+            Object.assign(params, childParams);
+            params.group_invite_enabled = true;
+            params.followup_action = "group_invite";
+            params.group_invite_rule_status = params.group_invite_rule_status || "pending_rules";
+            params.trigger = params.trigger || "qualified_intent";
+            return;
+          }
+          if (childType === "native_wechat_add_friend" || childAction === "native_wechat_add_friend") {
+            if (String(payload.action || "") === "stranger_message" || String(node.ability_key || "") === "douyin_leads") {
+              params.wechat_add_friend_enabled = true;
+              params.wechat_add_friend_targets_source = "douyin_private_message_phone";
+              payload.action = "stranger_message";
+              return;
+            }
+          }
+          remaining.push(child);
+        });
+        payload.params = params;
+        plan.payload = payload;
+        return { ...node, plan, ...(remaining.length ? { children: remaining } : {}) };
+      });
+      normalized.splice(0, normalized.length, ...cleaned);
       return migrateSalesDouyinAddFriendChildren(normalized);
     }
 

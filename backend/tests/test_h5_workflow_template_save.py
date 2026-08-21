@@ -6,6 +6,7 @@ from backend.app.api.h5_workflows import (
     create_workflow_template,
     delete_workflow_template,
     update_workflow_template,
+    _clean_nodes,
 )
 from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, ScheduledTask
 
@@ -72,6 +73,50 @@ def test_douyin_private_reply_mode_is_server_owned(db_session, test_user):
 
     params = created["template"]["nodes"][0]["plan"]["payload"]["params"]
     assert params["reply_mode"] == "ai_lead"
+
+
+def test_legacy_sales_action_children_fold_into_parent_properties():
+    nodes = [
+        {
+            "id": "sales_wechat",
+            "time": "07:00",
+            "department_id": "sales",
+            "ability_label": "微信私信接管",
+            "plan": {"task_kind": "client_workflow", "payload": {"action": "native_wechat_poll", "params": {}}},
+            "children": [{
+                "id": "legacy-group",
+                "time": "07:15",
+                "action_type": "native_wechat_group_invite",
+                "ability_key": "native_wechat_poll",
+                "ability_label": "微信自动拉群",
+                "plan": {"payload": {"action": "native_wechat_poll", "params": {"group_invite_rule_status": "configured"}}},
+            }],
+        },
+        {
+            "id": "sales_douyin",
+            "time": "08:00",
+            "ability_key": "douyin_leads",
+            "ability_label": "抖音私信接管",
+            "plan": {"task_kind": "douyin_leads", "payload": {"action": "stranger_message", "params": {}}},
+            "children": [{
+                "id": "legacy-add",
+                "time": "08:15",
+                "action_type": "native_wechat_add_friend",
+                "ability_key": "native_wechat_add_friend",
+                "plan": {"payload": {"action": "native_wechat_add_friend", "params": {}}},
+            }],
+        },
+    ]
+
+    cleaned = _clean_nodes(nodes)
+    wechat = cleaned[0]
+    douyin = cleaned[1]
+    assert not wechat.get("children")
+    assert wechat["plan"]["payload"]["params"]["group_invite_enabled"] is True
+    assert wechat["plan"]["payload"]["params"]["followup_action"] == "group_invite"
+    assert not douyin.get("children")
+    assert douyin["plan"]["payload"]["action"] == "stranger_message"
+    assert douyin["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is True
 
 
 def test_legacy_douyin_private_switch_defaults_to_false_in_server_payload():
