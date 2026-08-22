@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import uuid
@@ -33,6 +34,7 @@ router = APIRouter()
 
 _FEATURE_TYPE = "linkedin_mining"
 _TERMINAL_STATUS = {"completed", "failed", "canceled", "stale"}
+logger = logging.getLogger(__name__)
 
 
 class LinkedInMiningStartBody(BaseModel):
@@ -1000,8 +1002,20 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
             row.stage = "completed"
             row.progress = 100
             row.completed_at = _utcnow()
-            _append_output(row, step_key=step_key, title="最终分析报告", kind="report", data=report)
-            _mark_step(row, step_key, "completed", detail="已生成最终报告", result={"sections": list(report.keys())})
+
+            # Persist the report and terminal state before building the optional
+            # output index. The latter contains the accumulated step payloads and
+            # can fail or become slow independently of the report itself.
+            db.commit()
+            db.refresh(row)
+            try:
+                _mark_step(row, step_key, "completed", detail="已生成最终报告", result={"sections": list(report.keys())})
+                _append_output(row, step_key=step_key, title="最终分析报告", kind="report", data=report)
+                db.commit()
+                db.refresh(row)
+            except Exception:
+                db.rollback()
+                logger.exception("LinkedIn summary output index failed job_id=%s; report is already persisted", row.job_id)
 
         else:
             raise HTTPException(status_code=400, detail=f"unsupported step: {step_key}")
@@ -1237,7 +1251,38 @@ async def _auto_run_job_inner(job_id: str, bearer_token: str = "") -> None:
                 return
             try:
                 await _execute_step(db, row, user, str(step.get("key") or ""))
-            except Exception:
+            except Exception as exc:
+                logger.exception("LinkedIn autorun failed job_id=%s step=%s", job_id, step.get("key"))
+                # _execute_step normally records failures itself. Keep a second
+                # guard here for errors raised while committing or refreshing so
+                # a job can never remain indefinitely in running state.
+                try:
+                    db.rollback()
+                    db.refresh(row)
+                    if row.status not in _TERMINAL_STATUS:
+                        row.status = "failed"
+                        row.stage = "failed"
+                        row.error = str(getattr(exc, "detail", None) or exc)[:4000]
+                        db.commit()
+                except Exception:
+                    logger.exception("LinkedIn autorun failure state could not be persisted job_id=%s", job_id)
+                    try:
+                        with SessionLocal() as recovery_db:
+                            recovery_row = (
+                                recovery_db.query(CreativeGenerationJob)
+                                .filter(
+                                    CreativeGenerationJob.job_id == job_id,
+                                    CreativeGenerationJob.feature_type == _FEATURE_TYPE,
+                                )
+                                .first()
+                            )
+                            if recovery_row and recovery_row.status not in _TERMINAL_STATUS:
+                                recovery_row.status = "failed"
+                                recovery_row.stage = "failed"
+                                recovery_row.error = str(getattr(exc, "detail", None) or exc)[:4000]
+                                recovery_db.commit()
+                    except Exception:
+                        logger.exception("LinkedIn autorun recovery commit failed job_id=%s", job_id)
                 return
 
 
