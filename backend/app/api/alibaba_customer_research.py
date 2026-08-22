@@ -40,9 +40,9 @@ class AlibabaEvidenceBody(AlibabaPublicSignalsBody):
 
 _UPSTREAM_TASKS: dict[str, dict[str, Any]] = {
     "professional_network_company": {
-        "path": "/api/v1/linkedin/web/get_company_profile",
+        "path": "/api/v1/linkedin/web_v2/get_company_profile",
         "method": "GET",
-        "allowed": {"company", "company_id"},
+        "allowed": {"url"},
         "title": "职业社媒公司资料",
         "category": "社媒公开资料",
     },
@@ -1102,7 +1102,11 @@ def _build_tasks(body: AlibabaPublicSignalsBody) -> list[dict[str, Any]]:
     if company:
         tasks.extend(
             [
-                {"kind": "professional_network_company", "params": {"company": company}, "field": "company_name"},
+                {
+                    "kind": "professional_network_company",
+                    "params": {"url": f"https://www.linkedin.com/company/{re.sub(r'[^a-z0-9]+', '-', company.lower()).strip('-')}/"},
+                    "field": "company_name",
+                },
                 {"kind": "short_video_account_search", "params": {"keyword": company}, "field": "company_name"},
                 {"kind": "visual_social_search", "params": {"query": company, "select": "users"}, "field": "company_name"},
                 {"kind": "public_discussion_search", "params": {"keyword": company, "search_type": "Top"}, "field": "company_name"},

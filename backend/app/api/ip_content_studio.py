@@ -293,177 +293,90 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "platform": "linkedin",
         "source_type": "user_profile",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_profile",
-        "allowed_params": {
-            "username",
-            "include_follower_and_connection",
-            "include_experiences",
-            "include_skills",
-            "include_certifications",
-            "include_publications",
-            "include_educations",
-            "include_volunteers",
-            "include_honors",
-            "include_interests",
-            "include_bio",
-        },
+        "path": "/api/v1/linkedin/web_v2/get_user_profile",
+        "allowed_params": {"url"},
     },
     "linkedin_user_posts": {
         "platform": "linkedin",
         "source_type": "user_post",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_posts",
-        "allowed_params": {"urn", "page", "pagination_token"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "posts"},
     },
     "linkedin_user_comments": {
         "platform": "linkedin",
         "source_type": "user_comment",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_comments",
-        "allowed_params": {"urn", "page", "pagination_token"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "comments"},
     },
     "linkedin_user_reactions": {
         "platform": "linkedin",
         "source_type": "user_reaction",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_reactions",
-        "allowed_params": {"urn", "page", "pagination_token"},
-    },
-    "linkedin_user_contact_info": {
-        "platform": "linkedin",
-        "source_type": "user_contact",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_contact",
-        "allowed_params": {"username"},
-    },
-    "linkedin_user_follow_count": {
-        "platform": "linkedin",
-        "source_type": "user_follow_count",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_follower_and_connection",
-        "allowed_params": {"username"},
-    },
-    "linkedin_user_experiences": {
-        "platform": "linkedin",
-        "source_type": "user_experience",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_experience",
-        "allowed_params": {"urn", "page"},
-    },
-    "linkedin_user_skills": {
-        "platform": "linkedin",
-        "source_type": "user_skill",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_skills",
-        "allowed_params": {"urn", "page"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "reactions"},
     },
     "linkedin_user_recent_activity": {
         "platform": "linkedin",
         "source_type": "user_recent_activity",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_posts",
-        "allowed_params": {"urn", "page", "pagination_token"},
-    },
-    "linkedin_user_about": {
-        "platform": "linkedin",
-        "source_type": "user_about",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_about",
-        "allowed_params": {"urn"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "posts"},
     },
     "linkedin_company_profile": {
         "platform": "linkedin",
         "source_type": "company_profile",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_profile",
-        "allowed_params": {"company", "company_id"},
-    },
-    "linkedin_company_employees": {
-        "platform": "linkedin",
-        "source_type": "company_employee",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_people",
-        "allowed_params": {"company_id", "page"},
+        "path": "/api/v1/linkedin/web_v2/get_company_profile",
+        "allowed_params": {"url"},
     },
     "linkedin_company_posts": {
         "platform": "linkedin",
         "source_type": "company_post",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_posts",
-        "allowed_params": {"company_id", "page", "sort_by"},
+        "path": "/api/v1/linkedin/web_v2/get_company_posts",
+        "allowed_params": {"url", "start", "pagination_token", "sort_by"},
     },
     "linkedin_company_jobs": {
         "platform": "linkedin",
         "source_type": "company_job",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_jobs",
+        "path": "/api/v1/linkedin/web_v2/search_jobs",
         "allowed_params": {
-            "company_id",
-            "page",
+            "keywords",
+            "geo_code",
+            "experience_levels",
+            "company_ids",
+            "title_ids",
+            "onsite_remotes",
+            "functions",
+            "industries",
+            "job_types",
             "sort_by",
             "date_posted",
-            "experience_level",
-            "remote",
-            "job_type",
             "easy_apply",
             "under_10_applicants",
-            "fair_chance_employer",
+            "start",
         },
-    },
-    "linkedin_search_users": {
-        "platform": "linkedin",
-        "source_type": "user_search",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/search_people",
-        "allowed_params": {
-            "name",
-            "first_name",
-            "last_name",
-            "title",
-            "company",
-            "school",
-            "page",
-            "geocode_location",
-            "current_company",
-            "profile_language",
-            "industry",
-            "service_category",
-        },
-    },
-    "linkedin_search_posts": {
-        "platform": "linkedin",
-        "source_type": "search_post",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/search_posts",
-        "allowed_params": {"keyword", "page", "date_posted", "sort_by", "from_member", "from_company", "content_type"},
-    },
-    "linkedin_hashtag_feed": {
-        "platform": "linkedin",
-        "source_type": "hashtag_feed",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/search_posts",
-        "allowed_params": {"keyword", "page", "date_posted", "sort_by", "from_member", "from_company", "content_type"},
     },
     "linkedin_post_detail": {
         "platform": "linkedin",
         "source_type": "post_detail",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_post_detail",
-        "allowed_params": {"post_id"},
+        "path": "/api/v1/linkedin/web_v2/get_post_detail",
+        "allowed_params": {"url"},
     },
     "linkedin_post_comments": {
         "platform": "linkedin",
         "source_type": "post_comment",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_post_comments",
-        "allowed_params": {"post_id", "page", "sort_order", "post_type"},
-    },
-    "linkedin_post_reactions": {
-        "platform": "linkedin",
-        "source_type": "post_reaction",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_post_reactions",
-        "allowed_params": {"post_id", "page", "type"},
+        "path": "/api/v1/linkedin/web_v2/get_post_comments",
+        "allowed_params": {"urn", "sort_by", "page", "pagination_token", "share_urn"},
     },
     "reddit_search": {
         "platform": "reddit",
@@ -2383,6 +2296,7 @@ async def _call_tikhub(query_type: str, params: dict[str, Any], body: dict[str, 
     spec = _ENDPOINTS.get(query_type)
     if not spec:
         raise HTTPException(status_code=400, detail=f"不支持的 TikHub 查询类型：{query_type}")
+    request_params = {**(spec.get("default_params") or {}), **params}
     url = _tikhub_api_base() + spec["path"]
     headers = {
         "Authorization": f"Bearer {_tikhub_api_key()}",
@@ -2394,7 +2308,7 @@ async def _call_tikhub(query_type: str, params: dict[str, Any], body: dict[str, 
         if spec["method"] == "POST":
             resp = await client.post(url, headers={**headers, "Content-Type": "application/json"}, json=body)
         else:
-            resp = await client.get(url, headers=headers, params=params)
+            resp = await client.get(url, headers=headers, params=request_params)
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
         payload = resp.json()
@@ -2417,6 +2331,11 @@ async def _execute_query_with_retry(
 ) -> dict[str, Any]:
     last_result: dict[str, Any] = {}
     attempts = max(1, int(attempts or 1))
+    retry_http_statuses = set(_RETRY_HTTP_STATUSES)
+    if query_type.startswith("linkedin_"):
+        # LinkedIn Web V2 is backed by a limited resource pool. TikHub's
+        # documentation explicitly calls out transient HTTP 400 responses.
+        retry_http_statuses.add(400)
     for idx in range(attempts):
         try:
             last_result = await _execute_query(
@@ -2443,7 +2362,7 @@ async def _execute_query_with_retry(
             return last_result
         query = last_result.get("query") if isinstance(last_result.get("query"), dict) else {}
         error_message = query.get("error_message") or last_result.get("error_message") or ""
-        if int(query.get("http_status") or 0) not in _RETRY_HTTP_STATUSES and not _is_retryable_detail(error_message):
+        if int(query.get("http_status") or 0) not in retry_http_statuses and not _is_retryable_detail(error_message):
             return last_result
         if idx < attempts - 1:
             await asyncio.sleep(0.8 * (idx + 1))
@@ -2465,6 +2384,8 @@ async def _execute_query(
     if not spec:
         raise HTTPException(status_code=400, detail=f"不支持的 TikHub 查询类型：{query_type}")
     clean_params = _clean_mapping(params, set(spec.get("allowed_params") or set()))
+    default_params = _clean_mapping(spec.get("default_params") or {}, set(spec.get("allowed_params") or set()))
+    clean_params = {**default_params, **clean_params}
     clean_body = _clean_mapping(body, set(spec.get("allowed_body") or set()))
     price = _query_price(query_type)
     balance = user_balance_decimal(current_user)
