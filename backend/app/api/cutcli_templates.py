@@ -2855,7 +2855,23 @@ def _caption_llm_model_id() -> str:
 def _caption_llm_attempts(token: str, model: str) -> List[Dict[str, str]]:
     models = [model]
     try:
-        from .sutui_chat_proxy import _get_v3_route, _sutui_chat_model_candidates
+        from .sutui_chat_proxy import (
+            _get_v3_route,
+            _sutui_chat_model_candidates,
+            _yyapi_chat_configured,
+            _yyapi_chat_model_id,
+            _yyapi_direct_route,
+        )
+
+        if _yyapi_chat_configured():
+            route = _yyapi_direct_route(_yyapi_chat_model_id())
+            if route:
+                return [{
+                    "model": _yyapi_chat_model_id(),
+                    "url": f"{str(route['api_base']).rstrip('/')}/v1/chat/completions",
+                    "api_key": str(route["api_key"]),
+                    "provider": "yyapi",
+                }]
 
         models = _sutui_chat_model_candidates(model, has_tools=False) or models
         attempts: List[Dict[str, str]] = []

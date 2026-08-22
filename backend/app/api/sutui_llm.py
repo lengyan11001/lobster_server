@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from mcp.sutui_tokens import next_sutui_server_token_internal
 
+from ..core.config import settings
 from ..models import User
 from ..services.sutui_llm_probe import (
     _fetch_mcp_models,
@@ -46,6 +47,25 @@ async def get_sutui_llm_models(current_user: User = Depends(get_current_user)):
     仅返回对话用 LLM（mcp/models 中 category 为 llm 或 text），不含生图/生视频等。
     优先读 data/sutui_llm_snapshot.json 再按上述规则过滤；过滤后为空则实时拉取 mcp/models 再过滤。
     """
+    yyapi_key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    if yyapi_key and bool(getattr(settings, "yyapi_force_sutui_chat", True)):
+        model_id = (
+            getattr(settings, "yyapi_chat_model", None)
+            or os.environ.get("YYAPI_CHAT_MODEL")
+            or "gpt-5.6-sol"
+        ).strip()
+        if "/" in model_id:
+            model_id = model_id.rsplit("/", 1)[-1]
+        return {
+            "probed_at": None,
+            "recommended": model_id,
+            "models": [{"id": model_id, "name": "YYAPI · GPT-5.6 Sol", "category": "llm", "available": True}],
+            "error": None,
+            "category_filter": "llm,text",
+            "live_fill": False,
+            "provider": "yyapi",
+        }
+
     snap = read_sutui_llm_snapshot()
     raw_list = list(snap.get("models") or []) if isinstance(snap.get("models"), list) else []
     models = filter_chat_models_for_api(raw_list)

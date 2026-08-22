@@ -219,6 +219,10 @@ class Settings(BaseSettings):
     # ── 直连 LLM API（优先于 xskill.ai 中转）──
     deepseek_api_key: Optional[str] = None
     deepseek_api_base: str = "https://api.deepseek.com"
+    yyapi_api_key: Optional[str] = None
+    yyapi_api_base: str = "https://www.yyapi.cloud"
+    yyapi_chat_model: str = "gpt-5.6-sol"
+    yyapi_force_sutui_chat: bool = True
 
     # ── Meta Social（Instagram / Facebook 发布）──
     """Facebook App ID（在 developers.facebook.com 创建 App 后获取）"""

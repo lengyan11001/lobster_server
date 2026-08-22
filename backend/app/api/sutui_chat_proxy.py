@@ -136,11 +136,49 @@ async def _stream_chat_upstream(
 def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
     """If a model has a direct API key configured, return route info; else None."""
     mid = (model or "").strip()
+    yyapi_key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    yyapi_model = (
+        getattr(settings, "yyapi_chat_model", None)
+        or os.environ.get("YYAPI_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    yyapi_model = _strip_provider_prefix(yyapi_model)
+    if yyapi_key and mid == yyapi_model:
+        base = (
+            getattr(settings, "yyapi_api_base", None)
+            or os.environ.get("YYAPI_API_BASE")
+            or "https://www.yyapi.cloud"
+        ).rstrip("/")
+        return {"api_base": base, "api_key": yyapi_key, "provider": "yyapi"}
     if mid in ("deepseek-chat", "deepseek-reasoner"):
         key = (getattr(settings, "deepseek_api_key", None) or "").strip()
         if key:
             base = (getattr(settings, "deepseek_api_base", None) or "https://api.deepseek.com").rstrip("/")
             return {"api_base": base, "api_key": key, "provider": "deepseek"}
+    return None
+
+
+def _yyapi_chat_configured() -> bool:
+    key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    force = getattr(settings, "yyapi_force_sutui_chat", True)
+    return bool(key) and bool(force)
+
+
+def _yyapi_chat_model_id() -> str:
+    raw = (
+        getattr(settings, "yyapi_chat_model", None)
+        or os.environ.get("YYAPI_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    return _strip_provider_prefix(raw) or "gpt-5.6-sol"
+
+
+def _yyapi_direct_route(model: str = "") -> Optional[Dict[str, str]]:
+    """Return the configured YYAPI route without exposing its secret to callers."""
+    target = _yyapi_chat_model_id()
+    route = _get_direct_route((model or target).strip() or target)
+    if route and route.get("provider") == "yyapi":
+        return route
     return None
 
 
@@ -803,6 +841,12 @@ def _sutui_chat_model_candidates(
     out: List[str] = []
     init = (initial_model or "").strip()
 
+    # The server-wide YYAPI switch intentionally normalizes every Sutui chat
+    # request to one model. This covers callers that still send legacy model
+    # ids (including AI console, H5 and WeChat automation).
+    if _yyapi_chat_configured():
+        return [_yyapi_chat_model_id()]
+
     if init and init not in seen:
         seen.add(init)
         out.append(init)
@@ -878,6 +922,11 @@ def _sutui_chat_attempts_for_models(
                 "timeout": direct_timeout,
                 "is_direct": True,
             })
+            if dr.get("provider") == "yyapi" and _yyapi_chat_configured():
+                # YYAPI is the explicitly configured server-wide Sutui chat
+                # provider; do not fall through and leak a Sutui token to the
+                # old xskill route for the same request.
+                continue
         v3 = _get_v3_route(mid, token)
         if v3:
             attempts.append({
@@ -1668,8 +1717,9 @@ async def sutui_chat_completions(
     _enforce_max_tool_call_rounds(body, trace_id)
 
     bm = brand_mark_for_jwt_claim(getattr(current_user, "brand_mark", None))
-    token, sutui_pool = await next_sutui_server_token_with_pool(brand_mark=bm)
-    if not token:
+    yyapi_active = _yyapi_chat_configured()
+    token, sutui_pool = ("", "yyapi") if yyapi_active else await next_sutui_server_token_with_pool(brand_mark=bm)
+    if not token and not yyapi_active:
         raise HTTPException(
             status_code=503,
             detail=f"服务器未配置共享速推 Token 池（pool={sutui_pool or 'none'}）",
@@ -1677,7 +1727,11 @@ async def sutui_chat_completions(
     chat_billing_recon = sutui_token_recon_meta(token, sutui_pool)
 
     stream = bool(body.get("stream"))
-    url = f"{_api_base()}/v1/chat/completions"
+    url = (
+        f"{(_yyapi_direct_route() or {}).get('api_base')}/v1/chat/completions"
+        if yyapi_active
+        else f"{_api_base()}/v1/chat/completions"
+    )
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",

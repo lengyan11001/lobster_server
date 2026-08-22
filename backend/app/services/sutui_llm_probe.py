@@ -13,6 +13,7 @@ import httpx
 
 from mcp.sutui_tokens import next_sutui_server_token_internal
 
+from backend.app.core.config import settings
 from backend.app.services.sutui_api_audit import log_xskill_http
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,23 @@ def is_sutui_llm_probe_enabled_for_this_instance() -> bool:
 
 
 def _api_base() -> str:
+    yyapi_key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    if yyapi_key and bool(getattr(settings, "yyapi_force_sutui_chat", True)):
+        return (
+            getattr(settings, "yyapi_api_base", None)
+            or os.environ.get("YYAPI_API_BASE")
+            or "https://www.yyapi.cloud"
+        ).rstrip("/")
     return (os.environ.get("SUTUI_API_BASE") or "https://api.xskill.ai").rstrip("/")
+
+
+def _yyapi_model() -> str:
+    raw = (
+        getattr(settings, "yyapi_chat_model", None)
+        or os.environ.get("YYAPI_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    return raw.rsplit("/", 1)[-1] or "gpt-5.6-sol"
 
 
 def _filter_models_by_category(raw_models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -226,6 +243,25 @@ async def run_sutui_llm_probe_once() -> Dict[str, Any]:
     """执行一次探测并写入快照文件（仅国内实例；使用默认速推 Token 池）。"""
     if not is_sutui_llm_probe_enabled_for_this_instance():
         raise RuntimeError("本实例未启用速推 LLM 探测（海外机请设 LOBSTER_SERVER_REGION=overseas，且不应执行探测）")
+
+    yyapi_key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    if yyapi_key and bool(getattr(settings, "yyapi_force_sutui_chat", True)):
+        model_id = _yyapi_model()
+        ok, code = await _probe_one_chat(yyapi_key, model_id)
+        ts = datetime.now(timezone.utc).isoformat()
+        payload: Dict[str, Any] = {
+            "probed_at": ts,
+            "api_base": _api_base(),
+            "category_filter": "llm,text",
+            "recommended": model_id if ok else None,
+            "models": [{"id": model_id, "name": "YYAPI · GPT-5.6 Sol", "category": "llm", "available": ok}],
+            "provider": "yyapi",
+        }
+        if not ok:
+            payload["error"] = f"YYAPI chat probe failed HTTP {code}"
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _SNAPSHOT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return payload
 
     token = await next_sutui_server_token_internal()
     if not token:

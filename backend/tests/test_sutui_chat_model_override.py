@@ -2,6 +2,7 @@ from backend.app.api.sutui_chat_proxy import (
     _sutui_chat_attempts_for_models,
     _sutui_chat_model_candidates,
 )
+import backend.app.api.sutui_chat_proxy as sutui_chat_proxy
 
 
 def test_model_override_still_keeps_deepseek_fallback_route():
@@ -88,3 +89,18 @@ def test_mastra_requires_deepseek_even_when_global_chain_omits_it(monkeypatch):
     )
 
     assert candidates == ["deepseek-chat"]
+
+
+def test_configured_yyapi_replaces_all_sutui_chat_routes(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_base", "https://www.yyapi.cloud")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_force_sutui_chat", True)
+
+    candidates = _sutui_chat_model_candidates("deepseek-chat", has_tools=True)
+    attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
+
+    assert candidates == ["gpt-5.6-sol"]
+    assert [(a["model"], a["provider"], a["is_direct"]) for a in attempts] == [
+        ("gpt-5.6-sol", "direct:yyapi", True),
+    ]
