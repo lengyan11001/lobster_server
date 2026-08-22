@@ -205,7 +205,7 @@ def test_xai_video_model_has_billable_pricing_entry():
     entry = pricing["models"]["grok-imagine-video-1.5"]
 
     assert entry["price_type"] == "per_call"
-    assert entry["price_per_unit"] == 80
+    assert entry["price_per_unit"] == 160
     assert entry["api_format"] == "comfyui_grok"
     assert entry["token_group"] == "comfyui_video"
 
