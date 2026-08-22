@@ -1177,6 +1177,18 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
         },
         ensure_ascii=False,
     )
+
+    # Do not keep the job session's transaction open while waiting for the LLM.
+    # The source-row queries above implicitly start a transaction; on PostgreSQL
+    # that connection can be terminated as idle-in-transaction before the
+    # model responds, making the final status/report update fail even though
+    # the AI request succeeded.  Commit the accumulated read state here so the
+    # next flush after the await starts from a fresh transaction/connection.
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
     token = create_access_token({"sub": str(current_user.id)})
     headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": f"Bearer {token}"}
     payload = {
