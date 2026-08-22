@@ -293,3 +293,47 @@ async def test_stream_disconnect_after_usage_chunk_does_not_deduct(db_session, d
 
 async def _async_value(value):
     return value
+
+
+def test_yyapi_usage_billing_uses_customer_multiplier(monkeypatch):
+    from backend.app.services import sutui_pricing
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "yyapi_input_price_yuan_per_1m", 5.0, raising=False)
+    monkeypatch.setattr(settings, "yyapi_cached_input_price_yuan_per_1m", 0.5, raising=False)
+    monkeypatch.setattr(settings, "yyapi_output_price_yuan_per_1m", 30.0, raising=False)
+    monkeypatch.setattr(settings, "yyapi_upstream_multiplier", 0.23, raising=False)
+    monkeypatch.setattr(settings, "yyapi_customer_multiplier", 0.4, raising=False)
+    monkeypatch.setattr(settings, "yyapi_credits_per_yuan", 100.0, raising=False)
+
+    out = sutui_pricing.yyapi_usage_billing(
+        {
+            "prompt_tokens": 181229,
+            "prompt_cache_hit_tokens": 7258,
+            "prompt_cache_miss_tokens": 173971,
+            "completion_tokens": 9467,
+        }
+    )
+    assert out is not None
+    assert out["upstream_cost_yuan"] == Decimal("0.26622362")
+    assert out["customer_charge_yuan"] == Decimal("0.4629976")
+    assert out["customer_credits"] == Decimal("46.2998")
+
+
+def test_yyapi_turn_precharge_defers_until_usage(db_session, monkeypatch):
+    from backend.app.api import sutui_chat_proxy
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy, "_yyapi_chat_configured", lambda: True)
+    user = _user("1.0000")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    out = sutui_chat_proxy.charge_chat_turn_once(db_session, user, "yyapi-turn")
+    db_session.refresh(user)
+    assert out["pricing_deferred"] is True
+    assert out["credits_charged"] == 0
+    assert user.credits == Decimal("1.0000")

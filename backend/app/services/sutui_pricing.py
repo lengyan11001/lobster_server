@@ -210,6 +210,67 @@ def credits_from_llm_market_usage(model_id: str, usage: Optional[dict]) -> Decim
     return quantize_credits(cost)
 
 
+def yyapi_usage_billing(usage: Optional[dict]) -> Optional[dict]:
+    """Calculate YYAPI cost and Lobster charge from OpenAI-compatible usage.
+
+    YYAPI exposes list prices in yuan per million tokens.  Keep the provider
+    cost (list price * 0.23) separate from the customer charge (list price *
+    0.40), because both values are useful when reconciling the ledger.
+    """
+    if not isinstance(usage, dict):
+        return None
+
+    def _int(name: str) -> int:
+        try:
+            return max(0, int(usage.get(name) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    prompt_tokens = _int("prompt_tokens")
+    cache_hit_tokens = _int("prompt_cache_hit_tokens")
+    cache_miss_tokens = _int("prompt_cache_miss_tokens")
+    completion_tokens = _int("completion_tokens")
+    if cache_hit_tokens + cache_miss_tokens > prompt_tokens and prompt_tokens > 0:
+        cache_miss_tokens = max(0, prompt_tokens - cache_hit_tokens)
+    if cache_hit_tokens == 0 and cache_miss_tokens == 0:
+        cache_miss_tokens = prompt_tokens
+    elif cache_miss_tokens == 0 and prompt_tokens > cache_hit_tokens:
+        cache_miss_tokens = prompt_tokens - cache_hit_tokens
+
+    try:
+        input_rate = Decimal(str(getattr(settings, "yyapi_input_price_yuan_per_1m", 5.0)))
+        cache_rate = Decimal(str(getattr(settings, "yyapi_cached_input_price_yuan_per_1m", 0.5)))
+        output_rate = Decimal(str(getattr(settings, "yyapi_output_price_yuan_per_1m", 30.0)))
+        upstream_multiplier = Decimal(str(getattr(settings, "yyapi_upstream_multiplier", 0.23)))
+        customer_multiplier = Decimal(str(getattr(settings, "yyapi_customer_multiplier", 0.4)))
+        credits_per_yuan = Decimal(str(getattr(settings, "yyapi_credits_per_yuan", 100.0)))
+    except Exception:
+        return None
+    if min(input_rate, cache_rate, output_rate, upstream_multiplier, customer_multiplier, credits_per_yuan) < 0:
+        return None
+
+    list_price_yuan = (
+        Decimal(cache_miss_tokens) * input_rate
+        + Decimal(cache_hit_tokens) * cache_rate
+        + Decimal(completion_tokens) * output_rate
+    ) / Decimal(1_000_000)
+    if list_price_yuan <= 0:
+        return None
+    upstream_cost_yuan = list_price_yuan * upstream_multiplier
+    customer_charge_yuan = list_price_yuan * customer_multiplier
+    customer_credits = quantize_credits(customer_charge_yuan * credits_per_yuan)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "prompt_cache_hit_tokens": cache_hit_tokens,
+        "prompt_cache_miss_tokens": cache_miss_tokens,
+        "completion_tokens": completion_tokens,
+        "list_price_yuan": list_price_yuan,
+        "upstream_cost_yuan": upstream_cost_yuan,
+        "customer_charge_yuan": customer_charge_yuan,
+        "customer_credits": customer_credits,
+    }
+
+
 def _quantize_credits(value: float) -> int:
     """与速推侧金额习惯一致：先保留两位小数再取整为积分（避免浮点误差）。"""
     return int(round(float(value) + 1e-9, 2))

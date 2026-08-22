@@ -37,6 +37,7 @@ from ..services.sutui_pricing import (
     extract_upstream_billing_snapshot,
     extract_upstream_reported_credits,
     fetch_model_pricing,
+    yyapi_usage_billing,
 )
 from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 from .auth import get_current_user
@@ -1167,6 +1168,10 @@ _CHAT_TURN_PRE_DEDUCT_ENDPOINT = "chat_turn"
 _CHAT_TURN_CHARGE_CREDITS = _SUTUI_CHAT_MIN_CHARGE_CREDITS
 
 
+def _yyapi_pricing_enabled() -> bool:
+    return _yyapi_chat_configured()
+
+
 class ChatTurnPreDeductIn(BaseModel):
     turn_id: str = Field(..., min_length=1, max_length=128)
     # Older Online builds sent a 35-char task-status source. Accept it here and
@@ -1287,6 +1292,20 @@ def charge_chat_turn_once(
             "charged": False,
             "credits_charged": 0,
             "billing_skipped": "no_user_deduct",
+        }
+        _store_chat_turn_idempotency(db, current_user.id, tid, payload)
+        return payload
+
+    # YYAPI is settled after the response supplies token usage. Register the
+    # turn for idempotency, but skip the legacy flat-10 pre-charge.
+    if _yyapi_pricing_enabled():
+        payload = {
+            "ok": True,
+            "turn_id": tid,
+            "charged": True,
+            "credits_charged": 0,
+            "pricing_deferred": True,
+            "billing_rule": "yyapi_usage_customer_0.40",
         }
         _store_chat_turn_idempotency(db, current_user.id, tid, payload)
         return payload
@@ -1509,6 +1528,13 @@ def _credits_for_sutui_chat(
     is_direct_api: bool = False,
 ) -> Tuple[Decimal, str]:
     """LLM 实扣：v3 cost → 直连官方定价 → 上游显式价字段 → docs 定价+usage → usage×fallback。"""
+    # YYAPI pricing is authoritative for this route; generic upstream cost
+    # fields and fallback tables must not override the configured rates.
+    if _yyapi_pricing_enabled():
+        yyapi = yyapi_usage_billing(usage)
+        if yyapi and yyapi["customer_credits"] > 0:
+            return quantize_credits(yyapi["customer_credits"]), "yyapi_usage_customer_0.40"
+
     if usage and isinstance(usage, dict):
         v3_cost = usage.get("cost")
         if isinstance(v3_cost, (int, float)) and v3_cost > 0:
@@ -1642,6 +1668,16 @@ def _apply_chat_deduct(
         "trace_id": tid,
         "billing_src": billing_src,
     }
+    if _yyapi_pricing_enabled():
+        yyapi = yyapi_usage_billing(usage)
+        if yyapi:
+            meta_chat.update({
+                "yyapi_list_price_yuan": float(yyapi["list_price_yuan"]),
+                "yyapi_upstream_cost_yuan": float(yyapi["upstream_cost_yuan"]),
+                "yyapi_customer_charge_yuan": float(yyapi["customer_charge_yuan"]),
+                "yyapi_upstream_multiplier": float(getattr(settings, "yyapi_upstream_multiplier", 0.23)),
+                "yyapi_customer_multiplier": float(getattr(settings, "yyapi_customer_multiplier", 0.4)),
+            })
     if billing_recon:
         meta_chat = {**meta_chat, **billing_recon}
     append_credit_ledger(
@@ -1786,7 +1822,7 @@ async def sutui_chat_completions(
         current_user,
         model_id,
         body,
-        apply_min_charge=not (openclaw_internal_llm or chat_turn_precharged),
+        apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
     )
 
     user_bal_str = "-"
@@ -2007,7 +2043,7 @@ async def sutui_chat_completions(
                 body,
                 usage_raw if isinstance(usage_raw, dict) else None,
             )
-            if chat_turn_precharged:
+            if chat_turn_precharged and not _yyapi_pricing_enabled():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat_deduct result=skipped reason=chat_turn_precharged "
                     "turn_id=%s model=%s",
@@ -2025,7 +2061,7 @@ async def sutui_chat_completions(
                     billing_recon=chat_billing_recon,
                     trace_id=trace_id,
                     is_direct_api=winning_is_direct,
-                    apply_min_charge=not openclaw_internal_llm,
+                    apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
                     billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                 )
         else:
@@ -2325,7 +2361,7 @@ async def sutui_chat_completions(
                     yield f"data: {err}\n\n".encode("utf-8")
         finally:
             bill_model = billing_model_holder[0]
-            if chat_turn_precharged:
+            if chat_turn_precharged and not _yyapi_pricing_enabled():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped reason=chat_turn_precharged "
                     "turn_id=%s model=%s",
@@ -2367,7 +2403,7 @@ async def sutui_chat_completions(
                         billing_recon=chat_billing_recon,
                         trace_id=trace_id,
                         is_direct_api=billing_is_direct_holder[0],
-                        apply_min_charge=not openclaw_internal_llm,
+                        apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
                         billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                     )
             except HTTPException as exc:

@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
 
@@ -1009,15 +1009,25 @@ async def list_global_lead_jobs(
         )
     total = query.count()
     rows = query.order_by(GlobalLeadJob.created_at.desc(), GlobalLeadJob.id.desc()).offset(offset).limit(limit).all()
-    payloads = []
-    for row in rows:
-        row = _refresh_global_job(db, row, resume_stale_children=True)
-        crm_count = db.query(GlobalLeadCrmContact).filter(
-            GlobalLeadCrmContact.user_id == current_user.id,
-            GlobalLeadCrmContact.job_id == row.job_id,
-            GlobalLeadCrmContact.deleted_at.is_(None),
-        ).count()
-        payloads.append(_job_payload(row, crm_count=crm_count))
+    # Do not refresh every child job while rendering history.  This endpoint
+    # is called repeatedly by the UI and used to resume stale children,
+    # synchronize contacts, and issue one CRM count query per row.  A job
+    # detail request performs the authoritative refresh on demand.
+    job_ids = [row.job_id for row in rows]
+    counts: dict[str, int] = {}
+    if job_ids:
+        count_rows = (
+            db.query(GlobalLeadCrmContact.job_id, func.count(GlobalLeadCrmContact.id))
+            .filter(
+                GlobalLeadCrmContact.user_id == current_user.id,
+                GlobalLeadCrmContact.job_id.in_(job_ids),
+                GlobalLeadCrmContact.deleted_at.is_(None),
+            )
+            .group_by(GlobalLeadCrmContact.job_id)
+            .all()
+        )
+        counts = {str(job_id): int(count or 0) for job_id, count in count_rows}
+    payloads = [_job_payload(row, crm_count=counts.get(row.job_id, 0)) for row in rows]
     return {"ok": True, "total": total, "items": payloads}
 
 

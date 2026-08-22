@@ -16280,6 +16280,9 @@
 
     async function refreshCurrentUser() {
       state.user = await api("/auth/me");
+      if (window.LobsterH5I18n && typeof window.LobsterH5I18n.syncUser === "function") {
+        window.LobsterH5I18n.syncUser(state.user.id, state.user.language);
+      }
       writeCachedH5User(state.user);
       renderCurrentUser();
       return state.user;

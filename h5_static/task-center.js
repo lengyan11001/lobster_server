@@ -50,7 +50,7 @@
     root.id = "lobsterTaskCenter";
     root.innerHTML = [
       '<button id="lobsterTaskFab" class="lobster-task-fab" type="button" aria-label="当前执行任务" title="当前执行任务">',
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12M6 12h12M6 19h8"></path><path d="m16 17 2 2 4-5"></path></svg><i></i></button>',
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 17.5 4 21l4.2-1.35A9 9 0 1 0 5.5 17.5Z"></path><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"></path></svg><i></i></button>',
       '<section id="lobsterTaskPanel" class="lobster-task-panel" hidden aria-label="当前执行任务">',
       '<header class="lobster-task-head"><strong>当前执行任务</strong><button class="lobster-task-close" type="button" aria-label="关闭">×</button></header>',
       '<div id="lobsterTaskList" class="lobster-task-list"></div></section>'
@@ -75,7 +75,7 @@
     var height = Number(viewport && viewport.height || window.innerHeight || 0);
     var shell = document.querySelector(".shell");
     var shellRect = shell ? shell.getBoundingClientRect() : { left: left, right: left + width };
-    var size = fab.offsetWidth || 58;
+    var size = fab.offsetWidth || 54;
     var minLeft = Math.max(left + 10, shellRect.left + 10);
     var maxLeft = Math.max(minLeft, Math.min(left + width - size - 10, shellRect.right - size - 10));
     return { minLeft: minLeft, maxLeft: maxLeft, minTop: top + 10, maxTop: Math.max(top + 10, top + height - size - 10) };

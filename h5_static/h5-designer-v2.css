@@ -5513,6 +5513,23 @@ body * {
   gap: 5px;
 }
 
+#profileView .profile-language-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+#profileView .profile-language-controls select {
+  width: 116px;
+  height: 32px;
+  padding: 0 24px 0 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  color: #475569;
+  background: #fff;
+  font-size: 11px;
+}
+
 #profileView .speech-voice-controls select {
   min-width: 0;
   width: 116px;

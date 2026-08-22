@@ -60,6 +60,9 @@ def _job_payload(row: CreativeGenerationJob) -> dict[str, Any]:
     steps = meta.get("steps") if isinstance(meta.get("steps"), list) else []
     outputs = meta.get("outputs") if isinstance(meta.get("outputs"), list) else []
     current_step = meta.get("current_step") or ""
+    result_payload = dict(row.result_payload or {}) if isinstance(row.result_payload, dict) else {}
+    if isinstance(result_payload.get("candidates"), list):
+        result_payload["candidates"] = _candidate_list_with_real_names(result_payload["candidates"])
     return {
         "job_id": row.job_id,
         "status": row.status,
@@ -68,7 +71,7 @@ def _job_payload(row: CreativeGenerationJob) -> dict[str, Any]:
         "title": row.title or "",
         "prompt": row.prompt or "",
         "request_payload": row.request_payload or {},
-        "result_payload": row.result_payload or {},
+        "result_payload": result_payload,
         "error": row.error or "",
         "meta": meta,
         "steps": steps,
@@ -371,7 +374,41 @@ def _profile_name_from_raw(raw: Any) -> str:
         # Activity URNs and member IDs are keys, not display names.
         if text and not re.fullmatch(r"\d{6,}", text):
             return text
-    return ""
+    # Some activity payloads wrap the actor under raw/data/included/entities.
+    # Search those bounded containers so historical candidates do not remain
+    # displayed as numeric activity IDs.
+    seen: set[int] = set()
+    def walk(node: Any, depth: int = 0) -> str:
+        if depth > 3 or id(node) in seen:
+            return ""
+        seen.add(id(node))
+        if isinstance(node, dict):
+            for prefix in ("", "poster", "author", "actor", "user", "profile", "mini_profile", "miniProfile"):
+                path = lambda field: f"{prefix}.{field}" if prefix else field
+                direct = _first_lookup(node, (path("name"), path("full_name"), path("fullName"), path("display_name"), path("displayName")))
+                first = _first_lookup(node, (path("first_name"), path("firstName"), path("first")))
+                last = _first_lookup(node, (path("last_name"), path("lastName"), path("last")))
+                candidate = _clean_text(direct or " ".join([str(first or "").strip(), str(last or "").strip()]).strip(), 255)
+                if candidate and not _is_identifier_name(candidate):
+                    return candidate
+            for key in ("poster", "author", "actor", "user", "profile", "owner", "creator", "raw", "data", "included", "entities"):
+                value = node.get(key)
+                if isinstance(value, (dict, list)):
+                    found = walk(value, depth + 1)
+                    if found:
+                        return found
+            for value in list(node.values())[:40]:
+                if isinstance(value, (dict, list)):
+                    found = walk(value, depth + 1)
+                    if found:
+                        return found
+        elif isinstance(node, list):
+            for value in node[:40]:
+                found = walk(value, depth + 1)
+                if found:
+                    return found
+        return ""
+    return walk(raw)
 
 
 def _is_identifier_name(value: Any) -> bool:
@@ -397,9 +434,11 @@ def _string_list(value: Any, limit: int = 8) -> list[str]:
 def _contact_payload(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
-    websites = _string_list(_lookup(raw, "websites") or _lookup(raw, "website") or _lookup(raw, "website_url"))
-    phone_numbers = _string_list(_lookup(raw, "phone_numbers") or _lookup(raw, "phone") or _lookup(raw, "phoneNumbers"))
+    websites = [x for x in _string_list(_lookup(raw, "websites") or _lookup(raw, "website") or _lookup(raw, "website_url")) if re.match(r"^https?://[^\s]+$", x, re.I)]
+    phone_numbers = [x for x in _string_list(_lookup(raw, "phone_numbers") or _lookup(raw, "phone") or _lookup(raw, "phoneNumbers")) if re.search(r"\d{6,}", x)]
     email = _clean_text(_lookup(raw, "email") or _lookup(raw, "email_address") or _lookup(raw, "emailAddress"), 255)
+    if email and not re.fullmatch(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", email, re.I):
+        email = ""
     wechat = _clean_text(_lookup(raw, "wechat") or _lookup(raw, "weixin"), 255)
     twitter = _string_list(_lookup(raw, "twitter") or _lookup(raw, "twitter_handles"))
     address = _clean_long_text(_lookup(raw, "address"), 1000)
@@ -412,6 +451,52 @@ def _contact_payload(raw: Any) -> dict[str, Any]:
         "address": address,
     }
     return {k: v for k, v in out.items() if v not in ("", [], {}, None)}
+
+
+def _sanitize_report_contacts(report: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep report contacts tied to structured profile fields, never post text."""
+    if not isinstance(report, dict):
+        return report
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        contact = item.get("contact") if isinstance(item.get("contact"), dict) else {}
+        key_values = [item.get("name"), item.get("candidate_key"), item.get("url"), item.get("profile_url")]
+        for value in key_values:
+            value = _clean_text(value, 255).lower()
+            if value:
+                by_key[value] = contact
+
+    def structured_text(contact: dict[str, Any]) -> str:
+        values: list[str] = []
+        email = contact.get("email")
+        if isinstance(email, str) and re.fullmatch(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", email, re.I):
+            values.append(email)
+        for key in ("phone_numbers", "websites", "twitter"):
+            raw = contact.get(key)
+            for value in raw if isinstance(raw, list) else [raw]:
+                value = _clean_text(value, 500)
+                if key == "websites" and not re.match(r"^https?://[^\s]+$", value, re.I):
+                    continue
+                if key == "phone_numbers" and not re.search(r"\d{6,}", value):
+                    continue
+                if value and value not in values:
+                    values.append(value)
+        wechat = _clean_text(contact.get("wechat"), 255)
+        if wechat and len(wechat) <= 80:
+            values.append(wechat)
+        return ", ".join(values[:8])
+
+    rows = report.get("contact_list")
+    if isinstance(rows, list):
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            keys = [_clean_text(item.get("name"), 255).lower(), _clean_text(item.get("source"), 255).lower()]
+            contact = next((by_key.get(key) for key in keys if key and by_key.get(key)), {})
+            item["contact"] = structured_text(contact)
+    return report
 
 
 def _has_contact(item: dict[str, Any]) -> bool:
@@ -700,6 +785,8 @@ def _candidate_with_real_name(item: Any) -> dict[str, Any]:
     real_name = _profile_name_from_raw(out.get("raw"))
     if real_name:
         out["name"] = real_name
+    elif _is_identifier_name(out.get("name")):
+        out["name"] = "LinkedIn 用户（待补全姓名）"
     return out
 
 
@@ -890,6 +977,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
         elif step_key == "seed_activity":
             outputs = []
             post_ids: list[str] = []
+            activity_item_count = 0
             user_refs = _ensure_meta_map(row, "linkedin_user_refs")
             for username in req.get("seed_usernames") or []:
                 ref = user_refs.get(username) if isinstance(user_refs.get(username), dict) else {}
@@ -905,7 +993,9 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         meta={"source": "seed_activity", "source_reason": f"种子用户动态 {username}"},
                     )
                     raw = result.get("raw_response")
-                    for item in _collect_raw_items(raw)[:6]:
+                    raw_items = _collect_raw_items(raw)
+                    activity_item_count += len(raw_items)
+                    for item in raw_items[:6]:
                         post_id = _post_id(item)
                         if post_id and post_id not in post_ids:
                             post_ids.append(post_id)
@@ -915,6 +1005,9 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
             _set_meta(row, meta)
             _append_output(row, step_key=step_key, title="种子用户动态", kind="activity", data={"queries": outputs, "post_ids": post_ids[:12]})
             _mark_step(row, step_key, "completed", detail=f"已同步动态，发现 {len(post_ids[:12])} 个可追踪帖子", result={"queries": outputs, "post_ids": post_ids[:12]})
+
+            if not activity_item_count:
+                _mark_step(row, step_key, "skipped", detail="no seed activity data; skipped follow-up activity processing", result={"queries": outputs, "post_ids": []})
 
         elif step_key == "discovery_users":
             refs = _ensure_meta_map(row, "linkedin_user_refs")
@@ -926,6 +1019,9 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
             outputs = [{"ok": True, "source": "profile.people_also_viewed", "count": discovered_count}]
             _append_output(row, step_key=step_key, title="基于用户发现候选人", kind="candidates", data=outputs)
             _mark_step(row, step_key, "completed", detail=f"已从个人主页发现 {discovered_count} 个相似用户", result={"queries": outputs})
+
+            if not discovered_count:
+                _mark_step(row, step_key, "skipped", detail="no related users were returned; skipped downstream discovery", result={"queries": outputs})
 
         elif step_key == "company_profiles":
             outputs = []
@@ -1005,6 +1101,9 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
             _append_output(row, step_key=step_key, title="公司员工与相似公司", kind="candidates", data=outputs)
             employee_count = sum(int(item.get("count") or 0) for item in outputs)
             _mark_step(row, step_key, "completed", detail=f"已从公司主页发现 {employee_count} 个员工", result={"queries": outputs})
+
+            if not employee_count:
+                _mark_step(row, step_key, "skipped", detail="no company employees were returned; skipped employee processing", result={"queries": outputs})
 
         elif step_key == "keyword_search":
             outputs = [
@@ -1294,7 +1393,7 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
             "next_actions": [],
             "limitations": ["LLM未返回结构化JSON，已保留原始摘要。"],
         }
-    return _jsonable(report)
+    return _jsonable(_sanitize_report_contacts(report, candidates))
 
 
 async def _auto_run_job_inner(job_id: str, bearer_token: str = "") -> None:

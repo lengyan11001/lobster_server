@@ -3,18 +3,18 @@
   right: max(18px, calc((100vw - 430px) / 2 + 18px));
   bottom: max(96px, calc(82px + env(safe-area-inset-bottom)));
   z-index: 1250;
-  width: 56px;
-  min-width: 56px;
-  height: 56px;
-  min-height: 56px;
+  width: 54px;
+  min-width: 54px;
+  height: 54px;
+  min-height: 54px;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, .86);
-  border-radius: 18px;
-  color: #075985;
-  background: linear-gradient(145deg, rgba(240, 249, 255, .98), rgba(207, 250, 254, .96));
-  box-shadow: 0 15px 34px rgba(14, 116, 144, .24), inset 0 0 0 1px rgba(125, 211, 252, .45);
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #2563eb, #0ea5e9);
+  box-shadow: 0 16px 34px rgba(37, 99, 235, .28), 0 6px 16px rgba(14, 165, 233, .2);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -30,9 +30,9 @@
   animation: lobster-task-sweep 3.2s linear infinite;
 }
 
-.lobster-task-fab::before { inset: -80% -35%; }
+.lobster-task-fab::before { inset: 3px; border: 1px solid rgba(255, 255, 255, .24); border-radius: inherit; background: none; animation: none; }
 .lobster-task-fab svg { position: relative; width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.lobster-task-fab i { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border: 2px solid #e0f2fe; border-radius: 50%; background: #94a3b8; }
+.lobster-task-fab i { position: absolute; top: 2px; right: 2px; width: 11px; height: 11px; border: 2px solid #fff; border-radius: 50%; background: #94a3b8; }
 .lobster-task-fab.is-active i { background: #22c55e; box-shadow: 0 0 14px rgba(34, 197, 94, .8); }
 .lobster-task-fab.is-dragging { cursor: grabbing; transition: none; }
 .lobster-task-fab:not(.is-dragging):active { transform: scale(.96); }

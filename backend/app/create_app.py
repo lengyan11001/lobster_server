@@ -619,6 +619,24 @@ def _migrate_user_is_overseas_user():
         logger.warning("Migration user is_overseas_user skipped: %s", e)
 
 
+def _migrate_user_language():
+    """Add the persisted UI language preference for existing users."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        if "language" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN language VARCHAR(16) NOT NULL DEFAULT 'zh-CN'"))
+        logger.info("[startup] users added column language")
+    except Exception as e:
+        logger.warning("Migration user language skipped: %s", e)
+
+
 def _migrate_user_wecom_userid():
     """Add wecom_userid to users（企业微信 FromUserName 绑定，渠道消息按该用户扣费）。"""
     from sqlalchemy import inspect, text
@@ -1146,6 +1164,7 @@ def create_app() -> FastAPI:
         _migrate_user_brand_mark()
         _seed_brand_configs()
         _migrate_user_is_overseas_user()
+        _migrate_user_language()
         _migrate_user_wecom_userid()
         _migrate_user_llm_model_override()
         _migrate_user_agent_openclaw_memory_enabled()

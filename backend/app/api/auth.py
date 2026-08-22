@@ -78,12 +78,17 @@ class UserOut(BaseModel):
     id: int
     email: str
     preferred_model: str
+    language: str = "zh-CN"
     credits: Optional[float] = None
     brand_mark: Optional[str] = None
     is_overseas_user: bool = False
     wecom_userid: Optional[str] = None
     is_agent: bool = False
     features: Dict[str, bool] = Field(default_factory=dict)
+
+
+class UserLanguageBody(BaseModel):
+    language: str
 
 
 class Token(BaseModel):
@@ -725,6 +730,7 @@ def get_me(
         id=current_user.id,
         email=unscoped_account_email(current_user.email),
         preferred_model=preferred,
+        language=str(getattr(current_user, "language", None) or "zh-CN"),
         credits=credits_json_float(getattr(current_user, "credits", None) or 0),
         brand_mark=user_brand_mark(current_user),
         is_overseas_user=bool(getattr(current_user, "is_overseas_user", False)),
@@ -732,6 +738,20 @@ def get_me(
         is_agent=bool(getattr(current_user, "is_agent", False)),
         features=user_feature_flags(db, current_user.id),
     )
+
+
+@router.post("/language", summary="保存当前用户界面语言")
+def update_user_language(
+    body: UserLanguageBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    language = str(body.language or "").strip()
+    if language not in {"zh-CN", "en-US"}:
+        raise HTTPException(status_code=400, detail="language must be zh-CN or en-US")
+    current_user.language = language
+    db.commit()
+    return {"language": language}
 
 
 @router.post("/claim-installation-slot", summary="登录完成后接管当前安装槽位")

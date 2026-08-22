@@ -464,6 +464,7 @@ def _get_lan_ip() -> str:
 
 class UpdateSettingsRequest(BaseModel):
     preferred_model: Optional[str] = None
+    language: Optional[str] = None
 
 
 @router.get("/api/settings", summary="获取用户设置")
@@ -473,7 +474,10 @@ def get_settings(current_user: User = Depends(get_current_user)):
         preferred = "sutui"
     else:
         preferred = getattr(current_user, "preferred_model", "openclaw") or "openclaw"
-    return {"preferred_model": preferred}
+    return {
+        "preferred_model": preferred,
+        "language": str(getattr(current_user, "language", None) or "zh-CN"),
+    }
 
 
 @router.post("/api/settings", summary="更新用户设置")
@@ -484,8 +488,16 @@ def update_settings(
 ):
     if body.preferred_model is not None:
         current_user.preferred_model = body.preferred_model.strip() or "openclaw"
+    if body.language is not None:
+        language = body.language.strip()
+        if language not in {"zh-CN", "en-US"}:
+            raise HTTPException(status_code=400, detail="language must be zh-CN or en-US")
+        current_user.language = language
     db.commit()
-    return {"preferred_model": current_user.preferred_model}
+    return {
+        "preferred_model": current_user.preferred_model,
+        "language": str(getattr(current_user, "language", None) or "zh-CN"),
+    }
 
 
 @router.get("/api/settings/models", summary="可选模型列表（需登录）")

@@ -223,6 +223,15 @@ class Settings(BaseSettings):
     yyapi_api_base: str = "https://www.yyapi.cloud"
     yyapi_chat_model: str = "gpt-5.6-sol"
     yyapi_force_sutui_chat: bool = True
+    # YYAPI token billing: provider list price is in yuan per 1M tokens.
+    # The provider applies 0.23x to its internal cost; Lobster charges 0.40x
+    # of the same list price and converts yuan to the account credit unit.
+    yyapi_input_price_yuan_per_1m: float = 5.0
+    yyapi_cached_input_price_yuan_per_1m: float = 0.5
+    yyapi_output_price_yuan_per_1m: float = 30.0
+    yyapi_upstream_multiplier: float = 0.23
+    yyapi_customer_multiplier: float = 0.4
+    yyapi_credits_per_yuan: float = 100.0
 
     # ── Meta Social（Instagram / Facebook 发布）──
     """Facebook App ID（在 developers.facebook.com 创建 App 后获取）"""

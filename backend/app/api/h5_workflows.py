@@ -2248,9 +2248,17 @@ def update_workflow_template(
     name = (body.name or "").strip()[:160]
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
+    body_iid = _clean_text(body.installation_id, 128)
+    header_iid = _clean_text(x_installation_id, 128)
+    if body_iid and header_iid and body_iid != header_iid:
+        raise HTTPException(status_code=409, detail="员工槽位参数与当前设备不一致，请刷新后重试")
+    requested_iid = body_iid or header_iid
+    bound_iid = _clean_text(row.installation_id, 128)
+    if bound_iid and requested_iid and bound_iid != requested_iid:
+        raise HTTPException(status_code=409, detail="该员工已绑定其他设备槽位，请切换到原设备后编辑")
     meta: Optional[dict[str, Any]] = None
-    if body.installation_id is not None or x_installation_id:
-        row.installation_id = _clean_text(body.installation_id or x_installation_id, 128)
+    if requested_iid and not bound_iid:
+        row.installation_id = requested_iid
     if body.meta:
         meta = dict(body.meta)
         system_template_key = _clean_text(meta.get("system_template_key"), 128)
