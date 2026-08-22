@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -360,10 +360,23 @@ def _profile_key_from_raw(raw: Any) -> str:
 def _profile_name_from_raw(raw: Any) -> str:
     if not isinstance(raw, dict):
         return ""
-    first = _lookup(raw, "first_name") or _lookup(raw, "firstName") or _lookup(raw, "mini_profile.first_name")
-    last = _lookup(raw, "last_name") or _lookup(raw, "lastName") or _lookup(raw, "mini_profile.last_name")
-    name = _lookup(raw, "name") or _lookup(raw, "full_name") or _lookup(raw, "fullName") or " ".join([str(first or "").strip(), str(last or "").strip()]).strip()
-    return _clean_text(name, 255)
+    prefixes = ("", "poster", "author", "actor", "user", "profile", "mini_profile", "miniProfile")
+    for prefix in prefixes:
+        path = lambda field: f"{prefix}.{field}" if prefix else field
+        direct = _first_lookup(raw, (path("name"), path("full_name"), path("fullName"), path("display_name"), path("displayName")))
+        first = _first_lookup(raw, (path("first_name"), path("firstName"), path("first")))
+        last = _first_lookup(raw, (path("last_name"), path("lastName"), path("last")))
+        name = direct or " ".join([str(first or "").strip(), str(last or "").strip()]).strip()
+        text = _clean_text(name, 255)
+        # Activity URNs and member IDs are keys, not display names.
+        if text and not re.fullmatch(r"\d{6,}", text):
+            return text
+    return ""
+
+
+def _is_identifier_name(value: Any) -> bool:
+    text = _clean_text(value, 255)
+    return bool(text and re.fullmatch(r"\d{6,}", text))
 
 
 def _string_list(value: Any, limit: int = 8) -> list[str]:
@@ -588,7 +601,7 @@ def _normalize_candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, A
     meta = raw.get("__lobster_ip_content_meta") if isinstance(raw.get("__lobster_ip_content_meta"), dict) else {}
     body = raw.get("raw") if isinstance(raw.get("raw"), dict) else raw
     key = row.author_key or _profile_key_from_raw(body) or row.item_key
-    name = row.author_name or _profile_name_from_raw(body) or row.title or key
+    name = _profile_name_from_raw(body) or row.author_name or row.title or key
     if not key and not name:
         return None
     headline = _lookup(body, "headline") or _lookup(body, "occupation") or _lookup(body, "title") or row.title or row.description or ""
@@ -626,7 +639,7 @@ def _merge_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         cur = merged[key]
         for field in ("name", "headline", "company", "url"):
-            if not cur.get(field) and item.get(field):
+            if item.get(field) and (not cur.get(field) or (field == "name" and _is_identifier_name(cur.get(field)))):
                 cur[field] = item[field]
         if item.get("contact"):
             cur_contact = cur.setdefault("contact", {})
@@ -680,6 +693,18 @@ def _candidate_from_raw(raw: Any, *, source_type: str, source_reason: str) -> Op
         "evidence": [{"source_type": source_type, "title": _clean_text(name or key, 255), "description": _brief_text(body, 600)}],
         "raw": body,
     }
+
+
+def _candidate_with_real_name(item: Any) -> dict[str, Any]:
+    out = dict(item) if isinstance(item, dict) else {}
+    real_name = _profile_name_from_raw(out.get("raw"))
+    if real_name:
+        out["name"] = real_name
+    return out
+
+
+def _candidate_list_with_real_names(value: Any) -> list[dict[str, Any]]:
+    return [_candidate_with_real_name(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _append_candidate_pool(row: CreativeGenerationJob, raw_items: list[Any], *, source_type: str, source_reason: str, limit: int = 80) -> int:
@@ -774,6 +799,39 @@ def _next_pending_step(row: CreativeGenerationJob, requested: str = "") -> Optio
         if item.get("status") not in {"completed", "skipped"}:
             return item
     return None
+
+
+def _fail_stale_linkedin_jobs(db: Session, user_id: int) -> int:
+    """Close autoruns left behind by a worker restart or lost background task."""
+    try:
+        timeout_minutes = float(os.environ.get("LINKEDIN_MINING_STALE_TIMEOUT_MINUTES") or "30")
+    except (TypeError, ValueError):
+        timeout_minutes = 30.0
+    timeout_minutes = max(5.0, min(24 * 60.0, timeout_minutes))
+    cutoff = _utcnow() - timedelta(minutes=timeout_minutes)
+    rows = (
+        db.query(CreativeGenerationJob)
+        .filter(
+            CreativeGenerationJob.user_id == user_id,
+            CreativeGenerationJob.feature_type == _FEATURE_TYPE,
+            CreativeGenerationJob.deleted_at.is_(None),
+            CreativeGenerationJob.status.in_(["queued", "running"]),
+            CreativeGenerationJob.updated_at < cutoff,
+        )
+        .all()
+    )
+    for row in rows:
+        meta = _meta(row)
+        current_step = str(meta.get("current_step") or "")
+        if current_step:
+            _mark_step(row, current_step, "failed", detail="后台任务超时或进程已停止", error="autorun stale timeout")
+        row.status = "failed"
+        row.stage = "failed"
+        row.error = f"后台任务超过 {int(timeout_minutes)} 分钟未更新，已标记失败，可重新运行"
+        row.completed_at = _utcnow()
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 def _user_from_job(db: Session, row: CreativeGenerationJob) -> User:
@@ -1037,7 +1095,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 def _fallback_summary_report(row: CreativeGenerationJob, *, reason: str = "") -> dict[str, Any]:
     req = row.request_payload or {}
     result = row.result_payload if isinstance(row.result_payload, dict) else {}
-    candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
+    candidates = _candidate_list_with_real_names(result.get("candidates"))
     lead_summary = result.get("lead_summary") if isinstance(result.get("lead_summary"), dict) else {}
     priority_leads: list[dict[str, Any]] = []
     contact_list: list[dict[str, Any]] = []
@@ -1125,7 +1183,7 @@ def _fallback_summary_report(row: CreativeGenerationJob, *, reason: str = "") ->
 
 async def _generate_summary_report(row: CreativeGenerationJob, current_user: User, db: Session) -> dict[str, Any]:
     req = row.request_payload or {}
-    candidates = (row.result_payload or {}).get("candidates") if isinstance(row.result_payload, dict) else []
+    candidates = _candidate_list_with_real_names((row.result_payload or {}).get("candidates") if isinstance(row.result_payload, dict) else [])
     lead_summary = (row.result_payload or {}).get("lead_summary") if isinstance(row.result_payload, dict) else {}
     rows = _query_rows_for_job(db, row.user_id, row.job_id)
     source_briefs = []
@@ -1382,6 +1440,7 @@ def list_linkedin_mining_jobs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _fail_stale_linkedin_jobs(db, current_user.id)
     q = db.query(CreativeGenerationJob).filter(
         CreativeGenerationJob.user_id == current_user.id,
         CreativeGenerationJob.feature_type == _FEATURE_TYPE,
@@ -1398,6 +1457,7 @@ def get_linkedin_mining_job(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _fail_stale_linkedin_jobs(db, current_user.id)
     row = (
         db.query(CreativeGenerationJob)
         .filter(
