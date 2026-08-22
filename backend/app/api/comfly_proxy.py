@@ -2619,6 +2619,10 @@ def _is_grok_api_format(entry: Dict[str, Any]) -> bool:
     return str((entry or {}).get("api_format") or "").strip().lower() == "grok"
 
 
+def _is_comfyui_grok_api_format(entry: Dict[str, Any]) -> bool:
+    return str((entry or {}).get("api_format") or "").strip().lower() == "comfyui_grok"
+
+
 def _coerce_grok15_model(duration: Any) -> str:
     try:
         seconds = int(float(duration or 0))
@@ -2818,7 +2822,13 @@ async def _build_comfly_grok15_multipart(
     forwarded = dict(body or {})
     prompt = str(forwarded.get("prompt") or "").strip()
     duration = forwarded.get("duration") or forwarded.get("seconds") or 6
-    upstream_model = _coerce_grok15_model(duration)
+    # The dedicated ComfyUI video relay accepts the canonical model id. The
+    # legacy Comfly Grok route still uses duration-specific model aliases.
+    upstream_model = (
+        _upstream_model(model, entry)
+        if _is_comfyui_grok_api_format(entry)
+        else _coerce_grok15_model(duration)
+    )
     ratio = forwarded.get("ratio") or forwarded.get("aspect_ratio") or "9:16"
     data: Dict[str, str] = {
         "model": upstream_model,
@@ -2876,8 +2886,9 @@ async def _submit_comfly_grok15_video(
             except Exception:
                 pass
     if isinstance(resp, dict):
-        resp.setdefault("_provider", "comfly")
-        resp.setdefault("_api_format", "grok_v1")
+        is_comfyui = _is_comfyui_grok_api_format(entry)
+        resp.setdefault("_provider", "comfyui" if is_comfyui else "comfly")
+        resp.setdefault("_api_format", "comfyui_grok_v1" if is_comfyui else "grok_v1")
         resp.setdefault("_requested_model", upstream_model)
     return resp
 
@@ -2893,7 +2904,7 @@ async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str =
         raise HTTPException(400, "missing task_id")
     kind = (api_kind or "").strip().lower()
     route_model = (model or "").strip()
-    if kind == "grok_v1":
+    if kind in {"grok_v1", "comfyui_grok_v1"}:
         resp = await _comfly_request(
             "GET",
             _comfly_url(f"/v1/videos/{tid}", route_model or "grok-video-3"),
@@ -2902,8 +2913,8 @@ async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str =
             _TIMEOUT_VIDEO_POLL,
         )
         if isinstance(resp, dict):
-            resp.setdefault("_provider", "comfly")
-            resp.setdefault("_api_format", "grok_v1")
+            resp.setdefault("_provider", "comfyui" if kind == "comfyui_grok_v1" else "comfly")
+            resp.setdefault("_api_format", kind)
         return resp
     try:
         resp = await _comfly_request(
@@ -4087,7 +4098,7 @@ async def proxy_videos_generations_submit(
     )
 
     try:
-        if _is_grok_api_format(entry):
+        if _is_grok_api_format(entry) or _is_comfyui_grok_api_format(entry):
             resp = await _submit_comfly_grok15_video(body, model, entry)
         else:
             resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
@@ -4121,7 +4132,11 @@ async def proxy_videos_generations_submit(
     task_id = _task_id_from_response(resp) or (
         (resp.get("data", {}) or {}).get("task_id") if isinstance(resp.get("data"), dict) else resp.get("task_id")
     )
-    api_kind = "grok_v1" if _is_grok_api_format(entry) else "veo_v2"
+    api_kind = (
+        "comfyui_grok_v1"
+        if _is_comfyui_grok_api_format(entry)
+        else ("grok_v1" if _is_grok_api_format(entry) else "veo_v2")
+    )
     _remember_proxy_video_task(task_id, api_kind, model)
     _audit("video_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
            task_id=task_id,
@@ -4135,8 +4150,8 @@ async def proxy_videos_generations_submit(
         user_id=billing_user_id,
         requested_model=model,
         model=model,
-        provider="comfly",
-        channel="comfly",
+        provider="comfyui" if _is_comfyui_grok_api_format(entry) else "comfly",
+        channel="comfyui" if _is_comfyui_grok_api_format(entry) else "comfly",
         route=api_kind,
         endpoint="/api/comfly-proxy/v2/videos/generations",
         request_id=task_id or "",
@@ -4172,11 +4187,12 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
     if low_model.startswith("apiz/veo3.1/image-to-video") or low_model.startswith("apiz/veo3.1/reference-to-video"):
         low_channel = "grok"
 
-    if low_channel in {"openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/") or low_model.startswith("xai/grok-imagine-video-1.5/"):
+    if low_channel in {"comfyui", "comfyui_video", "openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/") or low_model.startswith("xai/grok-imagine-video-1.5/"):
         return {
             "ok": True,
             "model_family": "grok",
             "providers": [
+                {"channel": "comfyui", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
                 {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},

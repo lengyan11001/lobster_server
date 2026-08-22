@@ -435,6 +435,49 @@ def _build_sora2_multipart(
     return data, files
 
 
+async def _build_comfyui_grok_multipart(
+    payload: Dict[str, Any],
+    *,
+    model_id: str,
+    prompt: str,
+    first_image: str,
+) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """Build the dedicated ComfyUI Grok video upload request.
+
+    ComfyUI's Grok endpoint expects the reference image as a multipart file,
+    even when the caller supplies a public URL. Keep the canonical model id
+    and do not use the legacy duration-specific Grok aliases here.
+    """
+    size = _coerce_sora2_size(payload, model_id)
+    data: Dict[str, str] = {
+        "model": model_id,
+        "prompt": prompt,
+        "size": size,
+    }
+    files: Dict[str, Any] = {key: (None, value) for key, value in data.items()}
+
+    ref = (first_image or "").strip()
+    if not ref:
+        return data, files
+
+    filename = _filename_from_media_ref(ref)
+    media_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+    if ref.startswith(("http://", "https://")):
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False, follow_redirects=True) as client:
+            response = await client.get(ref)
+            response.raise_for_status()
+            content = response.content
+            media_type = (response.headers.get("content-type") or media_type).split(";", 1)[0].strip() or media_type
+    else:
+        path = Path(ref)
+        if not path.exists() or not path.is_file():
+            raise RuntimeError(f"ComfyUI Grok reference file not found: {ref}")
+        content = path.read_bytes()
+
+    files["input_reference"] = (filename, content, media_type)
+    return data, files
+
+
 _FORCE_SUTUI_MODEL_IDS = {
     "xai/grok-imagine-video/text-to-video",
     "xai/grok-imagine-video/image-to-video",
@@ -743,6 +786,15 @@ async def call_comfly_video_generate(
         }
         aspect_ratio = payload.get("aspect_ratio") or "16:9"
         body["aspect_ratio"] = aspect_ratio
+    elif api_format == "comfyui_grok":
+        url = f"{base}/v1/videos"
+        request_mode = "multipart"
+        body, multipart_files = await _build_comfyui_grok_multipart(
+            payload,
+            model_id=str(comfly_model),
+            prompt=prompt,
+            first_image=first_image,
+        )
     elif api_format == "grok":
         url = f"{base}/v2/videos/generations"
         grok_duration = 10 if duration >= 10 else 6
@@ -858,7 +910,9 @@ async def call_comfly_task_query(task_id: str, token_group: str = "", api_format
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    if api_format in ("veo", "grok"):
+    if api_format == "comfyui_grok":
+        url = f"{base}/v1/videos/{task_id}"
+    elif api_format in ("veo", "grok"):
         url = f"{base}/v2/videos/generations/{task_id}"
     elif api_format == "sora2":
         url = f"{base}/v1/videos/{task_id}"

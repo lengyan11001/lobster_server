@@ -198,14 +198,15 @@
     "grok-imagine-video-1.5": {
       "price_type": "per_call",
       "price_per_unit": 80,
-      "api_format": "xai_official",
+      "api_format": "comfyui_grok",
       "comfly_model": "grok-imagine-video-1.5",
+      "token_group": "comfyui_video",
       "sutui_equivalent": [
         "grok-imagine-video-1.5",
         "xai/grok-imagine-video/image-to-video",
         "xai/grok-imagine-video/text-to-video"
       ],
-      "note": "Official xAI Grok Imagine Video 1.5 fallback channel; same user charge as the existing Grok video provider."
+      "note": "Dedicated ComfyUI Grok video channel. Uses the original model name and the separate COMFLY_API_KEY_COMFYUI_VIDEO token group."
     },
     "sora2": {
       "enabled": false,

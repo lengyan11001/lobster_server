@@ -131,15 +131,20 @@ def test_xai_video_is_first_provider_for_grok_family():
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
     assert policy["providers"][0] == {
-        "channel": "xai",
+        "channel": "comfyui",
         "model": "grok-imagine-video-1.5",
         "base_url": "/api/comfly-proxy",
     }
     assert policy["providers"] == [
         {
-            "channel": "xai",
+            "channel": "comfyui",
             "model": "grok-imagine-video-1.5",
             "base_url": "/api/comfly-proxy",
+        },
+        {
+            "channel": "xai",
+        "model": "grok-imagine-video-1.5",
+        "base_url": "/api/comfly-proxy",
         },
         {
             "channel": "openmind",
@@ -201,7 +206,8 @@ def test_xai_video_model_has_billable_pricing_entry():
 
     assert entry["price_type"] == "per_call"
     assert entry["price_per_unit"] == 80
-    assert entry["api_format"] == "xai_official"
+    assert entry["api_format"] == "comfyui_grok"
+    assert entry["token_group"] == "comfyui_video"
 
 
 def test_interrupted_image_download_payload_detection():
