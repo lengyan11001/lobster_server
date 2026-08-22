@@ -924,6 +924,7 @@ def _video_fallback_candidates(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     has_image = bool(_collect_video_image_refs(payload))
     if has_image:
         return [
+            {"channel": "comfly", "model": "grok-imagine-video-1.5"},
             {"channel": "openmind", "model": "grok-video-3"},
             {"channel": "comfly", "model": "grok-video-3"},
         ]

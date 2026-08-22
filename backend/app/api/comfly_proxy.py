@@ -4192,7 +4192,10 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "grok",
             "providers": [
-                {"channel": "comfyui", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+                # Keep the public channel name compatible with existing clients.
+                # The pricing entry routes this model to the dedicated comfyui_grok
+                # upstream internally.
+                {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
                 {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},

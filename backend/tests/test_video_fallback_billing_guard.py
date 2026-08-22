@@ -131,13 +131,13 @@ def test_xai_video_is_first_provider_for_grok_family():
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
     assert policy["providers"][0] == {
-        "channel": "comfyui",
+        "channel": "comfly",
         "model": "grok-imagine-video-1.5",
         "base_url": "/api/comfly-proxy",
     }
     assert policy["providers"] == [
         {
-            "channel": "comfyui",
+            "channel": "comfly",
             "model": "grok-imagine-video-1.5",
             "base_url": "/api/comfly-proxy",
         },
