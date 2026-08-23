@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from ..models import ShanjianDigitalHumanProfile, User
 from .auth import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _ROOT_DIR = Path(__file__).resolve().parents[3]
 _ENV_PATH = _ROOT_DIR / ".env"
@@ -164,6 +166,13 @@ def _data(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_material_composition(value: Any) -> str:
+    composition = _clean_text(value)
+    if composition == "sequential":
+        composition = "order"
+    return composition if composition in {"random", "order"} else "random"
 
 
 def _normalize_virtualman_row(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -367,8 +376,8 @@ async def submit_clip(
         endpoint = "/v1/clip/video/broadcast_mixcut"
     elif scene == "newsMixCutting":
         endpoint = "/v1/clip/video/news_mixcut"
-        payload["processRules"]["materialComposition"] = (
-            body.material_composition if body.material_composition in {"random", "sequential"} else "random"
+        payload["processRules"]["materialComposition"] = _normalize_material_composition(
+            body.material_composition
         )
         payload["processRules"]["videoDuration"] = max(5, min(int(body.video_duration or 30), 300))
 
@@ -400,11 +409,31 @@ async def submit_clip(
             "description": body.introduce_description.strip(),
         }
 
+    logger.info(
+        "[shanjian-smart-clip] submit user_id=%s scene=%s style_id=%s title_len=%s introduce_name_len=%s introduce_description_len=%s materials=%s pack_rules=%s process_rules=%s",
+        current_user.id,
+        scene,
+        body.style_id.strip(),
+        len(str(payload.get("title") or "")),
+        len(body.introduce_name.strip()),
+        len(body.introduce_description.strip()),
+        len(payload.get("materials") or []),
+        payload.get("packRules"),
+        payload.get("processRules"),
+    )
     upstream = await _post(endpoint, body.token, payload)
     data = _data(upstream)
     task_id = str(data.get("taskId") or "").strip()
     if not task_id:
         raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+    logger.info(
+        "[shanjian-smart-clip] accepted user_id=%s scene=%s style_id=%s task_id=%s request_id=%s",
+        current_user.id,
+        scene,
+        body.style_id.strip(),
+        task_id,
+        upstream.get("requestId") or "",
+    )
     return {
         "ok": True,
         "task_id": task_id,

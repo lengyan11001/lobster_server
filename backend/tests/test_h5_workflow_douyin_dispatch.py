@@ -193,6 +193,12 @@ def test_h5_add_and_edit_expose_and_persist_collection_params():
     assert 'await saveWorkflowTemplate({ notify: false });' in script
     assert 'workflowParamDouyinKeyword' in script
     assert 'setFieldValue("workflowParamDouyinKeyword"' in script
+    assert 'params.keyword || params.query || node.note || ""' not in script
+    assert 'if (!keyword) throw new Error("请填写采集关键词")' not in script
+    assert "留空使用当前设备 Online 已配置的全部关键词" in script
+    assert "留空使用当前设备 Online 已配置的全部关键词" in html
+    assert 'if (keyword) collectionParams.keyword = keyword;' in script
+    assert '"抖音获客 - Online 全部关键词"' in script
 
 
 def test_h5_douyin_nodes_are_marked_as_one_shot():

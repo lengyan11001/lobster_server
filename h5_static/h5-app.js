@@ -3821,7 +3821,7 @@
           return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡")))
             + taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
         }
-        return taskFieldHtml("采集关键词", taskTextareaHtml("workflowParamDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
+        return taskFieldHtml("采集关键词（可选）", taskTextareaHtml("workflowParamDouyinKeyword", "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
           + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")))
@@ -4220,10 +4220,22 @@
           };
         }
         const keyword = workflowParamValue("workflowParamDouyinKeyword");
-        if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workflowParamValue("workflowParamDouyinRegions"));
+        const collectionParams = {
+          max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
+          regions: regions.length ? regions : ["全国"],
+          mode: workflowParamValue("workflowParamDouyinMode") || "script",
+          followup_actions: normalizeSalesDouyinFollowupActions([
+            workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
+            workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
+            workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
+            workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
+          ]),
+          customer_scope: "current_collection_batch",
+        };
+        if (keyword) collectionParams.keyword = keyword;
         return {
-          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
           payload: {
@@ -4231,19 +4243,7 @@
             h5_task_source: "h5",
             h5_one_shot: true,
             douyin_execution_mode: "one_shot",
-            params: {
-              keyword,
-              max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
-              regions: regions.length ? regions : ["全国"],
-              mode: workflowParamValue("workflowParamDouyinMode") || "script",
-              followup_actions: normalizeSalesDouyinFollowupActions([
-                workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
-                workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
-                workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
-                workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
-              ]),
-              customer_scope: "current_collection_batch",
-            },
+            params: collectionParams,
           },
         };
       }
@@ -4482,10 +4482,22 @@
         && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "search_collect"
       ) {
         const keyword = workflowParamValue("workflowNodeDouyinKeyword");
-        if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workflowParamValue("workflowNodeDouyinRegions"));
+        const collectionParams = {
+          regions: regions.length ? regions : ["全国"],
+          max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
+          mode: workflowParamValue("workflowNodeDouyinMode") || "script",
+          followup_actions: normalizeSalesDouyinFollowupActions([
+            workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
+            workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
+            workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
+            workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
+          ]),
+          customer_scope: "current_collection_batch",
+        };
+        if (keyword) collectionParams.keyword = keyword;
         plan = {
-          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
           payload: {
@@ -4493,19 +4505,7 @@
             h5_task_source: "h5",
             h5_one_shot: true,
             douyin_execution_mode: "one_shot",
-            params: {
-              keyword,
-              regions: regions.length ? regions : ["全国"],
-              max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
-              mode: workflowParamValue("workflowNodeDouyinMode") || "script",
-              followup_actions: normalizeSalesDouyinFollowupActions([
-                workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
-                workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
-                workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
-                workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
-              ]),
-              customer_scope: "current_collection_batch",
-            },
+            params: collectionParams,
           },
         };
       } else {
@@ -5470,7 +5470,7 @@
         return;
       }
       if (payload.action === "search_collect" || isDouyinLookup) {
-        setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || node.note || "");
+        setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || "");
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
@@ -21075,7 +21075,7 @@
           );
       }
       if (key === "douyin_leads") {
-        return taskFieldHtml("采集关键词", taskTextareaHtml("workDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
+        return taskFieldHtml("采集关键词（可选）", taskTextareaHtml("workDouyinKeyword", "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"), true)
           + taskFieldHtml("地区", workInputHtml("workDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workDouyinMaxResults", "number", "50", 'min="10" max="100"'))
           + taskFieldHtml("搜索方式", taskSelectHtml("workDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
@@ -21258,20 +21258,20 @@
       }
       if (key === "douyin_leads") {
         const keyword = workValue("workDouyinKeyword");
-        if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workValue("workDouyinRegions"));
+        const collectionParams = {
+          max_results: workNumber(workValue("workDouyinMaxResults"), 50, 10, 100),
+          regions: regions.length ? regions : ["全国"],
+          mode: workValue("workDouyinMode") || "script",
+        };
+        if (keyword) collectionParams.keyword = keyword;
         return {
-          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
           taskKind: "douyin_leads",
           content: "H5 安排工作：抖音获客采集客户",
           payload: {
             action: "search_collect",
-            params: {
-              keyword,
-              max_results: workNumber(workValue("workDouyinMaxResults"), 50, 10, 100),
-              regions: regions.length ? regions : ["全国"],
-              mode: workValue("workDouyinMode") || "script",
-            },
+            params: collectionParams,
           },
         };
       }

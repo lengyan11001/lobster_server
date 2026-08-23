@@ -17,6 +17,9 @@
 
   var GENERATED_EN = window.LobsterGeneratedEn || {};
   var CURATED_EN = {
+    "采集关键词（可选）": "Collection Keywords (Optional)",
+    "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔": "Leave blank to use all keywords configured in Online for the current device. Separate custom keywords with commas or line breaks.",
+    "抖音获客 - Online 全部关键词": "Douyin Leads - All Online Keywords",
     "首页": "Home", "AI员工": "AI Employees", "创作": "Create", "作品": "Content", "我的": "Profile",
     "定时任务": "Scheduled Tasks", "语音输入": "Voice Input", "个人中心": "Profile", "返回顶部": "Back to top",
     "手机号注册和登录": "Phone Sign-in", "默认用验证码登录；设置过密码后也可以直接用账号密码登录。": "Sign in with a verification code by default, or use your password after setting one.",

@@ -3,6 +3,13 @@ import asyncio
 from backend.app.api import shanjian_smart_clip
 
 
+def test_news_mixcut_material_composition_uses_current_upstream_values():
+    assert shanjian_smart_clip._normalize_material_composition("order") == "order"
+    assert shanjian_smart_clip._normalize_material_composition("sequential") == "order"
+    assert shanjian_smart_clip._normalize_material_composition("random") == "random"
+    assert shanjian_smart_clip._normalize_material_composition("unknown") == "random"
+
+
 def test_task_info_flattens_completed_result(monkeypatch):
     async def fake_get(_path, _token, _params):
         return {
