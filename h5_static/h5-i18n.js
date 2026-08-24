@@ -19,6 +19,11 @@
 
   var GENERATED_EN = window.LobsterGeneratedEn || {};
   var CURATED_EN = {
+    "关联数字人形象 / 分身": "Linked Digital Avatars / Clones",
+    "关联声音": "Linked Voices",
+    "正在加载资源...": "Loading resources...",
+    "暂无可用资源，请先创建并完成数字人资源": "No available resources. Create and finish a digital human resource first.",
+    "未命名资源": "Untitled Resource",
     "采集关键词（可选）": "Collection Keywords (Optional)",
     "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔": "Leave blank to use all keywords configured in Online for the current device. Separate custom keywords with commas or line breaks.",
     "抖音获客 - Online 全部关键词": "Douyin Leads - All Online Keywords",

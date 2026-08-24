@@ -6783,6 +6783,12 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
     }
+    .personal-digital-human-resources-group > .personal-template-choice-grid {
+      max-height: 174px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 2px;
+    }
     .personal-template-choice {
       min-width: 0;
       min-height: 42px;

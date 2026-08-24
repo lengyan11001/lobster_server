@@ -316,6 +316,11 @@
       personalDigitalHumanTemplatePickerTarget: "personal",
       personalSelectedDigitalHumanTemplate: null,
       personalDigitalHumanTemplateDraft: null,
+      personalDigitalHumanResources: { avatars: [], voices: [] },
+      personalDigitalHumanAvatarOptions: [],
+      personalDigitalHumanVoiceOptions: [],
+      personalDigitalHumanResourcesLoaded: false,
+      personalDigitalHumanResourcesLoading: false,
       workSelectedDigitalHumanTemplate: null,
       personalDefault: null,
       localBestsellerPersonaPromise: null,
@@ -18180,6 +18185,7 @@
       (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       state.personalSelectedDigitalHumanTemplate = normalizePersonalDigitalHumanTemplate(meta.digital_human_template);
+      state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(meta.digital_human_resources);
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
       setPersonalTemplateLanguage(ipTemplateLanguage(item));
     }
@@ -18599,6 +18605,7 @@
         title.textContent = current ? `编辑模板：${personalTemplateName(current)}` : "新建模板";
       }
       renderPersonalSettings();
+      loadPersonalDigitalHumanResources(true).catch(() => {});
       modal.classList.remove("hidden");
       const nameInput = $("personalTemplateName");
       if (nameInput && typeof nameInput.focus === "function") setTimeout(() => nameInput.focus(), 80);
@@ -18624,6 +18631,9 @@
       state.personalSelectedMemories = {};
       state.personalSelectedDigitalHumanTemplate = null;
       state.personalDigitalHumanTemplateDraft = null;
+      state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(
+        state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.digital_human_resources
+      );
       if ($("personalTemplateName")) $("personalTemplateName").value = "";
       personalSetStatus("");
       renderPersonalSettings();
@@ -18661,6 +18671,138 @@
         pack_rules: { ...(normalized.pack_rules || {}) },
         process_rules: { ...(normalized.process_rules || {}) },
       } : null;
+    }
+
+    function digitalHumanResourceKey(item, kind) {
+      item = item && typeof item === "object" ? item : {};
+      const provider = String(item.provider || item.source || "").trim().toLowerCase();
+      const id = kind === "voice"
+        ? String(item.voice || item.voice_id || item.speaker_id || item.speakerId || item.id || "").trim()
+        : String(item.virtualman_id || item.virtualmanId || item.avatar || item.avatar_id || item.avatarId || item.id || "").trim();
+      return `${provider}:${id}`;
+    }
+
+    function normalizePersonalDigitalHumanResources(value) {
+      value = value && typeof value === "object" ? value : {};
+      const normalizeList = (list, kind) => {
+        const seen = new Set();
+        return (Array.isArray(list) ? list : []).map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const row = { ...item };
+          const provider = String(row.provider || row.source || "").trim().toLowerCase()
+            || (kind === "avatar" && (row.virtualman_id || row.virtualmanId) ? "shanjian" : "hifly");
+          row.provider = provider;
+          if (kind === "avatar") {
+            row.virtualman_id = String(row.virtualman_id || row.virtualmanId
+              || (["shanjian", "shanjian_v2", "digital_human"].includes(provider) ? (row.avatar || "") : "")).trim();
+            row.avatar = String(row.avatar || row.avatar_id || row.avatarId || "").trim();
+          } else {
+            row.voice = String(row.voice || row.voice_id || row.speaker_id || row.speakerId || "").trim();
+          }
+          const key = digitalHumanResourceKey(row, kind);
+          if (!key || key.endsWith(":") || seen.has(key)) return null;
+          seen.add(key);
+          row.title = String(row.title || row.name || "未命名资源").trim() || "未命名资源";
+          return row;
+        }).filter(Boolean);
+      };
+      return { avatars: normalizeList(value.avatars, "avatar"), voices: normalizeList(value.voices, "voice") };
+    }
+
+    function clonePersonalDigitalHumanResources(value) {
+      const normalized = normalizePersonalDigitalHumanResources(value);
+      return {
+        avatars: normalized.avatars.map((row) => ({ ...row })),
+        voices: normalized.voices.map((row) => ({ ...row })),
+      };
+    }
+
+    function personalDigitalHumanResourceTitle(row) {
+      return String((row && (row.title || row.name || row.virtualman_id || row.avatar || row.voice)) || "未命名资源");
+    }
+
+    function personalDigitalHumanResourceSubtitle(row, kind) {
+      const id = kind === "voice"
+        ? (row && (row.voice || row.voice_id || row.speaker_id))
+        : (row && (row.virtualman_id || row.avatar || row.avatar_id));
+      const provider = row && (row.provider || row.source);
+      return [id, provider].filter(Boolean).join(" · ");
+    }
+
+    function renderPersonalDigitalHumanResources() {
+      const resources = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResources);
+      state.personalDigitalHumanResources = resources;
+      ["avatar", "voice"].forEach((kind) => {
+        const list = $(kind === "avatar" ? "personalDigitalHumanAvatarList" : "personalDigitalHumanVoiceList");
+        const count = $(kind === "avatar" ? "personalDigitalHumanAvatarCount" : "personalDigitalHumanVoiceCount");
+        if (!list) return;
+        const resourceRows = resources[kind === "avatar" ? "avatars" : "voices"];
+        const loadedOptions = kind === "avatar" ? state.personalDigitalHumanAvatarOptions : state.personalDigitalHumanVoiceOptions;
+        const selected = new Set(resourceRows.map((row) => digitalHumanResourceKey(row, kind)));
+        const options = [];
+        const optionKeys = new Set();
+        [...loadedOptions, ...resourceRows].forEach((row) => {
+          const key = digitalHumanResourceKey(row, kind);
+          if (!key || key.endsWith(":") || optionKeys.has(key)) return;
+          optionKeys.add(key);
+          options.push(row);
+        });
+        if (count) count.textContent = String(selected.size);
+        if (state.personalDigitalHumanResourcesLoading && !options.length) {
+          list.innerHTML = `<div class="personal-template-empty">正在加载资源...</div>`;
+          return;
+        }
+        if (!options.length) {
+          list.innerHTML = `<div class="personal-template-empty">暂无可用资源，请先创建并完成数字人资源</div>`;
+          return;
+        }
+        list.innerHTML = options.map((row) => {
+          const key = digitalHumanResourceKey(row, kind);
+          const checked = selected.has(key);
+          return `<label class="personal-template-choice${checked ? " checked" : ""}" title="${escapeHtml(personalDigitalHumanResourceTitle(row))}">
+            <input type="checkbox" data-personal-digital-resource="${kind}" data-resource-key="${escapeHtml(key)}"${checked ? " checked" : ""}>
+            <span><strong>${escapeHtml(personalDigitalHumanResourceTitle(row))}</strong><em>${escapeHtml(personalDigitalHumanResourceSubtitle(row, kind))}</em></span>
+          </label>`;
+        }).join("");
+        list.querySelectorAll("[data-personal-digital-resource]").forEach((input) => {
+          input.addEventListener("change", () => {
+            const listKey = kind === "avatar" ? "avatars" : "voices";
+            const current = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResources)[listKey]
+              .filter((row) => digitalHumanResourceKey(row, kind) !== input.dataset.resourceKey);
+            if (input.checked) {
+              const picked = options.find((row) => digitalHumanResourceKey(row, kind) === input.dataset.resourceKey);
+              if (picked) current.push({ ...picked });
+            }
+            state.personalDigitalHumanResources[listKey] = current;
+            renderPersonalDigitalHumanResources();
+          });
+        });
+      });
+    }
+
+    async function loadPersonalDigitalHumanResources(force = false) {
+      if (state.personalDigitalHumanResourcesLoading) {
+        renderPersonalDigitalHumanResources();
+        return;
+      }
+      if (!force && state.personalDigitalHumanResourcesLoaded) {
+        renderPersonalDigitalHumanResources();
+        return;
+      }
+      state.personalDigitalHumanResourcesLoading = true;
+      renderPersonalDigitalHumanResources();
+      try {
+        const [avatars, voices] = await Promise.all([
+          api("/api/h5/assets/digital-library?kind=avatar&page=1&size=100", { cache: "no-store" }).catch(() => ({ items: [] })),
+          api("/api/h5/assets/digital-library?kind=voice&page=1&size=100", { cache: "no-store" }).catch(() => ({ items: [] })),
+        ]);
+        state.personalDigitalHumanAvatarOptions = Array.isArray(avatars.items) ? avatars.items : [];
+        state.personalDigitalHumanVoiceOptions = Array.isArray(voices.items) ? voices.items : [];
+        state.personalDigitalHumanResourcesLoaded = true;
+      } finally {
+        state.personalDigitalHumanResourcesLoading = false;
+        renderPersonalDigitalHumanResources();
+      }
     }
 
     function renderPersonalDigitalHumanTemplateSummary() {
@@ -18986,6 +19128,7 @@
       renderPersonalCustomReference();
       renderPersonalGeneratedDocs();
       renderPersonalDigitalHumanTemplateSummary();
+      renderPersonalDigitalHumanResources();
     }
 
     async function savePersonalProfile(btn = null) {
@@ -19022,6 +19165,7 @@
       const language = currentPersonalTemplateLanguage();
       const requirements = templateRequirementsWithLanguage(stripPersonalSurveyRequirements((state.personalDefault || {}).requirements), language);
       const digitalHumanTemplate = clonePersonalDigitalHumanTemplate(state.personalSelectedDigitalHumanTemplate);
+      const digitalHumanResources = clonePersonalDigitalHumanResources(state.personalDigitalHumanResources);
       const payload = {
         name,
         keyword_ids: personalExistingIntIds(personalCleanIntIds(state.personalSelectedKeywords), state.personalKeywords),
@@ -19035,6 +19179,7 @@
           language,
           target_language: ipTemplateLanguageLabel(language),
           digital_human_template: digitalHumanTemplate,
+          digital_human_resources: digitalHumanResources,
         },
       };
       const currentTemplateId = state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.current_template_id;
