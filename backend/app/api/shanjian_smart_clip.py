@@ -70,6 +70,7 @@ class SubmitClipBody(TokenBody):
     resource_preprocess_method: str = "roughCut"
     material_composition: str = "random"
     video_duration: int = 30
+    struct_layers: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskBody(TokenBody):
@@ -400,7 +401,10 @@ async def submit_clip(
             file_url = str(item.get("fileUrl") or item.get("file_url") or "").strip()
             kind = str(item.get("type") or "").strip()
             if file_url and kind in {"image", "video"}:
-                cleaned.append({"type": kind, "fileUrl": file_url})
+                row = {"type": kind, "fileUrl": file_url}
+                if "soundSwitch" in item or "sound_switch" in item:
+                    row["soundSwitch"] = bool(item.get("soundSwitch", item.get("sound_switch")))
+                cleaned.append(row)
         if cleaned:
             payload["materials"] = cleaned
     if body.introduce_name.strip() or body.introduce_description.strip():
@@ -408,6 +412,11 @@ async def submit_clip(
             "name": body.introduce_name.strip(),
             "description": body.introduce_description.strip(),
         }
+    if body.struct_layers:
+        payload["structLayers"] = [
+            item for item in body.struct_layers[:10]
+            if isinstance(item, dict) and str(item.get("markCode") or item.get("mark_code") or "").strip()
+        ]
 
     logger.info(
         "[shanjian-smart-clip] submit user_id=%s scene=%s style_id=%s title_len=%s introduce_name_len=%s introduce_description_len=%s materials=%s pack_rules=%s process_rules=%s",
