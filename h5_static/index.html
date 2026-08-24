@@ -11,7 +11,7 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260824-personal-digital-resources-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260824-personal-digital-resource-picker-v2" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260822-account-language-v1" />
   <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
 </head>
@@ -2168,14 +2168,20 @@
         <section class="personal-template-resource-group personal-digital-human-resources-group">
           <div class="personal-template-resource-head">
             <strong>关联数字人形象 / 分身</strong>
-            <span>已选 <b id="personalDigitalHumanAvatarCount">0</b></span>
+            <div class="personal-template-resource-actions">
+              <span>已选 <b id="personalDigitalHumanAvatarCount">0</b></span>
+              <button class="ghost" type="button" id="personalDigitalHumanAvatarChooseBtn">选择</button>
+            </div>
           </div>
           <div class="personal-template-choice-grid" id="personalDigitalHumanAvatarList"></div>
         </section>
         <section class="personal-template-resource-group personal-digital-human-resources-group">
           <div class="personal-template-resource-head">
             <strong>关联声音</strong>
-            <span>已选 <b id="personalDigitalHumanVoiceCount">0</b></span>
+            <div class="personal-template-resource-actions">
+              <span>已选 <b id="personalDigitalHumanVoiceCount">0</b></span>
+              <button class="ghost" type="button" id="personalDigitalHumanVoiceChooseBtn">选择</button>
+            </div>
           </div>
           <div class="personal-template-choice-grid" id="personalDigitalHumanVoiceList"></div>
         </section>
@@ -2184,6 +2190,34 @@
           <button class="ghost" type="button" id="personalTemplateCancel">取消</button>
           <button type="button" id="personalSaveDefaultBtn">保存模板</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="employee-modal personal-digital-resource-modal hidden" id="personalDigitalHumanResourceModal" role="dialog" aria-modal="true" aria-labelledby="personalDigitalHumanResourceTitle">
+    <button class="employee-modal-backdrop" type="button" id="personalDigitalHumanResourceBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover personal-digital-resource-picker">
+      <button class="employee-popover-close" type="button" id="personalDigitalHumanResourceClose" aria-label="关闭">×</button>
+      <div class="personal-digital-resource-picker-head">
+        <div>
+          <strong id="personalDigitalHumanResourceTitle">选择数字人资源</strong>
+          <span id="personalDigitalHumanResourceStats">共 0 个，已选 0 个</span>
+        </div>
+      </div>
+      <div class="personal-digital-resource-tabs" id="personalDigitalHumanResourceTabs">
+        <button type="button" data-personal-resource-kind="avatar">形象 / 分身</button>
+        <button type="button" data-personal-resource-kind="voice">声音</button>
+      </div>
+      <div class="personal-digital-resource-search">
+        <input id="personalDigitalHumanResourceSearch" type="search" placeholder="搜索名称、编号或来源" autocomplete="off">
+        <button class="ghost" type="button" id="personalDigitalHumanResourceSelectAll">全选搜索结果</button>
+      </div>
+      <div class="personal-digital-resource-list" id="personalDigitalHumanResourcePickerList"></div>
+      <div class="personal-digital-resource-pager" id="personalDigitalHumanResourcePager"></div>
+      <div class="work-dispatch-actions personal-digital-resource-picker-actions">
+        <button class="ghost danger-text" type="button" id="personalDigitalHumanResourceClear">清空当前类型</button>
+        <button class="ghost" type="button" id="personalDigitalHumanResourceCancel">取消</button>
+        <button type="button" id="personalDigitalHumanResourceConfirm">确认选择</button>
       </div>
     </div>
   </div>
@@ -2570,8 +2604,8 @@
   <div class="toast" id="toast"></div>
 
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
-  <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resources-v1"></script>
-  <script src="/h5-static/h5-app.js?v=20260824-personal-digital-resources-v1"></script>
+  <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
+  <script src="/h5-static/h5-app.js?v=20260824-personal-digital-resource-picker-v2"></script>
   <script src="/h5-static/task-center.js?v=20260821-task-center-round-v3"></script>
 </body>
 </html>

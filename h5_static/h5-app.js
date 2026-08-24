@@ -321,6 +321,10 @@
       personalDigitalHumanVoiceOptions: [],
       personalDigitalHumanResourcesLoaded: false,
       personalDigitalHumanResourcesLoading: false,
+      personalDigitalHumanResourcePickerKind: "avatar",
+      personalDigitalHumanResourceQuery: "",
+      personalDigitalHumanResourcePage: 1,
+      personalDigitalHumanResourceDraft: null,
       workSelectedDigitalHumanTemplate: null,
       personalDefault: null,
       localBestsellerPersonaPromise: null,
@@ -18613,6 +18617,7 @@
 
     function closePersonalTemplateModal() {
       $("personalTemplateModal")?.classList.add("hidden");
+      closePersonalDigitalHumanResourcePicker();
       closePersonalDigitalHumanTemplatePicker();
       closePersonalDigitalHumanPreview();
     }
@@ -18729,6 +18734,21 @@
       return [id, provider].filter(Boolean).join(" · ");
     }
 
+    function personalDigitalHumanResourceOptions(kind, value = state.personalDigitalHumanResources) {
+      const resources = normalizePersonalDigitalHumanResources(value);
+      const selectedRows = resources[kind === "avatar" ? "avatars" : "voices"];
+      const loadedRows = kind === "avatar" ? state.personalDigitalHumanAvatarOptions : state.personalDigitalHumanVoiceOptions;
+      const options = [];
+      const seen = new Set();
+      [...loadedRows, ...selectedRows].forEach((row) => {
+        const key = digitalHumanResourceKey(row, kind);
+        if (!key || key.endsWith(":") || seen.has(key)) return;
+        seen.add(key);
+        options.push(row);
+      });
+      return options;
+    }
+
     function renderPersonalDigitalHumanResources() {
       const resources = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResources);
       state.personalDigitalHumanResources = resources;
@@ -18737,47 +18757,109 @@
         const count = $(kind === "avatar" ? "personalDigitalHumanAvatarCount" : "personalDigitalHumanVoiceCount");
         if (!list) return;
         const resourceRows = resources[kind === "avatar" ? "avatars" : "voices"];
-        const loadedOptions = kind === "avatar" ? state.personalDigitalHumanAvatarOptions : state.personalDigitalHumanVoiceOptions;
-        const selected = new Set(resourceRows.map((row) => digitalHumanResourceKey(row, kind)));
-        const options = [];
-        const optionKeys = new Set();
-        [...loadedOptions, ...resourceRows].forEach((row) => {
-          const key = digitalHumanResourceKey(row, kind);
-          if (!key || key.endsWith(":") || optionKeys.has(key)) return;
-          optionKeys.add(key);
-          options.push(row);
-        });
-        if (count) count.textContent = String(selected.size);
-        if (state.personalDigitalHumanResourcesLoading && !options.length) {
+        if (count) count.textContent = String(resourceRows.length);
+        if (state.personalDigitalHumanResourcesLoading && !resourceRows.length) {
           list.innerHTML = `<div class="personal-template-empty">正在加载资源...</div>`;
           return;
         }
-        if (!options.length) {
-          list.innerHTML = `<div class="personal-template-empty">暂无可用资源，请先创建并完成数字人资源</div>`;
+        if (!resourceRows.length) {
+          list.innerHTML = `<button class="personal-digital-resource-empty" type="button" data-open-personal-digital-resource="${kind}">尚未选择，点击添加</button>`;
           return;
         }
-        list.innerHTML = options.map((row) => {
-          const key = digitalHumanResourceKey(row, kind);
-          const checked = selected.has(key);
-          return `<label class="personal-template-choice${checked ? " checked" : ""}" title="${escapeHtml(personalDigitalHumanResourceTitle(row))}">
-            <input type="checkbox" data-personal-digital-resource="${kind}" data-resource-key="${escapeHtml(key)}"${checked ? " checked" : ""}>
-            <span><strong>${escapeHtml(personalDigitalHumanResourceTitle(row))}</strong><em>${escapeHtml(personalDigitalHumanResourceSubtitle(row, kind))}</em></span>
-          </label>`;
-        }).join("");
-        list.querySelectorAll("[data-personal-digital-resource]").forEach((input) => {
-          input.addEventListener("change", () => {
-            const listKey = kind === "avatar" ? "avatars" : "voices";
-            const current = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResources)[listKey]
-              .filter((row) => digitalHumanResourceKey(row, kind) !== input.dataset.resourceKey);
-            if (input.checked) {
-              const picked = options.find((row) => digitalHumanResourceKey(row, kind) === input.dataset.resourceKey);
-              if (picked) current.push({ ...picked });
-            }
-            state.personalDigitalHumanResources[listKey] = current;
-            renderPersonalDigitalHumanResources();
-          });
-        });
+        const visible = resourceRows.slice(0, 4);
+        list.innerHTML = visible.map((row) => `<div class="personal-template-choice checked personal-digital-resource-summary-item" title="${escapeHtml(personalDigitalHumanResourceTitle(row))}">
+          <span><strong>${escapeHtml(personalDigitalHumanResourceTitle(row))}</strong><em>${escapeHtml(personalDigitalHumanResourceSubtitle(row, kind))}</em></span>
+        </div>`).join("") + (resourceRows.length > visible.length
+          ? `<button class="personal-digital-resource-more" type="button" data-open-personal-digital-resource="${kind}">另有 ${resourceRows.length - visible.length} 个已选择</button>`
+          : "");
       });
+    }
+
+    const PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE = 20;
+
+    function personalDigitalHumanPickerRows() {
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const rows = personalDigitalHumanResourceOptions(kind, state.personalDigitalHumanResourceDraft);
+      const query = String(state.personalDigitalHumanResourceQuery || "").trim().toLowerCase();
+      if (!query) return rows;
+      return rows.filter((row) => [
+        personalDigitalHumanResourceTitle(row),
+        personalDigitalHumanResourceSubtitle(row, kind),
+        row && row.status,
+      ].some((value) => String(value || "").toLowerCase().includes(query)));
+    }
+
+    function renderPersonalDigitalHumanResourcePicker() {
+      const modal = $("personalDigitalHumanResourceModal");
+      if (!modal || modal.classList.contains("hidden")) return;
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      state.personalDigitalHumanResourceDraft = draft;
+      const selectedRows = draft[kind === "avatar" ? "avatars" : "voices"];
+      const selectedKeys = new Set(selectedRows.map((row) => digitalHumanResourceKey(row, kind)));
+      const filteredRows = personalDigitalHumanPickerRows();
+      const totalPages = Math.max(1, Math.ceil(filteredRows.length / PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE));
+      state.personalDigitalHumanResourcePage = Math.min(Math.max(1, Number(state.personalDigitalHumanResourcePage) || 1), totalPages);
+      const start = (state.personalDigitalHumanResourcePage - 1) * PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE;
+      const pageRows = filteredRows.slice(start, start + PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE);
+      const title = $("personalDigitalHumanResourceTitle");
+      if (title) title.textContent = kind === "avatar" ? "选择数字人形象 / 分身" : "选择声音";
+      const stats = $("personalDigitalHumanResourceStats");
+      if (stats) stats.textContent = `搜索结果 ${filteredRows.length} 个，已选 ${selectedRows.length} 个`;
+      $("personalDigitalHumanResourceTabs")?.querySelectorAll("[data-personal-resource-kind]").forEach((button) => {
+        const buttonKind = button.dataset.personalResourceKind || "avatar";
+        const count = draft[buttonKind === "avatar" ? "avatars" : "voices"].length;
+        button.textContent = `${buttonKind === "avatar" ? "形象 / 分身" : "声音"} (${count})`;
+        button.classList.toggle("active", buttonKind === kind);
+      });
+      const list = $("personalDigitalHumanResourcePickerList");
+      if (list) {
+        list.innerHTML = pageRows.length ? pageRows.map((row) => {
+          const key = digitalHumanResourceKey(row, kind);
+          const checked = selectedKeys.has(key);
+          const cover = kind === "avatar" ? personalDigitalHumanMediaUrl(row.cover_url || row.image_url) : "";
+          const marker = kind === "avatar" ? personalDigitalHumanResourceTitle(row).slice(0, 1) : "声";
+          return `<label class="personal-digital-resource-option${checked ? " selected" : ""}">
+            <input type="checkbox" data-personal-resource-key="${escapeHtml(key)}"${checked ? " checked" : ""}>
+            <span class="personal-digital-resource-thumb">${cover ? `<img src="${escapeHtml(cover)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : escapeHtml(marker)}</span>
+            <span class="personal-digital-resource-copy"><strong>${escapeHtml(personalDigitalHumanResourceTitle(row))}</strong><small>${escapeHtml(personalDigitalHumanResourceSubtitle(row, kind))}</small></span>
+          </label>`;
+        }).join("") : `<div class="personal-template-empty">没有匹配的资源</div>`;
+      }
+      const selectAll = $("personalDigitalHumanResourceSelectAll");
+      if (selectAll) {
+        const allSelected = !!filteredRows.length && filteredRows.every((row) => selectedKeys.has(digitalHumanResourceKey(row, kind)));
+        selectAll.textContent = allSelected ? "取消全选搜索结果" : "全选搜索结果";
+        selectAll.disabled = !filteredRows.length;
+      }
+      const pager = $("personalDigitalHumanResourcePager");
+      if (pager) {
+        pager.innerHTML = `<button class="ghost" type="button" data-personal-resource-page-delta="-1"${state.personalDigitalHumanResourcePage <= 1 ? " disabled" : ""}>上一页</button>
+          <span>${state.personalDigitalHumanResourcePage} / ${totalPages}</span>
+          <button class="ghost" type="button" data-personal-resource-page-delta="1"${state.personalDigitalHumanResourcePage >= totalPages ? " disabled" : ""}>下一页</button>`;
+      }
+    }
+
+    function openPersonalDigitalHumanResourcePicker(kind = "avatar") {
+      state.personalDigitalHumanResourcePickerKind = kind === "voice" ? "voice" : "avatar";
+      state.personalDigitalHumanResourceQuery = "";
+      state.personalDigitalHumanResourcePage = 1;
+      state.personalDigitalHumanResourceDraft = clonePersonalDigitalHumanResources(state.personalDigitalHumanResources);
+      if ($("personalDigitalHumanResourceSearch")) $("personalDigitalHumanResourceSearch").value = "";
+      $("personalDigitalHumanResourceModal")?.classList.remove("hidden");
+      renderPersonalDigitalHumanResourcePicker();
+      loadPersonalDigitalHumanResources(true).then(renderPersonalDigitalHumanResourcePicker).catch(() => {});
+    }
+
+    function closePersonalDigitalHumanResourcePicker() {
+      $("personalDigitalHumanResourceModal")?.classList.add("hidden");
+      state.personalDigitalHumanResourceDraft = null;
+    }
+
+    function confirmPersonalDigitalHumanResources() {
+      state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      renderPersonalDigitalHumanResources();
+      closePersonalDigitalHumanResourcePicker();
     }
 
     async function loadPersonalDigitalHumanResources(force = false) {
@@ -18792,16 +18874,28 @@
       state.personalDigitalHumanResourcesLoading = true;
       renderPersonalDigitalHumanResources();
       try {
+        const loadKind = async (kind) => {
+          const rows = [];
+          for (let page = 1; page <= 20; page += 1) {
+            const data = await api(`/api/h5/assets/digital-library?kind=${kind}&page=${page}&size=100`, { cache: "no-store" });
+            const items = Array.isArray(data.items) ? data.items : [];
+            rows.push(...items);
+            const total = Number(data.total || 0);
+            if (!items.length || items.length < 100 || (total > 0 && rows.length >= total)) break;
+          }
+          return rows;
+        };
         const [avatars, voices] = await Promise.all([
-          api("/api/h5/assets/digital-library?kind=avatar&page=1&size=100", { cache: "no-store" }).catch(() => ({ items: [] })),
-          api("/api/h5/assets/digital-library?kind=voice&page=1&size=100", { cache: "no-store" }).catch(() => ({ items: [] })),
+          loadKind("avatar").catch(() => []),
+          loadKind("voice").catch(() => []),
         ]);
-        state.personalDigitalHumanAvatarOptions = Array.isArray(avatars.items) ? avatars.items : [];
-        state.personalDigitalHumanVoiceOptions = Array.isArray(voices.items) ? voices.items : [];
+        state.personalDigitalHumanAvatarOptions = avatars;
+        state.personalDigitalHumanVoiceOptions = voices;
         state.personalDigitalHumanResourcesLoaded = true;
       } finally {
         state.personalDigitalHumanResourcesLoading = false;
         renderPersonalDigitalHumanResources();
+        renderPersonalDigitalHumanResourcePicker();
       }
     }
 
@@ -26630,6 +26724,76 @@
     $("personalTemplateCancel")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateLanguage")?.addEventListener("change", (evt) => setPersonalTemplateLanguage(evt.target.value || "zh-CN"));
     $("personalDigitalHumanTemplateChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanTemplatePicker("personal"));
+    $("personalDigitalHumanAvatarChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanResourcePicker("avatar"));
+    $("personalDigitalHumanVoiceChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanResourcePicker("voice"));
+    $("personalDigitalHumanAvatarList")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-open-personal-digital-resource]");
+      if (button) openPersonalDigitalHumanResourcePicker(button.dataset.openPersonalDigitalResource || "avatar");
+    });
+    $("personalDigitalHumanVoiceList")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-open-personal-digital-resource]");
+      if (button) openPersonalDigitalHumanResourcePicker(button.dataset.openPersonalDigitalResource || "voice");
+    });
+    $("personalDigitalHumanResourceBackdrop")?.addEventListener("click", closePersonalDigitalHumanResourcePicker);
+    $("personalDigitalHumanResourceClose")?.addEventListener("click", closePersonalDigitalHumanResourcePicker);
+    $("personalDigitalHumanResourceCancel")?.addEventListener("click", closePersonalDigitalHumanResourcePicker);
+    $("personalDigitalHumanResourceConfirm")?.addEventListener("click", confirmPersonalDigitalHumanResources);
+    $("personalDigitalHumanResourceTabs")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-personal-resource-kind]");
+      if (!button) return;
+      state.personalDigitalHumanResourcePickerKind = button.dataset.personalResourceKind === "voice" ? "voice" : "avatar";
+      state.personalDigitalHumanResourceQuery = "";
+      state.personalDigitalHumanResourcePage = 1;
+      if ($("personalDigitalHumanResourceSearch")) $("personalDigitalHumanResourceSearch").value = "";
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourceSearch")?.addEventListener("input", (evt) => {
+      state.personalDigitalHumanResourceQuery = evt.target.value || "";
+      state.personalDigitalHumanResourcePage = 1;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourcePickerList")?.addEventListener("change", (evt) => {
+      const input = evt.target.closest("[data-personal-resource-key]");
+      if (!input) return;
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const listKey = kind === "avatar" ? "avatars" : "voices";
+      const key = input.dataset.personalResourceKey || "";
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      const current = draft[listKey].filter((row) => digitalHumanResourceKey(row, kind) !== key);
+      if (input.checked) {
+        const picked = personalDigitalHumanResourceOptions(kind, draft).find((row) => digitalHumanResourceKey(row, kind) === key);
+        if (picked) current.push({ ...picked });
+      }
+      draft[listKey] = current;
+      state.personalDigitalHumanResourceDraft = draft;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourceSelectAll")?.addEventListener("click", () => {
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const listKey = kind === "avatar" ? "avatars" : "voices";
+      const rows = personalDigitalHumanPickerRows();
+      const keys = new Set(rows.map((row) => digitalHumanResourceKey(row, kind)));
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      const currentKeys = new Set(draft[listKey].map((row) => digitalHumanResourceKey(row, kind)));
+      const allSelected = !!rows.length && rows.every((row) => currentKeys.has(digitalHumanResourceKey(row, kind)));
+      const kept = draft[listKey].filter((row) => !keys.has(digitalHumanResourceKey(row, kind)));
+      draft[listKey] = allSelected ? kept : [...kept, ...rows.map((row) => ({ ...row }))];
+      state.personalDigitalHumanResourceDraft = draft;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourceClear")?.addEventListener("click", () => {
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      draft[kind === "avatar" ? "avatars" : "voices"] = [];
+      state.personalDigitalHumanResourceDraft = draft;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourcePager")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-personal-resource-page-delta]");
+      if (!button || button.disabled) return;
+      state.personalDigitalHumanResourcePage += Number(button.dataset.personalResourcePageDelta || 0);
+      renderPersonalDigitalHumanResourcePicker();
+    });
     $("personalDigitalHumanTemplateSummary")?.addEventListener("click", (evt) => {
       if (!evt.target.closest("[data-clear-personal-dh-template]")) return;
       state.personalSelectedDigitalHumanTemplate = null;
