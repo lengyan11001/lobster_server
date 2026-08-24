@@ -5,7 +5,9 @@
   var SUPPORTED = { "zh-CN": true, "en-US": true };
   var brand = "bihuo";
   try {
-    brand = String(new URLSearchParams(location.search || "").get("brand") || "bihuo").trim().toLowerCase() || "bihuo";
+    var host = String(location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
+    var domainBrands = { "hikongai.com": "hikong", "www.hikongai.com": "hikong", "admin.hikongai.com": "hikong" };
+    brand = domainBrands[host] || String(new URLSearchParams(location.search || "").get("brand") || "bihuo").trim().toLowerCase() || "bihuo";
   } catch (e) {}
   var STORAGE_KEY = "lobster_h5_language:" + brand;
   var USER_STORAGE_PREFIX = "lobster_h5_language:user:";

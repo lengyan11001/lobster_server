@@ -1317,7 +1317,7 @@ def ios_webclip_mobileconfig(request: Request, db: Session = Depends(get_db)):
 @router.get("/", include_in_schema=False)
 def h5_root(request: Request, db: Session = Depends(get_db)):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
-    if host == "h5.bhzn.top" or host.startswith("h5."):
+    if host == "h5.bhzn.top" or host.startswith("h5.") or host in {"hikongai.com", "www.hikongai.com"}:
         branding = public_brand_config(db, request_brand_mark(request))
         return _h5_index_response(branding)
     raise HTTPException(status_code=404, detail="Not Found")

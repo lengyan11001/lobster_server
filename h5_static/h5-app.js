@@ -1,6 +1,13 @@
     const $ = (id) => document.getElementById(id);
     const H5_BRAND_MARK = (() => {
       try {
+        const host = String(window.location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
+        const domainBrands = {
+          "hikongai.com": "hikong",
+          "www.hikongai.com": "hikong",
+          "admin.hikongai.com": "hikong",
+        };
+        if (domainBrands[host]) return domainBrands[host];
         const params = new URLSearchParams(window.location.search || "");
         const raw = String(params.get("brand") || params.get("brand_mark") || "bihuo").trim().toLowerCase();
         return /^[a-z][a-z0-9_-]{0,62}$/.test(raw) ? raw : "bihuo";
