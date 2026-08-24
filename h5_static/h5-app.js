@@ -19040,7 +19040,9 @@
       if (data.item && data.item.id) {
         state.personalEditingTemplateId = String(data.item.id);
       }
-      await refreshPersonalDataPreserveSelection({ templates: true });
+      // Saving an agent template creates user-owned resource rows. Refresh
+      // all resource lists so reopening the new template can render them.
+      await refreshPersonalDataPreserveSelection({ keywords: true, competitors: true, memories: true, templates: true });
       if (!options.silent) toast("已保存");
     }
 

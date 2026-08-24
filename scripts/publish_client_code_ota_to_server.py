@@ -58,6 +58,14 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
 
 WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "backend",
+    # Website OTA also carries the small OEM switcher runtime. Keep these as
+    # exact paths so a partial desktop update never replaces the whole desktop
+    # directory on the client.
+    "desktop/oem_branding.py",
+    "desktop/oem_branding.pyc",
+    "desktop/oem_configurator.py",
+    "desktop/oem_configurator.pyc",
+    "OEM配置启动器.exe",
     "static/css",
     "static/js",
     "static/views",
@@ -72,13 +80,26 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "CLIENT_CODE_VERSION.json",
 ]
 
+OEM_SWITCHER_OTA_PATHS = frozenset(
+    {
+        "desktop/oem_branding.py",
+        "desktop/oem_branding.pyc",
+        "desktop/oem_configurator.py",
+        "desktop/oem_configurator.pyc",
+        "OEM配置启动器.exe",
+    }
+)
+
 
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
     has_full_code_roots = any(
         any(name.startswith(root + "/") for name in names)
-        for root in ("desktop", "mcp", "publisher", "scripts", "skills", "openclaw")
+        for root in ("mcp", "publisher", "scripts", "skills", "openclaw")
+    ) or any(
+        name.startswith("desktop/") and name not in OEM_SWITCHER_OTA_PATHS
+        for name in names
     )
     candidate_paths = DEFAULT_CLIENT_CODE_OTA_PATHS if has_full_code_roots else WEBSITE_CLIENT_CODE_OTA_PATHS
     paths = []

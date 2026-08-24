@@ -407,9 +407,10 @@ async def submit_clip(
                 cleaned.append(row)
         if cleaned:
             payload["materials"] = cleaned
-    if body.introduce_name.strip() or body.introduce_description.strip():
+    intro_name = body.introduce_name.strip() or str(body.title or "").strip() or "智能剪辑"
+    if body.introduce_description.strip():
         payload["introduceCard"] = {
-            "name": body.introduce_name.strip(),
+            "name": intro_name[:80],
             "description": body.introduce_description.strip(),
         }
     if body.struct_layers:

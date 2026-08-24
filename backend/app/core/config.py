@@ -203,6 +203,10 @@ class Settings(BaseSettings):
     aliyun_sms_sign_name: str = "深圳市必火智能信息技术"
     """阿里云短信模板Code"""
     aliyun_sms_template_code: str = "SMS_333406023"
+    # Optional JSON map of OEM marks to Aliyun SMS channel settings. Credentials
+    # stay in environment configuration; missing per-brand fields fall back to
+    # the global channel above.
+    aliyun_sms_brand_channels_json: Optional[str] = None
 
     # ── H5 实时语音识别（默认接讯飞流式听写）──
     h5_voice_asr_provider: str = "xfyun"

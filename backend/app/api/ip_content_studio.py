@@ -4744,7 +4744,7 @@ def save_schedule_template(
         db.rollback()
         raise HTTPException(status_code=409, detail="同名模板已经存在")
     db.refresh(row)
-    return {"ok": True, "item": _template_payload(row)}
+    return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
 
 
 @router.patch("/api/ip-content/schedule-templates/{template_id}", summary="更新 IP 日更定时任务模板")
@@ -4815,7 +4815,7 @@ def update_schedule_template(
         db.rollback()
         raise HTTPException(status_code=409, detail="同名模板已经存在")
     db.refresh(row)
-    return {"ok": True, "item": _template_payload(row)}
+    return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
 
 
 @router.delete("/api/ip-content/schedule-templates/{template_id}", summary="删除 IP 日更定时任务模板")

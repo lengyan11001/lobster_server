@@ -42,6 +42,7 @@ from ..services.brand_context import (
 )
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
+from ..services.sms_channel import resolve_aliyun_sms_channel
 from ..services.user_feature_flags import user_feature_flags
 from ..services.installation_slot_ownership import claim_installation_slot
 from .installation_slots import (
@@ -593,12 +594,14 @@ def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持")
     brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
-    aliyun_ak = (getattr(settings, "aliyun_sms_access_key_id", None) or "").strip()
-    aliyun_sk = (getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip()
+    aliyun = resolve_aliyun_sms_channel(brand_mark, settings)
+    aliyun_ak = aliyun.access_key_id
+    aliyun_sk = aliyun.access_key_secret
     ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
     ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
-    use_aliyun = bool(aliyun_ak and aliyun_sk)
-    if not use_aliyun and not (ihuyi_acc and ihuyi_pwd):
+    use_aliyun = aliyun.ready
+    use_ihuyi = bool(ihuyi_acc and ihuyi_pwd) and not aliyun.brand_specific
+    if not use_aliyun and not use_ihuyi:
         raise HTTPException(status_code=503, detail="未配置短信通道")
     if not _verify_auth_challenge(db, kind="captcha", subject=body.captcha_id or "", answer=body.captcha_answer or ""):
         raise HTTPException(status_code=400, detail="图形验证码错误或已过期，请刷新后重试")
@@ -617,8 +620,8 @@ def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends
             _aliyun_send(
                 access_key_id=aliyun_ak,
                 access_key_secret=aliyun_sk,
-                sign_name=getattr(settings, "aliyun_sms_sign_name", "深圳市必火智能信息技术"),
-                template_code=getattr(settings, "aliyun_sms_template_code", "SMS_333406023"),
+                sign_name=aliyun.sign_name,
+                template_code=aliyun.template_code,
                 mobile=mobile,
                 code=code,
             )
