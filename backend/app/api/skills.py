@@ -23,6 +23,7 @@ router = APIRouter()
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _OVERSEAS_CLIENT_HEADER = "x-lobster-client-overseas"
 BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
+_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__homepage_entry_permissions_seeded_v1"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -165,8 +166,37 @@ def _user_visible_package_ids(
 ) -> set:
     if not _user_has_custom_visibility(db, user.id):
         return _expand_group_visibility(set(_default_visible_packages_for_request(is_overseas_client)))
-    rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user.id).all()
-    return {r[0] for r in rows if r[0] not in REMOVED_DEFAULT_PACKAGE_IDS}
+    rows = {
+        str(row[0] or "").strip()
+        for row in db.query(UserSkillVisibility.package_id)
+        .filter(UserSkillVisibility.user_id == user.id)
+        .all()
+        if str(row[0] or "").strip()
+    }
+    # Older accounts already had visibility rows, so they bypassed the runtime
+    # defaults and missed the newly defined AI employee/sales/marketing entries.
+    # Materialize the current baseline once; subsequent admin removals remain
+    # authoritative because the migration marker prevents reseeding.
+    if _DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER not in rows:
+        baseline = _expand_group_visibility(
+            set(_default_visible_packages_for_request(is_overseas_client))
+        )
+        missing = baseline.difference(rows)
+        for package_id in sorted(missing):
+            db.add(UserSkillVisibility(user_id=user.id, package_id=package_id))
+        db.add(
+            UserSkillVisibility(
+                user_id=user.id,
+                package_id=_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER,
+            )
+        )
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        rows.update(baseline)
+        rows.add(_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER)
+    return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 
 def _pkg_store_visibility(pkg: dict) -> str:

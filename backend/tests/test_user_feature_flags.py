@@ -38,6 +38,43 @@ def test_new_user_default_entry_groups_and_retired_permissions(db_session, test_
     assert flags["media_edit_skill"] is False
 
 
+def test_legacy_visibility_rows_are_migrated_to_default_employee_groups_once(db_session, test_user):
+    from backend.app.api.skills import _user_visible_package_ids
+    from backend.app.models import UserSkillVisibility
+
+    # An older account already has a visibility row, which previously caused
+    # it to bypass the new default employee groups entirely.
+    db_session.add(
+        UserSkillVisibility(user_id=test_user.id, package_id=HOME_AI_CHAT_ENTRY_ID)
+    )
+    db_session.commit()
+
+    visible = _user_visible_package_ids(
+        db_session, test_user, is_overseas_client=False
+    )
+    assert MY_AI_EMPLOYEES_ENTRY_ID in visible
+    assert AI_MARKETING_ENTRY_ID in visible
+    assert "local_bestseller_skill" in visible
+
+    # Once the migration marker exists, a deliberate admin removal remains
+    # removed instead of being re-added on every request.
+    row = (
+        db_session.query(UserSkillVisibility)
+        .filter(
+            UserSkillVisibility.user_id == test_user.id,
+            UserSkillVisibility.package_id == "local_bestseller_skill",
+        )
+        .first()
+    )
+    assert row is not None
+    db_session.delete(row)
+    db_session.commit()
+    visible = _user_visible_package_ids(
+        db_session, test_user, is_overseas_client=False
+    )
+    assert "local_bestseller_skill" not in visible
+
+
 def test_openai_official_image_channel_flag_uses_user_skill_visibility(db_session, test_user):
     from backend.app.models import UserSkillVisibility
 
