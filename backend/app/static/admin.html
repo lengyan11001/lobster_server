@@ -38,6 +38,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .btn-outline:hover{background:var(--bg)}
 .btn-agent{background:var(--agent-color);color:#fff}
 .btn-agent:hover{background:#d97706}
+.skill-visibility-tabs button{border:1px solid var(--border);background:var(--bg);color:var(--text-secondary);padding:7px 12px;border-radius:7px;cursor:pointer;font-size:12px}
+.skill-visibility-tabs button.active{border-color:var(--primary);background:var(--primary);color:#fff}
 .error-msg{color:var(--danger);font-size:13px;margin-top:8px;text-align:center}
 
 /* Dashboard */
@@ -2746,18 +2748,25 @@ function filterSkillVisibility() {
   const root = document.getElementById('skillVisibilitySection');
   if (!root) return;
   const q = String((document.getElementById('skillVisibilitySearch') || {}).value || '').trim().toLowerCase();
-  const group = String((document.getElementById('skillVisibilityGroup') || {}).value || '');
+  const group = String(root.dataset.skillGroup || '');
   const only = !!((document.getElementById('skillVisibilityOnlyEnabled') || {}).checked);
   root.querySelectorAll('.table-wrap tbody tr').forEach(row => {
     const text = String(row.dataset.skillSearch || row.textContent || '').toLowerCase();
     const id = text.match(/[a-z0-9_]+/g) || [];
-    const isEntry = /_entry$|_access$/.test(id.join(' '));
-    const isLeads = /leads|inquiry|wechat|wecom|messenger|linkedin|reddit|tiktok|x_/.test(text);
-    const isMarketing = /video|human|digital|image|content|article|ppt|ecommerce|seedance|tvc|bestseller/.test(text);
-    const rowGroup = isEntry ? 'entry' : (isLeads ? 'leads' : (isMarketing ? 'marketing' : 'system'));
+    const rowGroup = row.dataset.skillGroup || 'system';
     const match = (!q || text.includes(q)) && (!group || group === rowGroup) && (!only || row.dataset.skillEnabled === '1');
     row.style.display = match ? '' : 'none';
   });
+  root.querySelectorAll('[data-skill-group]').forEach(button => {
+    button.classList.toggle('active', button.dataset.skillGroup === group);
+  });
+}
+
+function setSkillVisibilityGroup(group) {
+  const root = document.getElementById('skillVisibilitySection');
+  if (!root) return;
+  root.dataset.skillGroup = String(group || '');
+  filterSkillVisibility();
 }
 
 // ── 代理商：认领下级 ──
@@ -2861,6 +2870,15 @@ async function toggleSkillUnlock(userId, pkgId, checked) {
   } catch(e) { toast(e.message, 'error'); loadSkillVisibility(userId); }
 }
 
+function skillVisibilityGroup(pkg) {
+  const text = String((pkg && pkg.name) || '') + ' ' + String((pkg && pkg.id) || '');
+  const id = String((pkg && pkg.id) || '').toLowerCase();
+  if (/_entry$|_access$/.test(id) || /private_domain|overseas_platform/.test(id)) return 'entry';
+  if (/leads|inquiry|wechat|wecom|messenger|linkedin|reddit|tiktok|x_/.test(text.toLowerCase())) return 'leads';
+  if (/video|human|digital|image|content|article|ppt|ecommerce|seedance|tvc|bestseller/.test(text.toLowerCase())) return 'marketing';
+  return 'system';
+}
+
 async function loadSkillVisibility(userId) {
   const section = document.getElementById('skillVisibilitySection');
   try {
@@ -2890,7 +2908,7 @@ async function loadSkillVisibility(userId) {
       const permissionCell = isFeatureFlag
         ? '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + (active ? '已开通权限' : '开通权限') + '</span></label>'
         : '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label>';
-       html += '<tr data-skill-search="' + escapeHtml(String(pkg.name || '') + ' ' + pkg.id).toLowerCase() + '" data-skill-enabled="' + (active ? '1' : '0') + '">'
+      html += '<tr data-skill-group="' + skillVisibilityGroup(pkg) + '" data-skill-search="' + escapeHtml(String(pkg.name || '') + ' ' + pkg.id).toLowerCase() + '" data-skill-enabled="' + (active ? '1' : '0') + '">' 
          + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + pkgId + '</div></td>'
         + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(price) + '</div></td>'
         + '<td>' + (pkg.capabilities_count || 0) + '</td>'
@@ -2899,12 +2917,19 @@ async function loadSkillVisibility(userId) {
         + '</tr>';
     }
     html += '</tbody></table></div>';
-    html = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+    html = '<div class="skill-visibility-tabs" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+      + '<button type="button" data-skill-group="" onclick="setSkillVisibilityGroup(\'\')">全部</button>'
+      + '<button type="button" data-skill-group="entry" onclick="setSkillVisibilityGroup(\'entry\')">入口权限</button>'
+      + '<button type="button" data-skill-group="marketing" onclick="setSkillVisibilityGroup(\'marketing\')">AI营销</button>'
+      + '<button type="button" data-skill-group="leads" onclick="setSkillVisibilityGroup(\'leads\')">获客与海外</button>'
+      + '<button type="button" data-skill-group="system" onclick="setSkillVisibilityGroup(\'system\')">系统与其他</button>'
+      + '</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
       + '<input id="skillVisibilitySearch" type="search" placeholder="搜索权限名称或 ID" oninput="filterSkillVisibility()" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:7px">'
-      + '<select id="skillVisibilityGroup" onchange="filterSkillVisibility()" style="padding:9px 12px;border:1px solid var(--border);border-radius:7px"><option value="">全部分组</option><option value="entry">首页入口</option><option value="marketing">AI营销创作</option><option value="leads">获客与私信</option><option value="system">系统与其他技能</option></select>'
       + '<label style="font-size:12px;white-space:nowrap"><input id="skillVisibilityOnlyEnabled" type="checkbox" onchange="filterSkillVisibility()"> 只看已开启</label></div>'
       + '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">权限按分组筛选，搜索名称或 ID 即可定位。修改会立即保存到服务器。</div>' + html;
     section.innerHTML = html;
+    section.dataset.skillGroup = '';
+    filterSkillVisibility();
   } catch(e) {
     section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
   }

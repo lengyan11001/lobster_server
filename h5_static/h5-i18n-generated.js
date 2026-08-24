@@ -1473,7 +1473,7 @@ window.LobsterGeneratedEn = Object.freeze({
   "私信内容模式": "Private message content mode",
   "私信引流": "Private message traffic",
   "私域客户": "Private domain customers",
-  "私域销管": "Private domain sales management",
+  "私域销冠": "Private domain sales champion",
   "松开取消": "Release Cancel",
   "搜索/.test": "Search/.test",
   "搜索方式": "Search method",

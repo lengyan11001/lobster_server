@@ -9,6 +9,7 @@ from backend.app.services.user_feature_flags import (
     OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
     user_feature_flags,
 )
+from backend.app.services.user_feature_flags import OVERSEAS_PLATFORM_ENTRY_ID, PRIVATE_DOMAIN_ENTRY_ID
 
 
 def test_ai_secretary_is_disabled_for_new_users_until_granted(db_session, test_user):
@@ -36,6 +37,8 @@ def test_new_user_default_entry_groups_and_retired_permissions(db_session, test_
     assert flags["browser_use_skill"] is False
     assert flags["computer_use_skill"] is False
     assert flags["media_edit_skill"] is False
+    assert flags[PRIVATE_DOMAIN_ENTRY_ID] is False
+    assert flags[OVERSEAS_PLATFORM_ENTRY_ID] is False
 
 
 def test_legacy_visibility_rows_are_migrated_to_default_employee_groups_once(db_session, test_user):

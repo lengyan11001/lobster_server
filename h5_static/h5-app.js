@@ -571,7 +571,7 @@
         routeTab: "douyinLeadsSchedule",
       },
     };
-    const TASK_DEPARTMENTS = ["AI营销创作", "AI获客", "私域销管"];
+    const TASK_DEPARTMENTS = ["AI营销创作", "AI获客", "私域销冠", "海外平台"];
     const SCHEDULED_TASK_CAPABILITY_IDS = [
       "comfly.seedance.tvc.pipeline",
       "goal.image.pipeline",
@@ -658,7 +658,7 @@
         key: "wecom_reply",
         packageId: "wecom_reply",
         label: "企业微信客服",
-        department: "私域销管",
+        department: "私域销冠",
         mark: "微",
         dispatchKind: "client_workflow",
         workflowAction: "wecom_poll_reply",
@@ -798,9 +798,10 @@
       },
       {
         id: "private_domain",
-        name: "私域销管",
+        name: "私域销冠",
         alias: "个微",
         mark: "微",
+        featureKey: "private_domain_entry",
         description: "负责个人微信私聊、加好友、拉群和朋友圈互动。",
         children: [
           {
@@ -839,9 +840,10 @@
       },
       {
         id: "overseas",
-        name: "AI海外平台",
+        name: "海外平台",
         alias: "海外线索",
         mark: "海",
+        featureKey: "overseas_platform_entry",
         description: "负责海外平台线索采集和客户资料沉淀。",
         children: [
           {
@@ -1081,7 +1083,7 @@
         ...node,
         ability_key: nativeKey,
         department_id: lookup && lookup.department ? lookup.department.id || "private_domain" : "private_domain",
-        department_name: lookup && lookup.department ? lookup.department.name || "私域销管" : "私域销管",
+        department_name: lookup && lookup.department ? lookup.department.name || "私域销冠" : "私域销冠",
         plan: nativeWechatWorkflowPlan(nativeKey, note),
         children: workflowChildActions(node).map(normalizeSalesWorkflowNode).filter(Boolean),
       };
@@ -3242,6 +3244,12 @@
       return DEPARTMENT_SKILL_TREE.find((dept) => dept.id === normalized) || DEPARTMENT_SKILL_TREE[0];
     }
 
+    function departmentFeatureVisible(department) {
+      const featureKey = String((department && department.featureKey) || "").trim();
+      if (!featureKey) return true;
+      return !!(state.user && state.user.features && state.user.features[featureKey]);
+    }
+
     function isMarketingCreationDepartment(department) {
       const id = String((department && department.id) || "").trim();
       return id === AI_MARKETING_CREATION_ID || id === "marketing";
@@ -3312,6 +3320,7 @@
     }
 
     function departmentLeafNodes(department) {
+      if (!departmentFeatureVisible(department)) return [];
       if (isMarketingCreationDepartment(department)) {
         return abilityLeafNodes(marketingCreationEntryNodes());
       }
@@ -3319,16 +3328,17 @@
     }
 
     function departmentEntryNodes(department) {
+      if (!departmentFeatureVisible(department)) return [];
       if (isMarketingCreationDepartment(department)) return marketingCreationEntryNodes();
       return ((department && department.children) || []).filter((node) => node && !isPublishCenterNode(node));
     }
 
     function officeDepartments() {
-      return DEPARTMENT_SKILL_TREE;
+      return DEPARTMENT_SKILL_TREE.filter(departmentFeatureVisible);
     }
 
     function departmentAvailableLeafCount(department) {
-      return departmentLeafNodes(department).filter((node) => node && !node.comingSoon).length;
+      return departmentLeafNodes(department).filter((node) => node && !node.comingSoon && abilityIsActionable(node)).length;
     }
 
     function workflowOptionValue(lookup) {
@@ -3353,7 +3363,7 @@
       const rows = [];
       DEPARTMENT_SKILL_TREE.forEach((department) => {
         departmentLeafNodes(department).forEach((node) => {
-          if (!node || node.comingSoon || isPublishCenterNode(node)) return;
+          if (!node || node.comingSoon || isPublishCenterNode(node) || !abilityIsActionable(node)) return;
           rows.push({
             node,
             department,
@@ -4866,7 +4876,7 @@
         ability_key: key,
         ability_label: row.label || row.note || "",
         department_id: parentNode && parentNode.department_id || "private_domain",
-        department_name: parentNode && parentNode.department_name || "私域销管",
+        department_name: parentNode && parentNode.department_name || "私域销冠",
         note: row.note || row.label || "",
         sales_preset: true,
         is_action_node: true,
@@ -6740,6 +6750,9 @@
 
     function abilityIsActionable(node) {
       if (!node || node.comingSoon) return false;
+      if (node.featureKey && !(state.user && state.user.features && state.user.features[node.featureKey])) return false;
+      const nodeLookup = node.key ? abilityLookup(node.key) : null;
+      if (nodeLookup && !departmentFeatureVisible(nodeLookup.department)) return false;
       if (node.children && node.children.length) return true;
       if (node.always || node.routeTab) return true;
       if (isNativeWechatWorkflowKey(node.key) || isNativeWechatWorkflowKey(node.workQuickKey) || isNativeWechatWorkflowKey(node.workflowAction)) return true;
@@ -6992,6 +7005,11 @@
     function renderDepartmentView() {
       const department = departmentById(state.currentDepartmentId);
       if (!department) return;
+      if (!departmentFeatureVisible(department)) {
+        toast("当前账号没有该部门权限");
+        switchTab("office");
+        return;
+      }
       const entryOnly = setDepartmentEntryOnlyMode(department);
       state.currentDepartmentId = department.id;
       $("departmentKicker").textContent = department.alias || "DEPARTMENT";
@@ -7014,6 +7032,10 @@
     function openAbilityView(key, backDepartmentId = "") {
       const lookup = abilityLookup(key);
       if (!lookup) return;
+      if (!departmentFeatureVisible(lookup.department)) {
+        toast("当前账号没有该部门权限");
+        return;
+      }
       const sourceDepartmentId = String(backDepartmentId || state.currentDepartmentId || "").trim();
       state.currentDepartmentId = lookup.department.id;
       state.currentAbilityKey = lookup.node.key;

@@ -29,6 +29,8 @@ AI_SECRETARY_ENTRY_ID = "ai_secretary_entry"
 AGENT_ENTRY_ID = "agent_entry"
 MY_AI_EMPLOYEES_ENTRY_ID = "my_ai_employees_entry"
 AI_MARKETING_ENTRY_ID = "ai_marketing_entry"
+PRIVATE_DOMAIN_ENTRY_ID = "private_domain_entry"
+OVERSEAS_PLATFORM_ENTRY_ID = "overseas_platform_entry"
 TUTORIAL_ENTRY_ID = "tutorial_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
@@ -242,6 +244,24 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": AI_MARKETING_ENTRY_ID,
+    },
+    {
+        "id": PRIVATE_DOMAIN_ENTRY_ID,
+        "name": "私域销冠",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": PRIVATE_DOMAIN_ENTRY_ID,
+    },
+    {
+        "id": OVERSEAS_PLATFORM_ENTRY_ID,
+        "name": "海外平台",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": OVERSEAS_PLATFORM_ENTRY_ID,
     },
     {
         "id": TUTORIAL_ENTRY_ID,

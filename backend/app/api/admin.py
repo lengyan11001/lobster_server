@@ -1425,6 +1425,10 @@ def admin_update_user_skill_visibility(
         if row:
             db.delete(row)
             removed.append(pkg_id)
+        elif pkg_id in {str(item.get("id") or "").strip() for item in FEATURE_FLAG_PACKAGES}:
+            # Keep permission removal idempotent and report the requested
+            # feature as removed even when an older account had no row yet.
+            removed.append(pkg_id)
     for pkg_id in body.unlock_add:
         pkg_id = pkg_id.strip()
         if not pkg_id:

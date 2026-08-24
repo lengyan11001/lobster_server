@@ -39,6 +39,7 @@ from .scheduled_tasks import (
     _local_bestseller_profile_from_persona,
     _serialize_task,
 )
+from ..services.user_feature_flags import user_feature_flags
 
 router = APIRouter()
 
@@ -98,6 +99,37 @@ def _clean_time(value: Any) -> str:
     if not _TIME_RE.match(text):
         raise HTTPException(status_code=400, detail="节点时间格式应为 HH:MM")
     return text
+
+
+def _assert_workflow_feature_permissions(db: Session, user_id: int, nodes: list[dict[str, Any]]) -> None:
+    """Prevent direct API activation from bypassing H5 department gates."""
+    flags = user_feature_flags(db, int(user_id or 0))
+    required: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        key = str(node.get("ability_key") or node.get("abilityKey") or node.get("key") or "").strip().lower()
+        action = str(
+            ((node.get("plan") or {}).get("payload") or {}).get("action")
+            if isinstance(node.get("plan"), dict)
+            else ""
+        ).strip().lower()
+        key = action or key
+        department_id = str(node.get("department_id") or node.get("departmentId") or "").strip().lower()
+        if key in {"native_wechat_poll", "native_wechat_add_friend", "native_wechat_moments_engage", "native_wechat_group_invite"} and department_id != "sales":
+            required.add("private_domain_entry")
+        if key in {"linkedin_leads", "linkedin_mining", "reddit_leads", "x_leads", "tiktok_leads", "global_trade_leads_skill"}:
+            required.add("overseas_platform_entry")
+        for child in node.get("children") or []:
+            visit(child)
+
+    for node in nodes or []:
+        visit(node)
+    denied = sorted(key for key in required if not flags.get(key, False))
+    if denied:
+        labels = {"private_domain_entry": "私域销冠", "overseas_platform_entry": "海外平台"}
+        raise HTTPException(status_code=403, detail="当前账号未开通：" + "、".join(labels.get(key, key) for key in denied))
 
 
 def _workflow_platform_label(platform: str) -> str:
@@ -2439,6 +2471,7 @@ def activate_workflow_template(
         template.updated_at = datetime.utcnow()
         db.commit()
     nodes = _clean_nodes(template.nodes or [])
+    _assert_workflow_feature_permissions(db, owner.id, nodes)
     template_meta = template.meta if isinstance(template.meta, dict) else {}
     system_template_key = _clean_text(template_meta.get("system_template_key"), 128)
     snapshot_extra = None
@@ -2483,6 +2516,7 @@ def activate_inline_workflow_template(
         raise HTTPException(status_code=400, detail="该系统员工暂未开放")
     name = (body.name or "系统员工模板").strip()[:160] or "系统员工模板"
     nodes = _clean_nodes(body.nodes or [])
+    _assert_workflow_feature_permissions(db, owner.id, nodes)
     activation, stopped_ids, tasks = _activate_nodes_for_device(
         db=db,
         current_user=current_user,
