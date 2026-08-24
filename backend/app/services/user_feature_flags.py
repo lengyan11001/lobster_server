@@ -25,13 +25,25 @@ BILLING_ENTRY_ID = "billing_entry"
 SYS_CONFIG_ENTRY_ID = "sys_config_entry"
 LOGS_ENTRY_ID = "logs_entry"
 PERSONAL_SETTINGS_ENTRY_ID = "personal_settings_entry"
+AI_SECRETARY_ENTRY_ID = "ai_secretary_entry"
 AGENT_ENTRY_ID = "agent_entry"
+MY_AI_EMPLOYEES_ENTRY_ID = "my_ai_employees_entry"
+AI_MARKETING_ENTRY_ID = "ai_marketing_entry"
+TUTORIAL_ENTRY_ID = "tutorial_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
 MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
 HOMEPAGE_ENTRY_SEEDED_MARKER = "__homepage_entry_permissions_seeded_v1"
+RETIRED_PACKAGE_IDS = frozenset({
+    "production_records_entry",
+    "openclaw_weixin_channel",
+    "openclaw_memory_skill",
+    "browser_use_skill",
+    "computer_use_skill",
+    "media_edit_skill",
+})
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     HOME_AI_CHAT_ENTRY_ID,
     H5_CHAT_ENTRY_ID,
@@ -39,14 +51,15 @@ HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     PUBLISH_CENTER_ENTRY_ID,
     ASSET_LIBRARY_ENTRY_ID,
     SCHEDULED_TASKS_ENTRY_ID,
-    PRODUCTION_RECORDS_ENTRY_ID,
     BILLING_ENTRY_ID,
     SYS_CONFIG_ENTRY_ID,
     LOGS_ENTRY_ID,
     PERSONAL_SETTINGS_ENTRY_ID,
     AGENT_ENTRY_ID,
+    MY_AI_EMPLOYEES_ENTRY_ID,
+    AI_MARKETING_ENTRY_ID,
+    TUTORIAL_ENTRY_ID,
     LOCAL_BESTSELLER_SKILL_ID,
-    VIRAL_VIDEO_REMIX_SKILL_ID,
 )
 
 FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
@@ -195,6 +208,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "feature_key": PERSONAL_SETTINGS_ENTRY_ID,
     },
     {
+        "id": AI_SECRETARY_ENTRY_ID,
+        "name": "AI秘书入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": AI_SECRETARY_ENTRY_ID,
+    },
+    {
         "id": AGENT_ENTRY_ID,
         "name": "首页：AI 执行台入口",
         "store_visibility": "入口权限",
@@ -202,6 +224,33 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": AGENT_ENTRY_ID,
+    },
+    {
+        "id": MY_AI_EMPLOYEES_ENTRY_ID,
+        "name": "我的 AI 员工",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": MY_AI_EMPLOYEES_ENTRY_ID,
+    },
+    {
+        "id": AI_MARKETING_ENTRY_ID,
+        "name": "AI 营销创作",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": AI_MARKETING_ENTRY_ID,
+    },
+    {
+        "id": TUTORIAL_ENTRY_ID,
+        "name": "教程入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": TUTORIAL_ENTRY_ID,
     },
     {
         "id": LOCAL_BESTSELLER_SKILL_ID,
@@ -291,7 +340,8 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
         user = db.query(User).filter(User.id == int(user_id)).first()
         has_custom = _user_has_custom_visibility(db, int(user_id))
         if user is not None and not has_custom:
-            visible = set(_default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False))))
+            from ..api.skills import _expand_group_visibility
+            visible = _expand_group_visibility(set(_default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))))
         else:
             visible = {
                 row[0]
@@ -316,9 +366,11 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             flags.setdefault(package_id, False)
         if feature_key:
             flags.setdefault(feature_key, False)
+    for package_id in RETIRED_PACKAGE_IDS:
+        flags.setdefault(package_id, False)
     for package_id in visible:
         key = str(package_id or "").strip()
-        if not key:
+        if not key or key in RETIRED_PACKAGE_IDS:
             continue
         flags[key] = True
         alias = FEATURE_FLAG_PACKAGE_ALIASES.get(key)

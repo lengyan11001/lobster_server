@@ -31,7 +31,7 @@ from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normali
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
-from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
+from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES, RETIRED_PACKAGE_IDS
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 
@@ -1367,8 +1367,9 @@ def admin_get_user_skill_visibility(
         for k, v in packages.items()
     ]
     feature_pkg_by_id = {str(pkg.get("id") or ""): dict(pkg) for pkg in FEATURE_FLAG_PACKAGES}
-    all_pkgs = [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES] + [
+    all_pkgs = [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES if str(pkg.get("id") or "") not in RETIRED_PACKAGE_IDS] + [
         pkg for pkg in all_pkgs if pkg["id"] not in feature_pkg_by_id
+        and pkg["id"] not in RETIRED_PACKAGE_IDS
     ]
     return {
         "user_id": user_id,
@@ -1404,7 +1405,7 @@ def admin_update_user_skill_visibility(
     added, removed, unlocked_added, unlocked_removed = [], [], [], []
     for pkg_id in body.add:
         pkg_id = pkg_id.strip()
-        if not pkg_id:
+        if not pkg_id or pkg_id in RETIRED_PACKAGE_IDS:
             continue
         exists = db.query(UserSkillVisibility).filter(
             UserSkillVisibility.user_id == user_id,

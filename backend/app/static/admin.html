@@ -2196,7 +2196,7 @@ function renderGenerationRecordsTable(items, tableId, pagerId, page, loadFnName,
       const model = item.model || '';
       const tags = item.tags || '';
       const badgeClass = item.media_type === 'video' ? 'badge-purple' : (item.media_type === 'audio' ? 'badge-yellow' : 'badge-blue');
-      html += '<tr>'
+       html += '<tr>'
         + '<td style="font-size:11px;color:var(--text-secondary);white-space:nowrap">' + (item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '-') + '</td>'
         + (includeUser ? '<td><button class="btn btn-outline btn-sm" onclick="switchNav(&quot;users&quot;);showUserDetail(' + item.user_id + ')">#' + item.user_id + '</button><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(item.user_account || '-') + '</div></td>' : '')
         + '<td><span class="badge ' + badgeClass + '">' + escapeHtml(mediaTypeLabel(item.media_type)) + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(formatBytes(item.file_size)) + '</div></td>'
@@ -2711,7 +2711,7 @@ async function doAddCredits() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-async function loadSkillVisibility(userId) {
+async function loadSkillVisibilityLegacy(userId) {
   const section = document.getElementById('skillVisibilitySection');
   try {
     const visData = await api('/admin/api/user-skill-visibility/' + userId);
@@ -2731,10 +2731,33 @@ async function loadSkillVisibility(userId) {
       </label>`;
     }
     html += '</div>';
+    html = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+      + '<input id="skillVisibilitySearch" type="search" placeholder="搜索权限名称或 ID" oninput="filterSkillVisibility()" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:7px">'
+      + '<select id="skillVisibilityGroup" onchange="filterSkillVisibility()" style="padding:9px 12px;border:1px solid var(--border);border-radius:7px"><option value="">全部分组</option><option value="entry">首页入口</option><option value="marketing">AI营销创作</option><option value="leads">获客与私信</option><option value="system">系统与其他技能</option></select>'
+      + '<label style="font-size:12px;white-space:nowrap"><input id="skillVisibilityOnlyEnabled" type="checkbox" onchange="filterSkillVisibility()"> 只看已开启</label></div>'
+      + '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">权限按分组筛选，搜索名称或 ID 即可定位。修改会立即保存到服务器。</div>' + html;
     section.innerHTML = html;
   } catch(e) {
     section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
   }
+}
+
+function filterSkillVisibility() {
+  const root = document.getElementById('skillVisibilitySection');
+  if (!root) return;
+  const q = String((document.getElementById('skillVisibilitySearch') || {}).value || '').trim().toLowerCase();
+  const group = String((document.getElementById('skillVisibilityGroup') || {}).value || '');
+  const only = !!((document.getElementById('skillVisibilityOnlyEnabled') || {}).checked);
+  root.querySelectorAll('.table-wrap tbody tr').forEach(row => {
+    const text = String(row.dataset.skillSearch || row.textContent || '').toLowerCase();
+    const id = text.match(/[a-z0-9_]+/g) || [];
+    const isEntry = /_entry$|_access$/.test(id.join(' '));
+    const isLeads = /leads|inquiry|wechat|wecom|messenger|linkedin|reddit|tiktok|x_/.test(text);
+    const isMarketing = /video|human|digital|image|content|article|ppt|ecommerce|seedance|tvc|bestseller/.test(text);
+    const rowGroup = isEntry ? 'entry' : (isLeads ? 'leads' : (isMarketing ? 'marketing' : 'system'));
+    const match = (!q || text.includes(q)) && (!group || group === rowGroup) && (!only || row.dataset.skillEnabled === '1');
+    row.style.display = match ? '' : 'none';
+  });
 }
 
 // ── 代理商：认领下级 ──
@@ -2867,8 +2890,8 @@ async function loadSkillVisibility(userId) {
       const permissionCell = isFeatureFlag
         ? '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + (active ? '已开通权限' : '开通权限') + '</span></label>'
         : '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label>';
-      html += '<tr>'
-        + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + pkgId + '</div></td>'
+       html += '<tr data-skill-search="' + escapeHtml(String(pkg.name || '') + ' ' + pkg.id).toLowerCase() + '" data-skill-enabled="' + (active ? '1' : '0') + '">'
+         + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + pkgId + '</div></td>'
         + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(price) + '</div></td>'
         + '<td>' + (pkg.capabilities_count || 0) + '</td>'
         + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + visibleText + '</span></label></td>'
@@ -2876,6 +2899,11 @@ async function loadSkillVisibility(userId) {
         + '</tr>';
     }
     html += '</tbody></table></div>';
+    html = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+      + '<input id="skillVisibilitySearch" type="search" placeholder="搜索权限名称或 ID" oninput="filterSkillVisibility()" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:7px">'
+      + '<select id="skillVisibilityGroup" onchange="filterSkillVisibility()" style="padding:9px 12px;border:1px solid var(--border);border-radius:7px"><option value="">全部分组</option><option value="entry">首页入口</option><option value="marketing">AI营销创作</option><option value="leads">获客与私信</option><option value="system">系统与其他技能</option></select>'
+      + '<label style="font-size:12px;white-space:nowrap"><input id="skillVisibilityOnlyEnabled" type="checkbox" onchange="filterSkillVisibility()"> 只看已开启</label></div>'
+      + '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">权限按分组筛选，搜索名称或 ID 即可定位。修改会立即保存到服务器。</div>' + html;
     section.innerHTML = html;
   } catch(e) {
     section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';

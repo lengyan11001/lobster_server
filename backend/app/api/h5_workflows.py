@@ -23,9 +23,6 @@ from ..models import (
     IPContentKeyword,
     IPContentScheduleTemplate,
     OpenClawMemoryDocument,
-    ShanjianDigitalHumanProfile,
-    UserHiflyAvatarAsset,
-    UserHiflyVoiceAsset,
     ScheduledTask,
     User,
 )
@@ -752,81 +749,6 @@ def _current_personal_schedule_template(
     return row if grant else None
 
 
-def _latest_hifly_avatar(db: Session, user_id: int) -> str:
-    row = (
-        db.query(UserHiflyAvatarAsset)
-        .filter(
-            UserHiflyAvatarAsset.user_id == user_id,
-            UserHiflyAvatarAsset.status == "success",
-            UserHiflyAvatarAsset.hifly_avatar_id.isnot(None),
-        )
-        .order_by(UserHiflyAvatarAsset.updated_at.desc(), UserHiflyAvatarAsset.id.desc())
-        .first()
-    )
-    return _clean_text(row.hifly_avatar_id if row else "", 128)
-
-
-def _latest_hifly_voice(db: Session, user_id: int) -> str:
-    row = (
-        db.query(UserHiflyVoiceAsset)
-        .filter(
-            UserHiflyVoiceAsset.user_id == user_id,
-            UserHiflyVoiceAsset.status == "success",
-            UserHiflyVoiceAsset.hifly_voice_id.isnot(None),
-        )
-        .order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
-        .first()
-    )
-    return _clean_text(row.hifly_voice_id if row else "", 128)
-
-
-def _latest_shanjian_virtualman(db: Session, user_id: int) -> str:
-    row = (
-        db.query(ShanjianDigitalHumanProfile)
-        .filter(
-            ShanjianDigitalHumanProfile.user_id == user_id,
-            ShanjianDigitalHumanProfile.status == "succeed",
-            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
-        )
-        .order_by(
-            ShanjianDigitalHumanProfile.is_default.desc(),
-            ShanjianDigitalHumanProfile.updated_at.desc(),
-            ShanjianDigitalHumanProfile.id.desc(),
-        )
-        .first()
-    )
-    return _clean_text(row.virtualman_id if row else "", 128)
-
-
-def _available_shanjian_virtualmans(db: Session, user_id: int) -> list[dict[str, Any]]:
-    rows = (
-        db.query(ShanjianDigitalHumanProfile)
-        .filter(
-            ShanjianDigitalHumanProfile.user_id == user_id,
-            ShanjianDigitalHumanProfile.status == "succeed",
-            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
-        )
-        .order_by(ShanjianDigitalHumanProfile.id.asc())
-        .all()
-    )
-    candidates: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in rows:
-        virtualman_id = _clean_text(row.virtualman_id, 128)
-        if not virtualman_id or virtualman_id in seen:
-            continue
-        seen.add(virtualman_id)
-        candidates.append(
-            {
-                "profile_id": int(row.id),
-                "virtualman_id": virtualman_id,
-                "title": _clean_text(row.title, 128),
-                "cover_url": _clean_text(row.cover_url, 1000),
-            }
-        )
-    return candidates
-
-
 def _template_language(requirements: dict[str, Any], template: Optional[IPContentScheduleTemplate]) -> str:
     req = requirements if isinstance(requirements, dict) else {}
     meta = template.meta if template and isinstance(template.meta, dict) else {}
@@ -1034,6 +956,79 @@ def _sales_digital_human_template_id(
     if not isinstance(raw, dict):
         return ""
     return _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"), 128)
+
+
+def _sales_digital_human_resources(
+    personal: Optional[IPContentScheduleTemplate],
+    current: Optional[IPContentScheduleTemplate],
+) -> dict[str, list[dict[str, Any]]]:
+    """Read the avatar/voice allow-list stored on the active personal template.
+
+    The list is deliberately taken from template metadata only.  Falling back to
+    the user's latest/all assets here would make a workflow silently use assets
+    that were never selected in the template.
+    """
+    personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    current_meta = current.meta if current and isinstance(current.meta, dict) else {}
+    raw = current_meta.get("digital_human_resources") if "digital_human_resources" in current_meta else personal_meta.get("digital_human_resources")
+    if not isinstance(raw, dict):
+        return {"avatars": [], "voices": []}
+
+    avatars: list[dict[str, Any]] = []
+    seen_avatars: set[str] = set()
+    for item in raw.get("avatars") if isinstance(raw.get("avatars"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in {"succeed", "success", "completed", "complete", "done"}:
+            continue
+        provider = _clean_text(item.get("provider") or item.get("source"), 32).lower()
+        virtualman_id = _clean_text(item.get("virtualman_id") or item.get("virtualmanId"), 128)
+        avatar_id = _clean_text(item.get("avatar") or item.get("avatar_id") or item.get("avatarId"), 128)
+        if provider in {"shanjian", "shanjian_v2", "digital_human"} and not virtualman_id:
+            virtualman_id = avatar_id
+        identifier = virtualman_id if provider in {"shanjian", "digital_human", "shanjian_v2"} else avatar_id
+        if not identifier:
+            identifier = virtualman_id or avatar_id
+        if not identifier:
+            continue
+        key = f"{provider}:{identifier}"
+        if key in seen_avatars:
+            continue
+        seen_avatars.add(key)
+        avatars.append(
+            {
+                "provider": provider or ("shanjian" if virtualman_id else "hifly"),
+                "virtualman_id": virtualman_id,
+                "avatar": avatar_id,
+                "profile_id": _safe_int(item.get("profile_id") or item.get("source_record_id") or item.get("id")),
+                "title": _clean_text(item.get("title") or item.get("name"), 128),
+                "cover_url": _clean_text(item.get("cover_url") or item.get("coverUrl") or item.get("image_url"), 1000),
+            }
+        )
+
+    voices: list[dict[str, Any]] = []
+    seen_voices: set[str] = set()
+    for item in raw.get("voices") if isinstance(raw.get("voices"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in {"succeed", "success", "completed", "complete", "done"}:
+            continue
+        provider = _clean_text(item.get("provider") or item.get("source"), 32).lower()
+        voice = _clean_text(item.get("voice") or item.get("voice_id") or item.get("speaker_id") or item.get("speakerId"), 128)
+        if not voice or voice in seen_voices:
+            continue
+        seen_voices.add(voice)
+        voices.append(
+            {
+                "provider": provider or "hifly",
+                "voice": voice,
+                "title": _clean_text(item.get("title") or item.get("name"), 128),
+                "source_record_id": _safe_int(item.get("source_record_id") or item.get("id")),
+            }
+        )
+    return {"avatars": avatars, "voices": voices}
 
 
 def _prepare_publish_action_nodes(
@@ -1584,10 +1579,27 @@ def _prepare_sales_workflow_nodes(
         ]
     keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
     digital_human_provider = _sales_digital_human_provider(snapshot_extra, reference_template)
-    hifly_avatar = _latest_hifly_avatar(db, owner.id) if digital_human_provider == _SALES_DH_PROVIDER_LEGACY else ""
-    shanjian_virtualman = _latest_shanjian_virtualman(db, owner.id)
-    shanjian_virtualmans = _available_shanjian_virtualmans(db, owner.id)
-    hifly_voice = _latest_hifly_voice(db, owner.id)
+    digital_human_resources = _sales_digital_human_resources(personal, current_template)
+    selected_avatars = digital_human_resources["avatars"]
+    selected_voices = digital_human_resources["voices"]
+    hifly_avatar_rows = [
+        row for row in selected_avatars
+        if row.get("provider") not in {"shanjian", "shanjian_v2", "digital_human"}
+        and _clean_text(row.get("avatar"), 128)
+    ]
+    shanjian_virtualmans = [
+        {
+            "profile_id": _safe_int(row.get("profile_id")),
+            "virtualman_id": _clean_text(row.get("virtualman_id"), 128),
+            "title": _clean_text(row.get("title"), 128),
+            "cover_url": _clean_text(row.get("cover_url"), 1000),
+        }
+        for row in selected_avatars
+        if _clean_text(row.get("virtualman_id"), 128)
+    ]
+    hifly_avatar = _clean_text((hifly_avatar_rows[0] if hifly_avatar_rows else {}).get("avatar"), 128)
+    shanjian_virtualman = _clean_text((shanjian_virtualmans[0] if shanjian_virtualmans else {}).get("virtualman_id"), 128)
+    hifly_voice = _clean_text((selected_voices[0] if selected_voices else {}).get("voice"), 128)
     template_language = _template_language(requirements, reference_template)
 
     has_hifly = False
@@ -1692,6 +1704,9 @@ def _prepare_sales_workflow_nodes(
                 if hifly_voice:
                     params.setdefault("voice", hifly_voice)
                     params.setdefault("speaker_id", hifly_voice)
+                if selected_voices:
+                    params["voice_candidates"] = selected_voices
+                    params["voice_selection_mode"] = "daily_round_robin"
                 params = _apply_sales_digital_human_defaults(params)
                 payload["params"] = params
                 plan["payload"] = payload
@@ -1743,6 +1758,9 @@ def _prepare_sales_workflow_nodes(
                 if hifly_voice:
                     params.setdefault("voice", hifly_voice)
                     params.setdefault("speaker_id", hifly_voice)
+                if selected_voices:
+                    params["voice_candidates"] = selected_voices
+                    params["voice_selection_mode"] = "daily_round_robin"
                 params = _apply_sales_digital_human_defaults(params)
                 node["ability_key"] = "shanjian_digital_human_video"
                 plan["task_kind"] = "client_workflow"
@@ -1778,13 +1796,13 @@ def _prepare_sales_workflow_nodes(
         missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
     if has_hifly:
         if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
-            if not hifly_avatar:
+            if not hifly_avatar_rows:
                 missing.append("素材库：请先创建可用的旧版数字人形象分身")
         elif not shanjian_virtualmans:
             missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
         if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
             missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
-        if not hifly_voice:
+        if not selected_voices:
             missing.append("素材库：请先创建可用的声音分身")
     if has_local_bestseller and personal:
         profile = _local_bestseller_profile_from_persona(requirements)

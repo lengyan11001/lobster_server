@@ -433,10 +433,11 @@ def _maybe_convert_h5_digital_human_task(
     if "h5" not in context_hint.lower() and "数字人" not in context_hint:
         return task_kind, payload
     inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    strip_avatar_keys = _h5_dh_provider() == _DIGITAL_HUMAN_PROVIDER_V2
     params = {
         key: value
         for key, value in dict(inner).items()
-        if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
+        if key not in ({"avatar", "avatar_id", "st_show", "aigc_flag"} if strip_avatar_keys else {"st_show", "aigc_flag"})
     }
     placeholder_texts = {
         "数字人口播",
@@ -467,13 +468,16 @@ def _maybe_convert_h5_digital_human_task(
         legacy_payload["payload"] = params
         return task_kind, legacy_payload
     requested_virtualman_id = _h5_dh_clean_text(params.get("virtualman_id"), 128)
-    virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
-    virtualman_candidates = _h5_dh_available_virtualmans(db, target_user_id)
-    voice = _h5_dh_resolve_voice(
-        db,
-        target_user_id,
-        params.get("speaker_id") or params.get("voice"),
+    template_virtualman_candidates = params.get("virtualman_candidates") if isinstance(params.get("virtualman_candidates"), list) else []
+    virtualman_candidates = template_virtualman_candidates
+    virtualman_id = requested_virtualman_id or _h5_dh_clean_text(
+        (virtualman_candidates[0] if virtualman_candidates and isinstance(virtualman_candidates[0], dict) else {}).get("virtualman_id"),
+        128,
     )
+    voice_candidates = params.get("voice_candidates") if isinstance(params.get("voice_candidates"), list) else []
+    voice = _h5_dh_clean_text(params.get("speaker_id") or params.get("voice"), 128)
+    if not voice and voice_candidates and isinstance(voice_candidates[0], dict):
+        voice = _h5_dh_clean_text(voice_candidates[0].get("voice") or voice_candidates[0].get("speaker_id"), 128)
     if requested_virtualman_id:
         params["virtualman_selection_mode"] = "fixed"
     elif virtualman_candidates:
@@ -529,11 +533,13 @@ def _enrich_digital_human_voice_payload(
     if _h5_dh_clean_text(source.get("action"), 128) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
         return source
     params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
-    voice = _h5_dh_resolve_voice(
-        db,
-        target_user_id,
-        params.get("speaker_id") or params.get("voice"),
-    )
+    voice = _h5_dh_clean_text(params.get("speaker_id") or params.get("voice"), 128)
+    if not voice:
+        candidates = params.get("voice_candidates") if isinstance(params.get("voice_candidates"), list) else []
+        if candidates and isinstance(candidates[0], dict):
+            voice = _h5_dh_clean_text(candidates[0].get("voice") or candidates[0].get("speaker_id"), 128)
+    if not voice and "voice_candidates" not in params:
+        voice = _h5_dh_resolve_voice(db, target_user_id, "")
     if voice:
         params["voice"] = voice
         params["speaker_id"] = voice

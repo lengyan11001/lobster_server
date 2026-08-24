@@ -57,38 +57,16 @@ DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
     "skill_store_entry",
     "publish_center_entry",
     "asset_library_entry",
+    "global_trade_leads_skill",
     "scheduled_tasks_entry",
-    "production_records_entry",
     "billing_entry",
     "sys_config_entry",
     "logs_entry",
     "personal_settings_entry",
     "agent_entry",
-    "sutui_mcp",
-    "xiaohongshu_publish",
-    "douyin_publish",
-    "toutiao_publish",
-    "openclaw_weixin_channel",
-    "media_edit_skill",
-    "cutcli_template_studio",
-    "comfly_ecommerce_detail_skill",
-    "hifly_digital_human_skill",
-    "comfly_veo_skill",
-    "comfly_seedance_tvc_skill",
-    "goal_video_pipeline_skill",
-    "ip_content_daily_skill",
-    "linkedin_mining_skill",
-    "reddit_leads",
-    "x_leads",
-    "tiktok_leads",
-    "wecom_reply",
-    "juhe_wechat_skill",
-    "create_video_pipeline_skill",
-    "wewrite_official_account_skill",
-    "create_ppt_skill",
-    "local_bestseller_skill",
-    "viral_video_remix_skill",
-    "multi_clip_mixer_skill",
+    "my_ai_employees_entry",
+    "ai_marketing_entry",
+    "tutorial_entry",
 )
 
 
@@ -98,35 +76,54 @@ DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
     "skill_store_entry",
     "publish_center_entry",
     "asset_library_entry",
+    "global_trade_leads_skill",
     "scheduled_tasks_entry",
-    "production_records_entry",
     "billing_entry",
     "sys_config_entry",
     "logs_entry",
     "personal_settings_entry",
     "agent_entry",
-    "sutui_mcp",
-    "youtube_publish",
-    "twilio_whatsapp",
-    "openclaw_memory_skill",
-    "comfly_ecommerce_detail_skill",
-    "hifly_digital_human_skill",
-    "cutcli_template_studio",
-    "comfly_veo_skill",
-    "comfly_seedance_tvc_skill",
-    "goal_video_pipeline_skill",
-    "ip_content_daily_skill",
-    "reddit_leads",
-    "x_leads",
-    "tiktok_leads",
-    "wecom_reply",
-    "juhe_wechat_skill",
-    "create_ppt_skill",
-    "create_video_pipeline_skill",
-    "local_bestseller_skill",
-    "viral_video_remix_skill",
-    "multi_clip_mixer_skill",
+    "my_ai_employees_entry",
+    "ai_marketing_entry",
+    "tutorial_entry",
 )
+
+REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
+    "production_records_entry",
+    "openclaw_weixin_channel",
+    "openclaw_memory_skill",
+    "browser_use_skill",
+    "computer_use_skill",
+    "media_edit_skill",
+})
+
+DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
+    "my_ai_employees_entry": (
+        "local_bestseller_skill",
+    ),
+    "ai_marketing_entry": (
+        "comfly_ecommerce_detail_skill",
+        "hifly_digital_human_skill",
+        "comfly_veo_skill",
+        "comfly_seedance_tvc_skill",
+        "goal_video_pipeline_skill",
+        "ip_content_daily_skill",
+        "wewrite_official_account_skill",
+        "viral_video_remix_skill",
+        "create_video_pipeline_skill",
+        "create_ppt_skill",
+        "multi_clip_mixer_skill",
+    ),
+}
+
+
+def _expand_group_visibility(package_ids: set) -> set:
+    expanded = {str(item) for item in package_ids if str(item).strip()}
+    for group_id, children in DEFAULT_GROUP_PACKAGE_EXPANSIONS.items():
+        if group_id in expanded:
+            expanded.update(children)
+    expanded.difference_update(REMOVED_DEFAULT_PACKAGE_IDS)
+    return expanded
 
 
 def _default_visible_packages_for_request(is_overseas_client: bool) -> tuple[str, ...]:
@@ -154,7 +151,7 @@ def _ensure_user_visibility_seeded(db: Session, user: User) -> None:
     """
     if _user_has_custom_visibility(db, user.id):
         return
-    baseline = _default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))
+    baseline = _expand_group_visibility(set(_default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))))
     for pkg_id in baseline:
         db.add(UserSkillVisibility(user_id=user.id, package_id=pkg_id))
     db.commit()
@@ -167,9 +164,9 @@ def _user_visible_package_ids(
     is_overseas_client: bool,
 ) -> set:
     if not _user_has_custom_visibility(db, user.id):
-        return set(_default_visible_packages_for_request(is_overseas_client))
+        return _expand_group_visibility(set(_default_visible_packages_for_request(is_overseas_client)))
     rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user.id).all()
-    return {r[0] for r in rows}
+    return {r[0] for r in rows if r[0] not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 
 def _pkg_store_visibility(pkg: dict) -> str:
