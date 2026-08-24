@@ -23,7 +23,9 @@ router = APIRouter()
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _OVERSEAS_CLIENT_HEADER = "x-lobster-client-overseas"
 BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
-_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__homepage_entry_permissions_seeded_v1"
+# Keep this separate from the original homepage seed marker. Older accounts
+# may already have v1 while still missing the employee defaults added later.
+_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v2"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
