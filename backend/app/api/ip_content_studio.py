@@ -24,6 +24,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
 from .auth import access_token_claims, create_access_token, get_current_user
 from .mobile_identity import online_user_for_mobile_user
+from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
 from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
@@ -555,6 +556,10 @@ class ScheduleTemplateBody(BaseModel):
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
     requirements: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduleTemplateCopyBody(BaseModel):
+    name: str = Field("", max_length=160)
 
 
 class ScheduledDailyRunOptions(BaseModel):
@@ -2697,14 +2702,12 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
         return payload
     reference = _granted_template_for_user(db, int(row.user_id), _current_template_id_from_meta(row.meta)) or row
     if int(reference.id or 0) != int(row.id or 0):
-        if not payload.get("keyword_ids"):
-            payload["keyword_ids"] = _clean_int_ids(reference.keyword_ids, 50)
-        if not payload.get("competitor_ids"):
-            payload["competitor_ids"] = _clean_int_ids(reference.competitor_ids, 50)
-        if not payload.get("memory_doc_ids"):
-            payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
-        if not payload.get("memory_docs"):
-            payload["memory_docs"] = reference.memory_docs or []
+        # A direct agent-template selection is a live reference. Always read
+        # its current resources so later agent edits reach this user's view.
+        payload["keyword_ids"] = _clean_int_ids(reference.keyword_ids, 50)
+        payload["competitor_ids"] = _clean_int_ids(reference.competitor_ids, 50)
+        payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
+        payload["memory_docs"] = reference.memory_docs or []
         payload["requirements"] = {**(reference.requirements or {}), **(payload.get("requirements") or {})}
     keywords, competitors = _template_resource_rows(db, reference)
     keyword_id_set = set(_clean_int_ids(payload.get("keyword_ids"), 50))
@@ -2834,6 +2837,163 @@ def _granted_template_for_user(db: Session, user_id: int, template_id: Any) -> O
         .first()
     )
     return row if grant else None
+
+
+def _granted_template_matching_refs(
+    db: Session,
+    user_id: int,
+    keyword_ids: list[int],
+    competitor_ids: list[int],
+) -> Optional[IPContentScheduleTemplate]:
+    """Recover the selected authorized source when an old client omitted its ID."""
+    grants = db.query(H5AgentTemplateGrant).filter(
+        H5AgentTemplateGrant.target_user_id == user_id,
+        H5AgentTemplateGrant.status == "active",
+    ).all()
+    requested_keywords = set(_clean_int_ids(keyword_ids, 50))
+    requested_competitors = set(_clean_int_ids(competitor_ids, 50))
+    for grant in grants:
+        source = db.query(IPContentScheduleTemplate).filter(
+            IPContentScheduleTemplate.id == grant.template_id,
+            IPContentScheduleTemplate.user_id == grant.owner_user_id,
+            IPContentScheduleTemplate.status == "active",
+        ).first()
+        if source is None or not requested_keywords.issubset(set(_clean_int_ids(source.keyword_ids, 50))):
+            continue
+        if not requested_competitors.issubset(set(_clean_int_ids(source.competitor_ids, 50))):
+            continue
+        return source
+    return None
+
+
+def _copy_template_name(db: Session, user_id: int, source_name: str, requested_name: str = "") -> str:
+    base = _clean_text(requested_name, 160) or f"{_clean_text(source_name, 140) or 'IP template'} (copy)"
+    candidate = base
+    index = 2
+    while db.query(IPContentScheduleTemplate.id).filter(
+        IPContentScheduleTemplate.user_id == user_id,
+        IPContentScheduleTemplate.name == candidate,
+    ).first() is not None:
+        suffix = f" (copy {index})"
+        candidate = f"{base[:160 - len(suffix)]}{suffix}"
+        index += 1
+    return candidate
+
+
+def _copy_template_resources(
+    db: Session,
+    source: IPContentScheduleTemplate,
+    target_user_id: int,
+    installation_id: str,
+) -> tuple[list[int], list[int], list[str], list[dict[str, Any]]]:
+    """Clone a granted template's resources into the target user's namespace."""
+    source_keyword_ids = _clean_int_ids(source.keyword_ids, 50)
+    source_competitor_ids = _clean_int_ids(source.competitor_ids, 50)
+    source_doc_ids = _clean_memory_doc_ids(source.memory_doc_ids, 50) or _memory_doc_ids_from_docs(source.memory_docs or [], 50)
+
+    source_keywords = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == source.user_id, IPContentKeyword.id.in_(source_keyword_ids))
+        .all()
+        if source_keyword_ids else []
+    )
+    keyword_map: dict[int, int] = {}
+    for item in _rows_ordered_by_ids(source_keywords, source_keyword_ids):
+        existing = db.query(IPContentKeyword).filter(
+            IPContentKeyword.user_id == target_user_id,
+            IPContentKeyword.keyword == item.keyword,
+        ).first()
+        if existing is None:
+            existing = IPContentKeyword(
+                user_id=target_user_id,
+                keyword=item.keyword,
+                display_name=item.display_name or item.keyword,
+                status="active",
+                meta={**(item.meta or {}), "copied_from_keyword_id": item.id},
+            )
+            db.add(existing)
+            db.flush()
+        keyword_map[int(item.id)] = int(existing.id)
+
+    source_competitors = (
+        db.query(ContentCompetitorAccount)
+        .filter(ContentCompetitorAccount.user_id == source.user_id, ContentCompetitorAccount.id.in_(source_competitor_ids))
+        .all()
+        if source_competitor_ids else []
+    )
+    competitor_map: dict[int, int] = {}
+    for item in _rows_ordered_by_ids(source_competitors, source_competitor_ids):
+        existing = db.query(ContentCompetitorAccount).filter(
+            ContentCompetitorAccount.user_id == target_user_id,
+            ContentCompetitorAccount.platform == item.platform,
+            ContentCompetitorAccount.account_key == item.account_key,
+        ).first()
+        if existing is None:
+            existing = ContentCompetitorAccount(
+                user_id=target_user_id,
+                platform=item.platform,
+                display_name=item.display_name or item.account_key,
+                account_key=item.account_key,
+                homepage_url=item.homepage_url,
+                industry_tags=item.industry_tags,
+                status="active",
+                meta={**(item.meta or {}), "copied_from_competitor_id": item.id},
+            )
+            db.add(existing)
+            db.flush()
+        competitor_map[int(item.id)] = int(existing.id)
+
+    source_docs = {
+        str(row.doc_id): row
+        for row in db.query(OpenClawMemoryDocument).filter(
+            OpenClawMemoryDocument.target_user_id == source.user_id,
+            OpenClawMemoryDocument.doc_id.in_(source_doc_ids),
+            OpenClawMemoryDocument.status == "active",
+        ).all()
+    } if source_doc_ids else {}
+    inline_docs = {
+        str((item or {}).get("id") or (item or {}).get("doc_id") or ""): item
+        for item in (source.memory_docs or [])
+        if isinstance(item, dict)
+    }
+    copied_doc_ids: list[str] = []
+    copied_docs: list[dict[str, Any]] = []
+    for doc_id in source_doc_ids:
+        source_doc = source_docs.get(str(doc_id))
+        inline = inline_docs.get(str(doc_id)) or {}
+        content = str((source_doc.content_text if source_doc else inline.get("content") or inline.get("content_text") or inline.get("text") or "") or "")
+        title = _clean_text((source_doc.title if source_doc else inline.get("title") or inline.get("name") or "memory"), 160) or "memory"
+        filename = _clean_text((source_doc.filename if source_doc else inline.get("filename") or title), 255) or title
+        if not content.strip():
+            continue
+        new_id = f"tplcopy_{uuid.uuid4().hex}"
+        source_meta = source_doc.meta if source_doc else (inline.get("meta") if isinstance(inline.get("meta"), dict) else {})
+        new_doc = OpenClawMemoryDocument(
+            doc_id=new_id,
+            target_user_id=target_user_id,
+            installation_id=installation_id or "template-copy",
+            origin="user",
+            uploader_user_id=target_user_id,
+            uploader_role="user",
+            title=title,
+            filename=filename,
+            notes=(source_doc.notes if source_doc else inline.get("notes") or "") or "",
+            content_text=content,
+            size=len(content.encode("utf-8", "ignore")),
+            sha256=hashlib.sha256(content.encode("utf-8", "ignore")).hexdigest(),
+            status="active",
+            meta={**(source_meta or {}), "copied_from_doc_id": str(doc_id)},
+        )
+        db.add(new_doc)
+        copied_doc_ids.append(new_id)
+        copied_docs.append({"id": new_id, "title": title, "filename": filename, "content": content, "meta": new_doc.meta or {}})
+    db.flush()
+    return (
+        [keyword_map[item_id] for item_id in source_keyword_ids if item_id in keyword_map],
+        [competitor_map[item_id] for item_id in source_competitor_ids if item_id in competitor_map],
+        copied_doc_ids,
+        copied_docs,
+    )
 
 
 def _current_template_id_from_meta(meta: Any) -> int:
@@ -4384,6 +4544,51 @@ def list_schedule_templates(
     return {"items": items}
 
 
+@router.post("/api/ip-content/schedule-templates/{template_id}/copy", summary="复制 IP 日更模板为个人副本")
+def copy_schedule_template(
+    template_id: int,
+    request: Request,
+    body: Optional[ScheduleTemplateCopyBody] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = _granted_template_for_user(db, int(current_user.id), template_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="模板不存在或未授权")
+    installation_id = optional_installation_id_from_request(request) if request is not None else None
+    keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+        db,
+        source,
+        int(current_user.id),
+        installation_id or "template-copy",
+    )
+    requested_name = body.name if body is not None else ""
+    row = IPContentScheduleTemplate(
+        user_id=int(current_user.id),
+        name=_copy_template_name(db, int(current_user.id), source.name, requested_name),
+        keyword_ids=keyword_ids,
+        competitor_ids=competitor_ids,
+        memory_doc_ids=memory_doc_ids,
+        memory_docs=memory_docs,
+        requirements=_jsonable(source.requirements or {}),
+        meta=_jsonable({
+            **(source.meta or {}),
+            "source": "user_copy",
+            "copied_from_template_id": int(source.id),
+            "copied_from_owner_user_id": int(source.user_id),
+        }),
+        status="active",
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="复制模板失败，请重试")
+    db.refresh(row)
+    return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
+
+
 @router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")
 def get_personal_default_ip_content_config(
     current_user: User = Depends(get_current_user),
@@ -4480,17 +4685,57 @@ def save_schedule_template(
     name = _clean_text(body.name, 160)
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
-    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
-    memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    source_template = _granted_template_for_user(db, int(current_user.id), _current_template_id_from_meta(body.meta))
+    live_granted_source = source_template is not None and int(source_template.user_id) != int(current_user.id)
+    if live_granted_source:
+        keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+            db,
+            source_template,
+            int(current_user.id),
+            "template-save",
+        )
+        requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
+        meta = {
+            **(body.meta or {}),
+            "source": "user_copy",
+            "copied_from_template_id": int(source_template.id),
+            "copied_from_owner_user_id": int(source_template.user_id),
+        }
+        meta.pop("current_template_id", None)
+    else:
+        try:
+            keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+        except HTTPException:
+            source_template = _granted_template_matching_refs(
+                db, int(current_user.id), body.keyword_ids, body.competitor_ids
+            )
+            if source_template is None:
+                raise
+            keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+                db, source_template, int(current_user.id), "template-save"
+            )
+            requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
+            meta = {
+                **(body.meta or {}),
+                "source": "user_copy",
+                "copied_from_template_id": int(source_template.id),
+                "copied_from_owner_user_id": int(source_template.user_id),
+            }
+            meta.pop("current_template_id", None)
+        else:
+            memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+            memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+            requirements = _strip_personal_profile_requirements(body.requirements)
+            meta = body.meta or {}
     row = IPContentScheduleTemplate(
         user_id=current_user.id,
         name=name,
         keyword_ids=keyword_ids,
         competitor_ids=competitor_ids,
-        memory_doc_ids=_clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50),
+        memory_doc_ids=memory_doc_ids,
         memory_docs=memory_docs,
-        requirements=_jsonable(_strip_personal_profile_requirements(body.requirements)),
-        meta=_jsonable(body.meta or {}),
+        requirements=_jsonable(requirements),
+        meta=_jsonable(meta),
     )
     db.add(row)
     try:
@@ -4515,6 +4760,40 @@ def update_schedule_template(
         .first()
     )
     if row is None:
+        # A stale editor can still submit the source ID after an agent template
+        # was selected. Treat that request as "save a personal copy" instead
+        # of validating the agent's resource IDs against the child account.
+        source_template = _granted_template_for_user(db, int(current_user.id), template_id)
+        if source_template is not None and int(source_template.user_id) != int(current_user.id):
+            name = _clean_text(body.name, 160)
+            if not name:
+                raise HTTPException(status_code=400, detail="请填写模板名称")
+            keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+                db, source_template, int(current_user.id), "template-save"
+            )
+            row = IPContentScheduleTemplate(
+                user_id=current_user.id,
+                name=name,
+                keyword_ids=keyword_ids,
+                competitor_ids=competitor_ids,
+                memory_doc_ids=memory_doc_ids,
+                memory_docs=memory_docs,
+                requirements=_jsonable({**(source_template.requirements or {}), **(body.requirements or {})}),
+                meta=_jsonable({
+                    **(body.meta or {}),
+                    "source": "user_copy",
+                    "copied_from_template_id": int(source_template.id),
+                    "copied_from_owner_user_id": int(source_template.user_id),
+                }),
+            )
+            db.add(row)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="同名模板已经存在")
+            db.refresh(row)
+            return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
         raise HTTPException(status_code=404, detail="模板不存在")
     name = _clean_text(body.name, 160)
     if not name:

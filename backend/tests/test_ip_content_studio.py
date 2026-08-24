@@ -1104,6 +1104,68 @@ def test_personal_default_preserves_granted_agent_template_refs(db_session, test
     assert silent_result["item"]["requirements"]["moments"] == "agent moments"
 
 
+def test_copy_granted_ip_template_clones_resources_and_stays_independent(db_session, test_user, other_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument
+
+    keyword = IPContentKeyword(user_id=test_user.id, keyword="copy-keyword", display_name="Copy Keyword")
+    competitor = ContentCompetitorAccount(
+        user_id=test_user.id,
+        platform="douyin",
+        display_name="Copy Competitor",
+        account_key="copy-competitor",
+    )
+    memory = OpenClawMemoryDocument(
+        doc_id="copy-source-doc",
+        target_user_id=test_user.id,
+        installation_id="agent-install",
+        origin="agent",
+        uploader_user_id=test_user.id,
+        uploader_role="agent",
+        title="Source memory",
+        filename="source.txt",
+        content_text="source content",
+        status="active",
+    )
+    db_session.add_all([keyword, competitor, memory])
+    db_session.flush()
+    source = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="Agent source",
+        keyword_ids=[keyword.id],
+        competitor_ids=[competitor.id],
+        memory_doc_ids=[memory.doc_id],
+        memory_docs=[{"id": memory.doc_id, "title": memory.title, "content": memory.content_text}],
+        requirements={"common": "source requirement"},
+        meta={"source": "admin_template_config"},
+    )
+    db_session.add(source)
+    db_session.flush()
+    db_session.add(H5AgentTemplateGrant(
+        template_id=source.id,
+        owner_user_id=test_user.id,
+        target_user_id=other_user.id,
+        status="active",
+    ))
+    db_session.commit()
+
+    result = studio.copy_schedule_template(source.id, None, None, other_user, db_session)
+    copied = db_session.query(IPContentScheduleTemplate).filter(
+        IPContentScheduleTemplate.id == result["item"]["id"],
+        IPContentScheduleTemplate.user_id == other_user.id,
+    ).one()
+    assert copied.keyword_ids != source.keyword_ids
+    assert copied.competitor_ids != source.competitor_ids
+    assert copied.memory_doc_ids != source.memory_doc_ids
+    assert copied.meta["copied_from_template_id"] == source.id
+
+    source.requirements = {"common": "changed at agent"}
+    source.name = "Agent source changed"
+    db_session.commit()
+    db_session.refresh(copied)
+    assert copied.requirements == {"common": "source requirement"}
+
+
 def test_keyword_text_seed_briefs_deduplicate_template_keywords():
     from backend.app.api import ip_content_studio as studio
 

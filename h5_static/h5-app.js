@@ -18851,7 +18851,7 @@
         const active = isDefault ? " active default" : (id && id === editingId ? " active" : "");
         const grantBtn = own && canManageAgent() ? `<button type="button" data-agent-dispatch-template="${escapeHtml(id)}">下发</button>` : "";
         const defaultBadge = isDefault ? `<span class="personal-template-badge">默认使用</span>` : "";
-        const defaultBtn = isDefault ? "" : `<button type="button" data-use-personal-template="${escapeHtml(id)}">设为默认</button>`;
+        const defaultBtn = isDefault ? "" : `<button type="button" data-use-personal-template="${escapeHtml(id)}">${row.source === "agent" ? "套用" : "设为默认"}</button>`;
         const displaySource = row.source === "agent" ? `代理商：${row.owner_name || ""} · ${languageLabel}` : `语种 ${languageLabel} · 关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
         return `<div class="personal-template-card${active}">
           <div>
@@ -18860,7 +18860,7 @@
           </div>
           <div class="personal-row-actions">
             ${defaultBtn}
-            <button type="button" data-edit-personal-template="${escapeHtml(id)}">${own ? "编辑" : "套用"}</button>
+            ${own ? `<button type="button" data-edit-personal-template="${escapeHtml(id)}">编辑</button>` : ""}
             ${own ? `<button class="danger-text" type="button" data-delete-personal-template="${escapeHtml(id)}">删除</button>` : ""}
             ${grantBtn}
           </div>
@@ -19030,6 +19030,8 @@
           digital_human_template: digitalHumanTemplate,
         },
       };
+      const currentTemplateId = state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.current_template_id;
+      if (currentTemplateId && !payload.meta.current_template_id) payload.meta.current_template_id = currentTemplateId;
       const editingId = String(state.personalEditingTemplateId || "").trim();
       const data = await api(editingId ? `/api/ip-content/schedule-templates/${encodeURIComponent(editingId)}` : "/api/ip-content/schedule-templates", {
         method: editingId ? "PATCH" : "POST",
@@ -19045,6 +19047,14 @@
     async function usePersonalTemplate(templateId, btn = null) {
       const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(templateId || ""));
       if (!row) throw new Error("模板不存在");
+      if (row.source === "agent") {
+        state.personalEditingTemplateId = "";
+        applyPersonalTemplate(row, { editing: false });
+        state.personalTemplateBaseMeta = { ...(row.meta || {}), current_template_id: row.id };
+        openPersonalTemplateModal();
+        personalSetStatus("已填充代理商模板内容，请修改名称后保存为个人模板。");
+        return;
+      }
       personalSetBusy(btn, true, "保存中...");
       try {
         const language = ipTemplateLanguage(row);
@@ -19067,6 +19077,27 @@
         applyPersonalSurvey(state.personalDefault);
         renderPersonalSettings();
         personalSetStatus("默认模板已更新。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function copyPersonalTemplate(templateId, btn = null) {
+      const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(templateId || ""));
+      if (!row) throw new Error("模板不存在");
+      personalSetBusy(btn, true, "复制中的...");
+      try {
+        const data = await api(`/api/ip-content/schedule-templates/${encodeURIComponent(templateId)}/copy`, {
+          method: "POST",
+          json: {},
+        });
+        await refreshPersonalDataPreserveSelection({ keywords: true, competitors: true, memories: true, templates: true });
+        const copied = data.item || (state.personalTemplates || []).find((item) => String(item.meta?.copied_from_template_id || "") === String(templateId));
+        if (copied) {
+          applyPersonalTemplate(copied, { editing: true });
+          openPersonalTemplateModal();
+        }
+        toast("已复制为个人模板，可继续编辑");
       } finally {
         personalSetBusy(btn, false);
       }
@@ -26612,6 +26643,7 @@
       const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
       const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       const editTemplateBtn = evt.target.closest("[data-edit-personal-template]");
+      const copyTemplateBtn = evt.target.closest("[data-copy-personal-template]");
       const deleteTemplateBtn = evt.target.closest("[data-delete-personal-template]");
       const useTemplateBtn = evt.target.closest("[data-use-personal-template]");
       const dispatchTemplateBtn = evt.target.closest("[data-agent-dispatch-template]");
@@ -26630,6 +26662,10 @@
             applyPersonalTemplate(row, { editing: row.source !== "agent" });
             openPersonalTemplateModal();
           }
+          return;
+        }
+        if (copyTemplateBtn) {
+          await copyPersonalTemplate(copyTemplateBtn.dataset.copyPersonalTemplate || "", copyTemplateBtn);
           return;
         }
         if (deleteTemplateBtn) {
