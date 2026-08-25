@@ -78,6 +78,7 @@
       tasks: [],
       runs: [],
       runStatusSnapshot: {},
+      ipContentFailureNotified: {},
       runStatusReady: false,
       taskListOffset: 0,
       taskListHasNext: false,
@@ -7842,7 +7843,7 @@
 
     function secretaryDepartmentStats(department) {
       const scope = departmentScope(department);
-      const runs = (state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const runs = dedupeScheduledRunsForDisplay(state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
       const tasks = (state.tasks || []).filter((row) => recordMatchesWorkScope(row, scope));
       const jobs = secretaryJobRowsForDepartment(department);
       const now = Date.now();
@@ -11044,7 +11045,7 @@
         time: row.created_at || row.updated_at,
         raw: row,
       }));
-      const douyinRuns = (state.runs || [])
+      const douyinRuns = dedupeScheduledRunsForDisplay(state.runs || [])
         .filter((row) => String(row && row.task_kind || "") === "douyin_leads")
         .map((row) => ({
           type: "douyin",
@@ -11321,6 +11322,95 @@
       const id = String(task && task.id || "");
       if (!id) return false;
       return (runs || []).some((row) => String(row && row.task_id || "") === id);
+    }
+
+    function scheduledTaskDedupTitle(value) {
+      return String(value || "").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 160);
+    }
+
+    function scheduledTaskDedupKey(task) {
+      if (!task || String(task.task_kind || "").trim() !== "douyin_leads") return "";
+      const scheduleType = String(task.schedule_type || "").trim().toLowerCase();
+      if (scheduleType !== "interval" && scheduleType !== "daily_times") return "";
+      const payload = task.payload && typeof task.payload === "object" ? task.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const action = String(payload.action || params.action || params.sales_action || "").trim().toLowerCase();
+      if (!action) return "";
+      const context = payload.h5_context && typeof payload.h5_context === "object" ? payload.h5_context
+        : (params.h5_context && typeof params.h5_context === "object" ? params.h5_context : {});
+      const contextKey = [
+        context.workflow_template_id,
+        context.workflow_node_id,
+        context.node_id,
+        context.ability_key,
+        context.capability_id,
+      ].map((value) => String(value || "").trim()).join("|") || "-";
+      const config = task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : {};
+      const scheduleKey = scheduleType === "interval"
+        ? `interval:${Math.max(60, Number(task.interval_seconds || config.interval_seconds || 3600) || 3600)}`
+        : `daily_times:${(Array.isArray(config.daily_times) ? config.daily_times : []).map((value) => String(value || "").trim()).filter(Boolean).sort().join(",")}`;
+      const installationKey = (Array.isArray(task.installation_ids) ? task.installation_ids : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .sort()
+        .join(",");
+      return [
+        "douyin_leads",
+        scheduledTaskDedupTitle(task.title),
+        action,
+        contextKey,
+        scheduleKey,
+        installationKey,
+      ].join("|");
+    }
+
+    function dedupeScheduledTasksForDisplay(rows) {
+      const seen = new Set();
+      return (Array.isArray(rows) ? rows : []).filter((task) => {
+        const key = scheduledTaskDedupKey(task);
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function scheduledRunDedupKey(run) {
+      if (!run || String(run.task_kind || "").trim() !== "douyin_leads") return "";
+      const payload = run.payload && typeof run.payload === "object" ? run.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const action = String(payload.action || params.action || params.sales_action || "").trim().toLowerCase();
+      if (!action) return "";
+      const context = payload.h5_context && typeof payload.h5_context === "object" ? payload.h5_context
+        : (params.h5_context && typeof params.h5_context === "object" ? params.h5_context : {});
+      const contextKey = [
+        context.workflow_template_id,
+        context.workflow_node_id,
+        context.node_id,
+        context.ability_key,
+        context.capability_id,
+      ].map((value) => String(value || "").trim()).join("|") || "-";
+      const scheduledMinute = String(run.created_at || run.started_at || run.updated_at || "").slice(0, 16);
+      const installationKey = String(run.installation_id || run.claimed_by_installation_id || "").trim();
+      return [
+        "douyin_run",
+        scheduledTaskDedupTitle(run.title),
+        action,
+        contextKey,
+        scheduledMinute,
+        installationKey,
+      ].join("|");
+    }
+
+    function dedupeScheduledRunsForDisplay(rows) {
+      const seen = new Set();
+      return (Array.isArray(rows) ? rows : []).filter((run) => {
+        const key = scheduledRunDedupKey(run);
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     }
 
     function taskIsFutureWork(task, runs) {
@@ -11662,7 +11752,7 @@
       renderWorkScopeBar();
       const scope = state.workListScope || { type: "all", label: "全部记录" };
       const tasks = (state.tasks || []).filter((row) => recordMatchesWorkScope(row, scope));
-      const runs = (state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const runs = dedupeScheduledRunsForDisplay(state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
       const platforms = new Set();
       [...tasks, ...runs].forEach((row) => collectPlatforms(row).forEach((p) => platforms.add(p)));
       const scopedSocialJobs = (state.socialLeadJobs || []).filter((job) => workbenchJobMatchesScope(job, "social", scope));
@@ -12533,6 +12623,62 @@
         add("媒体文件", urls.length ? `${urls.length} 个` : "");
         return rows;
       }
+      function ipContentUpstreamCheck(payload, run) {
+        const source = payload && typeof payload === "object" ? payload : {};
+        const failure = source.failure && typeof source.failure === "object" ? source.failure : {};
+        const progress = run && run.progress && typeof run.progress === "object" ? run.progress : {};
+        const direct = source.upstream_check && typeof source.upstream_check === "object" ? source.upstream_check : null;
+        const nested = failure.upstream_check && typeof failure.upstream_check === "object" ? failure.upstream_check : null;
+        const progressCheck = progress.upstream_check && typeof progress.upstream_check === "object" ? progress.upstream_check : null;
+        if (direct || nested || progressCheck) return direct || nested || progressCheck;
+        const raw = String((run && (run.error || run.result_text)) || source.error || "").trim();
+        if (!raw) return null;
+        if (/524|504|timeout|timed out|超时|上游无响应/i.test(raw)) {
+          return {
+            available: "unknown",
+            retryable: true,
+            reason_code: "upstream_timeout",
+            http_status: /524/.test(raw) ? 524 : 504,
+            advice: "本次上游响应超时，建议稍后重试，或减少单批生成条数/缩短资料。",
+          };
+        }
+        if (/quota|balance|insufficient|余额|额度/i.test(raw)) {
+          return {
+            available: false,
+            retryable: false,
+            reason_code: "upstream_quota_exhausted",
+            advice: "上游余额或额度不足，需要管理员处理后再重试。",
+          };
+        }
+        return null;
+      }
+      function ipContentUpstreamAvailabilityText(value) {
+        if (value === true) return "上游可用";
+        if (value === false) return "上游不可用";
+        if (value === "limited") return "上游限流中";
+        return "上游状态未知，可重试验证";
+      }
+      function ipContentUpstreamNoticeHtml(payload, run) {
+        const check = ipContentUpstreamCheck(payload, run);
+        if (!check) return "";
+        const status = ipContentUpstreamAvailabilityText(check.available);
+        const reasonMap = {
+          upstream_timeout: "本次调用超时",
+          upstream_rate_limited: "上游限流",
+          upstream_auth_failed: "上游鉴权失败",
+          upstream_quota_exhausted: "上游余额或额度不足",
+          request_rejected: "请求被上游拒绝",
+          upstream_error: "上游调用失败",
+        };
+        const reason = reasonMap[String(check.reason_code || "")] || "上游调用异常";
+        const http = check.http_status ? `HTTP ${check.http_status}` : "";
+        const retry = check.retryable === false ? "不建议直接重试" : "可以重试";
+        const advice = String(check.advice || "").trim();
+        return `<div class="task-detail-section task-detail-result-primary">
+          <h4>上游状态</h4>
+          <pre>${escapeHtml([status, reason, http, retry, advice].filter(Boolean).join("\n"))}</pre>
+        </div>`;
+      }
       function readableDetailValue(item, keys) {
         if (!item || typeof item !== "object") return "";
         for (const key of keys) {
@@ -12612,6 +12758,8 @@
         const imageStateText = imageBusy
           ? `图片生成中：${statusText(activeImageRun.status)}，请等待客户端完成。`
           : (lastImageRun ? `最近图片任务：${statusText(lastImageRun.status)}${lastImageRun.result_text ? " · " + lastImageRun.result_text : ""}` : "先选择文案；每条最多使用 3 个配图提示词。");
+        const upstreamNotice = ipContentUpstreamNoticeHtml(payload, run);
+        if (upstreamNotice) sections.push(upstreamNotice);
         sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
           const records = Array.isArray(group.records) ? group.records : [];
           const isMoments = String(group.task || "") === "moments_candidate";
@@ -12689,6 +12837,29 @@
         .join("");
     }
 
+    function notifyIpContentUpstreamFailure(run) {
+      if (!run || String(run.task_kind || "") !== "ip_content_daily") return;
+      if (!["failed", "error"].includes(String(run.status || "").toLowerCase())) return;
+      const payload = run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const failure = payload.failure && typeof payload.failure === "object" ? payload.failure : {};
+      const progress = run.progress && typeof run.progress === "object" ? run.progress : {};
+      let check = payload.upstream_check && typeof payload.upstream_check === "object" ? payload.upstream_check : null;
+      if (!check && failure.upstream_check && typeof failure.upstream_check === "object") check = failure.upstream_check;
+      if (!check && progress.upstream_check && typeof progress.upstream_check === "object") check = progress.upstream_check;
+      const raw = String(run.error || payload.error || "").trim();
+      if (!check && /524|504|timeout|timed out|超时|上游无响应/i.test(raw)) {
+        check = { available: "unknown", retryable: true, reason_code: "upstream_timeout", http_status: /524/.test(raw) ? 524 : 504, advice: "本次上游响应超时，可以稍后重试。" };
+      }
+      if (!check) return;
+      const key = `${run.id || ""}:${check.reason_code || ""}:${check.http_status || ""}:${raw.slice(0, 40)}`;
+      if (state.ipContentFailureNotified[key]) return;
+      state.ipContentFailureNotified[key] = true;
+      const available = check.available === false ? "上游不可用" : (check.available === "limited" ? "上游限流中" : "上游状态未知");
+      const retry = check.retryable === false ? "暂不建议直接重试" : "可以重试";
+      const http = check.http_status ? `HTTP ${check.http_status}，` : "";
+      toast(`IP日更失败：${available}，${http}${retry}。${check.advice || ""}`);
+    }
+
     async function openRunDetail(runId, backTab = "") {
       if (!runId) return;
       const body = $("runPageBody");
@@ -12703,6 +12874,7 @@
         ? `${statusText(cachedRun.status)} · ${fmtTime(cachedRun.created_at)}`
         : "正在读取结果";
       body.innerHTML = cachedRun ? taskDetailHtml(cachedRun) : `<div class="hint">加载中...</div>`;
+      if (cachedRun) notifyIpContentUpstreamFailure(cachedRun);
       switchTab("runDetail");
       try {
         const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
@@ -12711,6 +12883,7 @@
         $("runPageTitle").textContent = run.title || "执行详情";
         $("runPageSubtitle").textContent = `${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
+        notifyIpContentUpstreamFailure(run);
         if (run.task_kind === "ip_content_daily") {
           loadRuns({ reset: true }).then(() => {
             if (state.currentRunDetailId === runId) body.innerHTML = taskDetailHtml(run);
@@ -18591,6 +18764,7 @@
       const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
       const target = $("personalTargetMemorySelect");
       const title = $("personalMemoryTitle");
+      const review = $("personalMemoryReviewText");
       if (target) {
         target.disabled = mode !== "overwrite";
         if (mode !== "overwrite") target.value = "";
@@ -18599,6 +18773,7 @@
         title.disabled = mode === "overwrite";
         if (mode === "overwrite") title.value = "";
       }
+      if (review) review.classList.toggle("hidden", mode !== "overwrite");
     }
 
     function personalTemplateName(row) {
@@ -19213,6 +19388,7 @@
                 <span>${escapeHtml(personalMemoryTitle(doc))}</span>
                 <div class="personal-row-actions">
                   <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                  <button type="button" data-download-personal-memory="${escapeHtml(id)}">下载</button>
                   <button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>
                 </div>
               </div>`;
@@ -19230,7 +19406,8 @@
               return `<div class="personal-row personal-memory-row">
                 <span>${escapeHtml(personalMemoryTitle(doc))} · ${escapeHtml(tag)}</span>
                 <div class="personal-row-actions">
-                  <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                    <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                    <button type="button" data-download-personal-memory="${escapeHtml(id)}">下载</button>
                   ${readOnly ? "" : `<button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>`}
                 </div>
               </div>`;
@@ -19723,6 +19900,35 @@
       return keys.map((key) => `# ${personalDocTypeLabel(key)}\n\n${String(docs[key] || "").trim()}`).filter(Boolean).join("\n\n---\n\n").trim();
     }
 
+    function downloadPersonalTextFile(filename, text) {
+      const blob = new Blob([String(text || "")], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename || "个人记忆资料.md";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function downloadPersonalMemoryDocument(docId, fallbackName) {
+      const iid = currentInstallationId();
+      const resp = await fetch(apiUrl(`/api/personal-settings/memory-documents/${encodeURIComponent(docId)}/download`), {
+        headers: { ...authHeaders({ "X-Installation-Id": iid }) },
+      });
+      if (!resp.ok) throw new Error((await resp.text()) || "下载失败");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fallbackName || "个人记忆资料.md";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
     function personalGeneratedDocsFromUi() {
       const docs = {};
       const order = [];
@@ -19749,7 +19955,7 @@
         return;
       }
       box.innerHTML = order.map((key) => `<article class="personal-generated-doc">
-        <div class="personal-generated-head"><strong>${escapeHtml(personalDocTypeLabel(key))}</strong><label><input type="checkbox" data-personal-save-doc="${escapeHtml(key)}" checked>保存</label></div>
+        <div class="personal-generated-head"><strong>${escapeHtml(personalDocTypeLabel(key))}</strong><label><input type="checkbox" data-personal-save-doc="${escapeHtml(key)}" checked>保存</label><button type="button" data-download-personal-generated="${escapeHtml(key)}">下载</button></div>
         <textarea data-personal-generated-text="${escapeHtml(key)}" rows="8">${escapeHtml(docs[key])}</textarea>
       </article>`).join("");
       box.querySelectorAll("[data-personal-generated-text]").forEach((textarea) => {
@@ -19757,6 +19963,13 @@
           const key = textarea.dataset.personalGeneratedText || "";
           if (key) state.personalGeneratedDocuments[key] = textarea.value || "";
           if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(state.personalGeneratedDocuments, state.personalGeneratedDocOrder);
+        });
+      });
+      box.querySelectorAll("[data-download-personal-generated]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const key = button.dataset.downloadPersonalGenerated || "";
+          const text = state.personalGeneratedDocuments && state.personalGeneratedDocuments[key] || "";
+          downloadPersonalTextFile(`${personalDocTypeLabel(key)}.md`, `# ${personalDocTypeLabel(key)}\n\n${text}`);
         });
       });
       if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(docs, order);
@@ -20114,8 +20327,10 @@
       const generatedContent = formatPersonalGeneratedDocs(generated.documents, generated.order);
       const hasPreview = document.querySelectorAll("[data-personal-generated-text]").length > 0;
       if (hasPreview && !Object.keys(generated.documents || {}).length) throw new Error("请至少勾选一个要保存的 AI 理解结果。");
-      let content = generatedContent || (!hasPreview ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim() : "");
       const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
+      let content = mode === "overwrite"
+        ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim()
+        : (generatedContent || (!hasPreview ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim() : ""));
       const title = mode === "new" ? (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() : "";
       const targetDocId = (($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "").trim();
       if (!content) {
@@ -23068,7 +23283,7 @@
         const pagination = data.pagination || {};
         state.taskListOffset = offset + rows.length;
         state.taskListHasNext = !!pagination.has_next;
-        state.tasks = append ? (state.tasks || []).concat(rows) : rows;
+        state.tasks = dedupeScheduledTasksForDisplay(append ? (state.tasks || []).concat(rows) : rows);
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
@@ -26919,6 +27134,16 @@
       const ok = await copyText(text);
       toast(ok ? "已复制记忆内容" : "复制失败，请长按内容复制");
     });
+    $("personalMemoryDetailDownloadBtn")?.addEventListener("click", async () => {
+      const id = String(state.personalMemoryDetailId || "").trim();
+      if (!id) return;
+      const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id) || {};
+      try {
+        await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+      } catch (err) {
+        toast(err.message || "下载失败");
+      }
+    });
     $("personalMemoryGenerateBackdrop")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalMemoryGenerateClose")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalMemoryStepTabs")?.addEventListener("click", (evt) => {
@@ -26981,6 +27206,7 @@
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
       const competitorSyncBtn = evt.target.closest("[data-sync-personal-competitor]");
       const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
+      const downloadMemoryBtn = evt.target.closest("[data-download-personal-memory]");
       const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       const editTemplateBtn = evt.target.closest("[data-edit-personal-template]");
       const copyTemplateBtn = evt.target.closest("[data-copy-personal-template]");
@@ -27014,6 +27240,12 @@
         }
         if (previewMemoryBtn) {
           await previewPersonalMemory(previewMemoryBtn.dataset.previewPersonalMemory || "");
+          return;
+        }
+        if (downloadMemoryBtn) {
+          const id = downloadMemoryBtn.dataset.downloadPersonalMemory || "";
+          const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id) || {};
+          await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
           return;
         }
         if (deleteMemoryBtn) {

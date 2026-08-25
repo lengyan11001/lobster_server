@@ -15,9 +15,10 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -1318,6 +1319,26 @@ async def preview_memory_document(
     row, source = _accessible_memory_row(db, target_user, installation_id, doc_id)
     data = _memory_summary(row, include_content=True, source=source)
     return {"ok": True, "document": data, "content_text": data.get("content_text") or ""}
+
+
+@router.get("/api/personal-settings/memory-documents/{doc_id}/download")
+async def download_memory_document(
+    doc_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    installation_id = _installation_id(request)
+    target_user = _owner_user(db, current_user)
+    row, _source = _accessible_memory_row(db, target_user, installation_id, doc_id)
+    title = _short_title(row.title or row.filename or "个人记忆资料", "个人记忆资料")
+    filename = f"{title}.md"
+    disposition = f'attachment; filename="memory.md"; filename*=UTF-8\'\'{quote(filename)}'
+    return Response(
+        content=(row.content_text or "").encode("utf-8"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": disposition, "Cache-Control": "no-store"},
+    )
 
 
 @router.delete("/api/personal-settings/memory-documents/{doc_id}")

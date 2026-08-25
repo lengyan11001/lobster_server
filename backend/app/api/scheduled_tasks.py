@@ -1330,6 +1330,130 @@ def _serialize_task(row: ScheduledTask) -> Dict[str, Any]:
     }
 
 
+def _scheduled_task_dedup_title(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())[:160]
+
+
+def _scheduled_task_dedup_action(payload: Dict[str, Any]) -> str:
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    return str(
+        payload.get("action")
+        or params.get("action")
+        or params.get("sales_action")
+        or ""
+    ).strip().lower()
+
+
+def _scheduled_task_dedup_context(payload: Dict[str, Any]) -> str:
+    ctx = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    if not ctx:
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        ctx = params.get("h5_context") if isinstance(params.get("h5_context"), dict) else {}
+    if not ctx:
+        return "-"
+    return "|".join(
+        str(ctx.get(key) or "").strip()
+        for key in ("workflow_template_id", "workflow_node_id", "node_id", "ability_key", "capability_id")
+    ) or "-"
+
+
+def _scheduled_task_dedup_schedule_token(
+    *,
+    schedule_type: str,
+    interval_seconds: Optional[int],
+    payload: Dict[str, Any],
+) -> str:
+    stype = str(schedule_type or "").strip().lower()
+    if stype == "interval":
+        return f"interval:{max(60, int(interval_seconds or 3600))}"
+    if stype == "daily_times":
+        cfg = _schedule_config_from_payload(payload)
+        times = _normalize_daily_times(cfg.get("daily_times") or payload.get("daily_times") or [])
+        return "daily_times:" + ",".join(times)
+    return stype
+
+
+def _scheduled_task_dedup_key(
+    *,
+    task_kind: str,
+    title: Any,
+    payload: Any,
+    schedule_type: str,
+    interval_seconds: Optional[int],
+    installation_ids: Any,
+) -> str:
+    kind = str(task_kind or "").strip().lower()
+    stype = str(schedule_type or "").strip().lower()
+    if kind != "douyin_leads" or stype not in _RECURRING_SCHEDULE_TYPES:
+        return ""
+    data = payload if isinstance(payload, dict) else {}
+    action = _scheduled_task_dedup_action(data)
+    if not action:
+        return ""
+    targets = ",".join(sorted(_clean_installation_ids(installation_ids)))
+    schedule = _scheduled_task_dedup_schedule_token(
+        schedule_type=stype,
+        interval_seconds=interval_seconds,
+        payload=data,
+    )
+    return "|".join(
+        [
+            kind,
+            _scheduled_task_dedup_title(title),
+            action,
+            _scheduled_task_dedup_context(data),
+            schedule,
+            targets,
+        ]
+    )
+
+
+def _find_duplicate_active_recurring_task(
+    db: Session,
+    *,
+    target_user_id: int,
+    task_kind: str,
+    title: str,
+    payload: Dict[str, Any],
+    schedule_type: str,
+    interval_seconds: Optional[int],
+    installation_ids: List[str],
+) -> Optional[ScheduledTask]:
+    dedup_key = _scheduled_task_dedup_key(
+        task_kind=task_kind,
+        title=title,
+        payload=payload,
+        schedule_type=schedule_type,
+        interval_seconds=interval_seconds,
+        installation_ids=installation_ids,
+    )
+    if not dedup_key:
+        return None
+    rows = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == target_user_id,
+            ScheduledTask.task_kind == task_kind,
+            ScheduledTask.status == "active",
+            ScheduledTask.schedule_type == schedule_type,
+        )
+        .order_by(ScheduledTask.created_at.desc(), ScheduledTask.id.desc())
+        .limit(100)
+        .all()
+    )
+    for row in rows:
+        if _scheduled_task_dedup_key(
+            task_kind=row.task_kind,
+            title=row.title,
+            payload=row.payload or {},
+            schedule_type=row.schedule_type,
+            interval_seconds=row.interval_seconds,
+            installation_ids=row.target_installation_ids or [],
+        ) == dedup_key:
+            return row
+    return None
+
+
 def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
     payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
     return {
@@ -2168,7 +2292,22 @@ def _serial_client_run_is_blocked(
     return q.first() is not None
 
 
-_LONG_RUNNING_CLIENT_ACTIONS = {"native_wechat_poll"}
+_LONG_RUNNING_CLIENT_ACTIONS = {"native_wechat_poll", "native_wechat_moments_engage"}
+
+
+def _client_processing_timeout_minutes(row: ScheduledTaskRun) -> int:
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    kind = str(row.task_kind or "").strip().lower()
+    action = str(payload.get("action") or "").strip().lower()
+    if action in _LONG_RUNNING_CLIENT_ACTIONS:
+        return 45
+    if kind == "douyin_leads" and action == "precise_touch":
+        return 45
+    if kind == "douyin_leads":
+        return 30
+    if kind == "client_workflow" and (action == "publish_content" or action.startswith("publish_")):
+        return 30
+    return 20
 
 
 def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> bool:
@@ -2176,9 +2315,7 @@ def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> boo
     if claimed_at is None:
         return False
     last_activity = max(value for value in (claimed_at, row.updated_at) if value is not None)
-    payload = row.payload if isinstance(row.payload, dict) else {}
-    action = str(payload.get("action") or "").strip().lower()
-    timeout_minutes = 45 if action in _LONG_RUNNING_CLIENT_ACTIONS else 10
+    timeout_minutes = _client_processing_timeout_minutes(row)
     return last_activity < now - timedelta(minutes=timeout_minutes)
 
 
@@ -3048,7 +3185,23 @@ def _execute_server_side_run(
         if str(run.status or "").strip().lower() in _FINAL_STATUSES:
             return
         run.status = "failed"
-        run.error = str(exc.detail or exc)
+        detail_payload = exc.detail if isinstance(exc.detail, dict) else {}
+        run.error = str(
+            detail_payload.get("message")
+            or detail_payload.get("detail")
+            or detail_payload.get("error")
+            or exc.detail
+            or exc
+        )
+        if run.task_kind == "ip_content_daily":
+            run.result_payload = {
+                "ok": False,
+                "ip_content_daily": True,
+                "error": run.error,
+                "failure": detail_payload,
+                "failed_batches": detail_payload.get("failed_batches") if isinstance(detail_payload.get("failed_batches"), list) else [],
+                "upstream_check": detail_payload.get("upstream_check") if isinstance(detail_payload.get("upstream_check"), dict) else {},
+            }
         run.progress = _merge_run_progress(
             run,
             {
@@ -3056,6 +3209,7 @@ def _execute_server_side_run(
                 "server_side": True,
                 "stage": "failed",
                 "text": run.error,
+                **({"upstream_check": detail_payload.get("upstream_check")} if isinstance(detail_payload.get("upstream_check"), dict) else {}),
             },
         )
         run.finished_at = failed
@@ -3223,6 +3377,22 @@ def _enqueue_task(
     return runs
 
 
+def _advance_duplicate_recurring_task(task: ScheduledTask, now: datetime) -> None:
+    if task.schedule_type == "interval":
+        interval = max(60, int(task.interval_seconds or 3600))
+        task.next_run_at = now + timedelta(seconds=interval)
+    elif task.schedule_type == "daily_times":
+        cfg = _schedule_config_from_payload(task.payload or {})
+        times = _normalize_daily_times(cfg.get("daily_times") or [])
+        offset = int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480)
+        task.next_run_at = _compute_next_daily_time(
+            now_utc=now,
+            daily_times=times,
+            timezone_offset_minutes=offset,
+        )
+    task.updated_at = now
+
+
 def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetime) -> Optional[ScheduledTask]:
     result = db.execute(
         update(ScheduledTask)
@@ -3252,14 +3422,30 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
         q = q.filter(ScheduledTask.user_id == user_id)
     q = q.order_by(ScheduledTask.next_run_at.asc(), ScheduledTask.id.asc()).limit(50).with_for_update(skip_locked=True)
     count = 0
+    skipped_duplicates = 0
+    seen_recurring_keys: set[str] = set()
     for candidate in q.all():
+        dedup_key = _scheduled_task_dedup_key(
+            task_kind=candidate.task_kind,
+            title=candidate.title,
+            payload=candidate.payload or {},
+            schedule_type=candidate.schedule_type,
+            interval_seconds=candidate.interval_seconds,
+            installation_ids=candidate.target_installation_ids or [],
+        )
+        if dedup_key and dedup_key in seen_recurring_keys:
+            _advance_duplicate_recurring_task(candidate, now)
+            skipped_duplicates += 1
+            continue
+        if dedup_key:
+            seen_recurring_keys.add(dedup_key)
         scheduled_at = candidate.next_run_at
         task = _reserve_due_task_for_enqueue(db, candidate, now)
         if not task:
             continue
         _enqueue_task(db, task, now, scheduled_at=scheduled_at)
         count += 1
-    if count:
+    if count or skipped_duplicates:
         db.commit()
     return count
 
@@ -3482,17 +3668,42 @@ def _create_task_row(
         )
     payload = dict(payload)
     payload["schedule_config"] = schedule_config
+    installation_ids = _clean_installation_ids(body.installation_ids)
+    title = _task_title(body, task_kind)
+    duplicate = _find_duplicate_active_recurring_task(
+        db,
+        target_user_id=target_user_id,
+        task_kind=task_kind,
+        title=title,
+        payload=payload,
+        schedule_type=schedule_type,
+        interval_seconds=interval_seconds,
+        installation_ids=installation_ids,
+    )
+    if duplicate is not None:
+        duplicate.title = title
+        duplicate.content = content
+        duplicate.payload = payload
+        duplicate.interval_seconds = interval_seconds
+        duplicate.target_installation_ids = installation_ids
+        duplicate.status = "active"
+        duplicate.updated_at = now
+        if duplicate.next_run_at is None:
+            duplicate.next_run_at = next_run_at
+        db.commit()
+        db.refresh(duplicate)
+        return duplicate
     task = ScheduledTask(
         user_id=target_user_id,
         created_by_user_id=created_by_user_id,
         created_by_role=created_by_role,
-        title=_task_title(body, task_kind),
+        title=title,
         task_kind=task_kind,
         content=content,
         payload=payload,
         schedule_type=schedule_type,
         interval_seconds=interval_seconds,
-        target_installation_ids=_clean_installation_ids(body.installation_ids),
+        target_installation_ids=installation_ids,
         status="active",
         next_run_at=next_run_at,
         created_at=now,
@@ -3936,7 +4147,7 @@ def pending_scheduled_task_runs(
     )
     if skipped_pending or expired_after_enqueue:
         db.flush()
-    stale_cutoff = now - timedelta(minutes=10)
+    stale_cutoff = now - timedelta(minutes=20)
     stale_rows = (
         db.query(ScheduledTaskRun)
         .filter(

@@ -73,6 +73,36 @@ def _request(installation_id: str = "test-installation") -> Request:
     )
 
 
+def _douyin_recurring_task(user_id: int, *, title: str = "今天执行抖音获客", task_id: int | None = None) -> ScheduledTask:
+    now = datetime.utcnow() - timedelta(minutes=5)
+    row = ScheduledTask(
+        user_id=user_id,
+        title=title,
+        task_kind="douyin_leads",
+        content="H5 工作流：抖音获客",
+        payload={
+            "action": "search_collect",
+            "params": {
+                "keyword": "阀门厂家",
+                "mode": "script",
+                "regions": ["全国"],
+            },
+            "schedule_config": {"timezone_offset_minutes": 480},
+        },
+        schedule_type="interval",
+        interval_seconds=3600,
+        target_installation_ids=["test-installation"],
+        status="active",
+        next_run_at=now,
+        run_count=0,
+        created_at=now,
+        updated_at=now,
+    )
+    if task_id is not None:
+        row.id = task_id
+    return row
+
+
 def _workflow_payload(*, action: str, start: str, end: str, timezone_offset_minutes: int = 480) -> dict:
     return {
         "action": action,
@@ -754,3 +784,72 @@ def test_pending_claim_serializes_native_wechat_runs_per_installation(db_session
 
     assert [item["id"] for item in result["items"]] == ["video-pending"]
     assert db_session.get(ScheduledTaskRun, "wechat-pending").status == "pending"
+
+
+def test_create_recurring_douyin_task_reuses_same_active_definition(db_session, test_user):
+    first = scheduled_tasks._create_task_row(
+        db_session,
+        scheduled_tasks.ScheduledTaskCreate(
+            title="今天执行抖音获客",
+            task_kind="douyin_leads",
+            content="H5 工作流：抖音获客",
+            payload={
+                "action": "search_collect",
+                "params": {
+                    "keyword": "阀门厂家",
+                    "mode": "script",
+                    "regions": ["全国"],
+                },
+            },
+            schedule_type="interval",
+            interval_seconds=3600,
+            start_at="2099-01-01T00:00",
+            timezone_offset_minutes=0,
+            installation_ids=["test-installation"],
+        ),
+        target_user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        created_by_role="user",
+    )
+    second = scheduled_tasks._create_task_row(
+        db_session,
+        scheduled_tasks.ScheduledTaskCreate(
+            title="今天执行抖音获客",
+            task_kind="douyin_leads",
+            content="H5 工作流：抖音获客",
+            payload={
+                "action": "search_collect",
+                "params": {
+                    "keyword": "船用阀门,氢能源阀门",
+                    "mode": "script",
+                    "regions": ["全国"],
+                },
+            },
+            schedule_type="interval",
+            interval_seconds=3600,
+            start_at="2099-01-01T00:00",
+            timezone_offset_minutes=0,
+            installation_ids=["test-installation"],
+        ),
+        target_user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        created_by_role="user",
+    )
+
+    rows = db_session.query(ScheduledTask).filter(ScheduledTask.user_id == test_user.id).all()
+    assert second.id == first.id
+    assert len(rows) == 1
+    assert rows[0].payload["params"]["keyword"] == "船用阀门,氢能源阀门"
+
+
+def test_due_recurring_douyin_duplicates_enqueue_once(db_session, test_user):
+    db_session.add(_douyin_recurring_task(test_user.id, task_id=101))
+    db_session.add(_douyin_recurring_task(test_user.id, task_id=102))
+    db_session.commit()
+
+    enqueued = scheduled_tasks._enqueue_due_tasks(db_session, user_id=test_user.id)
+    runs = db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == test_user.id).all()
+
+    assert enqueued == 1
+    assert len(runs) == 1
+    assert runs[0].task_id == 101

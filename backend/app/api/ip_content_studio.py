@@ -3356,6 +3356,68 @@ def _competitor_seed_briefs(competitors: list[ContentCompetitorAccount]) -> list
     return briefs
 
 
+def _llm_upstream_failure_payload(
+    *,
+    status_code: int,
+    detail: Any,
+    attempts: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    raw = _clean_long_text(detail, 2000) or f"HTTP {status_code}"
+    lowered = raw.lower()
+    reason_code = "upstream_error"
+    title = "LLM 上游本次调用失败"
+    retryable = status_code in _RETRY_HTTP_STATUSES or _is_retryable_detail(raw)
+    upstream_available: Any = "unknown"
+    advice = "可以稍后重试；如果持续失败，请联系管理员检查上游线路。"
+    if status_code in {524, 504} or "timeout" in lowered or "timed out" in lowered:
+        reason_code = "upstream_timeout"
+        title = "LLM 上游响应超时"
+        retryable = True
+        upstream_available = "unknown"
+        advice = "上游连接已建立但本次生成超过读取窗口，建议稍后重试，或减少单批生成条数/缩短资料。"
+    elif status_code == 429 or "too many requests" in lowered or "rate limit" in lowered:
+        reason_code = "upstream_rate_limited"
+        title = "LLM 上游限流"
+        retryable = True
+        upstream_available = "limited"
+        advice = "上游还在，但当前被限流，建议等待后重试。"
+    elif status_code in {401, 403} or "invalid api key" in lowered or "unauthorized" in lowered:
+        reason_code = "upstream_auth_failed"
+        title = "LLM 上游鉴权不可用"
+        retryable = False
+        upstream_available = False
+        advice = "需要管理员检查上游 Key、Token 池或线路权限。"
+    elif status_code == 402 or "insufficient" in lowered or "quota" in lowered or "balance" in lowered or "余额" in raw:
+        reason_code = "upstream_quota_exhausted"
+        title = "LLM 上游余额或额度不足"
+        retryable = False
+        upstream_available = False
+        advice = "需要管理员补充上游额度或切换可用模型。"
+    elif 400 <= status_code < 500 and status_code not in _RETRY_HTTP_STATUSES:
+        reason_code = "request_rejected"
+        title = "LLM 请求被上游拒绝"
+        retryable = False
+        upstream_available = True
+        advice = "上游能访问，但本次请求参数/内容被拒绝，需要检查提示词、模型或请求体。"
+    message = f"{title}：{raw}"
+    return {
+        "message": message,
+        "error": raw,
+        "error_type": "llm_upstream",
+        "upstream_check": {
+            "provider": "sutui-chat",
+            "available": upstream_available,
+            "retryable": retryable,
+            "reason_code": reason_code,
+            "http_status": int(status_code or 0),
+            "attempts": max(1, int(attempts or 1)),
+            "timeout_seconds": float(timeout_seconds or 0),
+            "advice": advice,
+        },
+    }
+
+
 async def _post_llm_with_retry(
     *,
     payload: dict[str, Any],
@@ -3387,7 +3449,15 @@ async def _post_llm_with_retry(
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_detail = str(exc)
             if idx >= attempts - 1:
-                raise HTTPException(status_code=502, detail=f"文案生成失败：{last_detail}") from exc
+                raise HTTPException(
+                    status_code=502,
+                    detail=_llm_upstream_failure_payload(
+                        status_code=502,
+                        detail=last_detail,
+                        attempts=attempts,
+                        timeout_seconds=timeout_value,
+                    ),
+                ) from exc
             await asyncio.sleep(_retry_delay(idx))
             continue
         if resp.status_code < 400:
@@ -3395,11 +3465,35 @@ async def _post_llm_with_retry(
         detail = _response_message(data) or _clean_long_text(data, 800) or f"HTTP {resp.status_code}"
         last_detail = detail
         if resp.status_code not in _RETRY_HTTP_STATUSES and not _is_retryable_detail(detail):
-            raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=_llm_upstream_failure_payload(
+                    status_code=resp.status_code,
+                    detail=detail,
+                    attempts=attempts,
+                    timeout_seconds=timeout_value,
+                ),
+            )
         if idx >= attempts - 1:
-            raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=_llm_upstream_failure_payload(
+                    status_code=resp.status_code,
+                    detail=detail,
+                    attempts=attempts,
+                    timeout_seconds=timeout_value,
+                ),
+            )
         await asyncio.sleep(_retry_delay(idx))
-    raise HTTPException(status_code=502, detail=f"文案生成失败：{last_detail or '上游无响应'}")
+    raise HTTPException(
+        status_code=502,
+        detail=_llm_upstream_failure_payload(
+            status_code=502,
+            detail=last_detail or "上游无响应",
+            attempts=attempts,
+            timeout_seconds=timeout_value,
+        ),
+    )
 
 
 async def _call_ip_content_llm(
@@ -3920,9 +4014,14 @@ async def _generate_and_save_ip_content_records(
             except Exception:
                 pass
             detail = getattr(exc, "detail", None) or str(exc)
-            if isinstance(detail, (dict, list)):
-                detail = json.dumps(detail, ensure_ascii=False)
-            error_text = _clean_long_text(detail, 1000) or f"{clean_label}第 {batch_index}/{total_batches} 批生成失败"
+            detail_payload = detail if isinstance(detail, dict) else {}
+            if isinstance(detail, dict):
+                detail_text = detail.get("message") or detail.get("detail") or detail.get("error") or json.dumps(detail, ensure_ascii=False)
+            elif isinstance(detail, list):
+                detail_text = json.dumps(detail, ensure_ascii=False)
+            else:
+                detail_text = str(detail)
+            error_text = _clean_long_text(detail_text, 1000) or f"{clean_label}第 {batch_index}/{total_batches} 批生成失败"
             batch_error = {
                 "index": batch_index,
                 "status": "failed",
@@ -3930,6 +4029,10 @@ async def _generate_and_save_ip_content_records(
                 "records": [_draft_record_payload(row) for row in batch_records],
                 "error": error_text,
             }
+            if detail_payload.get("error_type"):
+                batch_error["error_type"] = detail_payload.get("error_type")
+            if isinstance(detail_payload.get("upstream_check"), dict):
+                batch_error["upstream_check"] = detail_payload.get("upstream_check")
             failed_batches.append(batch_error)
             batch_payloads.append(batch_error)
             _emit_schedule_progress(
@@ -3970,7 +4073,15 @@ async def _generate_and_save_ip_content_records(
                 "group_id": clean_group_id,
             },
         )
-        raise HTTPException(status_code=502, detail=error_message)
+        failure_detail: dict[str, Any] = {
+            "message": error_message,
+            "error": first_error,
+            "error_type": failed_batches[0].get("error_type") if failed_batches else "",
+            "failed_batches": failed_batches,
+        }
+        if failed_batches and isinstance(failed_batches[0].get("upstream_check"), dict):
+            failure_detail["upstream_check"] = failed_batches[0].get("upstream_check")
+        raise HTTPException(status_code=502, detail=failure_detail)
     _emit_schedule_progress(
         progress,
         "generate_done",
