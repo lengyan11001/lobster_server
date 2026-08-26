@@ -16,4 +16,4 @@ def test_h5_memory_download_prefers_native_app_bridge():
 def test_h5_memory_download_script_cache_key_is_current():
     index = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
 
-    assert "/h5-static/h5-app.js?v=20260826-memory-download-bridge-v1" in index
+    assert "/h5-static/h5-app.js?v=20260826-library-media-gallery-v1" in index

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,3 +109,47 @@ def test_h5_background_reads_do_not_trigger_blocking_loading():
     assert 'api("/api/hifly/avatar/library", { method: "POST", json: { page: 1, size: 100, include_mine: true }, blocking: false })' in script
     assert 'api("/api/hifly/voice/library", { method: "POST", json: {}, blocking: false })' in script
     assert 'const data = await api("/api/mastra-chat/messages", {\n          method: "POST",\n          blocking: false,' in script
+
+
+def test_digital_avatar_library_uses_media_url_and_video_first_frame():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    api = (ROOT / "backend" / "app" / "api" / "hifly_assets.py").read_text(encoding="utf-8")
+
+    assert "const mediaUrl = assetPrimaryMediaUrl(row)" in script
+    assert "const mediaType = designerMediaType(row)" in script
+    assert 'mediaType === "video"' in script
+    assert '"thumbnail_url": cover_url' in api
+    assert '"media_type": media_type' in api
+    assert '"media_url": media_url' in api
+    assert '"video_url": media_url if media_type == "video" else ""' in api
+
+
+def test_legacy_video_avatar_normalization_exposes_cover_and_training_media():
+    from backend.app.api.hifly_assets import _normalize_avatar_asset
+
+    row = SimpleNamespace(
+        id=7,
+        meta={
+            "upload_meta": {"source_url": "https://cdn.example/avatar-training.mp4"},
+            "task_raw": {"data": {"poster_url": "https://cdn.example/avatar-cover.jpg"}},
+        },
+        cover_url="",
+        source_type="video",
+        hifly_task_id="task-7",
+        hifly_avatar_id="avatar-7",
+        title="视频形象",
+        status="success",
+        model=None,
+        aigc_flag=0,
+        error_message="",
+        created_at=None,
+        updated_at=None,
+    )
+
+    item = _normalize_avatar_asset(row)
+
+    assert item["media_type"] == "video"
+    assert item["media_url"] == "https://cdn.example/avatar-training.mp4"
+    assert item["video_url"] == item["media_url"]
+    assert item["thumbnail_url"] == "https://cdn.example/avatar-cover.jpg"
+    assert item["image_url"] == item["thumbnail_url"]

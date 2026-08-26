@@ -1622,7 +1622,14 @@ def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request
     meta = dict(row.meta or {})
     detail_asset_id = str(meta.get("source_asset_id") or "").strip()
     detail_url = build_asset_file_url(request, detail_asset_id) if request and detail_asset_id else ""
-    cover_url = row.cover_url or ""
+    upload_meta = meta.get("upload_meta") if isinstance(meta.get("upload_meta"), dict) else {}
+    task_raw = meta.get("task_raw") if isinstance(meta.get("task_raw"), dict) else {}
+    create_raw = meta.get("create_raw") if isinstance(meta.get("create_raw"), dict) else {}
+    source_type = str(row.source_type or upload_meta.get("source_type") or "image").strip().lower()
+    media_type = "video" if "video" in source_type else "image"
+    media_url = detail_url or str(upload_meta.get("source_url") or "").strip()
+    cover_url = str(row.cover_url or _pick_cover(task_raw) or _pick_cover(create_raw) or _pick_cover(meta) or "").strip()
+    image_url = cover_url or (media_url if media_type == "image" else "")
     return {
         "id": row.id,
         "source": "hifly",
@@ -1632,9 +1639,14 @@ def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request
         "task_id": row.hifly_task_id,
         "avatar": row.hifly_avatar_id or "",
         "title": row.title,
-        "image_url": cover_url,
+        "image_url": image_url,
         "cover_url": cover_url,
-        "source_type": row.source_type,
+        "thumbnail_url": cover_url,
+        "poster_url": cover_url,
+        "media_type": media_type,
+        "media_url": media_url,
+        "video_url": media_url if media_type == "video" else "",
+        "source_type": source_type,
         "detail_asset_id": detail_asset_id,
         "detail_url": detail_url,
         "status": row.status,
@@ -1735,7 +1747,10 @@ def _normalize_shanjian_profile_as_avatar(
 ) -> Dict[str, Any]:
     source_asset_id = str(row.source_asset_id or "").strip()
     detail_url = build_asset_file_url(request, source_asset_id) if request and source_asset_id else (row.source_url or "")
-    cover_url = row.cover_url or row.source_url or detail_url or ""
+    source_type = str(row.train_mode or "image").strip().lower()
+    media_type = "video" if "video" in source_type else "image"
+    media_url = detail_url or row.source_url or ""
+    cover_url = row.cover_url or (media_url if media_type == "image" else "")
     status = str(row.status or "").strip()
     if status == "succeed":
         normalized_status = "success"
@@ -1754,7 +1769,12 @@ def _normalize_shanjian_profile_as_avatar(
         "title": row.title,
         "image_url": cover_url,
         "cover_url": cover_url,
-        "source_type": row.train_mode or "image",
+        "thumbnail_url": cover_url,
+        "poster_url": cover_url,
+        "media_type": media_type,
+        "media_url": media_url,
+        "video_url": media_url if media_type == "video" else "",
+        "source_type": source_type,
         "detail_asset_id": source_asset_id,
         "detail_url": detail_url,
         "status": normalized_status,
