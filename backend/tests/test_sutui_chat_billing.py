@@ -320,6 +320,28 @@ def test_yyapi_usage_billing_uses_customer_multiplier(monkeypatch):
     assert out["customer_credits"] == Decimal("46.2998")
 
 
+def test_fallback_deepseek_does_not_use_yyapi_pricing(monkeypatch):
+    from backend.app.api import sutui_chat_proxy
+
+    monkeypatch.setattr(sutui_chat_proxy, "_yyapi_pricing_enabled", lambda: True)
+    monkeypatch.setattr(
+        sutui_chat_proxy,
+        "yyapi_usage_billing",
+        lambda usage: {"customer_credits": Decimal("9999"), "list_price_yuan": Decimal("1"),
+                        "upstream_cost_yuan": Decimal("1"), "customer_charge_yuan": Decimal("1")},
+    )
+
+    credits, source = sutui_chat_proxy._credits_for_sutui_chat(
+        "deepseek-chat",
+        {"prompt_tokens": 1000, "completion_tokens": 1000},
+        provider="direct:deepseek",
+        is_direct_api=True,
+    )
+
+    assert credits == Decimal("0.5")
+    assert source == "direct_official_pricing"
+
+
 def test_yyapi_turn_precharge_defers_until_usage(db_session, monkeypatch):
     from backend.app.api import sutui_chat_proxy
     from backend.app.core.config import settings

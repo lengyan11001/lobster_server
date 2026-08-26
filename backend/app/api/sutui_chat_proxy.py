@@ -160,9 +160,14 @@ def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
 
 
 def _yyapi_chat_configured() -> bool:
+    """Whether a YYAPI direct route is configured.
+
+    YYAPI is the first route in the normal fallback chain.  The legacy
+    Callers use this endpoint without selecting a provider, and a failed
+    YYAPI request must be allowed to continue to the remaining candidates.
+    """
     key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
-    force = getattr(settings, "yyapi_force_sutui_chat", True)
-    return bool(key) and bool(force)
+    return bool(key)
 
 
 def _yyapi_chat_model_id() -> str:
@@ -842,33 +847,39 @@ def _sutui_chat_model_candidates(
     out: List[str] = []
     init = (initial_model or "").strip()
 
-    # The server-wide YYAPI switch intentionally normalizes every Sutui chat
-    # request to one model. This covers callers that still send legacy model
-    # ids (including AI console, H5 and WeChat automation).
-    if _yyapi_chat_configured():
-        return [_yyapi_chat_model_id()]
+    # Provider order is server-owned.  Callers may send any legacy model id;
+    # that id is only a later fallback and never determines the provider.
+    yyapi_model = _yyapi_chat_model_id() if _yyapi_chat_configured() else ""
 
-    if init and init not in seen:
-        seen.add(init)
-        out.append(init)
+    def add(mid: str) -> None:
+        model = (mid or "").strip()
+        if model and model not in seen:
+            seen.add(model)
+            out.append(model)
+
+    if yyapi_model:
+        add(yyapi_model)
+    # DeepSeek is always the next provider-owned candidate.  When its direct
+    # key is absent it may still resolve through the documented xskill route.
+    add("deepseek-chat")
+    if init:
+        add(init)
     configured_chain = (
         list(fallback_chain)
         if fallback_chain is not None
         else _parse_sutui_chat_fallback_chain_env()
     )
     configured_chain.extend(required_fallbacks or [])
-    configured_chain.append("deepseek-chat")
     for fb in configured_chain:
-        m = _remap_model_id_for_sutui(fb)
-        if m and m not in seen:
-            seen.add(m)
-            out.append(m)
+        add(_remap_model_id_for_sutui(fb))
     if not out:
         return [init] if init else []
     disabled = _disabled_sutui_chat_models()
     if disabled:
         before_disabled = list(out)
-        out = [m for m in out if m not in disabled]
+        # ``gpt-5.6-sol`` is disabled on the xskill route by default, but the
+        # same id is the configured YYAPI model and must remain available.
+        out = [m for m in out if m not in disabled or m == yyapi_model]
         skipped_disabled = set(before_disabled) - set(out)
         if skipped_disabled:
             logger.info("[sutui-chat] skipping disabled chat models: %s", skipped_disabled)
@@ -923,13 +934,12 @@ def _sutui_chat_attempts_for_models(
                 "timeout": direct_timeout,
                 "is_direct": True,
             })
-            if dr.get("provider") == "yyapi" and _yyapi_chat_configured():
-                # YYAPI is the explicitly configured server-wide Sutui chat
-                # provider; do not fall through and leak a Sutui token to the
-                # old xskill route for the same request.
+            if dr.get("provider") == "yyapi":
+                # Do not duplicate the YYAPI model through xskill.  The next
+                # model candidate is the actual fallback route.
                 continue
         v3 = _get_v3_route(mid, token)
-        if v3:
+        if v3 and token:
             attempts.append({
                 "model": v3["model"],
                 "api_base": v3["api_base"],
@@ -940,14 +950,15 @@ def _sutui_chat_attempts_for_models(
                 "endpoint_prefix": v3["endpoint_prefix"],
                 "v1_model": mid,
             })
-        attempts.append({
-            "model": mid,
-            "api_base": _api_base(),
-            "api_key": token,
-            "provider": "xskill",
-            "timeout": xskill_timeout,
-            "is_direct": False,
-        })
+        if token:
+            attempts.append({
+                "model": mid,
+                "api_base": _api_base(),
+                "api_key": token,
+                "provider": "xskill",
+                "timeout": xskill_timeout,
+                "is_direct": False,
+            })
     return attempts
 
 
@@ -1526,11 +1537,14 @@ def _credits_for_sutui_chat(
     response_body: Optional[Dict[str, Any]] = None,
     *,
     is_direct_api: bool = False,
+    provider: Optional[str] = None,
 ) -> Tuple[Decimal, str]:
     """LLM 实扣：v3 cost → 直连官方定价 → 上游显式价字段 → docs 定价+usage → usage×fallback。"""
-    # YYAPI pricing is authoritative for this route; generic upstream cost
-    # fields and fallback tables must not override the configured rates.
-    if _yyapi_pricing_enabled():
+    # YYAPI pricing applies only when YYAPI actually won.  A request may have
+    # started at YYAPI and completed on DeepSeek/xskill after fallback.
+    provider_name = (provider or "").strip().lower()
+    is_yyapi_route = provider_name in {"yyapi", "direct:yyapi"}
+    if is_yyapi_route and _yyapi_pricing_enabled():
         yyapi = yyapi_usage_billing(usage)
         if yyapi and yyapi["customer_credits"] > 0:
             return quantize_credits(yyapi["customer_credits"]), "yyapi_usage_customer_0.40"
@@ -1600,6 +1614,7 @@ def _apply_chat_deduct(
     billing_recon: Optional[Dict[str, Any]] = None,
     trace_id: Optional[str] = None,
     is_direct_api: bool = False,
+    provider: Optional[str] = None,
     apply_min_charge: bool = True,
     billing_mode: str = "standard",
 ) -> None:
@@ -1616,7 +1631,13 @@ def _apply_chat_deduct(
     reported_raw = None
     if response_body and isinstance(response_body, dict):
         reported_raw = extract_upstream_reported_credits(response_body)
-    credits, billing_src = _credits_for_sutui_chat(model, usage, response_body, is_direct_api=is_direct_api)
+    credits, billing_src = _credits_for_sutui_chat(
+        model,
+        usage,
+        response_body,
+        is_direct_api=is_direct_api,
+        provider=provider,
+    )
     raw_computed_credits = credits
     if apply_min_charge and credits < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
         credits = _SUTUI_CHAT_MIN_CHARGE_CREDITS
@@ -1667,8 +1688,9 @@ def _apply_chat_deduct(
         "billing_mode": billing_mode,
         "trace_id": tid,
         "billing_src": billing_src,
+        "provider": provider or ("direct" if is_direct_api else "xskill"),
     }
-    if _yyapi_pricing_enabled():
+    if (provider or "").strip().lower() in {"yyapi", "direct:yyapi"} and _yyapi_pricing_enabled():
         yyapi = yyapi_usage_billing(usage)
         if yyapi:
             meta_chat.update({
@@ -1753,27 +1775,7 @@ async def sutui_chat_completions(
     _enforce_max_tool_call_rounds(body, trace_id)
 
     bm = brand_mark_for_jwt_claim(getattr(current_user, "brand_mark", None))
-    yyapi_active = _yyapi_chat_configured()
-    token, sutui_pool = ("", "yyapi") if yyapi_active else await next_sutui_server_token_with_pool(brand_mark=bm)
-    if not token and not yyapi_active:
-        raise HTTPException(
-            status_code=503,
-            detail=f"服务器未配置共享速推 Token 池（pool={sutui_pool or 'none'}）",
-        )
-    chat_billing_recon = sutui_token_recon_meta(token, sutui_pool)
-
     stream = bool(body.get("stream"))
-    url = (
-        f"{(_yyapi_direct_route() or {}).get('api_base')}/v1/chat/completions"
-        if yyapi_active
-        else f"{_api_base()}/v1/chat/completions"
-    )
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-    }
-
     model_id = (body.get("model") or "").strip()
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
@@ -1789,6 +1791,13 @@ async def sutui_chat_completions(
         required_fallbacks=["deepseek-chat"] if mastra_chat_profile else None,
         fallback_chain=preferred_model_fallback_chain,
     )
+
+    # Always resolve a Sutui token for possible xskill candidates.  Direct
+    # YYAPI/DeepSeek routes do not require it, so a missing token must not
+    # prevent those providers from being attempted.
+    token, sutui_pool = await next_sutui_server_token_with_pool(brand_mark=bm)
+    chat_billing_recon = sutui_token_recon_meta(token, sutui_pool)
+    url = f"{_api_base()}/v1/chat/completions"
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
     _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
@@ -1837,6 +1846,15 @@ async def sutui_chat_completions(
         token,
         forced_model_override=force_exact_model,
     )
+    if not attempts:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"未配置可用的 LLM 通道：YYAPI/DeepSeek 未配置有效密钥，"
+                f"且共享速推 Token 池为空（pool={sutui_pool or 'none'}）"
+            ),
+        )
+    url = f"{attempts[0]['api_base']}{attempts[0].get('endpoint_prefix', '/v1')}/chat/completions"
     logger.info(
         "[chat_trace] trace_id=%s attempts=%s",
         trace_id,
@@ -2061,6 +2079,7 @@ async def sutui_chat_completions(
                     billing_recon=chat_billing_recon,
                     trace_id=trace_id,
                     is_direct_api=winning_is_direct,
+                    provider=winning_provider,
                     apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
                     billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                 )
@@ -2091,6 +2110,7 @@ async def sutui_chat_completions(
     billing_user_id = int(current_user.id)
     billing_model_holder: List[str] = [model_id]
     billing_is_direct_holder: List[bool] = [False]
+    billing_provider_holder: List[str] = [""]
 
     async def gen() -> AsyncIterator[bytes]:
         line_buf = bytearray()
@@ -2192,6 +2212,7 @@ async def sutui_chat_completions(
 
                             billing_model_holder[0] = mid_try
                             billing_is_direct_holder[0] = att_is_direct
+                            billing_provider_holder[0] = att["provider"]
                             logger.info(
                                 "[chat_trace] trace_id=%s stream_started http=200 model=%s provider=%s",
                                 trace_id, mid_try or "-", att["provider"],
@@ -2403,6 +2424,7 @@ async def sutui_chat_completions(
                         billing_recon=chat_billing_recon,
                         trace_id=trace_id,
                         is_direct_api=billing_is_direct_holder[0],
+                        provider=billing_provider_holder[0],
                         apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
                         billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                     )

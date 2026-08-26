@@ -19900,16 +19900,35 @@
       return keys.map((key) => `# ${personalDocTypeLabel(key)}\n\n${String(docs[key] || "").trim()}`).filter(Boolean).join("\n\n---\n\n").trim();
     }
 
-    function downloadPersonalTextFile(filename, text) {
-      const blob = new Blob([String(text || "")], { type: "text/markdown;charset=utf-8" });
+    function parseNativeSaveResult(value) {
+      if (value && typeof value === "object") return value;
+      if (typeof value !== "string") return {};
+      try { return JSON.parse(value); } catch (err) { return { ok: value === "ok" }; }
+    }
+
+    async function downloadPersonalTextFile(filename, text) {
+      filename = filename || "个人记忆资料.md";
+      text = String(text || "");
+      if (window.LobsterAndroid && typeof window.LobsterAndroid.saveTextFile === "function") {
+        const result = parseNativeSaveResult(window.LobsterAndroid.saveTextFile(filename, "text/markdown", text));
+        if (!result.ok && !result.cancelled) throw new Error(result.error || "保存失败");
+        return result;
+      }
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_text_file === "function") {
+        const result = parseNativeSaveResult(await window.pywebview.api.save_text_file(filename, text));
+        if (!result.ok && !result.cancelled) throw new Error(result.error || "保存失败");
+        return result;
+      }
+      const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = filename || "个人记忆资料.md";
+      anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { ok: true, browser_download: true };
     }
 
     async function downloadPersonalMemoryDocument(docId, fallbackName) {
@@ -19918,15 +19937,8 @@
         headers: { ...authHeaders({ "X-Installation-Id": iid }) },
       });
       if (!resp.ok) throw new Error((await resp.text()) || "下载失败");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fallbackName || "个人记忆资料.md";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const text = await resp.text();
+      return downloadPersonalTextFile(fallbackName || "个人记忆资料.md", text);
     }
 
     function personalGeneratedDocsFromUi() {
@@ -19966,10 +19978,15 @@
         });
       });
       box.querySelectorAll("[data-download-personal-generated]").forEach((button) => {
-        button.addEventListener("click", () => {
+        button.addEventListener("click", async () => {
           const key = button.dataset.downloadPersonalGenerated || "";
           const text = state.personalGeneratedDocuments && state.personalGeneratedDocuments[key] || "";
-          downloadPersonalTextFile(`${personalDocTypeLabel(key)}.md`, `# ${personalDocTypeLabel(key)}\n\n${text}`);
+          try {
+            const result = await downloadPersonalTextFile(`${personalDocTypeLabel(key)}.md`, `# ${personalDocTypeLabel(key)}\n\n${text}`);
+            if (!result || !result.cancelled) toast(result && result.path ? `已保存至：${result.path}` : "文件已保存");
+          } catch (err) {
+            toast(err.message || "下载失败");
+          }
         });
       });
       if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(docs, order);
@@ -27139,7 +27156,8 @@
       if (!id) return;
       const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id) || {};
       try {
-        await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+        const result = await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+        if (!result || !result.cancelled) toast(result && result.path ? `已保存至：${result.path}` : "文件已保存");
       } catch (err) {
         toast(err.message || "下载失败");
       }
@@ -27245,7 +27263,8 @@
         if (downloadMemoryBtn) {
           const id = downloadMemoryBtn.dataset.downloadPersonalMemory || "";
           const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id) || {};
-          await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+          const result = await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+          if (!result || !result.cancelled) toast(result && result.path ? `已保存至：${result.path}` : "文件已保存");
           return;
         }
         if (deleteMemoryBtn) {

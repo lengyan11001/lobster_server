@@ -226,7 +226,6 @@ class Settings(BaseSettings):
     yyapi_api_key: Optional[str] = None
     yyapi_api_base: str = "https://www.yyapi.cloud"
     yyapi_chat_model: str = "gpt-5.6-sol"
-    yyapi_force_sutui_chat: bool = True
     # YYAPI token billing: provider list price is in yuan per 1M tokens.
     # The provider applies 0.23x to its internal cost; Lobster charges 0.40x
     # of the same list price and converts yuan to the account credit unit.
