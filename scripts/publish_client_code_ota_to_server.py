@@ -75,7 +75,6 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "static/branding/brands.json",
     "static/index.html",
     "static/ai3d-model-preview.html",
-    "static/lobster-bridge.js",
     "static/client_version.json",
     "CLIENT_CODE_VERSION.json",
 ]
