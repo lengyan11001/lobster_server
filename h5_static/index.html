@@ -1742,10 +1742,14 @@
             <input id="workflowNodeDouyinMaxResults" type="number" min="10" max="100" step="1" value="50">
             <label for="workflowNodeDouyinMode">搜索方式</label>
             <select id="workflowNodeDouyinMode"><option value="script">浏览器脚本</option><option value="api">接口模式</option></select>
-            <label>采集后继续执行（可多选）</label>
+          </div>
+          <div class="field full hidden" id="workflowNodeDouyinTouchField">
+            <label for="workflowNodeDouyinTouchMaxUsers">精准用户触达参数</label>
+            <input id="workflowNodeDouyinTouchMaxUsers" type="number" min="1" max="200" step="1" value="20">
+            <label>触达动作（按顺序执行）</label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupReplyComments" type="checkbox" checked><span>回复客户评论</span></label>
-            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupMentionComment" type="checkbox" checked><span>评论并@客户</span></label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupFollowComment" type="checkbox" checked><span>关注并评论</span></label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupMentionComment" type="checkbox" checked><span>评论并@客户</span></label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupDirectMessage" type="checkbox" checked><span>主动私信</span></label>
           </div>
           <div class="field full hidden" id="workflowNodeMomentField">

@@ -303,6 +303,28 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         task_kind = str(plan.get("task_kind") or plan.get("taskKind") or "").strip().lower()
         payload = copy.deepcopy(plan.get("payload")) if isinstance(plan.get("payload"), dict) else {}
         _normalize_douyin_private_switch(raw, plan, payload)
+        if task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "search_collect":
+            collection_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            collection_params = dict(collection_params)
+            collection_params["followup_actions"] = []
+            collection_params.pop("touch_actions", None)
+            collection_params["customer_scope"] = "current_collection_batch"
+            payload["params"] = collection_params
+        elif task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "precise_touch":
+            touch_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            touch_params = dict(touch_params)
+            raw_actions = touch_params.get("touch_actions") if "touch_actions" in touch_params else touch_params.get("followup_actions")
+            touch_params["touch_actions"] = _sales_douyin_followup_actions(raw_actions) or list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+            touch_params.pop("followup_actions", None)
+            touch_params["customer_scope"] = "precise_pool"
+            if touch_params.get("max_users") not in (None, "", []):
+                try:
+                    touch_params["max_users"] = max(1, min(200, int(touch_params["max_users"])))
+                except (TypeError, ValueError):
+                    touch_params["max_users"] = 20
+            else:
+                touch_params["max_users"] = 20
+            payload["params"] = touch_params
         title = str(plan.get("title") or raw.get("label") or raw.get("ability_label") or "工作流任务").strip()[:160]
         content = str(plan.get("content") or f"H5 工作流：{title}").strip()[:12000]
         if _is_workflow_placeholder(raw) or payload.get("action") == "workflow_coming_soon":
@@ -568,15 +590,8 @@ def _fold_legacy_sales_douyin_followup_nodes(nodes: Any) -> list[dict[str, Any]]
             prepared.append(item)
             continue
         if is_sales_douyin and action in _SALES_DOUYIN_FOLLOWUP_ACTIONS and current_collection is not None:
-            parent_plan = current_collection.get("plan") if isinstance(current_collection.get("plan"), dict) else {}
-            parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
-            parent_params = dict(parent_payload.get("params") if isinstance(parent_payload.get("params"), dict) else {})
-            selected = _sales_douyin_followup_actions([*(parent_params.get("followup_actions") or []), action])
-            parent_params["followup_actions"] = selected
-            parent_params["customer_scope"] = "current_collection_batch"
-            parent_payload["params"] = parent_params
-            parent_plan["payload"] = parent_payload
-            current_collection["plan"] = parent_plan
+            # Legacy standalone touch nodes must not make collection execute
+            # touch actions. The standalone precise-touch node owns that work.
             continue
         prepared.append(item)
     return prepared
@@ -1153,6 +1168,10 @@ def _prepare_publish_action_nodes(
 
 def _sales_action_from_note(note: Any) -> str:
     text = _clean_text(note, 200)
+    if "我的评论区" in text:
+        return "self_comment_monitor"
+    if "精准用户触达" in text or "精准触达" in text:
+        return "precise_touch"
     if "养号" in text:
         return "account_nurture"
     if "发布后采集" in text or "关键词抓取" in text:
@@ -1172,8 +1191,8 @@ def _sales_action_from_note(note: Any) -> str:
 
 _SALES_DOUYIN_FOLLOWUP_ACTIONS = (
     "reply_comments",
-    "mention_comment",
     "follow_comment",
+    "mention_comment",
     "direct_message",
 )
 
@@ -1199,19 +1218,29 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
         action = inferred_action
     result: dict[str, Any] = {"action": action or "search_collect"}
     if (action or "search_collect") == "search_collect":
-        followup_actions = (
-            _sales_douyin_followup_actions(params.get("followup_actions"))
-            if "followup_actions" in params
-            else list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
-        )
         result["params"] = {
-            "followup_actions": followup_actions,
             "customer_scope": "current_collection_batch",
         }
         for key in ("keyword", "regions", "max_results", "max_videos_per_run", "mode"):
             value = params.get(key)
+            if key == "keyword" and any(marker in _clean_text(value, 200) for marker in ("抖音获客", "精准用户触达", "精准触达")):
+                continue
             if value not in (None, "", []):
                 result["params"][key] = copy.deepcopy(value)
+    if action == "precise_touch":
+        raw_actions = params.get("touch_actions") if "touch_actions" in params else params.get("followup_actions")
+        touch_actions = _sales_douyin_followup_actions(raw_actions)
+        if not touch_actions:
+            touch_actions = list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+        result["params"] = {
+            "touch_actions": touch_actions,
+            "customer_scope": "precise_pool",
+        }
+        if params.get("max_users") not in (None, "", []):
+            try:
+                result["params"]["max_users"] = max(1, min(200, int(params.get("max_users"))))
+            except (TypeError, ValueError):
+                result["params"]["max_users"] = 20
     # Private-message takeover keeps add-friend behavior on the parent node.
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.

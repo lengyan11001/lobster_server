@@ -264,6 +264,7 @@
       workflowGrantTemplateId: "",
       workflowGrantSelectedUserIds: {},
       workflowSubmitting: false,
+      workflowSalesTemplateMigrationPending: false,
       workflowParamNodeId: "",
       workflowActionParentNodeId: "",
       workflowActionEditId: "",
@@ -894,7 +895,7 @@
       { time: "10:00", endTime: "10:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "10:30", endTime: "11:00", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "11:00", endTime: "11:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
-      { time: "11:30", endTime: "12:45", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { followup_actions: ["reply_comments", "mention_comment", "follow_comment", "direct_message"], customer_scope: "current_collection_batch" } },
+      { time: "11:30", endTime: "12:45", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { customer_scope: "current_collection_batch" } },
       { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
       { time: "13:45", endTime: "14:15", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "14:15", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
@@ -905,8 +906,10 @@
       { time: "16:00", endTime: "16:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
       { time: "16:30", endTime: "16:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "17:00", endTime: "17:15", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
-      { time: "17:15", endTime: "18:15", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { followup_actions: ["reply_comments", "mention_comment", "follow_comment", "direct_message"], customer_scope: "current_collection_batch" } },
+      { time: "17:15", endTime: "18:15", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { customer_scope: "current_collection_batch" } },
+      { time: "18:15", endTime: "18:30", key: "douyin_leads", label: "抖音精准用户触达", note: "抖音精准用户触达", params: { touch_actions: ["reply_comments", "follow_comment", "mention_comment", "direct_message"], customer_scope: "precise_pool", max_users: 20 } },
       { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "18:45", endTime: "19:00", key: "douyin_leads", label: "抖音我的评论区", note: "抖音我的评论区" },
       { time: "19:15", endTime: "19:30", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
       { time: "19:30", endTime: "20:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "20:00", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
       { time: "20:15", endTime: "20:30", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
@@ -939,6 +942,7 @@
       if (isNativeWechatWorkflowKey(key)) return false;
       if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
       if (key === "douyin_leads" && isSalesDouyinCollectionNode(node)) return false;
+      if (key === "douyin_leads" && isSalesDouyinPreciseTouchNode(node)) return false;
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
     }
@@ -1138,6 +1142,8 @@
 
     function salesWorkflowActionForNote(note) {
       const text = String(note || "");
+      if (text.includes("我的评论区")) return "self_comment_monitor";
+      if (text.includes("精准用户触达") || text.includes("精准触达")) return "precise_touch";
       if (text.includes("养号")) return "account_nurture";
       if (text.includes("发布后采集") || text.includes("关键词抓取")) return "search_collect";
       if (text.includes("回复") && text.includes("评论")) return "reply_comments";
@@ -1148,7 +1154,7 @@
       return "search_collect";
     }
 
-    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "mention_comment", "follow_comment", "direct_message"];
+    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "follow_comment", "mention_comment", "direct_message"];
 
     function normalizeSalesDouyinFollowupActions(value) {
       const selected = new Set((Array.isArray(value) ? value : []).map((item) => String(item || "").trim().toLowerCase()));
@@ -1169,6 +1175,11 @@
         && salesDouyinNodeAction(node) === "search_collect";
     }
 
+    function isSalesDouyinPreciseTouchNode(node) {
+      return String(node && (node.ability_key || node.key) || "") === "douyin_leads"
+        && salesDouyinNodeAction(node) === "precise_touch";
+    }
+
     function foldSalesDouyinFollowupNodes(nodes) {
       const prepared = [];
       let currentCollection = null;
@@ -1178,18 +1189,21 @@
           && (node.sales_preset || String(node.id || "").startsWith("sales_") || String(node.department_id || "") === "sales");
         if (isSalesDouyin && action === "search_collect") {
           currentCollection = node;
+          const collectionPlan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
+          const collectionPayload = collectionPlan.payload && typeof collectionPlan.payload === "object" ? { ...collectionPlan.payload } : {};
+          const collectionParams = collectionPayload.params && typeof collectionPayload.params === "object" ? { ...collectionPayload.params } : {};
+          collectionParams.followup_actions = [];
+          delete collectionParams.touch_actions;
+          collectionParams.customer_scope = "current_collection_batch";
+          collectionPayload.params = collectionParams;
+          collectionPlan.payload = collectionPayload;
+          currentCollection.plan = collectionPlan;
           prepared.push(node);
           return;
         }
-        if (isSalesDouyin && SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action) && currentCollection) {
-          const plan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
-          const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
-          const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
-          params.followup_actions = normalizeSalesDouyinFollowupActions([...(params.followup_actions || []), action]);
-          params.customer_scope = "current_collection_batch";
-          payload.params = params;
-          plan.payload = payload;
-          currentCollection.plan = plan;
+        if (isSalesDouyin && SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action)) {
+          // Legacy standalone follow-up nodes must not make collection execute
+          // touch actions. The standalone precise-touch node owns that work.
           return;
         }
         prepared.push(node);
@@ -3610,9 +3624,12 @@
       const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
       const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "search_collect";
+      const showDouyinPreciseTouch = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && salesWorkflowActionForNote(selectedNote) === "precise_touch";
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
+      $("workflowNodeDouyinTouchField")?.classList.toggle("hidden", !showDouyinPreciseTouch);
       syncWorkflowMomentPicker("node", showMoments);
       const checkbox = $("workflowNodeNativeWechatGroupInviteEnabled");
       if (checkbox && !showGroupInvite) checkbox.checked = false;
@@ -3623,10 +3640,13 @@
         setFieldValue("workflowNodeDouyinRegions", "全国");
         setFieldValue("workflowNodeDouyinMaxResults", 50);
         setFieldValue("workflowNodeDouyinMode", "script");
+      }
+      if (reset && showDouyinPreciseTouch) {
+        setFieldValue("workflowNodeDouyinTouchMaxUsers", 20);
         [
           "workflowNodeDouyinFollowupReplyComments",
-          "workflowNodeDouyinFollowupMentionComment",
           "workflowNodeDouyinFollowupFollowComment",
+          "workflowNodeDouyinFollowupMentionComment",
           "workflowNodeDouyinFollowupDirectMessage",
         ].forEach((id) => setFieldValue(id, true));
       }
@@ -3863,16 +3883,20 @@
           return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡")))
             + taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
         }
+        if (item && item.selfCommentMonitor) return "";
+        if (item && item.preciseTouch) {
+          return taskFieldHtml("每次触达数量", workInputHtml("workflowParamDouyinTouchMaxUsers", "number", "20", 'min="1" max="200"'))
+            + taskFieldHtml("触达动作（按顺序执行）", workCheckboxGroupHtml([
+              { id: "workflowParamDouyinFollowupReplyComments", label: "回复客户评论", checked: true },
+              { id: "workflowParamDouyinFollowupFollowComment", label: "关注并评论", checked: true },
+              { id: "workflowParamDouyinFollowupMentionComment", label: "评论并@客户", checked: true },
+              { id: "workflowParamDouyinFollowupDirectMessage", label: "主动私信", checked: true },
+            ]), true);
+        }
         return taskFieldHtml("采集关键词（可选）", taskTextareaHtml("workflowParamDouyinKeyword", "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
-          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")))
-          + taskFieldHtml("采集后继续执行", workCheckboxGroupHtml([
-            { id: "workflowParamDouyinFollowupReplyComments", label: "回复客户评论", checked: true },
-            { id: "workflowParamDouyinFollowupMentionComment", label: "评论并@客户", checked: true },
-            { id: "workflowParamDouyinFollowupFollowComment", label: "关注并评论", checked: true },
-            { id: "workflowParamDouyinFollowupDirectMessage", label: "主动私信", checked: true },
-          ]), true);
+          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
       }
       if (key === "local_bestseller") {
         return localBestsellerFieldsHtml("workflowParamLocal", false);
@@ -3915,7 +3939,15 @@
       if (node.key === "wechat_channels_transcript") return workflowWechatTranscriptFieldsHtml();
        if (node.workQuickKey) {
          const quick = workQuickItemByKey(node.workQuickKey) || node;
-         return workflowQuickFieldsHtml(isSalesDouyinPrivateNode(workflowNode) ? { ...quick, privateTakeover: true } : quick);
+         return workflowQuickFieldsHtml(
+           isSalesDouyinPrivateNode(workflowNode)
+             ? { ...quick, privateTakeover: true }
+             : isSalesDouyinPreciseTouchNode(workflowNode)
+               ? { ...quick, preciseTouch: true }
+               : workflowNode && salesWorkflowActionForNote(workflowNode.note || workflowNode.ability_label) === "self_comment_monitor"
+                 ? { ...quick, selfCommentMonitor: true }
+                 : quick,
+         );
        }
       if (node.capabilityId || node.serverTask) return workflowCapabilityFieldsHtml(node.capabilityId || node.key);
       if (node.routeTab) return `<div class="quick-empty">这个节点是页面入口，不能加入定时工作流。</div>`;
@@ -4261,18 +4293,50 @@
             },
           };
         }
+        if ((quick && quick.preciseTouch) || (workflowNode && isSalesDouyinPreciseTouchNode(workflowNode))) {
+          const touchActions = normalizeSalesDouyinFollowupActions([
+            workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
+            workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
+            workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
+            workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
+          ]);
+          return {
+            title: "抖音精准用户触达",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：精准用户触达",
+            payload: {
+              action: "precise_touch",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: {
+                max_users: workflowParamNumber("workflowParamDouyinTouchMaxUsers", 20, 1, 200),
+                touch_actions: touchActions.length ? touchActions : [...SALES_DOUYIN_FOLLOWUP_ACTIONS],
+                customer_scope: "precise_pool",
+              },
+            },
+          };
+        }
+        if ((quick && quick.selfCommentMonitor) || (workflowNode && salesWorkflowActionForNote(workflowNode.note || workflowNode.ability_label) === "self_comment_monitor")) {
+          return {
+            title: "抖音我的评论区",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：抖音我的评论区",
+            payload: {
+              action: "self_comment_monitor",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: { customer_scope: "self_comments" },
+            },
+          };
+        }
         const keyword = workflowParamValue("workflowParamDouyinKeyword");
         const regions = workSplitList(workflowParamValue("workflowParamDouyinRegions"));
         const collectionParams = {
           max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
           regions: regions.length ? regions : ["全国"],
           mode: workflowParamValue("workflowParamDouyinMode") || "script",
-          followup_actions: normalizeSalesDouyinFollowupActions([
-            workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
-            workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
-            workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
-            workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
-          ]),
           customer_scope: "current_collection_batch",
         };
         if (keyword) collectionParams.keyword = keyword;
@@ -4377,6 +4441,15 @@
           workflowNode,
         );
       }
+      if (
+        isSalesDouyinPreciseTouchNode(workflowNode)
+        && (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads")
+      ) {
+        return collectWorkflowQuickPlan(
+          { ...(workQuickItemByKey(node.workQuickKey || node.key) || node), preciseTouch: true },
+          workflowNode,
+        );
+      }
       if (workflowNodeUsesPersonaDefaults(workflowNode)) return workflowPlanForLookup(lookup, note);
       const platform = socialPlatformFromAbilityKey(node.key);
       if (platform) {
@@ -4425,6 +4498,34 @@
       }
       if (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads") {
         const salesAction = salesWorkflowActionForNote(prompt);
+        if (salesAction === "precise_touch") {
+          return {
+            title: "抖音精准用户触达",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：精准用户触达",
+            payload: {
+              action: "precise_touch",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: { touch_actions: [...SALES_DOUYIN_FOLLOWUP_ACTIONS], max_users: 20, customer_scope: "precise_pool" },
+            },
+          };
+        }
+        if (salesAction === "self_comment_monitor") {
+          return {
+            title: "抖音我的评论区",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：抖音我的评论区",
+            payload: {
+              action: "self_comment_monitor",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: { customer_scope: "self_comments" },
+            },
+          };
+        }
         return {
           title: `抖音获客 - ${prompt.slice(0, 24)}`,
           task_kind: "douyin_leads",
@@ -4521,6 +4622,48 @@
         }, { requireTargets: true });
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
+        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "precise_touch"
+      ) {
+        const touchActions = normalizeSalesDouyinFollowupActions([
+          workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
+          workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
+          workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
+          workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
+        ]);
+        plan = {
+          title: "抖音精准用户触达",
+          task_kind: "douyin_leads",
+          content: "H5 工作流：精准用户触达",
+          payload: {
+            action: "precise_touch",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: {
+              max_users: workflowParamNumber("workflowNodeDouyinTouchMaxUsers", 20, 1, 200),
+              touch_actions: touchActions.length ? touchActions : [...SALES_DOUYIN_FOLLOWUP_ACTIONS],
+              customer_scope: "precise_pool",
+            },
+          },
+        };
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
+        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "self_comment_monitor"
+      ) {
+        plan = {
+          title: "抖音我的评论区",
+          task_kind: "douyin_leads",
+          content: "H5 工作流：抖音我的评论区",
+          payload: {
+            action: "self_comment_monitor",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: { customer_scope: "self_comments" },
+          },
+        };
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
         && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "search_collect"
       ) {
         const keyword = workflowParamValue("workflowNodeDouyinKeyword");
@@ -4529,12 +4672,6 @@
           regions: regions.length ? regions : ["全国"],
           max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
           mode: workflowParamValue("workflowNodeDouyinMode") || "script",
-          followup_actions: normalizeSalesDouyinFollowupActions([
-            workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
-            workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
-            workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
-            workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
-          ]),
           customer_scope: "current_collection_batch",
         };
         if (keyword) collectionParams.keyword = keyword;
@@ -4757,12 +4894,22 @@
             if (Object.prototype.hasOwnProperty.call(planParams, key)) preservedParams[key] = planParams[key];
             else if (Object.prototype.hasOwnProperty.call(rowParams, key)) preservedParams[key] = rowParams[key];
           });
-          const hasPlanFollowups = Object.prototype.hasOwnProperty.call(planParams, "followup_actions");
-          const hasRowFollowups = Object.prototype.hasOwnProperty.call(rowParams, "followup_actions");
-          preservedParams.followup_actions = hasPlanFollowups || hasRowFollowups
-            ? normalizeSalesDouyinFollowupActions(hasPlanFollowups ? planParams.followup_actions : rowParams.followup_actions)
-            : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+          // Collection only populates the precise-user pool. The four touch
+          // actions belong to the separate precise-touch node.
+          preservedParams.followup_actions = [];
           preservedParams.customer_scope = "current_collection_batch";
+        }
+        if (action === "precise_touch") {
+          const sourceActions = Object.prototype.hasOwnProperty.call(planParams, "touch_actions")
+            ? planParams.touch_actions
+            : rowParams.touch_actions;
+          const touchActions = Object.prototype.hasOwnProperty.call(planParams, "touch_actions") || Object.prototype.hasOwnProperty.call(rowParams, "touch_actions")
+            ? normalizeSalesDouyinFollowupActions(sourceActions)
+            : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+          preservedParams.touch_actions = touchActions.length ? touchActions : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+          const maxUsers = planParams.max_users ?? rowParams.max_users;
+          if (maxUsers != null && maxUsers !== "") preservedParams.max_users = Math.max(1, Math.min(200, Number(maxUsers) || 20));
+          preservedParams.customer_scope = "precise_pool";
         }
         next.payload = Object.keys(preservedParams).length
           ? { action, params: preservedParams }
@@ -5040,6 +5187,39 @@
         }
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+    }
+
+    function salesPresetNodeIdentity(node) {
+      if (!node || typeof node !== "object") return "";
+      const key = String(node.ability_key || node.key || "").trim();
+      const text = String(node.note || node.ability_label || "");
+      const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const explicitAction = String(payload.action || params.sales_action || "").trim().toLowerCase();
+      const action = key === "douyin_leads" ? (explicitAction || salesWorkflowActionForNote(text)) : "";
+      // These two Douyin actions were added after older sales mirrors were
+      // already saved. Their action identity remains stable if a user edits
+      // the displayed time or wording.
+      if (key === "douyin_leads" && (action === "precise_touch" || action === "self_comment_monitor")) {
+        return `douyin:${action}`;
+      }
+      return [key, text.trim(), String(node.time || "").trim()].join("|");
+    }
+
+    function mergeSalesWorkflowPresetNodes(nodes) {
+      const existing = cloneWorkflowNodes(nodes);
+      const defaults = buildSalesWorkflowPresetNodes();
+      const seen = new Set(existing.map(salesPresetNodeIdentity).filter(Boolean));
+      let added = 0;
+      defaults.forEach((node) => {
+        const identity = salesPresetNodeIdentity(node);
+        if (!identity || seen.has(identity)) return;
+        existing.push(cloneWorkflowNodes([node])[0]);
+        seen.add(identity);
+        added += 1;
+      });
+      return { nodes: normalizeWorkflowScheduleNodes(existing), added };
     }
 
     function normalizeWorkflowScheduleNodes(nodes) {
@@ -5417,13 +5597,20 @@
       closeWorkflowOverlays();
       const personalMirror = personalSystemWorkflowTemplate("system_sales");
       if (personalMirror) {
-        applyWorkflowTemplate({
+        const merged = mergeSalesWorkflowPresetNodes(personalMirror.nodes);
+        const migratedMirror = {
           ...personalMirror,
+          nodes: merged.nodes,
           meta: { ...(personalMirror.meta || {}), system_template_key: "system_sales" },
-        });
+        };
+        const index = state.workflowTemplates.findIndex((item) => String(item && item.id || "") === String(personalMirror.id || ""));
+        if (index >= 0) state.workflowTemplates[index] = migratedMirror;
+        applyWorkflowTemplate(migratedMirror);
+        state.workflowSalesTemplateMigrationPending = merged.added > 0;
         state.workflowViewingTemplateKey = "system_sales";
         return;
       }
+      state.workflowSalesTemplateMigrationPending = false;
       state.workflowEditingTemplateId = "";
       state.workflowEditingTemplateMeta = { system_template_key: "system_sales", source: "system_mirror" };
       state.workflowViewingTemplateId = "";
@@ -5463,6 +5650,7 @@
       state.workflowEditingTemplateMeta = {};
       state.workflowViewingTemplateId = "";
       state.workflowViewingTemplateKey = "";
+      state.workflowSalesTemplateMigrationPending = false;
       state.workflowNodesDraft = [];
       state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
@@ -5511,18 +5699,22 @@
         setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, false));
         return;
       }
+      if (isDouyinLookup && isSalesDouyinPreciseTouchNode(node)) {
+        setFieldValue("workflowParamDouyinTouchMaxUsers", params.max_users || params.max_users_per_run || 20);
+        const touchActions = Object.prototype.hasOwnProperty.call(params, "touch_actions")
+          ? normalizeSalesDouyinFollowupActions(params.touch_actions)
+          : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+        setFieldValue("workflowParamDouyinFollowupReplyComments", touchActions.includes("reply_comments"));
+        setFieldValue("workflowParamDouyinFollowupFollowComment", touchActions.includes("follow_comment"));
+        setFieldValue("workflowParamDouyinFollowupMentionComment", touchActions.includes("mention_comment"));
+        setFieldValue("workflowParamDouyinFollowupDirectMessage", touchActions.includes("direct_message"));
+        return;
+      }
       if (payload.action === "search_collect" || isDouyinLookup) {
         setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || "");
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
-        const followupActions = Object.prototype.hasOwnProperty.call(params, "followup_actions")
-          ? normalizeSalesDouyinFollowupActions(params.followup_actions)
-          : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
-        setFieldValue("workflowParamDouyinFollowupReplyComments", followupActions.includes("reply_comments"));
-        setFieldValue("workflowParamDouyinFollowupMentionComment", followupActions.includes("mention_comment"));
-        setFieldValue("workflowParamDouyinFollowupFollowComment", followupActions.includes("follow_comment"));
-        setFieldValue("workflowParamDouyinFollowupDirectMessage", followupActions.includes("direct_message"));
         return;
       }
       if (payload.action === "image_studio_generate" || nodeInfo.workQuickKey === "image_composer_studio") {
@@ -6336,6 +6528,7 @@
 
     function applyWorkflowTemplate(tpl) {
       if (!tpl) return;
+      state.workflowSalesTemplateMigrationPending = false;
       const meta = tpl.meta && typeof tpl.meta === "object" ? { ...tpl.meta } : {};
       const systemTemplateKey = tpl.source === "system" ? String(tpl.id || "") : workflowSystemTemplateKey(tpl);
       state.workflowEditingTemplateId = tpl.source === "own" ? String(tpl.id || "") : "";
@@ -6449,6 +6642,7 @@
         });
         const savedTemplate = normalizeWorkflowTemplate(data.template || null);
         state.workflowEditingTemplateId = String((savedTemplate && savedTemplate.id) || id || "");
+        state.workflowSalesTemplateMigrationPending = false;
         state.workflowEditingTemplateMeta = savedTemplate && savedTemplate.meta && typeof savedTemplate.meta === "object"
           ? { ...savedTemplate.meta }
           : meta;
@@ -6480,6 +6674,10 @@
 
     async function activateWorkflowTemplate(templateId = "") {
       let id = String(templateId || state.workflowEditingTemplateId || "");
+      if (state.workflowSalesTemplateMigrationPending && state.workflowEditingTemplateId) {
+        await saveWorkflowTemplate({ notify: false });
+        id = String(state.workflowEditingTemplateId || id);
+      }
       if (!id) {
         await saveWorkflowTemplate();
         id = String(state.workflowEditingTemplateId || "");

@@ -30,24 +30,13 @@ def test_sales_douyin_action_can_be_recovered_from_old_node_title():
     }
 
 
-def test_sales_douyin_collection_defaults_all_followup_actions():
+def test_sales_douyin_collection_does_not_include_followup_actions():
     payload = _sales_douyin_action_payload(
         {"note": "抖音获客·关键词抓取精准客户"},
         {"action": "search_collect", "params": {}},
     )
 
-    assert payload == {
-        "action": "search_collect",
-        "params": {
-            "followup_actions": [
-                "reply_comments",
-                "mention_comment",
-                "follow_comment",
-                "direct_message",
-            ],
-            "customer_scope": "current_collection_batch",
-        },
-    }
+    assert payload == {"action": "search_collect", "params": {"customer_scope": "current_collection_batch"}}
 
 
 def test_sales_douyin_collection_preserves_explicit_empty_followup_actions():
@@ -56,7 +45,7 @@ def test_sales_douyin_collection_preserves_explicit_empty_followup_actions():
         {"action": "search_collect", "params": {"followup_actions": []}},
     )
 
-    assert payload["params"]["followup_actions"] == []
+    assert payload == {"action": "search_collect", "params": {"customer_scope": "current_collection_batch"}}
 
 
 def test_sales_douyin_collection_dispatch_preserves_server_node_params():
@@ -79,8 +68,26 @@ def test_sales_douyin_collection_dispatch_preserves_server_node_params():
         "regions": ["深圳", "东莞"],
         "max_results": 80,
         "mode": "api",
-        "followup_actions": ["direct_message"],
         "customer_scope": "current_collection_batch",
+    }
+
+
+def test_sales_douyin_precise_touch_keeps_selected_actions_and_pool_scope():
+    payload = _sales_douyin_action_payload(
+        {"note": "抖音精准用户触达"},
+        {
+            "action": "precise_touch",
+            "params": {"touch_actions": ["mention_comment", "follow_comment"], "max_users": 12},
+        },
+    )
+
+    assert payload == {
+        "action": "precise_touch",
+        "params": {
+            "touch_actions": ["follow_comment", "mention_comment"],
+            "customer_scope": "precise_pool",
+            "max_users": 12,
+        },
     }
 
 
@@ -138,6 +145,8 @@ def test_all_sales_douyin_preset_titles_map_to_the_expected_action():
     cases = {
         "抖音自动养号": "account_nurture",
         "抖音获客·关键词抓取精准客户": "search_collect",
+        "抖音精准用户触达": "precise_touch",
+        "抖音我的评论区": "self_comment_monitor",
         "抖音回复精准客户评论10个": "reply_comments",
         "抖音自己评论区接管，评论并@10个精准客户": "mention_comment",
         "抖音关注10个精准客户，并找到他的首条作品去评论": "follow_comment",
@@ -151,12 +160,12 @@ def test_all_sales_douyin_preset_titles_map_to_the_expected_action():
         result = _sales_douyin_action_payload({"note": title}, legacy)
         assert result["action"] == expected
         if expected == "search_collect":
-            assert result["params"]["followup_actions"] == [
-                "reply_comments",
-                "mention_comment",
-                "follow_comment",
-                "direct_message",
-            ]
+            assert result["params"] == {"customer_scope": "current_collection_batch"}
+        elif expected == "precise_touch":
+            assert result["params"] == {
+                "touch_actions": ["reply_comments", "follow_comment", "mention_comment", "direct_message"],
+                "customer_scope": "precise_pool",
+            }
         else:
             assert "params" not in result
 
@@ -199,6 +208,19 @@ def test_h5_add_and_edit_expose_and_persist_collection_params():
     assert "留空使用当前设备 Online 已配置的全部关键词" in html
     assert 'if (keyword) collectionParams.keyword = keyword;' in script
     assert '"抖音获客 - Online 全部关键词"' in script
+
+
+def test_h5_sales_preset_separates_collection_and_precise_touch_nodes():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+    assert 'label: "抖音精准用户触达"' in script
+    assert 'customer_scope: "precise_pool"' in script
+    assert 'action: "precise_touch"' in script
+    assert 'workflowNodeDouyinTouchField' in html
+    assert 'workflowNodeDouyinTouchMaxUsers' in html
+    assert 'Collection only populates the precise-user pool.' in script
+    assert 'const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "follow_comment", "mention_comment", "direct_message"]' in script
 
 
 def test_h5_douyin_nodes_are_marked_as_one_shot():

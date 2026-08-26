@@ -75,7 +75,7 @@ def test_douyin_private_reply_mode_is_server_owned(db_session, test_user):
     assert params["reply_mode"] == "ai_lead"
 
 
-def test_legacy_douyin_followup_nodes_fold_into_collection_properties():
+def test_legacy_douyin_followup_nodes_are_removed_from_collection():
     def node(node_id: str, time: str, label: str, action: str) -> dict:
         return {
             "id": node_id,
@@ -104,12 +104,7 @@ def test_legacy_douyin_followup_nodes_fold_into_collection_properties():
 
     assert [item["id"] for item in cleaned] == ["collect"]
     params = cleaned[0]["plan"]["payload"]["params"]
-    assert params["followup_actions"] == [
-        "reply_comments",
-        "mention_comment",
-        "follow_comment",
-        "direct_message",
-    ]
+    assert params["followup_actions"] == []
     assert params["customer_scope"] == "current_collection_batch"
 
 
@@ -147,7 +142,7 @@ def test_douyin_collection_editor_params_survive_server_normalization():
     assert params["regions"] == ["深圳", "东莞"]
     assert params["max_results"] == 80
     assert params["mode"] == "api"
-    assert params["followup_actions"] == ["reply_comments", "direct_message"]
+    assert params["followup_actions"] == []
     assert params["customer_scope"] == "current_collection_batch"
 
 
