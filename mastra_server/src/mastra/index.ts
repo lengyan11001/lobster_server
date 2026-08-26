@@ -470,7 +470,12 @@ const listSystemCapabilities = createTool({
       query: query || '',
       matched_count: result.matched_count,
       available_count: result.available_count,
-      capabilities: result.capabilities,
+      capabilities: result.capabilities.map((row) => ({
+        ...row,
+        // Keep the structured parameter contract at the tool boundary after
+        // capability search was extracted into its own module.
+        parameter_schema: row.parameter_schema,
+      })),
       execution_hint: canExecute
         ? '当前会话已授权；命中 execution_target=server 的能力时加载并调用实际 MCP 工具，命中 execution_target=online 时调用 dispatch_online_capability。'
         : '当前会话是确认模式；用户明确要求执行命中的 server 生成/写入能力时，先调用 request_task_approval 生成确认卡，execution_target=server。不要说未检索到能力，也不要让用户口头再发“确认执行”。',

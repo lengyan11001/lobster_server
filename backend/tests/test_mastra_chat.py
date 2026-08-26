@@ -2066,9 +2066,9 @@ def test_media_task_transport_failure_requeues_same_task_id(
 def test_mastra_media_generation_is_guarded_and_polled_to_terminal():
     from pathlib import Path
 
-    source = (
-        Path(__file__).resolve().parents[2] / "mastra_server" / "src" / "mastra" / "index.ts"
-    ).read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "mastra_server" / "src" / "mastra" / "index.ts").read_text(encoding="utf-8")
+    capability_search = (root / "mastra_server" / "src" / "mastra" / "capability-search.ts").read_text(encoding="utf-8")
 
     assert "const existing = tasks.get(capabilityId)" in source
     assert "capability_id: 'task.get_result'" in source
@@ -2078,5 +2078,5 @@ def test_mastra_media_generation_is_guarded_and_polled_to_terminal():
     assert "throw new MediaPollResumeError(message)" in source
     assert "if (error instanceof MediaPollResumeError) throw error" in source
     assert source.count("if (mediaExecution.hasPending())") >= 2
-    assert "parameter_schema: parameterSchema" in source
+    assert "parameter_schema: parameterSchema" in capability_search
     assert "按照 parameter_schema 的类型、必填项、默认值和范围" in source
