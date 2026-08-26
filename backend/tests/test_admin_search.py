@@ -345,6 +345,74 @@ def test_agent_credit_addition_transfers_from_agent_balance(db_session_factory, 
         assert session.query(CreditLedger).count() == 2
 
 
+def test_agent_can_reset_managed_user_password_only(db_session_factory, db_session):
+    from backend.app.api.auth import verify_password
+
+    agent = User(
+        email="agent-password@test.local",
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        is_agent=True,
+        agent_level=1,
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(agent)
+    db_session.commit()
+    db_session.refresh(agent)
+    child = User(
+        email="agent-password-child@test.local",
+        hashed_password="old-hash",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        parent_user_id=agent.id,
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    unrelated = User(
+        email="agent-password-unrelated@test.local",
+        hashed_password="old-hash",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([child, unrelated])
+    db_session.commit()
+    db_session.refresh(child)
+    db_session.refresh(unrelated)
+
+    client = _client_for_admin_context(
+        db_session_factory,
+        admin_api.AdminContext(role="agent", user_id=agent.id, brand_mark="daka"),
+    )
+    response = client.post(
+        "/admin/api/reset-password",
+        json={"user_id": child.id, "new_password": "new-password-123"},
+    )
+    assert response.status_code == 200
+
+    with db_session_factory() as session:
+        saved_child = session.get(User, child.id)
+        assert saved_child.password_initialized is True
+        assert verify_password("new-password-123", saved_child.hashed_password)
+
+    unrelated_response = client.post(
+        "/admin/api/reset-password",
+        json={"user_id": unrelated.id, "new_password": "blocked-password"},
+    )
+    assert unrelated_response.status_code == 403
+
+    self_response = client.post(
+        "/admin/api/reset-password",
+        json={"user_id": agent.id, "new_password": "blocked-password"},
+    )
+    assert self_response.status_code == 403
+
 def test_admin_positive_credit_adjustment_does_not_use_agent_transfer(db_session_factory, db_session):
     user = User(
         email="admin-credit@test.local",

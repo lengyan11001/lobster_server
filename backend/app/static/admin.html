@@ -2453,7 +2453,8 @@ async function showUserDetail(userId) {
     // admin / agent: skill visibility & unlock permissions
     const canManageSkills = isAdmin() || (isAgent() && !viewingSelf);
     document.getElementById('skillVisCard').style.display = canManageSkills ? '' : 'none';
-    document.getElementById('resetPwdBtn').style.display = isAdmin() ? '' : 'none';
+    // 管理员和代理商都可在积分页重置其有权管理的下级密码；代理商自查时整张卡片会隐藏。
+    document.getElementById('resetPwdBtn').style.display = (isAdmin() || isAgent()) ? '' : 'none';
 
     // agent: remove sub（自查时不显示）
     const removeCard = document.getElementById('removeSubCard');

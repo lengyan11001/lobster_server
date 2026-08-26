@@ -651,10 +651,10 @@ class SetUserLlmModelBody(BaseModel):
 @router.post("/admin/api/reset-password")
 def admin_reset_password(
     body: ResetPasswordBody,
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    """管理员重置指定用户的登录密码。密码规则与注册一致（6~128 位）。"""
+    """管理员或代理商重置其有权管理用户的登录密码。"""
     _assert_can_manage_user(db, ctx, body.user_id)
     pwd = (body.new_password or "").strip()
     if len(pwd) < 6:
