@@ -75,7 +75,15 @@ _PROXY_AUDIT_LOGGER = logging.getLogger("comfly_proxy_audit")
 
 # Comfly 上游超时（与 pipeline 默认 poll 间隔对齐，video submit 通常很快返回 task_id）
 _TIMEOUT_CHAT = 120.0
-_TIMEOUT_IMAGE = 300.0
+try:
+    # A slow image provider must yield to the fallback chain well before the
+    # local image-workbench job gives up waiting for the cloud proxy.
+    _TIMEOUT_IMAGE = max(
+        30.0,
+        min(180.0, float(os.environ.get("COMFLY_IMAGE_UPSTREAM_TIMEOUT_SECONDS") or "90")),
+    )
+except (TypeError, ValueError):
+    _TIMEOUT_IMAGE = 90.0
 try:
     _TIMEOUT_OPENMIND_IMAGE_READ = max(
         30.0,
@@ -283,6 +291,8 @@ def _image_generation_channel_disable_ttl_seconds(provider: str, error: str) -> 
         return _env_int("COMFLY_IMAGE_PROVIDER_AUTH_DISABLE_SECONDS", 1800, min_value=60, max_value=7200)
     if "http 429" in msg and provider in {"openai_official", "gaisc", "comfyui_official", "openmindapi", "openmind", "yunwu", "sutui"}:
         return _env_int("COMFLY_IMAGE_PROVIDER_RATE_LIMIT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
+    if "timeout" in msg or any(status in msg for status in ("http 502", "http 503", "http 504")):
+        return _env_int("COMFLY_IMAGE_PROVIDER_TRANSIENT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
     return 0
 
 
@@ -736,20 +746,25 @@ def _image_generation_model_attempts(model: str) -> List[str]:
     return [model]
 
 
-def _image_generation_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
+def _image_generation_model_attempts_for_user(
+    model: str,
+    *,
+    openai_official_first: bool,
+    prefer_openmind: bool = False,
+) -> List[str]:
     if not _is_gpt_image_2_request_model(model):
         return [model]
+    attempts = _image_generation_model_attempts(model)
     if openai_official_first:
-        return [
-            "gpt-image-2-openai-official",
-            "gpt-image-2-gaisc",
-            "gpt-image-2",
-            "gpt-image-2-comfyui-official",
-            "gpt-image-2-sutui",
-            "gpt-image-2-openmindapi",
-            "nano-banana-2",
-        ]
-    return _image_generation_model_attempts(model)
+        attempts.insert(0, "gpt-image-2-openai-official")
+    if prefer_openmind and "gpt-image-2-openmindapi" in attempts:
+        attempts.remove("gpt-image-2-openmindapi")
+        # Keep the official OpenAI channel first for entitled users. OpenMind
+        # is otherwise promoted ahead of relays whose recent failures can be
+        # circuit-broken by the loop below.
+        insert_at = 1 if openai_official_first else 0
+        attempts.insert(insert_at, "gpt-image-2-openmindapi")
+    return attempts
 
 
 def _image_edit_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
@@ -921,11 +936,16 @@ async def _comfly_request(
     method: str, url: str, body: Optional[Dict[str, Any]], headers: Dict[str, str], timeout: float,
 ) -> Dict[str, Any]:
     """统一封装 httpx 调用 Comfly。失败抛 RuntimeError，含状态码与文本片段。"""
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        if method.upper() == "GET":
-            r = await client.get(url, headers=headers)
-        else:
-            r = await client.post(url, headers=headers, json=body or {})
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            if method.upper() == "GET":
+                r = await client.get(url, headers=headers)
+            else:
+                r = await client.post(url, headers=headers, json=body or {})
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Comfly request timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Comfly transport error ({type(exc).__name__}): {exc}") from exc
     if r.status_code >= 400:
         raise RuntimeError(f"Comfly HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -958,8 +978,13 @@ async def _comfly_multipart_request(
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        r = await client.post(url, headers=headers, data=data, files=files)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            r = await client.post(url, headers=headers, data=data, files=files)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Comfly multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Comfly multipart transport error ({type(exc).__name__}): {exc}") from exc
     if r.status_code >= 400:
         raise RuntimeError(f"Comfly HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -975,8 +1000,13 @@ async def _yunwu_multipart_request(
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        r = await client.post(url, headers=headers, data=data, files=files)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            r = await client.post(url, headers=headers, data=data, files=files)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Yunwu multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Yunwu multipart transport error ({type(exc).__name__}): {exc}") from exc
     if r.status_code >= 400:
         raise RuntimeError(f"Yunwu HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -1077,12 +1107,17 @@ async def _sutui_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
         body["model"] = "openai/gpt-image-2"
     if body.get("size") and not body.get("image_size"):
         body["image_size"] = body.get("size")
-    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
-        resp = await client.post(
-            f"{_sutui_image_base_url()}/v1/images/generations",
-            headers=await _sutui_image_headers(),
-            json=body,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+            resp = await client.post(
+                f"{_sutui_image_base_url()}/v1/images/generations",
+                headers=await _sutui_image_headers(),
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Sutui request timeout after {int(_TIMEOUT_IMAGE)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Sutui transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"Sutui HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1103,13 +1138,18 @@ async def _sutui_multipart_request(
     files: List[Tuple[str, Tuple[Any, ...]]],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        resp = await client.post(
-            f"{_sutui_image_base_url()}{path}",
-            headers=await _sutui_image_headers(multipart=True),
-            data=data,
-            files=files,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            resp = await client.post(
+                f"{_sutui_image_base_url()}{path}",
+                headers=await _sutui_image_headers(multipart=True),
+                data=data,
+                files=files,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Sutui multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Sutui multipart transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"Sutui HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1153,6 +1193,7 @@ def _is_retryable_image_error(exc: BaseException) -> bool:
         "connection",
         "read",
         "network",
+        "transport",
         "new_api_error",
         "unknown_error",
         "upstream",
@@ -1160,6 +1201,12 @@ def _is_retryable_image_error(exc: BaseException) -> bool:
         "未接收到上游响应内容",
     )
     return any(token in msg for token in retry_tokens)
+
+
+def _should_skip_same_image_channel_retry(exc: BaseException) -> bool:
+    """Advance to the next provider immediately for transient upstream failures."""
+    msg = str(exc or "").lower()
+    return "timeout" in msg or "transport" in msg or "http 5" in msg
 
 
 def _extract_upstream_trace_id(error: Any) -> str:
@@ -1796,13 +1843,18 @@ async def _openmind_multipart_request(
 ) -> Dict[str, Any]:
     headers = _openmind_image_headers()
     headers.pop("Content-Type", None)
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        resp = await client.post(
-            f"{_openmind_image_base_url()}{path}",
-            headers=headers,
-            data=data,
-            files=files,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            resp = await client.post(
+                f"{_openmind_image_base_url()}{path}",
+                headers=headers,
+                data=data,
+                files=files,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"OpenMind multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"OpenMind multipart transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenMind HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1818,12 +1870,17 @@ async def _openmind_multipart_request(
 
 async def _openai_official_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
     body = _openai_official_image_body(source_body)
-    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
-        resp = await client.post(
-            _openai_official_image_url("/images/generations"),
-            headers=_openai_official_image_headers(),
-            json=body,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+            resp = await client.post(
+                _openai_official_image_url("/images/generations"),
+                headers=_openai_official_image_headers(),
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"OpenAI official image timeout after {int(_TIMEOUT_IMAGE)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"OpenAI official image transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenAI official HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -2990,6 +3047,20 @@ def _coerce_comfly_image_ratio_size(*values: Any) -> str:
     return "1:1"
 
 
+def _gaisc_image_size(*values: Any) -> str:
+    """Return G-AISC pixel dimensions aligned to its required 16-pixel grid."""
+    ratio = _coerce_comfly_image_ratio_size(*values)
+    return {
+        "1:1": "1024x1024",
+        "4:3": "1360x1024",
+        "3:4": "1024x1360",
+        "16:9": "1920x1088",
+        "9:16": "1088x1920",
+        "3:2": "1536x1024",
+        "2:3": "1024x1536",
+    }.get(ratio, "1024x1024")
+
+
 def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     upstream = _upstream_model(model, entry)
     forwarded = dict(body)
@@ -3055,6 +3126,13 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
             out["image"] = image_url
         if image_urls:
             out["image_urls"] = image_urls
+        if str(entry.get("token_group") or "").strip().lower() == "gaisc":
+            out["size"] = _gaisc_image_size(
+                forwarded.get("aspect_ratio"),
+                forwarded.get("ratio"),
+                forwarded.get("size"),
+                forwarded.get("image_size"),
+            )
         return out
     if api_format == "grok":
         prompt = str(forwarded.get("prompt") or "").strip()
@@ -3207,7 +3285,11 @@ async def _execute_image_generation_request(
     body: Dict[str, Any],
 ) -> Dict[str, Any]:
     openai_official_first = _openai_official_image_first_for_user(billing_user_id)
-    attempt_models = _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
+    attempt_models = _image_generation_model_attempts_for_user(
+        model,
+        openai_official_first=openai_official_first,
+        prefer_openmind=_openmind_image_fallback_enabled(),
+    )
     if len(attempt_models) == 1:
         _require_model_entry(model)
     errors: List[str] = []
@@ -3309,17 +3391,18 @@ async def _execute_image_generation_request(
                         )
                     else:
                         resp = await _openai_official_image_request(upstream_body)
+                elif token_group == "openmindapi":
+                    # This channel is a direct provider, not a Comfly relay.
+                    # It must work for both text-to-image and image editing.
+                    resp = await _openmind_image_request(upstream_body)
                 elif reference_urls:
-                    if token_group == "openmindapi":
-                        resp = await _openmind_image_request(upstream_body)
-                    else:
-                        edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
-                        resp = await _submit_image_edit_attempt(
-                            attempt_model=attempt_model,
-                            entry=entry,
-                            data=edit_data,
-                            files=edit_files,
-                        )
+                    edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
+                    resp = await _submit_image_edit_attempt(
+                        attempt_model=attempt_model,
+                        entry=entry,
+                        data=edit_data,
+                        files=edit_files,
+                    )
                 elif token_group == "sutui":
                     resp = await _sutui_image_request(upstream_body)
                 else:
@@ -3415,13 +3498,18 @@ async def _execute_image_generation_request(
                     error_message=last_error[:1000],
                     meta={"attempt": index, "retry": retry_index, "retries": attempts_per_model, "refs": len(reference_urls)},
                 )
-                if retry_index >= attempts_per_model or not _is_retryable_image_error(e):
+                if (
+                    retry_index >= attempts_per_model
+                    or not _is_retryable_image_error(e)
+                    or _should_skip_same_image_channel_retry(e)
+                ):
                     break
                 await asyncio.sleep(0.8 * retry_index)
 
         openmind_fallback_provider = "openmind"
         if (
             _openmind_image_fallback_enabled()
+            and provider_label != "openmindapi"
             and _image_generation_channel_available(openmind_fallback_provider, attempt_model)
             and (not last_error or _is_retryable_image_error(RuntimeError(last_error)))
         ):

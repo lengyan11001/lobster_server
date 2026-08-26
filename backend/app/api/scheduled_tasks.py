@@ -1731,7 +1731,7 @@ def _run_list_uses_compact_response(request: Request, explicit: Optional[bool]) 
         str(request.headers.get(name) or "").strip().lower()
         for name in ("origin", "referer")
     )
-    return "h5.bhzn.top" in source or "/h5" in source
+    return "h5.bhzn.top" in source or "hikongai.cn" in source or "/h5" in source
 
 
 def _is_server_side_task(task_or_run: Any) -> bool:

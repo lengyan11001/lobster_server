@@ -3,9 +3,9 @@
       try {
         const host = String(window.location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
         const domainBrands = {
-          "hikongai.com": "hikong",
-          "www.hikongai.com": "hikong",
-          "admin.hikongai.com": "hikong",
+          "hikongai.cn": "hikong",
+          "www.hikongai.cn": "hikong",
+          "admin.hikongai.cn": "hikong",
         };
         if (domainBrands[host]) return domainBrands[host];
         const params = new URLSearchParams(window.location.search || "");

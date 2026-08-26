@@ -6,7 +6,7 @@
   var brand = "bihuo";
   try {
     var host = String(location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
-    var domainBrands = { "hikongai.com": "hikong", "www.hikongai.com": "hikong", "admin.hikongai.com": "hikong" };
+    var domainBrands = { "hikongai.cn": "hikong", "www.hikongai.cn": "hikong", "admin.hikongai.cn": "hikong" };
     brand = domainBrands[host] || String(new URLSearchParams(location.search || "").get("brand") || "bihuo").trim().toLowerCase() || "bihuo";
   } catch (e) {}
   var STORAGE_KEY = "lobster_h5_language:" + brand;

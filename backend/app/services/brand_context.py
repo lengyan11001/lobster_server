@@ -52,7 +52,7 @@ BUILTIN_BRANDS: dict[str, dict[str, Any]] = {
         "icon_128": "/h5-static/hikong_128.png",
         "icon_256": "/h5-static/hikong_256.png",
         "primary_color": "#0b8f8a",
-        "domains": ["hikongai.com", "www.hikongai.com", "admin.hikongai.com"],
+        "domains": ["hikongai.cn", "www.hikongai.cn", "admin.hikongai.cn"],
     },
 }
 
@@ -86,9 +86,9 @@ BUILTIN_BRANDS.update(_manifest_oem_brands())
 # Domains are deployment-owned routing signals, kept separate from the OEM asset
 # manifest so a client branding refresh cannot remove a live web entry point.
 BUILTIN_BRANDS.setdefault("hikong", {})["domains"] = [
-    "hikongai.com",
-    "www.hikongai.com",
-    "admin.hikongai.com",
+    "hikongai.cn",
+    "www.hikongai.cn",
+    "admin.hikongai.cn",
 ]
 
 

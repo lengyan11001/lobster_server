@@ -5,7 +5,7 @@
   var brand = (function () {
     try {
       var host = String(location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
-      var domainBrands = { "hikongai.com": "hikong", "www.hikongai.com": "hikong", "admin.hikongai.com": "hikong" };
+      var domainBrands = { "hikongai.cn": "hikong", "www.hikongai.cn": "hikong", "admin.hikongai.cn": "hikong" };
       if (domainBrands[host]) return domainBrands[host];
       var raw = String(new URLSearchParams(location.search).get("brand") || new URLSearchParams(location.search).get("brand_mark") || "bihuo").trim().toLowerCase();
       return /^[a-z][a-z0-9_-]{0,62}$/.test(raw) ? raw : "bihuo";

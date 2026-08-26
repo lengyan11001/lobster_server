@@ -77,6 +77,7 @@ _H5_INDEX_HEADERS = {
 }
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _H5_WEBCLIP_URL = "https://h5.bhzn.top/"
+_HIKONG_WEBCLIP_URL = "https://hikongai.cn/"
 _H5_WEBCLIP_LABEL = "必火AI员工"
 _VALID_MODES = {"direct"}
 _H5_CLIENT_COMMAND_PREFIX = "__LOBSTER_H5_CLIENT_COMMAND__"
@@ -1090,7 +1091,8 @@ def _webclip_icon_xml(branding: Dict[str, Any]) -> str:
 def _ios_webclip_mobileconfig(branding: Dict[str, Any]) -> str:
     mark = str(branding.get("mark") or "bihuo").strip().lower()
     label_raw = str(branding.get("display_name") or branding.get("document_title") or _H5_WEBCLIP_LABEL).strip()
-    webclip_url_raw = f"{_H5_WEBCLIP_URL}?brand={quote(mark, safe='')}"
+    webclip_base_url = _HIKONG_WEBCLIP_URL if mark == "hikong" else _H5_WEBCLIP_URL
+    webclip_url_raw = f"{webclip_base_url}?brand={quote(mark, safe='')}"
     webclip_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{webclip_url_raw}#webclip"))
     profile_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{webclip_url_raw}#profile"))
     identifier = f"top.bhzn.h5.webclip.{mark}"
@@ -1317,7 +1319,7 @@ def ios_webclip_mobileconfig(request: Request, db: Session = Depends(get_db)):
 @router.get("/", include_in_schema=False)
 def h5_root(request: Request, db: Session = Depends(get_db)):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
-    if host == "h5.bhzn.top" or host.startswith("h5.") or host in {"hikongai.com", "www.hikongai.com"}:
+    if host == "h5.bhzn.top" or host.startswith("h5.") or host in {"hikongai.cn", "www.hikongai.cn"}:
         branding = public_brand_config(db, request_brand_mark(request))
         return _h5_index_response(branding)
     raise HTTPException(status_code=404, detail="Not Found")

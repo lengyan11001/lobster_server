@@ -61,7 +61,7 @@ def test_hikong_ios_webclip_uses_server_oem_icon(db_session_factory):
     profile = plistlib.loads(response.content)
     clip = profile["PayloadContent"][0]
     assert clip["Label"] == "海康AI智能体"
-    assert clip["URL"] == "https://h5.bhzn.top/?brand=hikong"
+    assert clip["URL"] == "https://hikongai.cn/?brand=hikong"
     assert clip["Icon"] == (_ROOT / "client_static" / "oem" / "hikong" / "icon_256_v3.png").read_bytes()
 
 
