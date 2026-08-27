@@ -62,6 +62,8 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     # Website OTA also carries the small OEM switcher runtime. Keep these as
     # exact paths so a partial desktop update never replaces the whole desktop
     # directory on the client.
+    "desktop/launcher.py",
+    "desktop/launcher.pyc",
     "desktop/oem_branding.py",
     "desktop/oem_branding.pyc",
     "desktop/oem_configurator.py",
@@ -82,6 +84,8 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
 
 OEM_SWITCHER_OTA_PATHS = frozenset(
     {
+        "desktop/launcher.py",
+        "desktop/launcher.pyc",
         "desktop/oem_branding.py",
         "desktop/oem_branding.pyc",
         "desktop/oem_configurator.py",
