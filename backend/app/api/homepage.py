@@ -322,9 +322,51 @@ _HOME_HTML = f"""<!doctype html>
 """
 
 
+_HIKONG_HOME_HTML = (
+    _HOME_HTML.replace(
+        "<title>必火AI员工 - 岗位级 AI 执行系统</title>",
+        "<title>海康AI智能体 - 企业智能化执行平台</title>",
+    )
+    .replace(
+        'content="必火AI员工是一套面向企业营销、获客、内容生产、素材管理和客户服务的岗位级 AI 执行系统。"',
+        'content="海康AI智能体面向企业营销、客户经营、内容生产与业务协同，让 AI 真正参与日常工作。"',
+    )
+    .replace("--blue: #3c7dff;", "--blue: #0b8f8a;")
+    .replace("--cyan: #20d5ff;", "--cyan: #21c8a8;")
+    .replace("--green: #38e0b4;", "--green: #7ee787;")
+    .replace("/h5-static/bihu_256.png", "/client/oem/hikong/logo_1024.png")
+    .replace("必火AI员工", "海康AI智能体")
+    .replace("岗位级 AI 执行系统", "企业智能化执行平台")
+    .replace(
+        "把内容、获客、客服和发布",
+        "让智能协作进入每一个经营现场",
+    )
+    .replace("交给一组 AI 员工", "交给懂业务的 AI 智能体")
+    .replace(
+        "海康AI智能体面向企业日常增长场景，把素材库、技能商店、定时任务、IP日更、公众号排版、视频号文案提取、企业微信客服和移动端协同整合成一套可落地的 AI 工作台。",
+        "海康AI智能体连接内容生产、精准获客、客户服务、素材管理与多端协同，把分散工具组织成可配置、可执行、可追踪的企业智能工作台。",
+    )
+    .replace("不是单个工具，是可分工的 AI 员工", "不是单点工具，是可协同的 AI 智能体")
+    .replace(
+        "高质量 3D 模型，沉淀可复用资产。",
+        "知识文档与内容素材，沉淀可复用资产。",
+    )
+    .replace(
+        "让 AI 真正进入岗位，而不是停在聊天框里",
+        "让 AI 真正参与业务，而不是停在聊天框里",
+    )
+    .replace(
+        "从内容生产到客户服务，从移动端到桌面端，海康AI智能体把日常任务变成可执行、可追踪、可复盘的流程。",
+        "从内容生产到客户服务，从移动端到桌面端，海康AI智能体把日常任务变成可执行、可追踪、可复盘的业务流程。",
+    )
+)
+
+
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def homepage(request: Request):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
+    if host in {"hikongai.cn", "www.hikongai.cn"}:
+        return HTMLResponse(content=_HIKONG_HOME_HTML, media_type="text/html; charset=utf-8")
     if host == "h5.bhzn.top" or host.startswith("h5."):
         if not _H5_INDEX.is_file():
             raise HTTPException(status_code=404, detail="H5 页面未打包")
