@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,13 @@ def _split_host(value: str) -> tuple[str, str]:
         user, host = value.split("@", 1)
         return user, host
     return "ubuntu", value
+
+
+def _local_key_path(value: str) -> Path:
+    """Accept native Windows paths and Git Bash paths such as /d/maczhuji."""
+    if os.name == "nt" and len(value) >= 3 and value[0] == "/" and value[1].isalpha() and value[2] == "/":
+        value = f"{value[1]}:{value[2:]}"
+    return Path(value)
 
 
 @dataclass(frozen=True)
@@ -116,7 +124,7 @@ def _connect(target: Target):
     }
 
     if target.key_path:
-        key = Path(target.key_path)
+        key = _local_key_path(target.key_path)
         if key.is_file():
             key_loaders = [
                 getattr(paramiko, name)
@@ -189,6 +197,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Deploy lobster_server from Windows/Python without local bash.")
     parser.add_argument("--env", type=Path, default=ROOT / ".env.deploy", help=".env.deploy path")
     parser.add_argument("--test", action="store_true", help="Deploy only LOBSTER_DEPLOY_HOST_TEST")
+    parser.add_argument("--push", action="store_true", help="Push local main before deploying production")
     parser.add_argument("--no-reset", action="store_true", help="Use git pull instead of reset --hard origin/main")
     args = parser.parse_args()
 
@@ -206,6 +215,9 @@ def main() -> int:
     primary = _target_from_env(env)
     if not primary:
         raise SystemExit("[ERR] 未设置 LOBSTER_DEPLOY_HOST")
+    if args.push:
+        print("[deploy] git push origin main")
+        subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, check=True)
     deploy_target(primary, reset=not args.no_reset)
 
     if _truthy(env.get("LOBSTER_DEPLOY_OVERSEAS")):

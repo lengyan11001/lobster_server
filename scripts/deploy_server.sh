@@ -4,6 +4,15 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# On Windows, Python parses .env.deploy without shell-evaluating passwords and
+# converts Git Bash key paths such as /d/maczhuji before opening the key.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    exec python "$ROOT/scripts/deploy_from_local.py" --push
+    ;;
+esac
+
 if [ -f "$ROOT/.env.deploy" ]; then
   set -a
   # shellcheck source=../.env.deploy
