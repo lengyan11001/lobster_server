@@ -3405,8 +3405,21 @@
           optionId: index,
           optionLabel: item.label,
           defaultNote: item.note,
+          optionGroup: workflowNodeOptionGroup(item.key),
         };
       }).filter(Boolean);
+    }
+
+    const WORKFLOW_NODE_GROUP_ORDER = ["抖音", "个微", "AI营销"];
+
+    function workflowNodeOptionGroup(nodeOrKey) {
+      const key = typeof nodeOrKey === "string"
+        ? nodeOrKey
+        : nodeOrKey && (nodeOrKey.key || nodeOrKey.workQuickKey || nodeOrKey.ability_key);
+      const normalized = String(key || "").trim();
+      if (normalized === "douyin_leads") return "抖音";
+      if (normalized.startsWith("native_wechat_")) return "个微";
+      return "AI营销";
     }
 
     function workflowDepartmentNodeLookups() {
@@ -3419,7 +3432,7 @@
             department,
             trail: [node],
             optionLabel: node.label || node.key,
-            optionGroup: department.name || "能力类目",
+            optionGroup: workflowNodeOptionGroup(node),
           });
         });
       });
@@ -3603,6 +3616,33 @@
       if (visible) renderWorkflowMomentPicker(scope);
     }
 
+    function syncWorkflowDouyinReplyCommentFields(prefix = "workflowParam", collectionVisible = true) {
+      const modeId = `${prefix}DouyinReplyCommentMode`;
+      const mode = ["fixed", "ai", "rewrite"].includes(workflowParamValue(modeId))
+        ? workflowParamValue(modeId)
+        : "fixed";
+      [
+        ["Fixed", "fixed"],
+        ["Ai", "ai"],
+        ["Rewrite", "rewrite"],
+      ].forEach(([suffix, expected]) => {
+        const field = $(`${prefix}DouyinReplyComment${suffix}Field`);
+        if (!field) return;
+        const visible = !!collectionVisible && mode === expected;
+        field.classList.toggle("hidden", !visible);
+        field.querySelectorAll("input, textarea, select").forEach((input) => {
+          input.disabled = !visible;
+        });
+      });
+    }
+
+    function bindWorkflowDouyinReplyCommentMode(prefix = "workflowParam") {
+      const mode = $(`${prefix}DouyinReplyCommentMode`);
+      if (!mode || mode.dataset.workflowReplyModeBound === "1") return;
+      mode.dataset.workflowReplyModeBound = "1";
+      mode.addEventListener("change", () => syncWorkflowDouyinReplyCommentFields(prefix, true));
+    }
+
     function bindWorkflowMomentPicker(scope) {
       const cfg = workflowMomentPickerConfig(scope);
       $(cfg.search)?.addEventListener("input", (event) => {
@@ -3650,6 +3690,7 @@
       if (field) field.classList.toggle("hidden", !showGroupInvite);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
       $("workflowNodeDouyinTouchField")?.classList.toggle("hidden", !showDouyinPreciseTouch);
+      syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);
       syncWorkflowMomentPicker("node", showMoments);
       const checkbox = $("workflowNodeNativeWechatGroupInviteEnabled");
       if (checkbox && !showGroupInvite) checkbox.checked = false;
@@ -3666,6 +3707,8 @@
         setFieldValue("workflowNodeDouyinReplyCommentPrompt", "");
         setFieldValue("workflowNodeDouyinReplyCommentSeedText", "");
       }
+      bindWorkflowDouyinReplyCommentMode("workflowNode");
+      syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);
       if (reset && showDouyinPreciseTouch) {
         setFieldValue("workflowNodeDouyinTouchMaxUsers", 20);
         [
@@ -3679,11 +3722,16 @@
     function workflowAbilityOptionsHtml() {
       const groups = new Map();
       workflowLeafLookups().forEach((lookup) => {
-        const group = lookup.optionGroup || "销售员工";
+        const group = lookup.optionGroup || workflowNodeOptionGroup(lookup && lookup.node);
         if (!groups.has(group)) groups.set(group, []);
         groups.get(group).push(lookup);
       });
-      return Array.from(groups.entries()).map(([group, lookups]) => {
+      const orderedGroups = [
+        ...WORKFLOW_NODE_GROUP_ORDER.filter((group) => groups.has(group)),
+        ...Array.from(groups.keys()).filter((group) => !WORKFLOW_NODE_GROUP_ORDER.includes(group)),
+      ];
+      return orderedGroups.map((group) => {
+        const lookups = groups.get(group) || [];
         const options = lookups.map((lookup) => {
           const isSalesWorkflowOption = lookup && lookup.optionId != null;
           const disabled = (isSalesWorkflowOption || abilityIsActionable(lookup.node)) ? "" : " disabled";
@@ -3896,6 +3944,13 @@
         + taskFieldHtml("任务要求", taskTextareaHtml("workflowParamGenericPrompt", "填写要执行的任务参数和要求"), true);
     }
 
+    function workflowDouyinReplyCommentFieldsHtml(prefix = "workflowParam") {
+      return taskFieldHtml("回复模式", taskSelectHtml(`${prefix}DouyinReplyCommentMode`, optionHtml("fixed", "固定文案") + optionHtml("ai", "AI 按客户评论生成") + optionHtml("rewrite", "AI 同方向改编")))
+        + `<div class="field full hidden" id="${prefix}DouyinReplyCommentFixedField"><label for="${prefix}DouyinReplyCommentText">固定回复文案</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentText`, "固定模式使用")}</div>`
+        + `<div class="field full hidden" id="${prefix}DouyinReplyCommentAiField"><label for="${prefix}DouyinReplyCommentPrompt">回复要求</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentPrompt`, "AI 模式：回复方向和约束")}</div>`
+        + `<div class="field full hidden" id="${prefix}DouyinReplyCommentRewriteField"><label for="${prefix}DouyinReplyCommentSeedText">改编基准文案</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentSeedText`, "改编模式使用")}</div>`;
+    }
+
     function workflowQuickFieldsHtml(item) {
       const key = String(item && item.key || "");
       if (key === "image_composer_studio") return workflowCapabilityFieldsHtml("goal.image.pipeline");
@@ -3921,10 +3976,7 @@
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
           + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")))
           + taskFieldHtml("筛选后立即回复", workCheckboxHtml("workflowParamDouyinReplyPreciseComments", "对本轮每个视频筛选出的精准评论回复一轮", false))
-          + taskFieldHtml("回复模式", taskSelectHtml("workflowParamDouyinReplyCommentMode", optionHtml("fixed", "固定文案") + optionHtml("ai", "AI 按客户评论生成") + optionHtml("rewrite", "AI 同方向改编")))
-          + taskFieldHtml("固定回复文案", taskTextareaHtml("workflowParamDouyinReplyCommentText", "固定模式使用；AI 模式可留空"), true)
-          + taskFieldHtml("回复要求", taskTextareaHtml("workflowParamDouyinReplyCommentPrompt", "AI 模式：回复方向和约束"), true)
-          + taskFieldHtml("改编基准文案", taskTextareaHtml("workflowParamDouyinReplyCommentSeedText", "改编模式使用"), true);
+          + workflowDouyinReplyCommentFieldsHtml("workflowParam");
       }
       if (key === "local_bestseller") {
         return localBestsellerFieldsHtml("workflowParamLocal", false);
@@ -3998,6 +4050,8 @@
       const modal = $("workflowParamModal");
       if (!modal) return;
       initAssetPickerControls(modal);
+      bindWorkflowDouyinReplyCommentMode("workflowParam");
+      syncWorkflowDouyinReplyCommentFields("workflowParam", false);
       if ($("workflowParamLocalStyle")) bindLocalBestsellerPersonaControls("workflowParamLocal");
       bindWorkflowGoalVideoModeControls();
       if ($("workflowParamVideoCandidateGroup")) {
@@ -5936,6 +5990,7 @@
       modal.classList.remove("hidden");
       initWorkflowParamControls(lookup.node);
       refillWorkflowParamFields(node, lookup);
+      syncWorkflowDouyinReplyCommentFields("workflowParam", isSalesDouyinCollectionNode(node));
       if (String(lookup.node.key || lookup.node.workQuickKey || "") === "native_wechat_moments_engage") {
         refreshWorkflowMomentContactSource().then(() => {
           if (String(state.workflowParamNodeId || "") === String(node.id || "")) renderWorkflowMomentPicker("param");

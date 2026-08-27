@@ -1738,12 +1738,18 @@
             <label class="task-checkbox"><input id="workflowNodeDouyinReplyPreciseComments" type="checkbox"><span>筛选后立即回复精准客户评论</span></label>
             <label for="workflowNodeDouyinReplyCommentMode">回复模式</label>
             <select id="workflowNodeDouyinReplyCommentMode"><option value="fixed">固定文案</option><option value="ai">AI 按客户评论生成</option><option value="rewrite">AI 同方向改编</option></select>
-            <label for="workflowNodeDouyinReplyCommentText">固定回复文案</label>
-            <textarea id="workflowNodeDouyinReplyCommentText" rows="2" placeholder="固定模式使用；AI 模式可留空"></textarea>
-            <label for="workflowNodeDouyinReplyCommentPrompt">回复要求</label>
-            <textarea id="workflowNodeDouyinReplyCommentPrompt" rows="2" placeholder="AI 模式：回复方向和约束"></textarea>
-            <label for="workflowNodeDouyinReplyCommentSeedText">改编基准文案</label>
-            <textarea id="workflowNodeDouyinReplyCommentSeedText" rows="2" placeholder="改编模式使用"></textarea>
+            <div class="field full hidden" id="workflowNodeDouyinReplyCommentFixedField">
+              <label for="workflowNodeDouyinReplyCommentText">固定回复文案</label>
+              <textarea id="workflowNodeDouyinReplyCommentText" rows="2" placeholder="固定模式使用"></textarea>
+            </div>
+            <div class="field full hidden" id="workflowNodeDouyinReplyCommentAiField">
+              <label for="workflowNodeDouyinReplyCommentPrompt">回复要求</label>
+              <textarea id="workflowNodeDouyinReplyCommentPrompt" rows="2" placeholder="AI 模式：回复方向和约束"></textarea>
+            </div>
+            <div class="field full hidden" id="workflowNodeDouyinReplyCommentRewriteField">
+              <label for="workflowNodeDouyinReplyCommentSeedText">改编基准文案</label>
+              <textarea id="workflowNodeDouyinReplyCommentSeedText" rows="2" placeholder="改编模式使用"></textarea>
+            </div>
           </div>
           <div class="field full hidden" id="workflowNodeDouyinTouchField">
             <label for="workflowNodeDouyinTouchMaxUsers">精准用户触达参数</label>
@@ -2620,7 +2626,7 @@
 
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
   <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
-  <script src="/h5-static/h5-app.js?v=20260826-library-media-gallery-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260827-workflow-node-groups-reply-mode-v1"></script>
   <script src="/h5-static/task-center.js?v=20260821-task-center-round-v3"></script>
 </body>
 </html>

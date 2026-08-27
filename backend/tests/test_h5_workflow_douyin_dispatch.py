@@ -214,6 +214,32 @@ def test_h5_add_and_edit_expose_and_persist_collection_params():
     assert '"抖音获客 - Online 全部关键词"' in script
 
 
+def test_h5_node_editor_groups_options_and_switches_reply_fields_by_mode():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+    assert 'const WORKFLOW_NODE_GROUP_ORDER = ["抖音", "个微", "AI营销"]' in script
+    assert 'function workflowNodeOptionGroup(nodeOrKey)' in script
+    assert 'if (normalized === "douyin_leads") return "抖音";' in script
+    assert 'if (normalized.startsWith("native_wechat_")) return "个微";' in script
+    assert 'workflowNodeOptionGroup(node)' in script
+    assert 'WORKFLOW_NODE_GROUP_ORDER.filter((group) => groups.has(group))' in script
+    for field_id in (
+        "workflowNodeDouyinReplyCommentFixedField",
+        "workflowNodeDouyinReplyCommentAiField",
+        "workflowNodeDouyinReplyCommentRewriteField",
+    ):
+        assert f'id="{field_id}"' in html
+    for suffix in ("Fixed", "Ai", "Rewrite"):
+        assert f'${{prefix}}DouyinReplyComment{suffix}Field' in script
+    assert 'function workflowDouyinReplyCommentFieldsHtml(prefix = "workflowParam")' in script
+    assert 'function syncWorkflowDouyinReplyCommentFields(prefix = "workflowParam", collectionVisible = true)' in script
+    assert 'input.disabled = !visible' in script
+    assert 'bindWorkflowDouyinReplyCommentMode("workflowParam")' in script
+    assert 'bindWorkflowDouyinReplyCommentMode("workflowNode")' in script
+    assert "20260827-workflow-node-groups-reply-mode-v1" in html
+
+
 def test_h5_sales_preset_separates_collection_and_precise_touch_nodes():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
