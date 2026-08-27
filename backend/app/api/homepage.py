@@ -306,7 +306,10 @@ _HOME_HTML = f"""<!doctype html>
 
   <footer>
     <div class="shell footer-row">
-      <span>© 2026 必火AI员工 · 岗位级 AI 执行系统</span>
+      <span>
+        © 2026 必火AI员工 · 岗位级 AI 执行系统
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026043577号</a>
+      </span>
       <span>
         <a href="/privacy-policy">隐私政策</a>
         <a href="/terms-of-service">服务条款</a>
