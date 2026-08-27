@@ -7,6 +7,7 @@ from backend.app.api.assets import (
 from backend.app.api.generation_records import (
     GenerationRecordReportBody,
     backfill_generation_records_to_assets,
+    repair_generated_asset_origins,
     report_generation_record,
 )
 from backend.app.models import Asset, DataMigrationMarker, GenerationRecord
@@ -157,6 +158,54 @@ def test_batch_registration_does_not_reclassify_user_upload_with_same_url(db_ses
     assert {row.meta["asset_origin"] for row in rows} == {"user_upload", "generated"}
 
 
+def test_batch_registration_keeps_same_source_id_isolated_by_origin(db_session, test_user):
+    source_id = "shared-client-asset-001"
+    uploaded = register_asset_batch(
+        RegisterAssetBatchReq(assets=[RegisterAssetUrlReq(
+            url="https://cdn.example.test/input.png",
+            media_type="image",
+            source_asset_id=source_id,
+            asset_origin="user_upload",
+        )]),
+        current_user=test_user,
+        db=db_session,
+    )
+    generated = register_asset_batch(
+        RegisterAssetBatchReq(assets=[RegisterAssetUrlReq(
+            url="https://cdn.example.test/output.png",
+            media_type="image",
+            source_asset_id=source_id,
+            asset_origin="generated",
+            generation_task_id="task-output-001",
+        )]),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert uploaded["created"] == 1
+    assert generated["created"] == 1
+    rows = db_session.query(Asset).order_by(Asset.id.asc()).all()
+    assert len(rows) == 2
+    assert {row.meta["asset_origin"] for row in rows} == {"user_upload", "generated"}
+
+
+def test_generation_metadata_overrides_an_incoming_user_upload_origin(db_session, test_user):
+    result = register_asset_batch(
+        RegisterAssetBatchReq(assets=[RegisterAssetUrlReq(
+            url="https://cdn.example.test/generated.png",
+            media_type="image",
+            source_asset_id="generated-client-001",
+            asset_origin="user_upload",
+            generation_task_id="task-generated-001",
+        )]),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert result["items"][0]["asset_origin"] == "generated"
+    assert db_session.query(Asset).one().meta["asset_origin"] == "generated"
+
+
 def test_batch_registration_keeps_distinct_online_records_that_share_a_url(db_session, test_user):
     shared_url = "https://cdn.example.test/reused-result.png"
     result = register_asset_batch(
@@ -218,3 +267,41 @@ def test_historical_generation_backfill_runs_once(db_engine, db_session, test_us
     assert second == {"applied": False, "scanned": 0, "created": 0, "updated": 0}
     assert db_session.query(Asset).count() == 2
     assert db_session.query(DataMigrationMarker).count() == 1
+
+
+def test_generation_origin_repair_moves_only_polluted_generated_rows(db_engine, db_session, test_user):
+    db_session.add_all([
+        Asset(
+            asset_id="polluted-generated",
+            user_id=test_user.id,
+            filename="generated.png",
+            media_type="image",
+            file_size=1,
+            source_url="https://cdn.example.test/polluted-generated.png",
+            meta={
+                "asset_origin": "user_upload",
+                "generation_record_id": 7,
+                "registered_from": "online_generation_report",
+            },
+        ),
+        Asset(
+            asset_id="real-upload",
+            user_id=test_user.id,
+            filename="upload.png",
+            media_type="image",
+            file_size=1,
+            source_url="https://cdn.example.test/real-upload.png",
+            meta={"asset_origin": "user_upload"},
+        ),
+    ])
+    db_session.commit()
+
+    first = repair_generated_asset_origins(db_engine, batch_size=50)
+    second = repair_generated_asset_origins(db_engine, batch_size=50)
+    db_session.expire_all()
+
+    assert first == {"applied": True, "scanned": 2, "updated": 1}
+    assert second == {"applied": False, "scanned": 0, "updated": 0}
+    rows = {row.asset_id: row for row in db_session.query(Asset).all()}
+    assert rows["polluted-generated"].meta["asset_origin"] == "generated"
+    assert rows["real-upload"].meta["asset_origin"] == "user_upload"

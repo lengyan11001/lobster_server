@@ -306,6 +306,7 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "search_collect":
             collection_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
             collection_params = dict(collection_params)
+            collection_params.update(_sales_douyin_collection_reply_params(collection_params))
             collection_params["followup_actions"] = []
             collection_params.pop("touch_actions", None)
             collection_params["customer_scope"] = "current_collection_batch"
@@ -316,6 +317,8 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             raw_actions = touch_params.get("touch_actions") if "touch_actions" in touch_params else touch_params.get("followup_actions")
             touch_params["touch_actions"] = _sales_douyin_followup_actions(raw_actions) or list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
             touch_params.pop("followup_actions", None)
+            for key in ("reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text"):
+                touch_params.pop(key, None)
             touch_params["customer_scope"] = "precise_pool"
             if touch_params.get("max_users") not in (None, "", []):
                 try:
@@ -589,7 +592,30 @@ def _fold_legacy_sales_douyin_followup_nodes(nodes: Any) -> list[dict[str, Any]]
             current_collection = item
             prepared.append(item)
             continue
-        if is_sales_douyin and action in _SALES_DOUYIN_FOLLOWUP_ACTIONS and current_collection is not None:
+        if is_sales_douyin and action in (*_SALES_DOUYIN_FOLLOWUP_ACTIONS, "reply_comments") and current_collection is not None:
+            if action == "reply_comments":
+                current_plan = current_collection.get("plan") if isinstance(current_collection.get("plan"), dict) else {}
+                current_payload = current_plan.get("payload") if isinstance(current_plan.get("payload"), dict) else {}
+                current_params = dict(current_payload.get("params") if isinstance(current_payload.get("params"), dict) else {})
+                current_params["reply_precise_comments"] = True
+                legacy_plan = item.get("plan") if isinstance(item.get("plan"), dict) else {}
+                legacy_payload = legacy_plan.get("payload") if isinstance(legacy_plan.get("payload"), dict) else {}
+                legacy_params = legacy_payload.get("params") if isinstance(legacy_payload.get("params"), dict) else {}
+                for source_key, target_key in (
+                    ("reply_comment_mode", "reply_comment_mode"),
+                    ("reply_comment_text", "reply_comment_text"),
+                    ("reply_comment_prompt", "reply_comment_prompt"),
+                    ("reply_comment_seed_text", "reply_comment_seed_text"),
+                    ("comment_mode", "reply_comment_mode"),
+                    ("comment_text", "reply_comment_text"),
+                    ("comment_prompt", "reply_comment_prompt"),
+                    ("comment_seed_text", "reply_comment_seed_text"),
+                ):
+                    if legacy_params.get(source_key) not in (None, "", []):
+                        current_params[target_key] = legacy_params.get(source_key)
+                current_payload["params"] = current_params
+                current_plan["payload"] = current_payload
+                current_collection["plan"] = current_plan
             # Legacy standalone touch nodes must not make collection execute
             # touch actions. The standalone precise-touch node owns that work.
             continue
@@ -1190,11 +1216,42 @@ def _sales_action_from_note(note: Any) -> str:
 
 
 _SALES_DOUYIN_FOLLOWUP_ACTIONS = (
-    "reply_comments",
     "follow_comment",
     "mention_comment",
     "direct_message",
 )
+
+
+def _sales_douyin_collection_reply_params(params: Any) -> dict[str, Any]:
+    source = params if isinstance(params, dict) else {}
+    legacy_values = []
+    for key in ("followup_actions", "touch_actions"):
+        values = source.get(key)
+        if isinstance(values, list):
+            legacy_values.extend(values)
+    legacy_reply = "reply_comments" in {
+        _clean_text(item, 64).lower() for item in (legacy_values if isinstance(legacy_values, list) else [])
+    }
+    mode = _clean_text(source.get("reply_comment_mode") or source.get("comment_mode") or "fixed", 32).lower() or "fixed"
+    has_reply_config = any(
+        key in source
+        for key in (
+            "reply_precise_comments",
+            "reply_comment_mode",
+            "reply_comment_text",
+            "reply_comment_prompt",
+            "reply_comment_seed_text",
+        )
+    ) or legacy_reply
+    if not has_reply_config:
+        return {}
+    return {
+        "reply_precise_comments": _bool_param(source.get("reply_precise_comments"), legacy_reply),
+        "reply_comment_mode": mode if mode in {"fixed", "ai", "rewrite"} else "fixed",
+        "reply_comment_text": _clean_text(source.get("reply_comment_text") or source.get("comment_text"), 500),
+        "reply_comment_prompt": _clean_text(source.get("reply_comment_prompt") or source.get("comment_prompt"), 1000),
+        "reply_comment_seed_text": _clean_text(source.get("reply_comment_seed_text") or source.get("comment_seed_text"), 500),
+    }
 
 
 def _sales_douyin_followup_actions(value: Any) -> list[str]:
@@ -1221,6 +1278,7 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
         result["params"] = {
             "customer_scope": "current_collection_batch",
         }
+        result["params"].update(_sales_douyin_collection_reply_params(params))
         for key in ("keyword", "regions", "max_results", "max_videos_per_run", "mode"):
             value = params.get(key)
             if key == "keyword" and any(marker in _clean_text(value, 200) for marker in ("抖音获客", "精准用户触达", "精准触达")):

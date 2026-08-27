@@ -163,7 +163,7 @@ def test_all_sales_douyin_preset_titles_map_to_the_expected_action():
             assert result["params"] == {"customer_scope": "current_collection_batch"}
         elif expected == "precise_touch":
             assert result["params"] == {
-                "touch_actions": ["reply_comments", "follow_comment", "mention_comment", "direct_message"],
+                "touch_actions": ["follow_comment", "mention_comment", "direct_message"],
                 "customer_scope": "precise_pool",
             }
         else:
@@ -192,7 +192,11 @@ def test_h5_add_and_edit_expose_and_persist_collection_params():
         "workflowNodeDouyinRegions",
         "workflowNodeDouyinMaxResults",
         "workflowNodeDouyinMode",
-        "workflowNodeDouyinFollowupReplyComments",
+        "workflowNodeDouyinReplyPreciseComments",
+        "workflowNodeDouyinReplyCommentMode",
+        "workflowNodeDouyinReplyCommentText",
+        "workflowNodeDouyinReplyCommentPrompt",
+        "workflowNodeDouyinReplyCommentSeedText",
         "workflowNodeDouyinFollowupMentionComment",
         "workflowNodeDouyinFollowupFollowComment",
         "workflowNodeDouyinFollowupDirectMessage",
@@ -219,8 +223,8 @@ def test_h5_sales_preset_separates_collection_and_precise_touch_nodes():
     assert 'action: "precise_touch"' in script
     assert 'workflowNodeDouyinTouchField' in html
     assert 'workflowNodeDouyinTouchMaxUsers' in html
-    assert 'Collection only populates the precise-user pool.' in script
-    assert 'const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "follow_comment", "mention_comment", "direct_message"]' in script
+    assert 'Collection only populates the precise-user pool.' not in script
+    assert 'const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["follow_comment", "mention_comment", "direct_message"]' in script
 
 
 def test_h5_douyin_nodes_are_marked_as_one_shot():

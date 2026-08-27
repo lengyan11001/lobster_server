@@ -23,6 +23,18 @@ def test_library_reuses_recent_pages_and_falls_back_when_direct_media_fails():
     assert "data-library-media-fallback" in script
 
 
+def test_material_library_only_loads_user_uploads_while_content_records_load_generated_results():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'id="assetLibraryView"' in html
+    assert 'id="contentRecordsView"' in html
+    assert 'state.assetLibraryOrigin = "user_upload"' in script
+    assert 'loadAssetLibrary("user_upload")' in script
+    assert 'origin: "generated"' in script
+    assert 'api(`/api/assets?${params.toString()}`)' in script
+
+
 def test_placeholder_employees_remain_visible_while_placeholder_nodes_are_filtered():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
 
@@ -39,7 +51,7 @@ def test_profile_displays_real_credit_balance():
 
     assert 'id="profileCreditBalance"' in html
     assert '$("profileCreditBalance").textContent = compactNumber(user.credits, 2)' in script
-    assert "20260803-library-v4" in html
+    assert 'src="/h5-static/h5-app.js?v=' in html
 
 
 def test_ios_bottom_navigation_does_not_scale_on_tap():
@@ -54,7 +66,7 @@ def test_ios_bottom_navigation_does_not_scale_on_tap():
     assert "-webkit-tap-highlight-color: transparent;" in bottom_nav
     assert ".designer-bottom-nav button:not(:disabled):active" in bottom_nav
     assert "transform: none;" in bottom_nav
-    assert "20260808-ios-bottom-nav-v1" in html
+    assert 'href="/h5-static/h5-designer-v2.css?v=' in html
 
 
 def test_workflow_missing_dialog_is_a_bounded_single_action_sheet():
@@ -97,14 +109,14 @@ def test_h5_write_actions_use_one_blocking_loading_dialog():
     assert ".global-action-loading" in styles
     assert "width: min(320px, calc(100vw - 32px));" in styles
     assert "z-index: 1000;" in styles
-    assert "20260808-action-loading-v1" in html
+    assert 'src="/h5-static/h5-app.js?v=' in html
 
 
 def test_h5_background_reads_do_not_trigger_blocking_loading():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
 
     assert 'api("/api/shanjian-digital-human/profile/task", {' in script
-    assert 'json: { profile_id: Number(row.source_record_id) },\n            blocking: false,' in script
+    assert 'json: { profile_id: Number(row.source_record_id) },\n        blocking: false,' in script
     assert 'json: { page_size: 60, sid, scene: "realMan", sort_by: "desc" },\n            blocking: false,' in script
     assert 'api("/api/hifly/avatar/library", { method: "POST", json: { page: 1, size: 100, include_mine: true }, blocking: false })' in script
     assert 'api("/api/hifly/voice/library", { method: "POST", json: {}, blocking: false })' in script

@@ -1525,13 +1525,6 @@
           <span>我的</span>
         </button>
       </nav>
-      <button class="global-chat-fab" type="button" id="globalChatFab" aria-label="打开 AI 调度助手" title="AI 调度助手">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5.5 17.5 4 21l4.2-1.35A9 9 0 1 0 5.5 17.5Z"></path>
-          <path d="M8.5 12h.01M12 12h.01M15.5 12h.01"></path>
-        </svg>
-        <span class="global-chat-fab-badge" aria-hidden="true"></span>
-      </button>
     </div>
   </main>
   <button class="scroll-top-btn hidden" type="button" id="scrollTopBtn" aria-label="返回顶部">↑</button>
@@ -1742,12 +1735,20 @@
             <input id="workflowNodeDouyinMaxResults" type="number" min="10" max="100" step="1" value="50">
             <label for="workflowNodeDouyinMode">搜索方式</label>
             <select id="workflowNodeDouyinMode"><option value="script">浏览器脚本</option><option value="api">接口模式</option></select>
+            <label class="task-checkbox"><input id="workflowNodeDouyinReplyPreciseComments" type="checkbox"><span>筛选后立即回复精准客户评论</span></label>
+            <label for="workflowNodeDouyinReplyCommentMode">回复模式</label>
+            <select id="workflowNodeDouyinReplyCommentMode"><option value="fixed">固定文案</option><option value="ai">AI 按客户评论生成</option><option value="rewrite">AI 同方向改编</option></select>
+            <label for="workflowNodeDouyinReplyCommentText">固定回复文案</label>
+            <textarea id="workflowNodeDouyinReplyCommentText" rows="2" placeholder="固定模式使用；AI 模式可留空"></textarea>
+            <label for="workflowNodeDouyinReplyCommentPrompt">回复要求</label>
+            <textarea id="workflowNodeDouyinReplyCommentPrompt" rows="2" placeholder="AI 模式：回复方向和约束"></textarea>
+            <label for="workflowNodeDouyinReplyCommentSeedText">改编基准文案</label>
+            <textarea id="workflowNodeDouyinReplyCommentSeedText" rows="2" placeholder="改编模式使用"></textarea>
           </div>
           <div class="field full hidden" id="workflowNodeDouyinTouchField">
             <label for="workflowNodeDouyinTouchMaxUsers">精准用户触达参数</label>
             <input id="workflowNodeDouyinTouchMaxUsers" type="number" min="1" max="200" step="1" value="20">
             <label>触达动作（按顺序执行）</label>
-            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupReplyComments" type="checkbox" checked><span>回复客户评论</span></label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupFollowComment" type="checkbox" checked><span>关注并评论</span></label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupMentionComment" type="checkbox" checked><span>评论并@客户</span></label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupDirectMessage" type="checkbox" checked><span>主动私信</span></label>

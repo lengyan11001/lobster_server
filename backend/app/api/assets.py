@@ -682,6 +682,8 @@ def _incoming_creative_candidate_group(body: RegisterAssetUrlReq) -> str:
 
 
 def _register_asset_origin(body: RegisterAssetUrlReq) -> str:
+    if body.generation_record_id is not None or str(body.generation_task_id or "").strip():
+        return "generated"
     origin = _normalize_asset_origin_filter(body.asset_origin)
     return origin or "user_upload"
 
@@ -858,7 +860,7 @@ def upsert_registered_assets(
     )
     all_existing = {row.id: row for row in [*existing_rows, *recent_rows] if row.id is not None}.values()
     by_url: dict[tuple[str, str], Asset] = {}
-    by_source_id: dict[str, Asset] = {}
+    by_source_id: dict[tuple[str, str], Asset] = {}
     by_dedupe: dict[tuple[str, str], Asset] = {}
     for row in all_existing:
         row_origin = _asset_origin(row.meta)
@@ -873,7 +875,7 @@ def upsert_registered_assets(
         for key in ("source_asset_id", "client_asset_id"):
             source_id = str(meta.get(key) or "").strip()
             if source_id:
-                by_source_id.setdefault(source_id, row)
+                by_source_id.setdefault((row_origin, source_id), row)
 
     rows: list[Asset] = []
     created = 0
@@ -883,7 +885,7 @@ def upsert_registered_assets(
         source_id = str(body.source_asset_id or "").strip()[:80]
         dedupe_key = _save_url_dedupe_key(source_url)
         asset_origin = _register_asset_origin(body)
-        row = by_source_id.get(source_id) if source_id else None
+        row = by_source_id.get((asset_origin, source_id)) if source_id else None
         if row is None:
             candidate = by_url.get((asset_origin, source_url)) or by_dedupe.get((asset_origin, dedupe_key))
             candidate_meta = candidate.meta if candidate is not None and isinstance(candidate.meta, dict) else {}
@@ -931,7 +933,7 @@ def upsert_registered_assets(
         by_url[(asset_origin, source_url)] = row
         by_dedupe[(asset_origin, dedupe_key)] = row
         if source_id:
-            by_source_id[source_id] = row
+            by_source_id[(asset_origin, source_id)] = row
         rows.append(row)
     return rows, created, updated
 

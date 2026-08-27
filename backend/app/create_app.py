@@ -57,7 +57,11 @@ from .api.oauth_public_pages import router as oauth_public_pages_router
 from .api.homepage import router as homepage_router
 from .api.meta_social_publish import router as meta_social_publish_router
 from .api.admin import router as admin_router
-from .api.generation_records import backfill_generation_records_to_assets, router as generation_records_router
+from .api.generation_records import (
+    backfill_generation_records_to_assets,
+    repair_generated_asset_origins,
+    router as generation_records_router,
+)
 from .api.content_records import router as content_records_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.linkedin_mining import router as linkedin_mining_router
@@ -1158,6 +1162,10 @@ def create_app() -> FastAPI:
             # Shared-library history is recoverable and idempotent; a malformed
             # legacy row must not keep the API process from starting.
             logger.exception("generation asset backfill failed; it will retry on the next startup")
+        try:
+            repair_generated_asset_origins(engine)
+        except Exception:
+            logger.exception("generated asset origin repair failed; it will retry on the next startup")
         _migrate_user_sutui_token()
         _migrate_user_wechat_openid()
         _migrate_user_phone_default_passwords()

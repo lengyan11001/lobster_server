@@ -907,7 +907,7 @@
       { time: "16:30", endTime: "16:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "17:00", endTime: "17:15", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
       { time: "17:15", endTime: "18:15", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { customer_scope: "current_collection_batch" } },
-      { time: "18:15", endTime: "18:30", key: "douyin_leads", label: "抖音精准用户触达", note: "抖音精准用户触达", params: { touch_actions: ["reply_comments", "follow_comment", "mention_comment", "direct_message"], customer_scope: "precise_pool", max_users: 20 } },
+      { time: "18:15", endTime: "18:30", key: "douyin_leads", label: "抖音精准用户触达", note: "抖音精准用户触达", params: { touch_actions: ["follow_comment", "mention_comment", "direct_message"], customer_scope: "precise_pool", max_users: 20 } },
       { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "18:45", endTime: "19:00", key: "douyin_leads", label: "抖音我的评论区", note: "抖音我的评论区" },
       { time: "19:15", endTime: "19:30", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
@@ -1154,7 +1154,7 @@
       return "search_collect";
     }
 
-    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "follow_comment", "mention_comment", "direct_message"];
+    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["follow_comment", "mention_comment", "direct_message"];
 
     function normalizeSalesDouyinFollowupActions(value) {
       const selected = new Set((Array.isArray(value) ? value : []).map((item) => String(item || "").trim().toLowerCase()));
@@ -1192,16 +1192,36 @@
           const collectionPlan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
           const collectionPayload = collectionPlan.payload && typeof collectionPlan.payload === "object" ? { ...collectionPlan.payload } : {};
           const collectionParams = collectionPayload.params && typeof collectionPayload.params === "object" ? { ...collectionPayload.params } : {};
+          const legacyCollectionActions = [
+            ...(Array.isArray(collectionParams.followup_actions) ? collectionParams.followup_actions : []),
+            ...(Array.isArray(collectionParams.touch_actions) ? collectionParams.touch_actions : []),
+          ];
           collectionParams.followup_actions = [];
           delete collectionParams.touch_actions;
           collectionParams.customer_scope = "current_collection_batch";
+          collectionParams.reply_precise_comments = workflowBoolParam(collectionParams.reply_precise_comments, legacyCollectionActions.includes("reply_comments"));
+          collectionParams.reply_comment_mode = ["fixed", "ai", "rewrite"].includes(String(collectionParams.reply_comment_mode || collectionParams.comment_mode || "fixed").toLowerCase())
+            ? String(collectionParams.reply_comment_mode || collectionParams.comment_mode || "fixed").toLowerCase()
+            : "fixed";
+          collectionParams.reply_comment_text = String(collectionParams.reply_comment_text || collectionParams.comment_text || "");
+          collectionParams.reply_comment_prompt = String(collectionParams.reply_comment_prompt || collectionParams.comment_prompt || "");
+          collectionParams.reply_comment_seed_text = String(collectionParams.reply_comment_seed_text || collectionParams.comment_seed_text || "");
           collectionPayload.params = collectionParams;
           collectionPlan.payload = collectionPayload;
           currentCollection.plan = collectionPlan;
           prepared.push(node);
           return;
         }
-        if (isSalesDouyin && SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action)) {
+        if (isSalesDouyin && (SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action) || action === "reply_comments")) {
+          if (action === "reply_comments" && currentCollection) {
+            const collectionPlan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
+            const collectionPayload = collectionPlan.payload && typeof collectionPlan.payload === "object" ? { ...collectionPlan.payload } : {};
+            const collectionParams = collectionPayload.params && typeof collectionPayload.params === "object" ? { ...collectionPayload.params } : {};
+            collectionParams.reply_precise_comments = true;
+            collectionPayload.params = collectionParams;
+            collectionPlan.payload = collectionPayload;
+            currentCollection.plan = collectionPlan;
+          }
           // Legacy standalone follow-up nodes must not make collection execute
           // touch actions. The standalone precise-touch node owns that work.
           return;
@@ -3640,11 +3660,15 @@
         setFieldValue("workflowNodeDouyinRegions", "全国");
         setFieldValue("workflowNodeDouyinMaxResults", 50);
         setFieldValue("workflowNodeDouyinMode", "script");
+        setFieldValue("workflowNodeDouyinReplyPreciseComments", false);
+        setFieldValue("workflowNodeDouyinReplyCommentMode", "fixed");
+        setFieldValue("workflowNodeDouyinReplyCommentText", "");
+        setFieldValue("workflowNodeDouyinReplyCommentPrompt", "");
+        setFieldValue("workflowNodeDouyinReplyCommentSeedText", "");
       }
       if (reset && showDouyinPreciseTouch) {
         setFieldValue("workflowNodeDouyinTouchMaxUsers", 20);
         [
-          "workflowNodeDouyinFollowupReplyComments",
           "workflowNodeDouyinFollowupFollowComment",
           "workflowNodeDouyinFollowupMentionComment",
           "workflowNodeDouyinFollowupDirectMessage",
@@ -3887,7 +3911,6 @@
         if (item && item.preciseTouch) {
           return taskFieldHtml("每次触达数量", workInputHtml("workflowParamDouyinTouchMaxUsers", "number", "20", 'min="1" max="200"'))
             + taskFieldHtml("触达动作（按顺序执行）", workCheckboxGroupHtml([
-              { id: "workflowParamDouyinFollowupReplyComments", label: "回复客户评论", checked: true },
               { id: "workflowParamDouyinFollowupFollowComment", label: "关注并评论", checked: true },
               { id: "workflowParamDouyinFollowupMentionComment", label: "评论并@客户", checked: true },
               { id: "workflowParamDouyinFollowupDirectMessage", label: "主动私信", checked: true },
@@ -3896,7 +3919,12 @@
         return taskFieldHtml("采集关键词（可选）", taskTextareaHtml("workflowParamDouyinKeyword", "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
-          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
+          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")))
+          + taskFieldHtml("筛选后立即回复", workCheckboxHtml("workflowParamDouyinReplyPreciseComments", "对本轮每个视频筛选出的精准评论回复一轮", false))
+          + taskFieldHtml("回复模式", taskSelectHtml("workflowParamDouyinReplyCommentMode", optionHtml("fixed", "固定文案") + optionHtml("ai", "AI 按客户评论生成") + optionHtml("rewrite", "AI 同方向改编")))
+          + taskFieldHtml("固定回复文案", taskTextareaHtml("workflowParamDouyinReplyCommentText", "固定模式使用；AI 模式可留空"), true)
+          + taskFieldHtml("回复要求", taskTextareaHtml("workflowParamDouyinReplyCommentPrompt", "AI 模式：回复方向和约束"), true)
+          + taskFieldHtml("改编基准文案", taskTextareaHtml("workflowParamDouyinReplyCommentSeedText", "改编模式使用"), true);
       }
       if (key === "local_bestseller") {
         return localBestsellerFieldsHtml("workflowParamLocal", false);
@@ -4295,7 +4323,6 @@
         }
         if ((quick && quick.preciseTouch) || (workflowNode && isSalesDouyinPreciseTouchNode(workflowNode))) {
           const touchActions = normalizeSalesDouyinFollowupActions([
-            workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
             workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
             workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
             workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
@@ -4338,6 +4365,11 @@
           regions: regions.length ? regions : ["全国"],
           mode: workflowParamValue("workflowParamDouyinMode") || "script",
           customer_scope: "current_collection_batch",
+          reply_precise_comments: workflowParamChecked("workflowParamDouyinReplyPreciseComments"),
+          reply_comment_mode: workflowParamValue("workflowParamDouyinReplyCommentMode") || "fixed",
+          reply_comment_text: workflowParamValue("workflowParamDouyinReplyCommentText"),
+          reply_comment_prompt: workflowParamValue("workflowParamDouyinReplyCommentPrompt"),
+          reply_comment_seed_text: workflowParamValue("workflowParamDouyinReplyCommentSeedText"),
         };
         if (keyword) collectionParams.keyword = keyword;
         return {
@@ -4625,7 +4657,6 @@
         && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "precise_touch"
       ) {
         const touchActions = normalizeSalesDouyinFollowupActions([
-          workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
           workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
           workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
           workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
@@ -4673,6 +4704,11 @@
           max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
           mode: workflowParamValue("workflowNodeDouyinMode") || "script",
           customer_scope: "current_collection_batch",
+          reply_precise_comments: workflowParamChecked("workflowNodeDouyinReplyPreciseComments"),
+          reply_comment_mode: workflowParamValue("workflowNodeDouyinReplyCommentMode") || "fixed",
+          reply_comment_text: workflowParamValue("workflowNodeDouyinReplyCommentText"),
+          reply_comment_prompt: workflowParamValue("workflowNodeDouyinReplyCommentPrompt"),
+          reply_comment_seed_text: workflowParamValue("workflowNodeDouyinReplyCommentSeedText"),
         };
         if (keyword) collectionParams.keyword = keyword;
         plan = {
@@ -4894,8 +4930,10 @@
             if (Object.prototype.hasOwnProperty.call(planParams, key)) preservedParams[key] = planParams[key];
             else if (Object.prototype.hasOwnProperty.call(rowParams, key)) preservedParams[key] = rowParams[key];
           });
-          // Collection only populates the precise-user pool. The four touch
-          // actions belong to the separate precise-touch node.
+          ["reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text"].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(planParams, key)) preservedParams[key] = planParams[key];
+            else if (Object.prototype.hasOwnProperty.call(rowParams, key)) preservedParams[key] = rowParams[key];
+          });
           preservedParams.followup_actions = [];
           preservedParams.customer_scope = "current_collection_batch";
         }
@@ -5704,7 +5742,6 @@
         const touchActions = Object.prototype.hasOwnProperty.call(params, "touch_actions")
           ? normalizeSalesDouyinFollowupActions(params.touch_actions)
           : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
-        setFieldValue("workflowParamDouyinFollowupReplyComments", touchActions.includes("reply_comments"));
         setFieldValue("workflowParamDouyinFollowupFollowComment", touchActions.includes("follow_comment"));
         setFieldValue("workflowParamDouyinFollowupMentionComment", touchActions.includes("mention_comment"));
         setFieldValue("workflowParamDouyinFollowupDirectMessage", touchActions.includes("direct_message"));
@@ -5715,6 +5752,11 @@
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
+        setFieldValue("workflowParamDouyinReplyPreciseComments", workflowBoolParam(params.reply_precise_comments, false));
+        setFieldValue("workflowParamDouyinReplyCommentMode", params.reply_comment_mode || "fixed");
+        setFieldValue("workflowParamDouyinReplyCommentText", params.reply_comment_text || "");
+        setFieldValue("workflowParamDouyinReplyCommentPrompt", params.reply_comment_prompt || "");
+        setFieldValue("workflowParamDouyinReplyCommentSeedText", params.reply_comment_seed_text || "");
         return;
       }
       if (payload.action === "image_studio_generate" || nodeInfo.workQuickKey === "image_composer_studio") {
