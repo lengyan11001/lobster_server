@@ -58,6 +58,7 @@ def test_oem_manifest_registers_brand_without_a_second_code_map():
     assert BUILTIN_BRANDS["jinghai"]["icon_32"] == "/client/oem/jinghai/icon_32_v3.png"
     assert BUILTIN_BRANDS["hikong"]["display_name"] == "海康AI智能体"
     assert BUILTIN_BRANDS["hikong"]["icon_32"] == "/client/oem/hikong/icon_32_v3.png"
+    assert "h5.hikongai.cn" in BUILTIN_BRANDS["hikong"]["domains"]
 
 
 @pytest.mark.parametrize("brand", ["jinghai", "hikong"])

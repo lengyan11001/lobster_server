@@ -52,7 +52,7 @@ BUILTIN_BRANDS: dict[str, dict[str, Any]] = {
         "icon_128": "/h5-static/hikong_128.png",
         "icon_256": "/h5-static/hikong_256.png",
         "primary_color": "#0b8f8a",
-        "domains": ["hikongai.cn", "www.hikongai.cn", "admin.hikongai.cn"],
+        "domains": ["hikongai.cn", "www.hikongai.cn", "h5.hikongai.cn", "admin.hikongai.cn"],
     },
 }
 
@@ -88,6 +88,7 @@ BUILTIN_BRANDS.update(_manifest_oem_brands())
 BUILTIN_BRANDS.setdefault("hikong", {})["domains"] = [
     "hikongai.cn",
     "www.hikongai.cn",
+    "h5.hikongai.cn",
     "admin.hikongai.cn",
 ]
 

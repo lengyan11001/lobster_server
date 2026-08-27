@@ -77,7 +77,7 @@ _H5_INDEX_HEADERS = {
 }
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _H5_WEBCLIP_URL = "https://h5.bhzn.top/"
-_HIKONG_WEBCLIP_URL = "https://hikongai.cn/"
+_HIKONG_WEBCLIP_URL = "https://h5.hikongai.cn/"
 _H5_WEBCLIP_LABEL = "必火AI员工"
 _VALID_MODES = {"direct"}
 _H5_CLIENT_COMMAND_PREFIX = "__LOBSTER_H5_CLIENT_COMMAND__"
@@ -1319,7 +1319,7 @@ def ios_webclip_mobileconfig(request: Request, db: Session = Depends(get_db)):
 @router.get("/", include_in_schema=False)
 def h5_root(request: Request, db: Session = Depends(get_db)):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
-    if host == "h5.bhzn.top" or host.startswith("h5.") or host in {"hikongai.cn", "www.hikongai.cn"}:
+    if host == "h5.bhzn.top" or host.startswith("h5."):
         branding = public_brand_config(db, request_brand_mark(request))
         return _h5_index_response(branding)
     raise HTTPException(status_code=404, detail="Not Found")

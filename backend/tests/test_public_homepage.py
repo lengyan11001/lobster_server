@@ -20,6 +20,7 @@ def test_hikong_domain_serves_its_own_oem_homepage():
     assert response.status_code == 200
     assert "海康AI智能体 - 企业智能化执行平台" in response.text
     assert "/client/oem/hikong/logo_1024.png" in response.text
+    assert 'href="https://h5.hikongai.cn/"' in response.text
     assert "必火AI员工" not in response.text
     assert response.text == _HIKONG_HOME_HTML
 

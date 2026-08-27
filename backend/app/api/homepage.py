@@ -335,6 +335,7 @@ _HIKONG_HOME_HTML = (
     .replace("--cyan: #20d5ff;", "--cyan: #21c8a8;")
     .replace("--green: #38e0b4;", "--green: #7ee787;")
     .replace("/h5-static/bihu_256.png", "/client/oem/hikong/logo_1024.png")
+    .replace('href="/h5"', 'href="https://h5.hikongai.cn/"')
     .replace("必火AI员工", "海康AI智能体")
     .replace("岗位级 AI 执行系统", "企业智能化执行平台")
     .replace(
