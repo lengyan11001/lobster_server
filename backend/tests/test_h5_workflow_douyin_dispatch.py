@@ -91,6 +91,33 @@ def test_sales_douyin_precise_touch_keeps_selected_actions_and_pool_scope():
     }
 
 
+def test_sales_douyin_precise_touch_explicit_action_survives_custom_note():
+    payload = _sales_douyin_action_payload(
+        {"note": "重点客户跟进"},
+        {
+            "action": "precise_touch",
+            "params": {"sales_action": "search_collect", "touch_actions": ["direct_message"]},
+        },
+    )
+
+    assert payload == {
+        "action": "precise_touch",
+        "params": {
+            "touch_actions": ["direct_message"],
+            "customer_scope": "precise_pool",
+        },
+    }
+
+
+def test_sales_douyin_precise_touch_preserves_explicit_empty_actions():
+    payload = _sales_douyin_action_payload(
+        {"note": "抖音精准用户触达"},
+        {"action": "precise_touch", "params": {"touch_actions": []}},
+    )
+
+    assert payload["params"]["touch_actions"] == []
+
+
 def test_sales_douyin_stranger_message_keeps_online_runtime_params():
     node = {"ability_key": "douyin_leads", "note": "抖音私信接管"}
 
@@ -181,6 +208,9 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(rowParams.wechat_add_friend_enabled, false);" in script
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);" in script
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script
+    assert 'const explicit = String(payload.action || params.sales_action || "")' in script
+    assert "touch_actions: touchActions," in script
+    assert "touch_actions: touchActions.length ? touchActions" not in script
 
 
 def test_h5_add_and_edit_expose_and_persist_collection_params():

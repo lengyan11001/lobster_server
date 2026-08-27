@@ -146,6 +146,52 @@ def test_douyin_collection_editor_params_survive_server_normalization():
     assert params["customer_scope"] == "current_collection_batch"
 
 
+def test_precise_touch_editor_keeps_selected_actions_with_custom_note():
+    raw = {
+        "id": "touch",
+        "time": "10:00",
+        "department_id": "sales",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音精准用户触达",
+        "note": "重点客户跟进",
+        "sales_preset": True,
+        "plan": {
+            "title": "抖音精准用户触达",
+            "task_kind": "douyin_leads",
+            "payload": {
+                "action": "precise_touch",
+                "params": {"touch_actions": ["direct_message"], "max_users": 8},
+            },
+        },
+    }
+
+    params = _clean_nodes([raw])[0]["plan"]["payload"]["params"]
+
+    assert params["touch_actions"] == ["direct_message"]
+    assert params["max_users"] == 8
+
+
+def test_precise_touch_editor_preserves_explicit_empty_actions():
+    raw = {
+        "id": "touch-empty",
+        "time": "10:00",
+        "department_id": "sales",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音精准用户触达",
+        "note": "抖音精准用户触达",
+        "sales_preset": True,
+        "plan": {
+            "title": "抖音精准用户触达",
+            "task_kind": "douyin_leads",
+            "payload": {"action": "precise_touch", "params": {"touch_actions": []}},
+        },
+    }
+
+    params = _clean_nodes([raw])[0]["plan"]["payload"]["params"]
+
+    assert params["touch_actions"] == []
+
+
 def test_legacy_sales_action_children_fold_into_parent_properties():
     nodes = [
         {

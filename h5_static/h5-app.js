@@ -1166,8 +1166,11 @@
       const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       const inferred = salesWorkflowActionForNote(node && (node.note || node.ability_label) || plan.title || "");
-      const explicit = String(params.sales_action || payload.action || "").trim().toLowerCase();
-      return inferred !== "search_collect" ? inferred : (explicit || inferred);
+      const explicit = String(payload.action || params.sales_action || "").trim().toLowerCase();
+      if (["search_collect", "precise_touch", "self_comment_monitor", "account_nurture", "reply_comments", "follow_comment", "mention_comment", "direct_message", "stranger_message"].includes(explicit)) {
+        return explicit === "search_collect" && inferred !== "search_collect" ? inferred : explicit;
+      }
+      return inferred;
     }
 
     function isSalesDouyinCollectionNode(node) {
@@ -4392,7 +4395,7 @@
               douyin_execution_mode: "one_shot",
               params: {
                 max_users: workflowParamNumber("workflowParamDouyinTouchMaxUsers", 20, 1, 200),
-                touch_actions: touchActions.length ? touchActions : [...SALES_DOUYIN_FOLLOWUP_ACTIONS],
+                touch_actions: touchActions,
                 customer_scope: "precise_pool",
               },
             },
@@ -4726,7 +4729,7 @@
             douyin_execution_mode: "one_shot",
             params: {
               max_users: workflowParamNumber("workflowNodeDouyinTouchMaxUsers", 20, 1, 200),
-              touch_actions: touchActions.length ? touchActions : [...SALES_DOUYIN_FOLLOWUP_ACTIONS],
+              touch_actions: touchActions,
               customer_scope: "precise_pool",
             },
           },
@@ -4998,7 +5001,7 @@
           const touchActions = Object.prototype.hasOwnProperty.call(planParams, "touch_actions") || Object.prototype.hasOwnProperty.call(rowParams, "touch_actions")
             ? normalizeSalesDouyinFollowupActions(sourceActions)
             : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
-          preservedParams.touch_actions = touchActions.length ? touchActions : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+          preservedParams.touch_actions = touchActions;
           const maxUsers = planParams.max_users ?? rowParams.max_users;
           if (maxUsers != null && maxUsers !== "") preservedParams.max_users = Math.max(1, Math.min(200, Number(maxUsers) || 20));
           preservedParams.customer_scope = "precise_pool";

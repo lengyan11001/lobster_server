@@ -314,8 +314,13 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "precise_touch":
             touch_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
             touch_params = dict(touch_params)
+            has_explicit_actions = "touch_actions" in touch_params or "followup_actions" in touch_params
             raw_actions = touch_params.get("touch_actions") if "touch_actions" in touch_params else touch_params.get("followup_actions")
-            touch_params["touch_actions"] = _sales_douyin_followup_actions(raw_actions) or list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+            touch_params["touch_actions"] = (
+                _sales_douyin_followup_actions(raw_actions)
+                if has_explicit_actions
+                else list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+            )
             touch_params.pop("followup_actions", None)
             for key in ("reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text"):
                 touch_params.pop(key, None)
@@ -573,8 +578,21 @@ def _sales_douyin_node_action(node: Any) -> str:
     inferred = _sales_action_from_note(
         node.get("note") or node.get("ability_label") or node.get("label") or plan.get("title")
     )
-    explicit = _clean_text(params.get("sales_action") or payload.get("action"), 64).lower()
-    return inferred if inferred != "search_collect" else (explicit or inferred)
+    explicit = _clean_text(payload.get("action") or params.get("sales_action"), 64).lower()
+    valid_actions = {
+        "search_collect",
+        "precise_touch",
+        "self_comment_monitor",
+        "account_nurture",
+        "reply_comments",
+        "follow_comment",
+        "mention_comment",
+        "direct_message",
+        "stranger_message",
+    }
+    if explicit in valid_actions:
+        return inferred if explicit == "search_collect" and inferred != "search_collect" else explicit
+    return inferred
 
 
 def _fold_legacy_sales_douyin_followup_nodes(nodes: Any) -> list[dict[str, Any]]:
@@ -1264,14 +1282,21 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     """Reduce a sales Douyin node to the action-only Online contract."""
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     inferred_action = _sales_action_from_note(node.get("note") or node.get("ability_label"))
-    action = inferred_action
-    if action == "search_collect":
-        action = _clean_text(params.get("sales_action"), 64)
-    if not action or action == "search_collect":
-        requested_action = _clean_text(payload.get("action"), 64)
-        if requested_action and requested_action != "search_collect":
-            action = requested_action
-    if not action:
+    requested_action = _clean_text(payload.get("action") or params.get("sales_action"), 64).lower()
+    valid_actions = {
+        "search_collect",
+        "precise_touch",
+        "self_comment_monitor",
+        "account_nurture",
+        "reply_comments",
+        "follow_comment",
+        "mention_comment",
+        "direct_message",
+        "stranger_message",
+    }
+    if requested_action in valid_actions:
+        action = inferred_action if requested_action == "search_collect" and inferred_action != "search_collect" else requested_action
+    else:
         action = inferred_action
     result: dict[str, Any] = {"action": action or "search_collect"}
     if (action or "search_collect") == "search_collect":
@@ -1286,9 +1311,10 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
             if value not in (None, "", []):
                 result["params"][key] = copy.deepcopy(value)
     if action == "precise_touch":
+        has_explicit_actions = "touch_actions" in params or "followup_actions" in params
         raw_actions = params.get("touch_actions") if "touch_actions" in params else params.get("followup_actions")
         touch_actions = _sales_douyin_followup_actions(raw_actions)
-        if not touch_actions:
+        if not has_explicit_actions:
             touch_actions = list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
         result["params"] = {
             "touch_actions": touch_actions,
