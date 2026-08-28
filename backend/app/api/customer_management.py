@@ -263,9 +263,24 @@ def list_customer_recordings_for_customer(
 
 
 @router.get("/api/customers/{customer_id}")
-def customer_detail(customer_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def customer_detail(
+    customer_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     customer = _owned_customer(db, current_user.id, customer_id)
-    communications = db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == customer.id).order_by(CustomerCommunication.occurred_at.desc(), CustomerCommunication.id.desc()).all()
+    communication_query = db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == customer.id)
+    total = communication_query.count()
+    communications = communication_query.order_by(CustomerCommunication.occurred_at.desc(), CustomerCommunication.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     recording_ids = [c.recording_id for c in communications if c.recording_id]
     recordings = {r.id: r for r in db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id.in_(recording_ids)).all()} if recording_ids else {}
-    return {"customer": _customer_payload(customer), "communications": [_communication_payload(row, recordings.get(row.recording_id)) for row in communications]}
+    return {
+        "customer": _customer_payload(customer),
+        "communications": [_communication_payload(row, recordings.get(row.recording_id)) for row in communications],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "has_next": page * page_size < total,
+    }

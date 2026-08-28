@@ -114,6 +114,20 @@ tr:hover{background:var(--bg)}
 .tab:hover:not(.active){color:var(--text)}
 .detail-back{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:12px;display:inline-flex;align-items:center;gap:4px}
 .detail-back:hover{text-decoration:underline}
+.customer-detail-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:16px}
+.customer-detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.customer-detail-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.customer-detail-meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--text-secondary);font-size:13px;margin-top:8px}
+.customer-detail-notes{white-space:pre-wrap;word-break:break-word;line-height:1.7;font-size:13px;color:var(--text);margin-top:14px}
+.customer-communications-card h3{margin-bottom:0}
+.communication-item{padding:16px 0;border-top:1px solid var(--border)}
+.communication-item:first-child{border-top:0}
+.communication-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.communication-content,.communication-summary{white-space:pre-wrap;word-break:break-word;line-height:1.7;font-size:13px;margin-top:9px}
+.communication-summary{color:var(--text-secondary);max-height:7.2em;overflow:hidden;position:relative}
+.communication-summary.expanded{max-height:none}
+.communication-expand{border:0;background:none;color:var(--primary);font-size:12px;padding:4px 0;cursor:pointer}
+.communication-recording{margin-top:9px;padding:9px 11px;background:var(--bg);border-radius:6px;font-size:12px;word-break:break-word}
 .user-detail-tabs{display:flex;gap:4px;margin-bottom:14px;background:var(--bg);padding:4px;border-radius:8px;overflow-x:auto}
 .user-detail-tab{border:0;background:transparent;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
 .user-detail-tab.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
@@ -485,21 +499,29 @@ body{background:#edf2f7}
 
   <!-- Page: Customers -->
   <div class="container" id="pageCustomers" style="display:none">
-    <div class="admin-page-head">
-      <div><h1>客户管理</h1><p>维护客户资料，记录沟通历史，并关联录音摘要。</p></div>
-      <button class="btn btn-primary btn-compact" type="button" onclick="openCustomerEditor()">新增客户</button>
-    </div>
-    <div class="card">
-      <div class="search-bar" style="margin-bottom:14px">
-        <input type="text" id="customerSearchInput" placeholder="搜索姓名、公司、电话或邮箱" onkeydown="if(event.key==='Enter')loadCustomers(1)">
-        <select id="customerStatusFilter" onchange="loadCustomers(1)"><option value="">全部状态</option><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select>
-        <button class="btn btn-primary btn-sm" type="button" onclick="loadCustomers(1)">查询</button>
-        <button class="btn btn-outline btn-sm" type="button" onclick="clearCustomerSearch()">清空</button>
+    <div id="customerListView">
+      <div class="admin-page-head">
+        <div><h1>客户管理</h1><p>维护客户资料，记录沟通历史，并关联录音摘要。</p></div>
+        <button class="btn btn-primary btn-compact" type="button" onclick="openCustomerEditor()">新增客户</button>
       </div>
-      <div id="customersTable"><div class="empty">加载中...</div></div>
-      <div class="pagination" id="customersPagination"></div>
+      <div class="card">
+        <div class="search-bar" style="margin-bottom:14px">
+          <input type="text" id="customerSearchInput" placeholder="搜索姓名、公司、电话或邮箱" onkeydown="if(event.key==='Enter')loadCustomers(1)">
+          <select id="customerStatusFilter" onchange="loadCustomers(1)"><option value="">全部状态</option><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select>
+          <button class="btn btn-primary btn-sm" type="button" onclick="loadCustomers(1)">查询</button>
+          <button class="btn btn-outline btn-sm" type="button" onclick="clearCustomerSearch()">清空</button>
+        </div>
+        <div id="customersTable"><div class="empty">加载中...</div></div>
+        <div class="pagination" id="customersPagination"></div>
+      </div>
     </div>
-    <div class="card" id="customerDetailPanel" style="display:none;margin-top:16px"></div>
+    <div id="customerDetailView" style="display:none">
+      <div class="admin-page-head">
+        <div><button class="detail-back" type="button" onclick="closeCustomerDetail()">← 返回客户列表</button><h1 id="customerDetailHeading">客户详情</h1><p>查看客户资料及沟通记录</p></div>
+      </div>
+      <div id="customerDetailPanel"></div>
+      <div class="pagination" id="customerCommunicationsPagination"></div>
+    </div>
   </div>
 
   <!-- Page: Stats -->
@@ -874,6 +896,8 @@ let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
 let customerPage = 1;
 let customerRows = [];
+let customerDetailId = 0;
+let customerCommunicationsPage = 1;
 const COMMISSION_PAGE_SIZE = 100;
 const GENERATION_RECORD_PAGE_SIZE = 20;
 const TIKHUB_RECORD_PAGE_SIZE = 20;
@@ -1315,17 +1339,27 @@ async function saveCustomerEditor() {
   } catch (e) { error.textContent = e.message; }
 }
 
-async function showCustomerDetail(id) {
+async function showCustomerDetail(id, page = 1) {
   const panel = document.getElementById('customerDetailPanel'); if (!panel) return;
-  panel.style.display = ''; panel.innerHTML = '<div class="empty">加载中...</div>';
+  customerDetailId = Number(id); customerCommunicationsPage = Math.max(1, Number(page || 1));
+  document.getElementById('customerListView').style.display = 'none';
+  document.getElementById('customerDetailView').style.display = '';
+  panel.innerHTML = '<div class="empty">加载中...</div>';
   try {
-    const data = await api(customerApiPath('/' + id)); const row = data.customer; const communications = data.communications || [];
-    panel.innerHTML = `<div class="admin-card-head"><div><h3 style="margin:0">${escapeHtml(row.name)}</h3><div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${escapeHtml([row.company, row.position, row.phone, row.email].filter(Boolean).join(' · ') || '暂无联系信息')}</div></div><div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerEditor(${JSON.stringify(row).replace(/'/g, '&#39;')})'>编辑客户</button><button class="btn btn-primary btn-sm" type="button" onclick="openCustomerCommunication(${row.id})">新增沟通</button><button class="btn btn-danger btn-sm" type="button" onclick="deleteCustomer(${row.id})">删除客户</button></div></div><div style="font-size:13px;line-height:1.6;margin:14px 0">${escapeHtml(row.notes || '暂无备注')}</div><div class="customer-communications">${communications.length ? communications.map((item) => `<div style="border-top:1px solid var(--border);padding:13px 0"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>${escapeHtml(customerCommunicationTypeLabel(item.communication_type))}</strong><span style="font-size:12px;color:var(--text-secondary)">${item.occurred_at ? new Date(item.occurred_at).toLocaleString('zh-CN') : '-'}</span></div>${item.content ? `<p style="margin:8px 0;white-space:pre-wrap">${escapeHtml(item.content)}</p>` : ''}${item.summary ? `<div style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap">摘要：${escapeHtml(item.summary)}</div>` : ''}${item.recording ? `<div style="margin-top:7px;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:12px">录音：${escapeHtml(item.recording.name)}${item.recording.summary ? ` · ${escapeHtml(item.recording.summary)}` : ''}</div>` : ''}<div style="margin-top:8px"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerCommunication(${row.id}, ${JSON.stringify(item).replace(/'/g, '&#39;')})'>编辑</button><button class="btn btn-danger btn-sm" type="button" style="margin-left:6px" onclick="deleteCustomerCommunication(${item.id}, ${row.id})">删除</button></div></div>`).join('') : '<div class="empty">暂无沟通记录</div>'}</div>`;
-    panel.dataset.customerId = String(row.id);
+    const data = await api(customerApiPath('/' + customerDetailId + '?page=' + customerCommunicationsPage + '&page_size=10'));
+    const row = data.customer; const communications = data.communications || [];
+    document.getElementById('customerDetailHeading').textContent = row.name || '客户详情';
+    const summary = (item) => item.summary ? `<div class="communication-summary" id="communication-summary-${item.id}">摘要：${escapeHtml(item.summary)}</div>${item.summary.length > 260 ? `<button class="communication-expand" type="button" onclick="toggleCommunicationSummary(${item.id}, this)">展开摘要</button>` : ''}` : '';
+    const records = communications.length ? communications.map((item) => `<div class="communication-item"><div class="communication-head"><strong>${escapeHtml(customerCommunicationTypeLabel(item.communication_type))}</strong><span style="font-size:12px;color:var(--text-secondary)">${item.occurred_at ? new Date(item.occurred_at).toLocaleString('zh-CN') : '-'}</span></div>${item.content ? `<div class="communication-content">${escapeHtml(item.content)}</div>` : ''}${summary(item)}${item.recording ? `<div class="communication-recording">录音：${escapeHtml(item.recording.name)}${item.recording.summary ? ` · ${escapeHtml(item.recording.summary)}` : ''}</div>` : ''}<div style="margin-top:10px;display:flex;gap:6px"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerCommunication(${row.id}, ${JSON.stringify(item).replace(/'/g, '&#39;')})'>编辑</button><button class="btn btn-danger btn-sm" type="button" onclick="deleteCustomerCommunication(${item.id}, ${row.id})">删除</button></div></div>`).join('') : '<div class="empty">暂无沟通记录</div>';
+    panel.innerHTML = `<div class="customer-detail-card"><div class="customer-detail-header"><div><h2 style="font-size:20px;margin:0">${escapeHtml(row.name)}</h2><div class="customer-detail-meta">${[row.company, row.position, row.phone, row.email, row.source].filter(Boolean).map((v) => `<span>${escapeHtml(v)}</span>`).join('') || '<span>暂无联系信息</span>'}</div>${row.tags?.length ? `<div style="margin-top:9px">${row.tags.map((tag) => `<span class="badge badge-blue" style="margin-right:5px">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}</div><div class="customer-detail-actions"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerEditor(${JSON.stringify(row).replace(/'/g, '&#39;')})'>编辑客户</button><button class="btn btn-primary btn-sm" type="button" onclick="openCustomerCommunication(${row.id})">新增沟通</button><button class="btn btn-danger btn-sm" type="button" onclick="deleteCustomer(${row.id})">删除客户</button></div></div><div class="customer-detail-notes">${escapeHtml(row.notes || '暂无备注')}</div></div><div class="customer-detail-card customer-communications-card"><div class="admin-card-head"><h3>沟通记录</h3><span style="font-size:12px;color:var(--text-secondary)">共 ${Number(data.total || 0)} 条</span></div>${records}</div>`;
+    const pager = document.getElementById('customerCommunicationsPagination'); const pages = Math.ceil((data.total || 0) / (data.page_size || 10));
+    pager.innerHTML = pages > 1 ? `${customerCommunicationsPage > 1 ? `<button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id}, ${customerCommunicationsPage - 1})">上一页</button>` : ''}<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ${customerCommunicationsPage}/${pages} 页</span>${customerCommunicationsPage < pages ? `<button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id}, ${customerCommunicationsPage + 1})">下一页</button>` : ''}` : '';
   } catch (e) { panel.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
 }
 
-async function deleteCustomer(id) { if (!confirm('确定删除该客户及其全部沟通记录？')) return; try { await api(customerApiPath('/' + id), {method:'DELETE'}); document.getElementById('customerDetailPanel').style.display = 'none'; await loadCustomers(customerPage); toast('客户已删除'); } catch (e) { toast(e.message, 'error'); } }
+function closeCustomerDetail() { customerDetailId = 0; document.getElementById('customerDetailView').style.display = 'none'; document.getElementById('customerListView').style.display = ''; document.getElementById('customerCommunicationsPagination').innerHTML = ''; }
+function toggleCommunicationSummary(id, button) { const el = document.getElementById('communication-summary-' + id); if (!el) return; const expanded = el.classList.toggle('expanded'); button.textContent = expanded ? '收起摘要' : '展开摘要'; }
+async function deleteCustomer(id) { if (!confirm('确定删除该客户及其全部沟通记录？')) return; try { await api(customerApiPath('/' + id), {method:'DELETE'}); closeCustomerDetail(); await loadCustomers(customerPage); toast('客户已删除'); } catch (e) { toast(e.message, 'error'); } }
 
 function toDateTimeLocal(value) { const d = value ? new Date(value) : new Date(); if (Number.isNaN(d.getTime())) return ''; const pad = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 async function openCustomerCommunication(customerId, row = null) {
