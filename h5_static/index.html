@@ -1128,6 +1128,7 @@
             </div>
             <div class="recorder-detail-actions">
               <button type="button" class="ghost hidden" id="recorderFaqBtn">生成百问百答</button>
+              <button type="button" class="ghost hidden" id="recorderCustomerBtn">关联客户</button>
               <span class="recorder-detail-status" id="recorderDetailStatus">处理中</span>
             </div>
           </header>
@@ -2608,6 +2609,24 @@
         <button class="ghost" type="button" id="leadDetailCloseBtn">关闭</button>
       </div>
       <div id="leadDetailBody" class="lead-detail-body"></div>
+    </div>
+  </div>
+
+  <div class="employee-modal hidden" id="recorderCustomerModal" role="dialog" aria-modal="true" aria-labelledby="recorderCustomerTitle" aria-hidden="true">
+    <button class="employee-modal-backdrop" type="button" id="recorderCustomerBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover" style="max-width:620px">
+      <button class="employee-popover-close" type="button" id="recorderCustomerClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">客</div>
+        <div class="employee-popover-title"><strong id="recorderCustomerTitle">关联客户</strong><span>将这次录音作为一条沟通记录保存到客户名下</span></div>
+      </div>
+      <form id="recorderCustomerForm" class="work-dispatch-form">
+        <div class="work-dispatch-fields">
+          <div class="field full"><label for="recorderCustomerSelect">选择客户</label><select id="recorderCustomerSelect" required><option value="">加载中...</option></select></div>
+          <div class="field full"><label for="recorderCustomerNote">沟通备注（可选）</label><textarea id="recorderCustomerNote" rows="3" placeholder="可补充本次沟通的背景或下一步"></textarea></div>
+        </div>
+        <div class="work-dispatch-actions"><button class="ghost" type="button" id="recorderCustomerCancel">取消</button><button type="submit">保存关联</button></div>
+      </form>
     </div>
   </div>
 

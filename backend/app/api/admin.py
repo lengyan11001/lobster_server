@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
@@ -246,6 +246,65 @@ def _normalize_stats_days(days: int, *, max_days: int = 180, default_days: int =
 def _capability_source_label(source: Optional[str]) -> str:
     text = (source or "").strip()
     return text or "unknown"
+
+
+def _admin_customer_owner_ids(db: Session, ctx: AdminContext) -> list[int]:
+    if ctx.role == "admin":
+        return [uid for (uid,) in db.query(User.id).all()]
+    return _agent_visible_user_ids(db, int(ctx.user_id or 0))
+
+
+def _admin_customer_row(db: Session, ctx: AdminContext, customer_id: int) -> Customer:
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    row = db.query(Customer).filter(Customer.id == customer_id, Customer.owner_user_id.in_(owner_ids)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    return row
+
+
+def _admin_customer_payload(row: Customer, owner: User | None, communications_count: int = 0) -> dict:
+    from .customer_management import _customer_payload
+
+    payload = _customer_payload(row, owner=owner)
+    payload["communications_count"] = communications_count
+    return payload
+
+
+class AdminCustomerBody(BaseModel):
+    owner_user_id: int
+    name: str = Field(min_length=1, max_length=160)
+    company: str = Field(default="", max_length=255)
+    position: str = Field(default="", max_length=160)
+    phone: str = Field(default="", max_length=64)
+    email: str = Field(default="", max_length=255)
+    source: str = Field(default="", max_length=64)
+    tags: list[str] = Field(default_factory=list, max_length=30)
+    status: str = Field(default="active", max_length=32)
+    notes: str = Field(default="", max_length=10000)
+
+
+class AdminCommunicationBody(BaseModel):
+    communication_type: str = Field(default="note", max_length=32)
+    occurred_at: datetime | None = None
+    content: str = Field(default="", max_length=50000)
+    summary: str = Field(default="", max_length=10000)
+    recording_id: int | None = None
+
+
+def _admin_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))[:30]
+
+
+def _admin_recording_payload(row: RecorderAudioRecord) -> dict:
+    return {
+        "id": row.id,
+        "name": row.display_name or row.file_name,
+        "summary": row.summary_text or "",
+        "status": row.status,
+        "recorded_at": row.recorded_at.isoformat() if row.recorded_at else row.created_at.isoformat(),
+    }
 
 
 # ── 页面 ──
@@ -673,6 +732,177 @@ def admin_reset_password(
     db.refresh(user)
     logger.info("[admin/reset-password] user_id=%s email=%s ok", user.id, user.email)
     return {"ok": True, "user_id": user.id, "email": user.email}
+
+
+@router.get("/admin/api/customers")
+def admin_list_customers(
+    page: int = 1,
+    page_size: int = 20,
+    q: str = "",
+    owner_user_id: int | None = None,
+    status: str = "",
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    page = max(1, min(int(page or 1), 100000))
+    page_size = max(1, min(int(page_size or 20), 100))
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    query = db.query(Customer).filter(Customer.owner_user_id.in_(owner_ids))
+    if owner_user_id is not None:
+        if int(owner_user_id) not in owner_ids:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        query = query.filter(Customer.owner_user_id == int(owner_user_id))
+    text_value = str(q or "").strip()
+    if text_value:
+        like = f"%{text_value}%"
+        query = query.filter(or_(Customer.name.ilike(like), Customer.company.ilike(like), Customer.phone.ilike(like), Customer.email.ilike(like)))
+    if str(status or "").strip():
+        query = query.filter(Customer.status == str(status).strip())
+    total = query.count()
+    rows = query.order_by(Customer.updated_at.desc(), Customer.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    owner_map = {u.id: u for u in db.query(User).filter(User.id.in_([r.owner_user_id for r in rows])).all()} if rows else {}
+    counts = {cid: count for cid, count in db.query(CustomerCommunication.customer_id, func.count(CustomerCommunication.id)).filter(CustomerCommunication.customer_id.in_([r.id for r in rows])).group_by(CustomerCommunication.customer_id).all()} if rows else {}
+    return {"items": [_admin_customer_payload(row, owner_map.get(row.owner_user_id), counts.get(row.id, 0)) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
+
+
+@router.post("/admin/api/customers")
+def admin_create_customer(body: AdminCustomerBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    if body.owner_user_id not in owner_ids:
+        raise HTTPException(status_code=403, detail="无权为该用户添加客户")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="客户姓名不能为空")
+    from .customer_management import _clean_tags
+    row = Customer(owner_user_id=body.owner_user_id, name=name, company=body.company.strip(), position=body.position.strip(), phone=body.phone.strip(), email=body.email.strip(), source=body.source.strip(), tags=_clean_tags(body.tags), status=body.status.strip() or "active", notes=body.notes.strip())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    owner = db.query(User).filter(User.id == row.owner_user_id).first()
+    return {"ok": True, "customer": _admin_customer_payload(row, owner)}
+
+
+@router.patch("/admin/api/customers/{customer_id}")
+def admin_update_customer(customer_id: int, body: AdminCustomerBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = _admin_customer_row(db, ctx, customer_id)
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    if body.owner_user_id not in owner_ids:
+        raise HTTPException(status_code=403, detail="无权设置该客户归属")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="客户姓名不能为空")
+    from .customer_management import _clean_tags
+    row.owner_user_id = body.owner_user_id
+    row.name = name
+    row.company = body.company.strip()
+    row.position = body.position.strip()
+    row.phone = body.phone.strip()
+    row.email = body.email.strip()
+    row.source = body.source.strip()
+    row.tags = _clean_tags(body.tags)
+    row.status = body.status.strip() or "active"
+    row.notes = body.notes.strip()
+    db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).update({CustomerCommunication.owner_user_id: row.owner_user_id}, synchronize_session=False)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "customer": _admin_customer_payload(row, db.query(User).filter(User.id == row.owner_user_id).first())}
+
+
+@router.delete("/admin/api/customers/{customer_id}")
+def admin_delete_customer(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = _admin_customer_row(db, ctx, customer_id)
+    db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/customers/{customer_id}/communications")
+def admin_create_communication(customer_id: int, body: AdminCommunicationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    recording = None
+    if body.recording_id is not None:
+        recording = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == body.recording_id, RecorderAudioRecord.user_id == customer.owner_user_id).first()
+        if not recording:
+            raise HTTPException(status_code=404, detail="录音不存在或不属于客户所属用户")
+    row = CustomerCommunication(customer_id=customer.id, owner_user_id=customer.owner_user_id, communication_type=body.communication_type.strip() or "note", occurred_at=body.occurred_at or datetime.utcnow(), content=body.content.strip(), summary=body.summary.strip() or (recording.summary_text.strip() if recording else ""), recording_id=recording.id if recording else None)
+    customer.last_contact_at = row.occurred_at
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "communication": _admin_communication_payload(row, recording)}
+
+
+def _admin_communication_payload(row: CustomerCommunication, recording: RecorderAudioRecord | None = None) -> dict:
+    return {
+        "id": row.id,
+        "customer_id": row.customer_id,
+        "owner_user_id": row.owner_user_id,
+        "communication_type": row.communication_type,
+        "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+        "content": row.content or "",
+        "summary": row.summary or "",
+        "recording_id": row.recording_id,
+        "recording": _admin_recording_payload(recording) if recording else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.patch("/admin/api/customer-communications/{communication_id}")
+def admin_update_communication(communication_id: int, body: AdminCommunicationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id, CustomerCommunication.owner_user_id.in_(_admin_customer_owner_ids(db, ctx))).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="沟通记录不存在")
+    customer = _admin_customer_row(db, ctx, row.customer_id)
+    recording = None
+    if body.recording_id is not None:
+        recording = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == body.recording_id, RecorderAudioRecord.user_id == customer.owner_user_id).first()
+        if not recording:
+            raise HTTPException(status_code=404, detail="录音不存在或不属于客户所属用户")
+    row.communication_type = body.communication_type.strip() or "note"
+    row.occurred_at = body.occurred_at or row.occurred_at or datetime.utcnow()
+    row.content = body.content.strip()
+    row.summary = body.summary.strip() or (recording.summary_text.strip() if recording else "")
+    row.recording_id = recording.id if recording else None
+    customer.last_contact_at = row.occurred_at
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "communication": _admin_communication_payload(row, recording)}
+
+
+@router.delete("/admin/api/customer-communications/{communication_id}")
+def admin_delete_communication(communication_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id, CustomerCommunication.owner_user_id.in_(_admin_customer_owner_ids(db, ctx))).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="沟通记录不存在")
+    customer = _admin_customer_row(db, ctx, row.customer_id)
+    db.delete(row)
+    db.flush()
+    from .customer_management import _refresh_last_contact
+    _refresh_last_contact(db, customer)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/admin/api/customers/{customer_id}/recordings")
+def admin_customer_recordings(customer_id: int, page: int = 1, page_size: int = 20, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == customer.owner_user_id, RecorderAudioRecord.status == "completed")
+    total = query.count()
+    rows = query.order_by(RecorderAudioRecord.recorded_at.desc().nullslast(), RecorderAudioRecord.created_at.desc()).offset((max(1, page) - 1) * min(max(1, page_size), 100)).limit(min(max(1, page_size), 100)).all()
+    return {"items": [_admin_recording_payload(row) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
+
+
+@router.get("/admin/api/customers/{customer_id}")
+def admin_customer_detail(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = _admin_customer_row(db, ctx, customer_id)
+    owner = db.query(User).filter(User.id == row.owner_user_id).first()
+    communications = db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).order_by(CustomerCommunication.occurred_at.desc(), CustomerCommunication.id.desc()).all()
+    recording_ids = [c.recording_id for c in communications if c.recording_id]
+    recordings = {r.id: r for r in db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id.in_(recording_ids), RecorderAudioRecord.user_id == row.owner_user_id).all()} if recording_ids else {}
+    from .customer_management import _communication_payload
+    return {"customer": _admin_customer_payload(row, owner, len(communications)), "communications": [_communication_payload(item, recordings.get(item.recording_id)) for item in communications]}
 
 
 @router.post("/admin/api/user-llm-model")

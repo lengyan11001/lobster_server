@@ -1802,6 +1802,55 @@ class RecorderAudioRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class Customer(Base):
+    """Customer managed by one Lobster user; agents can view their descendants' customers."""
+
+    __tablename__ = "customers"
+    __table_args__ = (
+        Index("ix_customers_owner_updated", "owner_user_id", "updated_at"),
+        Index("ix_customers_owner_phone", "owner_user_id", "phone"),
+        Index("ix_customers_owner_status", "owner_user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    company: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    position: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    phone: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    email: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    source: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    last_contact_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CustomerCommunication(Base):
+    """A dated customer touchpoint, optionally linked to a recorder transcript."""
+
+    __tablename__ = "customer_communications"
+    __table_args__ = (
+        Index("ix_customer_comms_customer_occurred", "customer_id", "occurred_at"),
+        Index("ix_customer_comms_owner_occurred", "owner_user_id", "occurred_at"),
+        Index("ix_customer_comms_recording", "recording_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    customer_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    communication_type: Mapped[str] = mapped_column(String(32), default="note", nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    recording_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class ShanjianDigitalHumanVideoTask(Base):
     __tablename__ = "shanjian_digital_human_video_tasks"
     __table_args__ = (

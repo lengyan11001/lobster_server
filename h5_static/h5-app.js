@@ -15385,6 +15385,11 @@
         faqButton.classList.toggle("hidden", row.status !== "completed");
         faqButton.dataset.recorderFaq = String(row.id || "");
       }
+      const customerButton = $("recorderCustomerBtn");
+      if (customerButton) {
+        customerButton.classList.toggle("hidden", row.status !== "completed");
+        customerButton.dataset.recorderCustomer = String(row.id || "");
+      }
       document.querySelectorAll("#recorderDetailView [data-recorder-copy], #recorderDetailView [data-recorder-export]").forEach((button) => {
         button.disabled = row.status !== "completed";
       });
@@ -26156,6 +26161,51 @@
       const button = event.currentTarget;
       const id = Number(button.dataset.recorderFaq || state.recorderDetailId || 0);
       if (id) useRecorderForFaq(id, button).catch((err) => toast(err.message || "百问百答资料准备失败"));
+    });
+    function closeRecorderCustomerModal() {
+      const modal = $("recorderCustomerModal");
+      if (modal) modal.classList.add("hidden");
+    }
+    async function openRecorderCustomerModal(recordingId) {
+      const modal = $("recorderCustomerModal");
+      const select = $("recorderCustomerSelect");
+      if (!modal || !select) return;
+      modal.classList.remove("hidden");
+      select.innerHTML = '<option value="">正在加载客户…</option>';
+      try {
+        const data = await api("/api/customers?page=1&page_size=100");
+        const items = Array.isArray(data.items) ? data.items : [];
+        select.innerHTML = items.length
+          ? '<option value="">请选择客户</option>' + items.map((item) => `<option value="${escapeHtml(String(item.id))}">${escapeHtml(item.name)}${item.company ? ` · ${escapeHtml(item.company)}` : ""}</option>`).join("")
+          : '<option value="">暂无客户，请先添加</option>';
+        modal.dataset.recordingId = String(recordingId || "");
+      } catch (err) {
+        select.innerHTML = `<option value="">${escapeHtml(err.message || "客户加载失败")}</option>`;
+      }
+    }
+    $("recorderCustomerBtn")?.addEventListener("click", (event) => {
+      openRecorderCustomerModal(Number(event.currentTarget.dataset.recorderCustomer || state.recorderDetailId || 0)).catch((err) => toast(err.message || "客户加载失败"));
+    });
+    $("recorderCustomerClose")?.addEventListener("click", closeRecorderCustomerModal);
+    $("recorderCustomerCancel")?.addEventListener("click", closeRecorderCustomerModal);
+    $("recorderCustomerBackdrop")?.addEventListener("click", closeRecorderCustomerModal);
+    $("recorderCustomerForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const modal = $("recorderCustomerModal");
+      const customerId = Number($("recorderCustomerSelect")?.value || 0);
+      const recordingId = Number(modal?.dataset.recordingId || state.recorderDetailId || 0);
+      if (!customerId || !recordingId) return toast("请选择客户", "error");
+      const note = $("recorderCustomerNote")?.value?.trim() || "";
+      try {
+        await api(`/api/customers/${encodeURIComponent(customerId)}/communications`, {
+          method: "POST",
+          body: JSON.stringify({ communication_type: "recording", content: note, recording_id: recordingId }),
+        });
+        closeRecorderCustomerModal();
+        toast("录音已关联到客户");
+      } catch (err) {
+        toast(err.message || "关联客户失败", "error");
+      }
     });
     if ($("recorderStartBtn")) $("recorderStartBtn").addEventListener("click", () => {
       const native = recorderNative();

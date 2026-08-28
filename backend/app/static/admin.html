@@ -355,6 +355,7 @@ body{background:#edf2f7}
     <div class="nav-tabs" id="navTabs">
       <div class="nav-tab active" data-icon="首" data-nav="stats" onclick="switchNav('stats')">首页数据大盘</div>
       <div class="nav-tab" data-icon="用" data-nav="users" onclick="switchNav('users')">用户列表</div>
+      <div class="nav-tab" data-icon="客" data-nav="customers" onclick="switchNav('customers')">客户管理</div>
       <div class="nav-tab" data-icon="代" data-nav="agents" id="agentsNavTab" onclick="switchNav('agents')">代理商管理</div>
       <div class="nav-tab" data-icon="模" data-nav="templates" onclick="switchNav('templates')">模板配置</div>
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
@@ -477,6 +478,26 @@ body{background:#edf2f7}
         <div id="removeSubSection"></div>
       </div>
     </div>
+  </div>
+
+  <!-- Page: Customers -->
+  <div class="container" id="pageCustomers" style="display:none">
+    <div class="admin-page-head">
+      <div><h1>客户管理</h1><p>维护客户资料，记录沟通历史，并关联录音摘要。</p></div>
+      <button class="btn btn-primary btn-sm" type="button" onclick="openCustomerEditor()">新增客户</button>
+    </div>
+    <div class="card">
+      <div class="search-bar" style="margin-bottom:14px">
+        <input type="text" id="customerSearchInput" placeholder="搜索姓名、公司、电话或邮箱" onkeydown="if(event.key==='Enter')loadCustomers(1)">
+        <select id="customerStatusFilter" onchange="loadCustomers(1)"><option value="">全部状态</option><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select>
+        <select id="customerOwnerFilter" style="display:none" onchange="loadCustomers(1)"><option value="">全部归属</option></select>
+        <button class="btn btn-primary btn-sm" type="button" onclick="loadCustomers(1)">查询</button>
+        <button class="btn btn-outline btn-sm" type="button" onclick="clearCustomerSearch()">清空</button>
+      </div>
+      <div id="customersTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="customersPagination"></div>
+    </div>
+    <div class="card" id="customerDetailPanel" style="display:none;margin-top:16px"></div>
   </div>
 
   <!-- Page: Stats -->
@@ -777,6 +798,45 @@ body{background:#edf2f7}
   </div>
 </div>
 
+<!-- 客户编辑弹窗 -->
+<div class="modal-mask" id="customerEditorModal" onclick="if(event.target===this)closeCustomerEditor()">
+  <div class="modal-card" style="max-width:760px">
+    <h3 id="customerEditorTitle">新增客户</h3>
+    <input type="hidden" id="customerEditorId">
+    <div class="template-form-grid">
+      <div class="form-group"><label>姓名 *</label><input id="customerNameInput" maxlength="160" placeholder="客户姓名"></div>
+      <div class="form-group"><label>公司</label><input id="customerCompanyInput" maxlength="255" placeholder="公司名称"></div>
+      <div class="form-group"><label>职位</label><input id="customerPositionInput" maxlength="160" placeholder="职位"></div>
+      <div class="form-group"><label>电话</label><input id="customerPhoneInput" maxlength="64" placeholder="手机号或座机"></div>
+      <div class="form-group"><label>邮箱</label><input id="customerEmailInput" maxlength="255" placeholder="邮箱"></div>
+      <div class="form-group"><label>来源</label><input id="customerSourceInput" maxlength="64" placeholder="例如：抖音、转介绍"></div>
+      <div class="form-group"><label>状态</label><select id="customerStatusInput"><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select></div>
+      <div class="form-group" id="customerOwnerGroup" style="display:none"><label>归属用户</label><select id="customerOwnerInput"></select></div>
+      <div class="form-group full"><label>标签</label><input id="customerTagsInput" maxlength="500" placeholder="多个标签用逗号分隔"></div>
+      <div class="form-group full"><label>备注</label><textarea id="customerNotesInput" maxlength="10000" placeholder="客户背景、需求、下一步计划"></textarea></div>
+    </div>
+    <div class="error-msg" id="customerEditorError" style="text-align:left;min-height:18px"></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-sm" type="button" onclick="closeCustomerEditor()">取消</button><button class="btn btn-primary btn-sm" type="button" onclick="saveCustomerEditor()">保存</button></div>
+  </div>
+</div>
+
+<!-- 客户沟通记录弹窗 -->
+<div class="modal-mask" id="customerCommunicationModal" onclick="if(event.target===this)closeCustomerCommunication()">
+  <div class="modal-card" style="max-width:720px">
+    <h3 id="customerCommunicationTitle">新增沟通记录</h3>
+    <input type="hidden" id="customerCommunicationId">
+    <div class="template-form-grid">
+      <div class="form-group"><label>沟通类型</label><select id="customerCommunicationType"><option value="call">电话</option><option value="meeting">会议</option><option value="message">消息</option><option value="recording">录音</option><option value="note">备注</option></select></div>
+      <div class="form-group"><label>发生时间</label><input id="customerCommunicationAt" type="datetime-local"></div>
+      <div class="form-group full"><label>沟通内容</label><textarea id="customerCommunicationContent" maxlength="50000" placeholder="记录本次沟通内容"></textarea></div>
+      <div class="form-group full"><label>摘要</label><textarea id="customerCommunicationSummary" maxlength="10000" placeholder="可留空，关联录音时自动使用录音摘要"></textarea></div>
+      <div class="form-group full"><label>关联录音（可选）</label><select id="customerCommunicationRecording"><option value="">不关联录音</option></select></div>
+    </div>
+    <div class="error-msg" id="customerCommunicationError" style="text-align:left;min-height:18px"></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-sm" type="button" onclick="closeCustomerCommunication()">取消</button><button class="btn btn-primary btn-sm" type="button" onclick="saveCustomerCommunication()">保存</button></div>
+  </div>
+</div>
+
 <script>
 const API = location.origin;
 const ADMIN_BRAND_MARKS = new Set(['bihuo', 'daka', 'jinghai', 'hikong']);
@@ -810,6 +870,9 @@ let juheSelectedBatchId = null;
 let loginCaptchaId = '';
 let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
+let customerPage = 1;
+let customerRows = [];
+let customerOwnerOptions = [];
 const COMMISSION_PAGE_SIZE = 100;
 const GENERATION_RECORD_PAGE_SIZE = 20;
 const TIKHUB_RECORD_PAGE_SIZE = 20;
@@ -1065,6 +1128,7 @@ function navTitle(nav) {
   return {
     stats: '首页数据大盘',
     users: '用户列表',
+    customers: '客户管理',
     agents: '代理商管理',
     templates: '模板配置',
     generationRecords: '素材生成记录',
@@ -1082,6 +1146,8 @@ function switchNav(nav) {
   const title = document.getElementById('topbarTitle');
   if (title) title.textContent = navTitle(nav);
   document.getElementById('pageUsers').style.display = nav === 'users' ? '' : 'none';
+  const pageCustomers = document.getElementById('pageCustomers');
+  if (pageCustomers) pageCustomers.style.display = nav === 'customers' ? '' : 'none';
   document.getElementById('pageStats').style.display = nav === 'stats' ? '' : 'none';
   const pageAgents = document.getElementById('pageAgents');
   if (pageAgents) pageAgents.style.display = nav === 'agents' ? '' : 'none';
@@ -1097,6 +1163,7 @@ function switchNav(nav) {
   if (pageBrands) pageBrands.style.display = nav === 'brands' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
+  if (nav === 'customers') loadCustomers(customerPage || 1);
   if (nav === 'agents') loadAgents(agentPage || 1);
   if (nav === 'templates') prepareTemplatePage();
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
@@ -1173,6 +1240,144 @@ function clearUserSearch() {
   if (input) input.value = '';
   loadAllUsers(1);
 }
+
+function customerApiPath(path) { return '/admin/api/customers' + path; }
+function customerOwnerLabel(user) { return accountLabel(user && user.email) || ('用户 #' + (user && user.id)); }
+function customerTagsValue(value) { return Array.isArray(value) ? value.join(', ') : String(value || ''); }
+function customerStatusLabel(value) { return ({active:'跟进中', won:'已成交', lost:'已暂停'})[value] || value || '-'; }
+function customerCommunicationTypeLabel(value) { return ({call:'电话', meeting:'会议', message:'消息', recording:'录音', note:'备注'})[value] || value || '沟通'; }
+
+async function loadCustomerOwnerOptions() {
+  if (!isAdmin() && !isAgent()) return [];
+  const data = await api('/admin/api/users?page=1&page_size=100');
+  const rows = data.users || [];
+  customerOwnerOptions = rows.filter((u) => !(isAgent() && Number(u.id) === Number(MY_USER_ID)));
+  const ownerFilter = document.getElementById('customerOwnerFilter');
+  const ownerInput = document.getElementById('customerOwnerInput');
+  if (ownerFilter) {
+    ownerFilter.style.display = '';
+    const selected = ownerFilter.value || '';
+    ownerFilter.innerHTML = '<option value="">全部归属</option>' + customerOwnerOptions.map((u) => `<option value="${u.id}">${escapeHtml(customerOwnerLabel(u))}</option>`).join('');
+    ownerFilter.value = selected;
+  }
+  if (ownerInput) {
+    ownerInput.innerHTML = customerOwnerOptions.map((u) => `<option value="${u.id}">${escapeHtml(customerOwnerLabel(u))}</option>`).join('');
+  }
+  return customerOwnerOptions;
+}
+
+function clearCustomerSearch() {
+  const q = document.getElementById('customerSearchInput'); if (q) q.value = '';
+  const s = document.getElementById('customerStatusFilter'); if (s) s.value = '';
+  const o = document.getElementById('customerOwnerFilter'); if (o) o.value = '';
+  loadCustomers(1);
+}
+
+async function loadCustomers(page) {
+  customerPage = Math.max(1, Number(page || 1));
+  const target = document.getElementById('customersTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    if (!customerOwnerOptions.length && (isAdmin() || isAgent())) await loadCustomerOwnerOptions();
+    const q = (document.getElementById('customerSearchInput') || {}).value || '';
+    const status = (document.getElementById('customerStatusFilter') || {}).value || '';
+    const owner = (document.getElementById('customerOwnerFilter') || {}).value || '';
+    const params = new URLSearchParams({page: String(customerPage), page_size: '20', q: q.trim(), status});
+    if (owner) params.set('owner_user_id', owner);
+    const data = await api(customerApiPath('?' + params.toString()));
+    customerRows = data.items || [];
+    if (!customerRows.length) {
+      target.innerHTML = '<div class="empty">暂无客户记录</div>';
+    } else {
+      target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>姓名</th><th>公司/职位</th><th>电话</th><th>归属</th><th>状态</th><th>沟通</th><th>最近联系</th><th>操作</th></tr></thead><tbody>' + customerRows.map((row) => `<tr>
+        <td><strong>${escapeHtml(row.name)}</strong>${row.tags?.length ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(row.tags.join(' · '))}</div>` : ''}</td>
+        <td>${escapeHtml(row.company || '-')}<div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(row.position || '')}</div></td>
+        <td>${escapeHtml(row.phone || '-')}</td><td>${escapeHtml(row.owner_label || ('#' + row.owner_user_id))}</td>
+        <td><span class="badge ${row.status === 'won' ? 'badge-green' : row.status === 'lost' ? 'badge-red' : 'badge-blue'}">${escapeHtml(customerStatusLabel(row.status))}</span></td>
+        <td>${Number(row.communications_count || 0)}</td><td style="font-size:11px;color:var(--text-secondary)">${row.last_contact_at ? new Date(row.last_contact_at).toLocaleString('zh-CN') : '-'}</td>
+        <td><button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id})">详情</button></td></tr>`).join('') + '</tbody></table></div>';
+    }
+    const pager = document.getElementById('customersPagination');
+    const pages = Math.ceil((data.total || 0) / (data.page_size || 20));
+    pager.innerHTML = pages > 1 ? `${customerPage > 1 ? `<button class="btn btn-outline btn-sm" type="button" onclick="loadCustomers(${customerPage - 1})">上一页</button>` : ''}<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ${customerPage}/${pages} 页（共 ${data.total} 条）</span>${customerPage < pages ? `<button class="btn btn-outline btn-sm" type="button" onclick="loadCustomers(${customerPage + 1})">下一页</button>` : ''}` : '';
+  } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+function customerFormPayload() {
+  const ownerValue = document.getElementById('customerOwnerInput')?.value;
+  return { owner_user_id: Number(ownerValue || MY_USER_ID || 0), name: document.getElementById('customerNameInput').value.trim(), company: document.getElementById('customerCompanyInput').value.trim(), position: document.getElementById('customerPositionInput').value.trim(), phone: document.getElementById('customerPhoneInput').value.trim(), email: document.getElementById('customerEmailInput').value.trim(), source: document.getElementById('customerSourceInput').value.trim(), tags: document.getElementById('customerTagsInput').value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), status: document.getElementById('customerStatusInput').value, notes: document.getElementById('customerNotesInput').value.trim() };
+}
+
+async function openCustomerEditor(row = null) {
+  if ((isAdmin() || isAgent()) && !customerOwnerOptions.length) await loadCustomerOwnerOptions();
+  const id = row ? Number(row.id) : 0;
+  document.getElementById('customerEditorTitle').textContent = id ? '编辑客户' : '新增客户';
+  document.getElementById('customerEditorId').value = id || '';
+  document.getElementById('customerNameInput').value = row?.name || '';
+  document.getElementById('customerCompanyInput').value = row?.company || '';
+  document.getElementById('customerPositionInput').value = row?.position || '';
+  document.getElementById('customerPhoneInput').value = row?.phone || '';
+  document.getElementById('customerEmailInput').value = row?.email || '';
+  document.getElementById('customerSourceInput').value = row?.source || '';
+  document.getElementById('customerTagsInput').value = customerTagsValue(row?.tags);
+  document.getElementById('customerStatusInput').value = row?.status || 'active';
+  document.getElementById('customerNotesInput').value = row?.notes || '';
+  const ownerGroup = document.getElementById('customerOwnerGroup');
+  ownerGroup.style.display = (isAdmin() || isAgent()) ? '' : 'none';
+  const owner = document.getElementById('customerOwnerInput');
+  if (owner) owner.value = String(row?.owner_user_id || (customerOwnerOptions[0]?.id || MY_USER_ID || ''));
+  document.getElementById('customerEditorError').textContent = '';
+  document.getElementById('customerEditorModal').classList.add('show');
+}
+
+function closeCustomerEditor() { document.getElementById('customerEditorModal').classList.remove('show'); }
+
+async function saveCustomerEditor() {
+  const error = document.getElementById('customerEditorError'); error.textContent = '';
+  const payload = customerFormPayload();
+  if (!payload.name) { error.textContent = '请填写客户姓名'; return; }
+  if (!payload.owner_user_id) { error.textContent = '请选择归属用户'; return; }
+  const id = Number(document.getElementById('customerEditorId').value || 0);
+  try {
+    const data = await api(id ? customerApiPath('/' + id) : customerApiPath(''), {method: id ? 'PATCH' : 'POST', body: JSON.stringify(payload)});
+    closeCustomerEditor(); await loadCustomers(customerPage); if (id) showCustomerDetail(id); else showCustomerDetail(data.customer.id); toast('客户已保存');
+  } catch (e) { error.textContent = e.message; }
+}
+
+async function showCustomerDetail(id) {
+  const panel = document.getElementById('customerDetailPanel'); if (!panel) return;
+  panel.style.display = ''; panel.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api(customerApiPath('/' + id)); const row = data.customer; const communications = data.communications || [];
+    panel.innerHTML = `<div class="admin-card-head"><div><h3 style="margin:0">${escapeHtml(row.name)}</h3><div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${escapeHtml([row.company, row.position, row.phone, row.email].filter(Boolean).join(' · ') || '暂无联系信息')}</div></div><div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerEditor(${JSON.stringify(row).replace(/'/g, '&#39;')})'>编辑客户</button><button class="btn btn-primary btn-sm" type="button" onclick="openCustomerCommunication(${row.id})">新增沟通</button><button class="btn btn-danger btn-sm" type="button" onclick="deleteCustomer(${row.id})">删除客户</button></div></div><div style="font-size:13px;line-height:1.6;margin:14px 0">${escapeHtml(row.notes || '暂无备注')}</div><div class="customer-communications">${communications.length ? communications.map((item) => `<div style="border-top:1px solid var(--border);padding:13px 0"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>${escapeHtml(customerCommunicationTypeLabel(item.communication_type))}</strong><span style="font-size:12px;color:var(--text-secondary)">${item.occurred_at ? new Date(item.occurred_at).toLocaleString('zh-CN') : '-'}</span></div>${item.content ? `<p style="margin:8px 0;white-space:pre-wrap">${escapeHtml(item.content)}</p>` : ''}${item.summary ? `<div style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap">摘要：${escapeHtml(item.summary)}</div>` : ''}${item.recording ? `<div style="margin-top:7px;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:12px">录音：${escapeHtml(item.recording.name)}${item.recording.summary ? ` · ${escapeHtml(item.recording.summary)}` : ''}</div>` : ''}<div style="margin-top:8px"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerCommunication(${row.id}, ${JSON.stringify(item).replace(/'/g, '&#39;')})'>编辑</button><button class="btn btn-danger btn-sm" type="button" style="margin-left:6px" onclick="deleteCustomerCommunication(${item.id}, ${row.id})">删除</button></div></div>`).join('') : '<div class="empty">暂无沟通记录</div>'}</div>`;
+    panel.dataset.customerId = String(row.id);
+  } catch (e) { panel.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+async function deleteCustomer(id) { if (!confirm('确定删除该客户及其全部沟通记录？')) return; try { await api(customerApiPath('/' + id), {method:'DELETE'}); document.getElementById('customerDetailPanel').style.display = 'none'; await loadCustomers(customerPage); toast('客户已删除'); } catch (e) { toast(e.message, 'error'); } }
+
+function toDateTimeLocal(value) { const d = value ? new Date(value) : new Date(); if (Number.isNaN(d.getTime())) return ''; const pad = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+async function openCustomerCommunication(customerId, row = null) {
+  document.getElementById('customerCommunicationTitle').textContent = row ? '编辑沟通记录' : '新增沟通记录';
+  document.getElementById('customerCommunicationId').value = row?.id || '';
+  document.getElementById('customerCommunicationType').value = row?.communication_type || 'note';
+  document.getElementById('customerCommunicationAt').value = toDateTimeLocal(row?.occurred_at);
+  document.getElementById('customerCommunicationContent').value = row?.content || '';
+  document.getElementById('customerCommunicationSummary').value = row?.summary || '';
+  document.getElementById('customerCommunicationModal').dataset.customerId = String(customerId);
+  document.getElementById('customerCommunicationError').textContent = '';
+  const select = document.getElementById('customerCommunicationRecording'); select.innerHTML = '<option value="">不关联录音</option>';
+  try { const data = await api(customerApiPath('/' + customerId + '/recordings?page=1&page_size=100')); select.innerHTML += (data.items || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}${item.summary ? ' · ' + escapeHtml(item.summary.slice(0, 80)) : ''}</option>`).join(''); if (row?.recording_id) select.value = String(row.recording_id); } catch (e) { document.getElementById('customerCommunicationError').textContent = e.message; }
+  document.getElementById('customerCommunicationModal').classList.add('show');
+}
+function closeCustomerCommunication() { document.getElementById('customerCommunicationModal').classList.remove('show'); }
+async function saveCustomerCommunication() {
+  const modal = document.getElementById('customerCommunicationModal'); const customerId = Number(modal.dataset.customerId || 0); const id = Number(document.getElementById('customerCommunicationId').value || 0); const error = document.getElementById('customerCommunicationError'); error.textContent = '';
+  const payload = {communication_type: document.getElementById('customerCommunicationType').value, occurred_at: new Date(document.getElementById('customerCommunicationAt').value).toISOString(), content: document.getElementById('customerCommunicationContent').value.trim(), summary: document.getElementById('customerCommunicationSummary').value.trim(), recording_id: Number(document.getElementById('customerCommunicationRecording').value || 0) || null};
+  try { await api(id ? '/admin/api/customer-communications/' + id : customerApiPath('/' + customerId + '/communications'), {method: id ? 'PATCH' : 'POST', body: JSON.stringify(payload)}); closeCustomerCommunication(); await showCustomerDetail(customerId); await loadCustomers(customerPage); toast('沟通记录已保存'); } catch (e) { error.textContent = e.message; }
+}
+async function deleteCustomerCommunication(id, customerId) { if (!confirm('确定删除这条沟通记录？')) return; try { await api('/admin/api/customer-communications/' + id, {method:'DELETE'}); await showCustomerDetail(customerId); await loadCustomers(customerPage); toast('沟通记录已删除'); } catch (e) { toast(e.message, 'error'); } }
 
 let currentPage = 1;
 async function loadAllUsers(page) {
