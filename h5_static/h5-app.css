@@ -2063,13 +2063,27 @@
       gap: 8px;
       min-width: 0;
     }
+    .asset-picker-file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .asset-picker-upload-trigger {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
     .asset-picker-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       align-items: center;
     }
-    .asset-picker-row button {
+    .asset-picker-row button,
+    .asset-picker-row .asset-picker-upload-trigger {
       min-width: 0;
       min-height: 42px;
       padding: 0 8px;

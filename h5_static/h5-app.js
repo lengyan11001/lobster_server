@@ -21012,9 +21012,9 @@
       const multiple = !!opts.multiple;
       return `<div class="asset-picker" data-asset-picker="${escapeHtml(id)}" data-asset-media-type="${escapeHtml(mediaType)}" data-asset-output="${escapeHtml(output)}" data-asset-multiple="${multiple ? "1" : "0"}">
         <input id="${escapeHtml(id)}" type="hidden">
-        <input id="${escapeHtml(id)}File" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" ${multiple ? "multiple" : ""} hidden>
+        <input id="${escapeHtml(id)}File" class="asset-picker-file-input" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" ${multiple ? "multiple" : ""}>
         <div class="asset-picker-row">
-          <button class="ghost" type="button" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</button>
+          <label class="ghost asset-picker-upload-trigger" for="${escapeHtml(id)}File" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</label>
           <button class="ghost" type="button" data-asset-picker-open="${escapeHtml(id)}">${escapeHtml(selectText)}</button>
         </div>
         <div class="asset-picker-preview" id="${escapeHtml(id)}Preview"></div>
@@ -27223,6 +27223,9 @@
       }
       const btn = evt.target.closest("[data-asset-upload-trigger]");
       if (!btn) return;
+      // Labels activate the file input natively, which is more reliable than
+      // a programmatic click in Android WebView file choosers.
+      if (btn.tagName === "LABEL") return;
       evt.preventDefault();
       const id = btn.dataset.assetUploadTrigger || "";
       const input = id ? $(`${id}File`) : null;

@@ -1359,6 +1359,18 @@ async def upload_asset(
         mtype = "audio"
     elif ext.lower() in (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".txt", ".md"):
         mtype = "document"
+    # Android photo pickers may provide a generic filename without an image
+    # extension. Use the multipart MIME type as a fallback for classification.
+    content_type = getattr(file, "content_type", "") or ""
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mtype == "file" and mime.startswith("image/"):
+        mtype = "image"
+        if ext == ".bin":
+            ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/heic": ".heic", "image/heif": ".heif"}.get(mime, ".jpg")
+    elif mtype == "file" and mime.startswith("video/"):
+        mtype = "video"
+    elif mtype == "file" and mime.startswith("audio/"):
+        mtype = "audio"
 
     split_device = None
     if split_video and mtype == "video":
@@ -1379,7 +1391,6 @@ async def upload_asset(
         if existing_segment is not None:
             return _uploaded_asset_payload(existing_segment, deduplicated=True)
     _release_asset_db_before_io(db)
-    content_type = getattr(file, "content_type", "") or ""
     started_at = time.monotonic()
     aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
         _save_upload_file_or_tos,
