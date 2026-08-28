@@ -1114,6 +1114,55 @@ def _header_client_process_id(request: Request) -> str:
     ).strip()[:128]
 
 
+def _active_run_for_installation(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+    statuses: Optional[set[str]] = None,
+) -> Optional[ScheduledTaskRun]:
+    """Return the newest unfinished client run for one device slot."""
+    raw_id = str(installation_id or "").strip()
+    if not raw_id:
+        return None
+    scoped_id = installation_slot_id_for_user(db, user_id, raw_id)
+    ids = {raw_id}
+    if scoped_id:
+        ids.add(scoped_id)
+    filters = [
+        ScheduledTaskRun.installation_id.in_(tuple(ids)),
+        ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+    ]
+    return (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status.in_(tuple(statuses or _RUNNING_STATUSES)),
+            or_(*filters),
+        )
+        .order_by(ScheduledTaskRun.updated_at.desc(), ScheduledTaskRun.created_at.desc())
+        .first()
+    )
+
+
+def _assert_installations_available(
+    db: Session,
+    *,
+    user_id: int,
+    installation_ids: List[str],
+) -> None:
+    for installation_id in _clean_installation_ids(installation_ids):
+        if _active_run_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+        ) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="当前设备已有任务在进行中，请完成后再下发其他任务",
+            )
+
+
 def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
     if not installation_id:
         return
@@ -3731,10 +3780,23 @@ def create_scheduled_task(
     if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:
         raise HTTPException(status_code=400, detail="missing current installation id")
     if xi:
+        # Serialize dispatches per physical installation and reject a second
+        # demo/task while the previous run is still unfinished.
         ensure_installation_slot(
             db,
             owner_user.id,
             installation_slot_id_for_user(db, owner_user.id, xi),
+        )
+        slot_id = installation_slot_id_for_user(db, owner_user.id, xi)
+        if slot_id:
+            db.query(UserInstallation).filter(
+                UserInstallation.user_id == owner_user.id,
+                UserInstallation.installation_id == slot_id,
+            ).with_for_update().first()
+        _assert_installations_available(
+            db,
+            user_id=owner_user.id,
+            installation_ids=[xi],
         )
     if requested_kind in _SERVER_SIDE_TASK_KINDS:
         body.installation_ids = []
@@ -3975,6 +4037,12 @@ def run_scheduled_task_now(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _assert_user_task_access(task.user_id, current_user, owner_user)
+    if not _is_server_side_task(task):
+        _assert_installations_available(
+            db,
+            user_id=owner_user.id,
+            installation_ids=_clean_installation_ids(task.target_installation_ids or []),
+        )
     runs = _enqueue_task(db, task, datetime.utcnow())
     if task.schedule_type in {"interval", "daily_times"} and task.status != "cancelled":
         task.status = "active"
@@ -3991,6 +4059,7 @@ def list_scheduled_task_runs(
     date: str = Query("", max_length=10),
     timezone_offset_minutes: int = Query(480, ge=-720, le=840),
     installation_id: str = Query("", max_length=128),
+    active_only: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -4006,6 +4075,10 @@ def list_scheduled_task_runs(
                 ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
             )
         )
+    # Keep direct Python callers (whose omitted Query default is a Query
+    # object) equivalent to the HTTP default of false.
+    if active_only is True:
+        query = query.filter(ScheduledTaskRun.status.in_(tuple(_RUNNING_STATUSES)))
     date_key = (date or "").strip()
     if date_key:
         try:
@@ -4121,6 +4194,15 @@ def pending_scheduled_task_runs(
     )
     if expired_before_poll:
         db.commit()
+    # A physical installation executes exactly one client task at a time.
+    # Leave later pending runs queued until the current processing run closes.
+    if _active_run_for_installation(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        statuses={"processing", "running", "claimed", "queued", "waiting"},
+    ) is not None:
+        return {"ok": True, "items": []}
     # Always materialize newly due runs before honoring a recent empty-result
     # cache. Otherwise a node that becomes due immediately after an empty poll
     # can wait for the cache TTL before the client is even allowed to see it.
@@ -4240,6 +4322,9 @@ def pending_scheduled_task_runs(
         rows.append(row)
         if serial_key:
             claimed_serial_keys.add(serial_key)
+        # Never hand one device more than one run per poll. The next run is
+        # picked up only after this one reaches a final state.
+        break
     db.commit()
     if rows:
         _clear_pending_empty(pending_key)

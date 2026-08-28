@@ -698,7 +698,7 @@ def test_expired_server_side_workflow_node_is_cancelled_before_execution(db_sess
     assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
 
 
-def test_pending_claim_scans_past_blocked_serial_runs(db_session, test_user, monkeypatch):
+def test_pending_claim_does_not_claim_other_runs_while_installation_is_processing(db_session, test_user, monkeypatch):
     now = datetime.utcnow()
     processing = _run(
         run_id="douyin-processing",
@@ -736,9 +736,9 @@ def test_pending_claim_scans_past_blocked_serial_runs(db_session, test_user, mon
         db=db_session,
     )
 
-    assert [item["id"] for item in result["items"]] == ["workflow-pending"]
+    assert result["items"] == []
     assert db_session.get(ScheduledTaskRun, "douyin-pending").status == "pending"
-    assert db_session.get(ScheduledTaskRun, "workflow-pending").status == "processing"
+    assert db_session.get(ScheduledTaskRun, "workflow-pending").status == "pending"
 
 
 def test_pending_claim_serializes_native_wechat_runs_per_installation(db_session, test_user, monkeypatch):
@@ -782,8 +782,79 @@ def test_pending_claim_serializes_native_wechat_runs_per_installation(db_session
         db=db_session,
     )
 
-    assert [item["id"] for item in result["items"]] == ["video-pending"]
+    assert result["items"] == []
     assert db_session.get(ScheduledTaskRun, "wechat-pending").status == "pending"
+    assert db_session.get(ScheduledTaskRun, "video-pending").status == "pending"
+
+
+def test_pending_claim_returns_only_one_run_per_installation(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    first = _run(
+        run_id="first-pending",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="pending",
+        created_at=now - timedelta(minutes=2),
+    )
+    second = _run(
+        run_id="second-pending",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="pending",
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "_enqueue_due_tasks", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(scheduled_tasks, "_touch_installation_slot_lazy", lambda *_args, **_kwargs: None)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=2,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    assert [item["id"] for item in result["items"]] == ["first-pending"]
+    assert db_session.get(ScheduledTaskRun, "first-pending").status == "processing"
+    assert db_session.get(ScheduledTaskRun, "second-pending").status == "pending"
+
+
+def test_create_task_rejects_second_active_dispatch_for_installation(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(scheduled_tasks, "online_user_for_mobile_user", lambda _db, user: user)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/scheduled-tasks/tasks",
+            "headers": [(b"x-installation-id", b"test-installation")],
+            "query_string": b"",
+        }
+    )
+    body = scheduled_tasks.ScheduledTaskCreate(
+        title="first dispatch",
+        task_kind="client_workflow",
+        content="first",
+        payload={"action": "publish_content"},
+        schedule_type="once",
+        installation_ids=["test-installation"],
+    )
+    first = scheduled_tasks.create_scheduled_task(body, request, test_user, db_session)
+    assert first["runs"]
+
+    second_body = scheduled_tasks.ScheduledTaskCreate(
+        title="second dispatch",
+        task_kind="client_workflow",
+        content="second",
+        payload={"action": "publish_content"},
+        schedule_type="once",
+        installation_ids=["test-installation"],
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        scheduled_tasks.create_scheduled_task(second_body, request, test_user, db_session)
+    assert exc_info.value.status_code == 409
 
 
 def test_create_recurring_douyin_task_reuses_same_active_definition(db_session, test_user):

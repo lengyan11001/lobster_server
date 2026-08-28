@@ -35,7 +35,7 @@
   }
 
   function isActive(row) {
-    return ["pending", "processing", "running", "claimed", "queued"].indexOf(String(row && row.status || "").toLowerCase()) >= 0;
+    return ["pending", "processing", "running", "claimed", "queued", "waiting"].indexOf(String(row && row.status || "").toLowerCase()) >= 0;
   }
 
   function taskTitle(row) {
@@ -203,7 +203,7 @@
     var running = state.rows.filter(isActive);
     fab.classList.toggle("is-active", running.length > 0);
     panel.hidden = !state.open;
-    list.innerHTML = running.length ? running.slice(0, 8).map(function (row) {
+    list.innerHTML = running.length ? running.slice(0, 1).map(function (row) {
       return '<article class="lobster-task-card"><div class="lobster-task-copy"><div class="lobster-task-title">' + escapeHtml(taskTitle(row)) + '</div><div class="lobster-task-message">' + escapeHtml(taskMessage(row)) + '</div></div>' + (row.id ? '<button class="lobster-task-stop" data-run-id="' + escapeHtml(row.id) + '" type="button">停止</button>' : '') + '</article>';
     }).join("") : '<div class="lobster-task-empty">当前没有执行中的任务</div>';
     requestAnimationFrame(positionPanel);
@@ -213,18 +213,18 @@
     if (state.loading || !token()) return;
     state.loading = true;
     try {
-      var params = new URLSearchParams({ limit: "30", compact: "false" });
+      var params = new URLSearchParams({ limit: "1", compact: "true", active_only: "1" });
       var iid = installationId();
       if (iid) params.set("installation_id", iid);
       var response = await fetch("/api/scheduled-tasks/runs?" + params.toString(), { headers: headers() });
       if (!response.ok) throw new Error("load failed");
       var data = await response.json();
       var rows = Array.isArray(data.runs) ? data.runs : [];
-      var running = rows.filter(isActive);
+      var running = rows.filter(isActive).slice(0, 1);
       var fresh = running.some(function (row) { return row.id && !state.seen[row.id]; });
       state.seen = {};
       running.forEach(function (row) { if (row.id) state.seen[row.id] = true; });
-      state.rows = rows;
+      state.rows = running;
       if (fresh) state.open = true;
       render();
     } catch (_) {
@@ -251,8 +251,11 @@
 
   function start() {
     mount();
-    refresh();
-    setInterval(refresh, 4000);
+    (async function poll() {
+      await refresh();
+      var delay = state.rows.some(isActive) ? 4000 : 10000;
+      window.setTimeout(poll, delay);
+    })();
     window.addEventListener("storage", function (event) {
       if (event.key === storage("lobster_h5_selected_installation_id")) refresh();
     });

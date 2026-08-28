@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260824-personal-digital-resource-picker-v2" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260822-account-language-v1" />
   <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
+  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20260828-startup-shell-v2" />
 </head>
 <body>
   <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
@@ -63,13 +64,13 @@
         timer = window.setTimeout(function () {
           var alreadyReloaded = false;
           try { alreadyReloaded = window.sessionStorage.getItem(bootReloadKey) === "1"; } catch (_) {}
+          // Keep the marker for diagnostics, but never force a second navigation
+          // on iOS standalone cold starts.
           if (isIos && isStandalone && !alreadyReloaded) {
             try { window.sessionStorage.setItem(bootReloadKey, "1"); } catch (_) {}
-            reloadPage();
-            return;
           }
-          show("页面加载时间较长，请刷新后重试。");
-        }, 7000);
+          show("页面加载时间较长，请检查网络后手动刷新。");
+        }, 12000);
       }
       window.__h5RecoveryGuard = { arm: arm, ready: hide, show: show };
       armColdBoot();
@@ -2643,9 +2644,28 @@
 
   <div class="toast" id="toast"></div>
 
+  <script>
+    // Paint a lightweight authenticated shell before the large application
+    // bundle downloads. Real user/device data is still fetched by h5-app.js.
+    (function () {
+      try {
+        var brand = (document.documentElement.dataset.brand || "bihuo").toLowerCase();
+        var token = localStorage.getItem("lobster_h5_token:" + brand) || (brand === "bihuo" ? localStorage.getItem("lobster_h5_token") : "");
+        var cached = localStorage.getItem("lobster_h5_user:" + brand);
+        if (token && cached) {
+          var login = document.getElementById("loginPanel");
+          var app = document.getElementById("appPanel");
+          if (login) login.classList.add("hidden");
+          if (app) app.classList.remove("hidden");
+          document.body.classList.add("h5-shell-early");
+        }
+      } catch (_) {}
+    })();
+  </script>
+
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
   <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
-  <script src="/h5-static/h5-app.js?v=20260828-android-upload-v1"></script>
-  <script src="/h5-static/task-center.js?v=20260821-task-center-round-v3"></script>
+  <script src="/h5-static/h5-app.js?v=20260828-startup-shell-v2"></script>
+  <script src="/h5-static/task-center.js?v=20260828-task-center-single-active-v1"></script>
 </body>
 </html>

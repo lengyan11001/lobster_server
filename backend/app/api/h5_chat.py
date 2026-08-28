@@ -1297,7 +1297,9 @@ def h5_static_asset(filename: str):
     root = _H5_STATIC_DIR.resolve()
     if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
         raise HTTPException(status_code=404, detail="文件不存在")
-    cache_control = "no-store, no-cache, must-revalidate, max-age=0" if path.suffix.lower() in {".css", ".js"} else "public, max-age=86400"
+    # H5 assets are versioned in index.html query strings. Keep them on disk
+    # between cold starts so mobile WebViews do not redownload the 1MB+ bundle.
+    cache_control = "public, max-age=86400"
     return FileResponse(str(path), media_type=_h5_static_media_type(path), headers={"Cache-Control": cache_control})
 
 
