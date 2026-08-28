@@ -5,6 +5,15 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# On Windows/Git Bash, use the Python entrypoint so .env.deploy passwords are
+# parsed safely and used as a fallback when the configured key is unavailable.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    exec python "$ROOT/scripts/deploy_from_local.py"
+    ;;
+esac
+
 if [ -f "$ROOT/.env.deploy" ]; then
   set -a
   # shellcheck source=../.env.deploy
