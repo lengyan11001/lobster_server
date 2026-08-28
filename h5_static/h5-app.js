@@ -16882,15 +16882,16 @@
     }
 
     async function loadAuthenticatedBootstrapData() {
+      // Keep first paint small. View-specific loaders fetch their own data when
+      // the user opens that view; chat history is especially expensive and is
+      // unrelated to the default office page.
       const jobs = [
-        loadChatSessions(),
-        loadHistory({ includeEvents: false }),
-        loadPendingApprovals(),
         refreshDeviceStatus(),
-        refreshOfficeSummary(),
-        loadTaskSkills(),
         loadHomeHero().catch(() => applyHomeHero("")),
       ];
+      if (activeViewKey() === "messages") {
+        jobs.push(loadChatSessions(), loadHistory({ includeEvents: false }), loadPendingApprovals());
+      }
       const results = await Promise.allSettled(jobs);
       const failed = results.filter((item) => item.status === "rejected");
       if (failed.length) {
@@ -16918,11 +16919,21 @@
     }
 
     async function refreshCachedAuthInBackground() {
-      return validateAuthAndBootstrap({
-        keepCachedShell: true,
-        showLoginOnFailure: true,
-        switchToOffice: false,
-      });
+      // A visibility resume must not replay the full bootstrap bundle. It used
+      // to reload chat history, approvals, task runs and skills on every return,
+      // making the page appear stuck even after the shell was ready.
+      try {
+        await refreshCurrentUser();
+        return true;
+      } catch (err) {
+        if (isAuthFailure(err)) {
+          clearStoredAuth();
+          await showLoginShell();
+          return false;
+        }
+        console.warn("[h5] cached auth refresh failed", err);
+        return Boolean(state.user);
+      }
     }
 
     async function loadMe() {
