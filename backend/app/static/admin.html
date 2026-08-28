@@ -32,6 +32,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .btn-primary{background:var(--primary);color:#fff;width:100%}
 .btn-primary:hover{background:var(--primary-hover)}
 .btn-sm{padding:6px 14px;font-size:13px}
+.btn-compact{width:auto!important;padding:6px 12px;font-size:12px;border-radius:6px}
 .btn-success{background:var(--success);color:#fff}
 .btn-danger{background:var(--danger);color:#fff}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
@@ -123,6 +124,7 @@ tr:hover{background:var(--bg)}
 .modal-card{background:var(--card);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);padding:24px;width:100%;max-width:380px}
 .modal-card h3{font-size:16px;margin-bottom:6px;color:var(--text)}
 .modal-card .modal-sub{font-size:12px;color:var(--text-secondary);margin-bottom:16px}
+.modal-card .modal-owner-note{font-size:12px;color:var(--text-secondary);background:var(--bg);border-radius:6px;padding:7px 10px;margin:0 0 14px}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .modal-card .form-group input[type="password"]{width:100%}
 /* Agent claim bar */
@@ -484,13 +486,12 @@ body{background:#edf2f7}
   <div class="container" id="pageCustomers" style="display:none">
     <div class="admin-page-head">
       <div><h1>客户管理</h1><p>维护客户资料，记录沟通历史，并关联录音摘要。</p></div>
-      <button class="btn btn-primary btn-sm" type="button" onclick="openCustomerEditor()">新增客户</button>
+      <button class="btn btn-primary btn-compact" type="button" onclick="openCustomerEditor()">新增客户</button>
     </div>
     <div class="card">
       <div class="search-bar" style="margin-bottom:14px">
         <input type="text" id="customerSearchInput" placeholder="搜索姓名、公司、电话或邮箱" onkeydown="if(event.key==='Enter')loadCustomers(1)">
         <select id="customerStatusFilter" onchange="loadCustomers(1)"><option value="">全部状态</option><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select>
-        <select id="customerOwnerFilter" style="display:none" onchange="loadCustomers(1)"><option value="">全部归属</option></select>
         <button class="btn btn-primary btn-sm" type="button" onclick="loadCustomers(1)">查询</button>
         <button class="btn btn-outline btn-sm" type="button" onclick="clearCustomerSearch()">清空</button>
       </div>
@@ -802,6 +803,7 @@ body{background:#edf2f7}
 <div class="modal-mask" id="customerEditorModal" onclick="if(event.target===this)closeCustomerEditor()">
   <div class="modal-card" style="max-width:760px">
     <h3 id="customerEditorTitle">新增客户</h3>
+    <div class="modal-owner-note">客户归属将自动记录为当前登录账号</div>
     <input type="hidden" id="customerEditorId">
     <div class="template-form-grid">
       <div class="form-group"><label>姓名 *</label><input id="customerNameInput" maxlength="160" placeholder="客户姓名"></div>
@@ -811,12 +813,11 @@ body{background:#edf2f7}
       <div class="form-group"><label>邮箱</label><input id="customerEmailInput" maxlength="255" placeholder="邮箱"></div>
       <div class="form-group"><label>来源</label><input id="customerSourceInput" maxlength="64" placeholder="例如：抖音、转介绍"></div>
       <div class="form-group"><label>状态</label><select id="customerStatusInput"><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select></div>
-      <div class="form-group" id="customerOwnerGroup" style="display:none"><label>归属用户</label><select id="customerOwnerInput"></select></div>
       <div class="form-group full"><label>标签</label><input id="customerTagsInput" maxlength="500" placeholder="多个标签用逗号分隔"></div>
       <div class="form-group full"><label>备注</label><textarea id="customerNotesInput" maxlength="10000" placeholder="客户背景、需求、下一步计划"></textarea></div>
     </div>
     <div class="error-msg" id="customerEditorError" style="text-align:left;min-height:18px"></div>
-    <div class="modal-actions"><button class="btn btn-outline btn-sm" type="button" onclick="closeCustomerEditor()">取消</button><button class="btn btn-primary btn-sm" type="button" onclick="saveCustomerEditor()">保存</button></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-compact" type="button" onclick="closeCustomerEditor()">取消</button><button class="btn btn-primary btn-compact" type="button" onclick="saveCustomerEditor()">保存</button></div>
   </div>
 </div>
 
@@ -833,7 +834,7 @@ body{background:#edf2f7}
       <div class="form-group full"><label>关联录音（可选）</label><select id="customerCommunicationRecording"><option value="">不关联录音</option></select></div>
     </div>
     <div class="error-msg" id="customerCommunicationError" style="text-align:left;min-height:18px"></div>
-    <div class="modal-actions"><button class="btn btn-outline btn-sm" type="button" onclick="closeCustomerCommunication()">取消</button><button class="btn btn-primary btn-sm" type="button" onclick="saveCustomerCommunication()">保存</button></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-compact" type="button" onclick="closeCustomerCommunication()">取消</button><button class="btn btn-primary btn-compact" type="button" onclick="saveCustomerCommunication()">保存</button></div>
   </div>
 </div>
 
@@ -872,7 +873,6 @@ let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
 let customerPage = 1;
 let customerRows = [];
-let customerOwnerOptions = [];
 const COMMISSION_PAGE_SIZE = 100;
 const GENERATION_RECORD_PAGE_SIZE = 20;
 const TIKHUB_RECORD_PAGE_SIZE = 20;
@@ -1242,34 +1242,13 @@ function clearUserSearch() {
 }
 
 function customerApiPath(path) { return '/admin/api/customers' + path; }
-function customerOwnerLabel(user) { return accountLabel(user && user.email) || ('用户 #' + (user && user.id)); }
 function customerTagsValue(value) { return Array.isArray(value) ? value.join(', ') : String(value || ''); }
 function customerStatusLabel(value) { return ({active:'跟进中', won:'已成交', lost:'已暂停'})[value] || value || '-'; }
 function customerCommunicationTypeLabel(value) { return ({call:'电话', meeting:'会议', message:'消息', recording:'录音', note:'备注'})[value] || value || '沟通'; }
 
-async function loadCustomerOwnerOptions() {
-  if (!isAdmin() && !isAgent()) return [];
-  const data = await api('/admin/api/users?page=1&page_size=100');
-  const rows = data.users || [];
-  customerOwnerOptions = rows.filter((u) => !(isAgent() && Number(u.id) === Number(MY_USER_ID)));
-  const ownerFilter = document.getElementById('customerOwnerFilter');
-  const ownerInput = document.getElementById('customerOwnerInput');
-  if (ownerFilter) {
-    ownerFilter.style.display = '';
-    const selected = ownerFilter.value || '';
-    ownerFilter.innerHTML = '<option value="">全部归属</option>' + customerOwnerOptions.map((u) => `<option value="${u.id}">${escapeHtml(customerOwnerLabel(u))}</option>`).join('');
-    ownerFilter.value = selected;
-  }
-  if (ownerInput) {
-    ownerInput.innerHTML = customerOwnerOptions.map((u) => `<option value="${u.id}">${escapeHtml(customerOwnerLabel(u))}</option>`).join('');
-  }
-  return customerOwnerOptions;
-}
-
 function clearCustomerSearch() {
   const q = document.getElementById('customerSearchInput'); if (q) q.value = '';
   const s = document.getElementById('customerStatusFilter'); if (s) s.value = '';
-  const o = document.getElementById('customerOwnerFilter'); if (o) o.value = '';
   loadCustomers(1);
 }
 
@@ -1279,12 +1258,9 @@ async function loadCustomers(page) {
   if (!target) return;
   target.innerHTML = '<div class="empty">加载中...</div>';
   try {
-    if (!customerOwnerOptions.length && (isAdmin() || isAgent())) await loadCustomerOwnerOptions();
     const q = (document.getElementById('customerSearchInput') || {}).value || '';
     const status = (document.getElementById('customerStatusFilter') || {}).value || '';
-    const owner = (document.getElementById('customerOwnerFilter') || {}).value || '';
     const params = new URLSearchParams({page: String(customerPage), page_size: '20', q: q.trim(), status});
-    if (owner) params.set('owner_user_id', owner);
     const data = await api(customerApiPath('?' + params.toString()));
     customerRows = data.items || [];
     if (!customerRows.length) {
@@ -1305,12 +1281,10 @@ async function loadCustomers(page) {
 }
 
 function customerFormPayload() {
-  const ownerValue = document.getElementById('customerOwnerInput')?.value;
-  return { owner_user_id: Number(ownerValue || MY_USER_ID || 0), name: document.getElementById('customerNameInput').value.trim(), company: document.getElementById('customerCompanyInput').value.trim(), position: document.getElementById('customerPositionInput').value.trim(), phone: document.getElementById('customerPhoneInput').value.trim(), email: document.getElementById('customerEmailInput').value.trim(), source: document.getElementById('customerSourceInput').value.trim(), tags: document.getElementById('customerTagsInput').value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), status: document.getElementById('customerStatusInput').value, notes: document.getElementById('customerNotesInput').value.trim() };
+  return { name: document.getElementById('customerNameInput').value.trim(), company: document.getElementById('customerCompanyInput').value.trim(), position: document.getElementById('customerPositionInput').value.trim(), phone: document.getElementById('customerPhoneInput').value.trim(), email: document.getElementById('customerEmailInput').value.trim(), source: document.getElementById('customerSourceInput').value.trim(), tags: document.getElementById('customerTagsInput').value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), status: document.getElementById('customerStatusInput').value, notes: document.getElementById('customerNotesInput').value.trim() };
 }
 
 async function openCustomerEditor(row = null) {
-  if ((isAdmin() || isAgent()) && !customerOwnerOptions.length) await loadCustomerOwnerOptions();
   const id = row ? Number(row.id) : 0;
   document.getElementById('customerEditorTitle').textContent = id ? '编辑客户' : '新增客户';
   document.getElementById('customerEditorId').value = id || '';
@@ -1323,10 +1297,6 @@ async function openCustomerEditor(row = null) {
   document.getElementById('customerTagsInput').value = customerTagsValue(row?.tags);
   document.getElementById('customerStatusInput').value = row?.status || 'active';
   document.getElementById('customerNotesInput').value = row?.notes || '';
-  const ownerGroup = document.getElementById('customerOwnerGroup');
-  ownerGroup.style.display = (isAdmin() || isAgent()) ? '' : 'none';
-  const owner = document.getElementById('customerOwnerInput');
-  if (owner) owner.value = String(row?.owner_user_id || (customerOwnerOptions[0]?.id || MY_USER_ID || ''));
   document.getElementById('customerEditorError').textContent = '';
   document.getElementById('customerEditorModal').classList.add('show');
 }
@@ -1337,7 +1307,6 @@ async function saveCustomerEditor() {
   const error = document.getElementById('customerEditorError'); error.textContent = '';
   const payload = customerFormPayload();
   if (!payload.name) { error.textContent = '请填写客户姓名'; return; }
-  if (!payload.owner_user_id) { error.textContent = '请选择归属用户'; return; }
   const id = Number(document.getElementById('customerEditorId').value || 0);
   try {
     const data = await api(id ? customerApiPath('/' + id) : customerApiPath(''), {method: id ? 'PATCH' : 'POST', body: JSON.stringify(payload)});

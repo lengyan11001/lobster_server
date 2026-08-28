@@ -93,9 +93,12 @@ def test_agent_customer_scope_only_includes_descendants(db_session_factory, db_s
     client = TestClient(_admin_app(db_session_factory, admin_api.AdminContext(role="agent", user_id=agent.id, brand_mark="bihuo")))
     own = client.post("/admin/api/customers", json={"owner_user_id": child.id, "name": "下级客户"})
     assert own.status_code == 200
+    # Submitted owner ids are ignored; the creating agent is always the owner.
+    assert own.json()["customer"]["owner_user_id"] == agent.id
     blocked = client.post("/admin/api/customers", json={"owner_user_id": unrelated.id, "name": "无关客户"})
-    assert blocked.status_code == 403
-    assert client.get("/admin/api/customers").json()["total"] == 1
+    assert blocked.status_code == 200
+    assert blocked.json()["customer"]["owner_user_id"] == agent.id
+    assert client.get("/admin/api/customers").json()["total"] == 2
 
 
 def _admin_app(db_session_factory, context: admin_api.AdminContext) -> FastAPI:

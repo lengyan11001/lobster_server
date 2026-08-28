@@ -46,7 +46,7 @@ def _customer_payload(row: Customer, *, owner: User | None = None) -> dict[str, 
     return {
         "id": row.id,
         "owner_user_id": row.owner_user_id,
-        "owner_label": (owner.email if owner else ""),
+        "owner_label": (owner.email if owner else ("管理员" if int(row.owner_user_id or 0) == 0 else "")),
         "name": row.name,
         "company": row.company or "",
         "position": row.position or "",

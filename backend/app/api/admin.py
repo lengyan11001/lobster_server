@@ -250,8 +250,10 @@ def _capability_source_label(source: Optional[str]) -> str:
 
 def _admin_customer_owner_ids(db: Session, ctx: AdminContext) -> list[int]:
     if ctx.role == "admin":
-        return [uid for (uid,) in db.query(User.id).all()]
-    return _agent_visible_user_ids(db, int(ctx.user_id or 0))
+        # Admin tokens are not tied to a User row; reserve owner id 0 for them.
+        return [0, *[uid for (uid,) in db.query(User.id).all()]]
+    # Customers created from the agent console belong to the logged-in agent.
+    return list(dict.fromkeys([int(ctx.user_id or 0), *_agent_visible_user_ids(db, int(ctx.user_id or 0))]))
 
 
 def _admin_customer_row(db: Session, ctx: AdminContext, customer_id: int) -> Customer:
@@ -271,7 +273,6 @@ def _admin_customer_payload(row: Customer, owner: User | None, communications_co
 
 
 class AdminCustomerBody(BaseModel):
-    owner_user_id: int
     name: str = Field(min_length=1, max_length=160)
     company: str = Field(default="", max_length=255)
     position: str = Field(default="", max_length=160)
@@ -767,14 +768,12 @@ def admin_list_customers(
 
 @router.post("/admin/api/customers")
 def admin_create_customer(body: AdminCustomerBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
-    owner_ids = _admin_customer_owner_ids(db, ctx)
-    if body.owner_user_id not in owner_ids:
-        raise HTTPException(status_code=403, detail="无权为该用户添加客户")
+    owner_user_id = int(ctx.user_id or 0)
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="客户姓名不能为空")
     from .customer_management import _clean_tags
-    row = Customer(owner_user_id=body.owner_user_id, name=name, company=body.company.strip(), position=body.position.strip(), phone=body.phone.strip(), email=body.email.strip(), source=body.source.strip(), tags=_clean_tags(body.tags), status=body.status.strip() or "active", notes=body.notes.strip())
+    row = Customer(owner_user_id=owner_user_id, name=name, company=body.company.strip(), position=body.position.strip(), phone=body.phone.strip(), email=body.email.strip(), source=body.source.strip(), tags=_clean_tags(body.tags), status=body.status.strip() or "active", notes=body.notes.strip())
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -785,14 +784,10 @@ def admin_create_customer(body: AdminCustomerBody, ctx: AdminContext = Depends(_
 @router.patch("/admin/api/customers/{customer_id}")
 def admin_update_customer(customer_id: int, body: AdminCustomerBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
     row = _admin_customer_row(db, ctx, customer_id)
-    owner_ids = _admin_customer_owner_ids(db, ctx)
-    if body.owner_user_id not in owner_ids:
-        raise HTTPException(status_code=403, detail="无权设置该客户归属")
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="客户姓名不能为空")
     from .customer_management import _clean_tags
-    row.owner_user_id = body.owner_user_id
     row.name = name
     row.company = body.company.strip()
     row.position = body.position.strip()
@@ -802,7 +797,6 @@ def admin_update_customer(customer_id: int, body: AdminCustomerBody, ctx: AdminC
     row.tags = _clean_tags(body.tags)
     row.status = body.status.strip() or "active"
     row.notes = body.notes.strip()
-    db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).update({CustomerCommunication.owner_user_id: row.owner_user_id}, synchronize_session=False)
     db.commit()
     db.refresh(row)
     return {"ok": True, "customer": _admin_customer_payload(row, db.query(User).filter(User.id == row.owner_user_id).first())}
