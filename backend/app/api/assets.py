@@ -545,14 +545,24 @@ def _existing_online_split_segment(
     return None
 
 
-def _uploaded_asset_payload(row: Asset, *, deduplicated: bool = False) -> dict:
+def _uploaded_asset_payload(
+    row: Asset,
+    *,
+    deduplicated: bool = False,
+    request: Optional[Request] = None,
+) -> dict:
+    source_url = str(row.source_url or '').strip()
+    preview_url = source_url or (build_asset_file_url(request, row.asset_id) if request else '')
     return {
         "asset_id": row.asset_id,
         "filename": row.filename,
         "media_type": row.media_type,
         "file_size": row.file_size,
-        "source_url": row.source_url,
-        "url": row.source_url,
+        "source_url": source_url,
+        "url": preview_url,
+        "preview_url": preview_url,
+        "open_url": preview_url,
+        "cover_url": preview_url if row.media_type == "image" else "",
         "asset_origin": "user_upload",
         "deduplicated": deduplicated,
     }
@@ -1338,6 +1348,7 @@ async def save_asset_from_url(
 @_limit_asset_upload_requests
 async def upload_asset(
     file: UploadFile = File(...),
+    request: Request = None,
     split_video: bool = Form(False),
     source_upload_filename: str = Form(""),
     video_segment: bool = Form(False),
@@ -1389,7 +1400,7 @@ async def upload_asset(
             segment_index=clean_segment_index,
         )
         if existing_segment is not None:
-            return _uploaded_asset_payload(existing_segment, deduplicated=True)
+            return _uploaded_asset_payload(existing_segment, deduplicated=True, request=request)
     _release_asset_db_before_io(db)
     started_at = time.monotonic()
     aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
@@ -1495,7 +1506,7 @@ async def upload_asset(
     db.add(asset)
     db.commit()
     logger.info("[上传流程-步骤5] 服务器直连上传完成（TOS）asset_id=%s source_url=%s", aid, tos_public_url[:80])
-    return _uploaded_asset_payload(asset)
+    return _uploaded_asset_payload(asset, request=request)
 
 
 # ── Temporary file upload (for clients without TOS) ───────────────
@@ -1719,6 +1730,7 @@ def list_assets(
     asset_origin: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1769,15 +1781,17 @@ def list_assets(
     def payload(row: Asset) -> dict:
         context = _stored_asset_content_context(row)
         source_url = (row.source_url or "").strip()
+        local_path = _asset_local_path(row)
+        preview_url = source_url or (build_asset_file_url(request, row.asset_id) if local_path is not None and request else "")
         return {
             "asset_id": row.asset_id,
             "filename": row.filename,
             "media_type": row.media_type,
             "file_size": row.file_size,
             "source_url": source_url,
-            "preview_url": source_url,
-            "cover_url": source_url if row.media_type == "image" else "",
-            "open_url": source_url,
+            "preview_url": preview_url,
+            "cover_url": preview_url if row.media_type == "image" else "",
+            "open_url": preview_url,
             "title": context.get("title", ""),
             "description": context.get("description", ""),
             "prompt": row.prompt or context.get("creative_prompt", ""),
@@ -1908,6 +1922,7 @@ def serve_asset_file(
 @router.get("/api/assets/{asset_id}", summary="获取素材详情")
 def get_asset(
     asset_id: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1922,15 +1937,17 @@ def get_asset(
         db.refresh(a)
         context = _stored_asset_content_context(a)
     local_path = _asset_local_path(a)
+    source_url = (a.source_url or "").strip()
+    preview_url = source_url or (build_asset_file_url(request, a.asset_id) if local_path is not None and request else "")
     out = {
         "asset_id": a.asset_id,
         "filename": a.filename,
         "media_type": a.media_type,
         "file_size": a.file_size,
-        "source_url": a.source_url,
-        "preview_url": a.source_url or "",
-        "cover_url": (a.source_url or "") if a.media_type == "image" else "",
-        "open_url": a.source_url or "",
+        "source_url": source_url,
+        "preview_url": preview_url,
+        "cover_url": preview_url if a.media_type == "image" else "",
+        "open_url": preview_url,
         "title": context.get("title", ""),
         "description": context.get("description", ""),
         "prompt": a.prompt or context.get("creative_prompt", ""),
