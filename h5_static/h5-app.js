@@ -3444,10 +3444,7 @@
 
     function workflowLeafLookups() {
       const rows = [
-        ...workflowSalesNodeLookups().filter((lookup) => {
-          const key = String(lookup && lookup.node && lookup.node.key || "").trim();
-          return key === "douyin_leads" || key.startsWith("native_wechat_");
-        }),
+        ...workflowSalesNodeLookups().filter((lookup) => String(lookup && lookup.node && lookup.node.key || "") === "douyin_leads"),
         ...workflowDepartmentNodeLookups().filter((lookup) => String(lookup && lookup.node && lookup.node.key || "") !== "douyin_leads"),
       ];
       const seen = new Set();
