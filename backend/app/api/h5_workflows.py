@@ -2177,9 +2177,14 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
         granted_ids = [grant.template_id for grant in grants]
         granted_rows = []
         if granted_ids:
+            # A grant transfers the template to the target account.  The
+            # template's installation_id belongs to the granting account's
+            # device and must not hide the template on the target's device.
+            # Keep the installation scope for owned templates above, while
+            # resolving granted templates by the active grant alone.
             granted_rows = (
                 db.query(H5WorkflowTemplate)
-                .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active", template_scope)
+                .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active")
                 .order_by(H5WorkflowTemplate.updated_at.desc())
                 .all()
             )
