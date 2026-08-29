@@ -245,6 +245,7 @@
       h5LastResumeAt: 0,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
+      workflowTemplatesLoadedAt: 0,
       workflowTemplatesInstallationId: "",
       workflowTemplatesRequest: null,
       workflowTemplatesRequestKey: "",
@@ -6685,7 +6686,8 @@
       if (state.workflowTemplatesRequest && state.workflowTemplatesRequestKey === requestKey) {
         return state.workflowTemplatesRequest;
       }
-      if (!force && state.workflowTemplatesLoaded && state.workflowTemplatesInstallationId === requestKey) {
+      const cacheFresh = state.workflowTemplatesLoadedAt > 0 && Date.now() - state.workflowTemplatesLoadedAt < 60000;
+      if (state.workflowTemplatesLoaded && state.workflowTemplatesInstallationId === requestKey && (!force || cacheFresh)) {
         renderWorkflowTemplates();
         return;
       }
@@ -6702,6 +6704,7 @@
           state.workflowCanGrant = !!data.can_grant;
           state.workflowTemplatesInstallationId = requestKey;
           state.workflowTemplatesLoaded = true;
+          state.workflowTemplatesLoadedAt = Date.now();
           return state.workflowTemplates;
         } finally {
           if (state.workflowTemplatesRequest !== request) return;

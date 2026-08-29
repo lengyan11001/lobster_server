@@ -1835,8 +1835,66 @@ def _enrich_run_with_creative_video(db: Session, row: ScheduledTaskRun, data: Di
     return data
 
 
+def _bounded_compact_text(value: Any, limit: int) -> str:
+    if isinstance(value, str):
+        return value[:limit]
+    if isinstance(value, (bool, int, float)):
+        return str(value)[:limit]
+    return ""
+
+
 def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
     payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
+    raw_result = row.result_payload if isinstance(row.result_payload, dict) else {}
+
+    # Keep list/poll responses bounded while retaining the small bits of state
+    # that the Online run cards use for publish/resume actions. The full result
+    # remains available from GET /runs/{run_id}.
+    compact_result: Dict[str, Any] = {}
+    draft = raw_result.get("publish_draft")
+    if isinstance(draft, dict):
+        draft_summary: Dict[str, Any] = {
+            "status": str(draft.get("status") or "ready")[:32],
+        }
+        for key in ("run_id", "error"):
+            value = draft.get(key)
+            text = _bounded_compact_text(value, 512)
+            if text:
+                draft_summary[key] = text
+        compact_result["publish_draft"] = draft_summary
+    for key in ("resume_available", "video_status", "image_status"):
+        value = raw_result.get(key)
+        if isinstance(value, (bool, int, float, str)):
+            compact_result[key] = value
+    media_urls = raw_result.get("media_urls")
+    if isinstance(media_urls, list):
+        compact_result["media_urls"] = [
+            text
+            for value in media_urls[:8]
+            for text in [_bounded_compact_text(value, 2048)]
+            if text.strip()
+        ]
+    refs = raw_result.get("result_refs")
+    if isinstance(refs, dict):
+        urls = refs.get("urls")
+        if isinstance(urls, list):
+            compact_result["result_refs"] = {
+                "urls": [
+                    text
+                    for value in urls[:8]
+                    for text in [_bounded_compact_text(value, 2048)]
+                    if text.strip()
+                ]
+            }
+    mcp = raw_result.get("mcp_result")
+    if isinstance(mcp, dict):
+        mcp_summary = {
+            key: mcp[key]
+            for key in ("resume_available", "status")
+            if isinstance(mcp.get(key), (bool, int, float, str))
+        }
+        if mcp_summary:
+            compact_result["mcp_result"] = mcp_summary
     return {
         "id": row.id,
         "task_id": row.task_id,
@@ -1845,10 +1903,13 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
         "claimed_by_installation_id": row.claimed_by_installation_id,
         "title": row.title,
         "task_kind": row.task_kind,
+        "content": _bounded_compact_text(row.content, 500),
         "payload": payload,
         "status": row.status,
         "progress": row.progress or {},
-        "error": row.error,
+        "result_text": _bounded_compact_text(row.result_text, 2000),
+        "result_payload": compact_result,
+        "error": _bounded_compact_text(row.error, 2000),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
         "claimed_at": _iso(row.claimed_at),
