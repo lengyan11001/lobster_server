@@ -167,6 +167,7 @@ def test_interactive_routes_bypass_heavy_workload_queue(method: str, path: str) 
         ("GET", "/api/h5-chat/messages", "dynamic"),
         ("POST", "/chat/stream", "dynamic"),
         ("GET", "/api/health", ""),
+        ("GET", "/api/h5-workflows/templates", ""),
         ("GET", "/h5-static/h5-app.js", ""),
         ("OPTIONS", "/api/assets/upload", ""),
     ],

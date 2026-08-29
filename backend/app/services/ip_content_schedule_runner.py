@@ -10,9 +10,11 @@ from sqlalchemy import update
 from ..api.scheduled_tasks import (
     _SERVER_SIDE_TASK_KINDS,
     _enqueue_task,
+    _advance_task_after_expired_occurrence,
     _expire_workflow_node_runs,
     _fail_stale_server_side_runs,
     _recover_interrupted_server_side_runs,
+    _scheduled_occurrence_expired,
 )
 from ..db import SessionLocal
 from ..models import ScheduledTask
@@ -47,12 +49,19 @@ def _tick_once_sync() -> int:
                 ScheduledTask.next_run_at <= now,
             )
             .order_by(ScheduledTask.next_run_at.asc())
-            .limit(10)
+            .limit(50)
             .all()
         )
         count = 0
+        expired_count = 0
         for candidate in rows:
             scheduled_at = candidate.next_run_at
+            if scheduled_at is None:
+                continue
+            if _scheduled_occurrence_expired(candidate, scheduled_at, now):
+                _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
+                expired_count += 1
+                continue
             result = db.execute(
                 update(ScheduledTask)
                 .where(
@@ -70,6 +79,10 @@ def _tick_once_sync() -> int:
                 continue
             _enqueue_task(db, task, now, scheduled_at=scheduled_at)
             count += 1
+            # One server-side task per tick keeps scheduling behavior
+            # consistent with Online installations and avoids building a
+            # burst of work after a delayed scheduler wake-up.
+            break
         if count or expired_count:
             db.commit()
         return count

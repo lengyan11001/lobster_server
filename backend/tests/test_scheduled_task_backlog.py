@@ -74,7 +74,7 @@ def _request(installation_id: str = "test-installation") -> Request:
 
 
 def _douyin_recurring_task(user_id: int, *, title: str = "今天执行抖音获客", task_id: int | None = None) -> ScheduledTask:
-    now = datetime.utcnow() - timedelta(minutes=5)
+    now = datetime.utcnow() - timedelta(minutes=1)
     row = ScheduledTask(
         user_id=user_id,
         title=title,
@@ -119,7 +119,7 @@ def _workflow_payload(*, action: str, start: str, end: str, timezone_offset_minu
     }
 
 
-def test_recurring_enqueue_refreshes_one_pending_run_in_place(db_session, test_user):
+def test_recurring_enqueue_creates_one_run_per_due_occurrence(db_session, test_user):
     task = _task(test_user.id)
     db_session.add(task)
     db_session.commit()
@@ -134,13 +134,55 @@ def test_recurring_enqueue_refreshes_one_pending_run_in_place(db_session, test_u
     second = scheduled_tasks._create_run_for_target(db_session, task, "test-installation", second_at)
     db_session.commit()
 
-    assert second.id == first_id
-    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).count() == 1
+    assert second.id != first_id
+    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).count() == 2
     assert db_session.query(H5ChatMessage).filter(H5ChatMessage.id == second.h5_message_id).count() == 1
     assert second.content == "最新任务内容"
     assert second.created_at == second_at
-    assert second.progress["coalesced_count"] == 1
+    assert "coalesced_count" not in second.progress
     assert task.run_count == 2
+
+
+def test_due_run_is_not_materialized_while_installation_is_busy(db_session, test_user):
+    now = datetime.utcnow()
+    task = _task(test_user.id, title="到点排队任务", schedule_type="interval")
+    task.next_run_at = now - timedelta(seconds=1)
+    db_session.add(task)
+    db_session.flush()
+    processing = _run(
+        run_id="busy-before-due-run",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="douyin_leads",
+        status="processing",
+        created_at=now,
+    )
+    db_session.add(processing)
+    db_session.commit()
+
+    assert scheduled_tasks._enqueue_due_tasks(db_session, test_user.id, "test-installation") == 0
+    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).count() == 0
+    assert task.next_run_at is not None and task.next_run_at <= now
+
+
+def test_overdue_recurring_task_materializes_only_current_occurrence(db_session, test_user):
+    now = datetime.utcnow()
+    task = _task(test_user.id, title="补齐周期任务", schedule_type="interval")
+    task.interval_seconds = 60
+    task.next_run_at = now - timedelta(minutes=3)
+    db_session.add(task)
+    db_session.commit()
+
+    assert scheduled_tasks._enqueue_due_tasks(db_session, test_user.id) == 1
+    runs = (
+        db_session.query(ScheduledTaskRun)
+        .filter(ScheduledTaskRun.task_id == task.id)
+        .order_by(ScheduledTaskRun.created_at.asc())
+        .all()
+    )
+    assert len(runs) == 1
+    assert runs[0].status == "pending"
+    assert task.next_run_at is not None and task.next_run_at > now
 
 
 def test_pausing_scheduled_task_cancels_processing_run(
@@ -214,7 +256,7 @@ def test_pausing_scheduled_task_cancels_processing_run(
     assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
 
 
-def test_recurring_backlog_keeps_latest_and_skips_expired_without_touching_once_or_processing(
+def test_expired_pending_runs_are_skipped_without_touching_processing(
     db_session,
     test_user,
 ):
@@ -268,14 +310,14 @@ def test_recurring_backlog_keeps_latest_and_skips_expired_without_touching_once_
     )
     db_session.commit()
 
-    assert skipped == 1
+    assert skipped == 2
     assert db_session.get(ScheduledTaskRun, "recurring-old").status == "cancelled"
     assert db_session.get(ScheduledTaskRun, "recurring-latest").status == "pending"
     assert db_session.get(ScheduledTaskRun, "recurring-processing").status == "processing"
-    assert db_session.get(ScheduledTaskRun, "once-old").status == "pending"
+    assert db_session.get(ScheduledTaskRun, "once-old").status == "cancelled"
 
 
-def test_single_expired_recurring_run_is_skipped(db_session, test_user):
+def test_old_recurring_run_is_skipped_before_claim(db_session, test_user):
     now = datetime.utcnow()
     recurring = _task(test_user.id, schedule_type="interval")
     db_session.add(recurring)
@@ -301,10 +343,9 @@ def test_single_expired_recurring_run_is_skipped(db_session, test_user):
 
     assert skipped == 1
     assert stale.status == "cancelled"
-    assert stale.progress["skip_reason"] == "expired_recurring_run"
 
 
-def test_daily_scheduled_run_expires_after_thirty_minutes(db_session, test_user, monkeypatch):
+def test_daily_scheduled_run_is_skipped_after_node_window(db_session, test_user, monkeypatch):
     now = datetime.utcnow()
     monkeypatch.delenv("LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS", raising=False)
     recurring = _task(test_user.id, schedule_type="daily_times")
@@ -331,10 +372,9 @@ def test_daily_scheduled_run_expires_after_thirty_minutes(db_session, test_user,
 
     assert skipped == 1
     assert stale.status == "cancelled"
-    assert stale.progress["skip_reason"] == "expired_recurring_run"
 
 
-def test_background_cleanup_coalesces_offline_recurring_runs(db_session, test_user):
+def test_background_cleanup_expires_offline_recurring_runs(db_session, test_user):
     now = datetime.utcnow()
     recurring = _task(test_user.id)
     db_session.add(recurring)
@@ -500,7 +540,7 @@ def test_pending_materializes_due_run_before_honoring_empty_cache(db_session, te
     assert calls[:2] == ["enqueue", "cache"]
 
 
-def test_pending_claim_skips_expired_workflow_node_before_claim(db_session, test_user, monkeypatch):
+def test_pending_claim_keeps_expired_workflow_node_in_fifo_order(db_session, test_user, monkeypatch):
     now = datetime.utcnow().replace(second=0, microsecond=0)
     created_at = now - timedelta(hours=2)
     local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
@@ -551,18 +591,14 @@ def test_pending_claim_skips_expired_workflow_node_before_claim(db_session, test
     )
 
     db_session.expire_all()
-    assert [item["id"] for item in result["items"]] == [available.id]
-    cancelled = db_session.get(ScheduledTaskRun, expired.id)
-    assert cancelled.status == "cancelled"
-    assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
-    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
-    assert any(
-        event.payload.get("reason") == "workflow_node_deadline_expired"
-        for event in db_session.query(H5ChatEvent).filter(H5ChatEvent.message_id == message.id).all()
-    )
+    assert [item["id"] for item in result["items"]] == [expired.id]
+    claimed = db_session.get(ScheduledTaskRun, expired.id)
+    assert claimed.status == "processing"
+    assert db_session.get(H5ChatMessage, message.id).status == "processing"
+    assert db_session.get(ScheduledTaskRun, available.id).status == "pending"
 
 
-def test_expired_processing_workflow_node_releases_next_douyin_run(db_session, test_user, monkeypatch):
+def test_processing_workflow_node_keeps_next_douyin_run_queued(db_session, test_user, monkeypatch):
     now = datetime.utcnow().replace(second=0, microsecond=0)
     created_at = now - timedelta(hours=2)
     local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
@@ -614,13 +650,13 @@ def test_expired_processing_workflow_node_releases_next_douyin_run(db_session, t
     )
 
     db_session.expire_all()
-    assert [item["id"] for item in result["items"]] == [next_node.id]
-    assert db_session.get(ScheduledTaskRun, processing.id).status == "cancelled"
-    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
-    assert db_session.get(ScheduledTaskRun, next_node.id).status == "processing"
+    assert result["items"] == []
+    assert db_session.get(ScheduledTaskRun, processing.id).status == "processing"
+    assert db_session.get(H5ChatMessage, message.id).status == "processing"
+    assert db_session.get(ScheduledTaskRun, next_node.id).status == "pending"
 
 
-def test_expired_workflow_node_heartbeat_cancels_instead_of_extending_run(db_session, test_user):
+def test_workflow_node_heartbeat_extends_run_after_window(db_session, test_user):
     now = datetime.utcnow().replace(second=0, microsecond=0)
     created_at = now - timedelta(hours=2)
     local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
@@ -651,24 +687,22 @@ def test_expired_workflow_node_heartbeat_cancels_instead_of_extending_run(db_ses
     db_session.add_all([run, message])
     db_session.commit()
 
-    with pytest.raises(HTTPException) as exc_info:
-        scheduled_tasks.submit_scheduled_task_event(
-            run.id,
-            scheduled_tasks.ScheduledTaskEventIn(type="heartbeat", payload={"heartbeat": True}),
-            _request(),
-            test_user,
-            db_session,
-        )
+    result = scheduled_tasks.submit_scheduled_task_event(
+        run.id,
+        scheduled_tasks.ScheduledTaskEventIn(type="heartbeat", payload={"heartbeat": True}),
+        _request(),
+        test_user,
+        db_session,
+    )
 
     db_session.expire_all()
-    assert exc_info.value.status_code == 409
-    cancelled = db_session.get(ScheduledTaskRun, run.id)
-    assert cancelled.status == "cancelled"
-    assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
-    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
+    assert result["ok"] is True
+    retained = db_session.get(ScheduledTaskRun, run.id)
+    assert retained.status == "processing"
+    assert db_session.get(H5ChatMessage, message.id).status == "processing"
 
 
-def test_expired_server_side_workflow_node_is_cancelled_before_execution(db_session, test_user):
+def test_expired_server_side_workflow_node_is_not_cancelled_before_execution(db_session, test_user):
     now = datetime.utcnow().replace(second=0, microsecond=0)
     created_at = now - timedelta(hours=2)
     local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
@@ -690,12 +724,8 @@ def test_expired_server_side_workflow_node_is_cancelled_before_execution(db_sess
     db_session.add(run)
     db_session.commit()
 
-    scheduled_tasks._execute_server_side_run(db_session, run, now=now)
-
-    db_session.expire_all()
-    cancelled = db_session.get(ScheduledTaskRun, run.id)
-    assert cancelled.status == "cancelled"
-    assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
+    assert scheduled_tasks._expire_workflow_node_run(db_session, run, now=now) is False
+    assert run.status == "pending"
 
 
 def test_pending_claim_does_not_claim_other_runs_while_installation_is_processing(db_session, test_user, monkeypatch):
@@ -739,6 +769,69 @@ def test_pending_claim_does_not_claim_other_runs_while_installation_is_processin
     assert result["items"] == []
     assert db_session.get(ScheduledTaskRun, "douyin-pending").status == "pending"
     assert db_session.get(ScheduledTaskRun, "workflow-pending").status == "pending"
+
+
+def test_pending_poll_does_not_materialize_due_work_behind_processing_run(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    task = _task(test_user.id, title="忙碌期间到点", schedule_type="interval")
+    task.next_run_at = now - timedelta(seconds=1)
+    db_session.add(task)
+    processing = _run(
+        run_id="processing-before-poll-enqueue",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=now,
+    )
+    db_session.add(processing)
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "_touch_installation_slot_lazy", lambda *_args, **_kwargs: None)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=1,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    assert result["items"] == []
+    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).count() == 0
+
+
+def test_idle_poll_materializes_and_claims_one_due_task(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    first = _task(test_user.id, title="当前任务一", schedule_type="once")
+    second = _task(test_user.id, title="当前任务二", schedule_type="once")
+    first.next_run_at = now - timedelta(seconds=1)
+    second.next_run_at = now - timedelta(seconds=1)
+    db_session.add_all([first, second])
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "_touch_installation_slot_lazy", lambda *_args, **_kwargs: None)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=5,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    assert len(result["items"]) == 1
+    claimed = db_session.get(ScheduledTaskRun, result["items"][0]["id"])
+    assert claimed is not None and claimed.status == "processing"
+    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == second.id).count() == 0
+
+
+def test_expired_due_task_is_advanced_without_a_run(db_session, test_user):
+    now = datetime.utcnow()
+    task = _task(test_user.id, title="已过期任务", schedule_type="interval")
+    task.next_run_at = now - timedelta(minutes=10)
+    db_session.add(task)
+    db_session.commit()
+
+    assert scheduled_tasks._enqueue_due_tasks(db_session, test_user.id, "test-installation") == 0
+    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).count() == 0
+    assert task.next_run_at is not None and task.next_run_at > now
 
 
 def test_pending_claim_serializes_native_wechat_runs_per_installation(db_session, test_user, monkeypatch):
@@ -822,7 +915,7 @@ def test_pending_claim_returns_only_one_run_per_installation(db_session, test_us
     assert db_session.get(ScheduledTaskRun, "second-pending").status == "pending"
 
 
-def test_create_task_rejects_second_active_dispatch_for_installation(db_session, test_user, monkeypatch):
+def test_create_task_queues_second_active_dispatch_for_installation(db_session, test_user, monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "online_user_for_mobile_user", lambda _db, user: user)
     request = Request(
         {
@@ -852,9 +945,10 @@ def test_create_task_rejects_second_active_dispatch_for_installation(db_session,
         schedule_type="once",
         installation_ids=["test-installation"],
     )
-    with pytest.raises(HTTPException) as exc_info:
-        scheduled_tasks.create_scheduled_task(second_body, request, test_user, db_session)
-    assert exc_info.value.status_code == 409
+    second = scheduled_tasks.create_scheduled_task(second_body, request, test_user, db_session)
+    assert second["runs"] == []
+    second_task = db_session.get(ScheduledTask, second["task"]["id"])
+    assert second_task.next_run_at is not None
 
 
 def test_create_recurring_douyin_task_reuses_same_active_definition(db_session, test_user):

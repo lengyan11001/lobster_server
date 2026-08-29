@@ -77,6 +77,7 @@ _DISABLED_SCHEDULED_CAPABILITIES = {"create.video.pipeline", "create.ppt.pipelin
 _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
 _RUN_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
+_DEFAULT_PENDING_EXPIRY_SECONDS = 300
 _pending_empty_cache: Dict[str, float] = {}
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
@@ -1142,6 +1143,89 @@ def _active_run_for_installation(
         )
         .order_by(ScheduledTaskRun.updated_at.desc(), ScheduledTaskRun.created_at.desc())
         .first()
+    )
+
+
+def _active_publish_for_installation(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+) -> Optional[ScheduledTaskRun]:
+    """Return a publish follow-up currently being handled by one device."""
+    raw_id = str(installation_id or "").strip()
+    if not raw_id:
+        return None
+    scoped_id = installation_slot_id_for_user(db, user_id, raw_id)
+    ids = {raw_id}
+    if scoped_id:
+        ids.add(scoped_id)
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status == "completed",
+            or_(
+                ScheduledTaskRun.installation_id.in_(tuple(ids)),
+                ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+            ),
+        )
+        .order_by(ScheduledTaskRun.updated_at.desc(), ScheduledTaskRun.finished_at.desc())
+        .limit(200)
+        .all()
+    )
+    for row in rows:
+        draft = _publish_draft_from_payload(_run_result_payload(row))
+        if str(draft.get("status") or "").strip().lower() != "processing":
+            continue
+        claimed = str(draft.get("claimed_by_installation_id") or "").strip()
+        if not claimed or claimed in ids:
+            return row
+    return None
+
+
+def _installation_has_active_work(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+) -> bool:
+    return (
+        _active_run_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+            statuses={"processing", "running", "claimed", "queued", "waiting"},
+        )
+        is not None
+        or _active_publish_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+        )
+        is not None
+    )
+
+
+def _installation_has_unclaimed_work(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+) -> bool:
+    """Include an existing pending run before materializing another one."""
+    return _installation_has_active_work(
+        db,
+        user_id=user_id,
+        installation_id=installation_id,
+    ) or (
+        _active_run_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+            statuses={"pending"},
+        )
+        is not None
     )
 
 
@@ -2544,16 +2628,9 @@ def _create_run_for_target(
 ) -> ScheduledTaskRun:
     run_payload = _run_payload_for_task(db, task, now)
     run_payload = _materialize_workflow_node_window(run_payload, scheduled_at=scheduled_at or now)
-    existing = _pending_run_for_recurring_target(db, task, installation_id)
-    if existing is not None:
-        return _refresh_pending_recurring_run(
-            db,
-            run=existing,
-            task=task,
-            installation_id=installation_id,
-            run_payload=run_payload,
-            now=now,
-        )
+    # Every due occurrence gets its own run.  Recurring runs are consumed in
+    # creation order by the installation poller, so refreshing an existing
+    # pending row here would silently drop occurrences while a device is busy.
 
     run_id = uuid.uuid4().hex
     message_id = f"task_{run_id}"[:64]
@@ -2569,7 +2646,10 @@ def _create_run_for_target(
         content=task.content,
         payload=run_payload,
         status="pending",
-        progress={"queued_at": now.isoformat()},
+        progress={
+            "queued_at": now.isoformat(),
+            "scheduled_at": (scheduled_at or now).isoformat(),
+        },
         h5_message_id=message_id,
         created_at=now,
         updated_at=now,
@@ -2632,44 +2712,15 @@ def _expire_workflow_node_run(
     *,
     now: datetime,
 ) -> bool:
-    """Cancel a workflow-owned local run once its scheduled node window has ended."""
-    if str(run.status or "").strip().lower() not in {"pending", "processing"}:
-        return False
-    deadline = _workflow_node_deadline_for_run(run)
-    if deadline is None or deadline > now:
-        return False
-    message = "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
-    run.status = "cancelled"
-    run.error = message
-    run.finished_at = now
-    run.updated_at = now
-    run.progress = _merge_run_progress(
-        run,
-        {
-            "stage": "workflow_node_deadline_expired",
-            "text": message,
-            "reason": "workflow_node_deadline_expired",
-            "deadline_at": deadline.isoformat(),
-            "cancelled_at": now.isoformat(),
-        },
-    )
-    task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
-    if task:
-        task.last_error = message
-        task.updated_at = now
-    _sync_h5_message_from_run(db, run, now)
-    _add_h5_event(
-        db,
-        run.h5_message_id,
-        run.user_id,
-        "cancelled",
-        {
-            "reason": "workflow_node_deadline_expired",
-            "deadline_at": deadline.isoformat(),
-            "text": message,
-        },
-    )
-    return True
+    """Keep queued/running workflow runs alive until the client finishes them.
+
+    The node window controls when a task becomes due, but it is not an
+    execution timeout.  A slow task must not be cancelled when the next node
+    time arrives; the installation poller already guarantees FIFO delivery.
+    The function remains as a compatibility hook for callers that used to
+    expire runs at polling/reporting boundaries.
+    """
+    return False
 
 
 def _expire_workflow_node_runs(
@@ -2680,57 +2731,91 @@ def _expire_workflow_node_runs(
     installation_id: str = "",
     limit: int = 500,
 ) -> int:
-    """Expire workflow node runs independently of client heartbeats or task serialisation."""
-    now = now or datetime.utcnow()
-    if now.tzinfo is not None:
-        now = now.astimezone(timezone.utc).replace(tzinfo=None)
-    query = (
-        db.query(ScheduledTaskRun)
-        .filter(
-            ScheduledTaskRun.status.in_(["pending", "processing"]),
-            ScheduledTaskRun.created_by_role == "workflow",
-        )
-    )
-    if user_id is not None:
-        query = query.filter(ScheduledTaskRun.user_id == user_id)
-    target = str(installation_id or "").strip()
-    if target:
-        query = query.filter(
-            or_(
-                ScheduledTaskRun.installation_id.is_(None),
-                ScheduledTaskRun.installation_id == target,
-                ScheduledTaskRun.claimed_by_installation_id == target,
-            )
-        )
-    query = (
-        query.order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
-        .with_for_update(skip_locked=True)
-        .limit(max(1, min(int(limit or 1), 2000)))
-    )
-    expired = 0
-    for run in query.all():
-        if _expire_workflow_node_run(db, run, now=now):
-            expired += 1
-    return expired
+    """Compatibility hook; workflow runs are never expired by node windows."""
+    return 0
 
 
 def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
-    if task.schedule_type == "daily_times":
-        configured = str(os.environ.get("LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS") or "").strip()
-        try:
-            return max(300, min(7200, int(float(configured or 1800))))
-        except (TypeError, ValueError):
-            return 1800
-    configured = str(os.environ.get("LOBSTER_CLIENT_RECURRING_PENDING_MAX_AGE_SECONDS") or "").strip()
-    if configured:
-        try:
-            return max(300, min(86400, int(float(configured))))
-        except (TypeError, ValueError):
-            pass
+    env_name = (
+        "LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS"
+        if task.schedule_type == "daily_times"
+        else "LOBSTER_CLIENT_RECURRING_PENDING_MAX_AGE_SECONDS"
+    )
+    configured = str(os.environ.get(env_name) or "").strip()
+    try:
+        return max(60, min(86400, int(float(configured or _DEFAULT_PENDING_EXPIRY_SECONDS))))
+    except (TypeError, ValueError):
+        return _DEFAULT_PENDING_EXPIRY_SECONDS
+
+
+def _scheduled_occurrence_deadline(
+    task: ScheduledTask,
+    scheduled_at: datetime,
+) -> Optional[datetime]:
+    """Resolve a workflow node deadline for one not-yet-materialized trigger."""
+    payload = _materialize_workflow_node_window(task.payload or {}, scheduled_at=scheduled_at)
+    return _workflow_node_deadline_utc(payload, reference_at=scheduled_at)
+
+
+def _scheduled_occurrence_expired(
+    task: ScheduledTask,
+    scheduled_at: datetime,
+    now: datetime,
+) -> bool:
+    deadline = _scheduled_occurrence_deadline(task, scheduled_at)
+    if deadline is not None:
+        return deadline <= now
+    return (now - scheduled_at).total_seconds() > _recurring_pending_max_age_seconds(task)
+
+
+def _advance_task_after_expired_occurrence(
+    task: ScheduledTask,
+    scheduled_at: datetime,
+    now: datetime,
+) -> None:
+    """Move a recurring definition past all missed occurrences without runs."""
     if task.schedule_type == "interval":
         interval = max(60, int(task.interval_seconds or 3600))
-        return max(900, min(21600, interval * 3))
-    return 21600
+        elapsed = max(0.0, (now - scheduled_at).total_seconds())
+        occurrences_to_advance = int(elapsed // interval) + 1
+        task.next_run_at = scheduled_at + timedelta(seconds=occurrences_to_advance * interval)
+    elif task.schedule_type == "daily_times":
+        cfg = _schedule_config_from_payload(task.payload or {})
+        times = _normalize_daily_times(cfg.get("daily_times") or [])
+        offset = int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480)
+        task.next_run_at = _compute_next_daily_time(
+            now_utc=now,
+            daily_times=times,
+            timezone_offset_minutes=offset,
+        )
+    else:
+        task.next_run_at = None
+        task.status = "completed"
+        return
+    task.updated_at = now
+
+
+def _expire_pending_recurring_run(
+    db: Session,
+    run: ScheduledTaskRun,
+    task: ScheduledTask,
+    *,
+    now: datetime,
+) -> bool:
+    if str(run.status or "").strip().lower() != "pending":
+        return False
+    progress = run.progress if isinstance(run.progress, dict) else {}
+    scheduled_at = _parse_utc_datetime(progress.get("scheduled_at")) or run.created_at or now
+    if not _scheduled_occurrence_expired(task, scheduled_at, now):
+        return False
+    _skip_pending_recurring_run(
+        db,
+        run,
+        now=now,
+        reason="expired_before_execution",
+        message="任务到达时已超过有效执行时间，本轮已过期。",
+    )
+    return True
 
 
 def _skip_pending_recurring_run(
@@ -2773,15 +2858,6 @@ def _coalesce_recurring_pending_runs(
     installation_id: str,
     now: datetime,
 ) -> int:
-    online_installation_ids = {
-        str(row.installation_id or "")
-        for row in (
-            db.query(H5ChatDevicePresence)
-            .filter(H5ChatDevicePresence.user_id == user_id)
-            .all()
-        )
-        if str(row.installation_id or "") and is_device_online(row.last_seen_at, now=now)
-    }
     query = (
         db.query(ScheduledTaskRun, ScheduledTask)
         .join(ScheduledTask, ScheduledTask.id == ScheduledTaskRun.task_id)
@@ -2789,7 +2865,7 @@ def _coalesce_recurring_pending_runs(
             ScheduledTaskRun.user_id == user_id,
             ScheduledTaskRun.status == "pending",
             ScheduledTask.status == "active",
-            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES)),
+            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES) + ["once"]),
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
         )
     )
@@ -2802,54 +2878,19 @@ def _coalesce_recurring_pending_runs(
         )
     else:
         query = query.filter(ScheduledTaskRun.installation_id.is_(None))
-    pairs = (
-        query.order_by(
-            ScheduledTaskRun.task_id.asc(),
-            ScheduledTaskRun.installation_id.asc(),
-            ScheduledTaskRun.created_at.desc(),
-            ScheduledTaskRun.id.desc(),
-        )
+    expired = 0
+    for run, task in (
+        query.order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
         .with_for_update(of=ScheduledTaskRun, skip_locked=True)
         .limit(1000)
         .all()
-    )
-    newest_by_target: Dict[tuple[int, str], ScheduledTaskRun] = {}
-    skipped = 0
-    for run, task in pairs:
-        key = (int(task.id), str(run.installation_id or ""))
-        newest = newest_by_target.get(key)
-        if newest is not None:
-            _skip_pending_recurring_run(
-                db,
-                run,
-                now=now,
-                reason="superseded_recurring_run",
-                message="设备离线期间的旧计划已由最新一轮替代，未重复执行。",
-                superseded_by_run_id=newest.id,
-            )
-            skipped += 1
-            continue
-        newest_by_target[key] = run
-        cutoff = now - timedelta(seconds=_recurring_pending_max_age_seconds(task))
-        if run.created_at < cutoff:
-            target_is_online = bool(run.installation_id and str(run.installation_id) in online_installation_ids)
-            _skip_pending_recurring_run(
-                db,
-                run,
-                now=now,
-                reason="expired_recurring_run_while_busy" if target_is_online else "expired_recurring_run",
-                message=(
-                    "设备在线但正在执行其他任务，本轮计划在队列中超过有效时间，已自动跳过。"
-                    if target_is_online
-                    else "设备离线期间未执行，该计划已过有效时间并自动跳过。"
-                ),
-            )
-            skipped += 1
-    return skipped
+    ):
+        if _expire_pending_recurring_run(db, run, task, now=now):
+            expired += 1
+    return expired
 
 
 def _cleanup_recurring_pending_backlog(db: Session, now: Optional[datetime] = None) -> int:
-    """Apply the normal per-device coalescing rules even while clients are offline."""
     now = now or datetime.utcnow()
     pairs = (
         db.query(ScheduledTaskRun.user_id, ScheduledTaskRun.installation_id)
@@ -2857,22 +2898,22 @@ def _cleanup_recurring_pending_backlog(db: Session, now: Optional[datetime] = No
         .filter(
             ScheduledTaskRun.status == "pending",
             ScheduledTask.status == "active",
-            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES)),
+            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES) + ["once"]),
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
         )
         .distinct()
         .limit(1000)
         .all()
     )
-    skipped = 0
-    for user_id, installation_id in pairs:
-        skipped += _coalesce_recurring_pending_runs(
+    return sum(
+        _coalesce_recurring_pending_runs(
             db,
             user_id=int(user_id),
             installation_id=str(installation_id or ""),
             now=now,
         )
-    return skipped
+        for user_id, installation_id in pairs
+    )
 
 
 def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> int:
@@ -3007,7 +3048,6 @@ def _execute_server_side_run(
     if _expire_workflow_node_run(db, run, now=now):
         db.commit()
         return
-    deadline = _workflow_node_deadline_for_run(run)
     user = db.query(User).filter(User.id == run.user_id).first()
     if user is None:
         run.status = "failed"
@@ -3041,20 +3081,8 @@ def _execute_server_side_run(
     db.flush()
     db.commit()
     timeout_seconds = _server_side_timeout_seconds(run.task_kind)
-    if deadline is not None:
-        remaining_seconds = (deadline - datetime.utcnow()).total_seconds()
-        if remaining_seconds <= 0:
-            db.refresh(run)
-            if _expire_workflow_node_run(db, run, now=datetime.utcnow()):
-                db.commit()
-            return
-        timeout_seconds = min(timeout_seconds, max(0.1, remaining_seconds))
 
     def progress(stage: str, text: str, extra: Optional[Dict[str, Any]] = None) -> None:
-        progress_now = datetime.utcnow()
-        if deadline is not None and _expire_workflow_node_run(db, run, now=progress_now):
-            db.commit()
-            return
         _set_server_side_run_progress(db, run, stage=stage, text=text, extra=extra)
 
     try:
@@ -3159,9 +3187,6 @@ def _execute_server_side_run(
             return
         finished = datetime.utcnow()
         db.refresh(run)
-        if _expire_workflow_node_run(db, run, now=finished):
-            db.commit()
-            return
         if str(run.status or "").strip().lower() in _FINAL_STATUSES:
             return
         failed_count = int(result.get("failed_count") or 0) if isinstance(result, dict) else 0
@@ -3458,8 +3483,19 @@ def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetim
     return db.query(ScheduledTask).filter(ScheduledTask.id == task.id).first()
 
 
-def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
+def _enqueue_due_tasks(
+    db: Session,
+    user_id: Optional[int] = None,
+    installation_id: Optional[str] = None,
+) -> int:
     now = datetime.utcnow()
+    target_installation = str(installation_id or "").strip()
+    if target_installation and user_id is not None and _installation_has_unclaimed_work(
+        db,
+        user_id=user_id,
+        installation_id=target_installation,
+    ):
+        return 0
     q = db.query(ScheduledTask).filter(
         ScheduledTask.status == "active",
         ScheduledTask.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
@@ -3469,11 +3505,25 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     )
     if user_id is not None:
         q = q.filter(ScheduledTask.user_id == user_id)
+    # Only materialize one client task per poll.  The next task is selected
+    # after the current run reaches a final state.
     q = q.order_by(ScheduledTask.next_run_at.asc(), ScheduledTask.id.asc()).limit(50).with_for_update(skip_locked=True)
     count = 0
+    expired_count = 0
     skipped_duplicates = 0
     seen_recurring_keys: set[str] = set()
     for candidate in q.all():
+        if target_installation and not _is_server_side_task(candidate):
+            targets = _clean_installation_ids(candidate.target_installation_ids or [])
+            if targets and target_installation not in targets:
+                continue
+        if not target_installation and not _is_server_side_task(candidate):
+            targets = _clean_installation_ids(candidate.target_installation_ids or [])
+            if any(
+                _installation_has_unclaimed_work(db, user_id=candidate.user_id, installation_id=target)
+                for target in targets
+            ):
+                continue
         dedup_key = _scheduled_task_dedup_key(
             task_kind=candidate.task_kind,
             title=candidate.title,
@@ -3489,12 +3539,19 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
         if dedup_key:
             seen_recurring_keys.add(dedup_key)
         scheduled_at = candidate.next_run_at
-        task = _reserve_due_task_for_enqueue(db, candidate, now)
-        if not task:
+        if scheduled_at is None:
             continue
-        _enqueue_task(db, task, now, scheduled_at=scheduled_at)
+        if _scheduled_occurrence_expired(candidate, scheduled_at, now):
+            _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
+            expired_count += 1
+            continue
+        reserved = _reserve_due_task_for_enqueue(db, candidate, now)
+        if not reserved:
+            continue
+        _enqueue_task(db, reserved, now, scheduled_at=scheduled_at)
         count += 1
-    if count or skipped_duplicates:
+        break
+    if count or skipped_duplicates or expired_count:
         db.commit()
     return count
 
@@ -3761,7 +3818,21 @@ def _create_task_row(
     db.add(task)
     db.flush()
     if not _is_server_side_task(task) and task.next_run_at and task.next_run_at <= now:
-        _enqueue_task(db, task, now)
+        targets = _clean_installation_ids(task.target_installation_ids or [])
+        busy = any(
+            _installation_has_unclaimed_work(
+                db,
+                user_id=target_user_id,
+                installation_id=target,
+            )
+            for target in targets
+        )
+        if not busy:
+            _enqueue_task(db, task, now)
+            # The database session deliberately uses autoflush=False. Flush
+            # here so subsequent task definitions in the same activation see
+            # this pending run and do not materialize a second one.
+            db.flush()
     db.commit()
     db.refresh(task)
     return task
@@ -3780,8 +3851,8 @@ def create_scheduled_task(
     if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:
         raise HTTPException(status_code=400, detail="missing current installation id")
     if xi:
-        # Serialize dispatches per physical installation and reject a second
-        # demo/task while the previous run is still unfinished.
+        # Serialize execution at claim time, while allowing multiple task
+        # definitions/runs to wait in the installation's FIFO queue.
         ensure_installation_slot(
             db,
             owner_user.id,
@@ -3793,11 +3864,6 @@ def create_scheduled_task(
                 UserInstallation.user_id == owner_user.id,
                 UserInstallation.installation_id == slot_id,
             ).with_for_update().first()
-        _assert_installations_available(
-            db,
-            user_id=owner_user.id,
-            installation_ids=[xi],
-        )
     if requested_kind in _SERVER_SIDE_TASK_KINDS:
         body.installation_ids = []
     else:
@@ -4037,13 +4103,20 @@ def run_scheduled_task_now(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _assert_user_task_access(task.user_id, current_user, owner_user)
-    if not _is_server_side_task(task):
-        _assert_installations_available(
-            db,
-            user_id=owner_user.id,
-            installation_ids=_clean_installation_ids(task.target_installation_ids or []),
-        )
-    runs = _enqueue_task(db, task, datetime.utcnow())
+    now = datetime.utcnow()
+    targets = _clean_installation_ids(task.target_installation_ids or [])
+    if not _is_server_side_task(task) and any(
+        _installation_has_unclaimed_work(db, user_id=owner_user.id, installation_id=target)
+        for target in targets
+    ):
+        # Keep the definition due for the next idle poll. No run row is
+        # created while the installation is occupied.
+        task.status = "active"
+        task.next_run_at = now
+        task.updated_at = now
+        db.commit()
+        return {"ok": True, "runs": []}
+    runs = _enqueue_task(db, task, now)
     if task.schedule_type in {"interval", "daily_times"} and task.status != "cancelled":
         task.status = "active"
     db.commit()
@@ -4064,7 +4137,7 @@ def list_scheduled_task_runs(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    _enqueue_due_tasks(db, owner_user.id)
+    _enqueue_due_tasks(db, owner_user.id, _header_installation_id(request))
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
     selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
     if selected_installation_id:
@@ -4186,28 +4259,17 @@ def pending_scheduled_task_runs(
         )
         if interrupted:
             db.commit()
-    expired_before_poll = _expire_workflow_node_runs(
-        db,
-        now,
-        user_id=current_user_id,
-        installation_id=xi,
-    )
-    if expired_before_poll:
-        db.commit()
     # A physical installation executes exactly one client task at a time.
-    # Leave later pending runs queued until the current processing run closes.
-    if _active_run_for_installation(
+    # Do not materialize another run while it is busy.  The next poll after a
+    # final state will enqueue and claim exactly one currently-valid task.
+    if _installation_has_active_work(
         db,
         user_id=current_user_id,
         installation_id=xi,
-        statuses={"processing", "running", "claimed", "queued", "waiting"},
-    ) is not None:
+    ):
         return {"ok": True, "items": []}
-    # Always materialize newly due runs before honoring a recent empty-result
-    # cache. Otherwise a node that becomes due immediately after an empty poll
-    # can wait for the cache TTL before the client is even allowed to see it.
-    _enqueue_due_tasks(db, current_user_id)
-
+    _enqueue_due_tasks(db, current_user_id, xi)
+    _expire_workflow_node_runs(db, now, user_id=current_user_id, installation_id=xi)
     pending_key = _pending_cache_key("run", current_user_id, xi)
     if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
@@ -4440,6 +4502,19 @@ def pending_scheduled_publish_requests(
         claim_if_unowned=True,
         auth_session_id=request_auth_session_id(request),
     )
+    if _active_run_for_installation(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        statuses={"pending", "processing", "running", "claimed", "queued", "waiting"},
+    ) is not None:
+        return {"ok": True, "items": []}
+    if _active_publish_for_installation(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+    ) is not None:
+        return {"ok": True, "items": []}
     pending_key = _pending_cache_key("publish", current_user_id, xi)
     if _pending_empty_recent(pending_key, _PUBLISH_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}

@@ -205,6 +205,9 @@ _REQUEST_GUARD_BYPASS_PATHS = {
     "/api/health",
     "/api/lan-ip",
 }
+_REQUEST_GUARD_READ_BYPASS_PATHS = {
+    "/api/h5-workflows/templates",
+}
 
 
 def request_workload_kind(method: str, path: str) -> str:
@@ -212,6 +215,8 @@ def request_workload_kind(method: str, path: str) -> str:
     method = str(method or "").upper()
     path = str(path or "").rstrip("/") or "/"
     if method in {"OPTIONS", "HEAD"} or path in _REQUEST_GUARD_BYPASS_PATHS:
+        return ""
+    if method == "GET" and path in _REQUEST_GUARD_READ_BYPASS_PATHS:
         return ""
     if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in _REQUEST_GUARD_PREFIXES):
         return "dynamic"

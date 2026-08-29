@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import os
 import re
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -35,7 +37,6 @@ from .scheduled_tasks import (
     _cancel_unfinished_runs_for_task,
     _create_task_row,
     _delete_task_row,
-    _enqueue_task,
     _local_bestseller_profile_from_persona,
     _serialize_task,
 )
@@ -61,6 +62,54 @@ _WORKFLOW_CHILD_ACTION_TYPES = {
 _ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
 _SALES_DH_PROVIDER_V2 = "shanjian_v2"
 _SALES_DH_PROVIDER_LEGACY = "hifly_legacy"
+
+_WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS = 3.0
+_WORKFLOW_TEMPLATE_CACHE_LOCK = threading.Lock()
+_WORKFLOW_TEMPLATE_CACHE: dict[tuple[int, str], tuple[float, list[dict[str, Any]]]] = {}
+_WORKFLOW_TEMPLATE_CACHE_KEY_LOCKS: dict[tuple[int, str], threading.Lock] = {}
+
+# Keep server-side workflow activation aligned with the node picker in H5 and
+# Online. The picker uses package visibility as the capability permission;
+# activation must not be able to bypass that rule through a direct request.
+_WORKFLOW_NODE_CAPABILITY_IDS = {
+    "image_composer_studio": "goal.image.pipeline",
+    "hifly.video.create_by_tts": "hifly.video.create_by_tts",
+    "comfly.seedance.tvc.pipeline": "comfly.seedance.tvc.pipeline",
+    "comfly.daihuo.pipeline": "comfly.daihuo.pipeline",
+    "ip_content_daily": "ip_content_daily",
+    "wewrite.article.pipeline": "wewrite.article.pipeline",
+}
+_WORKFLOW_NODE_PACKAGE_IDS = {
+    "hifly.video.create_by_tts": "hifly_digital_human_skill",
+    "comfly.seedance.tvc.pipeline": "comfly_seedance_tvc_skill",
+    "comfly.daihuo.pipeline": "comfly_veo_skill",
+    "image_composer_studio": "goal_video_pipeline_skill",
+    "ip_content_daily": "ip_content_daily_skill",
+    "wewrite.article.pipeline": "wewrite_official_account_skill",
+    "linkedin_leads": "linkedin_leads",
+    "linkedin_mining": "linkedin_leads",
+    "reddit_leads": "reddit_leads",
+    "x_leads": "x_leads",
+    "tiktok_leads": "tiktok_leads",
+}
+_WORKFLOW_ACTION_CAPABILITY_IDS = {
+    "image_studio_generate": "goal.image.pipeline",
+}
+_WORKFLOW_TASK_CAPABILITY_IDS = {
+    "ip_content_daily": "ip_content_daily",
+}
+_WORKFLOW_PACKAGE_LABELS = {
+    "hifly_digital_human_skill": "数字人口播视频",
+    "comfly_seedance_tvc_skill": "创意分镜头视频",
+    "comfly_veo_skill": "爆款TVC",
+    "goal_video_pipeline_skill": "AI设计图",
+    "ip_content_daily_skill": "IP日更文案",
+    "wewrite_official_account_skill": "公众号文章",
+    "linkedin_leads": "LinkedIn线索挖掘",
+    "reddit_leads": "Reddit线索采集",
+    "x_leads": "X线索采集",
+    "tiktok_leads": "TikTok线索采集",
+}
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -101,35 +150,116 @@ def _clean_time(value: Any) -> str:
     return text
 
 
+def _workflow_visible_package_ids(db: Session, user_id: int) -> set[str]:
+    """Return the same package visibility used by the H5/Online node picker."""
+    from .skills import _skill_store_admin, _user_visible_package_ids
+
+    user = db.query(User).filter(User.id == int(user_id or 0)).first()
+    if not user:
+        return set()
+    if _skill_store_admin(user):
+        from .skills import _load_registry
+
+        return set((_load_registry().get("packages") or {}).keys())
+    return set(_user_visible_package_ids(db, user, is_overseas_client=False))
+
+
+def _workflow_capability_package_map() -> dict[str, str]:
+    """Map executable workflow capability ids to their registered package."""
+    from .skills import _load_registry
+
+    packages = _load_registry().get("packages") or {}
+    result: dict[str, str] = {}
+    for package_id, package in packages.items():
+        if not isinstance(package, dict):
+            continue
+        for capability_id in (package.get("capabilities") or {}).keys():
+            normalized = str(capability_id or "").strip()
+            if normalized:
+                result[normalized] = str(package_id or "").strip()
+    return result
+
+
+def _workflow_node_access_requirements(node: dict[str, Any], capability_packages: dict[str, str]) -> tuple[set[str], set[str]]:
+    """Return feature gates and package ids required by one workflow node."""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    nested_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+    action = _clean_text(payload.get("action"), 128).lower()
+    task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+    capability_id = _clean_text(
+        payload.get("capability_id")
+        or nested_payload.get("capability_id")
+        or params.get("capability_id")
+        or _WORKFLOW_ACTION_CAPABILITY_IDS.get(action)
+        or _WORKFLOW_TASK_CAPABILITY_IDS.get(task_kind)
+        or _WORKFLOW_NODE_CAPABILITY_IDS.get(key),
+        128,
+    )
+    if not capability_id and key in capability_packages:
+        capability_id = key
+
+    required_features: set[str] = set()
+    required_packages: set[str] = set()
+    effective_key = action or key
+    if effective_key in {"native_wechat_poll", "native_wechat_add_friend", "native_wechat_moments_engage", "native_wechat_group_invite"}:
+        required_features.add("private_domain_entry")
+    if effective_key == "douyin_leads" or key == "douyin_leads" or task_kind == "douyin_leads":
+        required_features.add("douyin_leads_access")
+    if effective_key in {"linkedin_leads", "linkedin_mining", "reddit_leads", "x_leads", "tiktok_leads", "global_trade_leads_skill"}:
+        required_features.add("overseas_platform_entry")
+    if task_kind == "social_leads":
+        platform = _clean_text(payload.get("platform"), 32).lower()
+        if platform in {"reddit", "x", "tiktok"}:
+            required_features.add("overseas_platform_entry")
+            required_packages.add({"reddit": "reddit_leads", "x": "x_leads", "tiktok": "tiktok_leads"}[platform])
+
+    if capability_id:
+        package_id = capability_packages.get(capability_id)
+        if package_id:
+            required_packages.add(package_id)
+    package_from_key = _WORKFLOW_NODE_PACKAGE_IDS.get(effective_key) or _WORKFLOW_NODE_PACKAGE_IDS.get(key)
+    if package_from_key:
+        required_packages.add(package_from_key)
+    return required_features, required_packages
+
+
 def _assert_workflow_feature_permissions(db: Session, user_id: int, nodes: list[dict[str, Any]]) -> None:
-    """Prevent direct API activation from bypassing H5 department gates."""
+    """Prevent direct API activation from bypassing the H5/Online node gates."""
     flags = user_feature_flags(db, int(user_id or 0))
-    required: set[str] = set()
+    required_features: set[str] = set()
+    required_packages: set[str] = set()
+    capability_packages = _workflow_capability_package_map()
 
     def visit(node: Any) -> None:
         if not isinstance(node, dict):
             return
-        key = str(node.get("ability_key") or node.get("abilityKey") or node.get("key") or "").strip().lower()
-        action = str(
-            ((node.get("plan") or {}).get("payload") or {}).get("action")
-            if isinstance(node.get("plan"), dict)
-            else ""
-        ).strip().lower()
-        key = action or key
-        department_id = str(node.get("department_id") or node.get("departmentId") or "").strip().lower()
-        if key in {"native_wechat_poll", "native_wechat_add_friend", "native_wechat_moments_engage", "native_wechat_group_invite"} and department_id != "sales":
-            required.add("private_domain_entry")
-        if key in {"linkedin_leads", "linkedin_mining", "reddit_leads", "x_leads", "tiktok_leads", "global_trade_leads_skill"}:
-            required.add("overseas_platform_entry")
-        for child in node.get("children") or []:
+        features, packages = _workflow_node_access_requirements(node, capability_packages)
+        required_features.update(features)
+        required_packages.update(packages)
+        children = list(node.get("children") or [])
+        children.extend(node.get("actions") or [])
+        for child in children:
             visit(child)
 
     for node in nodes or []:
         visit(node)
-    denied = sorted(key for key in required if not flags.get(key, False))
-    if denied:
-        labels = {"private_domain_entry": "私域销冠", "overseas_platform_entry": "海外平台"}
-        raise HTTPException(status_code=403, detail="当前账号未开通：" + "、".join(labels.get(key, key) for key in denied))
+    denied_features = sorted(key for key in required_features if not flags.get(key, False))
+    if denied_features:
+        labels = {
+            "douyin_leads_access": "抖音获客",
+            "private_domain_entry": "私域销冠",
+            "overseas_platform_entry": "海外平台",
+        }
+        raise HTTPException(status_code=403, detail="当前账号未开通：" + "、".join(labels.get(key, key) for key in denied_features))
+    if required_packages:
+        visible_packages = _workflow_visible_package_ids(db, int(user_id or 0))
+        denied_packages = sorted(package_id for package_id in required_packages if package_id not in visible_packages)
+        if denied_packages:
+            labels = [_WORKFLOW_PACKAGE_LABELS.get(package_id, package_id) for package_id in denied_packages]
+            raise HTTPException(status_code=403, detail="当前账号未开通：" + "、".join(labels))
 
 
 def _workflow_platform_label(platform: str) -> str:
@@ -1977,6 +2107,115 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
     }
 
 
+def _clear_workflow_template_cache() -> None:
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+
+
+def _workflow_template_cache_lock(key: tuple[int, str]) -> threading.Lock:
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        return _WORKFLOW_TEMPLATE_CACHE_KEY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _cached_workflow_template_payloads(key: tuple[int, str]) -> Optional[list[dict[str, Any]]]:
+    now = time.monotonic()
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        entry = _WORKFLOW_TEMPLATE_CACHE.get(key)
+        if not entry:
+            return None
+        created_at, payloads = entry
+        if now - created_at >= _WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS:
+            _WORKFLOW_TEMPLATE_CACHE.pop(key, None)
+            return None
+        return copy.deepcopy(payloads)
+
+
+def _store_workflow_template_payloads(key: tuple[int, str], payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stored = copy.deepcopy(payloads)
+    now = time.monotonic()
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        _WORKFLOW_TEMPLATE_CACHE[key] = (now, stored)
+        expired = [
+            cache_key
+            for cache_key, (created_at, _) in _WORKFLOW_TEMPLATE_CACHE.items()
+            if now - created_at >= _WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS
+        ]
+        for cache_key in expired:
+            _WORKFLOW_TEMPLATE_CACHE.pop(cache_key, None)
+    return copy.deepcopy(stored)
+
+
+def _workflow_template_payloads(db: Session, owner: User, installation_id: str) -> list[dict[str, Any]]:
+    key = (int(owner.id), str(installation_id or ""))
+    cached = _cached_workflow_template_payloads(key)
+    if cached is not None:
+        return cached
+
+    # Multiple UI entry points can request the same device at once. Serialize
+    # only that user/device key, then re-check the cache after the first query.
+    with _workflow_template_cache_lock(key):
+        cached = _cached_workflow_template_payloads(key)
+        if cached is not None:
+            return cached
+
+        template_scope = (
+            or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == installation_id)
+            if installation_id
+            else H5WorkflowTemplate.installation_id == ""
+        )
+        own_rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(H5WorkflowTemplate.owner_user_id == owner.id, H5WorkflowTemplate.status == "active", template_scope)
+            .order_by(H5WorkflowTemplate.updated_at.desc())
+            .all()
+        )
+        grants = (
+            db.query(H5WorkflowTemplateGrant)
+            .filter(H5WorkflowTemplateGrant.target_user_id == owner.id, H5WorkflowTemplateGrant.status == "active")
+            .all()
+        )
+        granted_ids = [grant.template_id for grant in grants]
+        granted_rows = []
+        if granted_ids:
+            granted_rows = (
+                db.query(H5WorkflowTemplate)
+                .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active", template_scope)
+                .order_by(H5WorkflowTemplate.updated_at.desc())
+                .all()
+            )
+        grant_map: dict[int, list[int]] = {}
+        if own_rows:
+            own_ids = [row.id for row in own_rows]
+            for grant in (
+                db.query(H5WorkflowTemplateGrant)
+                .filter(H5WorkflowTemplateGrant.template_id.in_(own_ids), H5WorkflowTemplateGrant.status == "active")
+                .all()
+            ):
+                grant_map.setdefault(grant.template_id, []).append(grant.target_user_id)
+
+        owner_ids = {
+            int(row.owner_user_id)
+            for row in granted_rows
+            if row.owner_user_id and int(row.owner_user_id) != int(owner.id)
+        }
+        owners_by_id = {}
+        if owner_ids:
+            owners_by_id = {
+                user.id: user
+                for user in db.query(User).filter(User.id.in_(owner_ids)).all()
+            }
+
+        payloads = [
+            *[_template_payload(row, source="own", grants=grant_map.get(row.id, [])) for row in own_rows],
+            *[
+                _template_payload(row, owner=owners_by_id.get(row.owner_user_id), source="granted")
+                for row in granted_rows
+                if row.owner_user_id != owner.id
+            ],
+        ]
+        return _store_workflow_template_payloads(key, payloads)
+
+
 def _activation_payload(row: H5WorkflowActivation, template: Optional[H5WorkflowTemplate] = None) -> dict[str, Any]:
     snapshot = row.template_snapshot if isinstance(row.template_snapshot, dict) else {}
     template_nodes = snapshot.get("nodes") if isinstance(snapshot.get("nodes"), list) else None
@@ -2267,7 +2506,6 @@ def _activate_nodes_for_device(
                 timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
             ):
                 scheduled.next_run_at = now
-                _enqueue_task(db, scheduled, now, scheduled_at=scheduled.next_run_at)
             created_task_ids.append(int(scheduled.id))
     except Exception:
         try:
@@ -2311,46 +2549,9 @@ def list_workflow_templates(
 ):
     owner = online_user_for_mobile_user(db, current_user)
     iid = _clean_text(installation_id or x_installation_id, 128)
-    template_scope = or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == iid) if iid else H5WorkflowTemplate.installation_id == ""
-    own_rows = (
-        db.query(H5WorkflowTemplate)
-        .filter(H5WorkflowTemplate.owner_user_id == owner.id, H5WorkflowTemplate.status == "active", template_scope)
-        .order_by(H5WorkflowTemplate.updated_at.desc())
-        .all()
-    )
-    grants = (
-        db.query(H5WorkflowTemplateGrant)
-        .filter(H5WorkflowTemplateGrant.target_user_id == owner.id, H5WorkflowTemplateGrant.status == "active")
-        .all()
-    )
-    granted_ids = [g.template_id for g in grants]
-    granted_rows = []
-    if granted_ids:
-        granted_rows = (
-            db.query(H5WorkflowTemplate)
-            .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active", template_scope)
-            .order_by(H5WorkflowTemplate.updated_at.desc())
-            .all()
-        )
-    grant_map: dict[int, list[int]] = {}
-    if own_rows:
-        own_ids = [r.id for r in own_rows]
-        for item in (
-            db.query(H5WorkflowTemplateGrant)
-            .filter(H5WorkflowTemplateGrant.template_id.in_(own_ids), H5WorkflowTemplateGrant.status == "active")
-            .all()
-        ):
-            grant_map.setdefault(item.template_id, []).append(item.target_user_id)
-    owners = {
-        row.id: db.query(User).filter(User.id == row.owner_user_id).first()
-        for row in granted_rows
-    }
     return {
         "ok": True,
-        "templates": [
-            *[_template_payload(row, source="own", grants=grant_map.get(row.id, [])) for row in own_rows],
-            *[_template_payload(row, owner=owners.get(row.id), source="granted") for row in granted_rows if row.owner_user_id != owner.id],
-        ],
+        "templates": _workflow_template_payloads(db, owner, iid),
         "can_grant": bool(getattr(current_user, "is_agent", False)),
     }
 
@@ -2381,6 +2582,7 @@ def create_workflow_template(
             existing.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(existing)
+            _clear_workflow_template_cache()
             return {"ok": True, "created": False, "template": _template_payload(existing, source="own")}
     row = H5WorkflowTemplate(
         owner_user_id=owner.id,
@@ -2395,6 +2597,7 @@ def create_workflow_template(
     db.add(row)
     db.commit()
     db.refresh(row)
+    _clear_workflow_template_cache()
     return {"ok": True, "created": True, "template": _template_payload(row, source="own")}
 
 
@@ -2445,6 +2648,7 @@ def update_workflow_template(
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
+    _clear_workflow_template_cache()
     return {"ok": True, "template": _template_payload(row, source="own")}
 
 
@@ -2461,6 +2665,7 @@ def delete_workflow_template(
     row.updated_at = now
     stopped_ids = _stop_active_for_template(db, row.id, owner.id, now)
     db.commit()
+    _clear_workflow_template_cache()
     return {"ok": True, "deleted": True, "stopped_activation_ids": stopped_ids}
 
 
@@ -2538,6 +2743,7 @@ def grant_workflow_template(
             )
         )
     db.commit()
+    _clear_workflow_template_cache()
     return {"ok": True, "template_id": row.id, "target_user_ids": target_ids}
 
 

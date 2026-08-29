@@ -245,6 +245,9 @@
       h5LastResumeAt: 0,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
+      workflowTemplatesInstallationId: "",
+      workflowTemplatesRequest: null,
+      workflowTemplatesRequestKey: "",
       workflowTemplatesLoading: false,
       workflowTemplateSaving: false,
       workflowCanGrant: false,
@@ -3402,7 +3405,10 @@
     function workflowSalesNodeLookups() {
       return SALES_WORKFLOW_NODE_OPTIONS.map((item, index) => {
         const lookup = abilityLookup(item.key);
-        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)) return null;
+        // Sales presets use the same capability gates as custom employee
+        // nodes.  Without this check, a hidden department can reappear via
+        // the system sales preset's duplicated options.
+        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node) || !abilityIsActionable(lookup.node)) return null;
         return {
           ...lookup,
           optionId: index,
@@ -6675,25 +6681,41 @@
     }
 
     async function loadWorkflowTemplates(force = false) {
-      if (!force && state.workflowTemplatesLoaded) {
+      const requestKey = String(currentInstallationId() || "");
+      if (state.workflowTemplatesRequest && state.workflowTemplatesRequestKey === requestKey) {
+        return state.workflowTemplatesRequest;
+      }
+      if (!force && state.workflowTemplatesLoaded && state.workflowTemplatesInstallationId === requestKey) {
         renderWorkflowTemplates();
         return;
       }
-      state.workflowTemplatesLoading = true;
-      renderWorkflowTemplates();
-      try {
-        const iid = currentInstallationId();
-        const query = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
-        const data = await api(`/api/h5-workflows/templates${query}`);
-        state.workflowTemplates = (Array.isArray(data.templates) ? data.templates : []).map(normalizeWorkflowTemplate);
-        state.workflowCanGrant = !!data.can_grant;
-        state.workflowTemplatesLoaded = true;
-      } finally {
-        state.workflowTemplatesLoading = false;
-        renderWorkflow();
-        renderCustomEmployees();
-        if (document.querySelector("#officeView.active")) renderOfficeEmployees();
-      }
+      let request;
+      request = (async () => {
+        state.workflowTemplatesLoading = true;
+        renderWorkflowTemplates();
+        try {
+          const iid = currentInstallationId();
+          const query = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
+          const data = await api(`/api/h5-workflows/templates${query}`);
+          if (String(currentInstallationId() || "") !== requestKey) return state.workflowTemplates;
+          state.workflowTemplates = (Array.isArray(data.templates) ? data.templates : []).map(normalizeWorkflowTemplate);
+          state.workflowCanGrant = !!data.can_grant;
+          state.workflowTemplatesInstallationId = requestKey;
+          state.workflowTemplatesLoaded = true;
+          return state.workflowTemplates;
+        } finally {
+          if (state.workflowTemplatesRequest !== request) return;
+          state.workflowTemplatesLoading = false;
+          state.workflowTemplatesRequest = null;
+          state.workflowTemplatesRequestKey = "";
+          renderWorkflow();
+          renderCustomEmployees();
+          if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+        }
+      })();
+      state.workflowTemplatesRequest = request;
+      state.workflowTemplatesRequestKey = requestKey;
+      return request;
     }
 
     async function loadWorkflowActive() {
@@ -13809,9 +13831,9 @@
     function ensureSelectedInstallationId() {
       const selected = String(state.selectedInstallationId || "").trim();
       if (!state.devicesLoaded && !(state.devices || []).length) return selected;
-      if (selected && state.devices.some((d) => String(d.installation_id || "") === selected)) return selected;
+      if (selected && state.devices.some((d) => d.online && String(d.installation_id || "") === selected)) return selected;
       const previous = state.selectedInstallationId;
-      const preferred = state.devices.find((d) => d.online && d.installation_id) || state.devices.find((d) => d.installation_id);
+      const preferred = state.devices.find((d) => d.online && d.installation_id);
       const next = String((preferred || {}).installation_id || "");
       state.selectedInstallationId = next;
       if (next) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), next);
@@ -16974,16 +16996,15 @@
       const selects = [$("profileHeaderDeviceSelect"), $("profileDeviceSelect")].filter(Boolean);
       if (!selects.length) return;
       ensureSelectedInstallationId();
-      const rows = (state.devices || []).filter((device) => device.installation_id);
+      const rows = (state.devices || []).filter((device) => device.online && device.installation_id);
       const options = rows.length
         ? rows.map((device) => {
             const id = String(device.installation_id || "");
             const accountCount = Number(device.publish_account_count || 0);
-            const status = device.online ? "" : " / 离线";
             const suffix = accountCount ? ` / ${accountCount}个发布账号` : "";
-            return optionHtml(id, `${deviceSelectorLabel(device)}${status}${suffix}`);
+            return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
           }).join("")
-        : optionHtml("", "暂无设备");
+        : optionHtml("", "暂无在线设备");
       selects.forEach((select) => {
         select.innerHTML = options;
         select.value = state.selectedInstallationId || "";
@@ -16991,8 +17012,8 @@
       });
       const selected = selectedDevice();
       const text = selected
-        ? `${selected.online ? "在线" : "离线"} / ${deviceSelectorLabel(selected)}`
-        : "暂无设备";
+        ? `在线 / ${deviceSelectorLabel(selected)}`
+        : "暂无在线设备";
       if ($("profileDeviceText")) $("profileDeviceText").textContent = text;
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
