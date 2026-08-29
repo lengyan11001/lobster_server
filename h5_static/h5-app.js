@@ -3443,7 +3443,21 @@
     }
 
     function workflowLeafLookups() {
-      return [...workflowSalesNodeLookups(), ...workflowDepartmentNodeLookups()];
+      const rows = [
+        ...workflowSalesNodeLookups().filter((lookup) => String(lookup && lookup.node && lookup.node.key || "") === "douyin_leads"),
+        ...workflowDepartmentNodeLookups().filter((lookup) => String(lookup && lookup.node && lookup.node.key || "") !== "douyin_leads"),
+      ];
+      const seen = new Set();
+      return rows.filter((lookup) => {
+        const key = String(lookup && lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
+        if (!key) return false;
+        const identity = key === "douyin_leads"
+          ? `${key}@@${salesWorkflowActionForNote(lookup.optionLabel || lookup.defaultNote || "")}`
+          : key;
+        if (seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
+      });
     }
 
     function workflowLookupFromValue(value) {
@@ -15651,7 +15665,14 @@
           loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
         ]).then(renderDepartmentDayBoard);
       }
-      if (key === "ability") renderAbilityView();
+      if (key === "ability") {
+        renderAbilityView();
+        loadTaskSkills().then(() => {
+          if (document.querySelector("#abilityView.active") && state.currentAbilityKey) {
+            renderAbilityView();
+          }
+        }).catch(() => {});
+      }
       if (key !== "office") closeEmployeeModal();
       if (key === "personalSettings") loadPersonalSettings(true);
       if (key === "taskList") loadTasks({ reset: true });
@@ -22687,6 +22708,9 @@
         state.taskSkillsLoading = false;
         renderTaskAbilityBoard();
         renderHomeQuickGrid();
+        if (document.querySelector("#abilityView.active") && state.currentAbilityKey) {
+          renderAbilityView();
+        }
       }
     }
 
