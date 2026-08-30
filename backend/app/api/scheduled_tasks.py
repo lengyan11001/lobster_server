@@ -3544,6 +3544,212 @@ def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetim
     return db.query(ScheduledTask).filter(ScheduledTask.id == task.id).first()
 
 
+_WORKFLOW_MATERIAL_ID_KEYS = {
+    "video_asset_id",
+    "final_video_asset_id",
+    "video_material_id",
+    "image_asset_id",
+    "cover_asset_id",
+    "final_image_asset_id",
+    "image_material_id",
+    "asset_id",
+    "final_asset_id",
+    "material_asset_id",
+    "saved_asset_id",
+}
+_WORKFLOW_MATERIAL_URL_KEYS = {
+    "video_url",
+    "video_uri",
+    "video_file_url",
+    "image_url",
+    "cover_url",
+    "image_file_url",
+    "url",
+    "file_url",
+    "public_url",
+    "media_url",
+}
+_WORKFLOW_MATERIAL_CONTAINER_KEYS = {
+    "assets",
+    "saved_assets",
+    "result_refs",
+    "outputs",
+    "output",
+    "item",
+    "video_result",
+    "image_result",
+    "local_result",
+    "generated",
+}
+_WORKFLOW_MATERIAL_SKIP_KEYS = {"params", "input_refs", "request", "prompt", "requirements", "h5_context"}
+
+
+def _workflow_result_has_publishable_material(value: Any) -> bool:
+    """Match the material references consumed by the client publish resolver."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized_key = str(key or "").strip().lower()
+            if normalized_key in _WORKFLOW_MATERIAL_SKIP_KEYS:
+                continue
+            if normalized_key in _WORKFLOW_MATERIAL_ID_KEYS or normalized_key in _WORKFLOW_MATERIAL_URL_KEYS:
+                if isinstance(item, (str, int, float)) and str(item).strip():
+                    return True
+                if isinstance(item, list) and any(str(entry or "").strip() for entry in item):
+                    return True
+            if (
+                normalized_key in _WORKFLOW_MATERIAL_CONTAINER_KEYS
+                or isinstance(item, (dict, list))
+            ) and _workflow_result_has_publishable_material(item):
+                return True
+    elif isinstance(value, list):
+        return any(_workflow_result_has_publishable_material(item) for item in value)
+    return False
+
+
+def _workflow_task_context(task: ScheduledTask) -> tuple[str, str, str]:
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    if not context and isinstance(params.get("h5_context"), dict):
+        context = params["h5_context"]
+    source_mode = str(params.get("source_mode") or payload.get("source_mode") or "").strip().lower()
+    parent_node_id = str(
+        context.get("workflow_parent_node_id")
+        or params.get("source_workflow_node_id")
+        or payload.get("source_workflow_node_id")
+        or ""
+    ).strip()
+    template_id = str(context.get("workflow_template_id") or "").strip()
+    return source_mode, parent_node_id, template_id
+
+
+def _workflow_run_local_date(run: ScheduledTaskRun, timezone_offset_minutes: int):
+    progress = run.progress if isinstance(run.progress, dict) else {}
+    anchor = _parse_utc_datetime(progress.get("scheduled_at")) or run.created_at
+    if anchor is None:
+        return None
+    return (anchor + timedelta(minutes=timezone_offset_minutes)).date()
+
+
+def _workflow_dependency_state(
+    db: Session,
+    task: ScheduledTask,
+    *,
+    scheduled_at: datetime,
+    now: datetime,
+    installation_id: str,
+) -> str:
+    """Return ready, waiting, or skip for a parent_latest_run child task."""
+    source_mode, parent_node_id, template_id = _workflow_task_context(task)
+    if source_mode != "parent_latest_run" or not parent_node_id:
+        return "ready"
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    schedule_cfg = _schedule_config_from_payload(payload)
+    try:
+        timezone_offset = int(schedule_cfg.get("timezone_offset_minutes") if schedule_cfg.get("timezone_offset_minutes") is not None else 480)
+    except (TypeError, ValueError):
+        timezone_offset = 480
+    timezone_offset = max(-720, min(840, timezone_offset))
+    target_local_date = (scheduled_at + timedelta(minutes=timezone_offset)).date()
+
+    query = db.query(ScheduledTaskRun).filter(
+        ScheduledTaskRun.user_id == task.user_id,
+        ScheduledTaskRun.task_kind == "client_workflow",
+        ScheduledTaskRun.status.in_(tuple(_RUNNING_STATUSES | _FINAL_STATUSES)),
+    )
+    if installation_id:
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id == installation_id,
+                ScheduledTaskRun.claimed_by_installation_id == installation_id,
+            )
+        )
+    parent_runs: list[ScheduledTaskRun] = []
+    for run in query.order_by(ScheduledTaskRun.created_at.desc()).limit(500).all():
+        run_payload = run.payload if isinstance(run.payload, dict) else {}
+        run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else {}
+        run_params = run_payload.get("params") if isinstance(run_payload.get("params"), dict) else {}
+        if not run_context and isinstance(run_params.get("h5_context"), dict):
+            run_context = run_params["h5_context"]
+        if str(run_context.get("workflow_node_id") or "").strip() != parent_node_id:
+            continue
+        if template_id and str(run_context.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        if _workflow_run_local_date(run, timezone_offset) != target_local_date:
+            continue
+        parent_runs.append(run)
+
+    completed_with_material = any(
+        str(run.status or "").strip().lower() == "completed"
+        and _workflow_result_has_publishable_material(run.result_payload)
+        for run in parent_runs
+    )
+    if completed_with_material:
+        return "ready"
+    if any(str(run.status or "").strip().lower() in _RUNNING_STATUSES - {"pending"} for run in parent_runs):
+        return "waiting"
+    if any(str(run.status or "").strip().lower() == "pending" for run in parent_runs):
+        return "waiting"
+
+    # No run for this date means the parent either missed its window or has
+    # not reached it yet. A parent scheduled after the child is a malformed
+    # workflow and is skipped for this occurrence instead of generating a
+    # client-side "no publishable material" failure.
+    parent_tasks = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == task.user_id,
+            ScheduledTask.task_kind == "client_workflow",
+            ScheduledTask.status == "active",
+        )
+        .order_by(ScheduledTask.id.asc())
+        .limit(500)
+        .all()
+    )
+    parent_task = None
+    for candidate in parent_tasks:
+        candidate_payload = candidate.payload if isinstance(candidate.payload, dict) else {}
+        candidate_context = candidate_payload.get("h5_context") if isinstance(candidate_payload.get("h5_context"), dict) else {}
+        candidate_params = candidate_payload.get("params") if isinstance(candidate_payload.get("params"), dict) else {}
+        if not candidate_context and isinstance(candidate_params.get("h5_context"), dict):
+            candidate_context = candidate_params["h5_context"]
+        if str(candidate_context.get("workflow_node_id") or "").strip() != parent_node_id:
+            continue
+        if template_id and str(candidate_context.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        targets = _clean_installation_ids(candidate.target_installation_ids or [])
+        if installation_id and targets and installation_id not in targets:
+            continue
+        parent_task = candidate
+        break
+    if parent_task is None:
+        return "skip"
+
+    parent_cfg = _schedule_config_from_payload(parent_task.payload if isinstance(parent_task.payload, dict) else {})
+    parent_times = _normalize_daily_times(parent_cfg.get("daily_times") or []) if parent_task.schedule_type == "daily_times" else []
+    if parent_times:
+        parent_expected = None
+        for item in parent_times:
+            hour, minute = [int(value) for value in item.split(":", 1)]
+            local_expected = datetime(
+                target_local_date.year,
+                target_local_date.month,
+                target_local_date.day,
+                hour,
+                minute,
+            )
+            candidate_expected = local_expected - timedelta(minutes=timezone_offset)
+            if parent_expected is None or candidate_expected < parent_expected:
+                parent_expected = candidate_expected
+        if parent_expected is not None and parent_expected > now:
+            return "skip"
+    if str(parent_task.status or "").strip().lower() != "active":
+        return "skip"
+    if parent_task.next_run_at is None or parent_task.next_run_at <= now:
+        return "waiting"
+    return "skip"
+
+
 def _enqueue_due_tasks(
     db: Session,
     user_id: Optional[int] = None,
@@ -3601,6 +3807,19 @@ def _enqueue_due_tasks(
             seen_recurring_keys.add(dedup_key)
         scheduled_at = candidate.next_run_at
         if scheduled_at is None:
+            continue
+        dependency_state = _workflow_dependency_state(
+            db,
+            candidate,
+            scheduled_at=scheduled_at,
+            now=now,
+            installation_id=target_installation,
+        )
+        if dependency_state == "waiting":
+            continue
+        if dependency_state == "skip":
+            _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
+            expired_count += 1
             continue
         if _scheduled_occurrence_expired(candidate, scheduled_at, now):
             _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
