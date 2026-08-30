@@ -1404,3 +1404,40 @@ def test_clean_scheduled_daily_tasks_keeps_allowed_unique_values():
 
     assert tasks == ["moments_candidate", "industry_hot_oral", "professional_ip_oral"]
     assert studio._clean_scheduled_daily_tasks("moments_candidate") == []
+
+
+def test_ip_content_llm_timeout_keeps_proxy_fallback_budget(monkeypatch):
+    import httpx
+
+    from backend.app.api import ip_content_studio as studio
+
+    seen_timeouts = []
+
+    class TimeoutClient:
+        def __init__(self, **kwargs):
+            seen_timeouts.append(kwargs["timeout"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            raise httpx.ReadTimeout("provider timed out")
+
+    monkeypatch.setattr(studio.httpx, "AsyncClient", TimeoutClient)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            studio._post_llm_with_retry(
+                payload={},
+                headers={},
+                attempts=1,
+                timeout_seconds=30,
+            )
+        )
+
+    assert exc.value.status_code == 504
+    assert seen_timeouts
+    assert seen_timeouts[0].read >= studio._LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS

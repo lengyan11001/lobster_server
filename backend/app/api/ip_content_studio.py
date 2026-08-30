@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import os
 import re
 import time
@@ -33,10 +34,20 @@ from ..services.credits_amount import credits_json_float, quantize_credits, user
 from ..services.brand_context import user_brand_mark
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _SOURCE_META_KEY = "__lobster_ip_content_meta"
 _SOURCE_USAGE_KEY = "__lobster_ip_content_usage"
 _RETRY_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+# The sutui proxy gives each provider up to 180 seconds before moving to the
+# next route. Keep the caller timeout above that budget so provider timeout
+# fallback can complete instead of being cancelled by this wrapper first.
+_LLM_PROXY_PROVIDER_TIMEOUT_SECONDS = 180.0
+_LLM_PROXY_TIMEOUT_GRACE_SECONDS = 30.0
+_LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS = (
+    _LLM_PROXY_PROVIDER_TIMEOUT_SECONDS + _LLM_PROXY_TIMEOUT_GRACE_SECONDS
+)
+_LLM_DEFAULT_CALL_TIMEOUT_SECONDS = 420.0
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 
 
@@ -3423,13 +3434,16 @@ async def _post_llm_with_retry(
     payload: dict[str, Any],
     headers: dict[str, str],
     attempts: int = 3,
-    timeout_seconds: float = 150.0,
+    timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     attempts = max(1, int(attempts or 1))
     try:
-        timeout_value = max(10.0, float(timeout_seconds or 150.0))
+        timeout_value = max(
+            _LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS,
+            float(timeout_seconds or _LLM_DEFAULT_CALL_TIMEOUT_SECONDS),
+        )
     except (TypeError, ValueError):
-        timeout_value = 150.0
+        timeout_value = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS
     timeout = httpx.Timeout(
         timeout_value,
         connect=min(15.0, timeout_value),
@@ -3449,15 +3463,24 @@ async def _post_llm_with_retry(
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_detail = str(exc)
             if idx >= attempts - 1:
+                error_status = 504 if isinstance(exc, httpx.TimeoutException) else 502
                 raise HTTPException(
-                    status_code=502,
+                    status_code=error_status,
                     detail=_llm_upstream_failure_payload(
-                        status_code=502,
+                        status_code=error_status,
                         detail=last_detail,
                         attempts=attempts,
                         timeout_seconds=timeout_value,
                     ),
                 ) from exc
+            logger.warning(
+                "[ip-content] sutui request failed, retrying for provider fallback "
+                "attempt=%s/%s timeout=%s error=%s",
+                idx + 1,
+                attempts,
+                isinstance(exc, httpx.TimeoutException),
+                last_detail[:500],
+            )
             await asyncio.sleep(_retry_delay(idx))
             continue
         if resp.status_code < 400:
@@ -3510,7 +3533,7 @@ async def _call_ip_content_llm(
     extra_requirements: str,
     fallback_sources: Optional[list[dict[str, Any]]] = None,
     llm_attempts: int = 3,
-    llm_timeout_seconds: float = 150.0,
+    llm_timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 5), 20))
     fallback_sources = fallback_sources or []
@@ -3803,7 +3826,7 @@ async def _generate_and_save_ip_content_records(
     group_id: str = "",
     batch_size: Optional[int] = None,
     llm_attempts: int = 3,
-    llm_timeout_seconds: float = 150.0,
+    llm_timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
     progress: ScheduleProgress = None,
     task_label: str = "",
     reference_image_urls: Optional[list[str]] = None,
@@ -4223,12 +4246,12 @@ async def run_ip_content_daily_scheduled(
             "reference_image_count": len(template_reference_image_urls),
         },
     )
-    scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 1, minimum=1, maximum=3)
+    scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 2, minimum=1, maximum=3)
     scheduled_llm_timeout_seconds = _env_float(
         "IP_CONTENT_STUDIO_SCHEDULE_LLM_TIMEOUT_SEC",
-        120.0,
-        minimum=30.0,
-        maximum=300.0,
+        _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
+        minimum=_LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS,
+        maximum=900.0,
     )
     sync_results: list[dict[str, Any]] = []
     if opts.sync_before:
