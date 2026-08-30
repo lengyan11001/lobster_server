@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import ipaddress
 import logging
 import math
 import os
@@ -502,6 +503,28 @@ def _task_status_text(status: str) -> str:
     return mapping.get(_clean_text(status), _clean_text(status) or "处理中")
 
 
+def _is_internal_upstream_url(value: str) -> bool:
+    """Reject local/private URLs before they are submitted to Shanjian."""
+    raw = _clean_text(value)
+    if not raw.lower().startswith(("http://", "https://")):
+        return True
+    try:
+        parsed = urlparse(raw)
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+    except Exception:
+        return True
+    if not hostname:
+        return True
+    if hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "bhzn.top", "www.bhzn.top", "42.194.209.150"}:
+        return True
+    if hostname.endswith(".local"):
+        return True
+    try:
+        return not ipaddress.ip_address(hostname).is_global
+    except ValueError:
+        return False
+
+
 def _resolve_asset_or_url(
     *,
     request: Request,
@@ -513,8 +536,10 @@ def _resolve_asset_or_url(
 ) -> str:
     raw_url = _clean_text(url)
     if raw_url:
-        if raw_url.startswith("http://") or raw_url.startswith("https://"):
+        if raw_url.startswith(("http://", "https://")) and not _is_internal_upstream_url(raw_url):
             return raw_url
+        if raw_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail=f"{label} URL must be a public address reachable by Shanjian")
         raise HTTPException(status_code=400, detail=f"{label} URL 必须是 http(s) 地址")
     aid = _clean_text(asset_id)
     if not aid:
