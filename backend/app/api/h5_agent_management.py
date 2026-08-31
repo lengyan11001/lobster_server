@@ -20,7 +20,10 @@ from ..models import (
 )
 from .admin import _agent_sub_user_ids
 from .auth import get_current_user
-from .h5_workflows import _template_payload as _workflow_template_payload
+from .h5_workflows import (
+    _clear_workflow_template_cache,
+    _template_payload as _workflow_template_payload,
+)
 from .ip_content_studio import _template_payload as _ip_template_payload
 from .mobile_identity import online_user_for_mobile_user
 from .openclaw_memory_cloud import _doc_summary
@@ -350,6 +353,7 @@ def h5_agent_save_user_grants(
         requested_doc_ids=memory_requested,
     )
     db.commit()
+    _clear_workflow_template_cache()
     return {
         "ok": True,
         "user": _user_payload(target),

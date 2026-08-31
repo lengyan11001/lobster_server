@@ -2788,7 +2788,11 @@ def activate_workflow_template(
         raise HTTPException(status_code=400, detail="请选择设备")
     template = _accessible_template(db, body.template_id, owner.id)
     bound_iid = _clean_text(template.installation_id, 128)
-    if bound_iid and bound_iid != iid:
+    # A granted template belongs to the granting account's template namespace,
+    # but it must run on the recipient's own device. Only enforce the bound
+    # slot for templates owned by the account activating them.
+    is_granted_template = int(template.owner_user_id) != int(owner.id)
+    if bound_iid and bound_iid != iid and not is_granted_template:
         raise HTTPException(status_code=409, detail="该员工已绑定其他设备槽位，请从当前设备的员工列表进入")
     if not bound_iid and template.owner_user_id == owner.id:
         template.installation_id = iid
@@ -2798,9 +2802,13 @@ def activate_workflow_template(
     _assert_workflow_feature_permissions(db, owner.id, nodes)
     template_meta = template.meta if isinstance(template.meta, dict) else {}
     system_template_key = _clean_text(template_meta.get("system_template_key"), 128)
-    snapshot_extra = None
+    snapshot_extra = {"source": "granted"} if is_granted_template else None
     if system_template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
-        snapshot_extra = {"template_key": system_template_key, "source": "own"}
+        snapshot_extra = {
+            **(snapshot_extra or {}),
+            "template_key": system_template_key,
+            "source": "granted" if is_granted_template else "own",
+        }
     if body.plan_day is not None:
         snapshot_extra = {**(snapshot_extra or {"source": "own"}), "plan_day": body.plan_day}
     activation, stopped_ids, tasks = _activate_nodes_for_device(

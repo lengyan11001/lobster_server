@@ -1,14 +1,21 @@
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
+from backend.app.api import h5_workflows as workflow_api
 from backend.app.api.h5_workflows import (
+    WorkflowActivateIn,
     WorkflowTemplateIn,
+    _accessible_template,
     _template_payload,
+    activate_workflow_template,
     create_workflow_template,
     delete_workflow_template,
     update_workflow_template,
     _clean_nodes,
 )
-from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, ScheduledTask
+from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, H5WorkflowTemplateGrant, ScheduledTask
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +55,78 @@ def _douyin_private_body(params: dict | None = None) -> WorkflowTemplateIn:
             }
         ],
     )
+
+
+def test_granted_workflow_can_activate_on_recipient_device_and_stays_read_only(
+    db_session, test_user, other_user, monkeypatch
+):
+    source = H5WorkflowTemplate(
+        owner_user_id=test_user.id,
+        installation_id="agent-device",
+        name="代理商员工",
+        nodes=_sales_body("代理商任务").nodes,
+        status="active",
+        meta={},
+    )
+    db_session.add(source)
+    db_session.commit()
+    db_session.refresh(source)
+    db_session.add(
+        H5WorkflowTemplateGrant(
+            template_id=source.id,
+            owner_user_id=test_user.id,
+            target_user_id=other_user.id,
+            status="active",
+        )
+    )
+    db_session.commit()
+
+    assert _accessible_template(db_session, source.id, other_user.id).id == source.id
+
+    captured = {}
+
+    def fake_activate_nodes_for_device(**kwargs):
+        captured.update(kwargs)
+        activation = type(
+            "Activation",
+            (),
+            {
+                "id": 1,
+                "user_id": other_user.id,
+                "installation_id": "recipient-device",
+                "template_id": source.id,
+                "status": "active",
+                "scheduled_task_ids": [],
+                "started_at": None,
+                "stopped_at": None,
+                "updated_at": None,
+                "template_snapshot": {"source": "granted"},
+            },
+        )()
+        return activation, [], []
+
+    monkeypatch.setattr(workflow_api, "online_user_for_mobile_user", lambda db, user: user)
+    monkeypatch.setattr(workflow_api, "_assert_workflow_feature_permissions", lambda db, user_id, nodes: None)
+    monkeypatch.setattr(workflow_api, "_activate_nodes_for_device", fake_activate_nodes_for_device)
+
+    result = activate_workflow_template(
+        WorkflowActivateIn(template_id=source.id, installation_id="recipient-device"),
+        current_user=other_user,
+        db=db_session,
+    )
+
+    assert captured["installation_id"] == "recipient-device"
+    assert captured["template_owner_user_id"] == test_user.id
+    assert result["activation"]["template_source"] == "granted"
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_workflow_template(
+            source.id,
+            WorkflowTemplateIn(name="不应修改", nodes=_sales_body("不应修改").nodes),
+            current_user=other_user,
+            db=db_session,
+        )
+    assert exc_info.value.status_code == 404
 
 
 def test_douyin_private_switch_is_explicitly_stored_and_returned(db_session, test_user):
@@ -445,6 +524,9 @@ def test_existing_workflow_payload_hides_legacy_placeholder_nodes():
 def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    editor = script.split("function openWorkflowTemplateEditor", 1)[1].split(
+        "async function loadWorkflowTemplates", 1
+    )[0]
 
     assert 'meta: { copied_from: String(tpl.id || ""), copied_source: tpl.source || "" }' in script
     assert 'system_template_key: "system_sales"' in script
@@ -459,6 +541,8 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);" in script
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
+    assert 'openCustomEmployeeDetail(id);' in editor
+    assert 'else if (!workflowTemplateCanEdit(tpl))' in editor
     assert 'meta.system_template_key || state.workflowViewingTemplateKey' not in script
     assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
     assert "20260730-workflow-menu-v2" in html

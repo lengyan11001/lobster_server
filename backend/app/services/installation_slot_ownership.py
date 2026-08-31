@@ -14,6 +14,11 @@ from ..models import (
     H5ChatEvent,
     H5ChatMessage,
     H5WorkflowActivation,
+    H5WorkflowTemplate,
+    H5MountedAccountDefault,
+    DouyinDashboardDeviceState,
+    OpenClawMemoryDocument,
+    RecorderAudioRecord,
     InstallationSlotOwner,
     ScheduledTask,
     ScheduledTaskRun,
@@ -24,6 +29,7 @@ from .brand_context import scoped_installation_id, user_brand_mark
 
 _INSTALLATION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{8,128}$")
 _ACTIVE_STATUSES = {"pending", "processing"}
+_PENDING_SLOT_STATUSES = {"pending", "queued", "waiting", "claimed"}
 _SLOT_TRANSFER_REASON = "该槽位已被后登录来源接管，先前来源任务已停止"
 
 
@@ -72,6 +78,115 @@ def _task_targets_slot(task: ScheduledTask, slot_ids: Set[str]) -> bool:
     if not isinstance(targets, list):
         return False
     return bool(slot_ids.intersection(str(item or "").strip() for item in targets))
+
+
+def migrate_installation_slot_references(
+    db: Session,
+    *,
+    user_id: int,
+    previous_installation_id: str,
+    installation_id: str,
+    now: datetime | None = None,
+) -> Dict[str, int]:
+    """Move pending workflow references when a client receives a new slot id."""
+    old = _normalize_installation_id(previous_installation_id)
+    new = _normalize_installation_id(installation_id)
+    if not old or not new or old == new:
+        return {}
+    now = now or datetime.utcnow()
+    stats: Dict[str, int] = {
+        "tasks": 0,
+        "runs": 0,
+        "messages": 0,
+        "activations": 0,
+        "templates": 0,
+        "mounted_defaults": 0,
+        "douyin_states": 0,
+        "memory_docs": 0,
+        "recorder_rows": 0,
+        "presence": 0,
+    }
+    user = db.query(User).filter(User.id == user_id).first()
+    old_ids = {old}
+    if user is not None:
+        scoped = scoped_installation_id(old, user_brand_mark(user))
+        if scoped:
+            old_ids.add(scoped)
+
+    for task in db.query(ScheduledTask).filter(ScheduledTask.user_id == user_id).all():
+        targets = task.target_installation_ids
+        if not isinstance(targets, list):
+            continue
+        changed = False
+        replaced: list[str] = []
+        for item in targets:
+            value = str(item or "").strip()
+            if value in old_ids:
+                value = new
+                changed = True
+            if value and value not in replaced:
+                replaced.append(value[:128])
+        if changed:
+            task.target_installation_ids = replaced
+            task.updated_at = now
+            stats["tasks"] += 1
+
+    runs = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status.in_(tuple(_PENDING_SLOT_STATUSES)),
+        )
+        .all()
+    )
+    for run in runs:
+        changed = False
+        if str(run.installation_id or "").strip() in old_ids:
+            run.installation_id = new
+            changed = True
+        if str(run.claimed_by_installation_id or "").strip() in old_ids:
+            run.claimed_by_installation_id = None
+            changed = True
+        if not changed:
+            continue
+        run.updated_at = now
+        stats["runs"] += 1
+        if run.h5_message_id:
+            message = db.query(H5ChatMessage).filter(H5ChatMessage.id == run.h5_message_id).first()
+            if message is not None:
+                if str(message.installation_id or "").strip() in old_ids:
+                    message.installation_id = new
+                if str(message.claimed_by_installation_id or "").strip() in old_ids:
+                    message.claimed_by_installation_id = None
+                message.updated_at = now
+                stats["messages"] += 1
+
+    for model, field, stat_key, user_field in (
+        (H5WorkflowActivation, "installation_id", "activations", "user_id"),
+        (H5WorkflowTemplate, "installation_id", "templates", "owner_user_id"),
+        (H5MountedAccountDefault, "installation_id", "mounted_defaults", "user_id"),
+        (DouyinDashboardDeviceState, "installation_id", "douyin_states", "user_id"),
+        (OpenClawMemoryDocument, "installation_id", "memory_docs", "target_user_id"),
+        (RecorderAudioRecord, "installation_id", "recorder_rows", "user_id"),
+    ):
+        for row in db.query(model).filter(getattr(model, user_field) == user_id).all():
+            if str(getattr(row, field, "") or "").strip() not in old_ids:
+                continue
+            setattr(row, field, new)
+            if hasattr(row, "updated_at"):
+                row.updated_at = now
+            stats[stat_key] += 1
+
+    stats["presence"] = int(
+        db.query(H5ChatDevicePresence)
+        .filter(
+            H5ChatDevicePresence.user_id == user_id,
+            H5ChatDevicePresence.installation_id.in_(tuple(old_ids)),
+        )
+        .delete(synchronize_session=False)
+        or 0
+    )
+    return stats
 
 
 def _add_cancel_event(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,7 +11,16 @@ from backend.app.api.h5_chat import router as h5_chat_router
 from backend.app.api.scheduled_tasks import router as scheduled_tasks_router
 from backend.app.api.settings_api import router as settings_router
 from backend.app.db import get_db
-from backend.app.models import InstallationSlotOwner, User, UserInstallation, UserMachineIdentity
+from backend.app.models import (
+    H5ChatMessage,
+    InstallationSlotOwner,
+    ScheduledTask,
+    ScheduledTaskRun,
+    User,
+    UserInstallation,
+    UserMachineIdentity,
+)
+from backend.app.services.installation_slot_ownership import migrate_installation_slot_references
 
 
 def _client_for_user(db_session_factory, user_id: int) -> TestClient:
@@ -243,6 +253,106 @@ def test_bind_keeps_signed_slot_when_machine_identity_changes_after_ota(
     payload = repaired_again.json()
     assert payload["installation_id"] == signed_slot
     assert payload["signature_reason"] == "already_signed"
+
+
+def test_bind_reuses_sole_stale_slot_after_reinstall(db_session_factory, test_user):
+    client = _client_for_user(db_session_factory, test_user.id)
+    old = "u1-" + "a" * 32
+    # Make the legacy slot look like the one left by an old installation.
+    session = db_session_factory()
+    try:
+        row = UserInstallation(user_id=test_user.id, installation_id=old, last_seen_at=datetime.utcnow() - timedelta(days=3))
+        session.add(row)
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": "fresh-reinstall-slot"},
+        json={
+            "installation_id": "fresh-reinstall-slot",
+            "device_id": "fresh-reinstall-slot",
+            "machine_instance_id": "machine-after-reinstall",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["installation_id"] == old
+    assert payload["replaced_installation_id"] == "fresh-reinstall-slot"
+
+
+def test_migrate_installation_slot_references_moves_pending_only(db_session, test_user):
+    now = datetime.utcnow()
+    old, new = "legacy-slot-001", "current-slot-001"
+    task = ScheduledTask(
+        user_id=test_user.id,
+        title="workflow",
+        task_kind="client_workflow",
+        content="run",
+        payload={},
+        schedule_type="once",
+        target_installation_ids=[old],
+        status="active",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(task)
+    db_session.flush()
+    msg = H5ChatMessage(
+        id="slot-migrate-message",
+        user_id=test_user.id,
+        installation_id=old,
+        mode="scheduled_task",
+        content="run",
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    pending = ScheduledTaskRun(
+        id="slot-migrate-pending",
+        task_id=task.id,
+        user_id=test_user.id,
+        installation_id=old,
+        title="workflow",
+        task_kind="client_workflow",
+        content="run",
+        payload={},
+        status="pending",
+        h5_message_id=msg.id,
+        created_at=now,
+        updated_at=now,
+    )
+    processing = ScheduledTaskRun(
+        id="slot-migrate-processing",
+        task_id=task.id,
+        user_id=test_user.id,
+        installation_id=old,
+        title="workflow",
+        task_kind="client_workflow",
+        content="run",
+        payload={},
+        status="processing",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([msg, pending, processing])
+    db_session.commit()
+
+    stats = migrate_installation_slot_references(
+        db_session,
+        user_id=test_user.id,
+        previous_installation_id=old,
+        installation_id=new,
+    )
+    db_session.commit()
+    db_session.refresh(task)
+    db_session.refresh(pending)
+    db_session.refresh(processing)
+    assert task.target_installation_ids == [new]
+    assert pending.installation_id == new
+    assert processing.installation_id == old
+    assert stats["tasks"] == 1 and stats["runs"] == 1
 
 
 def test_h5_device_status_dispatch_and_online_claim_use_the_same_slot(

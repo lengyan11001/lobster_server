@@ -6666,16 +6666,11 @@
       if (!tpl) throw new Error("员工模板不存在");
       if (tpl.source === "system" && String(tpl.id || "") === "system_sales") {
         prepareSalesWorkflowDraft();
+      } else if (!workflowTemplateCanEdit(tpl)) {
+        openCustomEmployeeDetail(id);
+        return;
       } else {
         applyWorkflowTemplate(tpl);
-        if (!workflowTemplateCanEdit(tpl)) {
-          state.workflowEditingTemplateId = "";
-          state.workflowEditingTemplateMeta = {
-            copied_from: String(tpl.id || ""),
-            copied_source: String(tpl.source || ""),
-          };
-          state.workflowViewingTemplateId = "";
-        }
       }
       closeCustomEmployeeDialog();
       switchTab("workflow");

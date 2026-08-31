@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import ipaddress
 import os
 import uuid
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -744,6 +746,31 @@ def _missing_local_bestseller_profile_fields(profile: Dict[str, Any]) -> List[st
     return missing
 
 
+def _is_public_upstream_url(value: Any) -> bool:
+    url = _clean_profile_text(value, 2000)
+    if not url.lower().startswith(("http://", "https://")):
+        return False
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        path = (parsed.path or "").lower()
+        if not hostname or hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+            return False
+        if "bhzn.top" in hostname or "42.194.209.150" in hostname:
+            return False
+        if path.startswith("/api/assets/file/") or path.startswith("/api/assets/temp/"):
+            return False
+        try:
+            address = ipaddress.ip_address(hostname)
+            if not address.is_global:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 def _server_asset_public_url(db: Session, *, user_id: int, asset_id: Any) -> str:
     clean_asset_id = _clean_profile_text(asset_id, 64)
     if not clean_asset_id:
@@ -754,7 +781,7 @@ def _server_asset_public_url(db: Session, *, user_id: int, asset_id: Any) -> str
         .first()
     )
     source_url = _clean_profile_text(row[0] if row else "", 2000)
-    return source_url if source_url.lower().startswith(("http://", "https://")) else ""
+    return source_url if _is_public_upstream_url(source_url) else ""
 
 
 def _enrich_local_bestseller_workflow_payload(
@@ -783,18 +810,22 @@ def _enrich_local_bestseller_workflow_payload(
         # One-off H5 tasks may intentionally override selected persona fields while inheriting the rest.
         merged_profile = dict(persona_profile)
         merged_profile.update(explicit_profile)
-        if _clean_profile_text(explicit_profile.get("photo_url"), 2000).lower().startswith(("http://", "https://")):
+        if _is_public_upstream_url(explicit_profile.get("photo_url")):
             merged_profile.pop("photo_asset_id", None)
     else:
         # Employee workflows always follow the current IP persona; old templates may carry stale placeholders.
         merged_profile = dict(explicit_profile)
         merged_profile.update(persona_profile)
+    direct_photo_url = _clean_profile_text(merged_profile.get("photo_url"), 2000)
+    if direct_photo_url and not _is_public_upstream_url(direct_photo_url):
+        # Preview/signature URLs are for the UI only. Keep the asset ID so Online can resolve a real public source_url.
+        merged_profile.pop("photo_url", None)
     photo_asset_id = _clean_profile_text(merged_profile.get("photo_asset_id"), 64)
     if photo_asset_id:
         server_photo_url = _server_asset_public_url(db, user_id=target_user_id, asset_id=photo_asset_id)
         if server_photo_url:
             merged_profile["photo_url"] = server_photo_url
-        if _clean_profile_text(merged_profile.get("photo_url"), 2000).lower().startswith(("http://", "https://")):
+        if _is_public_upstream_url(merged_profile.get("photo_url")):
             # Older online clients try every supplied asset ID against their local database.
             # Keep the server ID as metadata and send only the public URL in the execution profile.
             params["profile_photo_source_asset_id"] = photo_asset_id

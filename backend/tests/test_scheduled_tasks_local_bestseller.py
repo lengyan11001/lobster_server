@@ -40,6 +40,60 @@ def test_local_bestseller_resolves_server_photo_for_older_online_clients(db_sess
     assert payload["params"]["profile_photo_source_asset_id"] == "server-photo-1"
 
 
+def test_local_bestseller_drops_internal_photo_source_url(db_session, test_user):
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
+            status="active",
+            requirements={"profile_photo_asset_id": "internal-photo-1"},
+        )
+    )
+    db_session.add(
+        Asset(
+            asset_id="internal-photo-1",
+            user_id=test_user.id,
+            filename="assets/internal-photo-1.png",
+            media_type="image",
+            source_url="http://127.0.0.1:8000/api/assets/file/internal-photo-1?token=abc",
+        )
+    )
+    db_session.commit()
+
+    payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={"action": "local_bestseller_daily_video", "params": {}},
+        target_user_id=test_user.id,
+        now=datetime(2026, 7, 28, 6, 0),
+    )
+
+    profile = payload["params"]["profile"]
+    assert "photo_url" not in profile
+    assert profile["photo_asset_id"] == "internal-photo-1"
+
+
+def test_local_bestseller_keeps_asset_id_when_override_url_is_internal(db_session, test_user):
+    payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {
+                "profile_override": True,
+                "profile": {
+                    "photo_url": "http://127.0.0.1:8000/api/assets/file/local-photo?token=abc",
+                    "photo_asset_id": "local-photo-1",
+                },
+            },
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 7, 28, 6, 0),
+    )
+
+    profile = payload["params"]["profile"]
+    assert "photo_url" not in profile
+    assert profile["photo_asset_id"] == "local-photo-1"
+
+
 def test_employee_workflow_keeps_its_original_day_start_across_daily_runs(db_session, test_user):
     first_payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
         db_session,
