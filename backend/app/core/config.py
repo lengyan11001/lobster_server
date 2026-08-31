@@ -130,6 +130,8 @@ class Settings(BaseSettings):
     fuiou_ins_cd: Optional[str] = None
     """是否启用幂等重复下单（Reserved_repeat_order=1）"""
     fuiou_repeat_order: Optional[str] = None
+    """按 OEM 覆盖富友商户配置的 JSON 映射；未命中时回退系统级 FUIOU_*。"""
+    fuiou_brand_configs_json: Optional[str] = None
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
     openclaw_agent_id: str = "main"

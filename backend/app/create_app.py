@@ -821,6 +821,9 @@ def _migrate_recharge_callback_audit():
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN callback_amount_fen INTEGER"))
             if "wechat_transaction_id" not in cols:
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN wechat_transaction_id VARCHAR(64)"))
+            if "brand_mark" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN brand_mark VARCHAR(64)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_recharge_orders_brand_mark ON recharge_orders (brand_mark)"))
     except Exception as e:
         logger.warning("Migration recharge_orders callback_audit skipped: %s", e)
 

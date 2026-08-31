@@ -34,6 +34,7 @@ from ..services.fuiou_pay import (
     gen_order_no as fuiou_gen_order_no,
     parse_notify as fuiou_parse_notify,
 )
+from ..services.brand_context import user_brand_mark
 
 logger = logging.getLogger(__name__)
 
@@ -634,13 +635,14 @@ async def create_fuiou_recharge_order(
 ):
     if not _use_independent_recharge():
         raise HTTPException(status_code=400, detail="当前未启用自有充值")
-    if not fuiou_configured():
+    brand_mark = user_brand_mark(current_user)
+    if not fuiou_configured(brand_mark):
         raise HTTPException(status_code=400, detail="未配置富友支付（FUIOU_MCHNT_CD / FUIOU_MCHNT_KEY / FUIOU_PRECREATE_URL）")
     pricing = _get_billing_pricing()
     amount_yuan, amount_fen, credits = _calc_amount_from_body(body, pricing)
     total_fen = amount_fen if amount_fen else amount_yuan * 100
     order_type = _normalize_fuiou_order_type(body)
-    mchnt_order_no = fuiou_gen_order_no()
+    mchnt_order_no = fuiou_gen_order_no(brand_mark)
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
@@ -649,6 +651,7 @@ async def create_fuiou_recharge_order(
         status="pending",
         out_trade_no=mchnt_order_no,
         payment_method=_fuiou_payment_method(order_type),
+        brand_mark=brand_mark,
     )
     db.add(order)
     db.commit()
@@ -663,6 +666,7 @@ async def create_fuiou_recharge_order(
             notify_url=notify_url,
             goods_des=f"recharge {credits} credits",
             order_type=order_type,
+            brand_mark=brand_mark,
         )
     except Exception as e:
         logger.exception("[fuiou] order pay failed: %s", e)
@@ -706,9 +710,6 @@ async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     except Exception:
         logger.warning("[fuiou] notify: invalid JSON")
         return PlainTextResponse("0", status_code=400)
-    ok, data = fuiou_parse_notify(data)
-    if not ok:
-        return PlainTextResponse("0", status_code=400)
     out_trade_no = (data.get("mchnt_order_no") or "").strip()
     if not out_trade_no:
         logger.warning("[fuiou] notify: missing mchnt_order_no")
@@ -717,6 +718,11 @@ async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     if not order:
         logger.warning("[fuiou] notify: order not found mchnt_order_no=%s", out_trade_no)
         return PlainTextResponse("1")
+    # Resolve the signing key from the OEM captured on the order. Legacy orders
+    # have no brand_mark and intentionally use the existing system config.
+    ok, data = fuiou_parse_notify(data, getattr(order, "brand_mark", None))
+    if not ok:
+        return PlainTextResponse("0", status_code=400)
     if order.status == "paid":
         return PlainTextResponse("1")
     raw_amt = data.get("order_amt")
@@ -737,7 +743,17 @@ async def fuiou_query_recharge_order(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not fuiou_configured():
+    out_trade_no = (out_trade_no or "").strip()
+    if not out_trade_no:
+        raise HTTPException(status_code=400, detail="out_trade_no is required")
+    order = db.query(RechargeOrder).filter(
+        RechargeOrder.out_trade_no == out_trade_no,
+        RechargeOrder.user_id == current_user.id,
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+    brand_mark = getattr(order, "brand_mark", None)
+    if not fuiou_configured(brand_mark):
         raise HTTPException(status_code=400, detail="未配置富友支付")
     out_trade_no = (out_trade_no or "").strip()
     if not out_trade_no:
@@ -757,6 +773,7 @@ async def fuiou_query_recharge_order(
         result = await fuiou_order_query(
             mchnt_order_no=out_trade_no[:30],
             order_type=order_type,
+            brand_mark=brand_mark,
         )
     except Exception as e:
         logger.warning("[fuiou] query order failed: %s", e)

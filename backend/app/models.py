@@ -900,6 +900,8 @@ class RechargeOrder(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)  # pending, paid, cancelled
     out_trade_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     payment_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # 创建订单时锁定 OEM，回调/查询时据此选择对应富友商户密钥。
+    brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     # 审计：微信回调中的实付金额(分)、微信交易号，用于校验与对账
