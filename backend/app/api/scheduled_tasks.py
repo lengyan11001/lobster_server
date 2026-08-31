@@ -4909,6 +4909,44 @@ def submit_scheduled_task_event(
     if _expire_workflow_node_run(db, row, now=now):
         db.commit()
         raise HTTPException(status_code=409, detail=row.error or "节点时间已结束，任务已取消")
+    # A local client reports the absolute workflow-node cutoff explicitly.
+    # Persist that terminal state here so a worker that stopped at the
+    # boundary cannot remain ``processing`` forever when the compatibility
+    # expiry hook is disabled for FIFO scheduling.
+    event_payload = body.payload if isinstance(body.payload, dict) else {}
+    deadline_reason = str(event_payload.get("reason") or "").strip().lower()
+    if (
+        str(body.type or "").strip().lower() == "cancelled"
+        and deadline_reason == "workflow_node_deadline_expired"
+        and str(row.status or "").strip().lower() not in _FINAL_STATUSES
+    ):
+        message = str(
+            event_payload.get("text")
+            or "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
+        ).strip()
+        row.status = "cancelled"
+        row.error = message
+        row.finished_at = now
+        row.updated_at = now
+        row.progress = _merge_run_progress(
+            row,
+            {
+                **event_payload,
+                "stage": "workflow_node_deadline_expired",
+                "text": message,
+                "reason": "workflow_node_deadline_expired",
+                "cancelled_at": now.isoformat(),
+            },
+        )
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task:
+            task.last_error = message
+            task.updated_at = now
+        _sync_h5_message_from_run(db, row, now)
+        _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", event_payload)
+        db.commit()
+        return {"ok": True, "status": row.status, "cancelled": True}
+
     progress = dict(body.payload or {})
     client_process_id = _header_client_process_id(request)
     if client_process_id:
