@@ -13,7 +13,7 @@ from ..api.scheduled_tasks import (
     _fail_abandoned_client_runs,
 )
 from ..db import SessionLocal
-from ..models import CreativeGenerationJob, H5ChatApproval, H5ChatEvent, H5ChatMessage
+from ..models import CreativeGenerationJob, H5ChatApproval, H5ChatEvent, H5ChatMessage, RechargeOrder
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
         "chat_messages_expired": 0,
         "approvals_repaired": 0,
         "creative_jobs_expired": 0,
+        "fuiou_orders_expired": 0,
     }
     db = SessionLocal()
     try:
@@ -141,6 +142,34 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
             meta.update({"expired_at": now.isoformat(), "expiry_reason": "stale_generation_state"})
             job.meta = meta
         result["creative_jobs_expired"] = len(stale_jobs)
+
+        # Release OEM inventory reservations held by unpaid Fuiou orders. The
+        # timeout is deliberately short enough to prevent stock being trapped,
+        # while still allowing a normal QR-code payment window.
+        try:
+            pending_minutes = max(5, min(24 * 60, int(os.environ.get("FUIOU_PENDING_ORDER_EXPIRY_MINUTES") or "30")))
+        except (TypeError, ValueError):
+            pending_minutes = 30
+        fuiou_cutoff = now - timedelta(minutes=pending_minutes)
+        stale_orders = (
+            db.query(RechargeOrder)
+            .filter(
+                RechargeOrder.status == "pending",
+                RechargeOrder.payment_method.like("fuiou_%"),
+                RechargeOrder.created_at < fuiou_cutoff,
+            )
+            .order_by(RechargeOrder.created_at.asc())
+            .with_for_update(skip_locked=True)
+            .limit(500)
+            .all()
+        )
+        if stale_orders:
+            from ..api.billing import _release_hikong_inventory
+
+            for order in stale_orders:
+                _release_hikong_inventory(db, order)
+                order.status = "cancelled"
+        result["fuiou_orders_expired"] = len(stale_orders)
 
         db.commit()
         return result

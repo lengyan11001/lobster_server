@@ -902,6 +902,9 @@ class RechargeOrder(Base):
     payment_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     # 创建订单时锁定 OEM，回调/查询时据此选择对应富友商户密钥。
     brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    # OEM inventory reservation for brand-funded recharge (currently Hikong).
+    agent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    agent_reserved_credits: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     # 审计：微信回调中的实付金额(分)、微信交易号，用于校验与对账

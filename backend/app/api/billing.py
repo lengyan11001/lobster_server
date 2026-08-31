@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -25,6 +26,7 @@ from ..services.credits_amount import (
     credits_json_float_signed,
     ledger_display_delta,
     quantize_credits,
+    user_balance_decimal,
 )
 from ..services.daily_credit_limit import daily_limit_status, set_user_daily_limit
 from ..services.fuiou_pay import (
@@ -34,7 +36,7 @@ from ..services.fuiou_pay import (
     gen_order_no as fuiou_gen_order_no,
     parse_notify as fuiou_parse_notify,
 )
-from ..services.brand_context import user_brand_mark
+from ..services.brand_context import PHONE_EMAIL_SUFFIX, user_brand_mark, user_for_account
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,75 @@ def _public_credit_history_description(entry_type: str, delta: Any = None) -> st
 def _get_public_base_url() -> str:
     """支付回调等用。未配置 PUBLIC_BASE_URL 时用本机 IP:PORT。"""
     return get_effective_public_base_url()
+
+
+_HIKONG_BRAND = "hikong"
+_HIKONG_AGENT_PHONE = "13510019898"
+
+
+def _hikong_agent(db: Session) -> Optional[User]:
+    return user_for_account(db, f"{_HIKONG_AGENT_PHONE}{PHONE_EMAIL_SUFFIX}", _HIKONG_BRAND)
+
+
+def _reserve_hikong_inventory(db: Session, user: User, credits: int) -> Optional[User]:
+    """Reserve Hikong agent credits for a new recharge order.
+
+    The reservation is an immediate debit, so concurrent orders cannot spend the
+    same inventory. Returns the agent row or None for non-Hikong users.
+    """
+    if user_brand_mark(user) != _HIKONG_BRAND:
+        return None
+    agent = _hikong_agent(db)
+    if not agent:
+        raise HTTPException(status_code=409, detail="海康充值库存不足")
+    # Lock where supported (PostgreSQL); SQLite still serializes the enclosing
+    # write transaction for this short critical section.
+    try:
+        locked = db.query(User).filter(User.id == agent.id).with_for_update().first()
+        if locked:
+            agent = locked
+    except Exception:
+        pass
+    need = quantize_credits(credits)
+    balance = user_balance_decimal(agent)
+    if balance < need:
+        raise HTTPException(status_code=409, detail="海康充值库存不足")
+    agent.credits = quantize_credits(balance - need)
+    append_credit_ledger(
+        db,
+        agent.id,
+        -need,
+        "pre_deduct",
+        agent.credits,
+        description="海康 OEM 充值库存预扣",
+        ref_type="recharge_order",
+        meta={"brand_mark": _HIKONG_BRAND, "inventory": True, "credits": float(need)},
+    )
+    return agent
+
+
+def _release_hikong_inventory(db: Session, order: RechargeOrder) -> None:
+    reserved = quantize_credits(getattr(order, "agent_reserved_credits", None) or 0)
+    agent_id = getattr(order, "agent_user_id", None)
+    if not agent_id or reserved <= 0:
+        return
+    agent = db.query(User).filter(User.id == agent_id).with_for_update().first()
+    if not agent:
+        logger.error("[fuiou] Hikong inventory agent missing id=%s order=%s", agent_id, order.out_trade_no)
+        return
+    agent.credits = quantize_credits(user_balance_decimal(agent) + reserved)
+    append_credit_ledger(
+        db,
+        agent.id,
+        reserved,
+        "refund",
+        agent.credits,
+        description="海康充值下单失败，退回库存预扣",
+        ref_type="recharge_order",
+        ref_id=order.out_trade_no,
+        meta={"brand_mark": _HIKONG_BRAND, "inventory_release": True},
+    )
+    order.agent_reserved_credits = Decimal("0")
 
 
 def _agent_level(user: Optional[User]) -> int:
@@ -643,6 +714,7 @@ async def create_fuiou_recharge_order(
     total_fen = amount_fen if amount_fen else amount_yuan * 100
     order_type = _normalize_fuiou_order_type(body)
     mchnt_order_no = fuiou_gen_order_no(brand_mark)
+    inventory_agent = _reserve_hikong_inventory(db, current_user, credits)
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
@@ -652,6 +724,8 @@ async def create_fuiou_recharge_order(
         out_trade_no=mchnt_order_no,
         payment_method=_fuiou_payment_method(order_type),
         brand_mark=brand_mark,
+        agent_user_id=inventory_agent.id if inventory_agent else None,
+        agent_reserved_credits=quantize_credits(credits) if inventory_agent else None,
     )
     db.add(order)
     db.commit()
@@ -669,9 +743,17 @@ async def create_fuiou_recharge_order(
             brand_mark=brand_mark,
         )
     except Exception as e:
+        if inventory_agent:
+            _release_hikong_inventory(db, order)
+            order.status = "cancelled"
+            db.commit()
         logger.exception("[fuiou] order pay failed: %s", e)
         raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
     if not result.get("ok"):
+        if inventory_agent:
+            _release_hikong_inventory(db, order)
+            order.status = "cancelled"
+            db.commit()
         detail = result.get("result_msg") or "富友下单返回异常"
         logger.warning("[fuiou] order pay error: code=%s msg=%s", result.get("result_code"), detail)
         raise HTTPException(status_code=502, detail=detail)
@@ -700,6 +782,8 @@ async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     ③ 已支付订单再次回调返回 "1" 不重复加积分（防重放）。
     富友要求：成功处理后返回字符串 "1"，最多回调 5 次，间隔 30 秒。
     """
+    # Keep the legacy guard for deployments that have no system merchant at
+    # all; the normal production setup retains it as the fallback merchant.
     if not fuiou_configured():
         logger.warning("[fuiou] notify: not configured")
         return PlainTextResponse("0", status_code=500)
