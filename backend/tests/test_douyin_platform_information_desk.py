@@ -282,3 +282,24 @@ def test_compact_items_keeps_real_billboard_fields_and_uses_meaningful_fallback_
     )
     assert accounts[0]["title"] == "示例账号"
     assert accounts[0]["metrics"] == {"fans_cnt": 1000, "new_fans_cnt": 20}
+
+
+def test_hot_search_uses_word_instead_of_numeric_label_and_prefers_main_word_list():
+    from backend.app.services.douyin_platform_information_desk import _compact_items
+
+    items = _compact_items(
+        {
+            "data": {
+                "trending_list": [{"word": "实时上升词", "label": "0", "hot_value": "999"}],
+                "word_list": [{"word": "真正热搜词", "label": "0", "hot_value": "123456", "view_count": "789"}],
+            }
+        },
+        "hot_search",
+    )
+    assert items == [
+        {
+            "rank": 1,
+            "title": "真正热搜词",
+            "metrics": {"hot_value": 123456, "view_count": 789},
+        }
+    ]

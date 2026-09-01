@@ -37,6 +37,8 @@ _PREFERRED_ITEM_KEYS = (
     "objs",
     "item_list",
     "music_list",
+    "word_list",
+    "trending_list",
     "category_list",
     "user_list",
     "authors",
@@ -293,7 +295,7 @@ def _compact_item(value: Any, index: int, source_key: str | None = None) -> dict
     item: dict[str, Any] = {"rank": index + 1}
     field_aliases = {
         "id": ("id", "aweme_id", "item_id", "video_id", "challenge_id", "topic_id", "music_id", "sentence_id", "uid", "user_id", "author_id", "code", "music_info", "attribute_datas"),
-        "title": ("title", "item_title", "desc", "description", "sentence", "challenge_name", "topic_name", "music_name", "display_name", "label", "name", "word", "keyword", "music_info"),
+        "title": ("title", "item_title", "desc", "description", "sentence", "challenge_name", "topic_name", "music_name", "display_name", "name", "word", "keyword", "label", "music_info"),
         "author": ("author", "author_name", "nick_name", "nickname", "username", "user_name", "owner_nickname", "sec_uid", "music_info", "attribute_datas"),
         "url": ("url", "item_url", "share_url", "web_url", "video_url", "homepage_url", "author_link", "play_url"),
         "cover_url": ("item_cover_url", "cover_url", "cover", "cover_image", "image_url", "avatar_url", "origin_cover", "first_item_cover_url", "word_cover", "music_info", "attribute_datas"),
