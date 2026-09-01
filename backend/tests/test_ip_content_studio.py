@@ -200,6 +200,34 @@ def test_normalizes_douyin_user_search_v2_candidates():
     assert candidates[0]["avatar_url"] == "https://example.com/avatar-v2.jpg"
 
 
+def test_normalizes_legacy_douyin_user_search_dynamic_patch_candidates():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "user_list": [
+                {
+                    "dynamic_patch": {
+                        "raw_data": '{"user_info":{"uid":"123","sec_uid":"MS4wLjABAAAA-legacy","nickname":"Legacy account","unique_id":"legacy_account","follower_count":42,"aweme_count":8,"avatar_thumb":{"url_list":["https://example.com/legacy.jpg"]}}}'
+                    }
+                }
+            ]
+        },
+    }
+
+    candidates, raw_count = studio._normalize_douyin_users_from_payload(payload)
+
+    assert raw_count == 1
+    assert candidates[0]["sec_user_id"] == "MS4wLjABAAAA-legacy"
+    assert candidates[0]["uid"] == "123"
+    assert candidates[0]["display_name"] == "Legacy account"
+    assert candidates[0]["unique_id"] == "legacy_account"
+    assert candidates[0]["follower_count"] == 42
+    assert candidates[0]["aweme_count"] == 8
+    assert candidates[0]["avatar_url"] == "https://example.com/legacy.jpg"
+
+
 def test_normalizes_wechat_channels_user_search_candidates():
     from backend.app.api import ip_content_studio as studio
 

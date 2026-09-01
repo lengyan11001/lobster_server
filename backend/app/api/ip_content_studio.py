@@ -217,6 +217,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/douyin/search/fetch_user_search_v2",
         "allowed_body": {"keyword", "cursor"},
     },
+    "douyin_search_user": {
+        "platform": "douyin",
+        "source_type": "user_search",
+        "method": "POST",
+        "path": "/api/v1/douyin/search/fetch_user_search",
+        "allowed_body": {"keyword", "cursor", "douyin_user_fans", "douyin_user_type", "search_id"},
+    },
     "douyin_user_posts": {
         "platform": "douyin",
         "source_type": "user_post",
@@ -2051,7 +2058,18 @@ def _normalize_douyin_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
     if not user:
         nested = _lookup(item, "data.user_info")
         user = nested if isinstance(nested, dict) else item
-
+    # The currently available Douyin search endpoint wraps each user in a
+    # JSON string at dynamic_patch.raw_data.
+    if not _first(user, ["sec_uid", "sec_user_id", "secUid"]):
+        raw_data = _first(item, ["dynamic_patch.raw_data", "raw_data"])
+        if isinstance(raw_data, str) and raw_data.strip():
+            try:
+                parsed_raw_data = json.loads(raw_data)
+            except (TypeError, ValueError):
+                parsed_raw_data = {}
+            parsed_user = parsed_raw_data.get("user_info") if isinstance(parsed_raw_data, dict) else None
+            if isinstance(parsed_user, dict):
+                user = parsed_user
     sec_uid = _first(user, ["sec_uid", "sec_user_id", "secUid", "user_id"])
     if not sec_uid:
         sec_uid = _first(item, ["sec_uid", "sec_user_id", "user_id", "user_info.sec_uid", "data.user_info.sec_uid"])
@@ -5007,14 +5025,24 @@ async def search_douyin_users(
     keyword = _clean_text(q, 80)
     if not keyword:
         raise HTTPException(status_code=400, detail="请填写抖音昵称或抖音号")
-    result = await _execute_query(
+    # TikHub's V2 route currently returns upstream HTTP 400. The documented
+    # non-V2 Douyin search route still works and returns sec_uid for syncing
+    # the selected competitor's posts.
+    result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
-        query_type="douyin_search_user_v2",
+        query_type="douyin_search_user",
         params={},
-        body={"keyword": keyword, "cursor": 0},
+        body={
+            "keyword": keyword,
+            "cursor": 0,
+            "douyin_user_fans": "",
+            "douyin_user_type": "",
+            "search_id": "",
+        },
         save_items=False,
-        meta={"source": "competitor_user_search", "keyword": keyword},
+        meta={"source": "competitor_user_search", "keyword": keyword, "provider": "douyin_search_user"},
+        attempts=2,
         include_raw_response=True,
     )
     users, raw_count = _normalize_douyin_users_from_payload(result.get("raw_response") or {})
