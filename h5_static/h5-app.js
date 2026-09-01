@@ -2545,11 +2545,17 @@
         content.innerHTML = visible.length ? visible.map((section) => {
           const items = Array.isArray(section.items) ? section.items : [];
           const itemHtml = items.length ? items.map((item) => {
+            const metricLabels = { score: "热度分", hot_score: "热度", hot_value: "热度", heat: "热度", play_cnt: "播放", like_cnt: "点赞", follow_cnt: "涨粉", fans_cnt: "粉丝", new_like_cnt: "新增点赞", new_fans_cnt: "新增粉丝", publish_cnt: "发布", avg_play_cnt: "平均播放", video_count: "视频数", rank_diff: "上升", duration: "时长", like_rate: "点赞率", follow_rate: "涨粉率" };
             const metrics = item.metrics && typeof item.metrics === "object"
-              ? Object.entries(item.metrics).slice(0, 4).map(([key, value]) => `${escapeHtml(key.replace(/_/g, " "))} ${escapeHtml(value)}`).join(" · ")
+              ? Object.entries(item.metrics).slice(0, 6).map(([key, value]) => `${escapeHtml(metricLabels[key] || key.replace(/_/g, " "))} ${escapeHtml(value)}`).join(" · ")
               : "";
-            const title = item.title || item.name || (item.id ? `抖音作品 ${item.id}` : "平台数据");
-            const meta = item.author || item.value || item.detail || metrics || "平台公开数据";
+            const title = item.title || item.name || "热门内容";
+            const metaParts = [];
+            if (item.author && item.author !== title) metaParts.push(`作者 ${item.author}`);
+            if (item.value) metaParts.push(item.value);
+            if (item.detail) metaParts.push(item.detail);
+            if (metrics) metaParts.push(metrics);
+            const meta = metaParts.join(" · ") || "暂无指标";
             const link = /^https?:\/\//i.test(String(item.url || ""))
               ? `<a class="douyin-information-desk-item-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">打开观看</a>`
               : "";

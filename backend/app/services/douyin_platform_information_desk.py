@@ -292,7 +292,7 @@ def _compact_item(value: Any, index: int, source_key: str | None = None) -> dict
         return None
     item: dict[str, Any] = {"rank": index + 1}
     field_aliases = {
-        "id": ("id", "aweme_id", "item_id", "video_id", "challenge_id", "topic_id", "music_id", "uid", "user_id", "author_id", "code", "music_info", "attribute_datas"),
+        "id": ("id", "aweme_id", "item_id", "video_id", "challenge_id", "topic_id", "music_id", "sentence_id", "uid", "user_id", "author_id", "code", "music_info", "attribute_datas"),
         "title": ("title", "item_title", "desc", "description", "sentence", "challenge_name", "topic_name", "music_name", "display_name", "label", "name", "word", "keyword", "music_info"),
         "author": ("author", "author_name", "nick_name", "nickname", "username", "user_name", "owner_nickname", "sec_uid", "music_info", "attribute_datas"),
         "url": ("url", "item_url", "share_url", "web_url", "video_url", "homepage_url", "author_link", "play_url"),
@@ -316,7 +316,7 @@ def _compact_item(value: Any, index: int, source_key: str | None = None) -> dict
         item["title"] = _clip_string(value.get("key"))
         if isinstance(value.get("value"), (str, int, float)) and not isinstance(value.get("value"), bool):
             item["value"] = _clip_string(value.get("value"))
-    metric_aliases = ("play_count", "view_count", "digg_count", "like_count", "comment_count", "share_count", "collect_count", "follower_count", "fans_count", "hot_value", "hot_score", "score", "rank_value", "play_cnt", "like_cnt", "comment_cnt", "share_cnt", "collect_cnt", "follow_cnt", "publish_cnt", "avg_play_cnt", "duration")
+    metric_aliases = ("play_count", "view_count", "digg_count", "like_count", "comment_count", "share_count", "collect_count", "follower_count", "fans_count", "fans_cnt", "new_like_cnt", "new_fans_cnt", "hot_value", "hot_score", "heat", "score", "rank_value", "rank_diff", "play_cnt", "like_cnt", "comment_cnt", "share_cnt", "collect_cnt", "follow_cnt", "publish_cnt", "video_count", "avg_play_cnt", "duration", "follow_rate", "like_rate")
     metrics: dict[str, int | float] = {}
     for key in metric_aliases:
         number = _number(value.get(key))
@@ -332,6 +332,12 @@ def _compact_item(value: Any, index: int, source_key: str | None = None) -> dict
                         metrics[key] = number
     if metrics:
         item["metrics"] = dict(list(metrics.items())[:MAX_METRICS])
+    if not item.get("title"):
+        author = str(item.get("author") or "").strip()
+        if source_key == "hot_accounts" and author:
+            item["title"] = author
+        elif source_key in {"hot_video", "low_fan_video", "high_play_video", "high_like_video", "high_fan_video"} and author:
+            item["title"] = f"{author} 的热门视频"
     detail_parts = []
     for key in ("qualifier", "qualifier_id", "period", "date", "version", "sentence_tag_name"):
         detail = value.get(key)

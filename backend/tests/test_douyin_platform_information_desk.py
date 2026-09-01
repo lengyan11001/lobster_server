@@ -242,3 +242,43 @@ def test_compact_items_handles_tikhub_douyin_nested_payloads_and_public_links():
     )
     assert xingtu[0]["id"] == "1"
     assert xingtu[0]["title"] == "品牌种草榜"
+
+
+def test_compact_items_keeps_real_billboard_fields_and_uses_meaningful_fallback_titles():
+    from backend.app.services.douyin_platform_information_desk import _compact_items
+
+    content = _compact_items(
+        {
+            "data": {
+                "objs": [
+                    {
+                        "item_id": "767",
+                        "item_title": "",
+                        "nick_name": "示例账号",
+                        "fans_cnt": "5719",
+                        "play_cnt": "33409932",
+                        "like_cnt": "1079196",
+                        "follow_cnt": "3428",
+                        "score": "1568135",
+                    }
+                ]
+            }
+        },
+        "hot_video",
+    )
+    assert content[0]["title"] == "示例账号 的热门视频"
+    assert content[0]["metrics"] == {
+        "fans_cnt": 5719,
+        "play_cnt": 33409932,
+        "like_cnt": 1079196,
+        "follow_cnt": 3428,
+        "score": 1568135,
+    }
+    assert "抖音作品" not in content[0]["title"]
+
+    accounts = _compact_items(
+        {"data": {"user_list": [{"user_id": "sec", "nick_name": "示例账号", "fans_cnt": "1000", "new_fans_cnt": "20"}]}},
+        "hot_accounts",
+    )
+    assert accounts[0]["title"] == "示例账号"
+    assert accounts[0]["metrics"] == {"fans_cnt": 1000, "new_fans_cnt": 20}
