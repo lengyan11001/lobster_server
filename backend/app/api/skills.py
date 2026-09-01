@@ -339,7 +339,7 @@ def list_store(
     ) if not is_admin else None
     out = []
     for pkg_id, pkg in packages.items():
-        if pkg_id in RETIRED_PACKAGE_IDS:
+        if pkg_id in REMOVED_DEFAULT_PACKAGE_IDS:
             continue
         if pkg.get("show_in_store") is False:
             continue
@@ -410,7 +410,7 @@ def user_allowed_capability_ids(
     if is_admin:
         cap_ids = []
         for pkg_id, pkg in packages.items():
-            if pkg_id in RETIRED_PACKAGE_IDS:
+            if pkg_id in REMOVED_DEFAULT_PACKAGE_IDS:
                 continue
             cap_ids.extend((pkg.get("capabilities") or {}).keys())
         return {"is_admin": True, "capability_ids": sorted(set(cap_ids))}
@@ -562,7 +562,7 @@ def install_skill(
     package = packages.get(body.package_id)
     if not package:
         raise HTTPException(status_code=404, detail=f"技能包 {body.package_id} 不存在")
-    if body.package_id in RETIRED_PACKAGE_IDS:
+    if body.package_id in REMOVED_DEFAULT_PACKAGE_IDS:
         raise HTTPException(status_code=410, detail="该技能已退役")
     if package.get("status") == "coming_soon":
         raise HTTPException(status_code=400, detail="该技能包即将推出，暂不可安装")
