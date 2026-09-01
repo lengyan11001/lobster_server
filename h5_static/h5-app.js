@@ -2548,7 +2548,12 @@
             const metrics = item.metrics && typeof item.metrics === "object"
               ? Object.entries(item.metrics).slice(0, 4).map(([key, value]) => `${escapeHtml(key.replace(/_/g, " "))} ${escapeHtml(value)}`).join(" · ")
               : "";
-            return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span><span class="douyin-information-desk-item-title">${escapeHtml(item.title || item.name || item.id || "未命名数据")}</span></div><div class="douyin-information-desk-item-meta">${escapeHtml(item.author || metrics || "平台公开数据")}</div></div>`;
+            const title = item.title || item.name || (item.id ? `抖音作品 ${item.id}` : "平台数据");
+            const meta = item.author || item.value || item.detail || metrics || "平台公开数据";
+            const link = /^https?:\/\//i.test(String(item.url || ""))
+              ? `<a class="douyin-information-desk-item-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">打开观看</a>`
+              : "";
+            return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span><span class="douyin-information-desk-item-title">${escapeHtml(title)}</span></div><div class="douyin-information-desk-item-meta">${escapeHtml(meta)}${link}</div></div>`;
           }).join("") : `<div class="douyin-information-desk-empty">该接口暂无可展示条目${section.error ? `：${escapeHtml(section.error)}` : ""}</div>`;
           return `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title"><span>${escapeHtml(section.title || section.key || "数据")}</span><small>${items.length} 条</small></div><div class="douyin-information-desk-items">${itemHtml}</div></section>`;
         }).join("") : '<div class="douyin-information-desk-empty">该分类暂无数据</div>';

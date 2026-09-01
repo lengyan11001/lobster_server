@@ -4017,6 +4017,15 @@ body * {
   line-height: 1.5;
 }
 
+.douyin-information-desk-item-link {
+  display: inline-block;
+  margin-left: 8px;
+  color: #16839a;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .douyin-information-desk-empty {
   padding: 28px 10px;
   color: #7890a3;

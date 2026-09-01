@@ -13,6 +13,7 @@ import os
 import time
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -30,6 +31,43 @@ MAX_ITEMS_PER_SECTION = 20
 MAX_STRING_LENGTH = 320
 MAX_METRICS = 12
 TRANSIENT_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+_PREFERRED_ITEM_KEYS = (
+    "items",
+    "objs",
+    "item_list",
+    "music_list",
+    "category_list",
+    "user_list",
+    "authors",
+    "aweme_list",
+    "hot_list",
+    "data_list",
+    "records",
+    "results",
+    "list",
+    "catalog",
+    "data",
+)
+_NON_ITEM_KEYS = {
+    "extra",
+    "log_pb",
+    "base_resp",
+    "BaseResp",
+    "page",
+    "pagination",
+    "trends",
+    "fans_trends",
+    "url_list",
+    "banner_url",
+    "banner_dark",
+    "banner_light",
+    "word_cover",
+    "cover_hd",
+    "cover_large",
+    "cover_medium",
+    "cover_thumb",
+}
 
 
 # These are platform/public endpoints from https://docs.tikhub.io/llms.txt.
@@ -151,15 +189,34 @@ def _number(value: Any) -> int | float | None:
         return None
 
 
-def _first_value(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
+def _nested_value(value: dict[str, Any], kind: str) -> Any:
+    if kind in {"url", "cover_url"}:
+        nested_keys = ("url", "url_list", "share_url", "item_url", "web_url", "homepage_url", "cover_hd", "cover_large", "cover_medium", "cover_thumb", "avatar_uri", "uri")
+    elif kind == "id":
+        nested_keys = ("id", "id_str", "uid", "user_id", "author_id", "code", "value")
+    elif kind == "title":
+        nested_keys = ("title", "item_title", "name", "display_name", "label", "word", "keyword", "desc", "description")
+    else:
+        nested_keys = ("author", "author_name", "nick_name", "nickname", "username", "name", "display_name")
+    for key in nested_keys:
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            nested = _nested_value(nested, kind)
+        if isinstance(nested, list):
+            nested = next((entry for entry in nested if isinstance(entry, str) and entry.strip()), None)
+        if nested not in (None, "", [], {}):
+            return nested
+    return None
+
+
+def _first_value(item: dict[str, Any], keys: tuple[str, ...], kind: str = "") -> Any:
     for key in keys:
         value = item.get(key)
         if value not in (None, "", [], {}):
             if isinstance(value, dict):
-                for nested_key in ("name", "nickname", "title", "url", "value"):
-                    nested = value.get(nested_key)
-                    if nested not in (None, ""):
-                        return nested
+                value = _nested_value(value, kind)
+                if value in (None, "", [], {}):
+                    continue
             return value
     return None
 
@@ -179,22 +236,55 @@ def _extract_items(value: Any, depth: int = 0) -> list[Any]:
         return value
     if not isinstance(value, dict):
         return []
-    preferred_keys = ("items", "list", "data", "result", "results", "records", "aweme_list", "hot_list", "data_list")
-    for key in preferred_keys:
+    # TikHub wraps different APIs with different semantic list names. Prefer
+    # those names before walking arbitrary nested values, otherwise a banner's
+    # three image URLs can be mistaken for the actual brand category list.
+    for key in _PREFERRED_ITEM_KEYS:
+        if key not in value:
+            continue
         nested = value.get(key)
         if isinstance(nested, list):
             return nested
         found = _extract_items(nested, depth + 1)
         if found:
             return found
-    for nested in value.values():
+    for key, nested in value.items():
+        if key in _NON_ITEM_KEYS or key.endswith("_url"):
+            continue
         found = _extract_items(nested, depth + 1)
         if found:
             return found
+    # Index/date and dictionary endpoints legitimately return a flat object
+    # rather than a list. Turn only scalar fields at the data level into rows.
+    if depth <= 1:
+        scalar_rows = [
+            {"key": key, "value": nested}
+            for key, nested in value.items()
+            if key not in _NON_ITEM_KEYS and not isinstance(nested, (dict, list)) and nested not in (None, "")
+        ]
+        if scalar_rows:
+            return scalar_rows
     return []
 
 
-def _compact_item(value: Any, index: int) -> dict[str, Any] | None:
+def _stable_public_url(source_key: str | None, item: dict[str, Any], compact: dict[str, Any]) -> str:
+    item_id = str(compact.get("id") or "").strip()
+    if not item_id:
+        return ""
+    if source_key in {"hot_video", "low_fan_video", "high_play_video", "high_like_video", "high_fan_video", "creator_video_board", "creator_hot_spot", "creator_hot_topic", "creator_hot_music"}:
+        return f"https://www.douyin.com/video/{quote(item_id, safe='')}"
+    if source_key in {"hot_accounts", "xingtu_ranking"}:
+        return f"https://www.douyin.com/user/{quote(item_id, safe='')}"
+    if source_key in {"music_hot_search"}:
+        return f"https://www.douyin.com/music/{quote(item_id, safe='')}"
+    if source_key in {"hot_topic", "rising_topic", "hot_rise", "hot_city", "hot_challenge", "hot_total"}:
+        keyword = str(compact.get("title") or "").strip()
+        if keyword:
+            return f"https://www.douyin.com/search/{quote(keyword, safe='')}?type=general"
+    return ""
+
+
+def _compact_item(value: Any, index: int, source_key: str | None = None) -> dict[str, Any] | None:
     if isinstance(value, (str, int, float)) and not isinstance(value, bool):
         label = _clip_string(value)
         return {"rank": index + 1, "title": label} if label else None
@@ -202,14 +292,14 @@ def _compact_item(value: Any, index: int) -> dict[str, Any] | None:
         return None
     item: dict[str, Any] = {"rank": index + 1}
     field_aliases = {
-        "id": ("id", "aweme_id", "item_id", "video_id", "topic_id", "music_id", "uid"),
-        "title": ("title", "desc", "description", "name", "word", "keyword", "topic_name", "music_name"),
-        "author": ("author", "author_name", "nickname", "username", "user_name", "sec_uid"),
-        "url": ("url", "share_url", "web_url", "video_url", "homepage_url", "play_url"),
-        "cover_url": ("cover_url", "cover", "cover_image", "image_url", "avatar_url", "origin_cover"),
+        "id": ("id", "aweme_id", "item_id", "video_id", "challenge_id", "topic_id", "music_id", "uid", "user_id", "author_id", "code", "music_info", "attribute_datas"),
+        "title": ("title", "item_title", "desc", "description", "sentence", "challenge_name", "topic_name", "music_name", "display_name", "label", "name", "word", "keyword", "music_info"),
+        "author": ("author", "author_name", "nick_name", "nickname", "username", "user_name", "owner_nickname", "sec_uid", "music_info", "attribute_datas"),
+        "url": ("url", "item_url", "share_url", "web_url", "video_url", "homepage_url", "author_link", "play_url"),
+        "cover_url": ("item_cover_url", "cover_url", "cover", "cover_image", "image_url", "avatar_url", "origin_cover", "first_item_cover_url", "word_cover", "music_info", "attribute_datas"),
     }
     for output_key, aliases in field_aliases.items():
-        value_found = _first_value(value, aliases)
+        value_found = _first_value(value, aliases, output_key)
         if isinstance(value_found, (str, int, float)) and not isinstance(value_found, bool):
             if output_key == "id":
                 item[output_key] = _clip_string(value_found, 128)
@@ -221,13 +311,18 @@ def _compact_item(value: Any, index: int) -> dict[str, Any] | None:
                 text = _clip_string(value_found)
                 if text:
                     item[output_key] = text
-    metric_aliases = ("play_count", "view_count", "digg_count", "like_count", "comment_count", "share_count", "collect_count", "follower_count", "fans_count", "hot_value", "score", "rank_value")
+    if "key" in value and "value" in value and value.get("value") not in (None, "", [], {}):
+        item["id"] = _clip_string(value.get("key"), 128)
+        item["title"] = _clip_string(value.get("key"))
+        if isinstance(value.get("value"), (str, int, float)) and not isinstance(value.get("value"), bool):
+            item["value"] = _clip_string(value.get("value"))
+    metric_aliases = ("play_count", "view_count", "digg_count", "like_count", "comment_count", "share_count", "collect_count", "follower_count", "fans_count", "hot_value", "hot_score", "score", "rank_value", "play_cnt", "like_cnt", "comment_cnt", "share_cnt", "collect_cnt", "follow_cnt", "publish_cnt", "avg_play_cnt", "duration")
     metrics: dict[str, int | float] = {}
     for key in metric_aliases:
         number = _number(value.get(key))
         if number is not None:
             metrics[key] = number
-    for nested_key in ("statistics", "stats", "metrics", "data"):
+    for nested_key in ("statistics", "stats", "metrics", "data", "attribute_datas"):
         nested = value.get(nested_key)
         if isinstance(nested, dict):
             for key in metric_aliases:
@@ -237,15 +332,25 @@ def _compact_item(value: Any, index: int) -> dict[str, Any] | None:
                         metrics[key] = number
     if metrics:
         item["metrics"] = dict(list(metrics.items())[:MAX_METRICS])
+    detail_parts = []
+    for key in ("qualifier", "qualifier_id", "period", "date", "version", "sentence_tag_name"):
+        detail = value.get(key)
+        if detail not in (None, "", [], {}) and not isinstance(detail, (dict, list)):
+            detail_parts.append(f"{key}={_clip_string(detail, 80)}")
+    if detail_parts:
+        item["detail"] = " · ".join(detail_parts)
+    stable_url = _stable_public_url(source_key, value, item)
+    if stable_url:
+        item["url"] = stable_url
     if len(item) == 1:
         return None
     return item
 
 
-def _compact_items(payload: Any) -> list[dict[str, Any]]:
+def _compact_items(payload: Any, source_key: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for index, value in enumerate(_extract_items(payload)[:MAX_ITEMS_PER_SECTION]):
-        item = _compact_item(value, index)
+        item = _compact_item(value, index, source_key)
         if item:
             items.append(item)
     return items
@@ -285,7 +390,14 @@ def _endpoint_request(endpoint: dict[str, Any], snapshot_date: str | None = None
     params = dict(endpoint.get("params") or {})
     body = dict(endpoint.get("body") or {})
     if endpoint.get("key") == "hot_total":
-        day = str(snapshot_date or _local_today().isoformat()).replace("-", "")
+        # The billboard publishes a completed daily snapshot after the local
+        # day rolls over. At 09:00 the previous local day is the latest
+        # available range; querying today returns a valid empty response.
+        raw_day = str(snapshot_date or _local_today().isoformat())
+        try:
+            day = (date.fromisoformat(raw_day) - timedelta(days=1)).isoformat().replace("-", "")
+        except ValueError:
+            day = str(_local_today() - timedelta(days=1)).replace("-", "")
         params.update({"start_date": day, "end_date": day})
     if endpoint.get("key") == "hot_category":
         day = str(snapshot_date or _local_today().isoformat()).replace("-", "")
@@ -332,8 +444,8 @@ async def _fetch_endpoint(
                         "status": "success",
                         "http_status": status_code,
                         "latency_ms": int((time.perf_counter() - started) * 1000),
-                        "item_count": len(_compact_items(payload)),
-                        "items": _compact_items(payload),
+                        "item_count": len(_compact_items(payload, endpoint["key"])),
+                        "items": _compact_items(payload, endpoint["key"]),
                     }
                 last_error = _payload_message(payload) or f"TikHub HTTP {status_code}"
             except (httpx.TimeoutException, httpx.TransportError) as exc:

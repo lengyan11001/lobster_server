@@ -128,8 +128,8 @@ def test_tikhub_requests_follow_documented_parameters(monkeypatch):
 
     assert total_body == {}
     assert total_params["type"] == "range"
-    assert total_params["start_date"] == "20260901"
-    assert total_params["end_date"] == "20260901"
+    assert total_params["start_date"] == "20260831"
+    assert total_params["end_date"] == "20260831"
     assert video_params == {}
     assert video_body == {
         "page": 1,
@@ -169,4 +169,76 @@ def test_tikhub_requests_follow_documented_parameters(monkeypatch):
     assert result["status"] == "success"
     assert result["items"] == [{"rank": 1, "title": "公开热点", "metrics": {"hot_value": 99}}]
     assert "raw_secret" not in result
-    assert client.calls[0][2]["start_date"] == "20260901"
+    assert client.calls[0][2]["start_date"] == "20260831"
+
+
+def test_compact_items_handles_tikhub_douyin_nested_payloads_and_public_links():
+    from backend.app.services.douyin_platform_information_desk import _compact_items
+
+    music = _compact_items(
+        {
+            "data": {
+                "music_list": [
+                    {
+                        "music_info": {
+                            "id": 7612843324035729446,
+                            "title": "示例音乐",
+                            "author": "示例作者",
+                            "cover_hd": {"url_list": ["https://img.example/music.jpg"]},
+                        }
+                    }
+                ]
+            }
+        },
+        "music_hot_search",
+    )
+    assert music[0]["id"] == "7612843324035729446"
+    assert music[0]["title"] == "示例音乐"
+    assert music[0]["author"] == "示例作者"
+    assert music[0]["cover_url"] == "https://img.example/music.jpg"
+    assert music[0]["url"] == "https://www.douyin.com/music/7612843324035729446"
+
+    content = _compact_items(
+        {
+            "data": {
+                "objs": [
+                    {
+                        "item_id": "7679759751320942761",
+                        "item_title": "示例作品",
+                        "item_url": "https://cdn.example/video.mp4",
+                        "nick_name": "示例账号",
+                    }
+                ]
+            }
+        },
+        "hot_video",
+    )
+    assert content[0]["title"] == "示例作品"
+    assert content[0]["author"] == "示例账号"
+    assert content[0]["url"] == "https://www.douyin.com/video/7679759751320942761"
+
+    brand = _compact_items(
+        {
+            "data": {
+                "banner_url": {"url_list": ["https://img.example/1.jpg", "https://img.example/2.jpg", "https://img.example/3.jpg"]},
+                "category_list": [{"id": 10, "name": "汽车"}, {"id": 11, "name": "手机"}],
+            }
+        },
+        "brand_hot_categories",
+    )
+    assert [item["title"] for item in brand] == ["汽车", "手机"]
+
+    xingtu = _compact_items(
+        {
+            "data": {
+                "catalog": {
+                    "1": [
+                        {"code": 1, "display_name": "品牌种草榜", "qualifier": "食品饮料", "qualifier_id": "1903", "period": "30"}
+                    ]
+                }
+            }
+        },
+        "xingtu_catalog",
+    )
+    assert xingtu[0]["id"] == "1"
+    assert xingtu[0]["title"] == "品牌种草榜"
