@@ -149,7 +149,7 @@ class Settings(BaseSettings):
     comfly_api_base: Optional[str] = None
     comfly_api_key: Optional[str] = None
     """TikHub server-side proxy config. Keep API key on the server only."""
-    tikhub_api_base: str = "https://api.tikhub.dev"
+    tikhub_api_base: str = "https://api.tikhub.io"
     tikhub_api_key: Optional[str] = None
     """Default Lobster credits charged per successful TikHub query."""
     tikhub_query_unit_credits: float = 1.0

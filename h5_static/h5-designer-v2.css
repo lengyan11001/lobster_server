@@ -3844,6 +3844,205 @@ body * {
   min-block-size: 17px;
 }
 
+#officeView .douyin-information-desk-launcher {
+  right: 62px;
+}
+
+.douyin-information-desk-dialog {
+  z-index: 130;
+}
+
+.douyin-information-desk-panel {
+  width: min(760px, calc(100vw - 28px));
+  max-height: min(82vh, 760px);
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 20px;
+  background: #f7fbff;
+}
+
+.douyin-information-desk-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.douyin-information-desk-head h3 {
+  margin: 0;
+  color: #17324d;
+  font-size: 23px;
+}
+
+.douyin-information-desk-head p {
+  margin: 5px 0 0;
+  color: #6e8195;
+  font-size: 12px;
+}
+
+.douyin-information-desk-close {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.douyin-information-desk-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.douyin-information-desk-summary-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dceaf4;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.douyin-information-desk-summary-item strong {
+  display: block;
+  color: #17324d;
+  font-size: 17px;
+}
+
+.douyin-information-desk-summary-item span {
+  display: block;
+  margin-top: 2px;
+  color: #7890a3;
+  font-size: 11px;
+}
+
+.douyin-information-desk-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin: 16px -2px 10px;
+  padding: 2px;
+  scrollbar-width: none;
+}
+
+.douyin-information-desk-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.douyin-information-desk-tab {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid #dceaf4;
+  border-radius: 999px;
+  color: #527087;
+  background: #fff;
+  font-size: 12px;
+}
+
+.douyin-information-desk-tab.active {
+  border-color: #1e8eaa;
+  color: #fff;
+  background: #1e8eaa;
+}
+
+.douyin-information-desk-content {
+  max-height: 48vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.douyin-information-desk-section {
+  display: grid;
+  gap: 8px;
+}
+
+.douyin-information-desk-section-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #17324d;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.douyin-information-desk-section-title small {
+  color: #7890a3;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.douyin-information-desk-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.douyin-information-desk-item {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid #e0edf5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.douyin-information-desk-item-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.douyin-information-desk-rank {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #14708a;
+  background: #e5f5f8;
+  font-size: 11px;
+}
+
+.douyin-information-desk-item-title {
+  min-width: 0;
+  color: #26445d;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.douyin-information-desk-item-meta {
+  margin: 7px 0 0 30px;
+  color: #7890a3;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.douyin-information-desk-empty {
+  padding: 28px 10px;
+  color: #7890a3;
+  text-align: center;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  #officeView .douyin-information-desk-launcher {
+    right: 60px;
+    bottom: 58px;
+  }
+
+  .douyin-information-desk-panel {
+    padding: 16px;
+  }
+
+  .douyin-information-desk-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .douyin-information-desk-items {
+    grid-template-columns: 1fr;
+  }
+}
+
 .personal-keyword-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -98,6 +98,7 @@ REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
     "browser_use_skill",
     "computer_use_skill",
     "media_edit_skill",
+    "ecommerce_publish_skill",
 })
 
 DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
@@ -338,6 +339,8 @@ def list_store(
     ) if not is_admin else None
     out = []
     for pkg_id, pkg in packages.items():
+        if pkg_id in RETIRED_PACKAGE_IDS:
+            continue
         if pkg.get("show_in_store") is False:
             continue
         if not is_admin and visible is not None and pkg_id not in visible:
@@ -406,7 +409,9 @@ def user_allowed_capability_ids(
     is_admin = _skill_store_admin(current_user)
     if is_admin:
         cap_ids = []
-        for pkg in packages.values():
+        for pkg_id, pkg in packages.items():
+            if pkg_id in RETIRED_PACKAGE_IDS:
+                continue
             cap_ids.extend((pkg.get("capabilities") or {}).keys())
         return {"is_admin": True, "capability_ids": sorted(set(cap_ids))}
     visible = _user_visible_package_ids(
@@ -557,6 +562,8 @@ def install_skill(
     package = packages.get(body.package_id)
     if not package:
         raise HTTPException(status_code=404, detail=f"技能包 {body.package_id} 不存在")
+    if body.package_id in RETIRED_PACKAGE_IDS:
+        raise HTTPException(status_code=410, detail="该技能已退役")
     if package.get("status") == "coming_soon":
         raise HTTPException(status_code=400, detail="该技能包即将推出，暂不可安装")
     if _pkg_store_visibility(package) == "debug" and not _skill_store_admin(current_user):

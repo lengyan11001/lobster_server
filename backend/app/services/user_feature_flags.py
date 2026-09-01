@@ -36,6 +36,8 @@ LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
 MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
+DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID = "douyin_platform_information_desk"
+DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY = "douyin_platform_information_desk_access"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
 HOMEPAGE_ENTRY_SEEDED_MARKER = "__homepage_entry_permissions_seeded_v1"
 RETIRED_PACKAGE_IDS = frozenset({
@@ -45,6 +47,7 @@ RETIRED_PACKAGE_IDS = frozenset({
     "browser_use_skill",
     "computer_use_skill",
     "media_edit_skill",
+    "ecommerce_publish_skill",
 })
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     HOME_AI_CHAT_ENTRY_ID,
@@ -65,6 +68,15 @@ HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
 )
 
 FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
+    {
+        "id": DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
+        "name": "抖音平台信息台",
+        "store_visibility": "管理权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
+    },
     {
         "id": DOUYIN_LEADS_FEATURE_ID,
         "name": "抖音获客入口",
@@ -377,6 +389,14 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             .filter(UserSkillVisibility.user_id == int(user_id))
             .all()
         }
+
+    user_role = ""
+    try:
+        user_role = str(getattr(user, "role", "") or "").strip().lower()
+    except Exception:
+        pass
+    if user_role == "admin":
+        visible.update({DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID, DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY})
 
     flags: dict[str, bool] = {HOMEPAGE_FEATURE_GATES_MARKER: True}
     for package in FEATURE_FLAG_PACKAGES:

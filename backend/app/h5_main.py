@@ -15,6 +15,7 @@ from .api.branding import router as branding_router
 from .api.content_records import router as content_records_router
 from .api.customer_management import router as customer_management_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
+from .api.douyin_platform_information_desk import router as douyin_platform_information_desk_router
 from .api.global_leads import router as global_leads_router
 from .api.health import router as health_router
 from .api.h5_chat import router as h5_chat_router
@@ -232,6 +233,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(content_records_router, prefix="")
     app.include_router(customer_management_router, prefix="")
     app.include_router(douyin_dashboard_h5_router, prefix="")
+    app.include_router(douyin_platform_information_desk_router, prefix="")
     app.include_router(global_leads_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
     app.include_router(mastra_chat_router, prefix="")

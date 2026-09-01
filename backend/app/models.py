@@ -278,6 +278,32 @@ class DataMigrationMarker(Base):
     applied_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DouyinPlatformSnapshot(Base):
+    """Daily TikHub public-platform snapshot, without user-specific raw payloads."""
+
+    __tablename__ = "douyin_platform_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", name="uq_douyin_platform_snapshot_date"),
+        Index("ix_douyin_platform_snapshots_fetched_at", "fetched_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    snapshot_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running", index=True)
+    summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sections: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    endpoint_status: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class TikHubQueryLog(Base):
     """Server-side TikHub proxy audit log: request, response snapshot, and billing."""
 

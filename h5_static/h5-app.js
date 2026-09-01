@@ -35,6 +35,7 @@
         return null;
       }
     }
+    window.__lobsterH5AuthReady = false;
     const state = {
       token: localStorage.getItem(H5_TOKEN_KEY) || "",
       blockingActionCount: 0,
@@ -2497,6 +2498,91 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    let douyinInformationDeskCategory = "";
+
+    function douyinInformationDeskAllowed() {
+      const features = state.user && state.user.features;
+      return !!(state.user && String(state.user.role || "").toLowerCase() === "admin")
+        || !!(features && (features.douyin_platform_information_desk || features.douyin_platform_information_desk_access));
+    }
+
+    function renderDouyinInformationDesk(data) {
+      const snapshot = data && data.snapshot;
+      const fetchedAt = $("douyinInformationDeskFetchedAt");
+      const summary = $("douyinInformationDeskSummary");
+      const tabs = $("douyinInformationDeskTabs");
+      const content = $("douyinInformationDeskContent");
+      if (!snapshot) {
+        if (fetchedAt) fetchedAt.textContent = "服务器尚未生成今日快照，将在每天 09:00（北京时间）采集";
+        if (summary) summary.innerHTML = "";
+        if (tabs) tabs.innerHTML = "";
+        if (content) content.innerHTML = '<div class="douyin-information-desk-empty">暂无平台快照</div>';
+        return;
+      }
+      const snapshotSections = Array.isArray(snapshot.sections) ? snapshot.sections : [];
+      const categories = [];
+      snapshotSections.forEach((section) => {
+        const category = String(section && section.category || "其他").trim() || "其他";
+        if (!categories.includes(category)) categories.push(category);
+      });
+      if (!categories.includes(douyinInformationDeskCategory)) douyinInformationDeskCategory = categories[0] || "";
+      const stat = snapshot.summary || {};
+      if (fetchedAt) fetchedAt.textContent = `最近采集：${fmtTime(snapshot.fetched_at)} · 状态：${snapshot.status === "success" ? "完整" : "部分可用"}`;
+      if (summary) {
+        summary.innerHTML = [
+          [stat.item_count || 0, "条平台数据"],
+          [`${stat.success_count || 0}/${stat.endpoint_count || 0}`, "接口成功"],
+          [snapshot.snapshot_date || "-", "快照日期"],
+        ].map(([value, label]) => `<div class="douyin-information-desk-summary-item"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join("");
+      }
+      if (tabs) {
+        tabs.innerHTML = categories.map((category) => `<button class="douyin-information-desk-tab${category === douyinInformationDeskCategory ? " active" : ""}" type="button" data-douyin-information-category="${escapeHtml(category)}">${escapeHtml(category)}</button>`).join("");
+      }
+      const visible = snapshotSections.filter((section) => String(section && section.category || "其他") === douyinInformationDeskCategory);
+      if (content) {
+        content.innerHTML = visible.length ? visible.map((section) => {
+          const items = Array.isArray(section.items) ? section.items : [];
+          const itemHtml = items.length ? items.map((item) => {
+            const metrics = item.metrics && typeof item.metrics === "object"
+              ? Object.entries(item.metrics).slice(0, 4).map(([key, value]) => `${escapeHtml(key.replace(/_/g, " "))} ${escapeHtml(value)}`).join(" · ")
+              : "";
+            return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span><span class="douyin-information-desk-item-title">${escapeHtml(item.title || item.name || item.id || "未命名数据")}</span></div><div class="douyin-information-desk-item-meta">${escapeHtml(item.author || metrics || "平台公开数据")}</div></div>`;
+          }).join("") : `<div class="douyin-information-desk-empty">该接口暂无可展示条目${section.error ? `：${escapeHtml(section.error)}` : ""}</div>`;
+          return `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title"><span>${escapeHtml(section.title || section.key || "数据")}</span><small>${items.length} 条</small></div><div class="douyin-information-desk-items">${itemHtml}</div></section>`;
+        }).join("") : '<div class="douyin-information-desk-empty">该分类暂无数据</div>';
+      }
+    }
+
+    async function loadDouyinInformationDesk() {
+      const content = $("douyinInformationDeskContent");
+      if (content) content.innerHTML = '<div class="douyin-information-desk-empty">正在读取服务器快照...</div>';
+      try {
+        const data = await api("/api/douyin/platform-information-desk");
+        renderDouyinInformationDesk(data);
+      } catch (err) {
+        if (content) content.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml(err && err.message || "读取平台数据失败")}</div>`;
+      }
+    }
+
+    function openDouyinInformationDesk() {
+      if (!douyinInformationDeskAllowed()) {
+        toast("当前账号没有抖音平台信息台权限");
+        return;
+      }
+      const modal = $("douyinInformationDeskDialog");
+      if (!modal) return;
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      loadDouyinInformationDesk();
+    }
+
+    function closeDouyinInformationDesk() {
+      const modal = $("douyinInformationDeskDialog");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
     }
 
     function cssEscape(value) {
@@ -16872,6 +16958,7 @@
       if ($("avatarMini")) $("avatarMini").textContent = firstChar(name);
       if ($("profileAvatar")) $("profileAvatar").textContent = firstChar(name);
       if ($("profileCreditBalance")) $("profileCreditBalance").textContent = compactNumber(user.credits, 2);
+      $("openDouyinInformationDeskBtn")?.classList.toggle("hidden", !douyinInformationDeskAllowed());
       syncAgentManageEntry();
     }
 
@@ -16888,7 +16975,18 @@
       localStorage.removeItem(H5_USER_CACHE_KEY);
       state.token = "";
       state.user = null;
+      setH5AuthReady(false);
       renderCurrentUser();
+    }
+
+    function setH5AuthReady(value) {
+      const authenticated = Boolean(value);
+      window.__lobsterH5AuthReady = authenticated;
+      try {
+        window.dispatchEvent(new CustomEvent("lobster-auth-state", {
+          detail: { authenticated },
+        }));
+      } catch {}
     }
 
     function isAuthFailure(err) {
@@ -16914,6 +17012,7 @@
 
     async function refreshCurrentUser() {
       state.user = await api("/auth/me");
+      setH5AuthReady(true);
       if (window.LobsterH5I18n && typeof window.LobsterH5I18n.syncUser === "function") {
         window.LobsterH5I18n.syncUser(state.user.id, state.user.language);
       }
@@ -25910,7 +26009,7 @@
       const preserveExisting = !!options.preserveExisting;
       const silent = !!options.silent;
       const box = $("runList");
-      if (!state.token) return;
+      if (!state.token || !window.__lobsterH5AuthReady) return;
       if (state.runListLoading) return false;
       const installationId = currentInstallationId();
       const requestId = ++state.runListRequestSeq;
@@ -26662,6 +26761,19 @@
       uploadHomeHero(file).catch((err) => toast(err.message || "首页图片上传失败")).finally(() => {
         if (input) input.value = "";
       });
+    });
+    $("openDouyinInformationDeskBtn")?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      openDouyinInformationDesk();
+    });
+    $("douyinInformationDeskBackdrop")?.addEventListener("click", closeDouyinInformationDesk);
+    $("douyinInformationDeskCloseBtn")?.addEventListener("click", closeDouyinInformationDesk);
+    $("douyinInformationDeskTabs")?.addEventListener("click", (evt) => {
+      const tab = evt.target.closest("[data-douyin-information-category]");
+      if (!tab) return;
+      douyinInformationDeskCategory = String(tab.dataset.douyinInformationCategory || "");
+      loadDouyinInformationDesk();
     });
     document.querySelectorAll("[data-home-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -28765,12 +28877,12 @@
       }
       markH5PageReady("boot_ready");
       setInterval(() => {
-        if (!state.token || document.visibilityState === "hidden") return;
+        if (!state.token || !window.__lobsterH5AuthReady || document.visibilityState === "hidden") return;
         if (["assetLibrary", "mountedAccounts"].includes(activeViewKey())) return;
         refreshDeviceStatus();
       }, 7000);
       setInterval(() => {
-        if (!state.token) return;
+        if (!state.token || !window.__lobsterH5AuthReady) return;
         if (document.visibilityState === "hidden") return;
         if (!["office", "workflow", "workList", "runList", "runDetail", "department", "secretary"].includes(activeViewKey())) return;
         const activeStatuses = new Set(["pending", "claimed", "processing", "running"]);

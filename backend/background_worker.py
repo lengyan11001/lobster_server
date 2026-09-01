@@ -57,6 +57,9 @@ from backend.app.services.sutui_llm_probe import (
     sutui_llm_probe_loop_forever,
 )
 from backend.app.services.sutui_reconcile import is_sutui_reconcile_enabled, sutui_reconcile_loop_forever
+from backend.app.services.douyin_platform_information_desk import (
+    douyin_platform_information_desk_background_loop,
+)
 
 logger = logging.getLogger("backend.background_worker")
 
@@ -131,6 +134,10 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("runtime_state_maintenance", runtime_state_maintenance_loop))
     else:
         logger.info("[background] runtime state maintenance disabled")
+    if _enabled_from_env("LOBSTER_BACKGROUND_DOUYIN_INFORMATION_DESK_ENABLED", True):
+        factories.append(("douyin_platform_information_desk", douyin_platform_information_desk_background_loop))
+    else:
+        logger.info("[background] douyin platform information desk disabled")
     return factories
 
 

@@ -180,6 +180,9 @@
             <button class="designer-home-gallery" id="homeHeroUploadBtn" type="button" aria-label="设置首页图片" title="设置首页图片">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4.6-4.6a2 2 0 0 1 2.8 0L15 16l1.6-1.6a2 2 0 0 1 2.8 0L21 16M6 4h12a2 2 0 0 1 2 2v12H4V6a2 2 0 0 1 2-2zm9 3.5h.01"/></svg>
             </button>
+            <button class="designer-home-gallery douyin-information-desk-launcher hidden" id="openDouyinInformationDeskBtn" type="button" aria-label="抖音平台信息台" title="抖音平台信息台">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3M3 19h18"/></svg>
+            </button>
             <input class="hidden" id="homeHeroFileInput" type="file" accept="image/*">
           </div>
 
@@ -2556,6 +2559,25 @@
     </div>
   </div>
 
+  <div class="task-success-dialog douyin-information-desk-dialog hidden" id="douyinInformationDeskDialog" role="dialog" aria-modal="true" aria-labelledby="douyinInformationDeskTitle" aria-hidden="true">
+    <button class="task-success-backdrop" type="button" id="douyinInformationDeskBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel douyin-information-desk-panel">
+      <div class="douyin-information-desk-head">
+        <div>
+          <div class="task-success-kicker">DOUYIN PULSE</div>
+          <h3 id="douyinInformationDeskTitle">抖音平台信息台</h3>
+          <p id="douyinInformationDeskFetchedAt">正在读取服务器快照...</p>
+        </div>
+        <button class="ghost douyin-information-desk-close" type="button" id="douyinInformationDeskCloseBtn" aria-label="关闭">关闭</button>
+      </div>
+      <div class="douyin-information-desk-summary" id="douyinInformationDeskSummary"></div>
+      <div class="douyin-information-desk-tabs" id="douyinInformationDeskTabs" aria-label="数据分类"></div>
+      <div class="douyin-information-desk-content" id="douyinInformationDeskContent">
+        <div class="douyin-information-desk-empty">正在加载...</div>
+      </div>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="personalTemplateHelpDialog" role="dialog" aria-modal="true" aria-labelledby="personalTemplateHelpTitle">
     <button class="task-success-backdrop" type="button" id="personalTemplateHelpBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel help-panel">
@@ -2665,7 +2687,7 @@
 
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
   <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
-  <script src="/h5-static/h5-app.js?v=20260829-ability-workbench-render-v1"></script>
-  <script src="/h5-static/task-center.js?v=20260828-task-center-single-active-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260831-auth-gated-v1"></script>
+  <script src="/h5-static/task-center.js?v=20260831-auth-gated-v1"></script>
 </body>
 </html>

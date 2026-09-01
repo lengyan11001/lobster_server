@@ -1,7 +1,16 @@
 (function () {
   "use strict";
 
-  var state = { rows: [], open: false, seen: {}, loading: false, dragging: false };
+  var state = {
+    rows: [],
+    open: false,
+    seen: {},
+    loading: false,
+    dragging: false,
+    authenticated: !!window.__lobsterH5AuthReady,
+    started: false,
+    timer: null
+  };
   var brand = (function () {
     try {
       var host = String(location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
@@ -196,10 +205,12 @@
   }
 
   function render() {
+    var root = document.getElementById("lobsterTaskCenter");
     var panel = document.getElementById("lobsterTaskPanel");
     var fab = document.getElementById("lobsterTaskFab");
     var list = document.getElementById("lobsterTaskList");
     if (!panel || !fab || !list) return;
+    if (root) root.hidden = !state.authenticated;
     var running = state.rows.filter(isActive);
     fab.classList.toggle("is-active", running.length > 0);
     panel.hidden = !state.open;
@@ -210,7 +221,7 @@
   }
 
   async function refresh() {
-    if (state.loading || !token()) return;
+    if (state.loading || !state.authenticated || !token()) return;
     state.loading = true;
     try {
       var params = new URLSearchParams({ limit: "1", compact: "true", active_only: "1" });
@@ -235,6 +246,7 @@
   }
 
   async function stopRun(event) {
+    if (!state.authenticated || !token()) return;
     var button = event.target.closest("[data-run-id]");
     if (!button) return;
     button.disabled = true;
@@ -249,15 +261,49 @@
     }
   }
 
-  function start() {
-    mount();
-    (async function poll() {
+  function clearTimer() {
+    if (state.timer !== null) {
+      window.clearTimeout(state.timer);
+      state.timer = null;
+    }
+  }
+
+  function schedulePoll(delay) {
+    if (!state.started || !state.authenticated || !token() || state.timer !== null) return;
+    state.timer = window.setTimeout(async function () {
+      state.timer = null;
+      if (!state.authenticated || !token()) return;
       await refresh();
-      var delay = state.rows.some(isActive) ? 4000 : 10000;
-      window.setTimeout(poll, delay);
-    })();
+      schedulePoll(state.rows.some(isActive) ? 4000 : 10000);
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function setAuthenticated(value) {
+    state.authenticated = !!value;
+    if (!state.authenticated) {
+      clearTimer();
+      state.rows = [];
+      state.seen = {};
+      state.open = false;
+      render();
+      return;
+    }
+    mount();
+    render();
+    schedulePoll(0);
+  }
+
+  function start() {
+    state.started = true;
+    window.addEventListener("lobster-auth-state", function (event) {
+      var detail = event && event.detail;
+      setAuthenticated(!!(detail && detail.authenticated));
+    });
+    setAuthenticated(window.__lobsterH5AuthReady === true);
     window.addEventListener("storage", function (event) {
-      if (event.key === storage("lobster_h5_selected_installation_id")) refresh();
+      if (event.key === storage("lobster_h5_selected_installation_id") && state.authenticated) {
+        refresh();
+      }
     });
   }
 
