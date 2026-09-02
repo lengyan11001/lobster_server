@@ -32,6 +32,16 @@
     if (['history', 'materials', 'plan'].includes(name)) loadList(name).catch(e => toast(e.message));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  async function generateIdea() {
+    const text = $('ideaInput')?.value.trim() || '';
+    if (!text) return toast('先写一件今天发生的小事，或点一个灵感标签');
+    const payload = { happened: text, customer_problem:'', customer_question:'', desired_result:'', current_change:'', purpose:'建立信任', circle_type:'生活圈', image_urls:[] };
+    const data = await api('/api/moments-coach/generate', { method:'POST', json:payload });
+    fill(payload); showPanel('write');
+    const box = $('results');
+    box.innerHTML = `<div class="result-heading"><div><span class="eyebrow">生成完成</span><h2>选一条最像你会说的话</h2></div><small>发布前请核对素材真实性</small></div><div class="result-grid">${(data.items || []).map(item => `<article class="result" data-id="${esc(item.record_id)}"><header><span>${esc(item.circle_type || '生活圈')}</span><b>${esc(item.version_type || '文案')}</b></header><h3>${esc(item.title || '')}</h3><pre>${esc(item.body || '')}</pre><div class="result-note"><b>配图建议</b>${esc(item.image_suggestion || '按内容选择真实场景图片')}<b>衔接建议</b>${esc(item.transition || '结合上一条内容自然发布')}</div><label class="confirm"><input type="checkbox">我已核对素材，确认发布</label><button data-image>生成配图</button><button data-publish disabled>选择此版并发布</button></article>`).join('')}</div>`;
+    localStorage.setItem('lobster_moments_coach_draft', JSON.stringify(payload));
+  }
   async function generate() {
     const data = await api('/api/moments-coach/generate', { method:'POST', json:snapshot() });
     const box = $('results');
@@ -50,7 +60,9 @@
   document.addEventListener('click', (e) => {
     const tab = e.target.closest('[data-tab]'); if (tab) { e.preventDefault(); showPanel(tab.dataset.tab); return; }
     const go = e.target.closest('[data-go]'); if (go) { e.preventDefault(); showPanel(go.dataset.go); return; }
-    const home = e.target.closest('[data-home-action]'); if (home) { const action = home.dataset.homeAction; if (action === 'school') return toast('商学院内容即将开放'); if (action === 'image') { showPanel('write'); $('images')?.focus(); } else if (action === 'inspire') showPanel('write'); else showPanel('choose'); return; }
+    const home = e.target.closest('[data-home-action]'); if (home) { const action = home.dataset.homeAction; if (action === 'school') return toast('商学院内容即将开放'); if (action === 'image') { showPanel('write'); $('images')?.focus(); } else if (action === 'inspire') showPanel('choose'); else showPanel('idea'); return; }
+    const idea = e.target.closest('[data-idea]'); if (idea) { document.querySelectorAll('[data-idea]').forEach(x => x.classList.toggle('active', x === idea)); if ($('ideaInput')) $('ideaInput').value = `${idea.dataset.idea}：`; $('ideaInput')?.focus(); return; }
+    const ideaGenerate = e.target.closest('[data-generate-idea]'); if (ideaGenerate) { generateIdea().catch(err => toast(err.message)); return; }
     const circle = e.target.closest('[data-circle]'); if (circle) { const value = circle.dataset.circle; if ($('circle')) $('circle').value = value; showPanel('write'); const title = document.querySelector('.intro h2'); if (title) title.textContent = `${value}，今天想写点什么？`; return; }
     const use = e.target.closest('[data-use]'); if (use) { try { fill(JSON.parse(use.closest('[data-item]').dataset.item)); showPanel('write'); toast('素材已带入写作区'); } catch (_) { toast('素材读取失败'); } }
   });
