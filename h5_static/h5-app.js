@@ -18894,7 +18894,10 @@
       const business = req.business_description && typeof req.business_description === "object" ? req.business_description : req.business || {};
       setPersonalFieldValue("personalProfileName", req.profile_name || profile.name || "");
       setPersonalFieldValue("personalGender", req.gender || profile.gender || "");
-      setPersonalFieldValue("personalProfilePhoto", req.profile_photo_asset_id || profile.profile_photo_asset_id || req.profile_photo_url || profile.profile_photo_url || "");
+      // Prefer the durable public URL for display. The server may canonicalize
+      // a local Online asset ID to a different asset ID after sync.
+      setPersonalFieldValue("personalProfilePhoto", req.profile_photo_url || profile.profile_photo_url
+        || req.profile_photo_asset_id || profile.profile_photo_asset_id || "");
       setPersonalFieldValue("personalBirthEra", req.birth_era || profile.birth_era || "");
       setPersonalFieldValue("personalCurrentProvince", req.current_province || profile.current_province || "");
       setPersonalFieldValue("personalCurrentCity", req.current_city || profile.current_city || "");
@@ -21398,7 +21401,8 @@
       if (preview) preview.innerHTML = "<span>上传中...</span>";
       const fd = new FormData();
       fd.append("file", file, file.name || "upload");
-      const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
+      const uploadHeaders = { ...authHeaders(), "X-Asset-Purpose": id === "personalProfilePhotoPicker" ? "profile_photo" : "" };
+      const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: uploadHeaders, body: fd }, "正在上传素材");
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
       const item = addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });

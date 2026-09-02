@@ -28,7 +28,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
-from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
@@ -2738,12 +2738,180 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
         payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
         payload["memory_docs"] = reference.memory_docs or []
         payload["requirements"] = {**(reference.requirements or {}), **(payload.get("requirements") or {})}
+    if row is not None:
+        payload["requirements"] = _enrich_personal_profile_requirements_with_assets(
+            db, int(row.user_id), payload.get("requirements")
+        )
     keywords, competitors = _template_resource_rows(db, reference)
     keyword_id_set = set(_clean_int_ids(payload.get("keyword_ids"), 50))
     competitor_id_set = set(_clean_int_ids(payload.get("competitor_ids"), 50))
     payload["keywords"] = [_keyword_payload(item) for item in keywords if int(item.id) in keyword_id_set]
     payload["competitors"] = [_competitor_payload(item) for item in competitors if int(item.id) in competitor_id_set]
     return payload
+
+
+def _profile_photo_values(container: Any) -> tuple[str, str]:
+    if not isinstance(container, dict):
+        return "", ""
+    asset_id = ""
+    for key in ("profile_photo_asset_id", "photo_asset_id", "portrait_asset_id", "image_asset_id"):
+        value = str(container.get(key) or "").strip()
+        if value and not value.lower().startswith(("http://", "https://")):
+            asset_id = value
+            break
+    url = ""
+    for key in ("profile_photo_url", "photo_url", "portrait_url", "image_url"):
+        value = str(container.get(key) or "").strip()
+        if value.lower().startswith(("http://", "https://")):
+            url = value
+            break
+    return asset_id, url
+
+
+def _is_profile_photo_url(value: Any) -> bool:
+    url = str(value or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        return False
+    lowered = url.lower()
+    return not any(host in lowered for host in ("localhost", "127.0.0.1", "0.0.0.0"))
+
+
+def _profile_photo_filename(url: str, asset_id: str) -> str:
+    raw = str(url or "").split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    name = raw.rsplit("/", 1)[-1].strip()
+    if "." not in name:
+        name = f"profile-photo-{asset_id}.jpg"
+    return name[:255]
+
+
+def _enrich_personal_profile_requirements_with_assets(
+    db: Session, user_id: int, requirements: Any
+) -> dict[str, Any]:
+    """Return profile requirements with a durable server URL for saved photos.
+
+    Online may have stored a local asset ID while its cloud mirror is being
+    registered. Once the server row exists, exposing its public URL lets both
+    H5 and Online restore the preview without probing the other machine.
+    """
+    req = dict(requirements or {}) if isinstance(requirements, dict) else {}
+    containers = [req]
+    for key in ("basic_profile", "profile"):
+        value = req.get(key)
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        asset_id, current_url = _profile_photo_values(container)
+        if not asset_id and not _is_profile_photo_url(current_url):
+            continue
+        row = None
+        if asset_id:
+            row = (
+                db.query(Asset)
+                .filter(Asset.asset_id == asset_id, Asset.user_id == int(user_id))
+                .first()
+            )
+        # Online keeps its local asset ID while the server stores the
+        # canonical row under a separate ID. The sync endpoint records that
+        # local ID in source_asset_id/client_asset_id, so resolve that alias
+        # before falling back to the URL.
+        if row is None and asset_id:
+            row = (
+                db.query(Asset)
+                .filter(
+                    Asset.user_id == int(user_id),
+                    or_(
+                        Asset.meta["source_asset_id"].as_string() == asset_id,
+                        Asset.meta["client_asset_id"].as_string() == asset_id,
+                    ),
+                )
+                .order_by(Asset.id.desc())
+                .first()
+            )
+        if row is None and _is_profile_photo_url(current_url):
+            row = (
+                db.query(Asset)
+                .filter(Asset.user_id == int(user_id), Asset.source_url == current_url)
+                .first()
+            )
+        source_url = str(row.source_url or "").strip() if row else ""
+        public_url = source_url if _is_profile_photo_url(source_url) else current_url
+        if public_url:
+            container["profile_photo_url"] = public_url
+        if row is not None:
+            container["profile_photo_asset_id"] = str(row.asset_id)
+    return req
+
+
+def _ensure_personal_profile_photo_assets(
+    db: Session, user_id: int, requirements: Any
+) -> dict[str, Any]:
+    """Bind a local-client photo ID to a durable server asset row when possible."""
+    req = dict(requirements or {}) if isinstance(requirements, dict) else {}
+    containers = [req]
+    for key in ("basic_profile", "profile"):
+        value = req.get(key)
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        asset_id, photo_url = _profile_photo_values(container)
+        if not asset_id and not _is_profile_photo_url(photo_url):
+            continue
+        row = None
+        if asset_id:
+            row = (
+                db.query(Asset)
+                .filter(Asset.asset_id == asset_id, Asset.user_id == int(user_id))
+                .first()
+            )
+        if row is None and asset_id:
+            row = (
+                db.query(Asset)
+                .filter(
+                    Asset.user_id == int(user_id),
+                    or_(
+                        Asset.meta["source_asset_id"].as_string() == asset_id,
+                        Asset.meta["client_asset_id"].as_string() == asset_id,
+                    ),
+                )
+                .order_by(Asset.id.desc())
+                .first()
+            )
+        if row is None and _is_profile_photo_url(photo_url):
+            row = (
+                db.query(Asset)
+                .filter(Asset.user_id == int(user_id), Asset.source_url == photo_url)
+                .first()
+            )
+        if row is None and not _is_profile_photo_url(photo_url):
+            continue
+        if row is None:
+            canonical_id = uuid.uuid4().hex[:12]
+            row = Asset(
+                asset_id=canonical_id,
+                user_id=int(user_id),
+                filename=_profile_photo_filename(photo_url, canonical_id),
+                media_type="image",
+                file_size=0,
+                source_url=photo_url,
+                meta={
+                    "asset_origin": "user_upload",
+                    "profile_photo": True,
+                    "source_asset_id": asset_id[:80] if asset_id else "",
+                    "registered_from": "personal_profile_save",
+                },
+            )
+            db.add(row)
+            db.flush()
+        elif not str(row.source_url or "").strip():
+            row.source_url = photo_url
+            meta = dict(row.meta or {})
+            meta["profile_photo"] = True
+            meta.setdefault("asset_origin", "user_upload")
+            row.meta = meta
+        canonical_id = str(row.asset_id)
+        container["profile_photo_asset_id"] = canonical_id
+        container["profile_photo_url"] = str(row.source_url or photo_url)
+    return req
 
 
 _PERSONAL_PROFILE_REQUIREMENT_KEYS = {
@@ -4811,7 +4979,16 @@ def save_personal_default_ip_content_config(
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = _clean_memory_doc_ids(incoming_memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
     row.memory_docs = memory_docs
-    row.requirements = _jsonable(_personal_default_requirements_for_save(incoming_requirements, existing_requirements, body.meta))
+    normalized_requirements = _personal_default_requirements_for_save(
+        incoming_requirements, existing_requirements, body.meta
+    )
+    # A profile photo may originate from Online's local asset store. Bind its
+    # public URL to a durable server asset before committing the profile so a
+    # refresh or a later same-city bestseller run never loses the reference.
+    normalized_requirements = _ensure_personal_profile_photo_assets(
+        db, int(current_user.id), normalized_requirements
+    )
+    row.requirements = _jsonable(normalized_requirements)
     meta = {**(body.meta or {}), "source": "personal_settings", "is_personal_default": True}
     if template_ref is not None:
         meta["current_template_id"] = int(template_ref.id)
