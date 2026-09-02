@@ -1040,6 +1040,7 @@ def _image_media_type(path: Path) -> str:
 
 def _h5_static_media_type(path: Path) -> str:
     return {
+        ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
         ".js": "application/javascript; charset=utf-8",
     }.get(path.suffix.lower(), _image_media_type(path))
@@ -1295,7 +1296,7 @@ def h5_static_asset(filename: str):
     safe = _safe_upload_filename(filename)
     path = (_H5_STATIC_DIR / safe).resolve()
     root = _H5_STATIC_DIR.resolve()
-    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
+    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".html", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
         raise HTTPException(status_code=404, detail="文件不存在")
     # H5 assets are versioned in index.html query strings. Keep them on disk
     # between cold starts so mobile WebViews do not redownload the 1MB+ bundle.
