@@ -20,6 +20,7 @@ from .api.global_leads import router as global_leads_router
 from .api.health import router as health_router
 from .api.h5_chat import router as h5_chat_router
 from .api.mastra_chat import router as mastra_chat_router
+from .api.moments_coach import router as moments_coach_router
 from .api.h5_home import router as h5_home_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
@@ -237,6 +238,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(global_leads_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
     app.include_router(mastra_chat_router, prefix="")
+    app.include_router(moments_coach_router, prefix="")
     app.include_router(h5_home_router, prefix="")
     app.include_router(h5_agent_management_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")
