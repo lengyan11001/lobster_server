@@ -57,6 +57,7 @@
     localStorage.setItem('lobster_moments_coach_draft', JSON.stringify(snapshot()));
   }
   let historyItems = [];
+  let uploadedImageUrl = '';
   function renderHistory(filter = 'all') {
     const box = $('history'); if (!box) return;
     const items = filter === 'all' ? historyItems : historyItems.filter(x => (x.circle_type || '') === filter);
@@ -79,15 +80,17 @@
     const group = e.target.closest('[data-view-group]'); if (group) { const id = group.dataset.viewGroup; const items = historyItems.filter(x => x.group_id && x.group_id === id); if (items.length) { const old = historyItems; historyItems = items; renderHistory('all'); historyItems = old; } return; }
     const tab = e.target.closest('[data-tab]'); if (tab) { e.preventDefault(); showPanel(tab.dataset.tab); return; }
     const go = e.target.closest('[data-go]'); if (go) { e.preventDefault(); showPanel(go.dataset.go); return; }
-    const home = e.target.closest('[data-home-action]'); if (home) { const action = home.dataset.homeAction; if (action === 'school') return toast('商学院内容即将开放'); if (action === 'image') { showPanel('write'); $('images')?.focus(); } else if (action === 'inspire') showPanel('choose'); else showPanel('idea'); return; }
+    const home = e.target.closest('[data-home-action]'); if (home) { const action = home.dataset.homeAction; if (action === 'school') return toast('商学院内容即将开放'); if (action === 'image') showPanel('image'); else if (action === 'inspire') showPanel('choose'); else showPanel('idea'); return; }
     const idea = e.target.closest('[data-idea]'); if (idea) { document.querySelectorAll('[data-idea]').forEach(x => x.classList.toggle('active', x === idea)); if ($('ideaInput')) $('ideaInput').value = `${idea.dataset.idea}：`; $('ideaInput')?.focus(); return; }
     const ideaGenerate = e.target.closest('[data-generate-idea]'); if (ideaGenerate) { generateIdea().catch(err => toast(err.message)); return; }
+    const imageGenerate = e.target.closest('[data-generate-image-text]'); if (imageGenerate) { if (!uploadedImageUrl) return toast('请先选择图片'); const prompt=$('imagePrompt')?.value.trim() || '请根据这张图片生成适合朋友圈的文案'; api('/api/moments-coach/generate',{method:'POST',json:{happened:prompt,customer_problem:'',customer_question:'',desired_result:'',current_change:'',purpose:'建立信任',circle_type:'',image_urls:[uploadedImageUrl]}}).then(data=>{ fill({happened:prompt,purpose:'建立信任',circle_type:'',image_urls:[uploadedImageUrl]}); showPanel('write'); const box=$('results'); box.innerHTML=`<div class="result-heading"><div><span class="eyebrow">看图生成完成</span><h2>选一条最像你会说的话</h2></div></div><div class="result-grid">${(data.items||[]).map(item=>`<article class="result" data-id="${esc(item.record_id)}"><header><span>${esc(item.circle_type||'朋友圈')}</span><b>${esc(item.version_type||'文案')}</b></header><h3>${esc(item.title||'')}</h3><pre>${esc(item.body||'')}</pre><label class="confirm"><input type="checkbox">我已核对素材，确认发布</label><button data-publish disabled>选择此版并发布</button></article>`).join('')}</div>`;}).catch(err=>toast(err.message)); return; }
     const circle = e.target.closest('[data-circle]'); if (circle) { const value = circle.dataset.circle; if ($('circle')) $('circle').value = value; configureCircleForm(value); showPanel('write'); const title = document.querySelector('.intro h2'); if (title) title.textContent = `${value}，今天想写点什么？`; return; }
     const use = e.target.closest('[data-use]'); if (use) { try { fill(JSON.parse(use.closest('[data-item]').dataset.item)); showPanel('write'); toast('素材已带入写作区'); } catch (_) { toast('素材读取失败'); } }
   });
   const saveMaterial = () => api('/api/moments-coach/materials', { method:'POST', json:snapshot() }).then(() => toast('素材已保存')).catch(e => toast(e.message));
   $('saveMaterial')?.addEventListener('click', saveMaterial); $('saveMaterialTop')?.addEventListener('click', saveMaterial); $('generate')?.addEventListener('click', () => generate().catch(e => toast(e.message)));
   $('circle')?.addEventListener('change', e => configureCircleForm(e.target.value));
+  $('imageFile')?.addEventListener('change', async e => { const file=e.target.files?.[0]; if(!file) return; const preview=$('imagePreview'); if(preview){ preview.src=URL.createObjectURL(file); preview.classList.remove('hidden'); } const status=$('imageStatus'); if(status) status.textContent='正在上传图片…'; try { const fd=new FormData(); fd.append('file',file); const d=await api('/api/h5-chat/uploads',{method:'POST',body:fd}); uploadedImageUrl=d.url||d.source_url||''; if(status) status.textContent='图片已上传，可点击生成文案'; } catch(err) { if(status) status.textContent='上传失败'; toast(err.message); } });
   $('savePlan')?.addEventListener('click', () => { const items = [...document.querySelectorAll('.result')].map((el, i) => ({ draft_record_id: el.dataset.id, circle_type: el.querySelector('header span')?.textContent || '生活圈', sort_order: i })); api('/api/moments-coach/plans', { method:'POST', json:{ name:'朋友圈一周排期', items } }).then(() => toast('排期已保存')).catch(e => toast(e.message)); });
   $('results')?.addEventListener('change', (e) => { if (e.target.matches('input[type=checkbox]')) e.target.closest('.result').querySelector('[data-publish]').disabled = !e.target.checked; });
   $('results')?.addEventListener('click', async (e) => {
