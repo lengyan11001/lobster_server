@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+import httpx
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -55,6 +57,12 @@ class PublishBody(BaseModel):
     installation_id: str = ""
     image_urls: list[str] = Field(default_factory=list)
     image_asset_ids: list[str] = Field(default_factory=list)
+
+
+class ImageBody(BaseModel):
+    prompt: str = ""
+    model: str = "openai/gpt-image-2"
+    size: str = "1024x1024"
 
 
 def _material_payload(row: MomentsCoachMaterial) -> dict[str, Any]:
@@ -190,3 +198,26 @@ def publish_request(record_id: str, body: PublishBody, current_user: User = Depe
     run = ScheduledTaskRun(id=uuid.uuid4().hex, task_id=None, user_id=current_user.id, created_by_user_id=current_user.id, created_by_role="user", installation_id=body.installation_id or None, title=("朋友圈发布：" + (row.title or "朋友圈文案"))[:160], task_kind="content_publish", content=row.content or "", payload={"action": "publish_content", "source": "moments_coach", "record_id": row.record_id}, status="completed", progress={"status": "completed"}, result_text="等待客户端发布", result_payload={"publish_draft": draft}, created_at=datetime.utcnow(), updated_at=datetime.utcnow(), started_at=datetime.utcnow(), finished_at=datetime.utcnow())
     db.add(run); db.commit()
     return {"ok": True, "status": "pending", "run_id": run.id}
+
+
+@router.post("/api/moments-coach/{record_id}/generate-image")
+async def generate_image(record_id: str, body: ImageBody, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id, IPContentDraftRecord.record_id == _clean_text(record_id, 64), IPContentDraftRecord.task == "moments_sales_coach").first()
+    if row is None: raise HTTPException(404, "文案记录不存在")
+    prompt = _clean_long_text(body.prompt or (row.meta or {}).get("image_suggestion") or row.content or row.title, 2000)
+    if not prompt: raise HTTPException(400, "缺少配图提示")
+    token = (request.headers.get("Authorization") or "").strip()
+    if not token: raise HTTPException(401, "缺少登录凭证")
+    payload = {"model": _clean_text(body.model, 120) or "openai/gpt-image-2", "prompt": prompt, "size": _clean_text(body.size, 32) or "1024x1024", "n": 1}
+    timeout = httpx.Timeout(240.0, connect=15.0, read=240.0, write=30.0, pool=10.0)
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        response = await client.post(f"{_internal_api_base()}/api/comfly-proxy/v1/images/generations", json=payload, headers={"Authorization": token, "Content-Type": "application/json", "Accept": "application/json"})
+    try: data = response.json()
+    except Exception: data = {"error": response.text[:1000]}
+    if response.status_code >= 400: raise HTTPException(response.status_code, data.get("error") or data.get("detail") or "配图生成失败")
+    images = data.get("data") if isinstance(data, dict) else []
+    first = images[0] if isinstance(images, list) and images else {}
+    image_url = (first.get("url") or first.get("b64_json") or "") if isinstance(first, dict) else ""
+    if not image_url: raise HTTPException(502, "图片路由未返回图片")
+    meta = dict(row.meta or {}); meta["generated_images"] = [image_url] + [x for x in (meta.get("generated_images") or [])[1:] if x != image_url]; row.meta = meta; row.image_url = image_url; row.updated_at = datetime.utcnow(); db.commit()
+    return {"ok": True, "record_id": row.record_id, "image_url": image_url, "images": meta["generated_images"]}

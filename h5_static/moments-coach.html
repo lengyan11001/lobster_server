@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>朋友圈成交文案教练</title>
+  <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260902-standalone-v1" />
+</head>
+<body>
+  <main id="momentsApp" class="moments-app">
+    <header class="mc-header">
+      <div class="mc-brand"><button id="backBtn" class="icon-btn" aria-label="返回">‹</button><div><div class="eyebrow">AI 文案智能体</div><h1>朋友圈成交文案教练</h1><p>把真实经历，写成让人愿意靠近的朋友圈</p></div></div>
+      <div class="header-actions"><span class="status-dot"></span><span>草稿模式</span><button id="guideBtn" class="outline-btn">微信浮窗</button></div>
+    </header>
+    <div id="guide" class="guide hidden"><div><strong>添加到微信浮窗</strong><p>在微信内打开本页，点击右上角“…” → “添加到浮窗”。下次可从浮窗快速回来。</p></div><button id="guideClose" class="icon-btn">×</button></div>
+    <nav class="mc-tabs" role="tablist"><button class="active" data-tab="write">写一条</button><button data-tab="materials">素材库</button><button data-tab="plan">一周排期</button><button data-tab="history">历史草稿</button><button data-tab="settings">我的设定</button></nav>
+
+    <section class="mc-panel" data-panel="write">
+      <div class="intro"><div><span class="eyebrow">从真实素材出发</span><h2>今天，想让谁记住什么？</h2><p>把发生的事、对方的顾虑或一个变化告诉我。教练会判断内容节奏，并给你三个可以直接修改的版本。</p></div><label class="direction">本条方向<select id="circle"><option value="">让 AI 判断</option><option>生活圈</option><option>咨询圈</option><option>反馈圈</option><option>收款圈</option><option>促成交圈</option></select></label></div>
+      <div class="compose-layout"><div class="card compose-card"><div class="section-head"><div><span class="eyebrow">真实素材</span><h3>把事情说出来</h3></div><small>至少填写一项</small></div>
+        <label>今天发生了什么<textarea id="happened" placeholder="例如：一位客户把拖了很久的方案重新拿出来聊……"></textarea></label>
+        <div class="two-col"><label>她之前卡在哪里<textarea id="problem" placeholder="客户原来的困扰"></textarea></label><label>她问过什么<textarea id="question" placeholder="保留真实问法"></textarea></label><label>她真正想要的结果<textarea id="desired" placeholder="她希望发生的变化"></textarea></label><label>现在有什么进展<textarea id="change" placeholder="真实变化、反馈或阶段结果"></textarea></label></div>
+        <div class="two-col bottom"><label>这条想完成什么<select id="purpose"><option>建立信任</option><option>消除疑虑</option><option>展示变化</option><option>推动行动</option></select></label><label>配图 / 截图地址<textarea id="images" placeholder="每行一个图片链接，可先不填"></textarea></label></div>
+        <div class="actions"><button id="saveMaterial" class="secondary-btn">保存到素材库</button><button id="generate" class="primary-btn">开始生成 3 个版本</button></div>
+      </div><aside class="card rules"><span class="eyebrow">写作边界</span><h3>真实，才有成交感</h3><ul><li>不编造成交、反馈或结果</li><li>不暴露客户身份和聊天隐私</li><li>不使用“稳赚、保证、100%”等绝对表达</li><li>发布前必须人工确认</li></ul><div class="rule-note"><b>五种内容节奏</b><p>生活建立信任 · 咨询消除顾虑 · 反馈展示变化 · 收款传递价值 · 促成交给出行动理由</p></div></aside></div>
+      <div id="results" class="results"></div>
+    </section>
+    <section class="mc-panel hidden" data-panel="materials"><div class="panel-title"><div><span class="eyebrow">真实素材</span><h2>你的内容储备</h2><p>把客户问题、日常片段和真实变化存下来，需要发圈时直接取用。</p></div><button id="saveMaterialTop" class="primary-btn">保存当前素材</button></div><div id="materials" class="list">正在读取素材库…</div></section>
+    <section class="mc-panel hidden" data-panel="plan"><div class="panel-title"><div><span class="eyebrow">发布节奏</span><h2>一周排期</h2><p>让生活、专业与成交内容自然穿插，而不是把朋友圈写成广告栏。</p></div><button id="savePlan" class="primary-btn">将当前草稿存为排期</button></div><div class="plan-guide"><b>推荐结构</b><span>生活 2 条</span><span>咨询 1 条</span><span>反馈 1 条</span><span>收款 1 条</span><span>促成交 1 条</span></div><div id="plans" class="list">正在读取排期…</div></section>
+    <section class="mc-panel hidden" data-panel="history"><div class="panel-title"><div><span class="eyebrow">已生成内容</span><h2>历史草稿</h2><p>保留生成时的人设与素材快照，随时可以复盘和再利用。</p></div></div><div id="history" class="list">正在读取历史记录…</div></section>
+    <section class="mc-panel hidden" data-panel="settings"><div class="panel-title"><div><span class="eyebrow">写作底色</span><h2>当前 IP 人设</h2><p>教练自动读取个人设置中的 IP 人设，不需要重复填写。</p></div></div><div id="persona" class="persona">正在读取个人设定…</div></section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script src="/h5-static/moments-coach.js?v=20260902-standalone-v1"></script>
+</body>
+</html>
