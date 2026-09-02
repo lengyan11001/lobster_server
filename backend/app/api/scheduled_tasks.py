@@ -1091,6 +1091,122 @@ def _workflow_node_deadline_for_run(run: ScheduledTaskRun) -> Optional[datetime]
     )
 
 
+def _workflow_node_window_duration(payload: Any) -> Optional[timedelta]:
+    """Return the configured node window length, including overnight windows."""
+    source = payload if isinstance(payload, dict) else {}
+    context = source.get("h5_context")
+    if not isinstance(context, dict):
+        return None
+    start_match = _DAILY_TIME_RE.match(str(context.get("workflow_node_time") or "").strip())
+    end_match = _DAILY_TIME_RE.match(str(context.get("workflow_node_end_time") or "").strip())
+    if not start_match or not end_match:
+        return None
+    start_minutes = int(start_match.group(1)) * 60 + int(start_match.group(2))
+    end_minutes = int(end_match.group(1)) * 60 + int(end_match.group(2))
+    duration_minutes = end_minutes - start_minutes
+    if duration_minutes < 0:
+        duration_minutes += 24 * 60
+    return timedelta(minutes=duration_minutes)
+
+
+def _workflow_parent_finished_at(
+    db: Session,
+    task: ScheduledTask,
+    *,
+    scheduled_at: datetime,
+    installation_id: str = "",
+) -> Optional[datetime]:
+    """Find the completed parent run that supplied this child node's material."""
+    source_mode, parent_node_id, template_id = _workflow_task_context(task)
+    if source_mode != "parent_latest_run" or not parent_node_id:
+        return None
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    schedule_cfg = _schedule_config_from_payload(payload)
+    try:
+        timezone_offset = int(
+            schedule_cfg.get("timezone_offset_minutes")
+            if schedule_cfg.get("timezone_offset_minutes") is not None
+            else 480
+        )
+    except (TypeError, ValueError):
+        timezone_offset = 480
+    timezone_offset = max(-720, min(840, timezone_offset))
+    target_local_date = (
+        scheduled_at + timedelta(minutes=timezone_offset)
+    ).date()
+
+    query = db.query(ScheduledTaskRun).filter(
+        ScheduledTaskRun.user_id == task.user_id,
+        ScheduledTaskRun.task_kind == "client_workflow",
+        ScheduledTaskRun.status == "completed",
+    )
+    if installation_id:
+        ids = {str(installation_id).strip()}
+        try:
+            scoped_id = installation_slot_id_for_user(db, task.user_id, str(installation_id).strip())
+        except Exception:
+            scoped_id = ""
+        if scoped_id:
+            ids.add(str(scoped_id).strip())
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id.in_(tuple(ids)),
+                ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+            )
+        )
+
+    for run in query.order_by(ScheduledTaskRun.finished_at.desc(), ScheduledTaskRun.created_at.desc()).limit(500).all():
+        run_payload = run.payload if isinstance(run.payload, dict) else {}
+        run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else {}
+        run_params = run_payload.get("params") if isinstance(run_payload.get("params"), dict) else {}
+        if not run_context and isinstance(run_params.get("h5_context"), dict):
+            run_context = run_params["h5_context"]
+        if str(run_context.get("workflow_node_id") or "").strip() != parent_node_id:
+            continue
+        if template_id and str(run_context.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        if _workflow_run_local_date(run, timezone_offset) != target_local_date:
+            continue
+        if not _workflow_result_has_publishable_material(run.result_payload):
+            continue
+        finished_at = (
+            _parse_utc_datetime(run.finished_at)
+            or _parse_utc_datetime((run.progress or {}).get("completed_at") if isinstance(run.progress, dict) else None)
+            or _parse_utc_datetime(run.updated_at)
+        )
+        if finished_at is not None:
+            return finished_at
+    return None
+
+
+def _workflow_effective_deadline(
+    db: Session,
+    task: ScheduledTask,
+    *,
+    scheduled_at: datetime,
+    installation_id: str = "",
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Return deadline plus parent completion anchor for a scheduled occurrence."""
+    payload = _materialize_workflow_node_window(task.payload or {}, scheduled_at=scheduled_at)
+    deadline = _workflow_node_deadline_utc(payload, reference_at=scheduled_at)
+    if deadline is None:
+        return None, None
+    parent_finished_at = _workflow_parent_finished_at(
+        db,
+        task,
+        scheduled_at=scheduled_at,
+        installation_id=installation_id,
+    )
+    duration = _workflow_node_window_duration(payload)
+    if parent_finished_at is None or duration is None:
+        return deadline, None
+    # Preserve the original window when the parent finished early; if it ran
+    # long, carry the child's full configured window forward from that actual
+    # completion time instead of expiring it at the original fixed end time.
+    shifted_deadline = parent_finished_at + duration
+    return max(deadline, shifted_deadline), parent_finished_at
+
+
 def _materialize_workflow_node_window(
     payload: Dict[str, Any],
     *,
@@ -2720,6 +2836,20 @@ def _create_run_for_target(
 ) -> ScheduledTaskRun:
     run_payload = _run_payload_for_task(db, task, now)
     run_payload = _materialize_workflow_node_window(run_payload, scheduled_at=scheduled_at or now)
+    effective_deadline, parent_finished_at = _workflow_effective_deadline(
+        db,
+        task,
+        scheduled_at=scheduled_at or now,
+        installation_id=installation_id or "",
+    )
+    if effective_deadline is not None:
+        run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else None
+        if isinstance(run_context, dict):
+            run_context["workflow_node_deadline_at"] = effective_deadline.isoformat()
+            if parent_finished_at is not None:
+                run_context["workflow_node_effective_start_at"] = parent_finished_at.isoformat()
+                run_context["workflow_node_deadline_source"] = "parent_finished_at"
+            run_payload["h5_context"] = run_context
     # Every due occurrence gets its own run.  Recurring runs are consumed in
     # creation order by the installation poller, so refreshing an existing
     # pending row here would silently drop occurrences while a device is busy.
@@ -2841,20 +2971,36 @@ def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
 
 
 def _scheduled_occurrence_deadline(
+    db: Session,
     task: ScheduledTask,
     scheduled_at: datetime,
+    *,
+    installation_id: str = "",
 ) -> Optional[datetime]:
-    """Resolve a workflow node deadline for one not-yet-materialized trigger."""
-    payload = _materialize_workflow_node_window(task.payload or {}, scheduled_at=scheduled_at)
-    return _workflow_node_deadline_utc(payload, reference_at=scheduled_at)
+    """Resolve a trigger deadline, carrying dependent nodes after parent work."""
+    deadline, _ = _workflow_effective_deadline(
+        db,
+        task,
+        scheduled_at=scheduled_at,
+        installation_id=installation_id,
+    )
+    return deadline
 
 
 def _scheduled_occurrence_expired(
+    db: Session,
     task: ScheduledTask,
     scheduled_at: datetime,
     now: datetime,
+    *,
+    installation_id: str = "",
 ) -> bool:
-    deadline = _scheduled_occurrence_deadline(task, scheduled_at)
+    deadline = _scheduled_occurrence_deadline(
+        db,
+        task,
+        scheduled_at,
+        installation_id=installation_id,
+    )
     if deadline is not None:
         return deadline <= now
     return (now - scheduled_at).total_seconds() > _recurring_pending_max_age_seconds(task)
@@ -2898,7 +3044,7 @@ def _expire_pending_recurring_run(
         return False
     progress = run.progress if isinstance(run.progress, dict) else {}
     scheduled_at = _parse_utc_datetime(progress.get("scheduled_at")) or run.created_at or now
-    if not _scheduled_occurrence_expired(task, scheduled_at, now):
+    if not _scheduled_occurrence_expired(db, task, scheduled_at, now, installation_id=run.installation_id or ""):
         return False
     _skip_pending_recurring_run(
         db,
@@ -2920,7 +3066,18 @@ def _skip_pending_recurring_run(
     superseded_by_run_id: str = "",
 ) -> None:
     run.status = "cancelled"
-    run.error = message
+    # A missed window is an intentional scheduler skip, not an execution
+    # failure. Keep the reason in the result/progress payload so it remains
+    # visible without poisoning failure counters or error cards.
+    run.error = None
+    run.result_text = message
+    existing_result = run.result_payload if isinstance(run.result_payload, dict) else {}
+    run.result_payload = {
+        **existing_result,
+        "skipped": True,
+        "skip_reason": reason,
+        "skip_message": message,
+    }
     run.progress = _merge_run_progress(
         run,
         {
@@ -3852,7 +4009,13 @@ def _enqueue_due_tasks(
             _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
             expired_count += 1
             continue
-        if _scheduled_occurrence_expired(candidate, scheduled_at, now):
+        if _scheduled_occurrence_expired(
+            db,
+            candidate,
+            scheduled_at,
+            now,
+            installation_id=target_installation,
+        ):
             _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
             expired_count += 1
             continue
@@ -4925,7 +5088,16 @@ def submit_scheduled_task_event(
             or "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
         ).strip()
         row.status = "cancelled"
-        row.error = message
+        row.error = None
+        row.result_text = message
+        existing_result = row.result_payload if isinstance(row.result_payload, dict) else {}
+        row.result_payload = {
+            **existing_result,
+            "skipped": True,
+            "skip_reason": "workflow_node_deadline_expired",
+            "skip_message": message,
+            "deadline_at": event_payload.get("deadline_at"),
+        }
         row.finished_at = now
         row.updated_at = now
         row.progress = _merge_run_progress(
@@ -4940,7 +5112,7 @@ def submit_scheduled_task_event(
         )
         task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
         if task:
-            task.last_error = message
+            task.last_error = None
             task.updated_at = now
         _sync_h5_message_from_run(db, row, now)
         _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", event_payload)

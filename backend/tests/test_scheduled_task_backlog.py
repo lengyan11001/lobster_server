@@ -312,6 +312,9 @@ def test_expired_pending_runs_are_skipped_without_touching_processing(
 
     assert skipped == 2
     assert db_session.get(ScheduledTaskRun, "recurring-old").status == "cancelled"
+    assert db_session.get(ScheduledTaskRun, "recurring-old").error is None
+    assert db_session.get(ScheduledTaskRun, "recurring-old").result_payload["skipped"] is True
+    assert db_session.get(ScheduledTaskRun, "recurring-old").result_payload["skip_reason"] == "expired_before_execution"
     assert db_session.get(ScheduledTaskRun, "recurring-latest").status == "pending"
     assert db_session.get(ScheduledTaskRun, "recurring-processing").status == "processing"
     assert db_session.get(ScheduledTaskRun, "once-old").status == "cancelled"

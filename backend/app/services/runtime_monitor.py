@@ -253,9 +253,12 @@ async def collect_runtime_monitor_snapshot() -> Dict[str, Any]:
         creative_created = _count(db, CreativeGenerationJob, CreativeGenerationJob.created_at >= start, CreativeGenerationJob.created_at < now)
         creative_failed = _status_count(db, CreativeGenerationJob, ("failed", "error", "cancelled"), start, now, CreativeGenerationJob.updated_at)
         scheduled_total = _count(db, ScheduledTaskRun, ScheduledTaskRun.created_at >= start, ScheduledTaskRun.created_at < now)
-        scheduled_failed = _status_count(db, ScheduledTaskRun, ("failed", "error", "cancelled"), start, now, ScheduledTaskRun.updated_at)
+        # ``cancelled`` is a normal terminal state for missed workflow
+        # windows and user stops. Only execution errors belong in failure
+        # metrics.
+        scheduled_failed = _status_count(db, ScheduledTaskRun, ("failed", "error"), start, now, ScheduledTaskRun.updated_at)
         h5_total = _count(db, H5ChatMessage, H5ChatMessage.created_at >= start, H5ChatMessage.created_at < now)
-        h5_failed = _status_count(db, H5ChatMessage, ("failed", "error", "cancelled"), start, now, H5ChatMessage.updated_at)
+        h5_failed = _status_count(db, H5ChatMessage, ("failed", "error"), start, now, H5ChatMessage.updated_at)
         publish_total = _count(db, PublishTask, PublishTask.created_at >= start, PublishTask.created_at < now)
         publish_failed = _status_count(db, PublishTask, ("failed", "error"), start, now, PublishTask.finished_at)
         generated_assets = _count(db, GenerationRecord, GenerationRecord.created_at >= start, GenerationRecord.created_at < now)

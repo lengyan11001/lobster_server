@@ -198,3 +198,64 @@ def test_enqueue_does_not_materialize_child_after_parent_missed_window(db_sessio
     assert scheduled_tasks._enqueue_due_tasks(db_session, test_user.id, "device-1") == 0
     assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == child.id).count() == 0
     assert child.next_run_at is not None and child.next_run_at > now
+
+
+def test_workflow_child_deadline_follows_late_parent_completion(db_session, test_user):
+    scheduled_at = datetime(2026, 8, 20, 5, 30)
+    parent_finished_at = datetime(2026, 8, 20, 7, 0)
+    now = datetime(2026, 8, 20, 7, 30)
+    parent = _workflow_task(
+        test_user.id,
+        node_id="parent-node",
+        next_run_at=scheduled_at,
+    )
+    child = _child_task(
+        test_user.id,
+        parent_node_id="parent-node",
+        next_run_at=scheduled_at,
+    )
+    child.payload["h5_context"].update(
+        {
+            "workflow_node_time": "13:30",
+            "workflow_node_end_time": "14:30",
+        }
+    )
+    db_session.add_all([parent, child])
+    db_session.flush()
+    parent_run = _parent_run(
+        user_id=test_user.id,
+        task_id=parent.id,
+        status="completed",
+        scheduled_at=scheduled_at,
+        result_payload={"local_result": {"asset_id": "asset-1", "media_type": "video"}},
+    )
+    parent_run.finished_at = parent_finished_at
+    parent_run.updated_at = parent_finished_at
+    db_session.add(parent_run)
+    db_session.commit()
+
+    deadline = scheduled_tasks._scheduled_occurrence_deadline(
+        db_session,
+        child,
+        scheduled_at,
+        installation_id="device-1",
+    )
+
+    assert deadline == datetime(2026, 8, 20, 8, 0)
+    assert not scheduled_tasks._scheduled_occurrence_expired(
+        db_session,
+        child,
+        scheduled_at,
+        now,
+        installation_id="device-1",
+    )
+
+    run = scheduled_tasks._create_run_for_target(
+        db_session,
+        child,
+        "device-1",
+        now,
+        scheduled_at=scheduled_at,
+    )
+    assert run.payload["h5_context"]["workflow_node_deadline_at"] == "2026-08-20T08:00:00"
+    assert run.payload["h5_context"]["workflow_node_effective_start_at"] == "2026-08-20T07:00:00"
