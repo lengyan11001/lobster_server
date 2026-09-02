@@ -10,7 +10,7 @@ cd "$ROOT"
 # parsed safely and used as a fallback when the configured key is unavailable.
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    exec python "$ROOT/scripts/deploy_from_local.py"
+    exec python "$ROOT/scripts/deploy_from_local.py" --push
     ;;
 esac
 
@@ -35,6 +35,11 @@ if [ -z "$LOBSTER_DEPLOY_HOST" ]; then
   echo "或在服务器上执行: cd /opt/lobster-server && bash scripts/server_update_and_restart.sh"
   exit 1
 fi
+
+# Always publish the local main branch before touching the server.  This keeps
+# deployment a single operation: push once, then remote pull/restart once.
+echo "[push] git push origin main"
+git push origin main
 
 REMOTE_DIR="${LOBSTER_DEPLOY_REMOTE_DIR:-/opt/lobster-server}"
 REMOTE_DIR_OS="${LOBSTER_DEPLOY_REMOTE_DIR_OVERSEAS:-$REMOTE_DIR}"

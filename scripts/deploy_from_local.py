@@ -197,7 +197,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Deploy lobster_server from Windows/Python without local bash.")
     parser.add_argument("--env", type=Path, default=ROOT / ".env.deploy", help=".env.deploy path")
     parser.add_argument("--test", action="store_true", help="Deploy only LOBSTER_DEPLOY_HOST_TEST")
-    parser.add_argument("--push", action="store_true", help="Push local main before deploying production")
+    parser.add_argument("--push", action="store_true", help="Push local main before deploying production (enabled by deploy_from_local.sh)")
     parser.add_argument("--no-reset", action="store_true", help="Use git pull instead of reset --hard origin/main")
     args = parser.parse_args()
 
@@ -215,8 +215,11 @@ def main() -> int:
     primary = _target_from_env(env)
     if not primary:
         raise SystemExit("[ERR] 未设置 LOBSTER_DEPLOY_HOST")
+    # The shell wrapper passes --push so a normal deployment always publishes
+    # the exact local main commit before the remote pull/restart.  Keep the
+    # flag for direct callers, while avoiding any second push.
     if args.push:
-        print("[deploy] git push origin main")
+        print("[push] git push origin main")
         subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, check=True)
     deploy_target(primary, reset=not args.no_reset)
 
