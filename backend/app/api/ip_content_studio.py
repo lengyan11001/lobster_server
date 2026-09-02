@@ -32,6 +32,7 @@ from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPCo
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
+from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -138,6 +139,20 @@ def _retryable_http_exception(exc: HTTPException) -> bool:
     except Exception:
         status = 0
     return status in _RETRY_HTTP_STATUSES or _is_retryable_detail(exc.detail)
+
+
+def _tikhub_transport_charge_uncertain(exc: BaseException) -> bool:
+    """Whether TiKHub may have accepted a request before the client failed.
+
+    A connect/pool timeout or connect error happens before an HTTP request is
+    sent, so it is safe to leave the request uncharged.  Read/write timeouts,
+    remote protocol errors and other transport failures can happen after the
+    provider accepted the request; TiKHub documents that these may still be
+    billed even when no response reaches us.  Those attempts are therefore
+    settled conservatively and marked for reconciliation.
+    """
+
+    return not isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError))
 
 
 def _sync_error_result(*, source: str, row: Any, exc: Exception, attempts: int) -> dict[str, Any]:
@@ -521,6 +536,13 @@ class CompetitorCreateBody(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class CompetitorByChannelIdBody(BaseModel):
+    """Request body for adding a WeChat Channels account by its public ID."""
+
+    channel_id: str = Field("", max_length=200)
+    industry_tags: str = ""
+
+
 class CompetitorSyncBody(BaseModel):
     count: int = Field(20, ge=1, le=50)
     last_buffer: str = ""
@@ -794,6 +816,52 @@ def _wechat_channels_account_from_username(username: str) -> dict[str, Any]:
     }
 
 
+def _wechat_channels_channel_id_candidate(payload: Any, channel_id: str) -> Optional[dict[str, Any]]:
+    """Extract the resolved finder account without falling back to account search."""
+    users, _ = _normalize_wechat_channels_users_from_payload(payload or {}, limit=1)
+    if users:
+        candidate = dict(users[0])
+        candidate["channel_id"] = channel_id
+        candidate["source"] = "channel_id"
+        return candidate
+
+    # Some TiKHub responses return the username as a scalar rather than a
+    # candidate object. Only accept a finder username in this fallback.
+    def find_username(node: Any, depth: int = 0) -> str:
+        if depth > 8:
+            return ""
+        if isinstance(node, str):
+            value = _clean_text(node, 191)
+            return value if _is_wechat_channels_finder_username(value) else ""
+        if isinstance(node, list):
+            for value in node:
+                found = find_username(value, depth + 1)
+                if found:
+                    return found
+            return ""
+        if not isinstance(node, dict):
+            return ""
+        for key in ("username", "finder_username", "finderUserName", "finderUsername", "user_name", "userName"):
+            value = node.get(key)
+            if isinstance(value, str):
+                clean = _clean_text(value, 191)
+                if _is_wechat_channels_finder_username(clean):
+                    return clean
+        for value in node.values():
+            found = find_username(value, depth + 1)
+            if found:
+                return found
+        return ""
+
+    username = find_username(payload)
+    if not username:
+        return None
+    candidate = _wechat_channels_account_from_username(username)
+    candidate["channel_id"] = channel_id
+    candidate["source"] = "channel_id"
+    return candidate
+
+
 _MOMENTS_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
 _MOMENTS_CTA_EMOJI_RE = re.compile(r"(?:^|\n)\s*[🎯👉👇💬📩📲☎️🔥✨🚀]+\s*(?=\n|$)")
 _MOMENTS_CONTACT_INTENT_RE = re.compile(
@@ -894,11 +962,13 @@ def _tikhub_api_key() -> str:
 
 
 def _query_price(query_type: str) -> Decimal:
-    raw = getattr(settings, "tikhub_query_unit_credits", 1.0)
+    spec = _ENDPOINTS.get(query_type) or {}
     try:
-        return quantize_credits(Decimal(str(raw)))
-    except Exception:
-        return quantize_credits(1)
+        return tikhub_query_price(query_type, endpoint_path=str(spec.get("path") or ""), require_known=True)
+    except ValueError as exc:
+        # Never call a newly added/unknown endpoint at the legacy one-credit
+        # price: fail closed until its TiKHub catalog price is configured.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _internal_api_base() -> str:
@@ -1991,18 +2061,21 @@ def _query_log_payload(row: TikHubQueryLog, *, include_raw: bool = False, items:
 
 
 def _query_log_summary_payload(row: TikHubQueryLog) -> dict[str, Any]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
     return {
         "id": row.id,
         "user_id": row.user_id,
         "query_id": row.query_id,
         "platform": row.platform,
         "query_type": row.query_type,
+        "endpoint": row.endpoint,
         "status": row.status,
         "success": bool(row.success),
         "http_status": row.http_status,
         "tikhub_code": row.tikhub_code,
         "tikhub_request_id": row.tikhub_request_id or "",
         "credits_charged": credits_json_float(row.credits_charged or 0),
+        "pricing": meta.get("pricing") if isinstance(meta.get("pricing"), dict) else {},
         "latency_ms": row.latency_ms,
         "result_count": int(row.result_count or 0),
         "error_message": (row.error_message or "")[:240],
@@ -2141,7 +2214,7 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
         user = item.get("user") if isinstance(item.get("user"), dict) else {}
     if not user:
         nested_data = item.get("data") if isinstance(item.get("data"), dict) else {}
-        if _first(nested_data, ["username", "finder_username", "finderUserName", "user_name"]):
+        if _first(nested_data, ["username", "finder_username", "finderUserName", "finderUsername", "user_name", "userName"]):
             user = nested_data
     if not user:
         nested = _lookup(item, "data.finder_info")
@@ -2153,7 +2226,9 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
             "username",
             "finder_username",
             "finderUserName",
+            "finderUsername",
             "user_name",
+            "userName",
             "jumpInfo.userName",
             "noticeParam.finderUsername",
             "openid",
@@ -2168,7 +2243,9 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
                 "username",
                 "finder_username",
                 "finderUserName",
+                "finderUsername",
                 "user_name",
+                "userName",
                 "jumpInfo.userName",
                 "noticeParam.finderUsername",
                 "data.username",
@@ -2441,6 +2518,10 @@ async def _execute_query(
         credits_charged=quantize_credits(0),
         meta=meta or {},
     )
+    log.meta = {
+        **(meta or {}),
+        "pricing": tikhub_price_breakdown(query_type, str(spec.get("path") or "")),
+    }
     db.add(log)
     db.flush()
     # Persist the pending audit row, then release the connection while TikHub
@@ -2451,6 +2532,49 @@ async def _execute_query(
         http_status, payload, headers, latency_ms = await _call_tikhub(query_type, clean_params, clean_body)
     except HTTPException:
         raise
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        # A response timeout/transport reset can mean TiKHub accepted and
+        # billed the request even though the client saw no response.  Charge
+        # that attempt conservatively and expose the uncertainty in the audit
+        # row; connect/pool failures are known pre-send failures and remain
+        # uncharged.  Retry attempts get their own query_id/ledger entry, so
+        # every provider attempt is accounted for independently.
+        billing_uncertain = _tikhub_transport_charge_uncertain(exc)
+        log.status = "billing_uncertain" if billing_uncertain else "error"
+        log.error_message = str(exc)[:2000]
+        log.meta = {
+            **(log.meta or {}),
+            "billing_uncertain": billing_uncertain,
+            "provider_charge_unknown": billing_uncertain,
+            "transport_exception": type(exc).__name__,
+        }
+        if billing_uncertain and price > 0:
+            balance_after = quantize_credits(balance - price)
+            current_user.credits = balance_after
+            log.credits_charged = price
+            append_credit_ledger(
+                db,
+                current_user.id,
+                -price,
+                "unit_deduct",
+                balance_after,
+                description=f"TiKHub 请求结果未知，按可能已扣费结算：{query_type}",
+                ref_type="tikhub_query_uncertain",
+                ref_id=query_id,
+                meta={
+                    "source": "tikhub",
+                    "query_type": query_type,
+                    "platform": spec["platform"],
+                    "endpoint": spec["path"],
+                    "deduct_credits": credits_json_float(price),
+                    "billing_uncertain": True,
+                    "provider_charge_unknown": True,
+                    "transport_exception": type(exc).__name__,
+                    "pricing": tikhub_price_breakdown(query_type, str(spec.get("path") or "")),
+                },
+            )
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"TikHub 查询失败：{str(exc)[:200]}") from exc
     except Exception as exc:
         log.status = "error"
         log.error_message = str(exc)[:2000]
@@ -4707,6 +4831,7 @@ def list_my_tikhub_records(
                 TikHubQueryLog.query_id,
                 TikHubQueryLog.platform,
                 TikHubQueryLog.query_type,
+                TikHubQueryLog.endpoint,
                 TikHubQueryLog.status,
                 TikHubQueryLog.success,
                 TikHubQueryLog.http_status,
@@ -4716,6 +4841,7 @@ def list_my_tikhub_records(
                 TikHubQueryLog.latency_ms,
                 TikHubQueryLog.result_count,
                 TikHubQueryLog.error_message,
+                TikHubQueryLog.meta,
                 TikHubQueryLog.created_at,
                 TikHubQueryLog.updated_at,
             )
@@ -5320,6 +5446,91 @@ async def search_wechat_channels_users(
         "ok": True,
         "items": [],
         "raw_item_count": raw_count,
+        "query": result.get("query") or {},
+        "balance_after": result.get("balance_after"),
+    }
+
+
+@router.post("/api/ip-content/wechat-channels/competitors/by-channel-id", summary="按照视频号公开 ID 添加同行账号")
+async def add_competitor_by_channel_id(
+    body: CompetitorByChannelIdBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    channel_id = _clean_text(body.channel_id, 200)
+    if not _is_wechat_channels_channel_id(channel_id):
+        raise HTTPException(status_code=400, detail="请填写有效的视频号公开 ID（sph 开头）")
+
+    # This endpoint intentionally calls only the ID conversion API. It must
+    # never perform nickname/keyword account search as a fallback.
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_channel_id_to_username_v2",
+        params={},
+        body={"channel_id": channel_id, "raw": False},
+        save_items=False,
+        meta={"source": "competitor_channel_id_add", "channel_id": channel_id},
+        attempts=2,
+        include_raw_response=True,
+    )
+    if not result.get("ok"):
+        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+        detail = query.get("error_message") or "视频号公开 ID 解析失败"
+        raise HTTPException(status_code=502, detail=f"视频号公开 ID 解析失败：{detail}")
+
+    candidate = _wechat_channels_channel_id_candidate(result.get("raw_response") or {}, channel_id)
+    if not candidate:
+        raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
+    account_key = _clean_text(candidate.get("username") or candidate.get("finder_username"), 191)
+    if not _is_wechat_channels_finder_username(account_key):
+        raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
+
+    meta = dict(candidate.get("raw") or {}) if isinstance(candidate.get("raw"), dict) else {}
+    meta.update(
+        {
+            "source": "competitor_channel_id_add",
+            "channel_id": channel_id,
+            "username": account_key,
+            "finder_username": account_key,
+        }
+    )
+    existing = (
+        db.query(ContentCompetitorAccount)
+        .filter(
+            ContentCompetitorAccount.user_id == current_user.id,
+            ContentCompetitorAccount.platform == "wechat_channels",
+            ContentCompetitorAccount.account_key == account_key,
+        )
+        .first()
+    )
+    if existing is not None:
+        return {
+            "ok": True,
+            "item": _competitor_payload(existing),
+            "channel_id": channel_id,
+            "finder_username": account_key,
+            "already_exists": True,
+            "query": result.get("query") or {},
+            "balance_after": result.get("balance_after"),
+        }
+    created = add_competitor(
+        CompetitorCreateBody(
+            platform="wechat_channels",
+            account_key=account_key,
+            display_name=_clean_text(candidate.get("display_name") or account_key, 255),
+            homepage_url=_clean_long_text(candidate.get("homepage_url"), 4096),
+            industry_tags=body.industry_tags,
+            meta=meta,
+        ),
+        current_user=current_user,
+        db=db,
+    )
+    return {
+        "ok": True,
+        "item": created["item"],
+        "channel_id": channel_id,
+        "finder_username": account_key,
         "query": result.get("query") or {},
         "balance_after": result.get("balance_after"),
     }

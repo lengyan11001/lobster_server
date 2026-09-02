@@ -375,6 +375,48 @@ def test_ip_content_wechat_channels_user_search_resolves_channel_id(monkeypatch)
     ]
 
 
+def test_add_competitor_by_channel_id_uses_conversion_only(monkeypatch, db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append((query_type, body))
+        return {
+            "ok": True,
+            "raw_response": {"code": 200, "data": {"channel_id": "sphABC123456", "username": "v2_direct@finder", "nickname": "直接账号"}},
+            "query": {"query_type": query_type},
+            "balance_after": 8,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+    result = asyncio.run(
+        studio.add_competitor_by_channel_id(
+            studio.CompetitorByChannelIdBody(channel_id="sphABC123456", industry_tags="教育"),
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["item"]["account_key"] == "v2_direct@finder"
+    assert result["item"]["display_name"] == "直接账号"
+    assert calls == [("wechat_channels_channel_id_to_username_v2", {"channel_id": "sphABC123456", "raw": False})]
+
+
+def test_add_competitor_by_channel_id_rejects_non_public_id(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            studio.add_competitor_by_channel_id(
+                studio.CompetitorByChannelIdBody(channel_id="a nickname"),
+                current_user=test_user,
+                db=db_session,
+            )
+        )
+    assert exc_info.value.status_code == 400
+
+
 def test_ip_content_wechat_channels_user_search_prefers_wechat_search_v2(monkeypatch):
     from types import SimpleNamespace
 

@@ -766,6 +766,15 @@
                 serverTask: true,
               },
               {
+                key: "moments_sales_coach",
+                label: "朋友圈成交文案教练",
+                mark: "圈",
+                description: "基于真实素材生成生活、咨询、反馈、收款和促成交朋友圈文案。",
+                capabilityId: "moments_sales_coach",
+                serverTask: true,
+                always: true,
+              },
+              {
                 key: "wewrite.article.pipeline",
                 label: "公众号文章",
                 mark: "文",
@@ -1261,6 +1270,7 @@
       "image_composer_studio",
       "marketing_copy_group",
       "ip_content_daily",
+      "moments_sales_coach",
       "wewrite.article.pipeline",
     ]);
     const AI_MARKETING_COVERS = {
@@ -7577,6 +7587,7 @@
 
     function abilityCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
+      if (id === "moments_sales_coach") return momentsCoachFieldsHtml();
       if (id === "ip_content_daily") {
         return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"), true)
           + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
@@ -7611,6 +7622,48 @@
       return taskFieldHtml("任务名称", workInputHtml("abilityGenericTitle", "text", capabilityName(id) || "能力任务"))
         + taskFieldHtml("任务要求", taskTextareaHtml("abilityGenericPrompt", "填写要执行的任务参数和要求"), true);
     }
+
+    function momentsCoachFieldsHtml() {
+      return `<div class="moments-coach-guide" id="momentsCoachGuide"><strong>微信浮窗引导</strong><span>在微信内打开本页后，点击右上角 … → 添加到浮窗。当前填写进度会自动保留。</span><button type="button" class="ghost" id="momentsCoachGuideClose">知道了</button></div>
+        <div class="moments-coach-tabs personal-tabs" role="tablist"><button type="button" class="active" data-moments-tab="write">快速写一条</button><button type="button" data-moments-tab="materials">素材采集</button><button type="button" data-moments-tab="plan">一周排期</button><button type="button" data-moments-tab="history">历史记录</button><button type="button" data-moments-tab="settings">设置</button></div>
+        <div data-moments-panel="write" class="moments-coach-panel"><div class="work-dispatch-fields moments-coach-grid"><label class="field">发生了什么<textarea id="momentsCoachHappened" placeholder="记录真实发生的事情"></textarea></label><label class="field">客户之前的问题<textarea id="momentsCoachProblem" placeholder="客户原来的困扰"></textarea></label><label class="field">客户问过什么<textarea id="momentsCoachQuestion" placeholder="客户真实问法"></textarea></label><label class="field">客户想要的结果<textarea id="momentsCoachDesired" placeholder="客户希望达到什么结果"></textarea></label><label class="field">现在有什么变化<textarea id="momentsCoachChange" placeholder="当前真实变化或进展"></textarea></label><label class="field">本次发圈目的<select id="momentsCoachPurpose"><option value="建立信任">建立信任</option><option value="消除疑虑">消除疑虑</option><option value="展示变化">展示变化</option><option value="推动行动">推动行动</option></select></label><label class="field">圈型（可自动判断）<select id="momentsCoachCircle"><option value="">AI 自动判断</option><option>生活圈</option><option>咨询圈</option><option>反馈圈</option><option>收款圈</option><option>促成交圈</option></select></label><label class="field full">配图或截图地址<textarea id="momentsCoachImages" placeholder="每行一个图片 URL，可留空"></textarea></label></div><p class="moments-coach-disclaimer">初稿，发布前人工确认。不得编造成交、反馈或泄露客户隐私。</p><button type="button" id="momentsCoachGenerate" class="hero-action">生成三版文案</button><div id="momentsCoachResults"></div></div>
+        <div class="hidden" data-moments-panel="materials"><p>把真实经历保存为素材，下次生成可继续使用。</p><button type="button" class="hero-action" id="momentsCoachSaveMaterial">保存当前素材</button><div id="momentsCoachMaterialList"></div></div>
+        <div class="hidden" data-moments-panel="plan"><p>一周排期建议：生活 2 条、咨询 1 条、反馈 1 条、收款 1 条、促成交 1 条、收尾 1 条。</p><button type="button" class="hero-action" id="momentsCoachSavePlan">保存七日排期</button><div id="momentsCoachPlanList"></div></div>
+        <div class="hidden" data-moments-panel="history"><div id="momentsCoachHistoryList">正在加载历史记录…</div></div>
+        <div class="hidden" data-moments-panel="settings"><p>个人资料来自当前 IP 人设定位，修改请前往个人设置。</p><div id="momentsCoachPersonaSummary"></div></div>`;
+    }
+
+    function momentsCoachSnapshotFromFields() {
+      return { happened: abilityValue("momentsCoachHappened"), customer_problem: abilityValue("momentsCoachProblem"), customer_question: abilityValue("momentsCoachQuestion"), desired_result: abilityValue("momentsCoachDesired"), current_change: abilityValue("momentsCoachChange"), purpose: abilityValue("momentsCoachPurpose"), circle_type: abilityValue("momentsCoachCircle"), image_urls: splitTextareaList(abilityValue("momentsCoachImages")) };
+    }
+
+    async function momentsCoachGenerate() {
+      const data = await api("/api/moments-coach/generate", { method: "POST", json: momentsCoachSnapshotFromFields() });
+      const box = $("momentsCoachResults"); if (!box) return;
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-result"><header><strong>${escapeHtml(item.version_type || "文案")}</strong><span>${escapeHtml(item.circle_type || "")}</span></header><h4>${escapeHtml(item.title || "")}</h4><pre>${escapeHtml(item.body || "")}</pre><small>配图：${escapeHtml(item.image_suggestion || "暂无")}<br>建议时间：${escapeHtml(item.suggested_publish_at || "可自行安排")}<br>${item.compliance_warnings?.length ? "合规提示：" + escapeHtml(item.compliance_warnings.join("、")) : "已通过基础合规检查"}</small><label class="moments-coach-confirm"><input type="checkbox" data-moments-confirm="${escapeHtml(item.record_id || "")}"> 我已核对真实素材，确认后可发布</label><button type="button" class="ghost" data-moments-publish="${escapeHtml(item.record_id || "")}">发布到朋友圈</button></article>`).join("");
+      localStorage.setItem("lobster_moments_coach_draft", JSON.stringify(momentsCoachSnapshotFromFields()));
+    }
+
+    async function momentsCoachLoadHistory() {
+      const box = $("momentsCoachHistoryList"); if (!box) return;
+      const data = await api("/api/moments-coach/history");
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-history"><strong>${escapeHtml(item.version_type || "文案")} · ${escapeHtml(item.circle_type || "")}</strong><time>${escapeHtml(item.created_at || "")}</time><pre>${escapeHtml(item.body || "")}</pre></article>`).join("") || "暂无历史记录";
+    }
+
+    async function momentsCoachLoadMaterials() {
+      const box = $("momentsCoachMaterialList"); if (!box) return;
+      const data = await api("/api/moments-coach/materials");
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-history"><strong>${escapeHtml(item.title || "未命名素材")}</strong><pre>${escapeHtml(item.happened || item.current_change || item.customer_problem || "")}</pre></article>`).join("") || "暂无素材";
+    }
+
+    async function momentsCoachLoadPlans() {
+      const box = $("momentsCoachPlanList"); if (!box) return;
+      const data = await api("/api/moments-coach/plans");
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-history"><strong>${escapeHtml(item.name || "朋友圈一周排期")}</strong><span> ${item.items?.length || 0} 条</span></article>`).join("") || "暂无排期";
+    }
+
+    function momentsCoachRestoreDraft() {
+      try { const draft = JSON.parse(localStorage.getItem("lobster_moments_coach_draft") || "null"); if (!draft) return; const map = { happened: "momentsCoachHappened", customer_problem: "momentsCoachProblem", customer_question: "momentsCoachQuestion", desired_result: "momentsCoachDesired", current_change: "momentsCoachChange", purpose: "momentsCoachPurpose", circle_type: "momentsCoachCircle", image_urls: "momentsCoachImages" }; Object.entries(map).forEach(([key, id]) => { const el = $(id); if (el) el.value = Array.isArray(draft[key]) ? draft[key].join("\n") : (draft[key] || ""); }); } catch (_) {} }
 
     function renderAbilityWorkbench(lookup) {
       const box = $("abilityWorkbench");
@@ -7676,16 +7729,32 @@
         hideAbilityWorkbench();
         return;
       }
-      if (!node.routeTab) html += abilityScheduleFieldsHtml();
+      if (!node.routeTab && String(node.capabilityId || node.key || "") !== "moments_sales_coach") html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
       box.dataset.workbenchKey = String(node.workQuickKey || node.capabilityId || node.key || "").trim();
       if (title) title.textContent = node.workQuickKey === "publish_center" ? "发布任务" : `${node.label || "能力"}工作台`;
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
+      if (String(node.capabilityId || node.key || "") === "moments_sales_coach") {
+        setTimeout(() => {
+          momentsCoachRestoreDraft();
+          if (localStorage.getItem("lobster_moments_coach_guide_dismissed") === "1") $("momentsCoachGuide")?.classList.add("hidden");
+          $("momentsCoachGuideClose")?.addEventListener("click", () => { localStorage.setItem("lobster_moments_coach_guide_dismissed", "1"); $("momentsCoachGuide")?.classList.add("hidden"); });
+          $("abilityWorkbenchFields")?.querySelector(".moments-coach-tabs")?.addEventListener("click", (evt) => { const tab = evt.target.closest("[data-moments-tab]"); if (!tab) return; const name = tab.dataset.momentsTab; document.querySelectorAll("[data-moments-tab]").forEach((el) => el.classList.toggle("active", el === tab)); document.querySelectorAll("[data-moments-panel]").forEach((el) => el.classList.toggle("hidden", el.dataset.momentsPanel !== name)); if (name === "history") momentsCoachLoadHistory().catch(() => {}); if (name === "materials") momentsCoachLoadMaterials().catch(() => {}); if (name === "plan") momentsCoachLoadPlans().catch(() => {}); });
+          $("momentsCoachGenerate")?.addEventListener("click", () => momentsCoachGenerate().catch((err) => toast(err.message || "生成失败")));
+          $("momentsCoachSaveMaterial")?.addEventListener("click", async () => { try { await api("/api/moments-coach/materials", { method: "POST", json: momentsCoachSnapshotFromFields() }); toast("素材已保存"); } catch (err) { toast(err.message || "保存失败"); } });
+          $("momentsCoachSavePlan")?.addEventListener("click", async () => { try { const items = Array.from(document.querySelectorAll(".moments-coach-result")).map((el, index) => ({ draft_record_id: el.querySelector("[data-moments-confirm]")?.dataset.momentsConfirm || "", circle_type: el.querySelector("header span")?.textContent || "生活圈", sort_order: index })); await api("/api/moments-coach/plans", { method: "POST", json: { name: "朋友圈一周排期", items } }); toast("排期已保存"); } catch (err) { toast(err.message || "保存排期失败"); } });
+          $("momentsCoachResults")?.addEventListener("change", (evt) => { if (evt.target.matches("[data-moments-confirm]")) evt.target.closest(".moments-coach-result")?.classList.toggle("confirmed", evt.target.checked); });
+          $("momentsCoachResults")?.addEventListener("click", async (evt) => { const btn = evt.target.closest("[data-moments-publish]"); if (!btn) return; const check = btn.closest(".moments-coach-result")?.querySelector("[data-moments-confirm]"); if (!check?.checked) { toast("请先确认素材真实且已人工核对"); return; } try { await loadPublishAccounts(); const account = (state.publishAccounts || []).find((row) => String(row.platform || "").toLowerCase() === "wechat_moments") || (state.publishAccounts || [])[0]; if (!account) throw new Error("请先绑定微信朋友圈账号"); await api(`/api/moments-coach/${encodeURIComponent(btn.dataset.momentsPublish || "")}/publish-request`, { method: "POST", json: { account_id: publishAccountLocalId(account), account_nickname: account.nickname || account.account_nickname || "", installation_id: account.installation_id || "", image_urls: momentsCoachSnapshotFromFields().image_urls } }); toast("发布任务已提交"); } catch (err) { toast(err.message || "提交发布失败"); } });
+          momentsCoachLoadHistory().catch(() => {});
+          api("/api/moments-coach/config").then((data) => { const el = $("momentsCoachPersonaSummary"); const req = data.persona?.requirements || {}; if (el) el.textContent = req.basic_profile || req.profile || "已绑定当前 IP 人设"; }).catch(() => {});
+        }, 0);
+      }
       initAssetPickerControls(box);
       if (submit) {
         submit.disabled = false;
         submit.textContent = submitText;
+        submit.classList.toggle("hidden", String(node.capabilityId || node.key || "") === "moments_sales_coach");
       }
       setTimeout(updateAbilityScheduleFields, 0);
     }
@@ -20159,9 +20228,37 @@
     function updatePersonalCompetitorSearchFields() {
       const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
       const input = $("personalCompetitorKey");
+      const directButton = $("personalAddCompetitorByChannelIdBtn");
+      if (directButton) directButton.hidden = platform !== "wechat_channels";
       if (input) input.placeholder = platform === "wechat_channels" ? "输入昵称、sph开头ID或 username；ID区分0/O和大小写" : "输入昵称或抖音号";
       state.personalCompetitorCandidates = [];
       renderPersonalCompetitorCandidates();
+    }
+
+    async function addPersonalCompetitorByChannelId() {
+      const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      if (platform !== "wechat_channels") return;
+      const input = $("personalCompetitorKey");
+      const channelId = (input && input.value || "").trim();
+      if (!channelId) throw new Error("请先输入视频号公开 ID（sph 开头）。");
+      const tags = ($("personalCompetitorTags") && $("personalCompetitorTags").value || "").trim();
+      const button = $("personalAddCompetitorByChannelIdBtn");
+      personalSetBusy(button, true, "解析并添加中...");
+      try {
+        const data = await api("/api/ip-content/wechat-channels/competitors/by-channel-id", {
+          method: "POST",
+          json: { channel_id: channelId, industry_tags: tags },
+        });
+        if (input) input.value = "";
+        if ($("personalCompetitorTags")) $("personalCompetitorTags").value = "";
+        state.personalCompetitorCandidates = [];
+        renderPersonalCompetitorCandidates();
+        await refreshPersonalDataPreserveSelection({ competitors: true });
+        personalSetStatus("视频号公开 ID 已添加，正在同步公开作品。");
+        if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
+      } finally {
+        personalSetBusy(button, false);
+      }
     }
 
     async function addPersonalCompetitor() {
@@ -27759,7 +27856,9 @@
     });
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => personalSetStatus(err.message || "搜索失败", true)));
+    $("personalAddCompetitorByChannelIdBtn")?.addEventListener("click", () => addPersonalCompetitorByChannelId().catch((err) => personalSetStatus(err.message || "按照视频号公开 ID 添加失败", true)));
     $("personalCompetitorPlatform")?.addEventListener("change", updatePersonalCompetitorSearchFields);
+    updatePersonalCompetitorSearchFields();
     $("personalCompetitorKey")?.addEventListener("keydown", (evt) => {
       if (evt.key !== "Enter") return;
       evt.preventDefault();

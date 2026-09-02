@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from ..models import DouyinPlatformSnapshot
 from ..core.config import settings
 from ..db import SessionLocal
+from .tikhub_pricing import price_breakdown as tikhub_price_breakdown
 
 logger = logging.getLogger(__name__)
 
@@ -431,6 +432,7 @@ async def _fetch_endpoint(
         started = time.perf_counter()
         last_error = ""
         status_code = 0
+        pricing = tikhub_price_breakdown(endpoint["key"], endpoint["path"])
         for attempt in range(2):
             try:
                 params, body = _endpoint_request(endpoint, snapshot_date)
@@ -454,6 +456,10 @@ async def _fetch_endpoint(
                         "latency_ms": int((time.perf_counter() - started) * 1000),
                         "item_count": len(_compact_items(payload, endpoint["key"])),
                         "items": _compact_items(payload, endpoint["key"]),
+                        "attempts": attempt + 1,
+                        "provider_cost_usd": pricing["provider_cost_usd"],
+                        "provider_cost_usd_total": round(float(pricing["provider_cost_usd"] or 0) * (attempt + 1), 6),
+                        "estimated_lobster_credits": round(float(pricing["lobster_credits"] or 0) * (attempt + 1), 4),
                     }
                 last_error = _payload_message(payload) or f"TikHub HTTP {status_code}"
             except (httpx.TimeoutException, httpx.TransportError) as exc:
@@ -473,6 +479,10 @@ async def _fetch_endpoint(
             "item_count": 0,
             "items": [],
             "error": last_error or "TikHub request failed",
+            "attempts": 2,
+            "provider_cost_usd": pricing["provider_cost_usd"],
+            "provider_cost_usd_total": round(float(pricing["provider_cost_usd"] or 0) * 2, 6),
+            "estimated_lobster_credits": round(float(pricing["lobster_credits"] or 0) * 2, 4),
         }
 
 
@@ -586,6 +596,10 @@ async def collect_douyin_platform_snapshot(snapshot_date: str | None = None, for
         "failed_count": len(results) - success_count,
         "item_count": item_count,
         "source": "TikHub Douyin public APIs",
+        # This worker is platform-level (not charged to an end user), but the
+        # provider cost is kept in the snapshot so operations can reconcile it.
+        "provider_cost_usd": round(sum(float(result.get("provider_cost_usd_total") or result.get("provider_cost_usd") or 0) for result in results), 6),
+        "estimated_lobster_credits": round(sum(float(result.get("estimated_lobster_credits") or 0) for result in results), 4),
     }
     errors = [str(result.get("error") or "") for result in results if result.get("error")]
     db = SessionLocal()

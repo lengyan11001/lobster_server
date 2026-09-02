@@ -9,9 +9,11 @@ def test_h5_competitors_search_candidates_before_add():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
     assert 'id="personalCompetitorSearchResults"' in html
+    assert 'id="personalAddCompetitorByChannelIdBtn"' in html
     assert 'id="personalAddCompetitorBtn">搜索账号<' in html
     assert "/api/ip-content/wechat-channels/users/search?q=" in script
     assert "/api/ip-content/douyin/users/search?q=" in script
+    assert "/api/ip-content/wechat-channels/competitors/by-channel-id" in script
     assert "data-add-personal-competitor-candidate" in script
     assert "h5_personal_settings_wechat_channels_search" in script
     assert "candidate.username || candidate.finder_username || candidate.id" in script

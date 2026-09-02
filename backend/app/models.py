@@ -469,6 +469,65 @@ class IPContentDraftRecord(Base):
     )
 
 
+class MomentsCoachMaterial(Base):
+    """Verified real-life material used by the WeChat Moments sales coach."""
+
+    __tablename__ = "moments_coach_materials"
+    __table_args__ = (
+        Index("ix_moments_coach_materials_user_created", "user_id", "created_at"),
+        Index("ix_moments_coach_materials_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(180), default="", nullable=False)
+    happened: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    customer_problem: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    customer_question: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    desired_result: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    current_change: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    image_urls: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MomentsCoachPlan(Base):
+    """A saved seven-day Moments publishing plan."""
+
+    __tablename__ = "moments_coach_plans"
+    __table_args__ = (Index("ix_moments_coach_plans_user_created", "user_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(180), default="朋友圈一周排期", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="draft", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MomentsCoachPlanItem(Base):
+    """One scheduled copy in a Moments coach plan."""
+
+    __tablename__ = "moments_coach_plan_items"
+    __table_args__ = (Index("ix_moments_coach_plan_items_plan_date", "plan_id", "publish_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plan_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    draft_record_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    circle_type: Mapped[str] = mapped_column(String(32), default="生活圈", nullable=False)
+    publish_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="planned", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class UserContentRecord(Base):
     """Content created by the desktop client and shared with H5."""
 

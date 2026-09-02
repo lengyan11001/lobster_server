@@ -6,6 +6,8 @@ import os
 import random
 import re
 import time
+import uuid
+from decimal import Decimal
 from html import unescape as html_unescape
 from typing import Any, Optional
 from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
@@ -13,9 +15,14 @@ from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..db import get_db
 from ..models import User
+from ..services.credit_ledger import append_credit_ledger
+from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
 from .auth import get_current_user
 
 router = APIRouter()
@@ -1135,13 +1142,64 @@ def _build_tasks(body: AlibabaPublicSignalsBody) -> list[dict[str, Any]]:
 async def alibaba_customer_public_signals(
     body: AlibabaPublicSignalsBody,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     tasks = _build_tasks(body)
     items: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    credits_charged_total = Decimal("0.0000")
+    charges: list[dict[str, Any]] = []
     for task in tasks:
         try:
+            spec = _UPSTREAM_TASKS.get(task.get("kind") or {}) or {}
+            endpoint_path = str(spec.get("path") or "")
+            price = tikhub_query_price(str(task.get("kind") or ""), endpoint_path=endpoint_path, require_known=True)
+            balance = user_balance_decimal(current_user)
+            if price > 0 and balance < price:
+                skipped.append(
+                    {
+                        "kind": task["kind"],
+                        "field": task.get("field") or "",
+                        "reason": f"积分不足：本次 TiKHub 查询需 {credits_json_float(price)}，当前余额 {credits_json_float(balance)}",
+                    }
+                )
+                continue
             result = await _call_public_signal(task["kind"], task.get("params") or {})
+            if result.get("ok") and price > 0:
+                # Charge only after TiKHub returned a successful response.  The
+                # audit metadata records the provider USD cost and conversion so
+                # support can reconcile every public-signal request.
+                balance_after = quantize_credits(balance - price)
+                current_user.credits = balance_after
+                ref_id = f"alibaba-public-{uuid.uuid4().hex}"
+                append_credit_ledger(
+                    db,
+                    current_user.id,
+                    -price,
+                    "unit_deduct",
+                    balance_after,
+                    description=f"TiKHub 公开资料查询扣费：{task['kind']}",
+                    ref_type="tikhub_public_signal",
+                    ref_id=ref_id,
+                    meta={
+                        "source": "tikhub",
+                        "query_type": task["kind"],
+                        "endpoint": endpoint_path,
+                        "deduct_credits": credits_json_float(price),
+                        "pricing": tikhub_price_breakdown(task["kind"], endpoint_path),
+                    },
+                )
+                db.commit()
+                result["credits_charged"] = credits_json_float(price)
+                credits_charged_total = quantize_credits(credits_charged_total + price)
+                charges.append(
+                    {
+                        "kind": task["kind"],
+                        "endpoint": endpoint_path,
+                        "credits": credits_json_float(price),
+                        "pricing": tikhub_price_breakdown(task["kind"], endpoint_path),
+                    }
+                )
             if result.get("ok") and int(result.get("result_count") or 0) > 0 and _clean_text(result.get("snippet"), 20):
                 items.append(
                     {
@@ -1161,10 +1219,19 @@ async def alibaba_customer_public_signals(
                 )
             else:
                 skipped.append({"kind": task["kind"], "field": task.get("field") or "", "reason": result.get("reason") or "未获取到有效结果"})
+        except ValueError as exc:
+            logger.info("[ALIBABA-RESEARCH] public signal skipped user=%s kind=%s err=%s", current_user.id, task.get("kind"), exc)
+            skipped.append({"kind": task.get("kind") or "", "field": task.get("field") or "", "reason": "TiKHub 接口价格未配置，已阻止调用"})
         except Exception as exc:
             logger.info("[ALIBABA-RESEARCH] public signal skipped user=%s kind=%s err=%s", current_user.id, task.get("kind"), exc)
             skipped.append({"kind": task.get("kind") or "", "field": task.get("field") or "", "reason": "公开资料暂不可用"})
-    return {"ok": True, "items": items, "skipped_count": len(skipped)}
+    return {
+        "ok": True,
+        "items": items,
+        "skipped_count": len(skipped),
+        "credits_charged": credits_json_float(credits_charged_total),
+        "charges": charges,
+    }
 
 
 @router.post("/api/alibaba-customer-research/evidence", summary="客户档案一手证据")

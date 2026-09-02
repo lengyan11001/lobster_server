@@ -151,8 +151,12 @@ class Settings(BaseSettings):
     """TikHub server-side proxy config. Keep API key on the server only."""
     tikhub_api_base: str = "https://api.tikhub.io"
     tikhub_api_key: Optional[str] = None
-    """Default Lobster credits charged per successful TikHub query."""
+    """Legacy minimum Lobster credits charged per successful TiKHub query."""
     tikhub_query_unit_credits: float = 1.0
+    """USD→CNY conversion used for TiKHub endpoint costs (100 credits = CNY 1)."""
+    tikhub_usd_to_cny_rate: float = 7.5
+    """Optional JSON object overriding audited TiKHub endpoint USD costs."""
+    tikhub_endpoint_costs_json: Optional[str] = None
     """Customer archive first-priority search provider. Values: auto/serper/google_cse/tavily/html."""
     customer_research_search_provider: str = "auto"
     """Stable web search API key. Keep it on the server; never send it to clients."""
