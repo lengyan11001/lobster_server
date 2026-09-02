@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>朋友圈成交文案教练</title>
-  <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260902-standalone-v1" />
+  <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260902-standalone-v2" />
 </head>
 <body>
   <main id="momentsApp" class="moments-app">
@@ -13,9 +13,13 @@
       <div class="header-actions"><span class="status-dot"></span><span>草稿模式</span><button id="guideBtn" class="outline-btn">微信浮窗</button></div>
     </header>
     <div id="guide" class="guide hidden"><div><strong>添加到微信浮窗</strong><p>在微信内打开本页，点击右上角“…” → “添加到浮窗”。下次可从浮窗快速回来。</p></div><button id="guideClose" class="icon-btn">×</button></div>
-    <nav class="mc-tabs" role="tablist"><button class="active" data-tab="write">写一条</button><button data-tab="materials">素材库</button><button data-tab="plan">一周排期</button><button data-tab="history">历史草稿</button><button data-tab="settings">我的设定</button></nav>
+    <nav class="mc-tabs" role="tablist"><button class="active" data-tab="home">首页</button><button data-tab="history">历史</button><button data-tab="materials">素材库</button><button data-tab="plan">一周排期</button><button data-tab="mine">我的</button></nav>
 
-    <section class="mc-panel" data-panel="write">
+    <section class="mc-panel home-panel" data-panel="home"><div class="home-hero"><div class="avatar-ring">✦</div><div class="eyebrow">月亮的朋友圈成交教练</div><h2>朋友圈印钞机</h2><p>10秒生成收钱文案，打造朋友圈印钞机</p></div><div class="home-actions"><button class="home-card" data-home-action="inspire"><strong>✦<br>有灵感</strong><span>点击生成成交文案</span></button><button class="home-card" data-home-action="choose"><strong>◉<br>没灵感</strong><span>点击欣然帮你找</span></button><button class="home-card wide" data-home-action="image"><strong>▧ 看图写文</strong><span>上传图片，欣然自动判断圈型</span></button></div><button class="school-card" data-home-action="school"><b>▢　商学院</b><span>今日干货：心理按钮·引发互惠②：如何让用户不付钱都觉得不好意思？　›</span></button></section>
+
+    <section class="mc-panel hidden choose-panel" data-panel="choose"><div class="sub-head"><button class="back-link" data-go="home">‹</button><div><span class="eyebrow">选择朋友圈类型</span><h2>你想写哪种朋友圈？</h2><p>直接点击对应圈，10秒生成收钱文案</p></div><div class="quick-pills"><button data-tab="history">◷ 历史</button><button data-tab="mine">♟ 我的</button></div></div><div class="circle-grid"><button data-circle="生活圈"><b>♧</b><strong>生活圈</strong><span>通过日常，建立信任</span></button><button data-circle="咨询圈"><b>◌</b><strong>咨询圈</strong><span>消除用户疑虑，自动下单</span></button><button data-circle="收款圈"><b>◎</b><strong>收款圈</strong><span>用一个收款，引爆收款</span></button><button data-circle="反馈圈"><b>♧</b><strong>反馈圈</strong><span>用客户反馈，刺激共鸣</span></button><button class="wide" data-circle="促成交圈"><b>♨</b><strong>促成交圈</strong><span>让用户当下付钱</span></button></div></section>
+
+    <section class="mc-panel hidden" data-panel="write">
       <div class="intro"><div><span class="eyebrow">从真实素材出发</span><h2>今天，想让谁记住什么？</h2><p>把发生的事、对方的顾虑或一个变化告诉我。教练会判断内容节奏，并给你三个可以直接修改的版本。</p></div><label class="direction">本条方向<select id="circle"><option value="">让 AI 判断</option><option>生活圈</option><option>咨询圈</option><option>反馈圈</option><option>收款圈</option><option>促成交圈</option></select></label></div>
       <div class="compose-layout"><div class="card compose-card"><div class="section-head"><div><span class="eyebrow">真实素材</span><h3>把事情说出来</h3></div><small>至少填写一项</small></div>
         <label>今天发生了什么<textarea id="happened" placeholder="例如：一位客户把拖了很久的方案重新拿出来聊……"></textarea></label>
@@ -27,10 +31,10 @@
     </section>
     <section class="mc-panel hidden" data-panel="materials"><div class="panel-title"><div><span class="eyebrow">真实素材</span><h2>你的内容储备</h2><p>把客户问题、日常片段和真实变化存下来，需要发圈时直接取用。</p></div><button id="saveMaterialTop" class="primary-btn">保存当前素材</button></div><div id="materials" class="list">正在读取素材库…</div></section>
     <section class="mc-panel hidden" data-panel="plan"><div class="panel-title"><div><span class="eyebrow">发布节奏</span><h2>一周排期</h2><p>让生活、专业与成交内容自然穿插，而不是把朋友圈写成广告栏。</p></div><button id="savePlan" class="primary-btn">将当前草稿存为排期</button></div><div class="plan-guide"><b>推荐结构</b><span>生活 2 条</span><span>咨询 1 条</span><span>反馈 1 条</span><span>收款 1 条</span><span>促成交 1 条</span></div><div id="plans" class="list">正在读取排期…</div></section>
-    <section class="mc-panel hidden" data-panel="history"><div class="panel-title"><div><span class="eyebrow">已生成内容</span><h2>历史草稿</h2><p>保留生成时的人设与素材快照，随时可以复盘和再利用。</p></div></div><div id="history" class="list">正在读取历史记录…</div></section>
-    <section class="mc-panel hidden" data-panel="settings"><div class="panel-title"><div><span class="eyebrow">写作底色</span><h2>当前 IP 人设</h2><p>教练自动读取个人设置中的 IP 人设，不需要重复填写。</p></div></div><div id="persona" class="persona">正在读取个人设定…</div></section>
+    <section class="mc-panel hidden" data-panel="history"><div class="panel-title"><div><span class="eyebrow">已生成内容</span><h2>历史草稿</h2><p>保留生成时的素材快照，随时可以复盘和再利用。</p></div></div><div id="history" class="list">正在读取历史记录…</div></section>
+    <section class="mc-panel hidden" data-panel="mine"><div class="panel-title"><div><span class="eyebrow">我的空间</span><h2>我的朋友圈</h2><p>这里保留你的素材、历史草稿和排期。</p></div></div><div class="mine-links"><button data-tab="materials">素材库</button><button data-tab="history">历史草稿</button><button data-tab="plan">一周排期</button></div></section>
   </main>
   <div id="toast" class="toast"></div>
-  <script src="/h5-static/moments-coach.js?v=20260902-standalone-v1"></script>
+  <script src="/h5-static/moments-coach.js?v=20260902-standalone-v2"></script>
 </body>
 </html>
