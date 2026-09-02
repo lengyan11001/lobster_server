@@ -7,7 +7,9 @@ from typing import Any, Optional
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import asyncio
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -20,10 +22,11 @@ from .ip_content_studio import (
     _post_llm_with_retry,
     _PERSONAL_DEFAULT_TEMPLATE_NAME,
 )
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import IPContentDraftRecord, IPContentScheduleTemplate, MomentsCoachMaterial, MomentsCoachPlan, MomentsCoachPlanItem, ScheduledTaskRun, User
 
 router = APIRouter()
+_generation_semaphore = asyncio.Semaphore(4)
 
 _CIRCLE_TYPES = ("生活圈", "咨询圈", "反馈圈", "收款圈", "促成交圈")
 _VERSION_TYPES = ("稳妥版", "真人聊天版", "成交推进版")
@@ -118,8 +121,7 @@ def delete_material(material_id: int, current_user: User = Depends(get_current_u
     return {"ok": True}
 
 
-@router.post("/api/moments-coach/generate")
-async def generate(body: GenerateBody, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def _generate_now(body: GenerateBody, request: Request, current_user: User, db: Session, token_override: str = ""):
     material = _snapshot(body)
     if not any(material.get(key) for key in ("happened", "customer_problem", "customer_question", "desired_result", "current_change")):
         raise HTTPException(400, "请至少填写一项真实素材")
@@ -131,7 +133,7 @@ async def generate(body: GenerateBody, request: Request, current_user: User = De
     circle = body.circle_type if body.circle_type in _CIRCLE_TYPES else "自动判断"
     system = """你是朋友圈成交文案教练。只能依据真实素材写作，不得编造成交、反馈或客户隐私。固定五种圈型：生活圈、咨询圈、反馈圈、收款圈、促成交圈；一条朋友圈只完成一个任务。禁止稳赚、保证、100%、第一等绝对化表达。先判断圈型，再输出三个版本：稳妥版、真人聊天版、成交推进版。输出严格 JSON：{\"items\":[{\"circle_type\":\"\",\"version_type\":\"\",\"title\":\"\",\"body\":\"\",\"image_suggestion\":\"\",\"suggested_publish_at\":\"\",\"transition\":\"\",\"compliance_warnings\":[]}]}。"""
     user = json.dumps({"persona": persona.get("requirements") or {}, "material": material, "requested_circle": circle, "count": body.count}, ensure_ascii=False)
-    token = (request.headers.get("Authorization") or "").strip()
+    token = (token_override or request.headers.get("Authorization") or "").strip()
     if not token: raise HTTPException(401, "缺少登录凭证")
     data = await _post_llm_with_retry(payload={"model": "deepseek-chat", "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "stream": False, "temperature": 0.72}, headers={"Authorization": token, "Content-Type": "application/json", "Accept": "application/json"}, attempts=2, timeout_seconds=240)
     try: raw = data["choices"][0]["message"]["content"]
@@ -153,6 +155,59 @@ async def generate(body: GenerateBody, request: Request, current_user: User = De
     if not saved: raise HTTPException(502, "AI 返回内容为空")
     db.commit()
     return {"ok": True, "group_id": group_id, "items": [{"record_id": row.record_id, "title": row.title or "", "body": row.content or "", **(row.meta or {})} for row in saved]}
+
+
+async def _run_generation_job(job_id: str, body_data: dict[str, Any], user_id: int, token: str) -> None:
+    """Run LLM generation after the HTTP request has returned."""
+    db = SessionLocal()
+    try:
+        job = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.record_id == job_id, IPContentDraftRecord.task == "moments_sales_coach_job").first()
+        if not job:
+            return
+        meta = dict(job.meta or {}); meta.update({"status": "processing"}); job.meta = meta; job.updated_at = datetime.utcnow(); db.commit()
+        async with _generation_semaphore:
+            body = GenerateBody.model_validate(body_data)
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise RuntimeError("用户不存在")
+            result = await _generate_now(body, _RequestHeaders(token), user, db, token_override=token)
+        meta = dict(job.meta or {}); meta.update({"status": "completed", "group_id": result.get("group_id"), "items": result.get("items", [])}); job.meta = meta; job.updated_at = datetime.utcnow(); db.commit()
+    except Exception as exc:
+        db.rollback()
+        job = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.record_id == job_id, IPContentDraftRecord.task == "moments_sales_coach_job").first()
+        if job:
+            job.meta = {**(job.meta or {}), "status": "failed", "error": str(exc)[:1000]}; job.updated_at = datetime.utcnow(); db.commit()
+    finally:
+        db.close()
+
+
+class _RequestHeaders:
+    def __init__(self, token: str):
+        self.headers = {"Authorization": token}
+
+
+@router.post("/api/moments-coach/generate")
+async def generate(body: GenerateBody, request: Request, background: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    material = _snapshot(body)
+    if not any(material.get(key) for key in ("happened", "customer_problem", "customer_question", "desired_result", "current_change")):
+        raise HTTPException(400, "请至少填写一项真实素材")
+    token = (request.headers.get("Authorization") or "").strip()
+    if not token:
+        raise HTTPException(401, "缺少登录凭证")
+    job_id = uuid.uuid4().hex
+    job = IPContentDraftRecord(record_id=job_id, user_id=current_user.id, task="moments_sales_coach_job", platform="wechat_moments", title="朋友圈文案生成", content="", meta={"status": "pending", "created_at": datetime.utcnow().isoformat()})
+    db.add(job); db.commit()
+    background.add_task(_run_generation_job, job_id, body.model_dump(), int(current_user.id), token)
+    return {"ok": True, "job_id": job_id, "status": "pending"}
+
+
+@router.get("/api/moments-coach/generate/{job_id}")
+def generation_status(job_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.record_id == _clean_text(job_id, 64), IPContentDraftRecord.user_id == current_user.id, IPContentDraftRecord.task == "moments_sales_coach_job").first()
+    if row is None:
+        raise HTTPException(404, "生成任务不存在")
+    meta = row.meta or {}
+    return {"ok": True, "job_id": row.record_id, "status": meta.get("status", "pending"), "items": meta.get("items", []), "error": meta.get("error", "")}
 
 
 @router.get("/api/moments-coach/history")

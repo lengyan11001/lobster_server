@@ -26,8 +26,20 @@
   const snapshot = () => ({ happened: $('happened')?.value.trim() || '', customer_problem: $('problem')?.value.trim() || '', customer_question: $('question')?.value.trim() || '', desired_result: $('desired')?.value.trim() || '', current_change: $('change')?.value.trim() || '', purpose: $('purpose')?.value || '', circle_type: $('circle')?.value || '', image_urls: ($('images')?.value || '').split(/[\n,，；;]/).map(x => x.trim()).filter(Boolean) });
   const fill = (v) => { const map = {happened:'happened',customer_problem:'problem',customer_question:'question',desired_result:'desired',current_change:'change',purpose:'purpose',circle_type:'circle',image_urls:'images'}; Object.entries(map).forEach(([k,id]) => { if ($(id)) $(id).value = Array.isArray(v?.[k]) ? v[k].join('\n') : (v?.[k] || ''); }); };
   const renderResults = (items) => { const box = $('results'); if (!box) return; box.innerHTML = `<div class="result-heading"><div><span class="eyebrow">生成完成</span><h2>选一条最像你会说的话</h2></div><small>发布前请核对素材真实性</small></div><div class="result-grid">${(items || []).map(item => `<article class="result" data-id="${esc(item.record_id)}"><header><span>${esc(item.circle_type || '朋友圈')}</span><b>${esc(item.version_type || '文案')}</b></header><h3>${esc(item.title || '')}</h3><pre>${esc(item.body || '')}</pre><div class="result-note"><b>配图建议</b><p>${esc(item.image_suggestion || '按内容选择真实场景图片')}</p><b>衔接建议</b><p>${esc(item.transition || '结合上一条内容自然发布')}</p></div><label class="confirm"><input type="checkbox" data-confirm>我已核对素材，确认发布</label><button type="button" data-image>生成配图</button><button type="button" data-publish disabled>选择此版并发布</button></article>`).join('')}</div>`; };
-  async function generate() { const data = await api('/api/moments-coach/generate', {method:'POST', json:snapshot(), timeoutMs:300000}); renderResults(data.items); localStorage.setItem('lobster_moments_coach_draft', JSON.stringify(snapshot())); }
-  async function generateIdea() { const text = $('ideaInput')?.value.trim(); if (!text) throw new Error('请先写一件今天发生的小事，或选择一个灵感标签'); const payload = {happened:text, purpose:'建立信任', circle_type:'生活圈', image_urls:[]}; fill(payload); $('circle').value='生活圈'; showPanel('write'); const data = await api('/api/moments-coach/generate', {method:'POST', json:payload, timeoutMs:300000}); renderResults(data.items); }
+  async function requestGeneration(payload) {
+    const data = await api('/api/moments-coach/generate', {method:'POST', json:payload, timeoutMs:30000});
+    if (!data.job_id) throw new Error('生成任务未创建');
+    const box = $('results'); if (box) box.innerHTML = '<div class="result-heading"><h2>正在生成文案…</h2><small>任务已提交，页面不会被长连接占住</small></div>';
+    for (let i = 0; i < 200; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const status = await api(`/api/moments-coach/generate/${encodeURIComponent(data.job_id)}`, {timeoutMs:15000});
+      if (status.status === 'completed') { renderResults(status.items || []); return status; }
+      if (status.status === 'failed') throw new Error(status.error || '文案生成失败');
+    }
+    throw new Error('生成等待超时，请到历史记录查看');
+  }
+  async function generate() { const button = $('generate'); if (button) { button.disabled = true; button.textContent = '生成中…'; } try { const payload = snapshot(); const result = await requestGeneration(payload); localStorage.setItem('lobster_moments_coach_draft', JSON.stringify(payload)); return result; } finally { if (button) { button.disabled = false; button.textContent = '生成文案'; } } }
+  async function generateIdea() { const text = $('ideaInput')?.value.trim(); if (!text) throw new Error('请先写一件今天发生的小事，或选择一个灵感标签'); const payload = {happened:text, purpose:'建立信任', circle_type:'生活圈', image_urls:[]}; fill(payload); $('circle').value='生活圈'; showPanel('write'); await requestGeneration(payload); }
   let historyItems = [], uploadedImageUrl = '';
   async function loadList(type) { const endpoint = type === 'history' ? '/api/moments-coach/history' : type === 'materials' ? '/api/moments-coach/materials' : '/api/moments-coach/plans'; const data = await api(endpoint); const box = $(type === 'plan' ? 'plans' : type); if (!box) return; if (type === 'history') { historyItems = data.items || []; if ($('profileTotal')) $('profileTotal').textContent = historyItems.length; box.innerHTML = historyItems.map(x => `<article class="list-card"><header><span>${esc(x.circle_type || '朋友圈')}</span><span>${esc(String(x.created_at || '').replace('T',' ').slice(0,16))}</span></header><strong>${esc(x.title || '未命名文案')}</strong><pre>${esc(x.body || '')}</pre><button type="button" data-copy="${esc(x.body || '')}">复制文案</button></article>`).join('') || '<div class="list-card">还没有生成过草稿。</div>'; } else if (type === 'materials') { box.innerHTML = (data.items || []).map(x => `<article class="list-card" data-item='${esc(JSON.stringify(x))}'><header><span>真实素材</span><span>${esc(String(x.created_at || '').replace('T',' ').slice(0,16))}</span></header><strong>${esc(x.title || x.happened || '未命名素材')}</strong><pre>${esc(x.happened || x.current_change || '')}</pre><button type="button" data-use>用于写一条</button></article>`).join('') || '<div class="list-card">还没有保存素材。</div>'; } else { box.innerHTML = (data.items || []).map(x => `<article class="list-card"><header><span>已保存排期</span><span>${x.items?.length || 0} 条内容</span></header><strong>${esc(x.name || '朋友圈一周排期')}</strong></article>`).join('') || '<div class="list-card">还没有保存排期。</div>'; } }
   $('backBtn')?.addEventListener('click', () => { const current = panels().find(p => !p.classList.contains('hidden'))?.dataset.panel; if (current && current !== 'home') showPanel('home'); else location.href = `/?brand=${encodeURIComponent(brand)}`; });
@@ -36,6 +48,17 @@
   $('saveMaterial')?.addEventListener('click', async () => {try{await api('/api/moments-coach/materials',{method:'POST',json:snapshot()});toast('素材已保存');}catch(x){toast(x.message);}}); $('saveMaterialTop')?.addEventListener('click', async () => {try{await api('/api/moments-coach/materials',{method:'POST',json:snapshot()});toast('素材已保存');}catch(x){toast(x.message);}}); $('generate')?.addEventListener('click', async () => {try{await generate();}catch(x){toast(x.message);}});
   $('imageFile')?.addEventListener('change', async (e) => { const file=e.target.files?.[0]; if(!file)return; const status=$('imageStatus'), preview=$('imagePreview'); if(preview){preview.src=URL.createObjectURL(file);preview.classList.remove('hidden');} e.target.disabled=true; if(status)status.textContent='正在上传图片…'; try{const fd=new FormData();fd.append('file',file,file.name||'image.jpg');const d=await api('/api/h5-chat/uploads',{method:'POST',body:fd,timeoutMs:60000});uploadedImageUrl=d.url||'';if(!uploadedImageUrl)throw new Error('服务器未返回图片地址');if(status)status.textContent='图片已上传，可以点击生成文案';}catch(x){if(status)status.textContent='上传失败：'+x.message;toast(x.message);}finally{e.target.disabled=false;} });
   // Handle publishing in capture phase so the request is actually queued before the legacy click handler.
+  document.addEventListener('click', async (e) => {
+    const button = e.target.closest('[data-generate-image-text]');
+    if (!button) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (!uploadedImageUrl) { toast('请先选择图片'); return; }
+    try {
+      const prompt = $('imagePrompt')?.value.trim() || '请根据这张图片生成适合朋友圈的文案';
+      const payload = { happened: prompt, purpose: '建立信任', image_urls: [uploadedImageUrl] };
+      fill(payload); showPanel('write'); await requestGeneration(payload);
+    } catch (x) { toast(x.message); }
+  }, true);
   document.addEventListener('click', async (e) => {
     const button = e.target.closest('[data-publish]');
     if (!button) return;
