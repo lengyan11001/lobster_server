@@ -10,6 +10,7 @@
     const headers = { 'X-Lobster-Brand': brand, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) };
     const req = { ...options, headers };
     if (options.json) { req.body = JSON.stringify(options.json); req.headers['Content-Type'] = 'application/json'; delete req.json; }
+    req.credentials = 'include';
     const r = await fetch(`${apiBase}${path}${path.includes('?') ? '&' : '?'}brand=${encodeURIComponent(brand)}`, req);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || data.message || '请求失败');
@@ -25,11 +26,18 @@
     const map = { happened:'happened', customer_problem:'problem', customer_question:'question', desired_result:'desired', current_change:'change', purpose:'purpose', circle_type:'circle', image_urls:'images' };
     Object.entries(map).forEach(([k, id]) => { if ($(id)) $(id).value = Array.isArray(v[k]) ? v[k].join('\n') : (v[k] || ''); });
   };
+  function configureCircleForm(value) {
+    const fields = { happened:'今天发生了什么', problem:'她之前卡在哪里', question:'她问过什么', desired:'她真正想要的结果', change:'现在有什么进展', purpose:'这条想完成什么', images:'配图 / 截图地址' };
+    Object.entries(fields).forEach(([id, label]) => { const el=$(id); const parent=el?.closest('label'); if(!parent) return; parent.classList.add('circle-field'); const text=[...parent.childNodes].find(n=>n.nodeType===3); if(text) text.nodeValue=label; });
+    const visible={生活圈:['happened'],咨询圈:['question','problem'],收款圈:['problem','desired','change'],反馈圈:['problem','question','change'],促成交圈:['desired','change','purpose']}[value];
+    document.querySelectorAll('.circle-field').forEach(el=>el.classList.toggle('is-hidden',Array.isArray(visible)&&!visible.includes(el.querySelector('textarea,select')?.id)));
+  }
   const panels = () => [...document.querySelectorAll('[data-panel]')];
   const showPanel = (name) => {
     panels().forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name));
     document.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('active', x.dataset.tab === name));
     if (['history', 'materials', 'plan'].includes(name)) loadList(name).catch(e => toast(e.message));
+    if (name === 'mine' && !historyItems.length) loadList('history').catch(() => {});
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   async function generateIdea() {
@@ -37,7 +45,7 @@
     if (!text) return toast('先写一件今天发生的小事，或点一个灵感标签');
     const payload = { happened: text, customer_problem:'', customer_question:'', desired_result:'', current_change:'', purpose:'建立信任', circle_type:'生活圈', image_urls:[] };
     const data = await api('/api/moments-coach/generate', { method:'POST', json:payload });
-    fill(payload); showPanel('write');
+    fill(payload); configureCircleForm('生活圈'); showPanel('write');
     const box = $('results');
     box.innerHTML = `<div class="result-heading"><div><span class="eyebrow">生成完成</span><h2>选一条最像你会说的话</h2></div><small>发布前请核对素材真实性</small></div><div class="result-grid">${(data.items || []).map(item => `<article class="result" data-id="${esc(item.record_id)}"><header><span>${esc(item.circle_type || '生活圈')}</span><b>${esc(item.version_type || '文案')}</b></header><h3>${esc(item.title || '')}</h3><pre>${esc(item.body || '')}</pre><div class="result-note"><b>配图建议</b>${esc(item.image_suggestion || '按内容选择真实场景图片')}<b>衔接建议</b>${esc(item.transition || '结合上一条内容自然发布')}</div><label class="confirm"><input type="checkbox">我已核对素材，确认发布</label><button data-image>生成配图</button><button data-publish disabled>选择此版并发布</button></article>`).join('')}</div>`;
     localStorage.setItem('lobster_moments_coach_draft', JSON.stringify(payload));
@@ -48,9 +56,17 @@
     box.innerHTML = `<div class="result-heading"><div><span class="eyebrow">生成完成</span><h2>选一条最像你会说的话</h2></div><small>发布前请核对素材真实性</small></div><div class="result-grid">${(data.items || []).map(item => `<article class="result" data-id="${esc(item.record_id)}"><header><span>${esc(item.circle_type || '朋友圈')}</span><b>${esc(item.version_type || '文案')}</b></header><h3>${esc(item.title || '')}</h3><pre>${esc(item.body || '')}</pre><div class="result-note"><b>配图建议</b>${esc(item.image_suggestion || '按内容选择真实场景图片')}<b>衔接建议</b>${esc(item.transition || '结合上一条内容自然发布')}</div><label class="confirm"><input type="checkbox">我已核对素材，确认发布</label><button data-image>生成配图</button><button data-publish disabled>选择此版并发布</button></article>`).join('')}</div>`;
     localStorage.setItem('lobster_moments_coach_draft', JSON.stringify(snapshot()));
   }
+  let historyItems = [];
+  function renderHistory(filter = 'all') {
+    const box = $('history'); if (!box) return;
+    const items = filter === 'all' ? historyItems : historyItems.filter(x => (x.circle_type || '') === filter);
+    if ($('historySummary')) $('historySummary').textContent = `已保存 ${historyItems.length} 条生成记录`;
+    box.innerHTML = items.map(x => `<article class="list-card history-card"><header><span>${esc(x.circle_type || '朋友圈')}</span><span>${esc(String(x.created_at || '').replace('T', ' ').slice(0, 10))}</span></header><strong>${esc(x.title || '未命名文案')}</strong><pre>${esc(x.body || '')}</pre><div class="history-actions"><button data-copy="${esc(x.body || '')}">复制该文案</button><button data-view-group="${esc(x.group_id || '')}">查看3条</button></div></article>`).join('') || '<div class="list-card">还没有生成过草稿。</div>';
+  }
   async function loadList(type) {
     const endpoint = type === 'history' ? '/api/moments-coach/history' : type === 'materials' ? '/api/moments-coach/materials' : '/api/moments-coach/plans';
     const data = await api(endpoint); const box = $(type); if (!box) return;
+    if (type === 'history') { historyItems = data.items || []; if ($('profileTotal')) $('profileTotal').textContent = historyItems.length; renderHistory('all'); return; }
     if (type === 'plans') { box.innerHTML = (data.items || []).map(x => `<article class="list-card"><header><span>已保存排期</span><span>${x.items?.length || 0} 条内容</span></header><strong>${esc(x.name || '朋友圈一周排期')}</strong><p>${(x.items || []).map(i => esc(i.circle_type || '朋友圈')).join(' · ')}</p></article>`).join('') || '<div class="list-card">还没有保存排期。</div>'; return; }
     box.innerHTML = (data.items || []).map(x => `<article class="list-card" data-item='${esc(JSON.stringify(x))}'><header><span>${type === 'history' ? esc(x.circle_type || '朋友圈') : '真实素材'}</span><span>${esc(String(x.created_at || '').replace('T', ' ').slice(0, 16))}</span></header><strong>${esc(x.title || x.happened?.slice(0, 28) || x.version_type || '未命名')}</strong><pre>${esc(x.body || x.happened || x.current_change || x.customer_problem || '')}</pre>${type === 'materials' ? '<button data-use>用于写一条</button>' : ''}</article>`).join('') || `<div class="list-card">${type === 'history' ? '还没有生成过草稿。' : '还没有素材。'}</div>`;
   }
@@ -58,16 +74,20 @@
   $('guideBtn').onclick = () => $('guide')?.classList.remove('hidden');
   $('guideClose').onclick = () => { $('guide')?.classList.add('hidden'); localStorage.setItem('lobster_moments_coach_guide_dismissed', '1'); };
   document.addEventListener('click', (e) => {
+    const filter = e.target.closest('[data-history-filter]'); if (filter) { document.querySelectorAll('[data-history-filter]').forEach(x => x.classList.toggle('active', x === filter)); renderHistory(filter.dataset.historyFilter); return; }
+    const copy = e.target.closest('[data-copy]'); if (copy) { navigator.clipboard?.writeText(copy.dataset.copy || '').then(() => toast('文案已复制')).catch(() => toast('复制失败')); return; }
+    const group = e.target.closest('[data-view-group]'); if (group) { const id = group.dataset.viewGroup; const items = historyItems.filter(x => x.group_id && x.group_id === id); if (items.length) { const old = historyItems; historyItems = items; renderHistory('all'); historyItems = old; } return; }
     const tab = e.target.closest('[data-tab]'); if (tab) { e.preventDefault(); showPanel(tab.dataset.tab); return; }
     const go = e.target.closest('[data-go]'); if (go) { e.preventDefault(); showPanel(go.dataset.go); return; }
     const home = e.target.closest('[data-home-action]'); if (home) { const action = home.dataset.homeAction; if (action === 'school') return toast('商学院内容即将开放'); if (action === 'image') { showPanel('write'); $('images')?.focus(); } else if (action === 'inspire') showPanel('choose'); else showPanel('idea'); return; }
     const idea = e.target.closest('[data-idea]'); if (idea) { document.querySelectorAll('[data-idea]').forEach(x => x.classList.toggle('active', x === idea)); if ($('ideaInput')) $('ideaInput').value = `${idea.dataset.idea}：`; $('ideaInput')?.focus(); return; }
     const ideaGenerate = e.target.closest('[data-generate-idea]'); if (ideaGenerate) { generateIdea().catch(err => toast(err.message)); return; }
-    const circle = e.target.closest('[data-circle]'); if (circle) { const value = circle.dataset.circle; if ($('circle')) $('circle').value = value; showPanel('write'); const title = document.querySelector('.intro h2'); if (title) title.textContent = `${value}，今天想写点什么？`; return; }
+    const circle = e.target.closest('[data-circle]'); if (circle) { const value = circle.dataset.circle; if ($('circle')) $('circle').value = value; configureCircleForm(value); showPanel('write'); const title = document.querySelector('.intro h2'); if (title) title.textContent = `${value}，今天想写点什么？`; return; }
     const use = e.target.closest('[data-use]'); if (use) { try { fill(JSON.parse(use.closest('[data-item]').dataset.item)); showPanel('write'); toast('素材已带入写作区'); } catch (_) { toast('素材读取失败'); } }
   });
   const saveMaterial = () => api('/api/moments-coach/materials', { method:'POST', json:snapshot() }).then(() => toast('素材已保存')).catch(e => toast(e.message));
   $('saveMaterial')?.addEventListener('click', saveMaterial); $('saveMaterialTop')?.addEventListener('click', saveMaterial); $('generate')?.addEventListener('click', () => generate().catch(e => toast(e.message)));
+  $('circle')?.addEventListener('change', e => configureCircleForm(e.target.value));
   $('savePlan')?.addEventListener('click', () => { const items = [...document.querySelectorAll('.result')].map((el, i) => ({ draft_record_id: el.dataset.id, circle_type: el.querySelector('header span')?.textContent || '生活圈', sort_order: i })); api('/api/moments-coach/plans', { method:'POST', json:{ name:'朋友圈一周排期', items } }).then(() => toast('排期已保存')).catch(e => toast(e.message)); });
   $('results')?.addEventListener('change', (e) => { if (e.target.matches('input[type=checkbox]')) e.target.closest('.result').querySelector('[data-publish]').disabled = !e.target.checked; });
   $('results')?.addEventListener('click', async (e) => {
