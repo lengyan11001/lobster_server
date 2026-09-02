@@ -7498,7 +7498,7 @@
       if (sourceDepartmentId === AI_MARKETING_CREATION_ID) state.currentDepartmentId = sourceDepartmentId;
       if (String(lookup.node.key || lookup.node.capabilityId || "") === "moments_sales_coach") {
         const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
-        window.location.href = `/h5-static/moments-coach.html?brand=${brand}`;
+        window.location.href = `/h5-static/moments-coach.html?brand=${brand}&v=20260902-moments-coach-v3`;
         return;
       }
       switchTab("ability");
