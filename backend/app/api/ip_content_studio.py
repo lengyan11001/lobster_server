@@ -28,7 +28,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
@@ -2855,13 +2855,22 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
         return payload
     reference = _granted_template_for_user(db, int(row.user_id), _current_template_id_from_meta(row.meta)) or row
     if int(reference.id or 0) != int(row.id or 0):
-        # A direct agent-template selection is a live reference. Always read
-        # its current resources so later agent edits reach this user's view.
+        # A selected template is a live reference. The personal-default row
+        # may have been written by an older client with a full snapshot; only
+        # explicit overrides and profile fields are allowed to survive that
+        # snapshot. Template requirements/resources always come from the
+        # current source row.
         payload["keyword_ids"] = _clean_int_ids(reference.keyword_ids, 50)
         payload["competitor_ids"] = _clean_int_ids(reference.competitor_ids, 50)
         payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
         payload["memory_docs"] = reference.memory_docs or []
-        payload["requirements"] = {**(reference.requirements or {}), **(payload.get("requirements") or {})}
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
+        payload["requirements"] = {
+            **(reference.requirements or {}),
+            **overrides,
+            **_personal_profile_fields(row.requirements),
+        }
     if row is not None:
         payload["requirements"] = _enrich_personal_profile_requirements_with_assets(
             db, int(row.user_id), payload.get("requirements")
@@ -3365,6 +3374,111 @@ def _personal_default_template_reference(
     if template is None:
         return None
     return template
+
+
+def _current_personal_template_for_execution(
+    db: Session,
+    user_id: int,
+) -> Optional[IPContentScheduleTemplate]:
+    """Resolve the template selected in Personal Settings at execution time.
+
+    Workflow tasks are long-lived definitions. They must not pin the template
+    or its resource IDs from the day they were activated. Returning the
+    personal row when no explicit selection exists preserves the legacy
+    personal-default behaviour while still making the selected template live.
+    """
+    personal = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    if personal is None:
+        return None
+    selected = _granted_template_for_user(
+        db,
+        int(user_id),
+        _current_template_id_from_meta(personal.meta),
+    )
+    return selected or personal
+
+
+def _use_current_personal_template_options(
+    db: Session,
+    user_id: int,
+    options: Any,
+) -> dict[str, Any]:
+    """Replace stale template snapshots with the currently selected template.
+
+    Counts, task selection and sync options belong to the workflow node and
+    are retained. All template-owned fields are deliberately cleared so
+    ``run_ip_content_daily_scheduled`` can load the latest source row.
+    """
+    out = dict(options) if isinstance(options, dict) else {}
+    template = _current_personal_template_for_execution(db, int(user_id))
+    if template is None:
+        return out
+    out["template_id"] = int(template.id)
+    out["keyword_ids"] = []
+    out["competitor_ids"] = []
+    out["memory_docs"] = []
+    out["requirements"] = {}
+    out["template_source"] = "personal_current"
+    return out
+
+
+def _refresh_personal_workflow_ip_daily_payloads(
+    db: Session,
+    user_id: int,
+) -> int:
+    """Mark active workflow IP-daily definitions as live-template tasks.
+
+    Existing tasks/runs created before this change may contain a complete
+    template snapshot. Remove those fields from pending definitions/runs so
+    they cannot be shown or executed as stale data. Finished history remains
+    untouched.
+    """
+    task_rows = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == int(user_id),
+            ScheduledTask.task_kind == "ip_content_daily",
+            ScheduledTask.created_by_role == "workflow",
+            ScheduledTask.status.in_(["active", "paused"]),
+        )
+        .all()
+    )
+    task_ids: list[int] = []
+    changed = 0
+    for task in task_rows:
+        payload = dict(task.payload) if isinstance(task.payload, dict) else {}
+        payload = _use_current_personal_template_options(db, int(user_id), payload)
+        if payload != (task.payload or {}):
+            task.payload = _jsonable(payload)
+            task.updated_at = _utcnow()
+            changed += 1
+        task_ids.append(int(task.id))
+    if task_ids:
+        pending_runs = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.user_id == int(user_id),
+                ScheduledTaskRun.task_id.in_(task_ids),
+                ScheduledTaskRun.status == "pending",
+            )
+            .all()
+        )
+        for run in pending_runs:
+            refreshed = _use_current_personal_template_options(db, int(user_id), run.payload or {})
+            if refreshed != (run.payload or {}):
+                run.payload = _jsonable(refreshed)
+                run.updated_at = _utcnow()
+                changed += 1
+    return changed
 
 
 def _remove_template_reference(db: Session, user_id: int, field: str, reference_id: int) -> int:
@@ -4458,7 +4572,14 @@ async def run_ip_content_daily_scheduled(
     run_id: str = "",
     progress: ScheduleProgress = None,
 ) -> dict[str, Any]:
-    opts = ScheduledDailyRunOptions(**(options or {}))
+    runtime_options = dict(options or {})
+    if str(runtime_options.get("template_source") or "").strip().lower() == "personal_current":
+        runtime_options = _use_current_personal_template_options(
+            db,
+            int(current_user.id),
+            runtime_options,
+        )
+    opts = ScheduledDailyRunOptions(**runtime_options)
     selected_tasks = _clean_scheduled_daily_tasks(opts.tasks) or list(_SCHEDULED_DAILY_TASKS)
     _emit_schedule_progress(
         progress,
@@ -5092,15 +5213,29 @@ def save_personal_default_ip_content_config(
         )
         db.add(row)
     existing_requirements = row.requirements if row is not None else {}
+    existing_meta = row.meta if row is not None and isinstance(row.meta, dict) else {}
     incoming_requirements = body.requirements
+    template_requirement_overrides: dict[str, Any] = {}
     if template_ref is not None:
-        template_requirements = dict(template_ref.requirements or {})
-        if isinstance(incoming_requirements, dict) and incoming_requirements:
-            incoming_requirements = {**template_requirements, **incoming_requirements}
-        elif isinstance(existing_requirements, dict) and existing_requirements:
-            incoming_requirements = {**template_requirements, **existing_requirements}
+        source_requirements = dict(template_ref.requirements or {})
+        incoming_non_profile = _strip_personal_profile_requirements(body.requirements)
+        source = _clean_text((body.meta or {}).get("source"), 80)
+        if not incoming_non_profile:
+            # A silent save (for example after adding a keyword or memory)
+            # carries no template edits. Preserve intentional overrides
+            # instead of interpreting the empty request as "clear".
+            previous = existing_meta.get("template_requirement_overrides")
+            template_requirement_overrides = dict(previous) if isinstance(previous, dict) else {}
         else:
-            incoming_requirements = template_requirements
+            # Do not persist the source template snapshot in the personal row.
+            # Only values that genuinely differ from the current template are
+            # explicit local overrides; later source edits then flow through.
+            template_requirement_overrides = {
+                key: value
+                for key, value in incoming_non_profile.items()
+                if source_requirements.get(key) != value
+            }
+        incoming_requirements = template_requirement_overrides
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = _clean_memory_doc_ids(incoming_memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
@@ -5119,9 +5254,17 @@ def save_personal_default_ip_content_config(
     if template_ref is not None:
         meta["current_template_id"] = int(template_ref.id)
         meta["source_template_owner_user_id"] = int(template_ref.user_id)
+        if template_requirement_overrides:
+            meta["template_requirement_overrides"] = _jsonable(template_requirement_overrides)
+        else:
+            meta.pop("template_requirement_overrides", None)
     row.meta = _jsonable(meta)
     row.status = "active"
     row.updated_at = _utcnow()
+    # Existing workflow tasks must stop carrying the old template snapshot as
+    # soon as settings are saved. Their next run resolves the current
+    # template again, while completed history remains immutable.
+    _refresh_personal_workflow_ip_daily_payloads(db, int(current_user.id))
     try:
         db.commit()
     except IntegrityError:

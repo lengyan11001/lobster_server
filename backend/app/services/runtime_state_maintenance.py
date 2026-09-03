@@ -164,10 +164,10 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
             .all()
         )
         if stale_orders:
-            from ..api.billing import _release_hikong_inventory
+            from ..api.billing import _release_oem_inventory
 
             for order in stale_orders:
-                _release_hikong_inventory(db, order)
+                _release_oem_inventory(db, order)
                 order.status = "cancelled"
         result["fuiou_orders_expired"] = len(stale_orders)
 

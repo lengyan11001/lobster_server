@@ -42,7 +42,14 @@ from ..models import (
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user, get_current_user_id_from_token, request_auth_session_id
-from .ip_content_studio import _draft_record_payload, run_ip_content_daily_scheduled
+from .ip_content_studio import (
+    _current_template_id_from_meta,
+    _draft_record_payload,
+    _granted_template_for_user,
+    _personal_profile_fields,
+    _use_current_personal_template_options,
+    run_ip_content_daily_scheduled,
+)
 from .lead_collection_templates import run_lead_collection_templates_scheduled
 from .linkedin_mining import (
     create_linkedin_mining_job_from_payload,
@@ -309,11 +316,7 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
     current_template = _h5_dh_current_template(db, user_id, personal)
     reference_template = current_template or personal
     reference_owner_id = int(reference_template.user_id) if reference_template else int(user_id)
-    requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
-    if current_template and isinstance(current_template.requirements, dict):
-        merged = dict(requirements)
-        merged.update(current_template.requirements)
-        requirements = merged
+    requirements = _personal_default_requirements(db, user_id)
     keyword_ids = _h5_dh_clean_id_list(reference_template.keyword_ids if reference_template else [])
     competitor_ids = _h5_dh_clean_id_list(reference_template.competitor_ids if reference_template else [])
     keywords = (
@@ -677,7 +680,23 @@ def _personal_default_requirements(db: Session, user_id: int) -> Dict[str, Any]:
         .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
         .first()
     )
-    return row.requirements if row and isinstance(row.requirements, dict) else {}
+    if row is None:
+        return {}
+    personal_requirements = row.requirements if isinstance(row.requirements, dict) else {}
+    selected = _granted_template_for_user(
+        db,
+        int(user_id),
+        _current_template_id_from_meta(row.meta),
+    )
+    if selected is None or int(selected.id or 0) == int(row.id or 0):
+        return dict(personal_requirements)
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
+    return {
+        **(selected.requirements or {}),
+        **overrides,
+        **_personal_profile_fields(personal_requirements),
+    }
 
 
 def _local_bestseller_profile_from_persona(requirements: Dict[str, Any]) -> Dict[str, str]:
@@ -2726,6 +2745,21 @@ def _fail_previous_client_runs(
 
 def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Dict[str, Any]:
     run_payload = task.payload or {}
+    if task.task_kind == "ip_content_daily":
+        payload = run_payload if isinstance(run_payload, dict) else {}
+        context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+        if (
+            str(payload.get("template_source") or "").strip().lower() == "personal_current"
+            or str(task.created_by_role or "").strip().lower() == "workflow"
+            or bool(context.get("workflow_template_id"))
+        ):
+            # Workflow IP-daily nodes are live references. Keep node-specific
+            # counts/tasks, but discard any activation-time template snapshot.
+            run_payload = _use_current_personal_template_options(
+                db,
+                int(task.user_id),
+                dict(payload),
+            )
     if task.task_kind == "linkedin_mining":
         run_payload = _enrich_linkedin_mining_keywords(
             db,
@@ -3336,6 +3370,21 @@ def _execute_server_side_run(
 
     try:
         payload = run.payload if isinstance(run.payload, dict) else {}
+        if run.task_kind == "ip_content_daily":
+            run_context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+            if (
+                str(payload.get("template_source") or "").strip().lower() == "personal_current"
+                or str(run.created_by_role or "").strip().lower() == "workflow"
+                or bool(run_context.get("workflow_template_id"))
+            ):
+                payload = _use_current_personal_template_options(
+                    db,
+                    int(run.user_id),
+                    payload,
+                )
+                run.payload = payload
+                run.updated_at = now
+                db.flush()
         if run.task_kind == "ip_content_daily":
             progress("start", "服务器开始执行 IP 日更文案", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
@@ -4183,7 +4232,17 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail=f"定时任务能力已下线：{disabled_capability}")
     if task_kind == "ip_content_daily":
         payload = dict(payload)
-        if not int(payload.get("template_id") or 0) and not payload.get("keyword_ids") and not payload.get("competitor_ids") and not payload.get("memory_docs"):
+        if str(created_by_role or "").strip().lower() == "workflow":
+            # A workflow stores the schedule, while template data is resolved
+            # live for each occurrence.
+            payload["template_source"] = "personal_current"
+        if (
+            str(payload.get("template_source") or "").strip().lower() != "personal_current"
+            and not int(payload.get("template_id") or 0)
+            and not payload.get("keyword_ids")
+            and not payload.get("competitor_ids")
+            and not payload.get("memory_docs")
+        ):
             raise HTTPException(status_code=400, detail="IP日更文案任务需要选择模板、关键词、同行账号或记忆资料")
     if task_kind == "lead_collection_templates":
         payload = dict(payload)

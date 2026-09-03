@@ -55,6 +55,52 @@ class TestFuiouCreate:
         assert captured[0]["body"]["order_amt"] == "100"
         assert captured[0]["body"]["sign"]
 
+    def test_jinghai_recharge_reserves_fixed_agent_inventory(self, db_session, test_user):
+        from backend.app.api.billing import _reserve_oem_inventory
+        from backend.app.models import User
+
+        test_user.brand_mark = "jinghai"
+        agent = User(
+            email="13554848542+brand-jinghai@sms.lobster.local",
+            hashed_password="x",
+            credits=Decimal("500.0000"),
+            role="user",
+            is_agent=True,
+            agent_level=1,
+            brand_mark="jinghai",
+        )
+        db_session.add(agent)
+        db_session.commit()
+
+        reserved = _reserve_oem_inventory(db_session, test_user, 100)
+
+        assert reserved is not None
+        db_session.flush()
+        db_session.refresh(agent)
+        assert agent.credits == Decimal("400.0000")
+
+    def test_jinghai_recharge_rejects_when_fixed_agent_inventory_is_insufficient(self, db_session, test_user):
+        from fastapi import HTTPException
+        from backend.app.api.billing import _reserve_oem_inventory
+        from backend.app.models import User
+
+        test_user.brand_mark = "jinghai"
+        agent = User(
+            email="13554848542+brand-jinghai@sms.lobster.local",
+            hashed_password="x",
+            credits=Decimal("50.0000"),
+            role="user",
+            is_agent=True,
+            agent_level=1,
+            brand_mark="jinghai",
+        )
+        db_session.add(agent)
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            _reserve_oem_inventory(db_session, test_user, 100)
+        assert exc.value.status_code == 409
+
     def test_gateway_error_returns_502(self, client, patch_httpx_post, make_fuiou_response):
         patch_httpx_post(
             lambda _url, _body: make_fuiou_response(

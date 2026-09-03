@@ -38,6 +38,7 @@ from .scheduled_tasks import (
     _create_task_row,
     _delete_task_row,
     _local_bestseller_profile_from_persona,
+    _personal_default_requirements,
     _serialize_task,
 )
 from ..services.user_feature_flags import user_feature_flags
@@ -1817,11 +1818,10 @@ def _prepare_sales_workflow_nodes(
     reference_template = current_template or personal
     digital_human_template_id = _sales_digital_human_template_id(personal, current_template)
     reference_owner_id = int(reference_template.user_id) if reference_template else int(owner.id)
-    requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
-    if current_template and isinstance(current_template.requirements, dict):
-        merged_requirements = dict(requirements)
-        merged_requirements.update(current_template.requirements)
-        requirements = merged_requirements
+    # Resolve the selected IP template through the shared live-template
+    # helper. This prevents activation from reintroducing stale fields that
+    # were left on an older personal-default snapshot.
+    requirements = _personal_default_requirements(db, owner.id)
     keyword_ids = _clean_id_list(reference_template.keyword_ids if reference_template else [])
     competitor_ids = _clean_id_list(reference_template.competitor_ids if reference_template else [])
     keywords = _active_keywords_for_ids(db, reference_owner_id, keyword_ids)
@@ -1914,6 +1914,18 @@ def _prepare_sales_workflow_nodes(
                 payload["requirements"] = requirements
                 if "sync_before" not in payload:
                     payload["sync_before"] = True
+                # The workflow schedule is durable, but its selected IP
+                # template is resolved live on every run.
+                payload["template_source"] = "personal_current"
+                for stale_key in (
+                    "template_id",
+                    "keyword_ids",
+                    "competitor_ids",
+                    "memory_doc_ids",
+                    "memory_docs",
+                    "requirements",
+                ):
+                    payload.pop(stale_key, None)
             tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
             normalized_tasks = [task for task in tasks if task in _IP_DAILY_DEFAULT_TASKS]
             payload["tasks"] = normalized_tasks or list(_IP_DAILY_DEFAULT_TASKS)

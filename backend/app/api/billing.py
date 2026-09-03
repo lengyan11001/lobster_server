@@ -36,7 +36,7 @@ from ..services.fuiou_pay import (
     gen_order_no as fuiou_gen_order_no,
     parse_notify as fuiou_parse_notify,
 )
-from ..services.brand_context import PHONE_EMAIL_SUFFIX, user_brand_mark, user_for_account
+from ..services.brand_context import BRAND_FIXED_AGENT_PHONES, PHONE_EMAIL_SUFFIX, user_brand_mark, user_for_account
 
 logger = logging.getLogger(__name__)
 
@@ -85,25 +85,29 @@ def _get_public_base_url() -> str:
     return get_effective_public_base_url()
 
 
-_HIKONG_BRAND = "hikong"
-_HIKONG_AGENT_PHONE = "13510019898"
+_INVENTORY_BRANDS = {"hikong", "jinghai"}
+_INVENTORY_BRAND_LABELS = {"hikong": "海康", "jinghai": "鲸海"}
 
 
-def _hikong_agent(db: Session) -> Optional[User]:
-    return user_for_account(db, f"{_HIKONG_AGENT_PHONE}{PHONE_EMAIL_SUFFIX}", _HIKONG_BRAND)
+def _oem_inventory_agent(db: Session, brand_mark: str) -> Optional[User]:
+    phone = BRAND_FIXED_AGENT_PHONES.get(brand_mark)
+    if not phone:
+        return None
+    return user_for_account(db, f"{phone}{PHONE_EMAIL_SUFFIX}", brand_mark)
 
 
-def _reserve_hikong_inventory(db: Session, user: User, credits: int) -> Optional[User]:
-    """Reserve Hikong agent credits for a new recharge order.
+def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[User]:
+    """Reserve credits from an OEM's fixed agent for a new recharge order.
 
     The reservation is an immediate debit, so concurrent orders cannot spend the
-    same inventory. Returns the agent row or None for non-Hikong users.
+    same inventory. Returns the agent row or None for non-funded brands.
     """
-    if user_brand_mark(user) != _HIKONG_BRAND:
+    brand_mark = user_brand_mark(user)
+    if brand_mark not in _INVENTORY_BRANDS:
         return None
-    agent = _hikong_agent(db)
+    agent = _oem_inventory_agent(db, brand_mark)
     if not agent:
-        raise HTTPException(status_code=409, detail="海康充值库存不足")
+        raise HTTPException(status_code=409, detail=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)}充值库存不足")
     # Lock where supported (PostgreSQL); SQLite still serializes the enclosing
     # write transaction for this short critical section.
     try:
@@ -115,7 +119,7 @@ def _reserve_hikong_inventory(db: Session, user: User, credits: int) -> Optional
     need = quantize_credits(credits)
     balance = user_balance_decimal(agent)
     if balance < need:
-        raise HTTPException(status_code=409, detail="海康充值库存不足")
+        raise HTTPException(status_code=409, detail=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)}充值库存不足")
     agent.credits = quantize_credits(balance - need)
     append_credit_ledger(
         db,
@@ -123,33 +127,34 @@ def _reserve_hikong_inventory(db: Session, user: User, credits: int) -> Optional
         -need,
         "pre_deduct",
         agent.credits,
-        description="海康 OEM 充值库存预扣",
+        description=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)} OEM 充值库存预扣",
         ref_type="recharge_order",
-        meta={"brand_mark": _HIKONG_BRAND, "inventory": True, "credits": float(need)},
+        meta={"brand_mark": brand_mark, "inventory": True, "credits": float(need)},
     )
     return agent
 
 
-def _release_hikong_inventory(db: Session, order: RechargeOrder) -> None:
+def _release_oem_inventory(db: Session, order: RechargeOrder) -> None:
     reserved = quantize_credits(getattr(order, "agent_reserved_credits", None) or 0)
     agent_id = getattr(order, "agent_user_id", None)
     if not agent_id or reserved <= 0:
         return
     agent = db.query(User).filter(User.id == agent_id).with_for_update().first()
     if not agent:
-        logger.error("[fuiou] Hikong inventory agent missing id=%s order=%s", agent_id, order.out_trade_no)
+        logger.error("[fuiou] OEM inventory agent missing id=%s order=%s", agent_id, order.out_trade_no)
         return
     agent.credits = quantize_credits(user_balance_decimal(agent) + reserved)
+    order_brand = getattr(order, "brand_mark", None) or ""
     append_credit_ledger(
         db,
         agent.id,
         reserved,
         "refund",
         agent.credits,
-        description="海康充值下单失败，退回库存预扣",
+        description=f"{_INVENTORY_BRAND_LABELS.get(order_brand, order_brand or 'OEM')}充值下单失败，退回库存预扣",
         ref_type="recharge_order",
         ref_id=order.out_trade_no,
-        meta={"brand_mark": _HIKONG_BRAND, "inventory_release": True},
+        meta={"brand_mark": getattr(order, "brand_mark", None), "inventory_release": True},
     )
     order.agent_reserved_credits = Decimal("0")
 
@@ -725,7 +730,7 @@ async def create_fuiou_recharge_order(
     total_fen = amount_fen if amount_fen else amount_yuan * 100
     order_type = _normalize_fuiou_order_type(body)
     mchnt_order_no = fuiou_gen_order_no(brand_mark)
-    inventory_agent = _reserve_hikong_inventory(db, current_user, credits)
+    inventory_agent = _reserve_oem_inventory(db, current_user, credits)
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
@@ -755,14 +760,14 @@ async def create_fuiou_recharge_order(
         )
     except Exception as e:
         if inventory_agent:
-            _release_hikong_inventory(db, order)
+            _release_oem_inventory(db, order)
             order.status = "cancelled"
             db.commit()
         logger.exception("[fuiou] order pay failed: %s", e)
         raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
     if not result.get("ok"):
         if inventory_agent:
-            _release_hikong_inventory(db, order)
+            _release_oem_inventory(db, order)
             order.status = "cancelled"
             db.commit()
         detail = result.get("result_msg") or "富友下单返回异常"
