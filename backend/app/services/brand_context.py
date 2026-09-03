@@ -18,6 +18,14 @@ DEFAULT_BRAND_MARK = "bihuo"
 BRAND_MARK_RE = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 BRAND_EMAIL_TAG = "+brand-"
+# Each OEM has one designated level-1 operator account. These accounts act as
+# the brand's default agent and can see all users in that brand without first
+# claiming them. The bihuo account intentionally keeps the legacy hierarchy.
+BRAND_FIXED_AGENT_PHONES: dict[str, str] = {
+    "daka": "13927485337",
+    "hikong": "13510019898",
+    "jinghai": "13554848542",
+}
 
 BUILTIN_BRANDS: dict[str, dict[str, Any]] = {
     "bihuo": {
@@ -247,6 +255,20 @@ def ensure_brand_enabled(db: Session, raw: Optional[str]) -> str:
 
 def user_brand_mark(user: User) -> str:
     return normalize_brand_mark(getattr(user, "brand_mark", None), strict=False)
+
+
+def is_brand_fixed_agent(user: Optional[User]) -> bool:
+    """Whether a user is the designated full-visibility agent for its OEM."""
+    if user is None or not bool(getattr(user, "is_agent", False)):
+        return False
+    try:
+        if int(getattr(user, "agent_level", 0) or 0) != 1:
+            return False
+    except (TypeError, ValueError):
+        return False
+    mark = user_brand_mark(user)
+    expected_phone = BRAND_FIXED_AGENT_PHONES.get(mark)
+    return bool(expected_phone and phone_from_account_email(getattr(user, "email", "")) == expected_phone)
 
 
 def scoped_account_email(account_email: str, raw_brand: Optional[str]) -> str:

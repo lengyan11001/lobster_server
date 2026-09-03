@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
-from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
+from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
@@ -140,10 +140,21 @@ def _agent_level(user: Optional[User]) -> int:
 
 def _agent_visible_user_ids(db: Session, agent_user_id: int) -> list[int]:
     """代理商可见用户：自己的直属下级，以及直属二级代理名下的下级。"""
+    agent = db.query(User).filter(User.id == agent_user_id).first()
+    if is_brand_fixed_agent(agent):
+        # OEM fixed agents do not need to claim each user. Keep the result
+        # scoped to the agent's brand and exclude the operator itself because
+        # callers add it explicitly when they need the management list.
+        return [
+            uid
+            for (uid,) in db.query(User.id)
+            .filter(User.brand_mark == user_brand_mark(agent), User.id != agent_user_id)
+            .order_by(User.id)
+            .all()
+        ]
     direct_ids = _agent_sub_user_ids(db, agent_user_id)
     if not direct_ids:
         return []
-    agent = db.query(User).filter(User.id == agent_user_id).first()
     if _agent_level(agent) == 2:
         return direct_ids
     second_agent_ids = [

@@ -37,6 +37,7 @@ from ..services.brand_context import (
     scoped_account_email,
     scoped_installation_id,
     unscoped_account_email,
+    is_brand_fixed_agent,
     user_brand_mark,
     user_for_account,
 )
@@ -1338,7 +1339,15 @@ def agent_sub_users(
         raise HTTPException(status_code=403, detail="非代理商，无权访问")
     from sqlalchemy import func
     from ..models import RechargeOrder
-    subs = db.query(User).filter(User.parent_user_id == current_user.id).order_by(User.created_at.desc()).all()
+    if is_brand_fixed_agent(current_user):
+        subs = (
+            db.query(User)
+            .filter(User.brand_mark == user_brand_mark(current_user), User.id != current_user.id)
+            .order_by(User.created_at.desc())
+            .all()
+        )
+    else:
+        subs = db.query(User).filter(User.parent_user_id == current_user.id).order_by(User.created_at.desc()).all()
     result = []
     for u in subs:
         paid_sum = (
