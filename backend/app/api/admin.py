@@ -89,19 +89,20 @@ def _verify_admin_token(
         try:
             payload = jwt.decode(jwt_token, settings.secret_key, algorithms=[_JWT_ALGORITHM])
             user_id = int(payload.get("sub", 0))
-            if payload.get("scope") != "agent_admin":
+            scope = payload.get("scope")
+            if scope not in {"agent_admin", "admin_user"}:
                 raise HTTPException(status_code=401, detail="凭证无效")
             token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
         except (JWTError, ValueError, TypeError):
             raise HTTPException(status_code=401, detail="代理商凭证无效或已过期")
         user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.is_agent:
-            raise HTTPException(status_code=401, detail="代理商账号无效或已被取消代理资格")
+        if not user or (scope == "agent_admin" and not user.is_agent) or (scope == "admin_user" and str(user.role or "").strip().lower() != "admin"):
+            raise HTTPException(status_code=401, detail="管理账号无效或权限已被取消")
         if token_brand != brand_mark or user_brand_mark(user) != brand_mark:
             raise HTTPException(status_code=403, detail="代理商登录品牌不一致")
         if brand_row is not None and not bool(brand_row.enabled):
             raise HTTPException(status_code=403, detail="当前品牌未启用")
-        return AdminContext(role="agent", user_id=user_id, brand_mark=brand_mark)
+        return AdminContext(role="admin" if scope == "admin_user" else "agent", user_id=user_id, brand_mark=brand_mark)
 
     raise HTTPException(status_code=401, detail="凭证格式无效")
 
@@ -395,6 +396,30 @@ def admin_login(
             if not sms_ok:
                 raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
         password_ok = bool(user and user.is_agent and password and verify_password(password, user.hashed_password))
+        admin_password_ok = bool(user and str(getattr(user, "role", "") or "").strip().lower() == "admin" and password and verify_password(password, user.hashed_password))
+        if user and str(getattr(user, "role", "") or "").strip().lower() == "admin" and (admin_password_ok or sms_ok):
+            admin_jwt = jwt.encode(
+                {
+                    "sub": str(user.id),
+                    "scope": "admin_user",
+                    "brand_mark": brand_mark,
+                    "exp": datetime.utcnow() + timedelta(days=7),
+                },
+                settings.secret_key,
+                algorithm=_JWT_ALGORITHM,
+            )
+            token = AGENT_TOKEN_PREFIX + admin_jwt
+            display = unscoped_account_email(user.email).replace("@sms.lobster.local", "")
+            return {
+                "ok": True,
+                "token": token,
+                "role": "admin",
+                "user_id": user.id,
+                "display_name": display,
+                "agent_level": _agent_level(user),
+                "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+                "brand_mark": brand_mark,
+            }
         if user and user.is_agent and (password_ok or sms_ok):
             agent_jwt = jwt.encode(
                 {
