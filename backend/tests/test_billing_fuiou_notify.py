@@ -55,7 +55,7 @@ class TestFuiouCreate:
         assert captured[0]["body"]["order_amt"] == "100"
         assert captured[0]["body"]["sign"]
 
-    def test_jinghai_recharge_reserves_fixed_agent_inventory(self, db_session, test_user):
+    def test_jinghai_recharge_does_not_reserve_fixed_agent_inventory(self, db_session, test_user):
         from backend.app.api.billing import _reserve_oem_inventory
         from backend.app.models import User
 
@@ -74,13 +74,12 @@ class TestFuiouCreate:
 
         reserved = _reserve_oem_inventory(db_session, test_user, 100)
 
-        assert reserved is not None
+        assert reserved is None
         db_session.flush()
         db_session.refresh(agent)
-        assert agent.credits == Decimal("400.0000")
+        assert agent.credits == Decimal("500.0000")
 
-    def test_jinghai_recharge_rejects_when_fixed_agent_inventory_is_insufficient(self, db_session, test_user):
-        from fastapi import HTTPException
+    def test_jinghai_recharge_does_not_require_fixed_agent_balance(self, db_session, test_user):
         from backend.app.api.billing import _reserve_oem_inventory
         from backend.app.models import User
 
@@ -97,9 +96,26 @@ class TestFuiouCreate:
         db_session.add(agent)
         db_session.commit()
 
-        with pytest.raises(HTTPException) as exc:
-            _reserve_oem_inventory(db_session, test_user, 100)
-        assert exc.value.status_code == 409
+        assert _reserve_oem_inventory(db_session, test_user, 100) is None
+
+    def test_jinghai_create_returns_qr_without_fixed_agent(self, client, db_session, test_user, patch_httpx_post, make_fuiou_response):
+        from backend.app.models import RechargeOrder
+
+        test_user.brand_mark = "jinghai"
+        db_session.commit()
+        patch_httpx_post(
+            lambda _url, _body: make_fuiou_response({"qr_code": "https://qr.example/jinghai"})
+        )
+
+        response = client.post("/api/recharge/fuiou-create", json={"price_yuan": 1, "credits": 100})
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        order = db_session.query(RechargeOrder).filter(RechargeOrder.id == payload["order_id"]).one()
+        assert payload["qr_code"] == "https://qr.example/jinghai"
+        assert order.brand_mark == "jinghai"
+        assert order.agent_user_id is None
+        assert order.agent_reserved_credits is None
 
     def test_gateway_error_returns_502(self, client, patch_httpx_post, make_fuiou_response):
         patch_httpx_post(

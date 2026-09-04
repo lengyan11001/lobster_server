@@ -85,7 +85,12 @@ def _get_public_base_url() -> str:
     return get_effective_public_base_url()
 
 
-_INVENTORY_BRANDS = {"hikong", "jinghai"}
+# Only Hikong uses its fixed-agent balance as recharge inventory. Jinghai
+# recharge orders use the configured Fuiou merchant directly and never depend
+# on the fixed agent's balance.
+_INVENTORY_BRANDS = {"hikong"}
+# Keep the legacy Jinghai label so an older order that still contains a
+# reservation can be described correctly if its reservation is released.
 _INVENTORY_BRAND_LABELS = {"hikong": "海康", "jinghai": "鲸海"}
 
 
