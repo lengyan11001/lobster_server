@@ -1342,7 +1342,7 @@ window.LobsterGeneratedEn = Object.freeze({
   "声音克隆任务已提交": "Sound cloning task submitted",
   "声音名称": "sound name",
   "声音文件": "sound file",
-  "声音文件不能超过 20MB": "Sound files cannot exceed 20MB",
+  "声音文件不能超过 10MB": "Sound files cannot exceed 10MB",
   "声音文件仅支持 MP3、M4A 或 WAV": "Sound files only support MP3, M4A or WAV",
   "省份": "Province",
   "失败·": "Failure ·",

@@ -10347,3 +10347,29 @@
     .moments-coach-empty,.moments-coach-persona { grid-column:1 / -1; padding:38px 22px; color:#73839a; border:1px dashed #cbd8e7; border-radius:8px; background:#fbfcfe; text-align:center; line-height:1.7; }
     .moments-coach-persona { min-height:90px; color:#35465e; text-align:left; white-space:pre-wrap; }
     @media (max-width:760px) { .moments-coach-topbar { padding:22px 18px; align-items:flex-start; flex-direction:column; } .moments-coach-topbar h3 { font-size:23px; } .moments-coach-top-actions { width:100%; justify-content:space-between; } .moments-coach-guide { margin:12px 14px 0; } .moments-coach-nav { padding:0 12px; } .moments-coach-nav button { min-height:54px; padding:0 13px; font-size:13px; } .moments-coach-screen { padding:16px 14px 22px; } .moments-coach-intro,.moments-coach-list-head { align-items:flex-start; flex-direction:column; padding:19px; } .moments-coach-circle-picker { width:100%; min-width:0; } .moments-coach-compose { grid-template-columns:1fr; } .moments-coach-source { padding:18px; } .moments-coach-field-grid,.moments-coach-bottom-fields,.moments-coach-result-grid,.moments-coach-list { grid-template-columns:1fr; } .moments-coach-bottom-fields { gap:14px; } .moments-coach-compose-actions { flex-direction:column-reverse; } .moments-coach-compose-actions button { width:100%; } .moments-coach-rules { order:2; } .moments-coach-result-heading { align-items:flex-start; flex-direction:column; } .moments-coach-list-head button { width:100%; } }
+ .circle-field-hidden { display:none!important; }
+ #abilityView .moments-coach-mode .moments-coach-app { color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-topbar { background:#fff; color:#684d45; border-bottom:1px solid #f1cdb7; }
+ #abilityView .moments-coach-mode .moments-coach-topbar p { color:#a27f72; }
+ #abilityView .moments-coach-mode .moments-coach-top-actions span { color:#a27f72; }
+ #abilityView .moments-coach-mode .moments-coach-top-actions button { color:#ed790f; border:1px solid #f1cdb7; background:#fff8f3; }
+ #abilityView .moments-coach-mode .moments-coach-nav button.active { color:#ed790f; border-bottom-color:#ed790f; background:#fff8f3; }
+ #abilityView .moments-coach-mode .moments-coach-screen { background:#fff; }
+ #abilityView .moments-coach-mode .moments-coach-intro { border-color:#f1cdb7; background:#fff8f3; }
+ #abilityView .moments-coach-mode .moments-coach-intro span,#abilityView .moments-coach-mode .moments-coach-section-title span { color:#ed790f; }
+ #abilityView .moments-coach-mode .moments-coach-intro h4,#abilityView .moments-coach-mode .moments-coach-section-title h4 { color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-source { border-color:#f1cdb7; background:#fff8f3; }
+ #abilityView .moments-coach-mode .moments-coach-source textarea,#abilityView .moments-coach-mode .moments-coach-source select { border-color:#f2d5c2; background:#fffdfa; color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-rules { border-color:#f1cdb7; background:#fffaf7; color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-compose-actions button:last-child,#abilityView .moments-coach-mode .moments-coach-list-head button { border-color:#ed790f; background:#ed790f; }
+ #abilityView .moments-coach-mode .moments-coach-guide { color:#684d45; border-color:#f1cdb7; background:#fff3eb; }
+ #abilityView .moments-coach-mode .moments-coach-nav { border-color:#f1cdb7; background:#fff; }
+ #abilityView .moments-coach-mode .moments-coach-nav button { color:#a27f72; }
+ #abilityView .moments-coach-mode .moments-coach-intro p,#abilityView .moments-coach-mode .moments-coach-list-head p { color:#a27f72; }
+ #abilityView .moments-coach-mode .moments-coach-result,#abilityView .moments-coach-mode .moments-coach-history { border-color:#f1cdb7; background:#fff8f3; }
+ #abilityView .moments-coach-mode .moments-coach-result header span,#abilityView .moments-coach-mode .moments-coach-history header span { color:#ed790f; background:#fff3eb; }
+ #abilityView .moments-coach-mode .moments-coach-result h4,#abilityView .moments-coach-mode .moments-coach-history > strong { color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-result pre,#abilityView .moments-coach-mode .moments-coach-history pre { color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-result-note { background:#fff; }
+ #abilityView .moments-coach-mode .moments-coach-result-note b { color:#684d45; }
+ #abilityView .moments-coach-mode .moments-coach-result-note p { color:#a27f72; }

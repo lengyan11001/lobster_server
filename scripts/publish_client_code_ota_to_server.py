@@ -97,14 +97,31 @@ OEM_SWITCHER_OTA_PATHS = frozenset(
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
+    skill_roots = sorted(
+        {
+            "/".join(name.split("/")[:2])
+            for name in names
+            if name.startswith("skills/") and len(name.split("/")) >= 3
+        }
+    )
+    has_full_skills_root = "skills/__init__.py" in names or "skills/__init__.pyc" in names
     has_full_code_roots = any(
         any(name.startswith(root + "/") for name in names)
-        for root in ("mcp", "publisher", "skills", "openclaw")
+        for root in ("mcp", "publisher", "openclaw")
     ) or any(
         name.startswith("desktop/") and name not in OEM_SWITCHER_OTA_PATHS
         for name in names
-    )
-    candidate_paths = DEFAULT_CLIENT_CODE_OTA_PATHS if has_full_code_roots else WEBSITE_CLIENT_CODE_OTA_PATHS
+    ) or has_full_skills_root
+    if has_full_code_roots:
+        candidate_paths = DEFAULT_CLIENT_CODE_OTA_PATHS
+    elif skill_roots:
+        # A targeted OTA carries only selected skills. Keep the manifest scoped
+        # to those directories so the updater never reconciles the whole skills tree.
+        candidate_paths = [
+            path for path in WEBSITE_CLIENT_CODE_OTA_PATHS if path != "CLIENT_CODE_VERSION.json"
+        ] + skill_roots + ["CLIENT_CODE_VERSION.json"]
+    else:
+        candidate_paths = WEBSITE_CLIENT_CODE_OTA_PATHS
     paths = []
     for path in candidate_paths:
         normalized = path.replace("\\", "/").rstrip("/")

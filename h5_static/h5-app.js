@@ -7225,6 +7225,7 @@
 
     function abilityDesignerIcon(node) {
       const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("moments") || key.includes("circle") || key.includes("coach")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6a3.5 3.5 0 0 1-3.5 3.5H11l-4.5 4v-4.2A3.5 3.5 0 0 1 4 11.5v-6z"/><path d="M8 8h8M8 11h5"/></svg>`;
       if (key.includes("video") || key.includes("daily")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8 11.2 11.6 9A1 1 0 0 0 10 9.9v4.2a1 1 0 0 0 1.6.8l3.2-2.1a1 1 0 0 0 0-1.6z"/><path d="M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z"/></svg>`;
       if (key.includes("article") || key.includes("copy") || key.includes("text")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.8V8h4.2M8 12h8v2H8v-2zm0 4h8v2H8v-2z"/></svg>`;
       if (key.includes("image") || key.includes("pic")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16l1.6-1.6a2 2 0 0 1 2.8 0L22 16v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3zM6 5h12a2 2 0 0 1 2 2v5.2l-.2-.2a4 4 0 0 0-5.6 0L16 13.8l-3.2-3.2a4 4 0 0 0-5.6 0L4 13.8V7a2 2 0 0 1 2-2z"/></svg>`;
@@ -7233,6 +7234,7 @@
 
     function abilityDesignerTone(node) {
       const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("moments") || key.includes("circle") || key.includes("coach")) return "rose";
       if (key.includes("article")) return "emerald";
       if (key.includes("ppt")) return "rose";
       if (key.includes("image")) return "purple";
@@ -7242,6 +7244,7 @@
 
     function abilityDesignerArtLabel(node) {
       const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("moments") || key.includes("circle") || key.includes("coach")) return "朋 友 圈 成 交 教 练";
       if (key.includes("ppt")) return "幻 灯 片 自 动 化";
       if (key.includes("3d") || key.includes("model")) return "3D 建 模 实 验 室";
       if (key.includes("article")) return "深 度 内 容 构 建";
@@ -7487,11 +7490,6 @@
       state.currentAbilityKey = lookup.node.key;
       state.abilityTrail = lookup.trail.map((node) => node.key);
       if (sourceDepartmentId === AI_MARKETING_CREATION_ID) state.currentDepartmentId = sourceDepartmentId;
-      if (String(lookup.node.key || lookup.node.capabilityId || "") === "moments_sales_coach") {
-        const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
-        window.location.href = `/h5-static/moments-coach.html?brand=${brand}&v=20260902-moments-coach-v3`;
-        return;
-      }
       switchTab("ability");
     }
 
@@ -7619,15 +7617,31 @@
         + taskFieldHtml("任务要求", taskTextareaHtml("abilityGenericPrompt", "填写要执行的任务参数和要求"), true);
     }
 
+    const MOMENTS_CIRCLE_UI = {
+      "": { title: "今天，想让谁记住什么？", description: "不需要写得完整。把发生的事、对方的顾虑或一个变化告诉我，教练会先判断该发哪一种朋友圈。", eyebrow: "从真实素材出发", visible: ["happened", "problem", "question", "desired", "change"], labels: { happened: "今天发生了什么", problem: "她之前卡在哪里", question: "她问过什么", desired: "她真正想要的结果", change: "现在有什么进展" } },
+      "生活圈": { title: "生活圈", description: "用你的日常，将你打造成为朋友圈之星。", eyebrow: "生活圈", visible: ["happened"], labels: { happened: "谁做了什么事" } },
+      "咨询圈": { title: "咨询圈", description: "消除客户疑问，让客户自动下单。", eyebrow: "咨询圈", visible: ["question", "problem"], labels: { question: "客户问了什么问题", problem: "你的判断或建议" } },
+      "反馈圈": { title: "反馈圈", description: "用一个客户反馈，刺激井喷式订单。", eyebrow: "反馈圈", visible: ["problem", "desired", "change"], labels: { problem: "客户之前什么状态", desired: "报名的课程 / 使用的产品", change: "现在有什么变化" } },
+      "收款圈": { title: "收款圈", description: "用一个收款，引爆收款。", eyebrow: "收款圈", visible: ["problem", "desired", "change"], labels: { problem: "客户情况", desired: "报名的课程 / 购买的产品", change: "我能带他拿到的结果" } },
+      "促成交圈": { title: "促成交", description: "让用户忍不住立刻给你付钱。", eyebrow: "促成交圈", visible: ["desired", "problem", "change"], labels: { desired: "用户想获得什么结果", problem: "产品和优惠", change: "截止或名额" } },
+    };
+    function updateMomentsCoachCircleUi(value) {
+      const cfg = MOMENTS_CIRCLE_UI[value] || MOMENTS_CIRCLE_UI[""];
+      const title = $("momentsCoachTitle"); const eyebrow = $("momentsCoachEyebrow"); const introTitle = $("momentsCoachCircleTitle"); const intro = $("momentsCoachCircleIntro"); const description = $("momentsCoachCircleDescription");
+      if (title) title.textContent = cfg.title; if (eyebrow) eyebrow.textContent = cfg.eyebrow; if (introTitle) introTitle.textContent = cfg.title; if (intro) intro.textContent = cfg.eyebrow; if (description) description.textContent = cfg.description;
+      document.querySelectorAll("[data-moments-circle-field]").forEach((el) => { const key = el.dataset.momentsCircleField; el.classList.toggle("circle-field-hidden", !cfg.visible.includes(key)); const label = el.querySelector("span"); if (label) label.textContent = cfg.labels[key] || MOMENTS_CIRCLE_UI[""].labels[key]; });
+      const optional = document.querySelector("[data-moments-circle-optional]"); if (optional) optional.classList.toggle("circle-field-hidden", !!value);
+    }
+
     function momentsCoachFieldsHtml() {
       return `<section class="moments-coach-app">
         <header class="moments-coach-topbar"><div><p>朋友圈成交文案教练</p><h3>把真实经历，写成让人愿意靠近的朋友圈</h3></div><div class="moments-coach-top-actions"><span>仅生成草稿，发布前需确认</span><button type="button" id="momentsCoachGuideOpen">微信浮窗</button></div></header>
         <div class="moments-coach-guide hidden" id="momentsCoachGuide"><div><strong>添加到微信浮窗</strong><span>在微信内打开本页，点右上角“…”后选择“添加到浮窗”。下次从浮窗回来会恢复当前草稿。</span></div><button type="button" id="momentsCoachGuideClose" aria-label="关闭浮窗引导">关闭</button></div>
         <nav class="moments-coach-nav" role="tablist"><button type="button" class="active" data-moments-tab="write"><b>01</b>写一条</button><button type="button" data-moments-tab="materials"><b>02</b>素材库</button><button type="button" data-moments-tab="plan"><b>03</b>一周排期</button><button type="button" data-moments-tab="history"><b>04</b>历史草稿</button><button type="button" data-moments-tab="settings"><b>05</b>我的设定</button></nav>
         <div data-moments-panel="write" class="moments-coach-screen">
-          <section class="moments-coach-intro"><div><span>从真实素材出发</span><h4>今天，想让谁记住什么？</h4><p>不需要写得完整。把发生的事、对方的顾虑或一个变化告诉我，教练会先判断该发哪一种朋友圈。</p></div><div class="moments-coach-circle-picker"><span>本条方向</span><select id="momentsCoachCircle"><option value="">让 AI 判断</option><option>生活圈</option><option>咨询圈</option><option>反馈圈</option><option>收款圈</option><option>促成交圈</option></select></div></section>
+          <section class="moments-coach-intro"><div><span id="momentsCoachCircleIntro">从真实素材出发</span><h4 id="momentsCoachCircleTitle">今天，想让谁记住什么？</h4><p id="momentsCoachCircleDescription">不需要写得完整。把发生的事、对方的顾虑或一个变化告诉我，教练会先判断该发哪一种朋友圈。</p></div><div class="moments-coach-circle-picker" id="momentsCoachCirclePicker"><span>本条方向</span><select id="momentsCoachCircle"><option value="">让 AI 判断</option><option>生活圈</option><option>咨询圈</option><option>反馈圈</option><option>收款圈</option><option>促成交圈</option></select></div></section>
           <div class="moments-coach-compose">
-            <section class="moments-coach-source"><div class="moments-coach-section-title"><div><span>真实素材</span><h4>把事情说出来</h4></div><small>至少填写一项</small></div><label class="moments-coach-primary-field"><span>今天发生了什么</span><textarea id="momentsCoachHappened" placeholder="例如：一位客户把拖了很久的方案重新拿出来聊，原来她不是不想做，而是担心自己坚持不下来。"></textarea></label><div class="moments-coach-field-grid"><label><span>她之前卡在哪里</span><textarea id="momentsCoachProblem" placeholder="客户原来的困扰"></textarea></label><label><span>她问过什么</span><textarea id="momentsCoachQuestion" placeholder="保留真实问法"></textarea></label><label><span>她真正想要的结果</span><textarea id="momentsCoachDesired" placeholder="不是产品功能，是她希望发生的变化"></textarea></label><label><span>现在有什么进展</span><textarea id="momentsCoachChange" placeholder="真实变化、反馈或阶段结果"></textarea></label></div><div class="moments-coach-bottom-fields"><label><span>这条想完成什么</span><select id="momentsCoachPurpose"><option value="建立信任">建立信任</option><option value="消除疑虑">消除疑虑</option><option value="展示变化">展示变化</option><option value="推动行动">推动行动</option></select></label><label><span>配图 / 截图地址</span><textarea id="momentsCoachImages" placeholder="每行一个图片链接；也可以先不填"></textarea></label></div><div class="moments-coach-compose-actions"><button type="button" id="momentsCoachSaveMaterial">保存到素材库</button><button type="button" id="momentsCoachGenerate">开始生成 3 个版本</button></div></section>
+            <section class="moments-coach-source"><div class="moments-coach-section-title"><div><span id="momentsCoachEyebrow">真实素材</span><h4 id="momentsCoachTitle">把事情说出来</h4></div><small>至少填写一项</small></div><label class="moments-coach-primary-field" data-moments-circle-field="happened"><span>今天发生了什么</span><textarea id="momentsCoachHappened" placeholder="例如：一位客户把拖了很久的方案重新拿出来聊，原来她不是不想做，而是担心自己坚持不下来。"></textarea></label><div class="moments-coach-field-grid"><label data-moments-circle-field="problem"><span>她之前卡在哪里</span><textarea id="momentsCoachProblem" placeholder="客户原来的困扰"></textarea></label><label data-moments-circle-field="question"><span>她问过什么</span><textarea id="momentsCoachQuestion" placeholder="保留真实问法"></textarea></label><label data-moments-circle-field="desired"><span>她真正想要的结果</span><textarea id="momentsCoachDesired" placeholder="不是产品功能，是她希望发生的变化"></textarea></label><label data-moments-circle-field="change"><span>现在有什么进展</span><textarea id="momentsCoachChange" placeholder="真实变化、反馈或阶段结果"></textarea></label></div><div class="moments-coach-bottom-fields" data-moments-circle-optional><label><span>这条想完成什么</span><select id="momentsCoachPurpose"><option value="建立信任">建立信任</option><option value="消除疑虑">消除疑虑</option><option value="展示变化">展示变化</option><option value="推动行动">推动行动</option></select></label><label><span>配图 / 截图地址</span><textarea id="momentsCoachImages" placeholder="每行一个图片链接；也可以先不填"></textarea></label></div><div class="moments-coach-compose-actions"><button type="button" id="momentsCoachSaveMaterial">保存到素材库</button><button type="button" id="momentsCoachGenerate">开始生成 3 个版本</button></div></section>
             <aside class="moments-coach-rules"><span>写作边界</span><h4>真实，才会有成交感</h4><ul><li>一条朋友圈只表达一件事</li><li>不编造成交、客户反馈或结果</li><li>不暴露客户身份和聊天隐私</li><li>不使用保证、第一、100% 等词</li></ul><div><b>五种内容节奏</b><p>生活建立信任，咨询消除顾虑，反馈展示变化，收款传递价值，促成交给出行动理由。</p></div></aside>
           </div><div id="momentsCoachResults" class="moments-coach-results"></div>
         </div>
@@ -7639,7 +7653,8 @@
     }
 
     function momentsCoachSnapshotFromFields() {
-      return { happened: abilityValue("momentsCoachHappened"), customer_problem: abilityValue("momentsCoachProblem"), customer_question: abilityValue("momentsCoachQuestion"), desired_result: abilityValue("momentsCoachDesired"), current_change: abilityValue("momentsCoachChange"), purpose: abilityValue("momentsCoachPurpose"), circle_type: abilityValue("momentsCoachCircle"), image_urls: splitTextareaList(abilityValue("momentsCoachImages")) };
+      const circle = abilityValue("momentsCoachCircle"); const visible = (MOMENTS_CIRCLE_UI[circle] || MOMENTS_CIRCLE_UI[""]).visible;
+      return { happened: visible.includes("happened") ? abilityValue("momentsCoachHappened") : "", customer_problem: visible.includes("problem") ? abilityValue("momentsCoachProblem") : "", customer_question: visible.includes("question") ? abilityValue("momentsCoachQuestion") : "", desired_result: visible.includes("desired") ? abilityValue("momentsCoachDesired") : "", current_change: visible.includes("change") ? abilityValue("momentsCoachChange") : "", purpose: abilityValue("momentsCoachPurpose"), circle_type: circle, image_urls: splitTextareaList(abilityValue("momentsCoachImages")) };
     }
 
     async function momentsCoachGenerate() {
@@ -7746,7 +7761,9 @@
           if (localStorage.getItem("lobster_moments_coach_guide_dismissed") !== "1") $("momentsCoachGuide")?.classList.remove("hidden");
           $("momentsCoachGuideClose")?.addEventListener("click", () => { localStorage.setItem("lobster_moments_coach_guide_dismissed", "1"); $("momentsCoachGuide")?.classList.add("hidden"); });
           $("momentsCoachGuideOpen")?.addEventListener("click", () => { localStorage.removeItem("lobster_moments_coach_guide_dismissed"); $("momentsCoachGuide")?.classList.remove("hidden"); });
-          $("abilityWorkbenchFields")?.querySelector(".moments-coach-tabs")?.addEventListener("click", (evt) => { const tab = evt.target.closest("[data-moments-tab]"); if (!tab) return; const name = tab.dataset.momentsTab; document.querySelectorAll("[data-moments-tab]").forEach((el) => el.classList.toggle("active", el === tab)); document.querySelectorAll("[data-moments-panel]").forEach((el) => el.classList.toggle("hidden", el.dataset.momentsPanel !== name)); if (name === "history") momentsCoachLoadHistory().catch(() => {}); if (name === "materials") momentsCoachLoadMaterials().catch(() => {}); if (name === "plan") momentsCoachLoadPlans().catch(() => {}); });
+          $("momentsCoachCircle")?.addEventListener("change", (evt) => updateMomentsCoachCircleUi(evt.target.value));
+          updateMomentsCoachCircleUi($("momentsCoachCircle")?.value || "");
+          $("abilityWorkbenchFields")?.querySelector(".moments-coach-nav")?.addEventListener("click", (evt) => { const tab = evt.target.closest("[data-moments-tab]"); if (!tab) return; const name = tab.dataset.momentsTab; $("abilityWorkbenchFields").querySelectorAll("[data-moments-tab]").forEach((el) => el.classList.toggle("active", el === tab)); $("abilityWorkbenchFields").querySelectorAll("[data-moments-panel]").forEach((el) => el.classList.toggle("hidden", el.dataset.momentsPanel !== name)); if (name === "history") momentsCoachLoadHistory().catch(() => {}); if (name === "materials") momentsCoachLoadMaterials().catch(() => {}); if (name === "plan") momentsCoachLoadPlans().catch(() => {}); });
           $("momentsCoachGenerate")?.addEventListener("click", () => momentsCoachGenerate().catch((err) => toast(err.message || "生成失败")));
           const saveMaterial = async () => { try { await api("/api/moments-coach/materials", { method: "POST", json: momentsCoachSnapshotFromFields() }); toast("素材已保存"); momentsCoachLoadMaterials().catch(() => {}); } catch (err) { toast(err.message || "保存失败"); } };
           $("momentsCoachSaveMaterial")?.addEventListener("click", saveMaterial);
@@ -11498,9 +11515,25 @@
       }
     }
 
+    const VOICE_CLONE_MAX_BYTES = 10 * 1024 * 1024;
+
     function syncAssetVoiceSelectedFile() {
       const file = $("assetVoiceFile")?.files?.[0] || null;
       if (!file) return;
+      if (Number(file.size || 0) > VOICE_CLONE_MAX_BYTES) {
+        state.assetVoiceRecordedFile = null;
+        $("assetVoiceFile").value = "";
+        cleanupAssetVoiceRecordRuntime();
+        syncAssetVoiceRecordUi();
+        if ($("assetVoiceRecordPreview")) {
+          if (state.assetVoiceRecordPreviewUrl) URL.revokeObjectURL(state.assetVoiceRecordPreviewUrl);
+          state.assetVoiceRecordPreviewUrl = "";
+          $("assetVoiceRecordPreview").removeAttribute("src");
+          $("assetVoiceRecordPreview").classList.add("hidden");
+        }
+        if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "声音样本不能超过 10MB";
+        return toast("声音文件不能超过 10MB");
+      }
       cleanupAssetVoiceRecordRuntime();
       state.assetVoiceRecordedFile = null;
       syncAssetVoiceRecordUi();
@@ -11511,7 +11544,7 @@
       evt.preventDefault();
       const file = state.assetVoiceRecordedFile || ($("assetVoiceFile") && $("assetVoiceFile").files ? $("assetVoiceFile").files[0] : null);
       if (!file) return toast("请选择声音文件");
-      if (Number(file.size || 0) > 20 * 1024 * 1024) return toast("声音文件不能超过 20MB");
+      if (Number(file.size || 0) > VOICE_CLONE_MAX_BYTES) return toast("声音文件不能超过 10MB");
       if (!/\.(mp3|m4a|wav)$/i.test(String(file.name || ""))) return toast("声音文件仅支持 MP3、M4A 或 WAV");
       const title = (($("assetVoiceName") && $("assetVoiceName").value) || file.name || "未命名声音").trim();
       const fd = new FormData();

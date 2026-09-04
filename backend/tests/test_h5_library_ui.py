@@ -136,6 +136,27 @@ def test_digital_avatar_library_uses_media_url_and_video_first_frame():
     assert '"video_url": media_url if media_type == "video" else ""' in api
 
 
+def test_my_voice_style_exposes_its_provider_for_preview_dispatch():
+    from backend.app.api.hifly_assets import _normalize_voice_asset
+    from backend.app.models import UserHiflyVoiceAsset
+
+    row = UserHiflyVoiceAsset(
+        id=7,
+        user_id=1,
+        title="测试声音",
+        status="success",
+        hifly_task_id="qwen_voice_test_task",
+        hifly_voice_id="qwen-test-voice",
+        demo_url="https://cdn.example/voice.mp3",
+        meta={"provider": "qwen", "qwen_voice_id": "qwen-test-voice"},
+    )
+
+    item = _normalize_voice_asset(row)
+
+    assert item["provider"] == "qwen"
+    assert item["styles"][0]["provider"] == "qwen"
+
+
 def test_legacy_video_avatar_normalization_exposes_cover_and_training_media():
     from backend.app.api.hifly_assets import _normalize_avatar_asset
 

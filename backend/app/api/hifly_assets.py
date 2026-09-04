@@ -46,7 +46,9 @@ router = APIRouter()
 _HIFLY_API_BASE = "https://hfw-api.hifly.cc"
 _IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _VIDEO_MAX_BYTES = 500 * 1024 * 1024
-_AUDIO_MAX_BYTES = 20 * 1024 * 1024
+# Qwen voice enrollment rejects samples above 10 MiB. Keep this limit on the
+# clone endpoint so oversized files never get persisted or sent upstream.
+_VOICE_CLONE_MAX_BYTES = 10 * 1024 * 1024
 _AUDIO_DRIVE_MAX_BYTES = 100 * 1024 * 1024
 _HIFLY_IN_MEMORY_UPLOAD_BYTES = 32 * 1024 * 1024
 _MAX_AVATAR_PAGE_SIZE = 100
@@ -1256,10 +1258,10 @@ async def _prepare_voice_clone_upload(upload: UploadFile) -> Dict[str, Any]:
     if ext not in _AUDIO_EXTS:
         raise HTTPException(status_code=400, detail=f"仅支持 {', '.join(sorted(_AUDIO_EXTS))} 格式")
     try:
-        size = await asyncio.to_thread(_validate_upload_size, upload.file, _AUDIO_MAX_BYTES)
+        size = await asyncio.to_thread(_validate_upload_size, upload.file, _VOICE_CLONE_MAX_BYTES)
     except HTTPException as exc:
         if exc.status_code == 413:
-            raise HTTPException(status_code=400, detail=f"上传文件不能超过 {_AUDIO_MAX_BYTES // (1024 * 1024)}MB") from exc
+            raise HTTPException(status_code=400, detail=f"声音样本不能超过 {_VOICE_CLONE_MAX_BYTES // (1024 * 1024)}MB") from exc
         raise HTTPException(status_code=400, detail="上传文件为空") from exc
 
     raw = await upload.read(size + 1)
@@ -1670,6 +1672,7 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
     voice_id = row.hifly_voice_id or ""
     demo_url = _resolve_voice_preview_source(row, request)
     cover_url = row.cover_url or ""
+    provider = _voice_provider(row)
     voice_params = {}
     if isinstance(row.meta, dict) and isinstance(row.meta.get("voice_params"), dict):
         voice_params = dict(row.meta.get("voice_params") or {})
@@ -1699,9 +1702,9 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
                 "label": "默认风格",
                 "demo_url": public_demo_url,
                 "title": row.title,
+                "provider": provider,
             }
         )
-    provider = _voice_provider(row)
     return {
         "id": row.id,
         "source": "hifly",
