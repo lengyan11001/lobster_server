@@ -537,7 +537,7 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "workflowTemplateIsSales(tpl)" in script
     assert "plan_day: Number(planDay)" in script
     assert "function customWorkflowTemplateRows()" in script
-    assert "const mirrors = new Map();" in script
+    assert "const mergedIds = new Set(systemRows.map((tpl) => String(tpl && tpl.id || \"\")));" in script
     assert "return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);" in script
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
@@ -557,15 +557,17 @@ def test_custom_workflow_with_local_bestseller_requests_plan_day():
     assert "workflowTemplateIsSales(tpl)" not in activation
 
 
-def test_workflow_template_drawer_keeps_four_system_slots_and_restores_personal_sales():
+def test_workflow_template_drawer_uses_three_server_system_templates_and_restores_personal_sales():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     system_templates = script.split("function systemWorkflowTemplates()", 1)[1].split("function closeWorkflowOverlays", 1)[0]
     drawer = script.split("function renderWorkflowTemplates()", 1)[1].split("function userWorkflowTemplateRows", 1)[0]
     restore = script.split("function restoreSystemWorkflowTemplate", 1)[1].split("function resetWorkflowDraft", 1)[0]
 
-    for template_id in ("system_sales", "system_customer_service", "system_overseas", "system_hr"):
-        assert f'id: "{template_id}"' in script
+    for template_id in ("system_sales", "system_short_video_wechat", "system_douyin_leads"):
+        assert template_id in script
+    for legacy_template_id in ("system_customer_service", "system_overseas", "system_hr"):
+        assert legacy_template_id not in system_templates
     assert ".filter((tpl) => workflowTemplateNodeCount(tpl) > 0)" not in system_templates
     assert "const rows = systemWorkflowTemplates();" in drawer
     assert "workflowTemplateRows()" not in drawer

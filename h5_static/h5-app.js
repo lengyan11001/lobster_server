@@ -1282,13 +1282,6 @@
       ip_content_daily: "/h5-static/marketing-cover-ip-daily.png",
       "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.png",
     };
-    const SYSTEM_WORKFLOW_EMPLOYEES = [
-      { id: "system_sales", name: "销售员工", departmentId: "sales", mark: "销", preset: "sales" },
-      { id: "system_customer_service", name: "客服员工", departmentId: "customer_service", mark: "客", comingSoon: true },
-      { id: "system_overseas", name: "海外员工", departmentId: "overseas", mark: "海", comingSoon: true },
-      { id: "system_hr", name: "HR员工", departmentId: "operations", mark: "HR", comingSoon: true },
-    ];
-
     const DOUYIN_TASK_ACTIONS = {
       account_nurture: {
         label: "自动养号",
@@ -5521,6 +5514,7 @@
     function personalSystemWorkflowTemplate(templateKey) {
       const key = String(templateKey || "").trim();
       const ownRows = userWorkflowTemplateRows();
+      if (ownRows.some((tpl) => tpl && tpl.source === "system" && workflowSystemTemplateKey(tpl) === key)) return null;
       const exact = ownRows.find((tpl) => workflowSystemTemplateKey(tpl) === key);
       if (exact) return exact;
       if (key !== "system_sales") return null;
@@ -5783,24 +5777,25 @@
     }
 
     function systemWorkflowTemplates() {
-      return SYSTEM_WORKFLOW_EMPLOYEES.map((item) => {
-        const nodes = item.preset === "sales"
-          ? buildSalesWorkflowPresetNodes()
-          : buildDepartmentWorkflowPresetNodes(item.departmentId, item.id.replace(/^system_/, ""));
-        return {
-          id: item.id,
-          owner_user_id: 0,
-          owner_name: "系统",
-          name: item.name,
-          nodes,
-          status: item.comingSoon ? "coming_soon" : "active",
-          source: "system",
-          system: true,
-          mark: item.mark,
-          comingSoon: !!item.comingSoon,
-          granted_user_ids: [],
-        };
-      });
+      const catalogRows = userWorkflowTemplateRows().filter((tpl) => (
+        tpl && tpl.source === "system" && workflowSystemTemplateKey(tpl)
+      ));
+      if (catalogRows.length) {
+        return catalogRows.map((tpl) => {
+          const key = workflowSystemTemplateKey(tpl);
+          return {
+            ...tpl,
+            id: key,
+            source: "system",
+            system: true,
+            system_catalog: true,
+            comingSoon: false,
+            status: "active",
+            mark: String(tpl.name || "员").slice(0, 1),
+          };
+        });
+      }
+      return [];
     }
 
     function closeWorkflowOverlays() {
@@ -6416,15 +6411,9 @@
     function workflowTemplateRows() {
       const systemRows = systemWorkflowTemplates();
       const userRows = userWorkflowTemplateRows();
-      const mirrors = new Map();
-      userRows.forEach((tpl) => {
-        const key = workflowSystemTemplateKey(tpl);
-        if (key && !mirrors.has(key)) mirrors.set(key, tpl);
-      });
-      const mergedSystemRows = systemRows.map((tpl) => mirrors.get(String(tpl.id || "")) || tpl);
-      const mergedIds = new Set(mergedSystemRows.map((tpl) => String(tpl && tpl.id || "")));
+      const mergedIds = new Set(systemRows.map((tpl) => String(tpl && tpl.id || "")));
       return [
-        ...mergedSystemRows,
+        ...systemRows,
         ...userRows.filter((tpl) => {
           const id = String(tpl && tpl.id || "");
           return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);
@@ -6771,8 +6760,10 @@
     function openWorkflowTemplateEditor(id) {
       const tpl = workflowTemplateById(id);
       if (!tpl) throw new Error("员工模板不存在");
-      if (tpl.source === "system" && String(tpl.id || "") === "system_sales") {
+      if (tpl.source === "system" && !tpl.system_catalog && String(tpl.id || "") === "system_sales") {
         prepareSalesWorkflowDraft();
+      } else if (tpl.source === "system") {
+        applyWorkflowTemplate(tpl);
       } else if (!workflowTemplateCanEdit(tpl)) {
         openCustomEmployeeDetail(id);
         return;
@@ -8612,19 +8603,32 @@
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
       const roles = [
-        { id: "sales", name: "销售", status: "待命", target: "salesWorkflow", systemTemplateId: "system_sales" },
-        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true, systemTemplateId: "system_customer_service" },
-        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true, systemTemplateId: "system_overseas" },
-        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true, systemTemplateId: "system_hr" },
+        { id: "sales", name: "销售全流程员工", status: "待命", target: "systemWorkflow:system_sales", systemTemplateId: "system_sales" },
+        { id: "short_video_wechat", name: "短视频+微信员工", status: "待命", target: "systemWorkflow:system_short_video_wechat", systemTemplateId: "system_short_video_wechat" },
+        { id: "douyin_leads", name: "抖音获客员工", status: "待命", target: "systemWorkflow:system_douyin_leads", systemTemplateId: "system_douyin_leads" },
       ].map((role) => {
         const active = !role.comingSoon && activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
         return active ? { ...role, status: "启用中", active } : role;
       });
+      const catalogRoles = systemWorkflowTemplates().map((template, index) => {
+        const key = workflowSystemTemplateKey(template) || String(template.id || "");
+        const active = activeWorkflowTemplateKey() === key;
+        return {
+          id: `system_${key}`,
+          name: template.name || "系统员工",
+          status: active ? "启用中" : "待命",
+          active,
+          systemTemplateId: key,
+          target: `systemWorkflow:${key}`,
+          catalogIndex: index,
+        };
+      });
+      const displayRoles = catalogRoles.length ? catalogRoles : (state.workflowTemplatesLoaded ? [] : roles);
       const customEmployees = customWorkflowTemplateRows();
       const sortedCustomEmployees = sortWorkflowTemplatesForDisplay(customEmployees);
       const activeCustomEmployees = sortedCustomEmployees.filter((tpl) => workflowTemplateIsActive(tpl));
       const inactiveCustomEmployees = sortedCustomEmployees.filter((tpl) => !workflowTemplateIsActive(tpl));
-      const totalEmployees = roles.length + customEmployees.length;
+      const totalEmployees = displayRoles.length + customEmployees.length;
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
       if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(totalEmployees);
@@ -8650,7 +8654,7 @@
         overseas: "/h5-static/designer-employee-overseas.jpg",
         hr: "/h5-static/designer-employee-hr.jpg",
       };
-      const roleHtml = roles.map((role, index) => {
+      const roleHtml = displayRoles.map((role, index) => {
         const img = designerRoleAssets[role.id] || employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const activeSystemTemplate = role.active && role.systemTemplateId ? workflowTemplateById(role.systemTemplateId) : null;
@@ -8669,7 +8673,7 @@
         </button>`;
       }).join("");
       const activeTemplateHtml = activeCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, index)).join("");
-      const templateHtml = inactiveCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, activeCustomEmployees.length + roles.length + index)).join("");
+      const templateHtml = inactiveCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, activeCustomEmployees.length + displayRoles.length + index)).join("");
       const employeeScrollLeft = floor.scrollLeft;
       floor.innerHTML = activeTemplateHtml + roleHtml + templateHtml;
       floor.scrollLeft = Math.min(employeeScrollLeft, Math.max(0, floor.scrollWidth - floor.clientWidth));
@@ -15071,6 +15075,13 @@
             openSalesWorkflow();
             toast(err.message || "模板加载失败，已打开系统销售模板");
           });
+        return;
+      }
+      if (key.indexOf("systemWorkflow:") === 0) {
+        const templateId = key.slice("systemWorkflow:".length).trim();
+        loadWorkflowTemplates(true)
+          .then(() => openWorkflowTemplateEditor(templateId))
+          .catch((err) => toast(err.message || "系统员工模板打开失败"));
         return;
       }
       if (key === "aiMarketingCreation") {

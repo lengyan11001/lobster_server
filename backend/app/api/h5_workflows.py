@@ -60,7 +60,13 @@ _WORKFLOW_CHILD_ACTION_TYPES = {
     "native_wechat_add_friend",
     "native_wechat_moments_engage",
 }
-_ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
+_SYSTEM_WORKFLOW_OWNER_ID = 0
+_SYSTEM_WORKFLOW_CATALOG_SOURCE = "system_catalog"
+_ENABLED_SYSTEM_WORKFLOW_KEYS = {
+    "system_sales",
+    "system_short_video_wechat",
+    "system_douyin_leads",
+}
 _SALES_DH_PROVIDER_V2 = "shanjian_v2"
 _SALES_DH_PROVIDER_LEGACY = "hifly_legacy"
 
@@ -2208,6 +2214,16 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
         if cached is not None:
             return cached
 
+        system_rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(
+                H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+                H5WorkflowTemplate.status == "active",
+            )
+            .order_by(H5WorkflowTemplate.id.asc())
+            .all()
+        )
+        system_rows = [row for row in system_rows if _is_system_catalog_template(row)]
         template_scope = (
             or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == installation_id)
             if installation_id
@@ -2261,6 +2277,7 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
             }
 
         payloads = [
+            *[_template_payload(row, source="system") for row in system_rows],
             *[_template_payload(row, source="own", grants=grant_map.get(row.id, [])) for row in own_rows],
             *[
                 _template_payload(row, owner=owners_by_id.get(row.owner_user_id), source="granted")
@@ -2333,10 +2350,22 @@ def _system_workflow_template(
     return None
 
 
+def _is_system_catalog_template(row: Optional[H5WorkflowTemplate]) -> bool:
+    if row is None or int(row.owner_user_id or -1) != _SYSTEM_WORKFLOW_OWNER_ID:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    return (
+        _clean_text(meta.get("source"), 64) == _SYSTEM_WORKFLOW_CATALOG_SOURCE
+        and _clean_text(meta.get("system_template_key"), 128) in _ENABLED_SYSTEM_WORKFLOW_KEYS
+    )
+
+
 def _accessible_template(db: Session, template_id: int, owner_user_id: int) -> H5WorkflowTemplate:
     row = db.query(H5WorkflowTemplate).filter(H5WorkflowTemplate.id == template_id, H5WorkflowTemplate.status == "active").first()
     if not row:
         raise HTTPException(status_code=404, detail="模板不存在")
+    if _is_system_catalog_template(row):
+        return row
     if row.owner_user_id == owner_user_id:
         return row
     grant = (
@@ -2856,12 +2885,17 @@ def activate_workflow_template(
     _assert_workflow_feature_permissions(db, owner.id, nodes)
     template_meta = template.meta if isinstance(template.meta, dict) else {}
     system_template_key = _clean_text(template_meta.get("system_template_key"), 128)
-    snapshot_extra = {"source": "granted"} if is_granted_template else None
+    is_system_catalog = _is_system_catalog_template(template)
+    snapshot_extra = (
+        {"source": "system"}
+        if is_system_catalog
+        else ({"source": "granted"} if is_granted_template else None)
+    )
     if system_template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
         snapshot_extra = {
             **(snapshot_extra or {}),
             "template_key": system_template_key,
-            "source": "granted" if is_granted_template else "own",
+            "source": "system" if is_system_catalog else ("granted" if is_granted_template else "own"),
         }
     if body.plan_day is not None:
         snapshot_extra = {**(snapshot_extra or {"source": "own"}), "plan_day": body.plan_day}
