@@ -1,14 +1,17 @@
 """鉴权后统一使用服务器赞助/管理端速推 Token 池，转发 OpenAI 兼容 chat/completions 至 api.xskill.ai。"""
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import mimetypes
 import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -278,6 +281,27 @@ _SLIM_PROP_DESC_MAX = 40          # max chars for property-level description; 0 
 _BASE64_RE = __import__("re").compile(r"data:[^;]{0,60};base64,[A-Za-z0-9+/=]{200,}")
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+_CHAT_IMAGE_MAX_BYTES = _positive_int_env("SUTUI_CHAT_IMAGE_MAX_BYTES", 10 * 1024 * 1024)
+_CHAT_IMAGE_MAX_TOTAL_BYTES = _positive_int_env("SUTUI_CHAT_IMAGE_MAX_TOTAL_BYTES", 32 * 1024 * 1024)
+_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS = _positive_float_env("SUTUI_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS", 45.0)
+
+
 _TOOLS_BLACKLIST = frozenset({
     "browser", "canvas", "exec", "process",
 })
@@ -443,6 +467,166 @@ def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS) -> dict:
         if new_parts != c:
             return {**m, "content": new_parts}
     return m
+
+
+class _ChatImagePreparationError(ValueError):
+    """A user-supplied image could not be prepared for the vision provider."""
+
+    def __init__(self, message: str, *, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _image_mime_type(content_type: str, url: str, header: bytes) -> str:
+    """Resolve a safe image MIME type from the response, URL, or file signature."""
+    candidate = str(content_type or "").split(";", 1)[0].strip().lower()
+    if candidate.startswith("image/"):
+        return candidate
+
+    guessed, _ = mimetypes.guess_type(urlsplit(url).path)
+    if guessed and guessed.startswith("image/"):
+        return guessed
+
+    data = bytes(header or b"")
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+async def _download_chat_image_as_data_uri(
+    client: httpx.AsyncClient,
+    source_url: str,
+) -> Tuple[str, int, str]:
+    """Download one remote image and return a transient data URI."""
+    parsed = urlsplit(source_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise _ChatImagePreparationError("图片地址必须是 http/https URL", status_code=422)
+
+    try:
+        async with client.stream(
+            "GET",
+            source_url,
+            headers={"Accept": "image/*,application/octet-stream;q=0.8", "Accept-Encoding": "identity"},
+        ) as response:
+            if response.status_code >= 400:
+                raise _ChatImagePreparationError(
+                    f"图片下载失败（HTTP {response.status_code}）",
+                    status_code=502,
+                )
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > _CHAT_IMAGE_MAX_BYTES:
+                        raise _ChatImagePreparationError(
+                            f"图片超过 {_CHAT_IMAGE_MAX_BYTES // (1024 * 1024)} MB 限制",
+                            status_code=413,
+                        )
+                except ValueError:
+                    pass
+
+            chunks: List[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _CHAT_IMAGE_MAX_BYTES:
+                    raise _ChatImagePreparationError(
+                        f"图片超过 {_CHAT_IMAGE_MAX_BYTES // (1024 * 1024)} MB 限制",
+                        status_code=413,
+                    )
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+            mime = _image_mime_type(
+                response.headers.get("content-type", ""),
+                str(response.url) or source_url,
+                raw[:64],
+            )
+    except _ChatImagePreparationError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise _ChatImagePreparationError("图片下载超时，请稍后重试", status_code=504) from exc
+    except httpx.HTTPError as exc:
+        raise _ChatImagePreparationError(f"图片下载失败：{str(exc)[:240]}", status_code=502) from exc
+
+    if not raw:
+        raise _ChatImagePreparationError("图片下载结果为空", status_code=502)
+    if not mime:
+        raise _ChatImagePreparationError("下载内容不是可识别的图片", status_code=422)
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}", len(raw), mime
+
+
+async def _prepare_multimodal_images(body: Dict[str, Any], trace_id: str = "") -> Dict[str, int]:
+    """Replace remote image URLs in OpenAI messages with transient base64 data URIs."""
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return {"images": 0, "bytes": 0}
+
+    targets: List[Tuple[Dict[str, Any], Dict[str, Any], str]] = []
+    for message in messages:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            continue
+        for part in message["content"]:
+            if not isinstance(part, dict) or part.get("type") not in {"image_url", "image"}:
+                continue
+            ref = part.get("image_url") if part.get("type") == "image_url" else part.get("image")
+            if isinstance(ref, dict):
+                source_url = str(ref.get("url") or "").strip()
+            else:
+                source_url = str(ref or "").strip()
+            if source_url.startswith("data:image/"):
+                continue
+            if source_url:
+                targets.append((part, ref if isinstance(ref, dict) else {}, source_url))
+
+    if not targets:
+        return {"images": 0, "bytes": 0}
+
+    total_bytes = 0
+    prepared = 0
+    timeout = httpx.Timeout(
+        connect=min(10.0, _CHAT_IMAGE_FETCH_TIMEOUT_SECONDS),
+        read=_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS,
+        write=10.0,
+        pool=10.0,
+    )
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=True,
+        trust_env=False,
+        limits=httpx.Limits(max_connections=8, max_keepalive_connections=4, keepalive_expiry=30),
+    ) as client:
+        for part, ref, source_url in targets:
+            data_uri, size, _mime = await _download_chat_image_as_data_uri(client, source_url)
+            total_bytes += size
+            if total_bytes > _CHAT_IMAGE_MAX_TOTAL_BYTES:
+                raise _ChatImagePreparationError(
+                    f"本轮图片总大小超过 {_CHAT_IMAGE_MAX_TOTAL_BYTES // (1024 * 1024)} MB 限制",
+                    status_code=413,
+                )
+            if part.get("type") == "image_url":
+                replacement = dict(ref)
+                replacement["url"] = data_uri
+                part["image_url"] = replacement
+            else:
+                part["image"] = data_uri
+            prepared += 1
+
+    logger.info(
+        "[chat-image] trace_id=%s prepared_images=%s downloaded_bytes=%s max_image_bytes=%s",
+        trace_id or "-",
+        prepared,
+        total_bytes,
+        _CHAT_IMAGE_MAX_BYTES,
+    )
+    return {"images": prepared, "bytes": total_bytes}
 
 
 _LOBSTER_SYSTEM_HINT_BASE = (
@@ -1759,7 +1943,16 @@ async def sutui_chat_completions(
 
     openclaw_skill_request = _is_openclaw_skill_model_alias((body.get("model") or "").strip())
     _remap_sutui_chat_model(body)
-    llm_model_override = _user_llm_model_override(current_user)
+    image_understand_internal = (
+        request.headers.get("X-Lobster-Image-Understand")
+        or request.headers.get("x-lobster-image-understand")
+        or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    # Image understanding has an explicit provider-owned route.  Do not let a
+    # per-user chat preference silently replace YYAPI gpt-5.6-sol here.
+    if image_understand_internal:
+        body["model"] = "gpt-5.6-sol"
+    llm_model_override = "" if image_understand_internal else _user_llm_model_override(current_user)
     if llm_model_override:
         original_model = (body.get("model") or "").strip()
         body["model"] = llm_model_override
@@ -1771,6 +1964,20 @@ async def sutui_chat_completions(
             True,
         )
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
+    # Keep the audit request URL-only, then prepare remote images for the
+    # provider.  This prevents large base64 payloads from entering logs while
+    # ensuring every provider receives the same self-contained image input.
+    out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
+    try:
+        await _prepare_multimodal_images(body, trace_id=trace_id)
+    except _ChatImagePreparationError as exc:
+        logger.warning(
+            "[chat-image] trace_id=%s preparation_failed status=%s error=%s",
+            trace_id,
+            exc.status_code,
+            str(exc),
+        )
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     _enforce_single_search_models_tool_call(body, trace_id)
     _enforce_max_tool_call_rounds(body, trace_id)
 
@@ -1838,8 +2045,6 @@ async def sutui_chat_completions(
     if _should_deduct_credits():
         db.refresh(current_user)
         user_bal_str = str(user_balance_decimal(current_user))
-    out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
-
     # Default: direct -> xskill-v3 -> xskill-v1. Override: one exact xskill route, no fallback.
     attempts = _sutui_chat_attempts_for_models(
         model_candidates,

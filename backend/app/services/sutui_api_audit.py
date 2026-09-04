@@ -90,6 +90,16 @@ def clip_openai_chat_completions_json_for_audit(body: Dict[str, Any]) -> str:
                                 ),
                             }
                         )
+                    elif isinstance(part, dict) and part.get("type") == "image_url":
+                        image_ref = part.get("image_url")
+                        if isinstance(image_ref, dict):
+                            safe_ref = dict(image_ref)
+                            image_url = safe_ref.get("url")
+                            if isinstance(image_url, str) and image_url.startswith("data:"):
+                                safe_ref["url"] = f"[image data omitted len={len(image_url)}]"
+                            parts.append({**part, "image_url": safe_ref})
+                        else:
+                            parts.append(part)
                     else:
                         parts.append(part)
                 entry["content"] = parts

@@ -1019,6 +1019,23 @@ const orchestrator = new Agent({
   memory,
 })
 
+// YYAPI accepts image understanding reliably when the request contains only
+// the multimodal user message. Keep vision separate from the tool-enabled
+// orchestrator so the upstream never has to process image + tools in one call.
+const imageUnderstandingAgent = new Agent({
+  id: 'lobster-image-understanding',
+  name: 'Image understanding',
+  instructions: `
+Analyze the attached image(s) and return a concise, factual description for
+another agent to use. Extract visible text, people/objects, layout, numbers,
+and any actionable details. Do not call tools, invent missing information, or
+answer the user as a final assistant. If the image is unclear, say exactly
+what cannot be read.
+  `.trim(),
+  model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
+  inputProcessors: [new TokenLimiterProcessor({ limit: 16000, strategy: 'truncate', trimMode: 'contiguous' })],
+})
+
 const summarizer = new Agent({
   id: 'lobster-conversation-summarizer',
   name: '会话压缩器',
@@ -1220,8 +1237,13 @@ function attachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
   return attachments
 }
 
-function chatInputFor(body: Record<string, unknown>, message: string) {
+function chatInputFor(
+  body: Record<string, unknown>,
+  message: string,
+  options: { includeImages?: boolean } = {},
+) {
   const attachments = attachmentsFor(body)
+  const includeImages = options.includeImages !== false
   const approvedContinuation = Boolean(body.approval_granted)
     ? '【授权状态】用户已经在弹窗中确认本轮执行。现在直接完成原请求，不得再次征询授权或要求用户发送确认文字。\n\n'
     : ''
@@ -1232,12 +1254,14 @@ function chatInputFor(body: Record<string, unknown>, message: string) {
   )).join('\n')
   const text = `${approvedContinuation}【本轮用户请求】\n${message || '请分析并使用我提供的素材。'}\n\n本轮附加素材：\n${manifest}\n\n` +
     '请把这些素材视为用户本轮的真实输入。图片可直接理解；视频、音频或文档需要处理时，请调用已有能力，不要忽略素材，也不要编造素材内容。'
+  if (!includeImages) return text
   const content: Array<
     { type: 'text'; text: string } |
     { type: 'image'; image: URL; mimeType?: string }
   > = [{ type: 'text', text }]
   for (const item of attachments) {
-    if (item.media_type !== 'image') continue
+    const isImage = item.media_type === 'image' || String(item.content_type || '').toLowerCase().startsWith('image/')
+    if (!includeImages || !isImage) continue
     content.push({
       type: 'image',
       image: new URL(item.url),
@@ -1245,6 +1269,44 @@ function chatInputFor(body: Record<string, unknown>, message: string) {
     })
   }
   return [{ role: 'user' as const, content }]
+}
+
+function imageAttachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
+  return attachmentsFor(body).filter(item =>
+    item.media_type === 'image' || String(item.content_type || '').toLowerCase().startsWith('image/'),
+  )
+}
+
+type PreparedChatInput = {
+  input: ReturnType<typeof chatInputFor>
+  imageSummary: string
+}
+
+async function prepareChatInput(
+  body: Record<string, unknown>,
+  message: string,
+  requestContext: RequestContext<LobsterContext>,
+): Promise<PreparedChatInput> {
+  const images = imageAttachmentsFor(body)
+  if (!images.length) {
+    return { input: chatInputFor(body, message), imageSummary: '' }
+  }
+
+  const imageInput = chatInputFor(body, message)
+  const result = await imageUnderstandingAgent.generate(imageInput, {
+    requestContext,
+    maxSteps: 1,
+    modelSettings: { maxOutputTokens: 2048, temperature: 0.1 },
+  })
+  const summary = String(result.text || '').trim()
+  if (!summary) throw new Error('图片理解未返回有效结果')
+
+  // The main agent receives text only. This keeps its tool-call request
+  // compatible with YYAPI while retaining the original attachment manifest.
+  const textInput = chatInputFor(body, message, { includeImages: false })
+  const distilled = `${typeof textInput === 'string' ? textInput : JSON.stringify(textInput)}\n\n` +
+    '[图片理解结果]\n' + summary + '\n[图片理解结果结束]'
+  return { input: distilled, imageSummary: summary }
 }
 
 function validateChatBody(body: Record<string, unknown> | null) {
@@ -1347,7 +1409,8 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
           saved_assets: mediaExecution.savedAssets(),
         })
       }
-      const result = await orchestrator.generate(chatInputFor(body || {}, message), {
+      const preparedInput = await prepareChatInput(body || {}, message, requestContext)
+      const result = await orchestrator.generate(preparedInput.input, {
         memory: { thread: threadId, resource: resourceId, options: { lastMessages: false } },
         requestContext,
         context,
@@ -1444,7 +1507,11 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
             })
             return
           }
-          const output = await orchestrator.stream(chatInputFor(body, validated.message), {
+          if (imageAttachmentsFor(body).length) {
+            write({ type: 'thinking', text: '正在先理解图片，再进入任务调度...' })
+          }
+          const preparedInput = await prepareChatInput(body, validated.message, requestContext)
+          const output = await orchestrator.stream(preparedInput.input, {
             memory: {
               thread: validated.threadId,
               resource: validated.resourceId,

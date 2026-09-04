@@ -67,7 +67,7 @@ _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
 _GPT_IMAGE_2_MODEL_ID = "openai/gpt-image-2"
 _APIZ_VISION_READ_TIMEOUT_SECONDS = 6 * 60.0
 _APIZ_VISION_MAX_ATTEMPTS = 2
-_DEFAULT_IMAGE_UNDERSTAND_MODEL = "openai/gpt-5.6-sol"
+_DEFAULT_IMAGE_UNDERSTAND_MODEL = "gpt-5.6-sol"
 _GPT_IMAGE_2_MODEL_IDS = frozenset(
     {
         _GPT_IMAGE_2_MODEL_ID,
@@ -1696,6 +1696,129 @@ def _collect_chat_vision_urls(params: Dict[str, Any]) -> List[str]:
     return out
 
 
+async def _call_backend_image_understand(
+    params: Dict[str, Any],
+    user_token: str,
+    request: Request,
+    lobster_capability_id: str = "image.understand",
+) -> Dict[str, Any]:
+    """Run image understanding through the authenticated backend chat proxy.
+
+    The backend owns provider selection and billing.  This MCP layer only
+    adapts the capability payload to OpenAI multimodal chat format; the
+    backend downloads remote images and converts them to base64 before the
+    YYAPI route is attempted.
+    """
+    prompt = str(params.get("prompt") or "").strip()
+    image_urls = _collect_chat_vision_urls(params)
+    if not prompt:
+        return {"error": {"message": "image.understand 缺少 prompt"}}
+    if not image_urls:
+        return {"error": {"message": "image.understand 缺少 image_urls"}}
+
+    user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+    user_content.extend(
+        {"type": "image_url", "image_url": {"url": url}}
+        for url in image_urls
+    )
+    messages: List[Dict[str, Any]] = []
+    system_prompt = str(params.get("system_prompt") or "").strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_content})
+
+    body: Dict[str, Any] = {
+        "model": "gpt-5.6-sol",
+        "messages": messages,
+        "stream": False,
+    }
+    if "temperature" in params:
+        try:
+            body["temperature"] = float(params.get("temperature"))
+        except (TypeError, ValueError):
+            pass
+    else:
+        body["temperature"] = 0
+    if "max_tokens" in params:
+        try:
+            body["max_tokens"] = int(params.get("max_tokens"))
+        except (TypeError, ValueError):
+            pass
+    else:
+        body["max_tokens"] = 4096
+
+    trace_id = uuid.uuid4().hex
+    headers = _backend_headers(user_token, request)
+    headers["X-Lobster-Image-Understand"] = "1"
+    headers["X-Lobster-LLM-Billing-Mode"] = "openclaw_internal"
+    headers["X-Lobster-OpenClaw-Internal"] = "1"
+    headers["X-Lobster-Chat-Trace-Id"] = trace_id
+    url = f"{BASE_URL}/api/sutui-chat/completions"
+    timeout = httpx.Timeout(connect=15.0, read=240.0, write=30.0, pool=30.0)
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.post(url, json=body, headers=headers)
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "[image-understand] backend timeout capability=%s trace_id=%s err=%s",
+            lobster_capability_id,
+            trace_id,
+            str(exc)[:300],
+        )
+        return {"error": {"message": "图片理解请求超时，请稍后重试"}}
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "[image-understand] backend network error capability=%s trace_id=%s err=%s",
+            lobster_capability_id,
+            trace_id,
+            str(exc)[:300],
+        )
+        return {"error": {"message": f"图片理解服务连接失败：{str(exc)[:240]}"}}
+
+    try:
+        raw = response.json() if response.content else {}
+    except Exception:
+        raw = None
+    if response.status_code >= 400:
+        if isinstance(raw, dict):
+            detail = raw.get("detail") or raw.get("error") or raw.get("message")
+        else:
+            detail = response.text[:800]
+        logger.warning(
+            "[image-understand] backend HTTP error capability=%s trace_id=%s status=%s detail=%s",
+            lobster_capability_id,
+            trace_id,
+            response.status_code,
+            str(detail)[:500],
+        )
+        return {"error": {"message": f"图片理解服务 HTTP {response.status_code}: {str(detail)[:600]}"}}
+    if not isinstance(raw, dict):
+        return {"error": {"message": "图片理解服务返回格式异常"}}
+
+    content = _extract_chat_completion_content(raw)
+    if not content:
+        return {"error": {"message": "图片理解服务未返回有效内容"}}
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "[image-understand] backend success capability=%s trace_id=%s images=%s elapsed_ms=%s model=%s",
+        lobster_capability_id,
+        trace_id,
+        len(image_urls),
+        elapsed_ms,
+        raw.get("model") or "gpt-5.6-sol",
+    )
+    return {
+        "status": "completed",
+        "model": raw.get("model") or "gpt-5.6-sol",
+        "provider": "yyapi.sutui-chat",
+        "output": content,
+        "result": {"content": content},
+        "usage": raw.get("usage") if isinstance(raw.get("usage"), dict) else {},
+        "id": raw.get("id"),
+    }
+
+
 def _extract_chat_completion_content(data: Dict[str, Any]) -> str:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -2013,20 +2136,10 @@ async def _call_upstream_sutui_tasks_rest(
         if model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
             params["model"] = str(understand_model).strip()
         if lobster_capability_id == "image.understand":
-            if model.startswith("openrouter/router/"):
-                model = str(params.get("model") or _DEFAULT_IMAGE_UNDERSTAND_MODEL).strip() or _DEFAULT_IMAGE_UNDERSTAND_MODEL
-            params["model"] = model
-            logger.info(
-                "[apiz-chat] image.understand direct chat/completions model=%s params_keys=%s",
-                model,
-                sorted(params.keys()),
-            )
-            return await _call_apiz_chat_completions_vision(
-                api_base,
-                token,
-                params,
-                lobster_capability_id=lobster_capability_id,
-            )
+            # This path is retained only for legacy callers.  The capability
+            # dispatcher now routes image understanding through the backend
+            # chat proxy, so never fall back to APIZ /v3 here.
+            return {"error": {"message": "image.understand 必须通过后端 sutui-chat 路由"}}
         logger.info(
             "[apiz-sdk] tasks.create capability=%s model=%s params_keys=%s",
             lobster_capability_id or "(无)", model, sorted(params.keys()),
@@ -4350,7 +4463,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             sutui_token: Optional[str] = None
             sutui_pool_for_billing = ""
             sutui_token_ref_for_billing = ""
-            if upstream_name == "sutui":
+            if upstream_name == "sutui" and capability_id != "image.understand":
                 sutui_token, sutui_pool_for_billing = await next_sutui_server_token_with_pool(
                     brand_mark=user_brand_mark
                 )
@@ -4438,6 +4551,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         _early_use_comfly = True
                 elif _payload_prefer_comfly and _early_cf_ok() and capability_id in ("image.generate", "video.generate"):
                     _early_use_comfly = True
+                elif capability_id == "image.understand":
+                    # Image understanding is always owned by the backend
+                    # YYAPI chat route, never Comfly or the APIZ task API.
+                    _early_use_comfly = False
                 else:
                     _early_use_comfly = _early_should_cf(capability_id, _comfly_model_id)
                 logger.info(
@@ -4580,7 +4697,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     }
                 ], True
 
-            if not upstream_url:
+            if not upstream_url and not (capability_id == "image.understand" and upstream_name == "sutui"):
                 return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
 
             # 检测并转存内部图片 URL 到公开 CDN（图生视频/图生图需要）
@@ -4939,7 +5056,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             else:
                 logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
                 try:
-                    if capability_id == "video.generate" and upstream_name == "sutui":
+                    if capability_id == "image.understand" and upstream_name == "sutui":
+                        upstream_resp = await _call_backend_image_understand(
+                            payload,
+                            token,
+                            request,
+                            lobster_capability_id=capability_id,
+                        )
+                    elif capability_id == "video.generate" and upstream_name == "sutui":
                         payload = await _prepare_bihuo_25_video_input(
                             payload,
                             upstream_url=upstream_url,
