@@ -1,5 +1,7 @@
 from datetime import datetime
+from types import SimpleNamespace
 
+from backend.app.api import h5_workflows, scheduled_tasks
 from backend.app.api.h5_workflows import (
     _apply_sales_digital_human_defaults,
     _apply_workflow_runtime_options,
@@ -148,6 +150,16 @@ def test_sales_digital_human_template_comes_from_current_ip_template():
     assert _sales_digital_human_template_id(personal, current) == "style-current"
 
 
+def test_sales_digital_human_template_accepts_template_id_alias():
+    current = IPContentScheduleTemplate(
+        user_id=1,
+        name="current-ip-template",
+        meta={"digital_human_template": {"templateId": "template-current"}},
+    )
+
+    assert _sales_digital_human_template_id(None, current) == "template-current"
+
+
 def test_current_ip_template_can_explicitly_report_missing_sales_template():
     personal = IPContentScheduleTemplate(
         user_id=1,
@@ -161,6 +173,129 @@ def test_current_ip_template_can_explicitly_report_missing_sales_template():
     )
 
     assert _sales_digital_human_template_id(personal, current) == ""
+
+
+def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_session, test_user):
+    personal = SimpleNamespace(user_id=test_user.id, meta={})
+    current = SimpleNamespace(user_id=test_user.id, meta={})
+    monkeypatch.setattr(h5_workflows, "_personal_default_template", lambda db, user_id: personal)
+    monkeypatch.setattr(h5_workflows, "_current_personal_schedule_template", lambda db, user_id, row: current)
+    monkeypatch.setattr(h5_workflows, "_sales_digital_human_provider", lambda extra, template: "shanjian_v2")
+    monkeypatch.setattr(h5_workflows, "_sales_digital_human_template_id", lambda personal, current: "style-current")
+    monkeypatch.setattr(
+        h5_workflows,
+        "_h5_dh_context_params",
+        lambda db, user_id: {
+            "requirements": {"industry": "new"},
+            "keyword_ids": [11],
+            "keyword_texts": ["new keyword"],
+            "competitors": ["new competitor"],
+            "memory_doc_ids": ["31"],
+            "memory_docs": [{"id": 31, "title": "new memory"}],
+            "language": "en-US",
+            "digital_human_resources": {
+                "avatars": [{"provider": "shanjian_v2", "virtualman_id": "new-avatar"}],
+                "voices": [{"voice": "new-voice"}],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        h5_workflows,
+        "_personal_default_resource_overrides",
+        lambda personal, current: {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": False},
+    )
+    monkeypatch.setattr(h5_workflows, "_active_keywords_for_ids", lambda db, user_id, ids: [SimpleNamespace()])
+    monkeypatch.setattr(h5_workflows, "_active_competitors_for_ids", lambda db, user_id, ids: [SimpleNamespace(last_fetch_at=datetime.utcnow())])
+    monkeypatch.setattr(h5_workflows, "_missing_sales_persona_fields", lambda requirements: [])
+    monkeypatch.setattr(h5_workflows, "_device_is_online", lambda db, user_id, installation_id: True)
+
+    nodes = [
+        {
+            "id": "sales-digital",
+            "department_id": "sales",
+            "plan": {
+                "task_kind": "client_workflow",
+                "payload": {
+                    "action": "shanjian_digital_human_video",
+                    "params": {
+                        "requirements": {"industry": "old"},
+                        "virtualman_id": "old-avatar",
+                        "virtualman_candidates": [{"virtualman_id": "old-avatar"}],
+                        "voice": "old-voice",
+                        "voice_candidates": [{"voice": "old-voice"}],
+                    },
+                },
+            },
+        }
+    ]
+
+    prepared = h5_workflows._prepare_sales_workflow_nodes(
+        db=db_session,
+        owner=test_user,
+        installation_id="online-1",
+        template_name="销售员工",
+        nodes=nodes,
+        snapshot_extra=None,
+    )
+
+    params = prepared[0]["plan"]["payload"]["params"]
+    assert params["requirements"] == {"industry": "new"}
+    assert params["virtualman_id"] == "new-avatar"
+    assert params["voice"] == "new-voice"
+    assert params["keyword_ids"] == [11]
+    assert params["language"] == "en-US"
+
+
+def test_live_template_clear_removes_old_digital_human_resources(db_session, test_user):
+    personal = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
+        requirements={"industry": "old"},
+        meta={"current_template_id": 0},
+    )
+    db_session.add(personal)
+    db_session.flush()
+    current = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="current-ip-template",
+        requirements={"industry": "new"},
+        meta={
+            "digital_human_template": None,
+            "digital_human_template_configured": True,
+            "digital_human_resources": {"avatars": [], "voices": []},
+            "digital_human_resources_configured": True,
+        },
+    )
+    db_session.add(current)
+    db_session.flush()
+    personal.meta = {"current_template_id": current.id}
+    db_session.commit()
+
+    result = scheduled_tasks._refresh_live_personal_template_payload(
+        db_session,
+        task_kind="client_workflow",
+        target_user_id=test_user.id,
+        payload={
+            "action": "shanjian_digital_human_video",
+            "params": {
+                "requirements": {"industry": "old"},
+                "virtualman_id": "old-avatar",
+                "virtualman_candidates": [{"virtualman_id": "old-avatar"}],
+                "voice": "old-voice",
+                "speaker_id": "old-voice",
+                "voice_candidates": [{"voice": "old-voice"}],
+            },
+            "h5_context": {"workflow_template_id": "workflow-1", "workflow_node_id": "node-1"},
+        },
+    )
+
+    params = result["params"]
+    assert params["requirements"] == {"industry": "new"}
+    assert params["virtualman_candidates"] == []
+    assert params["voice_candidates"] == []
+    assert "virtualman_id" not in params
+    assert "voice" not in params
+    assert "speaker_id" not in params
 
 
 def test_publish_default_uses_payload_installation_id_when_column_is_empty(db_session, test_user):

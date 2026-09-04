@@ -157,6 +157,16 @@ def test_stored_template_rules_are_normalized_without_trusting_bad_duration():
     assert template_meta["watermark_show"] is True
 
 
+def test_stored_template_accepts_template_id_alias():
+    configured, template_meta = _stored_digital_human_template(
+        {"digital_human_template": {"templateId": "template-1"}}
+    )
+
+    assert configured is True
+    assert template_meta is not None
+    assert template_meta["style_id"] == "template-1"
+
+
 def test_editing_template_duration_is_not_a_hard_output_limit():
     assert _requested_video_duration_limit(
         {"template": {"style_id": "style-1", "video_duration": 30}}

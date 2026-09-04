@@ -917,6 +917,42 @@ _XSKILL_V3_MODEL_MAP: Dict[str, str] = {
 }
 _XSKILL_V3_CREDITS_PER_USD = 400
 
+# Server-owned second route for both text and image requests.  The APIZ
+# catalog advertises this model as text+image -> text; unlike DeepSeek Chat it
+# can safely receive the base64 image parts prepared above.
+_MULTIMODAL_FALLBACK_MODEL = "apiz/seed-2.0-mini"
+_TEXT_FALLBACK_MODEL = "deepseek-chat"
+
+
+def _request_has_multimodal_images(body: Any) -> bool:
+    """Return whether an OpenAI chat body contains an image content part."""
+    if not isinstance(body, dict):
+        return False
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in {"image_url", "image"}:
+                return True
+    return False
+
+
+def _is_text_only_deepseek_model(model: str) -> bool:
+    """Identify the built-in DeepSeek text routes that cannot accept images."""
+    mid = (model or "").strip().lower()
+    return mid in {
+        "deepseek-chat",
+        "deepseek-reasoner",
+        "deepseek/deepseek-chat",
+        "deepseek/deepseek-reasoner",
+    } or mid.startswith("deepseek/deepseek-v3")
+
 
 def _get_v3_route(model: str, token: str) -> Optional[Dict[str, Any]]:
     """Return v3 attempt dict if model has a v3 mapping, else None."""
@@ -972,9 +1008,9 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 
 
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
-    """主→备模型顺序：默认主模型 → openai/gpt-5.6-sol → deepseek-chat。"""
+    """Parse optional extra fallbacks after the server-owned model order."""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["openai/gpt-5.6-terra", "deepseek-chat"]
+    default = [_MULTIMODAL_FALLBACK_MODEL, _TEXT_FALLBACK_MODEL]
     if not raw:
         return default
     try:
@@ -1020,6 +1056,7 @@ def _sutui_chat_model_candidates(
     initial_model: str,
     *,
     has_tools: bool = False,
+    has_images: bool = False,
     required_fallbacks: Optional[List[str]] = None,
     fallback_chain: Optional[List[str]] = None,
 ) -> List[str]:
@@ -1043,10 +1080,14 @@ def _sutui_chat_model_candidates(
 
     if yyapi_model:
         add(yyapi_model)
-    # DeepSeek is always the next provider-owned candidate.  When its direct
-    # key is absent it may still resolve through the documented xskill route.
-    add("deepseek-chat")
-    if init:
+    # Keep the multimodal-capable APIZ route ahead of DeepSeek.  DeepSeek Chat
+    # is text-only, so it must never be selected for a request containing an
+    # image part.  For text-only requests it remains the final provider-owned
+    # fallback, as requested by the server routing policy.
+    add(_MULTIMODAL_FALLBACK_MODEL)
+    if not has_images:
+        add(_TEXT_FALLBACK_MODEL)
+    if init and not (has_images and _is_text_only_deepseek_model(init)):
         add(init)
     configured_chain = (
         list(fallback_chain)
@@ -1055,7 +1096,10 @@ def _sutui_chat_model_candidates(
     )
     configured_chain.extend(required_fallbacks or [])
     for fb in configured_chain:
-        add(_remap_model_id_for_sutui(fb))
+        mapped = _remap_model_id_for_sutui(fb)
+        if has_images and _is_text_only_deepseek_model(mapped):
+            continue
+        add(mapped)
     if not out:
         return [init] if init else []
     disabled = _disabled_sutui_chat_models()
@@ -1072,7 +1116,7 @@ def _sutui_chat_model_candidates(
         if out:
             logger.info("[circuit-breaker] all candidates tripped, using first: %s", out[0])
             return [out[0]]
-        fallback = "deepseek-chat"
+        fallback = _MULTIMODAL_FALLBACK_MODEL if has_images else _TEXT_FALLBACK_MODEL
         logger.warning("[sutui-chat] all candidates disabled, using emergency fallback: %s", fallback)
         return [fallback]
     if len(filtered) < len(out):
@@ -1986,6 +2030,7 @@ async def sutui_chat_completions(
     model_id = (body.get("model") or "").strip()
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
+    _req_has_images = _request_has_multimodal_images(body)
     force_exact_model = False
     preferred_model_fallback_chain = (
         ["openai/gpt-5.6-terra", "deepseek-chat"]
@@ -1995,6 +2040,7 @@ async def sutui_chat_completions(
     model_candidates = [model_id] if force_exact_model else _sutui_chat_model_candidates(
         model_id,
         has_tools=_req_has_tools,
+        has_images=_req_has_images,
         required_fallbacks=["deepseek-chat"] if mastra_chat_profile else None,
         fallback_chain=preferred_model_fallback_chain,
     )
@@ -2024,12 +2070,13 @@ async def sutui_chat_completions(
         force_exact_model,
     )
     logger.info(
-        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s forced_override=%s",
+        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s has_images=%s forced_override=%s",
         trace_id,
         bm,
         model_id or "-",
         sutui_pool or "-",
         model_candidates,
+        _req_has_images,
         force_exact_model,
     )
 

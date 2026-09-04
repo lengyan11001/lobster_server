@@ -1230,7 +1230,8 @@ async def _chat_openai(
     """OpenAI-compatible chat loop (DeepSeek, OpenAI, Google Gemini)."""
     base = (cfg.get("base_url") or "").rstrip("/")
     # Server-side sutui-chat proxy: OpenAI-compatible body, but endpoint is /api/sutui-chat/completions
-    # (not /v1/chat/completions). This proxy implements "direct deepseek first, then xskill fallback".
+    # (not /v1/chat/completions). The proxy owns the provider order: YYAPI,
+    # APIZ Seed 2.0 Mini, then text-only DeepSeek for text requests.
     if base.endswith("/api/sutui-chat"):
         url = f"{base}/completions"
     elif "googleapis.com" in base or base.endswith("/v1"):

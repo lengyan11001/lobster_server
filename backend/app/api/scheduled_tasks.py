@@ -440,7 +440,10 @@ def _h5_dh_selected_meta_value(
     if value is None or meta.get(configured_key) is True:
         return value, True
     if isinstance(value, dict):
-        if any(value.get(name) for name in ("avatars", "voices", "style_id", "styleId", "id")):
+        if any(
+            value.get(name)
+            for name in ("avatars", "voices", "style_id", "styleId", "template_id", "templateId", "id")
+        ):
             return value, True
         return value, False
     return value, bool(value)
@@ -1069,6 +1072,125 @@ def _workflow_uses_live_personal_template(task_kind: str, payload: Dict[str, Any
     )
 
 
+def _live_personal_template_validation(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Return the server's current-template decision for a live workflow.
+
+    The client receives the effective resources and this decision together at
+    claim time. It must not infer template completeness from an old task
+    snapshot or from its local asset database.
+    """
+    source = payload if isinstance(payload, dict) else {}
+    if not _workflow_uses_live_personal_template(task_kind, source):
+        return None
+
+    action = _clean_profile_text(source.get("action"), 80).lower()
+    capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
+    context = _h5_dh_context_params(db, int(target_user_id))
+    missing: List[str] = []
+
+    if action in _LOCAL_BESTSELLER_ACTIONS:
+        params = source.get("params") if isinstance(source.get("params"), dict) else {}
+        profile_source = _clean_profile_text(params.get("profile_source"), 32).lower()
+        if params.get("profile_override") or profile_source == "custom":
+            # A one-off custom profile is not owned by the personal template.
+            return {"checked": True, "ok": True, "missing": [], "message": ""}
+        requirements = context.get("requirements") if isinstance(context.get("requirements"), dict) else {}
+        profile = _local_bestseller_profile_from_persona(requirements)
+        missing.extend(_missing_local_bestseller_profile_fields(profile))
+        if missing:
+            message = "Current personal template is incomplete: " + ", ".join(dict.fromkeys(missing))
+        else:
+            message = ""
+        return {
+            "checked": True,
+            "ok": not missing,
+            "missing": list(dict.fromkeys(missing)),
+            "message": message,
+        }
+
+    if action == _SHANJIAN_DIGITAL_HUMAN_ACTION or capability_id == _HIFLY_TTS_CAPABILITY_ID:
+        resources = context.get("digital_human_resources")
+        resources = resources if isinstance(resources, dict) else {}
+        avatars = resources.get("avatars") if isinstance(resources.get("avatars"), list) else []
+        voices = resources.get("voices") if isinstance(resources.get("voices"), list) else []
+        template = context.get("digital_human_template")
+        template_id = ""
+        if isinstance(template, dict):
+            template_id = _h5_dh_clean_text(
+                template.get("style_id")
+                or template.get("styleId")
+                or template.get("template_id")
+                or template.get("templateId")
+                or template.get("id"),
+                128,
+            )
+        if not template_id:
+            missing.append("digital human editing template")
+        if not any(
+            _h5_dh_clean_text(item.get("virtualman_id") or item.get("avatar"), 128)
+            for item in avatars
+            if isinstance(item, dict)
+        ):
+            missing.append("digital human avatar")
+        # Capability tasks keep the provider request under ``payload``;
+        # converted client-workflow tasks use ``params``. Inspect the shape
+        # that will actually be sent so audio-driven requests do not require
+        # an unrelated voice asset.
+        source_params = (
+            source.get("payload")
+            if capability_id == _HIFLY_TTS_CAPABILITY_ID and isinstance(source.get("payload"), dict)
+            else source.get("params")
+            if isinstance(source.get("params"), dict)
+            else {}
+        )
+        audio_mode = (
+            _h5_dh_clean_text(source_params.get("drive_mode"), 32).lower() == "audio"
+            or bool(source_params.get("audio_url") or source_params.get("audio_asset_id"))
+        )
+        if not audio_mode and not any(
+            _h5_dh_clean_text(item.get("voice") or item.get("speaker_id"), 128)
+            for item in voices
+            if isinstance(item, dict)
+        ):
+            missing.append("voice asset")
+        message = "Current personal template is incomplete: " + ", ".join(dict.fromkeys(missing)) if missing else ""
+        return {
+            "checked": True,
+            "ok": not missing,
+            "missing": list(dict.fromkeys(missing)),
+            "message": message,
+        }
+
+    return {"checked": True, "ok": True, "missing": [], "message": ""}
+
+
+def _attach_live_personal_template_validation(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Dict[str, Any]:
+    source = dict(payload or {})
+    validation = _live_personal_template_validation(
+        db,
+        task_kind=task_kind,
+        payload=source,
+        target_user_id=target_user_id,
+    )
+    if validation is None:
+        source.pop("template_validation", None)
+    else:
+        source["template_validation"] = validation
+    return source
+
+
 def _refresh_live_personal_template_payload(
     db: Session,
     *,
@@ -1085,13 +1207,27 @@ def _refresh_live_personal_template_payload(
     """
     source = dict(payload or {})
     if not _workflow_uses_live_personal_template(task_kind, source):
+        source.pop("template_validation", None)
         return source
-    personal = _h5_dh_personal_default_template(db, int(target_user_id))
-    if personal is None:
-        return source
-    context_params = _h5_dh_context_params(db, int(target_user_id))
     action = _clean_profile_text(source.get("action"), 80).lower()
     capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
+    personal = _h5_dh_personal_default_template(db, int(target_user_id))
+    # A live workflow must not fall back to the activation snapshot when the
+    # current personal template was removed or is temporarily unavailable.
+    # Resolve an empty server context so stale template-owned fields are
+    # cleared and the normal server-side validation can report the omission.
+    context_params = _h5_dh_context_params(db, int(target_user_id))
+    if personal is None and task_kind == "client_workflow" and action in _LOCAL_BESTSELLER_ACTIONS:
+        params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
+        if not params.get("profile_override") and _clean_profile_text(params.get("profile_source"), 32).lower() != "custom":
+            params.pop("profile", None)
+        source["params"] = params
+        return _attach_live_personal_template_validation(
+            db,
+            task_kind=task_kind,
+            payload=source,
+            target_user_id=target_user_id,
+        )
     if task_kind == "capability" and capability_id == _HIFLY_TTS_CAPABILITY_ID:
         inner = dict(source.get("payload") if isinstance(source.get("payload"), dict) else {})
         for key in (
@@ -1120,8 +1256,14 @@ def _refresh_live_personal_template_payload(
             inner["voice"] = voice
         else:
             inner.pop("voice", None)
+            inner.pop("speaker_id", None)
         source["payload"] = inner
-        return source
+        return _attach_live_personal_template_validation(
+            db,
+            task_kind=task_kind,
+            payload=source,
+            target_user_id=target_user_id,
+        )
     if task_kind == "client_workflow":
         params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
         if action in _LOCAL_BESTSELLER_ACTIONS:
@@ -1141,7 +1283,12 @@ def _refresh_live_personal_template_payload(
                 payload=source,
                 target_user_id=int(target_user_id),
             )
-            return source
+            return _attach_live_personal_template_validation(
+                db,
+                task_kind=task_kind,
+                payload=source,
+                target_user_id=target_user_id,
+            )
         elif action == "shanjian_digital_human_video":
             # All inputs used to build the script/TTS request come from the
             # latest template. Explicit node controls such as title, speed,
@@ -1176,7 +1323,12 @@ def _refresh_live_personal_template_payload(
                     params["voice"] = voice
                     params["speaker_id"] = voice
         source["params"] = params
-    return source
+    return _attach_live_personal_template_validation(
+        db,
+        task_kind=task_kind,
+        payload=source,
+        target_user_id=target_user_id,
+    )
 
 
 def _digital_human_sequence_slot(

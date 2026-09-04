@@ -36,11 +36,12 @@ from .scheduled_tasks import (
     _SERVER_SIDE_TASK_KINDS,
     _cancel_unfinished_runs_for_task,
     _create_task_row,
+    _h5_dh_context_params,
     _delete_task_row,
     _local_bestseller_profile_from_persona,
-    _personal_default_requirements,
     _serialize_task,
 )
+from .ip_content_studio import _personal_default_resource_overrides
 from ..services.user_feature_flags import user_feature_flags
 
 router = APIRouter()
@@ -1150,6 +1151,8 @@ _SALES_DIGITAL_HUMAN_REQUEST_TEMPLATE_KEYS = {
     "use_template",
     "template_scene",
     "style_id",
+    "template_id",
+    "templateId",
     "materials",
     "material_sound_switch",
     "introduce_name",
@@ -1185,7 +1188,14 @@ def _sales_digital_human_template_id(
         raw = personal_meta.get("digital_human_template")
     if not isinstance(raw, dict):
         return ""
-    return _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"), 128)
+    return _clean_text(
+        raw.get("style_id")
+        or raw.get("styleId")
+        or raw.get("template_id")
+        or raw.get("templateId")
+        or raw.get("id"),
+        128,
+    )
 
 
 def _sales_digital_human_meta_value(
@@ -1212,7 +1222,10 @@ def _sales_digital_human_meta_value(
     if isinstance(value, dict):
         if any(value.get(name) for name in ("avatars", "voices")):
             return value, True
-        if any(str(value.get(name) or "").strip() for name in ("style_id", "styleId", "id")):
+        if any(
+            str(value.get(name) or "").strip()
+            for name in ("style_id", "styleId", "template_id", "templateId", "id")
+        ):
             return value, True
         return value, False
     return value, bool(value)
@@ -1862,45 +1875,44 @@ def _prepare_sales_workflow_nodes(
     reference_template = current_template or personal
     digital_human_template_id = _sales_digital_human_template_id(personal, current_template)
     reference_owner_id = int(reference_template.user_id) if reference_template else int(owner.id)
-    # Resolve the selected IP template through the shared live-template
-    # helper. This prevents activation from reintroducing stale fields that
-    # were left on an older personal-default snapshot.
-    requirements = _personal_default_requirements(db, owner.id)
-    keyword_ids = _clean_id_list(reference_template.keyword_ids if reference_template else [])
-    competitor_ids = _clean_id_list(reference_template.competitor_ids if reference_template else [])
-    keywords = _active_keywords_for_ids(db, reference_owner_id, keyword_ids)
-    competitors = _active_competitors_for_ids(db, reference_owner_id, competitor_ids)
-    memory_doc_ids = [str(x or "").strip() for x in ((reference_template.memory_doc_ids if reference_template else []) or []) if str(x or "").strip()]
-    memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
-    if memory_doc_ids and not memory_docs:
-        numeric_doc_ids = [int(value) for value in memory_doc_ids if value.isdigit()]
-        memory_rows = (
-            db.query(OpenClawMemoryDocument)
-            .filter(
-                OpenClawMemoryDocument.target_user_id == reference_owner_id,
-                OpenClawMemoryDocument.status == "active",
-                OpenClawMemoryDocument.id.in_(numeric_doc_ids),
-            )
-            .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
-            .limit(12)
-            .all()
-            if numeric_doc_ids
-            else []
-        )
-        memory_docs = [
-            {
-                "id": row.id,
-                "title": row.title,
-                "doc_type": row.doc_type,
-                "content": (row.content or "")[:4000],
-            }
-            for row in memory_rows
-        ]
-    keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
+    # Activation and runtime use the same server-side effective template
+    # context. Workflow nodes may retain action/timing controls, but they
+    # never retain an activation-time copy of personal template resources.
+    template_context = _h5_dh_context_params(db, owner.id)
+    resource_overrides = (
+        _personal_default_resource_overrides(personal, reference_template)
+        if personal and reference_template
+        else {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": False}
+    )
+    keyword_ids = _clean_id_list(template_context.get("keyword_ids"), 100)
+    competitor_ids = _clean_id_list(template_context.get("competitor_ids"), 100)
+    keyword_owner_id = owner.id if resource_overrides.get("keyword_ids") else reference_owner_id
+    competitor_owner_id = owner.id if resource_overrides.get("competitor_ids") else reference_owner_id
+    keywords = _active_keywords_for_ids(db, keyword_owner_id, keyword_ids)
+    competitors = _active_competitors_for_ids(db, competitor_owner_id, competitor_ids)
+    requirements = template_context.get("requirements") if isinstance(template_context.get("requirements"), dict) else {}
+    keyword_texts = [
+        _clean_text(value, 120)
+        for value in (template_context.get("keyword_texts") if isinstance(template_context.get("keyword_texts"), list) else [])
+        if _clean_text(value, 120)
+    ]
+    competitor_texts = [
+        _clean_text(value, 160)
+        for value in (template_context.get("competitors") if isinstance(template_context.get("competitors"), list) else [])
+        if _clean_text(value, 160)
+    ]
+    memory_doc_ids = [
+        str(value or "").strip()
+        for value in (template_context.get("memory_doc_ids") if isinstance(template_context.get("memory_doc_ids"), list) else [])
+        if str(value or "").strip()
+    ]
+    memory_docs = template_context.get("memory_docs") if isinstance(template_context.get("memory_docs"), list) else []
     digital_human_provider = _sales_digital_human_provider(snapshot_extra, reference_template)
-    digital_human_resources = _sales_digital_human_resources(personal, current_template)
-    selected_avatars = digital_human_resources["avatars"]
-    selected_voices = digital_human_resources["voices"]
+    digital_human_resources = template_context.get("digital_human_resources")
+    if not isinstance(digital_human_resources, dict):
+        digital_human_resources = {"avatars": [], "voices": []}
+    selected_avatars = digital_human_resources.get("avatars") if isinstance(digital_human_resources.get("avatars"), list) else []
+    selected_voices = digital_human_resources.get("voices") if isinstance(digital_human_resources.get("voices"), list) else []
     hifly_avatar_rows = [
         row for row in selected_avatars
         if row.get("provider") not in {"shanjian", "shanjian_v2", "digital_human"}
@@ -1919,7 +1931,7 @@ def _prepare_sales_workflow_nodes(
     hifly_avatar = _clean_text((hifly_avatar_rows[0] if hifly_avatar_rows else {}).get("avatar"), 128)
     shanjian_virtualman = _clean_text((shanjian_virtualmans[0] if shanjian_virtualmans else {}).get("virtualman_id"), 128)
     hifly_voice = _clean_text((selected_voices[0] if selected_voices else {}).get("voice"), 128)
-    template_language = _template_language(requirements, reference_template)
+    template_language = _clean_text(template_context.get("language"), 64) or _template_language(requirements, reference_template)
 
     has_hifly = False
     has_ip_daily = False
@@ -1988,8 +2000,8 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "client_workflow" and action == "native_wechat_poll":
             payload = dict(payload)
             params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
-            params.setdefault("language", template_language)
-            params.setdefault("target_language", template_language)
+            params["language"] = template_language
+            params["target_language"] = template_language
             payload["params"] = params
             plan["payload"] = payload
 
@@ -1998,10 +2010,14 @@ def _prepare_sales_workflow_nodes(
             if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
                 params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
                 inner = dict(params)
+                inner.pop("avatar", None)
+                inner.pop("avatar_id", None)
                 if hifly_avatar:
-                    inner.setdefault("avatar", hifly_avatar)
+                    inner["avatar"] = hifly_avatar
+                inner.pop("voice", None)
+                inner.pop("speaker_id", None)
                 if hifly_voice:
-                    inner.setdefault("voice", hifly_voice)
+                    inner["voice"] = hifly_voice
                 if _clean_text(inner.get("script"), 200) in {
                     _clean_text(node.get("note"), 200),
                     _clean_text(node.get("ability_label"), 200),
@@ -2016,28 +2032,29 @@ def _prepare_sales_workflow_nodes(
                 payload = dict(payload)
                 params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
                 params = dict(params)
-                params.setdefault("requirements", requirements)
-                params.setdefault("keyword_ids", keyword_ids)
-                params.setdefault("keywords", keyword_texts)
-                params.setdefault("keyword_texts", keyword_texts)
-                params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
-                params.setdefault("memory_doc_ids", memory_doc_ids)
-                params.setdefault("memory_docs", memory_docs)
-                params.setdefault("language", template_language)
-                params.setdefault("target_language", template_language)
+                params["requirements"] = copy.deepcopy(requirements)
+                params["keyword_ids"] = list(keyword_ids)
+                params["keywords"] = list(keyword_texts)
+                params["keyword_texts"] = list(keyword_texts)
+                params["competitors"] = list(competitor_texts)
+                params["memory_doc_ids"] = list(memory_doc_ids)
+                params["memory_docs"] = copy.deepcopy(memory_docs)
+                params["language"] = template_language
+                params["target_language"] = template_language
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
                 params["script_source"] = "ip_daily_industry_hot_oral"
-                if shanjian_virtualmans:
-                    params["virtualman_candidates"] = shanjian_virtualmans
-                    params["virtualman_selection_mode"] = "daily_round_robin"
+                params["virtualman_candidates"] = copy.deepcopy(shanjian_virtualmans)
+                params["virtualman_selection_mode"] = "daily_round_robin" if shanjian_virtualmans else "fixed"
+                params.pop("virtualman_id", None)
                 if shanjian_virtualman:
-                    params.setdefault("virtualman_id", shanjian_virtualman)
+                    params["virtualman_id"] = shanjian_virtualman
+                params.pop("voice", None)
+                params.pop("speaker_id", None)
                 if hifly_voice:
-                    params.setdefault("voice", hifly_voice)
-                    params.setdefault("speaker_id", hifly_voice)
-                if selected_voices:
-                    params["voice_candidates"] = selected_voices
-                    params["voice_selection_mode"] = "daily_round_robin"
+                    params["voice"] = hifly_voice
+                    params["speaker_id"] = hifly_voice
+                params["voice_candidates"] = copy.deepcopy(selected_voices)
+                params["voice_selection_mode"] = "daily_round_robin" if selected_voices else "fixed"
                 params = _apply_sales_digital_human_defaults(params)
                 payload["params"] = params
                 plan["payload"] = payload
@@ -2058,10 +2075,14 @@ def _prepare_sales_workflow_nodes(
                 if script_value in placeholder_texts or script_value.startswith("自动创作"):
                     inner.pop(script_key, None)
             if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                inner.pop("avatar", None)
+                inner.pop("avatar_id", None)
                 if hifly_avatar:
-                    inner.setdefault("avatar", hifly_avatar)
+                    inner["avatar"] = hifly_avatar
+                inner.pop("voice", None)
+                inner.pop("speaker_id", None)
                 if hifly_voice:
-                    inner.setdefault("voice", hifly_voice)
+                    inner["voice"] = hifly_voice
                 payload["payload"] = inner
                 plan["payload"] = payload
             else:
@@ -2070,28 +2091,29 @@ def _prepare_sales_workflow_nodes(
                     for key, value in inner.items()
                     if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
                 }
-                params.setdefault("requirements", requirements)
-                params.setdefault("keyword_ids", keyword_ids)
-                params.setdefault("keywords", keyword_texts)
-                params.setdefault("keyword_texts", keyword_texts)
-                params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
-                params.setdefault("memory_doc_ids", memory_doc_ids)
-                params.setdefault("memory_docs", memory_docs)
-                params.setdefault("language", template_language)
-                params.setdefault("target_language", template_language)
+                params["requirements"] = copy.deepcopy(requirements)
+                params["keyword_ids"] = list(keyword_ids)
+                params["keywords"] = list(keyword_texts)
+                params["keyword_texts"] = list(keyword_texts)
+                params["competitors"] = list(competitor_texts)
+                params["memory_doc_ids"] = list(memory_doc_ids)
+                params["memory_docs"] = copy.deepcopy(memory_docs)
+                params["language"] = template_language
+                params["target_language"] = template_language
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
                 params["script_source"] = "ip_daily_industry_hot_oral"
-                if shanjian_virtualmans:
-                    params["virtualman_candidates"] = shanjian_virtualmans
-                    params["virtualman_selection_mode"] = "daily_round_robin"
+                params["virtualman_candidates"] = copy.deepcopy(shanjian_virtualmans)
+                params["virtualman_selection_mode"] = "daily_round_robin" if shanjian_virtualmans else "fixed"
+                params.pop("virtualman_id", None)
                 if shanjian_virtualman:
-                    params.setdefault("virtualman_id", shanjian_virtualman)
+                    params["virtualman_id"] = shanjian_virtualman
+                params.pop("voice", None)
+                params.pop("speaker_id", None)
                 if hifly_voice:
-                    params.setdefault("voice", hifly_voice)
-                    params.setdefault("speaker_id", hifly_voice)
-                if selected_voices:
-                    params["voice_candidates"] = selected_voices
-                    params["voice_selection_mode"] = "daily_round_robin"
+                    params["voice"] = hifly_voice
+                    params["speaker_id"] = hifly_voice
+                params["voice_candidates"] = copy.deepcopy(selected_voices)
+                params["voice_selection_mode"] = "daily_round_robin" if selected_voices else "fixed"
                 params = _apply_sales_digital_human_defaults(params)
                 node["ability_key"] = "shanjian_digital_human_video"
                 plan["task_kind"] = "client_workflow"

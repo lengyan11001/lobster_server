@@ -218,6 +218,61 @@ def test_scheduled_run_drops_a_deleted_voice_when_no_active_voice_exists(db_sess
     assert "speaker_id" not in result["params"]
 
 
+def test_one_off_digital_human_does_not_require_personal_template_validation(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_h5_dh_context_params",
+        lambda db, user_id: {
+            "digital_human_template": {"style_id": "template-1"},
+            "digital_human_resources": {
+                "avatars": [{"virtualman_id": "avatar-1"}],
+                "voices": [],
+            },
+        },
+    )
+
+    result = scheduled_tasks._live_personal_template_validation(
+        db_session,
+        task_kind="capability",
+        payload={
+            "capability_id": "hifly.video.create_by_tts",
+            "payload": {"avatar": "avatar-1", "voice": "voice-1"},
+            "h5_context": {"source": "h5"},
+        },
+        target_user_id=test_user.id,
+    )
+
+    assert result is None
+
+
+def test_live_template_validation_allows_audio_driven_capability_without_voice(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_h5_dh_context_params",
+        lambda db, user_id: {
+            "digital_human_template": {"style_id": "template-1"},
+            "digital_human_resources": {
+                "avatars": [{"virtualman_id": "avatar-1"}],
+                "voices": [],
+            },
+        },
+    )
+
+    result = scheduled_tasks._live_personal_template_validation(
+        db_session,
+        task_kind="capability",
+        payload={
+            "capability_id": "hifly.video.create_by_tts",
+            "payload": {"avatar": "avatar-1", "audio_url": "https://example.test/voice.mp3"},
+            "h5_context": {"workflow_template_id": "template-1", "workflow_node_id": "node-1"},
+        },
+        target_user_id=test_user.id,
+    )
+
+    assert result["ok"] is True
+    assert "voice asset" not in result["missing"]
+
+
 def test_workflow_claim_uses_latest_personal_template_instead_of_payload_snapshot(db_session, test_user):
     personal = IPContentScheduleTemplate(
         user_id=test_user.id,

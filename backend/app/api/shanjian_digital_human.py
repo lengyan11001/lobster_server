@@ -967,7 +967,13 @@ def _stored_digital_human_template(meta: Any) -> tuple[bool, Optional[Dict[str, 
     raw = meta.get("digital_human_template")
     if not isinstance(raw, dict):
         return True, None
-    style_id = _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"))
+    style_id = _clean_text(
+        raw.get("style_id")
+        or raw.get("styleId")
+        or raw.get("template_id")
+        or raw.get("templateId")
+        or raw.get("id")
+    )
     if not style_id:
         return True, None
     pack_rules = raw.get("pack_rules") if isinstance(raw.get("pack_rules"), dict) else {}
