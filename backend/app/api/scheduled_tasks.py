@@ -412,6 +412,7 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
         "keyword_ids": keyword_ids,
         "keywords": keyword_texts,
         "keyword_texts": keyword_texts,
+        "competitor_ids": competitor_ids,
         "competitors": competitor_texts,
         "memory_doc_ids": memory_doc_ids,
         "memory_docs": memory_docs,

@@ -189,6 +189,7 @@ def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_sess
             "requirements": {"industry": "new"},
             "keyword_ids": [11],
             "keyword_texts": ["new keyword"],
+            "competitor_ids": [22],
             "competitors": ["new competitor"],
             "memory_doc_ids": ["31"],
             "memory_docs": [{"id": 31, "title": "new memory"}],
@@ -205,7 +206,13 @@ def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_sess
         lambda personal, current: {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": False},
     )
     monkeypatch.setattr(h5_workflows, "_active_keywords_for_ids", lambda db, user_id, ids: [SimpleNamespace()])
-    monkeypatch.setattr(h5_workflows, "_active_competitors_for_ids", lambda db, user_id, ids: [SimpleNamespace(last_fetch_at=datetime.utcnow())])
+    queried_competitor_ids = []
+
+    def active_competitors(db, user_id, ids):
+        queried_competitor_ids.extend(ids)
+        return [SimpleNamespace(last_fetch_at=datetime.utcnow())]
+
+    monkeypatch.setattr(h5_workflows, "_active_competitors_for_ids", active_competitors)
     monkeypatch.setattr(h5_workflows, "_missing_sales_persona_fields", lambda requirements: [])
     monkeypatch.setattr(h5_workflows, "_device_is_online", lambda db, user_id, installation_id: True)
 
@@ -244,6 +251,35 @@ def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_sess
     assert params["voice"] == "new-voice"
     assert params["keyword_ids"] == [11]
     assert params["language"] == "en-US"
+    assert queried_competitor_ids == [22]
+
+
+def test_h5_template_context_includes_competitor_ids(monkeypatch, db_session):
+    personal = SimpleNamespace(user_id=31, meta={})
+    current = SimpleNamespace(user_id=31, meta={})
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_personal_default_template", lambda db, user_id: personal)
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_current_template", lambda db, user_id, row: current)
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_personal_default_template_payload_with_resources",
+        lambda db, row: {
+            "requirements": {},
+            "keyword_ids": [],
+            "competitor_ids": [22, 23],
+            "keywords": [],
+            "competitors": [
+                {"account_name": "competitor-a"},
+                {"account_name": "competitor-b"},
+            ],
+            "memory_doc_ids": [],
+            "memory_docs": [],
+        },
+    )
+
+    context = scheduled_tasks._h5_dh_context_params(db_session, 31)
+
+    assert context["competitor_ids"] == [22, 23]
+    assert context["competitors"] == ["competitor-a", "competitor-b"]
 
 
 def test_live_template_clear_removes_old_digital_human_resources(db_session, test_user):
