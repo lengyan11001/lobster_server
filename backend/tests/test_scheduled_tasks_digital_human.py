@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from backend.app.api import scheduled_tasks
-from backend.app.models import ScheduledTask, UserHiflyVoiceAsset
+from backend.app.models import IPContentScheduleTemplate, ScheduledTask, UserHiflyVoiceAsset
 
 
 def _payload():
@@ -216,3 +216,52 @@ def test_scheduled_run_drops_a_deleted_voice_when_no_active_voice_exists(db_sess
 
     assert "voice" not in result["params"]
     assert "speaker_id" not in result["params"]
+
+
+def test_workflow_claim_uses_latest_personal_template_instead_of_payload_snapshot(db_session, test_user):
+    personal = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
+        requirements={"industry": "new-industry"},
+        meta={"current_template_id": 0},
+    )
+    db_session.add(personal)
+    db_session.flush()
+    current = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="current-ip-template",
+        requirements={"industry": "new-industry"},
+        meta={
+            "digital_human_resources": {
+                "avatars": [{"provider": "shanjian_v2", "virtualman_id": "latest-avatar", "status": "ready"}],
+                "voices": [{"voice": "latest-voice", "status": "active"}],
+            },
+            "digital_human_resources_configured": True,
+        },
+    )
+    db_session.add(current)
+    db_session.flush()
+    personal.meta = {"current_template_id": current.id}
+    db_session.commit()
+
+    result = scheduled_tasks._refresh_live_personal_template_payload(
+        db_session,
+        task_kind="client_workflow",
+        target_user_id=test_user.id,
+        payload={
+            "action": "shanjian_digital_human_video",
+            "params": {
+                "requirements": {"industry": "old-industry"},
+                "virtualman_id": "old-avatar",
+                "voice": "old-voice",
+                "speed_ratio": 1.25,
+            },
+            "h5_context": {"workflow_template_id": "workflow-1", "workflow_node_id": "node-1"},
+        },
+    )
+
+    params = result["params"]
+    assert params["requirements"] == {"industry": "new-industry"}
+    assert [item["virtualman_id"] for item in params["virtualman_candidates"]] == ["latest-avatar"]
+    assert params["voice"] == "latest-voice"
+    assert params["speed_ratio"] == 1.25

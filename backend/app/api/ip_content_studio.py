@@ -2791,12 +2791,17 @@ def _rows_ordered_by_ids(rows: list[Any], ids: list[int]) -> list[Any]:
     return [by_id[item_id] for item_id in ids if item_id in by_id]
 
 
-def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
-    keyword_ids = _clean_int_ids(row.keyword_ids, 50)
-    competitor_ids = _clean_int_ids(row.competitor_ids, 50)
+def _template_resource_rows_for_ids(
+    db: Session,
+    user_id: int,
+    keyword_ids: Any,
+    competitor_ids: Any,
+) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
+    keyword_ids = _clean_int_ids(keyword_ids, 50)
+    competitor_ids = _clean_int_ids(competitor_ids, 50)
     keywords = (
         db.query(IPContentKeyword)
-        .filter(IPContentKeyword.user_id == row.user_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
+        .filter(IPContentKeyword.user_id == int(user_id), IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
         .all()
         if keyword_ids
         else []
@@ -2804,7 +2809,7 @@ def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tupl
     competitors = (
         db.query(ContentCompetitorAccount)
         .filter(
-            ContentCompetitorAccount.user_id == row.user_id,
+            ContentCompetitorAccount.user_id == int(user_id),
             ContentCompetitorAccount.status == "active",
             ContentCompetitorAccount.id.in_(competitor_ids),
         )
@@ -2813,6 +2818,10 @@ def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tupl
         else []
     )
     return _rows_ordered_by_ids(keywords, keyword_ids), _rows_ordered_by_ids(competitors, competitor_ids)
+
+
+def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
+    return _template_resource_rows_for_ids(db, int(row.user_id), row.keyword_ids, row.competitor_ids)
 
 
 def _template_payload_with_resources(
@@ -2849,37 +2858,76 @@ def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate])
     return payload
 
 
+def _personal_default_resource_overrides(
+    row: IPContentScheduleTemplate,
+    reference: IPContentScheduleTemplate,
+) -> dict[str, bool]:
+    """Return resource fields explicitly customized on the personal row.
+
+    New clients persist this marker when the complete selection is saved.  For
+    older rows, a difference from the selected source is treated as an
+    override so a refresh cannot silently restore the source template's full
+    resource set.
+    """
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    marker = meta.get("template_resource_overrides")
+    if isinstance(marker, dict):
+        return {
+            "keyword_ids": bool(marker.get("keyword_ids")),
+            "competitor_ids": bool(marker.get("competitor_ids")),
+            "memory_doc_ids": bool(marker.get("memory_doc_ids")),
+        }
+    return {
+        "keyword_ids": _clean_int_ids(row.keyword_ids, 50) != _clean_int_ids(reference.keyword_ids, 50),
+        "competitor_ids": _clean_int_ids(row.competitor_ids, 50) != _clean_int_ids(reference.competitor_ids, 50),
+        "memory_doc_ids": _clean_memory_doc_ids(row.memory_doc_ids, 50) != _clean_memory_doc_ids(reference.memory_doc_ids, 50),
+    }
+
+
 def _personal_default_template_payload_with_resources(db: Session, row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
     payload = _personal_default_template_payload(row)
     if row is None:
         return payload
     reference = _granted_template_for_user(db, int(row.user_id), _current_template_id_from_meta(row.meta)) or row
+    overrides = _personal_default_resource_overrides(row, reference)
     if int(reference.id or 0) != int(row.id or 0):
-        # A selected template is a live reference. The personal-default row
-        # may have been written by an older client with a full snapshot; only
-        # explicit overrides and profile fields are allowed to survive that
-        # snapshot. Template requirements/resources always come from the
-        # current source row.
-        payload["keyword_ids"] = _clean_int_ids(reference.keyword_ids, 50)
-        payload["competitor_ids"] = _clean_int_ids(reference.competitor_ids, 50)
-        payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
-        payload["memory_docs"] = reference.memory_docs or []
+        # A selected template remains live for fields the user did not
+        # customize. Explicitly unchecked resources stay on the personal row.
+        payload["keyword_ids"] = (
+            _clean_int_ids(row.keyword_ids, 50)
+            if overrides["keyword_ids"]
+            else _clean_int_ids(reference.keyword_ids, 50)
+        )
+        payload["competitor_ids"] = (
+            _clean_int_ids(row.competitor_ids, 50)
+            if overrides["competitor_ids"]
+            else _clean_int_ids(reference.competitor_ids, 50)
+        )
+        payload["memory_doc_ids"] = (
+            _clean_memory_doc_ids(row.memory_doc_ids, 50)
+            if overrides["memory_doc_ids"]
+            else (_clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50))
+        )
+        payload["memory_docs"] = row.memory_docs or [] if overrides["memory_doc_ids"] else (reference.memory_docs or [])
         meta = row.meta if isinstance(row.meta, dict) else {}
-        overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
+        requirement_overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
         payload["requirements"] = {
             **(reference.requirements or {}),
-            **overrides,
+            **requirement_overrides,
             **_personal_profile_fields(row.requirements),
         }
     if row is not None:
         payload["requirements"] = _enrich_personal_profile_requirements_with_assets(
             db, int(row.user_id), payload.get("requirements")
         )
-    keywords, competitors = _template_resource_rows(db, reference)
+    keyword_owner = row if overrides["keyword_ids"] else reference
+    competitor_owner = row if overrides["competitor_ids"] else reference
+    keyword_rows, _ = _template_resource_rows_for_ids(db, int(keyword_owner.user_id), payload.get("keyword_ids"), [])
+    _, competitor_rows = _template_resource_rows_for_ids(db, int(competitor_owner.user_id), [], payload.get("competitor_ids"))
     keyword_id_set = set(_clean_int_ids(payload.get("keyword_ids"), 50))
     competitor_id_set = set(_clean_int_ids(payload.get("competitor_ids"), 50))
-    payload["keywords"] = [_keyword_payload(item) for item in keywords if int(item.id) in keyword_id_set]
-    payload["competitors"] = [_competitor_payload(item) for item in competitors if int(item.id) in competitor_id_set]
+    payload["keywords"] = [_keyword_payload(item) for item in keyword_rows if int(item.id) in keyword_id_set]
+    payload["competitors"] = [_competitor_payload(item) for item in competitor_rows if int(item.id) in competitor_id_set]
     return payload
 
 
@@ -3415,18 +3463,83 @@ def _use_current_personal_template_options(
     """Replace stale template snapshots with the currently selected template.
 
     Counts, task selection and sync options belong to the workflow node and
-    are retained. All template-owned fields are deliberately cleared so
-    ``run_ip_content_daily_scheduled`` can load the latest source row.
+    are retained. Template-owned fields are resolved from the latest personal
+    row (including explicit empty overrides) so the runner never falls back to
+    an activation-time snapshot.
     """
     out = dict(options) if isinstance(options, dict) else {}
+    personal = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
     template = _current_personal_template_for_execution(db, int(user_id))
-    if template is None:
+    if personal is None or template is None:
+        # A live workflow must fail closed when the current IP template was
+        # removed or is no longer accessible; never revive its old snapshot.
+        out["template_id"] = None
+        out["keyword_ids"] = []
+        out["competitor_ids"] = []
+        out["memory_doc_ids"] = []
+        out["memory_docs"] = []
+        out["requirements"] = {}
+        out["template_source"] = "personal_current"
         return out
+    effective = _personal_default_template_payload_with_resources(db, personal)
+    effective_memory_doc_ids = [
+        str(value or "").strip()
+        for value in (effective.get("memory_doc_ids") if isinstance(effective.get("memory_doc_ids"), list) else [])
+        if str(value or "").strip()
+    ]
+    effective_memory_docs = list(effective.get("memory_docs") or []) if isinstance(effective.get("memory_docs"), list) else []
+    if effective_memory_doc_ids and not effective_memory_docs:
+        numeric_ids = [int(value) for value in effective_memory_doc_ids if value.isdigit()]
+        rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(
+                OpenClawMemoryDocument.target_user_id.in_({int(user_id), int(template.user_id)}),
+                OpenClawMemoryDocument.status == "active",
+                OpenClawMemoryDocument.id.in_(numeric_ids),
+            )
+            .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
+            .limit(12)
+            .all()
+            if numeric_ids
+            else []
+        )
+        effective_memory_docs = [
+            {
+                "id": row.id,
+                "title": row.title,
+                "doc_type": row.doc_type,
+                "content": (row.content or "")[:4000],
+            }
+            for row in rows
+        ]
     out["template_id"] = int(template.id)
-    out["keyword_ids"] = []
-    out["competitor_ids"] = []
-    out["memory_docs"] = []
-    out["requirements"] = {}
+    # Keep the effective IDs/docs in the run options. The live source marker
+    # below tells the runner not to fall back to the selected row when a field
+    # is intentionally empty.
+    out["keyword_ids"] = list(effective.get("keyword_ids") or [])
+    out["competitor_ids"] = list(effective.get("competitor_ids") or [])
+    out["memory_doc_ids"] = effective_memory_doc_ids
+    out["memory_docs"] = effective_memory_docs
+    out["requirements"] = dict(effective.get("requirements") or {})
+    marker = personal.meta if isinstance(personal.meta, dict) else {}
+    resource_overrides = marker.get("template_resource_overrides") if isinstance(marker.get("template_resource_overrides"), dict) else {}
+    if not resource_overrides:
+        # Older rows predate the explicit marker; preserve their historical
+        # difference-from-source behavior when choosing resource ownership.
+        resource_overrides = _personal_default_resource_overrides(personal, template)
+    # These internal owner hints allow granted resources and user overrides to
+    # be validated against the correct account without exposing snapshot data.
+    out["_keyword_owner_user_id"] = int(user_id) if resource_overrides.get("keyword_ids") else int(template.user_id)
+    out["_competitor_owner_user_id"] = int(user_id) if resource_overrides.get("competitor_ids") else int(template.user_id)
     out["template_source"] = "personal_current"
     return out
 
@@ -4573,12 +4686,15 @@ async def run_ip_content_daily_scheduled(
     progress: ScheduleProgress = None,
 ) -> dict[str, Any]:
     runtime_options = dict(options or {})
-    if str(runtime_options.get("template_source") or "").strip().lower() == "personal_current":
+    live_personal_template = str(runtime_options.get("template_source") or "").strip().lower() == "personal_current"
+    if live_personal_template:
         runtime_options = _use_current_personal_template_options(
             db,
             int(current_user.id),
             runtime_options,
         )
+    live_keyword_owner_id = runtime_options.pop("_keyword_owner_user_id", None)
+    live_competitor_owner_id = runtime_options.pop("_competitor_owner_user_id", None)
     opts = ScheduledDailyRunOptions(**runtime_options)
     selected_tasks = _clean_scheduled_daily_tasks(opts.tasks) or list(_SCHEDULED_DAILY_TASKS)
     _emit_schedule_progress(
@@ -4623,23 +4739,45 @@ async def run_ip_content_daily_scheduled(
         if template is None:
             raise HTTPException(status_code=404, detail="IP 日更模板不存在")
         template_payload = _template_payload(template)
-        if not keyword_ids:
+        if not keyword_ids and not live_personal_template:
             keyword_ids = _clean_int_ids(template.keyword_ids, 50)
-        template_keyword_ids, _ = _filter_template_refs_for_owner(db, int(template.user_id), keyword_ids, [])
+        if live_keyword_owner_id:
+            keyword_owner_user_id = int(live_keyword_owner_id)
+        template_keyword_ids, _ = _filter_template_refs_for_owner(db, keyword_owner_user_id, keyword_ids, [])
         if template_keyword_ids:
             keyword_ids = template_keyword_ids
-            keyword_owner_user_id = int(template.user_id)
-        if not competitor_ids:
+            if not live_keyword_owner_id:
+                keyword_owner_user_id = int(template.user_id)
+        if not competitor_ids and not live_personal_template:
             competitor_ids = _clean_int_ids(template.competitor_ids, 50)
-        _, template_competitor_ids = _filter_template_refs_for_owner(db, int(template.user_id), [], competitor_ids)
+        if live_competitor_owner_id:
+            competitor_owner_user_id = int(live_competitor_owner_id)
+        _, template_competitor_ids = _filter_template_refs_for_owner(db, competitor_owner_user_id, [], competitor_ids)
         if template_competitor_ids:
             competitor_ids = template_competitor_ids
-            competitor_owner_user_id = int(template.user_id)
+            if not live_competitor_owner_id:
+                competitor_owner_user_id = int(template.user_id)
         merged_requirements = dict(template.requirements or {})
         merged_requirements.update({k: v for k, v in requirements.items() if _clean_long_text(v, 1)})
         requirements = merged_requirements
-        if not memory_docs_raw:
+        if not memory_docs_raw and not live_personal_template:
             memory_docs_raw = list(template.memory_docs or [])
+
+    if live_personal_template:
+        # Report the same effective current-personal view that fed execution;
+        # do not expose the selected template's stale resource snapshot.
+        live_personal_row = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.user_id == int(current_user.id),
+                IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+                IPContentScheduleTemplate.status == "active",
+            )
+            .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+            .first()
+        )
+        if live_personal_row is not None:
+            template_payload = _personal_default_template_payload_with_resources(db, live_personal_row)
 
     keyword_ids, _ = _validate_template_refs(db, keyword_owner_user_id, keyword_ids, [])
     _, competitor_ids = _validate_template_refs(db, competitor_owner_user_id, [], competitor_ids)
@@ -5181,20 +5319,45 @@ def save_personal_default_ip_content_config(
     db: Session = Depends(get_db),
 ):
     template_ref = _personal_default_template_reference(db, current_user, body)
+    body_fields = getattr(body, "model_fields_set", None)
+    if body_fields is None:
+        body_fields = getattr(body, "__fields_set__", set())
+    # The current Online client always sends the complete selection and marks
+    # it explicitly. Missing fields from older clients retain the source
+    # template for backwards compatibility; an explicit empty list clears it.
+    complete_selection = bool((body.meta or {}).get("resource_selection_complete") is True)
+    keyword_selection_sent = complete_selection or "keyword_ids" in body_fields
+    competitor_selection_sent = complete_selection or "competitor_ids" in body_fields
+    memory_id_selection_sent = complete_selection or "memory_doc_ids" in body_fields
+    memory_doc_selection_sent = complete_selection or "memory_docs" in body_fields
+    legacy_silent_save = (
+        not complete_selection
+        and _clean_text((body.meta or {}).get("source"), 80) == "h5_personal_settings"
+        and not body.keyword_ids
+        and not body.competitor_ids
+        and not body.memory_doc_ids
+        and not body.memory_docs
+    )
+    if legacy_silent_save:
+        keyword_selection_sent = False
+        competitor_selection_sent = False
+        memory_id_selection_sent = False
+        memory_doc_selection_sent = False
     if template_ref is not None:
-        keyword_ids, competitor_ids = _filter_template_refs_for_owner(db, int(template_ref.user_id), body.keyword_ids, body.competitor_ids)
-        if not keyword_ids:
-            keyword_ids, _ = _filter_template_refs_for_owner(db, int(template_ref.user_id), template_ref.keyword_ids, [])
-        if not competitor_ids:
-            _, competitor_ids = _filter_template_refs_for_owner(db, int(template_ref.user_id), [], template_ref.competitor_ids)
+        keyword_ids, competitor_ids = _filter_template_refs_for_owner(
+            db,
+            int(template_ref.user_id),
+            body.keyword_ids if keyword_selection_sent else template_ref.keyword_ids,
+            body.competitor_ids if competitor_selection_sent else template_ref.competitor_ids,
+        )
     else:
         keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
-    incoming_memory_docs = body.memory_docs
-    incoming_memory_doc_ids = body.memory_doc_ids
+    incoming_memory_docs = body.memory_docs if memory_doc_selection_sent else []
+    incoming_memory_doc_ids = body.memory_doc_ids if memory_id_selection_sent else []
     if template_ref is not None:
-        if not incoming_memory_docs:
+        if not memory_doc_selection_sent:
             incoming_memory_docs = list(template_ref.memory_docs or [])
-        if not incoming_memory_doc_ids:
+        if not memory_id_selection_sent:
             incoming_memory_doc_ids = list(template_ref.memory_doc_ids or [])
     memory_docs = _memory_payload_from_docs(incoming_memory_docs, content_limit=3200)
     row = (
@@ -5238,7 +5401,11 @@ def save_personal_default_ip_content_config(
         incoming_requirements = template_requirement_overrides
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
-    row.memory_doc_ids = _clean_memory_doc_ids(incoming_memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_doc_ids = (
+        _clean_memory_doc_ids(incoming_memory_doc_ids, 50)
+        if memory_id_selection_sent
+        else _memory_doc_ids_from_docs(memory_docs, 50)
+    )
     row.memory_docs = memory_docs
     normalized_requirements = _personal_default_requirements_for_save(
         incoming_requirements, existing_requirements, body.meta
@@ -5254,6 +5421,12 @@ def save_personal_default_ip_content_config(
     if template_ref is not None:
         meta["current_template_id"] = int(template_ref.id)
         meta["source_template_owner_user_id"] = int(template_ref.user_id)
+        source_memory_ids = _clean_memory_doc_ids(template_ref.memory_doc_ids, 50)
+        meta["template_resource_overrides"] = {
+            "keyword_ids": bool(keyword_selection_sent and keyword_ids != _clean_int_ids(template_ref.keyword_ids, 50)),
+            "competitor_ids": bool(competitor_selection_sent and competitor_ids != _clean_int_ids(template_ref.competitor_ids, 50)),
+            "memory_doc_ids": bool(memory_id_selection_sent and _clean_memory_doc_ids(incoming_memory_doc_ids, 50) != source_memory_ids),
+        }
         if template_requirement_overrides:
             meta["template_requirement_overrides"] = _jsonable(template_requirement_overrides)
         else:

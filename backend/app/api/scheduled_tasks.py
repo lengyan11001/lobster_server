@@ -46,6 +46,7 @@ from .ip_content_studio import (
     _current_template_id_from_meta,
     _draft_record_payload,
     _granted_template_for_user,
+    _personal_default_template_payload_with_resources,
     _personal_profile_fields,
     _use_current_personal_template_options,
     run_ip_content_daily_scheduled,
@@ -316,41 +317,47 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
     current_template = _h5_dh_current_template(db, user_id, personal)
     reference_template = current_template or personal
     reference_owner_id = int(reference_template.user_id) if reference_template else int(user_id)
-    requirements = _personal_default_requirements(db, user_id)
-    keyword_ids = _h5_dh_clean_id_list(reference_template.keyword_ids if reference_template else [])
-    competitor_ids = _h5_dh_clean_id_list(reference_template.competitor_ids if reference_template else [])
-    keywords = (
-        db.query(IPContentKeyword)
-        .filter(IPContentKeyword.user_id == reference_owner_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
-        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
-        .all()
-        if keyword_ids
-        else []
-    )
-    competitors = (
-        db.query(ContentCompetitorAccount)
-        .filter(
-            ContentCompetitorAccount.user_id == reference_owner_id,
-            ContentCompetitorAccount.status == "active",
-            ContentCompetitorAccount.id.in_(competitor_ids),
+    # Resolve the effective personal row on every invocation.  The personal
+    # row carries explicit resource overrides while its selected template is
+    # still a live reference; neither the workflow activation nor an older
+    # task payload is authoritative here.
+    effective = _personal_default_template_payload_with_resources(db, personal)
+    requirements = effective.get("requirements") if isinstance(effective.get("requirements"), dict) else {}
+    keyword_ids = _h5_dh_clean_id_list(effective.get("keyword_ids"), 100)
+    competitor_ids = _h5_dh_clean_id_list(effective.get("competitor_ids"), 100)
+    keyword_rows = effective.get("keywords") if isinstance(effective.get("keywords"), list) else []
+    competitor_rows = effective.get("competitors") if isinstance(effective.get("competitors"), list) else []
+    keyword_texts = [
+        _h5_dh_clean_text(
+            item.get("display_name") or item.get("keyword") or item.get("name")
+            if isinstance(item, dict)
+            else item,
+            120,
         )
-        .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
-        .all()
-        if competitor_ids
-        else []
-    )
+        for item in keyword_rows
+    ]
+    competitor_texts = [
+        _h5_dh_clean_text(
+            item.get("display_name") or item.get("account_name") or item.get("account_id") or item.get("name")
+            if isinstance(item, dict)
+            else item,
+            160,
+        )
+        for item in competitor_rows
+    ]
     memory_doc_ids = [
         str(x or "").strip()
-        for x in ((reference_template.memory_doc_ids if reference_template else []) or [])
+        for x in (effective.get("memory_doc_ids") if isinstance(effective.get("memory_doc_ids"), list) else [])
         if str(x or "").strip()
     ]
-    memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
+    memory_docs = effective.get("memory_docs") if isinstance(effective.get("memory_docs"), list) else []
     if memory_doc_ids and not memory_docs:
-        doc_ids = [int(x) for x in memory_doc_ids if str(x).isdigit()]
+        doc_ids = [int(value) for value in memory_doc_ids if str(value).isdigit()]
+        owner_ids = {int(user_id), int(reference_owner_id)}
         rows = (
             db.query(OpenClawMemoryDocument)
             .filter(
-                OpenClawMemoryDocument.target_user_id == reference_owner_id,
+                OpenClawMemoryDocument.target_user_id.in_(owner_ids),
                 OpenClawMemoryDocument.status == "active",
                 OpenClawMemoryDocument.id.in_(doc_ids),
             )
@@ -369,21 +376,137 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
             }
             for row in rows
         ]
-    keyword_texts = [_h5_dh_clean_text(row.display_name or row.keyword, 120) for row in keywords]
+    current_meta = current_template.meta if current_template and isinstance(current_template.meta, dict) else {}
+    personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    template_value, template_configured = _h5_dh_selected_meta_value(
+        current_meta,
+        "digital_human_template",
+        "digital_human_template_configured",
+    )
+    if not template_configured:
+        template_value = personal_meta.get("digital_human_template")
+    resources_value, resources_configured = _h5_dh_selected_meta_value(
+        current_meta,
+        "digital_human_resources",
+        "digital_human_resources_configured",
+    )
+    if not resources_configured:
+        resources_value = personal_meta.get("digital_human_resources")
+    digital_human_resources = _h5_dh_normalize_resources(resources_value)
+    digital_human_template = template_value if isinstance(template_value, dict) else {}
+    virtualman_candidates = [
+        item for item in digital_human_resources["avatars"]
+        if item.get("virtualman_id")
+    ]
+    voice_candidates = list(digital_human_resources["voices"])
+    virtualman_id = _h5_dh_clean_text(
+        (virtualman_candidates[0] if virtualman_candidates else {}).get("virtualman_id"),
+        128,
+    )
+    voice = _h5_dh_clean_text(
+        (voice_candidates[0] if voice_candidates else {}).get("voice"),
+        128,
+    )
     return {
         "requirements": requirements,
         "keyword_ids": keyword_ids,
         "keywords": keyword_texts,
         "keyword_texts": keyword_texts,
-        "competitors": [
-            _h5_dh_clean_text(row.display_name or row.account_name or row.account_id, 160)
-            for row in competitors
-        ],
+        "competitors": competitor_texts,
         "memory_doc_ids": memory_doc_ids,
         "memory_docs": memory_docs,
         "language": _h5_dh_template_language(requirements, reference_template),
         "target_language": _h5_dh_template_language(requirements, reference_template),
+        "digital_human_template": digital_human_template,
+        "digital_human_resources": digital_human_resources,
+        "digital_human_template_configured": bool(template_configured or template_value is not None),
+        "digital_human_resources_configured": bool(resources_configured or resources_value is not None),
+        "virtualman_candidates": virtualman_candidates,
+        "virtualman_id": virtualman_id,
+        "voice_candidates": voice_candidates,
+        "voice": voice,
     }
+
+
+def _h5_dh_selected_meta_value(
+    meta: dict[str, Any],
+    key: str,
+    configured_key: str,
+) -> tuple[Any, bool]:
+    """Read a selected digital-human value, preserving explicit clears."""
+    if key not in meta:
+        return None, False
+    value = meta.get(key)
+    if value is None or meta.get(configured_key) is True:
+        return value, True
+    if isinstance(value, dict):
+        if any(value.get(name) for name in ("avatars", "voices", "style_id", "styleId", "id")):
+            return value, True
+        return value, False
+    return value, bool(value)
+
+
+def _h5_dh_normalize_resources(value: Any) -> Dict[str, List[Dict[str, Any]]]:
+    """Normalize the current template's selected avatar/voice allow-list."""
+    raw = value if isinstance(value, dict) else {}
+    allowed_statuses = {
+        "succeed", "success", "completed", "complete", "done", "ready", "published", "active",
+    }
+    avatars: List[Dict[str, Any]] = []
+    seen_avatars: set[str] = set()
+    for item in raw.get("avatars") if isinstance(raw.get("avatars"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _h5_dh_clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in allowed_statuses:
+            continue
+        provider = _h5_dh_clean_text(item.get("provider") or item.get("source"), 32).lower()
+        virtualman_id = _h5_dh_clean_text(item.get("virtualman_id") or item.get("virtualmanId"), 128)
+        avatar_id = _h5_dh_clean_text(item.get("avatar") or item.get("avatar_id") or item.get("avatarId"), 128)
+        if provider in {"shanjian", "shanjian_v2", "digital_human"} and not virtualman_id:
+            virtualman_id = avatar_id
+        identifier = virtualman_id if provider in {"shanjian", "shanjian_v2", "digital_human"} else (avatar_id or virtualman_id)
+        if not identifier:
+            continue
+        key = f"{provider}:{identifier}"
+        if key in seen_avatars:
+            continue
+        seen_avatars.add(key)
+        avatars.append(
+            {
+                "provider": provider or ("shanjian" if virtualman_id else "hifly"),
+                "virtualman_id": virtualman_id,
+                "avatar": avatar_id,
+                "profile_id": _h5_dh_clean_id_list([item.get("profile_id") or item.get("source_record_id") or item.get("id")], 1)[0]
+                if _h5_dh_clean_id_list([item.get("profile_id") or item.get("source_record_id") or item.get("id")], 1)
+                else 0,
+                "title": _h5_dh_clean_text(item.get("title") or item.get("name"), 128),
+                "cover_url": _h5_dh_clean_text(item.get("cover_url") or item.get("coverUrl") or item.get("image_url"), 1000),
+            }
+        )
+    voices: List[Dict[str, Any]] = []
+    seen_voices: set[str] = set()
+    for item in raw.get("voices") if isinstance(raw.get("voices"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _h5_dh_clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in allowed_statuses:
+            continue
+        voice = _h5_dh_clean_text(item.get("voice") or item.get("voice_id") or item.get("speaker_id") or item.get("speakerId"), 128)
+        if not voice or voice in seen_voices:
+            continue
+        seen_voices.add(voice)
+        voices.append(
+            {
+                "provider": _h5_dh_clean_text(item.get("provider") or item.get("source"), 32) or "hifly",
+                "voice": voice,
+                "title": _h5_dh_clean_text(item.get("title") or item.get("name"), 128),
+                "source_record_id": _h5_dh_clean_id_list([item.get("source_record_id") or item.get("id")], 1)[0]
+                if _h5_dh_clean_id_list([item.get("source_record_id") or item.get("id")], 1)
+                else 0,
+            }
+        )
+    return {"avatars": avatars, "voices": voices}
 
 
 def _enrich_linkedin_mining_keywords(
@@ -468,6 +591,18 @@ def _maybe_convert_h5_digital_human_task(
     for key, value in context_params.items():
         if value and not params.get(key):
             params[key] = value
+    # Legacy H5 capability requests may not carry the selected avatar list.
+    # Resolve the current available assets once during conversion so the
+    # resulting workflow still has a valid initial candidate.
+    if _h5_dh_provider() == _DIGITAL_HUMAN_PROVIDER_V2:
+        if not params.get("virtualman_candidates"):
+            available_virtualmans = _h5_dh_available_virtualmans(db, target_user_id)
+            if available_virtualmans:
+                params["virtualman_candidates"] = available_virtualmans
+        if not params.get("virtualman_candidates") and not params.get("virtualman_id"):
+            latest_virtualman = _h5_dh_latest_virtualman(db, target_user_id)
+            if latest_virtualman:
+                params["virtualman_id"] = latest_virtualman
     params["script_source"] = "ip_daily_industry_hot_oral"
     if _h5_dh_provider() != _DIGITAL_HUMAN_PROVIDER_V2:
         legacy_payload = dict(payload)
@@ -544,8 +679,11 @@ def _enrich_digital_human_voice_payload(
         candidates = params.get("voice_candidates") if isinstance(params.get("voice_candidates"), list) else []
         if candidates and isinstance(candidates[0], dict):
             voice = _h5_dh_clean_text(candidates[0].get("voice") or candidates[0].get("speaker_id"), 128)
-    if not voice and "voice_candidates" not in params:
-        voice = _h5_dh_resolve_voice(db, target_user_id, "")
+    if "voice_candidates" not in params:
+        # Validate even a non-empty requested voice. Deleted/disabled assets
+        # must never remain in a task payload and should fall back to the
+        # latest active voice (or be removed when none exists).
+        voice = _h5_dh_resolve_voice(db, target_user_id, voice)
     if voice:
         params["voice"] = voice
         params["speaker_id"] = voice
@@ -872,6 +1010,7 @@ def _enrich_native_wechat_workflow_payload(
     *,
     payload: Dict[str, Any],
     target_user_id: int,
+    force_saved_config: bool = False,
 ) -> Dict[str, Any]:
     if _clean_profile_text(payload.get("action"), 80) != "native_wechat_poll":
         return payload
@@ -890,7 +1029,7 @@ def _enrich_native_wechat_workflow_payload(
         if key not in saved:
             continue
         current = params.get(key)
-        if current not in (None, "", [], {}):
+        if not force_saved_config and current not in (None, "", [], {}):
             continue
         params[key] = copy.deepcopy(saved[key])
     if pref and not _clean_profile_text(params.get("account_id"), 128):
@@ -903,6 +1042,141 @@ def _enrich_native_wechat_workflow_payload(
         params["group_invite_rule_status"] = "configured" if has_rules else "pending_rules"
     out["params"] = params
     return out
+
+
+_LIVE_PERSONAL_TEMPLATE_TASK_KINDS = {"client_workflow", "capability"}
+_LIVE_PERSONAL_TEMPLATE_ACTIONS = {
+    "local_bestseller_plan",
+    "local_bestseller_scene_batch",
+    "local_bestseller_daily_video",
+    "shanjian_digital_human_video",
+    "native_wechat_poll",
+}
+
+
+def _workflow_uses_live_personal_template(task_kind: str, payload: Dict[str, Any]) -> bool:
+    if task_kind not in _LIVE_PERSONAL_TEMPLATE_TASK_KINDS:
+        return False
+    context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    action = _clean_profile_text(payload.get("action"), 80).lower()
+    capability_id = _clean_profile_text(payload.get("capability_id"), 128).lower()
+    return bool(
+        str(payload.get("template_source") or "").strip().lower() == "personal_current"
+        or str(context.get("template_source") or "").strip().lower() == "personal_current"
+        or str(context.get("workflow_template_id") or "").strip()
+        or action in _LIVE_PERSONAL_TEMPLATE_ACTIONS and str(context.get("workflow_node_id") or "").strip()
+        or capability_id == _HIFLY_TTS_CAPABILITY_ID and str(context.get("workflow_node_id") or "").strip()
+    )
+
+
+def _refresh_live_personal_template_payload(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Overlay only template-owned fields from the latest saved IP settings.
+
+    Workflow payloads are durable scheduling records, not configuration
+    snapshots. This function runs immediately before enqueue/claim/execution;
+    node action, timing and quantity fields stay untouched.
+    """
+    source = dict(payload or {})
+    if not _workflow_uses_live_personal_template(task_kind, source):
+        return source
+    personal = _h5_dh_personal_default_template(db, int(target_user_id))
+    if personal is None:
+        return source
+    context_params = _h5_dh_context_params(db, int(target_user_id))
+    action = _clean_profile_text(source.get("action"), 80).lower()
+    capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
+    if task_kind == "capability" and capability_id == _HIFLY_TTS_CAPABILITY_ID:
+        inner = dict(source.get("payload") if isinstance(source.get("payload"), dict) else {})
+        for key in (
+            "requirements",
+            "keyword_ids",
+            "keywords",
+            "keyword_texts",
+            "competitors",
+            "memory_doc_ids",
+            "memory_docs",
+            "language",
+            "target_language",
+        ):
+            if key in context_params:
+                inner[key] = copy.deepcopy(context_params[key])
+        avatars = context_params.get("digital_human_resources", {}).get("avatars", [])
+        if isinstance(avatars, list) and avatars:
+            avatar = _h5_dh_clean_text(avatars[0].get("avatar") or avatars[0].get("virtualman_id"), 128)
+            if avatar:
+                inner["avatar"] = avatar
+        else:
+            inner.pop("avatar", None)
+            inner.pop("avatar_id", None)
+        voice = _h5_dh_clean_text(context_params.get("voice"), 128)
+        if voice:
+            inner["voice"] = voice
+        else:
+            inner.pop("voice", None)
+        source["payload"] = inner
+        return source
+    if task_kind == "client_workflow":
+        params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
+        if action in _LOCAL_BESTSELLER_ACTIONS:
+            # The normal sales workflow follows the current IP persona. A
+            # custom one-off profile remains an intentional node override.
+            if not params.get("profile_override") and _clean_profile_text(params.get("profile_source"), 32).lower() != "custom":
+                params.pop("profile", None)
+        elif action == "native_wechat_poll":
+            # Template language/memory and the mounted account's current
+            # takeover settings must replace activation-time values.
+            for key in ("language", "target_language", "memory_doc_ids"):
+                if key in context_params:
+                    params[key] = copy.deepcopy(context_params[key])
+            source["params"] = params
+            source = _enrich_native_wechat_workflow_payload(
+                db,
+                payload=source,
+                target_user_id=int(target_user_id),
+            )
+            return source
+        elif action == "shanjian_digital_human_video":
+            # All inputs used to build the script/TTS request come from the
+            # latest template. Explicit node controls such as title, speed,
+            # polling and rotation slot are retained.
+            for key in (
+                "requirements",
+                "keyword_ids",
+                "keywords",
+                "keyword_texts",
+                "competitors",
+                "memory_doc_ids",
+                "memory_docs",
+                "language",
+                "target_language",
+            ):
+                if key in context_params:
+                    params[key] = copy.deepcopy(context_params[key])
+            candidates = context_params.get("virtualman_candidates")
+            voice_candidates = context_params.get("voice_candidates")
+            params["virtualman_candidates"] = copy.deepcopy(candidates if isinstance(candidates, list) else [])
+            params["voice_candidates"] = copy.deepcopy(voice_candidates if isinstance(voice_candidates, list) else [])
+            params["virtualman_selection_mode"] = "daily_sequence" if params["virtualman_candidates"] else "fixed"
+            params["voice_selection_mode"] = "daily_sequence" if params["voice_candidates"] else "fixed"
+            params.pop("virtualman_id", None)
+            params.pop("voice", None)
+            params.pop("speaker_id", None)
+            if params["virtualman_candidates"]:
+                params["virtualman_id"] = _h5_dh_clean_text(context_params.get("virtualman_id"), 128)
+            if params["voice_candidates"]:
+                voice = _h5_dh_clean_text(context_params.get("voice"), 128)
+                if voice:
+                    params["voice"] = voice
+                    params["speaker_id"] = voice
+        source["params"] = params
+    return source
 
 
 def _digital_human_sequence_slot(
@@ -2766,7 +3040,22 @@ def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Di
             payload=dict(run_payload),
             target_user_id=task.user_id,
         )
+    if task.task_kind == "capability":
+        run_payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task.task_kind,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+            now=now,
+        )
     if task.task_kind == "client_workflow":
+        run_payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task.task_kind,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+            now=now,
+        )
         run_payload = _normalize_sales_digital_human_run_payload(task.task_kind, dict(run_payload))
         run_payload = _enrich_local_bestseller_workflow_payload(
             db,
@@ -4279,7 +4568,22 @@ def _create_task_row(
         _normalize_goal_video_task_payload(payload)
     interval_seconds = None
     now = datetime.utcnow()
+    if task_kind == "capability":
+        payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task_kind,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+            now=now,
+        )
     if task_kind == "client_workflow":
+        payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task_kind,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+            now=now,
+        )
         payload = _enrich_local_bestseller_workflow_payload(db, payload=dict(payload), target_user_id=target_user_id, now=now)
         payload = _enrich_native_wechat_workflow_payload(
             db,
@@ -4898,6 +5202,19 @@ def pending_scheduled_task_runs(
         )
         if not row:
             continue
+        # A pending run may have been materialized before the user changed
+        # Personal Settings. Resolve the live template at the exact claim
+        # boundary so the client never receives an activation-time snapshot.
+        live_payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=row.task_kind,
+            payload=dict(row.payload or {}),
+            target_user_id=row.user_id,
+            now=now,
+        )
+        if live_payload != (row.payload or {}):
+            row.payload = live_payload
+            row.updated_at = now
         refreshed_payload = _enrich_digital_human_voice_payload(
             db,
             payload=dict(row.payload or {}),

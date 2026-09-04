@@ -1174,10 +1174,42 @@ def _sales_digital_human_template_id(
 ) -> str:
     personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
     current_meta = current.meta if current and isinstance(current.meta, dict) else {}
-    raw = current_meta.get("digital_human_template") if "digital_human_template" in current_meta else personal_meta.get("digital_human_template")
+    raw, current_configured = _sales_digital_human_meta_value(current_meta, "digital_human_template", "digital_human_template_configured")
+    if not current_configured:
+        raw = personal_meta.get("digital_human_template")
     if not isinstance(raw, dict):
         return ""
     return _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"), 128)
+
+
+def _sales_digital_human_meta_value(
+    meta: dict[str, Any],
+    key: str,
+    configured_key: str,
+) -> tuple[Any, bool]:
+    """Resolve a selected digital-human value without treating empty legacy
+    metadata as an intentional override.
+
+    New saves include ``*_configured`` so an explicit clear remains a clear;
+    old rows with an empty current-template value still fall back to the
+    personal selection.
+    """
+    if key not in meta:
+        return None, False
+    value = meta.get(key)
+    # ``None`` is the legacy representation of an explicit "do not use"
+    # choice for the template itself; keep that clear instead of falling back.
+    if value is None:
+        return None, True
+    if meta.get(configured_key) is True:
+        return value, True
+    if isinstance(value, dict):
+        if any(value.get(name) for name in ("avatars", "voices")):
+            return value, True
+        if any(str(value.get(name) or "").strip() for name in ("style_id", "styleId", "id")):
+            return value, True
+        return value, False
+    return value, bool(value)
 
 
 def _sales_digital_human_resources(
@@ -1192,7 +1224,13 @@ def _sales_digital_human_resources(
     """
     personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
     current_meta = current.meta if current and isinstance(current.meta, dict) else {}
-    raw = current_meta.get("digital_human_resources") if "digital_human_resources" in current_meta else personal_meta.get("digital_human_resources")
+    raw, current_configured = _sales_digital_human_meta_value(
+        current_meta,
+        "digital_human_resources",
+        "digital_human_resources_configured",
+    )
+    if not current_configured:
+        raw = personal_meta.get("digital_human_resources")
     if not isinstance(raw, dict):
         return {"avatars": [], "voices": []}
 
@@ -1202,7 +1240,7 @@ def _sales_digital_human_resources(
         if not isinstance(item, dict):
             continue
         status = _clean_text(item.get("status") or item.get("state"), 32).lower()
-        if status and status not in {"succeed", "success", "completed", "complete", "done"}:
+        if status and status not in {"succeed", "success", "completed", "complete", "done", "ready", "published", "active"}:
             continue
         provider = _clean_text(item.get("provider") or item.get("source"), 32).lower()
         virtualman_id = _clean_text(item.get("virtualman_id") or item.get("virtualmanId"), 128)
@@ -1235,7 +1273,7 @@ def _sales_digital_human_resources(
         if not isinstance(item, dict):
             continue
         status = _clean_text(item.get("status") or item.get("state"), 32).lower()
-        if status and status not in {"succeed", "success", "completed", "complete", "done"}:
+        if status and status not in {"succeed", "success", "completed", "complete", "done", "ready", "published", "active"}:
             continue
         provider = _clean_text(item.get("provider") or item.get("source"), 32).lower()
         voice = _clean_text(item.get("voice") or item.get("voice_id") or item.get("speaker_id") or item.get("speakerId"), 128)
@@ -2472,6 +2510,10 @@ def _activate_nodes_for_device(
                 "workflow_template_id": template_id,
                 "workflow_template_name": template_name,
                 "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
+                # Template resources are live personal-settings references.
+                # The node context identifies the workflow only; execution
+                # resolves the current template instead of this activation.
+                "template_source": "personal_current",
                 "workflow_node_id": node.get("id"),
                 "workflow_node_time": node.get("time"),
                 "workflow_node_end_time": node.get("end_time") or "",
