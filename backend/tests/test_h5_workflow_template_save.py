@@ -14,6 +14,7 @@ from backend.app.api.h5_workflows import (
     delete_workflow_template,
     update_workflow_template,
     _clean_nodes,
+    _is_system_catalog_template,
 )
 from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, H5WorkflowTemplateGrant, ScheduledTask
 
@@ -55,6 +56,19 @@ def _douyin_private_body(params: dict | None = None) -> WorkflowTemplateIn:
             }
         ],
     )
+
+
+@pytest.mark.parametrize("template_key", ("system_sales", "system_short_video_wechat", "system_douyin_leads"))
+def test_zero_owner_system_catalog_template_is_recognized(template_key):
+    row = H5WorkflowTemplate(
+        owner_user_id=0,
+        name="系统模板",
+        nodes=[],
+        status="active",
+        meta={"source": "system_catalog", "system_template_key": template_key},
+    )
+
+    assert _is_system_catalog_template(row)
 
 
 def test_granted_workflow_can_activate_on_recipient_device_and_stays_read_only(

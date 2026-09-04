@@ -2351,7 +2351,7 @@ def _system_workflow_template(
 
 
 def _is_system_catalog_template(row: Optional[H5WorkflowTemplate]) -> bool:
-    if row is None or int(row.owner_user_id or -1) != _SYSTEM_WORKFLOW_OWNER_ID:
+    if row is None or row.owner_user_id is None or int(row.owner_user_id) != _SYSTEM_WORKFLOW_OWNER_ID:
         return False
     meta = row.meta if isinstance(row.meta, dict) else {}
     return (
