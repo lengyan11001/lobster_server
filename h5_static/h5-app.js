@@ -1280,6 +1280,7 @@
       "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.png",
       viral_video_remix: "/h5-static/marketing-cover-remix.png",
       ip_content_daily: "/h5-static/marketing-cover-ip-daily.png",
+      moments_sales_coach: "/h5-static/marketing-cover-moments-coach.png",
       "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.png",
     };
     const DOUYIN_TASK_ACTIONS = {

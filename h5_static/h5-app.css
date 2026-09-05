@@ -9787,6 +9787,18 @@
       background-size: 44px 44px, auto;
     }
 
+    .designer-ability-art.has-cover {
+      background: #fff4ec;
+    }
+    .designer-ability-art.has-cover img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
     .designer-ability-art::before,
     .designer-ability-art::after {
       content: "";
