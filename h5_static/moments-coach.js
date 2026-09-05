@@ -1,17 +1,7 @@
 (() => {
   const qs = new URLSearchParams(location.search);
   const brand = (qs.get('brand') || 'bihuo').toLowerCase();
-  const embedded = qs.get('embedded') === '1';
   const $ = (id) => document.getElementById(id);
-  const postEmbeddedMessage = (message) => {
-    if (!embedded || window.parent === window) return;
-    try { window.parent.postMessage({ ...message, source: 'moments-coach' }, location.origin); } catch (_) {}
-  };
-  const syncEmbeddedHeight = () => {
-    if (!embedded) return;
-    const height = Math.max(document.documentElement.scrollHeight || 0, document.body?.scrollHeight || 0);
-    postEmbeddedMessage({ type: 'moments-coach-height', height });
-  };
   const readToken = () => localStorage.getItem(`lobster_h5_token:${brand}`) || localStorage.getItem('lobster_h5_token') || '';
   const toast = (msg) => { const el = $('toast'); if (!el) return; el.textContent = String(msg || '操作失败'); el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); };
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -34,8 +24,8 @@
   const panels = () => [...document.querySelectorAll('[data-panel]')];
   let panelHistory = [];
   const currentPanel = () => panels().find(p => !p.classList.contains('hidden'))?.dataset.panel || 'home';
-  const showPanel = (name, options = {}) => { const current = currentPanel(); if (options.push && current !== name) panelHistory.push(current); if (name === 'home' && options.reset !== false) panelHistory = []; panels().forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name)); if (['history','materials','plan'].includes(name)) loadList(name).catch(e => toast(e.message)); window.scrollTo({top:0, behavior:'smooth'}); requestAnimationFrame(syncEmbeddedHeight); };
-  const goBackPanel = () => { const current = currentPanel(); const previous = panelHistory.pop(); if (previous) { showPanel(previous, {push:false, reset:false}); return; } if (current !== 'home') { showPanel('home', {push:false}); return; } if (embedded) { postEmbeddedMessage({ type: 'moments-coach-back' }); return; } location.href = `/?brand=${encodeURIComponent(brand)}`; };
+  const showPanel = (name, options = {}) => { const current = currentPanel(); if (options.push && current !== name) panelHistory.push(current); if (name === 'home' && options.reset !== false) panelHistory = []; panels().forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name)); if (['history','materials','plan'].includes(name)) loadList(name).catch(e => toast(e.message)); window.scrollTo({top:0, behavior:'smooth'}); };
+  const goBackPanel = () => { const current = currentPanel(); const previous = panelHistory.pop(); if (previous) { showPanel(previous, {push:false, reset:false}); return; } if (current !== 'home') { showPanel('home', {push:false}); return; } location.href = `/?brand=${encodeURIComponent(brand)}`; };
   const CIRCLE_UI = {
     '': { eyebrow:'从真实素材出发', title:'今天，想让谁记住什么？', description:'把发生的事、对方的顾虑或一个变化告诉我。教练会判断内容节奏，并给你三个可以直接修改的版本。', visible:['happened','problem','question','desired','change'], labels:{happened:'今天发生了什么',problem:'她之前卡在哪里',question:'她问过什么',desired:'她真正想要的结果',change:'现在有什么进展'}, placeholders:{happened:'例如：一位客户把拖了很久的方案重新拿出来聊……',problem:'客户原来的困扰',question:'保留真实问法',desired:'她希望发生的变化',change:'真实变化、反馈或阶段结果'}},
     '生活圈': { eyebrow:'生活圈', title:'生活圈', description:'用你的日常，将你打造成为朋友圈之星。', visible:['happened'], labels:{happened:'谁做了什么事'}, placeholders:{happened:'比如：下午陪我儿子骑自行车，他骑得很慢，我在后面跟着，突然觉得很放松'}},
@@ -101,9 +91,4 @@
     } catch (x) { button.disabled = false; toast(x.message); }
   }, true);
   try{fill(JSON.parse(localStorage.getItem('lobster_moments_coach_draft')||'null')||{});}catch{} updateCircleUI($('circle')?.value || ''); showPanel('home');
-  if (embedded) {
-    window.addEventListener('resize', syncEmbeddedHeight, {passive:true});
-    if (window.ResizeObserver) new ResizeObserver(syncEmbeddedHeight).observe(document.body);
-    setTimeout(syncEmbeddedHeight, 0);
-  }
 })();
