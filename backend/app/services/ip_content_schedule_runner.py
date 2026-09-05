@@ -58,7 +58,7 @@ def _tick_once_sync() -> int:
             scheduled_at = candidate.next_run_at
             if scheduled_at is None:
                 continue
-            if _scheduled_occurrence_expired(candidate, scheduled_at, now):
+            if _scheduled_occurrence_expired(db, candidate, scheduled_at, now):
                 _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
                 expired_count += 1
                 continue

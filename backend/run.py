@@ -101,13 +101,19 @@ if __name__ == "__main__":
         workers = max(1, int(workers_raw))
     except ValueError:
         workers = 1
+    max_requests_raw = (os.environ.get("BACKEND_MAX_REQUESTS") or "2000").strip()
+    try:
+        max_requests = max(100, int(max_requests_raw))
+    except ValueError:
+        max_requests = 2000
     _logger.info(
-        "[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s workers=%s",
+        "[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s workers=%s max_requests=%s",
         host,
         port,
         edition,
         _log_level_name,
         workers,
+        max_requests,
     )
     uvicorn.run(
         "backend.app.main:app",
@@ -115,4 +121,5 @@ if __name__ == "__main__":
         port=port,
         log_level=_log_level_name,
         workers=workers,
+        limit_max_requests=max_requests,
     )

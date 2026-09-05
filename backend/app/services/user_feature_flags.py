@@ -36,6 +36,8 @@ LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
 MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
+IP_CONTENT_ORAL_SKILL_ID = "ip_content_oral_skill"
+IP_CONTENT_MOMENTS_SKILL_ID = "ip_content_moments_skill"
 DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID = "douyin_platform_information_desk"
 DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY = "douyin_platform_information_desk_access"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
@@ -48,6 +50,9 @@ RETIRED_PACKAGE_IDS = frozenset({
     "computer_use_skill",
     "media_edit_skill",
     "ecommerce_publish_skill",
+    # Compatibility alias for the former combined IP daily package. The
+    # split packages below are the only new permissions/store entries.
+    "ip_content_daily_skill",
 })
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     HOME_AI_CHAT_ENTRY_ID,
@@ -121,6 +126,24 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": OPENAI_OFFICIAL_IMAGE_CHANNEL_ACCESS_KEY,
+    },
+    {
+        "id": IP_CONTENT_ORAL_SKILL_ID,
+        "name": "IP口播文案",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": IP_CONTENT_ORAL_SKILL_ID,
+    },
+    {
+        "id": IP_CONTENT_MOMENTS_SKILL_ID,
+        "name": "朋友圈图文",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": IP_CONTENT_MOMENTS_SKILL_ID,
     },
     {
         "id": HOME_AI_CHAT_ENTRY_ID,
@@ -366,14 +389,23 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
         return {HOMEPAGE_FEATURE_GATES_MARKER: True}
 
     try:
-        from ..api.skills import _default_visible_packages_for_request, _user_has_custom_visibility
+        from ..api.skills import _default_visible_packages_for_request, _user_has_custom_visibility, _user_visible_package_ids
         from ..models import User
 
         user = db.query(User).filter(User.id == int(user_id)).first()
         has_custom = _user_has_custom_visibility(db, int(user_id))
-        if user is not None and not has_custom:
-            from ..api.skills import _expand_group_visibility
-            visible = _expand_group_visibility(set(_default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))))
+        if user is not None:
+            # Reuse the skill-store visibility resolver so the split IP
+            # permissions are migrated for existing custom-visibility users
+            # before auth/me feature gates are evaluated.
+            visible = _user_visible_package_ids(
+                db,
+                user,
+                is_overseas_client=bool(getattr(user, "is_overseas_user", False)),
+            )
+            if not has_custom:
+                from ..api.skills import _expand_group_visibility
+                visible = _expand_group_visibility(set(visible))
         else:
             visible = {
                 row[0]

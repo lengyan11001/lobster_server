@@ -85,6 +85,8 @@ _WORKFLOW_NODE_CAPABILITY_IDS = {
     "comfly.seedance.tvc.pipeline": "comfly.seedance.tvc.pipeline",
     "comfly.daihuo.pipeline": "comfly.daihuo.pipeline",
     "ip_content_daily": "ip_content_daily",
+    "ip_content_oral": "ip_content_oral",
+    "ip_content_moments": "ip_content_moments",
     "wewrite.article.pipeline": "wewrite.article.pipeline",
 }
 _WORKFLOW_NODE_PACKAGE_IDS = {
@@ -93,6 +95,8 @@ _WORKFLOW_NODE_PACKAGE_IDS = {
     "comfly.daihuo.pipeline": "comfly_veo_skill",
     "image_composer_studio": "goal_video_pipeline_skill",
     "ip_content_daily": "ip_content_daily_skill",
+    "ip_content_oral": "ip_content_oral_skill",
+    "ip_content_moments": "ip_content_moments_skill",
     "wewrite.article.pipeline": "wewrite_official_account_skill",
     "linkedin_leads": "linkedin_leads",
     "linkedin_mining": "linkedin_leads",
@@ -105,6 +109,8 @@ _WORKFLOW_ACTION_CAPABILITY_IDS = {
 }
 _WORKFLOW_TASK_CAPABILITY_IDS = {
     "ip_content_daily": "ip_content_daily",
+    "ip_content_oral": "ip_content_oral",
+    "ip_content_moments": "ip_content_moments",
 }
 _WORKFLOW_PACKAGE_LABELS = {
     "hifly_digital_human_skill": "数字人口播视频",
@@ -112,6 +118,8 @@ _WORKFLOW_PACKAGE_LABELS = {
     "comfly_veo_skill": "爆款TVC",
     "goal_video_pipeline_skill": "AI设计图",
     "ip_content_daily_skill": "IP日更文案",
+    "ip_content_oral_skill": "IP口播文案",
+    "ip_content_moments_skill": "朋友圈图文",
     "wewrite_official_account_skill": "公众号文章",
     "linkedin_leads": "LinkedIn线索挖掘",
     "reddit_leads": "Reddit线索采集",
@@ -206,12 +214,39 @@ def _workflow_node_access_requirements(node: dict[str, Any], capability_packages
         or _WORKFLOW_NODE_CAPABILITY_IDS.get(key),
         128,
     )
+    # Split IP content nodes keep the executable task_kind for backward
+    # compatibility, so the node key is the authoritative capability for
+    # permission checks.
+    if task_kind == "ip_content_daily" and key in {"ip_content_oral", "ip_content_moments"}:
+        capability_id = key
     if not capability_id and key in capability_packages:
         capability_id = key
 
     required_features: set[str] = set()
     required_packages: set[str] = set()
     effective_key = action or key
+    legacy_ip_daily = False
+    if task_kind == "ip_content_daily" and capability_id == "ip_content_daily" and key not in {
+        "ip_content_oral",
+        "ip_content_moments",
+    }:
+        # Existing schedules still use the combined task kind. Resolve their
+        # permission from the actual selected output groups so they continue
+        # to run after the skill is split into two independently controlled
+        # entries.
+        selected_tasks = {
+            _clean_text(item, 80)
+            for item in (payload.get("tasks") if isinstance(payload.get("tasks"), list) else [])
+            if _clean_text(item, 80)
+        }
+        oral_tasks = {"industry_hot_oral", "professional_ip_oral"}
+        if selected_tasks == {"moments_candidate"}:
+            required_packages.add("ip_content_moments_skill")
+        elif selected_tasks and selected_tasks.issubset(oral_tasks):
+            required_packages.add("ip_content_oral_skill")
+        else:
+            required_packages.update({"ip_content_oral_skill", "ip_content_moments_skill"})
+        legacy_ip_daily = True
     if effective_key in {"native_wechat_poll", "native_wechat_add_friend", "native_wechat_moments_engage", "native_wechat_group_invite"}:
         required_features.add("private_domain_entry")
     if effective_key == "douyin_leads" or key == "douyin_leads" or task_kind == "douyin_leads":
@@ -228,7 +263,18 @@ def _workflow_node_access_requirements(node: dict[str, Any], capability_packages
         package_id = capability_packages.get(capability_id)
         if package_id:
             required_packages.add(package_id)
-    package_from_key = _WORKFLOW_NODE_PACKAGE_IDS.get(effective_key) or _WORKFLOW_NODE_PACKAGE_IDS.get(key)
+        # These split IP capabilities are server-task aliases rather than
+        # MCP catalog entries, so they are not necessarily present in the
+        # registry's ``capabilities`` map. Keep their package gate explicit.
+        split_package = {
+            "ip_content_oral": "ip_content_oral_skill",
+            "ip_content_moments": "ip_content_moments_skill",
+        }.get(capability_id)
+        if split_package:
+            required_packages.add(split_package)
+    package_from_key = None if legacy_ip_daily else (
+        _WORKFLOW_NODE_PACKAGE_IDS.get(effective_key) or _WORKFLOW_NODE_PACKAGE_IDS.get(key)
+    )
     if package_from_key:
         required_packages.add(package_from_key)
     return required_features, required_packages
@@ -444,7 +490,22 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "search_collect":
             collection_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
             collection_params = dict(collection_params)
-            collection_params.update(_sales_douyin_collection_reply_params(collection_params))
+            reply_params = _sales_douyin_collection_reply_params(collection_params)
+            if reply_params:
+                collection_params.update(reply_params)
+            else:
+                for key in (
+                    "reply_precise_comments",
+                    "reply_comment_mode",
+                    "reply_comment_text",
+                    "reply_comment_prompt",
+                    "reply_comment_seed_text",
+                    "comment_mode",
+                    "comment_text",
+                    "comment_prompt",
+                    "comment_seed_text",
+                ):
+                    collection_params.pop(key, None)
             collection_params["followup_actions"] = []
             collection_params.pop("touch_actions", None)
             collection_params["customer_scope"] = "current_collection_batch"
@@ -1438,26 +1499,90 @@ def _sales_douyin_collection_reply_params(params: Any) -> dict[str, Any]:
     legacy_reply = "reply_comments" in {
         _clean_text(item, 64).lower() for item in (legacy_values if isinstance(legacy_values, list) else [])
     }
-    mode = _clean_text(source.get("reply_comment_mode") or source.get("comment_mode") or "fixed", 32).lower() or "fixed"
-    has_reply_config = any(
-        key in source
-        for key in (
-            "reply_precise_comments",
-            "reply_comment_mode",
-            "reply_comment_text",
-            "reply_comment_prompt",
-            "reply_comment_seed_text",
+    explicit_enabled = _bool_param(source.get("reply_precise_comments"), False)
+    explicit_values = any(
+        _clean_text(source.get(key) or source.get(alias), 1000)
+        for key, alias in (
+            ("reply_comment_mode", "comment_mode"),
+            ("reply_comment_text", "comment_text"),
+            ("reply_comment_prompt", "comment_prompt"),
+            ("reply_comment_seed_text", "comment_seed_text"),
         )
-    ) or legacy_reply
+    )
+    # A persisted false checkbox is authoritative.  Older rows may omit the
+    # checkbox entirely and only contain a mode/text, in which case retain
+    # the legacy configuration for that user.  Do not let a stale mode on a
+    # row explicitly marked false re-enable comment replies.
+    has_reply_config = explicit_enabled or legacy_reply or (
+        "reply_precise_comments" not in source and explicit_values
+    )
     if not has_reply_config:
         return {}
-    return {
-        "reply_precise_comments": _bool_param(source.get("reply_precise_comments"), legacy_reply),
-        "reply_comment_mode": mode if mode in {"fixed", "ai", "rewrite"} else "fixed",
-        "reply_comment_text": _clean_text(source.get("reply_comment_text") or source.get("comment_text"), 500),
-        "reply_comment_prompt": _clean_text(source.get("reply_comment_prompt") or source.get("comment_prompt"), 1000),
-        "reply_comment_seed_text": _clean_text(source.get("reply_comment_seed_text") or source.get("comment_seed_text"), 500),
-    }
+    mode = _clean_text(source.get("reply_comment_mode") or source.get("comment_mode"), 32).lower()
+    result = {"reply_precise_comments": True}
+    if mode in {"fixed", "ai", "rewrite"}:
+        result["reply_comment_mode"] = mode
+    for key, alias, limit in (
+        ("reply_comment_text", "comment_text", 500),
+        ("reply_comment_prompt", "comment_prompt", 1000),
+        ("reply_comment_seed_text", "comment_seed_text", 500),
+    ):
+        value = _clean_text(source.get(key) or source.get(alias), limit)
+        if value:
+            result[key] = value
+    return result
+
+
+def _sanitize_system_douyin_collection_defaults(nodes: Any) -> list[dict[str, Any]]:
+    """Remove legacy reply defaults from the read-only system catalog.
+
+    The system workflow catalog is shared by every account, so it must never
+    carry a user's old comment mode or prompt.  An account's current Online
+    settings are resolved when the scheduled task is claimed instead.
+    """
+    prepared = copy.deepcopy(nodes) if isinstance(nodes, list) else []
+    kept: list[dict[str, Any]] = []
+    for node in prepared:
+        if not isinstance(node, dict):
+            continue
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+        action = _clean_text(payload.get("action"), 64).lower()
+        # Old system snapshots could contain a standalone reply-comments
+        # child.  Dropping it here prevents the legacy-node fold from turning
+        # replies back on after the collection parameters were sanitized.
+        if task_kind == "douyin_leads" and (
+            action == "reply_comments"
+            or _sales_douyin_node_action(node) == "reply_comments"
+        ):
+            continue
+        if task_kind == "douyin_leads" and (
+            action == "search_collect"
+            or _sales_douyin_node_action(node) == "search_collect"
+        ):
+            params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
+            for key in (
+                "reply_precise_comments",
+                "reply_comment_mode",
+                "reply_comment_text",
+                "reply_comment_prompt",
+                "reply_comment_seed_text",
+                "comment_mode",
+                "comment_text",
+                "comment_prompt",
+                "comment_seed_text",
+            ):
+                params.pop(key, None)
+            params["customer_scope"] = "current_collection_batch"
+            payload["params"] = params
+            plan["payload"] = payload
+            node["plan"] = plan
+        for child_key in ("children", "actions"):
+            if isinstance(node.get(child_key), list):
+                node[child_key] = _sanitize_system_douyin_collection_defaults(node[child_key])
+        kept.append(node)
+    return kept
 
 
 def _sales_douyin_followup_actions(value: Any) -> list[str]:
@@ -2169,13 +2294,25 @@ def _prepare_sales_workflow_nodes(
 
 
 def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, source: str = "own", grants: Optional[list[int]] = None) -> dict[str, Any]:
+    nodes = _canonical_workflow_nodes(row.nodes)
+    # System catalog rows are immutable shared defaults.  Hide any legacy
+    # reply mode/prompt that may still exist in the database; the actual run
+    # resolves the current account's Online configuration.
+    template_meta = row.meta if isinstance(row.meta, dict) else {}
+    is_system_key = _clean_text(template_meta.get("system_template_key"), 128) in _ENABLED_SYSTEM_WORKFLOW_KEYS
+    if (
+        (source in {"system", "granted"} and is_system_key)
+        or source == "system"
+        or _is_system_catalog_template(row)
+    ):
+        nodes = _sanitize_system_douyin_collection_defaults(nodes)
     return {
         "id": row.id,
         "owner_user_id": row.owner_user_id,
         "installation_id": _clean_text(row.installation_id, 128),
         "owner_name": owner.email if owner else "",
         "name": row.name,
-        "nodes": _canonical_workflow_nodes(row.nodes),
+        "nodes": nodes,
         "status": row.status,
         "source": source,
         "meta": row.meta or {},
@@ -2315,6 +2452,12 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
     template_nodes = snapshot.get("nodes") if isinstance(snapshot.get("nodes"), list) else None
     if template_nodes is None and template is not None:
         template_nodes = template.nodes or []
+    template_nodes = _canonical_workflow_nodes(template_nodes)
+    if (
+        _clean_text(snapshot.get("source"), 32).lower() in {"system", "granted"}
+        and _clean_text(snapshot.get("template_key"), 128) in _ENABLED_SYSTEM_WORKFLOW_KEYS
+    ):
+        template_nodes = _sanitize_system_douyin_collection_defaults(template_nodes)
     return {
         "id": row.id,
         "user_id": row.user_id,
@@ -2323,7 +2466,7 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
         "template_key": snapshot.get("template_key") or "",
         "template_source": snapshot.get("source") or "",
         "template_name": template.name if template else snapshot.get("name", ""),
-        "template_nodes": _canonical_workflow_nodes(template_nodes),
+        "template_nodes": template_nodes,
         "status": row.status,
         "scheduled_task_ids": row.scheduled_task_ids or [],
         "started_at": _iso(row.started_at),
@@ -2517,6 +2660,20 @@ def _activate_nodes_for_device(
     timezone_offset_minutes: Optional[int],
     snapshot_extra: Optional[dict[str, Any]] = None,
 ):
+    snapshot_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
+    if snapshot_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        nodes = _sanitize_system_douyin_collection_defaults(nodes)
+    if snapshot_key in _ENABLED_SYSTEM_WORKFLOW_KEYS and snapshot_key != "system_sales":
+        # These system catalogs also contain a Douyin collection node, but
+        # are not full sales presets and therefore must not be forced through
+        # the sales persona/resource validation path.
+        for node in nodes:
+            plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+            payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+            if _clean_text(plan.get("task_kind"), 64).lower() == "douyin_leads":
+                payload = _sales_douyin_action_payload(node, payload)
+                plan["payload"] = payload
+                node["plan"] = plan
     nodes = _prepare_sales_workflow_nodes(
         db=db,
         owner=owner,
@@ -2561,6 +2718,7 @@ def _activate_nodes_for_device(
                 "workflow_template_id": template_id,
                 "workflow_template_name": template_name,
                 "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
+                "workflow_template_source": (snapshot_extra or {}).get("source") or "",
                 # Template resources are live personal-settings references.
                 # The node context identifies the workflow only; execution
                 # resolves the current template instead of this activation.
@@ -2903,7 +3061,10 @@ def activate_workflow_template(
         template.installation_id = iid
         template.updated_at = datetime.utcnow()
         db.commit()
-    nodes = _clean_nodes(template.nodes or [])
+    raw_nodes = template.nodes or []
+    if _is_system_catalog_template(template):
+        raw_nodes = _sanitize_system_douyin_collection_defaults(raw_nodes)
+    nodes = _clean_nodes(raw_nodes)
     _assert_workflow_feature_permissions(db, owner.id, nodes)
     template_meta = template.meta if isinstance(template.meta, dict) else {}
     system_template_key = _clean_text(template_meta.get("system_template_key"), 128)
@@ -2957,7 +3118,13 @@ def activate_inline_workflow_template(
     if template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
         raise HTTPException(status_code=400, detail="该系统员工暂未开放")
     name = (body.name or "系统员工模板").strip()[:160] or "系统员工模板"
-    nodes = _clean_nodes(body.nodes or [])
+    raw_nodes = body.nodes or []
+    # Inline activation is used by the system workflow cards.  Sanitize on
+    # the server as well as in the UI so an older client cannot re-submit the
+    # catalog's stale screenshot prompt/mode.
+    if template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        raw_nodes = _sanitize_system_douyin_collection_defaults(raw_nodes)
+    nodes = _clean_nodes(raw_nodes)
     _assert_workflow_feature_permissions(db, owner.id, nodes)
     activation, stopped_ids, tasks = _activate_nodes_for_device(
         db=db,

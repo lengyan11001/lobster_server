@@ -534,6 +534,22 @@
         department: "AI营销创作",
         serverTask: true,
       },
+      "ip_content_oral": {
+        label: "IP口播文案",
+        description: "基于行业热门和专业同行数据生成行业热门口播、专业 IP 口播。",
+        packageId: "ip_content_oral_skill",
+        department: "AI营销创作",
+        serverTask: true,
+        taskKind: "ip_content_daily",
+      },
+      "ip_content_moments": {
+        label: "朋友圈图文",
+        description: "基于关键词、同行和记忆资料生成朋友圈图文与配图提示词。",
+        packageId: "ip_content_moments_skill",
+        department: "AI营销创作",
+        serverTask: true,
+        taskKind: "ip_content_daily",
+      },
       "comfly.daihuo.pipeline": {
         label: "爆款TVC",
         description: "用素材或公网图生成多分镜成片，适合商品宣传和广告视频。",
@@ -582,7 +598,8 @@
     const SCHEDULED_TASK_CAPABILITY_IDS = [
       "comfly.seedance.tvc.pipeline",
       "goal.image.pipeline",
-      "ip_content_daily",
+      "ip_content_oral",
+      "ip_content_moments",
       "hifly.video.create_by_tts",
     ];
     // H5 should dispatch new planning/generation work to Online by default;
@@ -754,16 +771,37 @@
             key: "marketing_copy_group",
             label: "AI文案智能体",
             mark: "文",
-            description: "生成IP日更、公众号文章和营销文案。",
+            description: "生成IP口播、朋友圈图文、公众号文章和营销文案。",
             children: [
               {
-                key: "ip_content_daily",
-                label: "IP日更文案",
+                key: "ip_content_oral",
+                label: "IP口播文案",
                 mark: "IP",
-                description: "生成短视频口播、朋友圈文案和配图提示词。",
+                description: "生成行业热门口播和专业 IP 口播文案。",
+                capabilityId: "ip_content_oral",
+                packageId: "ip_content_oral_skill",
+                serverTask: true,
+              },
+              {
+                key: "ip_content_moments",
+                label: "朋友圈图文",
+                mark: "圈",
+                description: "生成朋友圈图文内容和配图提示词。",
+                capabilityId: "ip_content_moments",
+                packageId: "ip_content_moments_skill",
+                serverTask: true,
+              },
+              {
+                // Kept only so older saved workflows can still be resolved;
+                // it is not offered as a new node after the split.
+                key: "ip_content_daily",
+                label: "IP日更文案（旧）",
+                mark: "旧",
+                description: "兼容旧版 IP 日更工作流。",
                 capabilityId: "ip_content_daily",
                 packageId: "ip_content_daily_skill",
                 serverTask: true,
+                legacy: true,
               },
               {
                 key: "moments_sales_coach",
@@ -898,6 +936,24 @@
       { value: "professional_ip_oral", label: "专业 IP 口播" },
       { value: "moments_candidate", label: "朋友圈文案" },
     ];
+    const IP_CONTENT_ORAL_CAPABILITY = "ip_content_oral";
+    const IP_CONTENT_MOMENTS_CAPABILITY = "ip_content_moments";
+    function isIpContentCapability(value) {
+      const id = String(value || "").trim();
+      return id === "ip_content_daily" || id === IP_CONTENT_ORAL_CAPABILITY || id === IP_CONTENT_MOMENTS_CAPABILITY;
+    }
+    function ipContentTasksForCapability(value) {
+      const id = String(value || "").trim();
+      if (id === IP_CONTENT_ORAL_CAPABILITY) return ["industry_hot_oral", "professional_ip_oral"];
+      if (id === IP_CONTENT_MOMENTS_CAPABILITY) return ["moments_candidate"];
+      return IP_DAILY_TASK_OPTIONS.map((item) => item.value);
+    }
+    function ipContentCapabilityLabel(value) {
+      const id = String(value || "").trim();
+      if (id === IP_CONTENT_ORAL_CAPABILITY) return "IP口播文案";
+      if (id === IP_CONTENT_MOMENTS_CAPABILITY) return "朋友圈图文";
+      return "IP日更文案";
+    }
     const SALES_WORKFLOW_PRESET = [
       { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }, { time: "09:00", platform: "wechat_channels", label: "同城爆款视频发布视频号", note: "同城爆款视频发布视频号，配文案、带标签发布" }] },
       { time: "06:30", endTime: "07:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "09:30", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
@@ -941,7 +997,8 @@
     const SALES_PERSONA_DEFAULT_KEYS = new Set([
       "local_bestseller",
       "hifly.video.create_by_tts",
-      "ip_content_daily",
+      "ip_content_oral",
+      "ip_content_moments",
       "douyin_leads",
       "wecom_reply",
       "native_wechat_poll",
@@ -1216,13 +1273,20 @@
           collectionParams.followup_actions = [];
           delete collectionParams.touch_actions;
           collectionParams.customer_scope = "current_collection_batch";
-          collectionParams.reply_precise_comments = workflowBoolParam(collectionParams.reply_precise_comments, legacyCollectionActions.includes("reply_comments"));
-          collectionParams.reply_comment_mode = ["fixed", "ai", "rewrite"].includes(String(collectionParams.reply_comment_mode || collectionParams.comment_mode || "fixed").toLowerCase())
-            ? String(collectionParams.reply_comment_mode || collectionParams.comment_mode || "fixed").toLowerCase()
-            : "fixed";
-          collectionParams.reply_comment_text = String(collectionParams.reply_comment_text || collectionParams.comment_text || "");
-          collectionParams.reply_comment_prompt = String(collectionParams.reply_comment_prompt || collectionParams.comment_prompt || "");
-          collectionParams.reply_comment_seed_text = String(collectionParams.reply_comment_seed_text || collectionParams.comment_seed_text || "");
+          const legacyReplyEnabled = legacyCollectionActions.includes("reply_comments");
+          const replyEnabled = workflowBoolParam(collectionParams.reply_precise_comments, false) || legacyReplyEnabled;
+          const replyMode = String(collectionParams.reply_comment_mode || collectionParams.comment_mode || "").toLowerCase();
+          const replyText = String(collectionParams.reply_comment_text || collectionParams.comment_text || "").trim();
+          const replyPrompt = String(collectionParams.reply_comment_prompt || collectionParams.comment_prompt || "").trim();
+          const replySeedText = String(collectionParams.reply_comment_seed_text || collectionParams.comment_seed_text || "").trim();
+          ["reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text", "comment_mode", "comment_text", "comment_prompt", "comment_seed_text"].forEach((key) => delete collectionParams[key]);
+          if (replyEnabled) {
+            collectionParams.reply_precise_comments = true;
+            if (["fixed", "ai", "rewrite"].includes(replyMode)) collectionParams.reply_comment_mode = replyMode;
+            if (replyText) collectionParams.reply_comment_text = replyText;
+            if (replyPrompt) collectionParams.reply_comment_prompt = replyPrompt;
+            if (replySeedText) collectionParams.reply_comment_seed_text = replySeedText;
+          }
           collectionPayload.params = collectionParams;
           collectionPlan.payload = collectionPayload;
           currentCollection.plan = collectionPlan;
@@ -1269,7 +1333,8 @@
       "local_bestseller",
       "image_composer_studio",
       "marketing_copy_group",
-      "ip_content_daily",
+      "ip_content_oral",
+      "ip_content_moments",
       "moments_sales_coach",
       "wewrite.article.pipeline",
     ]);
@@ -1280,6 +1345,8 @@
       "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.png",
       viral_video_remix: "/h5-static/marketing-cover-remix.png",
       ip_content_daily: "/h5-static/marketing-cover-ip-daily.png",
+      ip_content_oral: "/h5-static/marketing-cover-ip-daily.png",
+      ip_content_moments: "/h5-static/marketing-cover-ip-daily.png",
       moments_sales_coach: "/h5-static/marketing-cover-moments-coach.png",
       "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.png",
     };
@@ -2763,6 +2830,8 @@
         "goal.image.pipeline": "文案+创意图片",
         "hifly.video.create_by_tts": "数字人口播",
         "ip_content_daily": "IP日更文案",
+        "ip_content_oral": "IP口播文案",
+        "ip_content_moments": "朋友圈图文",
         "douyin_leads": "抖音获客",
         "comfly.daihuo.pipeline": "爆款TVC",
         "comfly.seedance.tvc.pipeline": "创意分镜头视频",
@@ -2796,7 +2865,12 @@
 
     function taskCapabilityId(row) {
       const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
-      if (row && row.task_kind === "ip_content_daily") return "ip_content_daily";
+      if (row && row.task_kind === "ip_content_daily") {
+        const tasks = Array.isArray(payload.tasks) ? new Set(payload.tasks.map((item) => String(item || "").trim()).filter(Boolean)) : new Set();
+        if (tasks.size === 1 && tasks.has("moments_candidate")) return "ip_content_moments";
+        if (tasks.size > 0 && Array.from(tasks).every((item) => item === "industry_hot_oral" || item === "professional_ip_oral")) return "ip_content_oral";
+        return "ip_content_daily";
+      }
       if (row && row.task_kind === "douyin_leads") return "douyin_leads";
       if (row && ["social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(row.task_kind)) return row.task_kind;
       return String(payload.capability_id || "");
@@ -3743,9 +3817,9 @@
 
     function syncWorkflowDouyinReplyCommentFields(prefix = "workflowParam", collectionVisible = true) {
       const modeId = `${prefix}DouyinReplyCommentMode`;
-      const mode = ["fixed", "ai", "rewrite"].includes(workflowParamValue(modeId))
+      const mode = ["", "fixed", "ai", "rewrite"].includes(workflowParamValue(modeId))
         ? workflowParamValue(modeId)
-        : "fixed";
+        : "";
       [
         ["Fixed", "fixed"],
         ["Ai", "ai"],
@@ -3827,7 +3901,7 @@
         setFieldValue("workflowNodeDouyinMaxResults", 50);
         setFieldValue("workflowNodeDouyinMode", "script");
         setFieldValue("workflowNodeDouyinReplyPreciseComments", false);
-        setFieldValue("workflowNodeDouyinReplyCommentMode", "fixed");
+        setFieldValue("workflowNodeDouyinReplyCommentMode", "");
         setFieldValue("workflowNodeDouyinReplyCommentText", "");
         setFieldValue("workflowNodeDouyinReplyCommentPrompt", "");
         setFieldValue("workflowNodeDouyinReplyCommentSeedText", "");
@@ -3968,10 +4042,11 @@
       return splitTextareaList(workflowParamValue(id));
     }
 
-    function workflowIpDailyTaskOptionsHtml() {
+    function workflowIpDailyTaskOptionsHtml(capabilityId = "ip_content_daily") {
+      const allowed = new Set(ipContentTasksForCapability(capabilityId));
       return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox ip-daily-task-option">
-          <input type="checkbox" data-workflow-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <input type="checkbox" data-workflow-ip-daily-task="${escapeHtml(item.value)}"${allowed.has(item.value) ? " checked" : ""}${String(capabilityId) !== "ip_content_daily" ? " disabled" : ""}>
           <span>${escapeHtml(item.label)}</span>
         </label>
       `).join("")}</div>`;
@@ -4013,9 +4088,9 @@
 
     function workflowCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
-      if (id === "ip_content_daily") {
+      if (isIpContentCapability(id)) {
         return taskFieldHtml("模板", ipTemplateSelectControl("workflowParamIpTemplate"), true)
-          + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(id), true)
           + ipDailyAdvancedFieldsHtml("workflowParamIp");
       }
       if (id === "goal.image.pipeline") {
@@ -4070,7 +4145,7 @@
     }
 
     function workflowDouyinReplyCommentFieldsHtml(prefix = "workflowParam") {
-      return taskFieldHtml("回复模式", taskSelectHtml(`${prefix}DouyinReplyCommentMode`, optionHtml("fixed", "固定文案") + optionHtml("ai", "AI 按客户评论生成") + optionHtml("rewrite", "AI 同方向改编")))
+      return taskFieldHtml("回复模式", taskSelectHtml(`${prefix}DouyinReplyCommentMode`, optionHtml("", "不启用回复（默认）") + optionHtml("fixed", "固定文案") + optionHtml("ai", "AI 按客户评论生成") + optionHtml("rewrite", "AI 同方向改编")))
         + `<div class="field full hidden" id="${prefix}DouyinReplyCommentFixedField"><label for="${prefix}DouyinReplyCommentText">固定回复文案</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentText`, "固定模式使用")}</div>`
         + `<div class="field full hidden" id="${prefix}DouyinReplyCommentAiField"><label for="${prefix}DouyinReplyCommentPrompt">回复要求</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentPrompt`, "AI 模式：回复方向和约束")}</div>`
         + `<div class="field full hidden" id="${prefix}DouyinReplyCommentRewriteField"><label for="${prefix}DouyinReplyCommentSeedText">改编基准文案</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentSeedText`, "改编模式使用")}</div>`;
@@ -4276,18 +4351,18 @@
 
     function collectWorkflowCapabilityPlan(node) {
       const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         const templateId = parseInt(workflowParamValue("workflowParamIpTemplate") || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedWorkflowIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
         return {
-          title: node.label || "IP日更文案",
+          title: node.label || ipContentCapabilityLabel(capabilityId),
           task_kind: "ip_content_daily",
-          content: "H5 工作流：IP日更文案",
+          content: `H5 工作流：${ipContentCapabilityLabel(capabilityId)}`,
           payload: {
             template_id: templateId,
-            tasks,
+            tasks: tasks.length ? tasks : ipContentTasksForCapability(capabilityId),
             sync_before: workflowParamChecked("workflowParamIpSyncBefore"),
             requirements: ipDailyRequirementsFromFields("workflowParamIp", templateId),
             industry_count: workflowParamNumber("workflowParamIpIndustryCount", 5, 1, 5),
@@ -4544,12 +4619,18 @@
           regions: regions.length ? regions : ["全国"],
           mode: workflowParamValue("workflowParamDouyinMode") || "script",
           customer_scope: "current_collection_batch",
-          reply_precise_comments: workflowParamChecked("workflowParamDouyinReplyPreciseComments"),
-          reply_comment_mode: workflowParamValue("workflowParamDouyinReplyCommentMode") || "fixed",
-          reply_comment_text: workflowParamValue("workflowParamDouyinReplyCommentText"),
-          reply_comment_prompt: workflowParamValue("workflowParamDouyinReplyCommentPrompt"),
-          reply_comment_seed_text: workflowParamValue("workflowParamDouyinReplyCommentSeedText"),
         };
+        if (workflowParamChecked("workflowParamDouyinReplyPreciseComments")) {
+          const replyMode = workflowParamValue("workflowParamDouyinReplyCommentMode");
+          const replyText = workflowParamValue("workflowParamDouyinReplyCommentText");
+          const replyPrompt = workflowParamValue("workflowParamDouyinReplyCommentPrompt");
+          const replySeedText = workflowParamValue("workflowParamDouyinReplyCommentSeedText");
+          collectionParams.reply_precise_comments = true;
+          if (replyMode) collectionParams.reply_comment_mode = replyMode;
+          if (replyText) collectionParams.reply_comment_text = replyText;
+          if (replyPrompt) collectionParams.reply_comment_prompt = replyPrompt;
+          if (replySeedText) collectionParams.reply_comment_seed_text = replySeedText;
+        }
         if (keyword) collectionParams.keyword = keyword;
         return {
           title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
@@ -4748,15 +4829,15 @@
         return nativeWechatWorkflowPlan(node.key || node.workQuickKey, prompt);
       }
       const capabilityId = String(node.capabilityId || node.key || "").trim();
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         return {
-          title: "IP日更文案",
+          title: ipContentCapabilityLabel(capabilityId),
           task_kind: "ip_content_daily",
-          content: "H5 工作流：IP日更文案",
+          content: `H5 工作流：${ipContentCapabilityLabel(capabilityId)}`,
           payload: {
             template_id: 0,
             use_personal_default: true,
-            tasks: ["industry_hot_oral", "professional_ip_oral", "moments_candidate"],
+            tasks: ipContentTasksForCapability(capabilityId),
             sync_before: true,
             requirements: ipDailyRequirementsWithLanguage(prompt, 0),
             industry_count: 5,
@@ -4883,12 +4964,18 @@
           max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
           mode: workflowParamValue("workflowNodeDouyinMode") || "script",
           customer_scope: "current_collection_batch",
-          reply_precise_comments: workflowParamChecked("workflowNodeDouyinReplyPreciseComments"),
-          reply_comment_mode: workflowParamValue("workflowNodeDouyinReplyCommentMode") || "fixed",
-          reply_comment_text: workflowParamValue("workflowNodeDouyinReplyCommentText"),
-          reply_comment_prompt: workflowParamValue("workflowNodeDouyinReplyCommentPrompt"),
-          reply_comment_seed_text: workflowParamValue("workflowNodeDouyinReplyCommentSeedText"),
         };
+        if (workflowParamChecked("workflowNodeDouyinReplyPreciseComments")) {
+          const replyMode = workflowParamValue("workflowNodeDouyinReplyCommentMode");
+          const replyText = workflowParamValue("workflowNodeDouyinReplyCommentText");
+          const replyPrompt = workflowParamValue("workflowNodeDouyinReplyCommentPrompt");
+          const replySeedText = workflowParamValue("workflowNodeDouyinReplyCommentSeedText");
+          collectionParams.reply_precise_comments = true;
+          if (replyMode) collectionParams.reply_comment_mode = replyMode;
+          if (replyText) collectionParams.reply_comment_text = replyText;
+          if (replyPrompt) collectionParams.reply_comment_prompt = replyPrompt;
+          if (replySeedText) collectionParams.reply_comment_seed_text = replySeedText;
+        }
         if (keyword) collectionParams.keyword = keyword;
         plan = {
           title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
@@ -5934,7 +6021,7 @@
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
         setFieldValue("workflowParamDouyinReplyPreciseComments", workflowBoolParam(params.reply_precise_comments, false));
-        setFieldValue("workflowParamDouyinReplyCommentMode", params.reply_comment_mode || "fixed");
+        setFieldValue("workflowParamDouyinReplyCommentMode", params.reply_comment_mode || "");
         setFieldValue("workflowParamDouyinReplyCommentText", params.reply_comment_text || "");
         setFieldValue("workflowParamDouyinReplyCommentPrompt", params.reply_comment_prompt || "");
         setFieldValue("workflowParamDouyinReplyCommentSeedText", params.reply_comment_seed_text || "");
@@ -5984,7 +6071,7 @@
         initializeWorkflowMomentPicker("param", Array.isArray(params.contact_wx_nos) ? params.contact_wx_nos : params.targets);
         return;
       }
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         const setTemplate = () => setFieldValue("workflowParamIpTemplate", payload.template_id || "");
         if (state.ipTemplatesLoaded) setTemplate();
         else loadIpTemplates(true).then(setTemplate).catch(() => {});
@@ -6407,6 +6494,13 @@
 
     function customWorkflowTemplateRows() {
       return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl));
+    }
+
+    // The office home should promote the built-in employees only until the
+    // user has created an employee of their own.  Granted/system rows must
+    // not count as a personal employee for this switch.
+    function homeOwnedWorkflowTemplateRows() {
+      return userWorkflowTemplateRows().filter((tpl) => workflowTemplateCanEdit(tpl));
     }
 
     function workflowTemplateRows() {
@@ -7196,7 +7290,7 @@
     }
 
     function abilityIsActionable(node) {
-      if (!node || node.comingSoon) return false;
+      if (!node || node.comingSoon || node.legacy) return false;
       if (node.featureKey && !(state.user && state.user.features && state.user.features[node.featureKey])) return false;
       const nodeLookup = node.key ? abilityLookup(node.key) : null;
       if (nodeLookup && !departmentFeatureVisible(nodeLookup.department)) return false;
@@ -7525,10 +7619,11 @@
         .filter(Boolean);
     }
 
-    function abilityIpDailyTaskOptionsHtml() {
+    function abilityIpDailyTaskOptionsHtml(capabilityId = "ip_content_daily") {
+      const allowed = new Set(ipContentTasksForCapability(capabilityId));
       return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox ip-daily-task-option">
-          <input type="checkbox" data-ability-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <input type="checkbox" data-ability-ip-daily-task="${escapeHtml(item.value)}"${allowed.has(item.value) ? " checked" : ""}${String(capabilityId) !== "ip_content_daily" ? " disabled" : ""}>
           <span>${escapeHtml(item.label)}</span>
         </label>
       `).join("")}</div>`;
@@ -7583,9 +7678,9 @@
     function abilityCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
       if (id === "moments_sales_coach") return momentsCoachFieldsHtml();
-      if (id === "ip_content_daily") {
+      if (isIpContentCapability(id)) {
         return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"), true)
-          + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(id), true)
           + ipDailyAdvancedFieldsHtml("abilityIp");
       }
       if (id === "goal.video.pipeline") {
@@ -7739,7 +7834,7 @@
         }
       } else if (node.capabilityId || node.serverTask) {
         html = abilityCapabilityFieldsHtml(node.capabilityId || node.key);
-        if ((node.capabilityId || node.key) === "ip_content_daily") {
+        if (isIpContentCapability(node.capabilityId || node.key)) {
           setTimeout(() => loadIpTemplates(true), 0);
         }
         if ((node.capabilityId || node.key) === "goal.video.pipeline") {
@@ -8669,8 +8764,12 @@
           catalogIndex: index,
         };
       });
-      const displayRoles = catalogRoles.length ? catalogRoles : (state.workflowTemplatesLoaded ? [] : roles);
-      const customEmployees = customWorkflowTemplateRows();
+      const ownedEmployees = homeOwnedWorkflowTemplateRows();
+      const hasOwnedEmployees = ownedEmployees.length > 0;
+      const displayRoles = hasOwnedEmployees ? [] : (catalogRoles.length ? catalogRoles : (state.workflowTemplatesLoaded ? [] : roles));
+      // Once a user has a personal employee, show only personal employees on
+      // the home floor; otherwise retain the existing system/authorized view.
+      const customEmployees = hasOwnedEmployees ? ownedEmployees : customWorkflowTemplateRows();
       const sortedCustomEmployees = sortWorkflowTemplatesForDisplay(customEmployees);
       const activeCustomEmployees = sortedCustomEmployees.filter((tpl) => workflowTemplateIsActive(tpl));
       const inactiveCustomEmployees = sortedCustomEmployees.filter((tpl) => !workflowTemplateIsActive(tpl));
@@ -9591,7 +9690,8 @@
         if (recordKind === "article" && sourceKind === "ip_daily") {
           const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
           const sourceTask = String(meta.task || "").trim();
-          openContentActionAbility("ip_content_daily", "abilityIpRequirement", () => {
+          const targetIpCapability = sourceTask === "moments_candidate" ? "ip_content_moments" : "ip_content_oral";
+          openContentActionAbility(targetIpCapability, "abilityIpRequirement", () => {
             document.querySelectorAll("[data-ability-ip-daily-task]").forEach((field) => {
               field.checked = !sourceTask || field.getAttribute("data-ability-ip-daily-task") === sourceTask;
             });
@@ -13423,7 +13523,11 @@
           : (lastImageRun ? `最近图片任务：${statusText(lastImageRun.status)}${lastImageRun.result_text ? " · " + lastImageRun.result_text : ""}` : "先选择文案；每条最多使用 3 个配图提示词。");
         const upstreamNotice = ipContentUpstreamNoticeHtml(payload, run);
         if (upstreamNotice) sections.push(upstreamNotice);
-        sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
+        // Keep the legacy task kind for execution compatibility, but expose
+        // the split capability name in run details based on the actual task
+        // groups. Mixed/older runs intentionally retain the old label.
+        const ipDetailLabel = ipContentCapabilityLabel(taskCapabilityId(run) || payload.capability_id);
+        sections.push(`<div class="task-detail-section"><h4>${escapeHtml(ipDetailLabel)}</h4>${groups.map((group) => {
           const records = Array.isArray(group.records) ? group.records : [];
           const isMoments = String(group.task || "") === "moments_candidate";
           if (isMoments) {
@@ -18099,10 +18203,11 @@
       return `<div class="ip-template-select-row">${taskSelectHtml(id, optionHtml("", "模板加载中..."))}<button class="ghost" type="button" data-open-personal-template-settings>配置模板</button></div>`;
     }
 
-    function ipDailyTaskOptionsHtml() {
+    function ipDailyTaskOptionsHtml(capabilityId = "ip_content_daily") {
+      const allowed = new Set(ipContentTasksForCapability(capabilityId));
       return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox ip-daily-task-option">
-          <input type="checkbox" data-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <input type="checkbox" data-ip-daily-task="${escapeHtml(item.value)}"${allowed.has(item.value) ? " checked" : ""}${String(capabilityId) !== "ip_content_daily" ? " disabled" : ""}>
           <span>${escapeHtml(item.label)}</span>
         </label>
       `).join("")}</div>`;
@@ -22631,18 +22736,18 @@
 
     function collectAbilityCapabilityPlan(node) {
       const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         const templateId = parseInt(abilityValue("abilityIpTemplate") || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedAbilityIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
         return {
-          title: node.label || "IP日更文案",
+          title: node.label || ipContentCapabilityLabel(capabilityId),
           taskKind: "ip_content_daily",
-          content: "H5 能力工作台：IP日更文案",
+          content: `H5 能力工作台：${ipContentCapabilityLabel(capabilityId)}`,
           payload: {
             template_id: templateId,
-            tasks,
+            tasks: tasks.length ? tasks : ipContentTasksForCapability(capabilityId),
             sync_before: !!($("abilityIpSyncBefore") && $("abilityIpSyncBefore").checked),
             requirements: ipDailyRequirementsFromFields("abilityIp", templateId),
             industry_count: abilityNumber("abilityIpIndustryCount", 5, 1, 5),
@@ -23040,9 +23145,9 @@
     function renderTaskParamFields() {
       const host = $("taskParamFields");
       if (!host) return;
-      if (state.taskAbility === "ip_content_daily") {
+      if (isIpContentCapability(state.taskAbility)) {
         host.innerHTML = taskFieldHtml("关键词和同行模板", ipTemplateSelectControl("taskIpTemplate"), true)
-          + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(state.taskAbility), true)
           + ipDailyAdvancedFieldsHtml("taskIp");
         loadIpTemplates(true);
         return;
@@ -23283,7 +23388,7 @@
     }
 
     function collectCapabilityPayload() {
-      if (state.taskAbility === "ip_content_daily") {
+      if (isIpContentCapability(state.taskAbility)) {
         const templateId = parseInt(($("taskIpTemplate") && $("taskIpTemplate").value) || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedIpDailyTasks();

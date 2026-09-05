@@ -109,7 +109,8 @@ def test_workflow_permission_gate_applies_to_ip_daily_node_package(monkeypatch):
         )
     except HTTPException as exc:
         assert exc.status_code == 403
-        assert "IP日更文案" in str(exc.detail)
+        assert "IP口播文案" in str(exc.detail)
+        assert "朋友圈图文" in str(exc.detail)
     else:
         raise AssertionError("IP daily workflow bypassed package visibility")
 

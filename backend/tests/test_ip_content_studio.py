@@ -1049,6 +1049,52 @@ def test_schedule_template_payload_falls_back_to_memory_docs_ids():
     assert payload["memory_doc_ids"] == ["doc-a", "doc-b", "legacy title"]
 
 
+def test_template_payload_with_resources_filters_deleted_memory_ids(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentScheduleTemplate, OpenClawMemoryDocument
+
+    active = OpenClawMemoryDocument(
+        doc_id="active-memory",
+        target_user_id=test_user.id,
+        installation_id="test-install",
+        origin="user",
+        title="Active memory",
+        filename="active.txt",
+        content_text="active content",
+        status="active",
+    )
+    deleted = OpenClawMemoryDocument(
+        doc_id="deleted-memory",
+        target_user_id=test_user.id,
+        installation_id="test-install",
+        origin="user",
+        title="Deleted memory",
+        filename="deleted.txt",
+        content_text="deleted content",
+        status="deleted",
+    )
+    db_session.add_all([active, deleted])
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="stale-memory-template",
+        memory_doc_ids=["deleted-memory", "active-memory", "legacy-inline-memory"],
+        memory_docs=[
+            {"id": "deleted-memory", "title": "Deleted memory"},
+            {"id": "active-memory", "title": "Active memory"},
+            {"id": "legacy-inline-memory", "title": "Inline memory"},
+        ],
+        status="active",
+    )
+    db_session.add(template)
+    db_session.commit()
+
+    payload = studio._template_payload_with_resources(db_session, template)
+
+    assert payload["memory_doc_ids"] == ["active-memory", "legacy-inline-memory"]
+    assert [item["id"] for item in payload["memory_docs"]] == ["active-memory", "legacy-inline-memory"]
+
+
 def test_personal_default_template_payload_marks_source():
     from types import SimpleNamespace
 

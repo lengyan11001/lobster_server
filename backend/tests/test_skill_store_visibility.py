@@ -80,7 +80,9 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     overseas_ids = {item["id"] for item in overseas_resp.json()["packages"]}
 
     assert "douyin_publish" in domestic_ids
-    assert "ip_content_daily_skill" in domestic_ids
+    assert "ip_content_oral_skill" in domestic_ids
+    assert "ip_content_moments_skill" in domestic_ids
+    assert "ip_content_daily_skill" not in domestic_ids
     assert "messenger_reply" not in domestic_ids
     assert "twilio_whatsapp" not in domestic_ids
     assert "bihuo_25_video_skill" not in domestic_ids
@@ -95,7 +97,9 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     assert "comfly_veo_skill" in overseas_ids
     assert "comfly_seedance_tvc_skill" in overseas_ids
     assert "goal_video_pipeline_skill" in overseas_ids
-    assert "ip_content_daily_skill" in overseas_ids
+    assert "ip_content_oral_skill" in overseas_ids
+    assert "ip_content_moments_skill" in overseas_ids
+    assert "ip_content_daily_skill" not in overseas_ids
     assert "create_ppt_skill" in overseas_ids
     assert "create_video_pipeline_skill" in overseas_ids
     assert "douyin_publish" not in overseas_ids

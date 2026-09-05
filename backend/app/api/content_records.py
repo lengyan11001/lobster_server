@@ -24,6 +24,8 @@ _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^\s)]+)", re.IGNORECASE)
 _HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(https?://.*?)\1", re.IGNORECASE)
 _IP_TASK_LABELS = {
+    "industry_hot_oral": "行业热门口播",
+    "professional_ip_oral": "专业 IP 口播",
     "moments_candidate": "朋友圈内容",
     "douyin_copy": "抖音文案",
     "xiaohongshu_copy": "小红书文案",

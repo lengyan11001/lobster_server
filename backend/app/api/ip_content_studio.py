@@ -2750,6 +2750,56 @@ def _memory_doc_ids_from_docs(docs: Any, limit: int = 30) -> list[str]:
     return _clean_memory_doc_ids(raw_ids, limit)
 
 
+def _canonical_template_memory_selection(
+    db: Session,
+    owner_user_ids: Any,
+    memory_doc_ids: Any,
+    memory_docs: Any,
+    *,
+    limit: int = 50,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Remove deleted memory references without dropping legacy inline docs."""
+    docs = [item for item in (memory_docs if isinstance(memory_docs, list) else []) if isinstance(item, dict)]
+    candidate_ids = _clean_memory_doc_ids(memory_doc_ids, limit) or _memory_doc_ids_from_docs(docs, limit)
+    if not candidate_ids:
+        return [], []
+
+    owners: set[int] = set()
+    raw_owners = owner_user_ids if isinstance(owner_user_ids, (list, tuple, set)) else [owner_user_ids]
+    for raw in raw_owners:
+        try:
+            owner_id = int(raw or 0)
+        except Exception:
+            continue
+        if owner_id >= 0:
+            owners.add(owner_id)
+
+    rows = (
+        db.query(OpenClawMemoryDocument.doc_id, OpenClawMemoryDocument.target_user_id, OpenClawMemoryDocument.status)
+        .filter(OpenClawMemoryDocument.doc_id.in_(candidate_ids))
+        .all()
+    )
+    known_ids = {str(doc_id or "").strip() for doc_id, _target_user_id, _status in rows}
+    active_ids = {
+        str(doc_id or "").strip()
+        for doc_id, target_user_id, status in rows
+        if str(status or "").strip().lower() == "active" and int(target_user_id or 0) in owners
+    }
+    inline_ids = set(_memory_doc_ids_from_docs(docs, limit))
+    # Authorized/system templates may carry self-contained legacy memories
+    # without a cloud document row. A real deleted row must never be revived
+    # merely because an old inline snapshot is still present.
+    valid_ids = active_ids | (inline_ids - known_ids)
+    canonical_ids = [doc_id for doc_id in candidate_ids if doc_id in valid_ids]
+    canonical_set = set(canonical_ids)
+    canonical_docs = []
+    for doc in docs:
+        doc_ids = _memory_doc_ids_from_docs([doc], 1)
+        if doc_ids and doc_ids[0] in canonical_set:
+            canonical_docs.append(doc)
+    return canonical_ids, canonical_docs
+
+
 def _template_payload(
     row: IPContentScheduleTemplate,
     *,
@@ -2833,7 +2883,16 @@ def _template_payload_with_resources(
     grants: Optional[list[int]] = None,
 ) -> dict[str, Any]:
     keywords, competitors = _template_resource_rows(db, row)
-    return _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
+    payload = _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(row.user_id),
+        payload.get("memory_doc_ids"),
+        payload.get("memory_docs"),
+    )
+    payload["memory_doc_ids"] = memory_doc_ids
+    payload["memory_docs"] = memory_docs
+    return payload
 
 
 def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
@@ -2922,6 +2981,15 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
         )
     keyword_owner = row if overrides["keyword_ids"] else reference
     competitor_owner = row if overrides["competitor_ids"] else reference
+    memory_owner = row if overrides["memory_doc_ids"] else reference
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(memory_owner.user_id),
+        payload.get("memory_doc_ids"),
+        payload.get("memory_docs"),
+    )
+    payload["memory_doc_ids"] = memory_doc_ids
+    payload["memory_docs"] = memory_docs
     keyword_rows, _ = _template_resource_rows_for_ids(db, int(keyword_owner.user_id), payload.get("keyword_ids"), [])
     _, competitor_rows = _template_resource_rows_for_ids(db, int(competitor_owner.user_id), [], payload.get("competitor_ids"))
     keyword_id_set = set(_clean_int_ids(payload.get("keyword_ids"), 50))
@@ -4372,7 +4440,7 @@ async def _generate_and_save_ip_content_records(
     clean_group_id = _clean_group_id(group_id) or uuid.uuid4().hex
     clean_label = task_label or {
         "industry_hot_oral": "行业热门口播文案",
-        "professional_ip_oral": "IP 日更口播文案",
+        "professional_ip_oral": "专业 IP 口播文案",
         "moments_candidate": "朋友圈文案",
     }.get(record_task, record_task)
     clean_batch_size = batch_size if batch_size is not None else target_count
@@ -4908,7 +4976,7 @@ async def run_ip_content_daily_scheduled(
     ) -> None:
         task_label = {
             "industry_hot_oral": "行业热门口播文案",
-            "professional_ip_oral": "IP 日更口播文案",
+        "professional_ip_oral": "专业 IP 口播文案",
             "moments_candidate": "朋友圈文案",
         }.get(record_task, record_task)
         generated = await _generate_and_save_ip_content_records(
@@ -5035,7 +5103,7 @@ async def run_ip_content_daily_scheduled(
         "records_by_task": records_by_task,
         "image_generation": {
             "manual": True,
-            "note": "朋友圈图片不由定时任务自动生成；请在执行详情或 IP 日更工作台手动触发。",
+        "note": "朋友圈图片不由定时任务自动生成；请在执行详情或朋友圈图文工作台手动触发。",
         },
     }
 
@@ -5360,6 +5428,12 @@ def save_personal_default_ip_content_config(
         if not memory_id_selection_sent:
             incoming_memory_doc_ids = list(template_ref.memory_doc_ids or [])
     memory_docs = _memory_payload_from_docs(incoming_memory_docs, content_limit=3200)
+    incoming_memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        [int(current_user.id), int(template_ref.user_id)] if template_ref is not None else int(current_user.id),
+        incoming_memory_doc_ids,
+        memory_docs,
+    )
     row = (
         db.query(IPContentScheduleTemplate)
         .filter(
@@ -5498,6 +5572,12 @@ def save_schedule_template(
             memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
             requirements = _strip_personal_profile_requirements(body.requirements)
             meta = body.meta or {}
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(current_user.id),
+        memory_doc_ids,
+        memory_docs,
+    )
     row = IPContentScheduleTemplate(
         user_id=current_user.id,
         name=name,
@@ -5571,10 +5651,16 @@ def update_schedule_template(
         raise HTTPException(status_code=400, detail="请填写模板名称")
     keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
     memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(current_user.id),
+        body.memory_doc_ids,
+        memory_docs,
+    )
     row.name = name
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
-    row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_doc_ids = memory_doc_ids
     row.memory_docs = memory_docs
     row.requirements = _jsonable(_strip_personal_profile_requirements(body.requirements))
     row.meta = _jsonable(body.meta or {})
@@ -6309,7 +6395,7 @@ async def generate_professional_ip_oral(
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
-        task_label="IP 日更口播文案",
+        task_label="专业 IP 口播文案",
     )
     return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}
 

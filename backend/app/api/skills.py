@@ -25,7 +25,7 @@ _OVERSEAS_CLIENT_HEADER = "x-lobster-client-overseas"
 BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
 # Keep this separate from the original homepage seed marker. Older accounts
 # may already have v1 while still missing the employee defaults added later.
-_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v2"
+_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v3"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -99,6 +99,7 @@ REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
     "computer_use_skill",
     "media_edit_skill",
     "ecommerce_publish_skill",
+    "ip_content_daily_skill",
 })
 
 DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
@@ -111,7 +112,8 @@ DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
         "comfly_veo_skill",
         "comfly_seedance_tvc_skill",
         "goal_video_pipeline_skill",
-        "ip_content_daily_skill",
+        "ip_content_oral_skill",
+        "ip_content_moments_skill",
         "wewrite_official_account_skill",
         "viral_video_remix_skill",
         "create_video_pipeline_skill",

@@ -10,7 +10,18 @@ def _add_persona_and_photo(db_session, user_id: int) -> None:
             user_id=user_id,
             name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
             status="active",
-            requirements={"profile_photo_asset_id": "server-photo-1"},
+            requirements={
+                "gender": "female",
+                "role": "driving instructor",
+                "product": "VIP driving lessons",
+                "current_province": "Guangdong",
+                "current_city": "Shaoguan",
+                "hometown": "Guizhou",
+                "birth_era": "1998",
+                "target_customer": "new drivers",
+                "video_style": "direct and practical",
+                "profile_photo_asset_id": "server-photo-1",
+            },
         )
     )
     db_session.add(
@@ -145,6 +156,27 @@ def test_existing_scheduled_task_refreshes_server_photo_when_run_is_created(db_s
 
     assert run.payload["params"]["profile"]["photo_url"] == "https://assets.example.test/assets/server-photo-1.png"
     assert "photo_asset_id" not in run.payload["params"]["profile"]
+
+
+def test_claim_time_refresh_keeps_live_profile_for_older_online_clients(db_session, test_user):
+    _add_persona_and_photo(db_session, test_user.id)
+
+    payload = scheduled_tasks._refresh_live_personal_template_payload(
+        db_session,
+        task_kind="client_workflow",
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {},
+            "h5_context": {"workflow_template_id": 159},
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 7, 29, 6, 0),
+    )
+
+    profile = payload["params"]["profile"]
+    assert profile["photo_url"] == "https://assets.example.test/assets/server-photo-1.png"
+    assert payload["params"]["profile_photo_source_asset_id"] == "server-photo-1"
+    assert payload["template_validation"]["ok"] is True
 
 
 def test_one_off_local_bestseller_can_override_selected_persona_fields(db_session, test_user):

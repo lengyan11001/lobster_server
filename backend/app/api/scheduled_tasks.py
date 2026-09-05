@@ -1272,6 +1272,23 @@ def _refresh_live_personal_template_payload(
             # custom one-off profile remains an intentional node override.
             if not params.get("profile_override") and _clean_profile_text(params.get("profile_source"), 32).lower() != "custom":
                 params.pop("profile", None)
+            # Claim-time refresh is also used when a run was created before
+            # the current template was saved. Rebuild the live profile here;
+            # otherwise older Online clients receive an empty profile and
+            # reject an otherwise valid server-side template.
+            source["params"] = params
+            source = _enrich_local_bestseller_workflow_payload(
+                db,
+                payload=source,
+                target_user_id=target_user_id,
+                now=now or datetime.utcnow(),
+            )
+            return _attach_live_personal_template_validation(
+                db,
+                task_kind=task_kind,
+                payload=source,
+                target_user_id=target_user_id,
+            )
         elif action == "native_wechat_poll":
             # Template language/memory and the mounted account's current
             # takeover settings must replace activation-time values.
@@ -2016,6 +2033,17 @@ def _normalize_schedule_type(value: str) -> str:
     return schedule_type
 
 
+def _ip_content_kind_label(payload: Any) -> str:
+    data = payload if isinstance(payload, dict) else {}
+    tasks = [str(item or "").strip() for item in (data.get("tasks") if isinstance(data.get("tasks"), list) else [])]
+    tasks = [item for item in tasks if item]
+    if len(tasks) == 1 and tasks[0] == "moments_candidate":
+        return "朋友圈图文"
+    if tasks and all(item in {"industry_hot_oral", "professional_ip_oral"} for item in tasks):
+        return "IP口播文案"
+    return "IP日更文案"
+
+
 def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
     title = (body.title or "").strip()
     if title:
@@ -2023,7 +2051,7 @@ def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
     if task_kind == "lead_collection_templates":
         return "线索采集模板定时任务"
     if task_kind == "ip_content_daily":
-        return "IP日更文案"
+        return _ip_content_kind_label(body.payload or {})
     if task_kind == "capability":
         cid = str((body.payload or {}).get("capability_id") or "").strip()
         return f"调用能力 {cid}"[:160] if cid else "能力调用任务"
@@ -2514,11 +2542,10 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
 def _run_list_uses_compact_response(request: Request, explicit: Optional[bool]) -> bool:
     if explicit is not None:
         return bool(explicit)
-    source = " ".join(
-        str(request.headers.get(name) or "").strip().lower()
-        for name in ("origin", "referer")
-    )
-    return "h5.bhzn.top" in source or "hikongai.cn" in source or "/h5" in source
+    # List views only need summaries and can request one run's full payload
+    # from the detail endpoint. Defaulting old clients to the compact shape
+    # prevents large nested workflow results from being encoded on every poll.
+    return True
 
 
 def _is_server_side_task(task_or_run: Any) -> bool:
@@ -2530,7 +2557,7 @@ def _task_display_kind(row: Any) -> str:
     if kind == "lead_collection_templates":
         return "线索采集模板"
     if kind == "ip_content_daily":
-        return "IP日更文案"
+        return _ip_content_kind_label(getattr(row, "payload", None) or {})
     return ""
 
 
@@ -3828,7 +3855,8 @@ def _execute_server_side_run(
                 run.updated_at = now
                 db.flush()
         if run.task_kind == "ip_content_daily":
-            progress("start", "服务器开始执行 IP 日更文案", {"timeout_seconds": timeout_seconds})
+            ip_label = _ip_content_kind_label(payload)
+            progress("start", f"服务器开始执行 {ip_label}", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
                 asyncio.wait_for(
                     run_ip_content_daily_scheduled(
@@ -3841,7 +3869,7 @@ def _execute_server_side_run(
                     timeout=timeout_seconds,
                 )
             )
-            result_text = "IP日更文案已生成，朋友圈图片请在详情里手动触发。"
+            result_text = f"{ip_label}已生成，朋友圈图片请在详情里手动触发。"
         elif run.task_kind == "lead_collection_templates":
             progress("start", "服务器开始执行线索采集模板", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(

@@ -833,6 +833,38 @@
             "workflow"
       ]
 },
+    "ip_content_oral_skill": {
+      "name": "IP口播文案",
+      "description": "基于行业热门和专业同行数据，生成行业热门口播与专业 IP 口播文案。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "ip-content-studio",
+        "mode": "oral",
+        "server_proxy": true,
+        "query_recorded": true,
+        "default_platforms": ["douyin", "wechat_channels"]
+      },
+      "tags": ["TikHub", "抖音", "口播", "IP"]
+    },
+    "ip_content_moments_skill": {
+      "name": "朋友圈图文",
+      "description": "基于关键词、同行和记忆资料生成朋友圈图文内容与配图提示词。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "ip-content-studio",
+        "mode": "moments",
+        "server_proxy": true,
+        "query_recorded": true,
+        "default_platforms": ["douyin", "wechat_channels"]
+      },
+      "tags": ["TikHub", "朋友圈", "图文", "配图"]
+    },
     "ip_content_daily_skill": {
       "name": "IP日更文案",
       "description": "先基于抖音/视频号行业榜单、热门话题与同行最新作品整理数据源，再结合记忆素材生成口播和朋友圈日更文案；TikHub 查询统一由服务器转发、记录与扣费。",
