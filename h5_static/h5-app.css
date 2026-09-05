@@ -10264,6 +10264,8 @@
     .moments-coach-mode > .department-breadcrumb,
     .moments-coach-mode > .ability-child-grid { display:none; }
     .moments-coach-mode > .ability-workbench { display:block; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; backdrop-filter:none; }
+    body.moments-coach-embedded #topBackBtn { display:none !important; }
+    body.moments-coach-embedded .moments-app .sub-head .back-link { display:none !important; }
     .moments-coach-mode .ability-workbench-head,
     .moments-coach-mode .ability-workbench-actions { display:none; }
     .moments-coach-mode .ability-workbench-form,

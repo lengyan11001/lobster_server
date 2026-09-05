@@ -7827,6 +7827,7 @@
         : (node.children || []);
       const visibleChildCount = childNodes.filter((child) => !isPublishCenterNode(child)).length;
       const isMomentsCoach = String(node.key || node.capabilityId || "") === "moments_sales_coach";
+      document.body.classList.toggle("moments-coach-embedded", isMomentsCoach);
       if (abilityShell) {
         abilityShell.classList.toggle("marketing-category-mode", marketingMode && visibleChildCount > 0);
         abilityShell.classList.toggle("marketing-tool-mode", marketingMode && visibleChildCount === 0);
