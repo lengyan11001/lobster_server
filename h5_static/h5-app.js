@@ -7634,6 +7634,9 @@
     }
 
     function momentsCoachFieldsHtml() {
+      return `<div class="moments-coach-embedded-loading">正在打开朋友圈印钞机…</div>`;
+      /* Legacy inline form retained below for reference; the workbench now injects
+         the standalone coach markup so its original interaction remains intact. */
       return `<section class="moments-coach-app">
         <header class="moments-coach-topbar"><div><p>朋友圈成交文案教练</p><h3>把真实经历，写成让人愿意靠近的朋友圈</h3></div><div class="moments-coach-top-actions"><span>仅生成草稿，发布前需确认</span><button type="button" id="momentsCoachGuideOpen">微信浮窗</button></div></header>
         <div class="moments-coach-guide hidden" id="momentsCoachGuide"><div><strong>添加到微信浮窗</strong><span>在微信内打开本页，点右上角“…”后选择“添加到浮窗”。下次从浮窗回来会恢复当前草稿。</span></div><button type="button" id="momentsCoachGuideClose" aria-label="关闭浮窗引导">关闭</button></div>
@@ -7650,6 +7653,26 @@
         <div data-moments-panel="history" class="moments-coach-screen hidden"><section class="moments-coach-list-head"><div><span>已生成内容</span><h4>历史草稿</h4><p>历史文案保留生成时的人设与素材快照。</p></div></section><div id="momentsCoachHistoryList" class="moments-coach-list">正在读取历史记录…</div></div>
         <div data-moments-panel="settings" class="moments-coach-screen hidden"><section class="moments-coach-list-head"><div><span>写作底色</span><h4>当前 IP 人设</h4><p>教练自动读取当前个人 IP 人设，不需要重复填写基础资料。</p></div></section><div id="momentsCoachPersonaSummary" class="moments-coach-persona">正在读取个人设定…</div></div>
       </section>`;
+    }
+
+    async function loadEmbeddedMomentsCoach(fields) {
+      if (!fields || fields.dataset.momentsCoachLoaded === "1") return;
+      fields.dataset.momentsCoachLoaded = "1";
+      try {
+        const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
+        const response = await fetch(`/h5-static/moments-coach.html?brand=${brand}&embedded=1&v=20260905-coach-workbench-v1`, { credentials: "include" });
+        if (!response.ok) throw new Error(`加载朋友圈印钞机失败（${response.status}）`);
+        const html = await response.text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        fields.innerHTML = doc.body?.innerHTML || "";
+        const script = document.createElement("script");
+        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-coach-workbench-v1`;
+        script.async = false;
+        document.body.appendChild(script);
+      } catch (err) {
+        fields.innerHTML = `<div class="moments-coach-embedded-loading">${escapeHtml(err.message || "朋友圈印钞机加载失败")}</div>`;
+        fields.dataset.momentsCoachLoaded = "";
+      }
     }
 
     function momentsCoachSnapshotFromFields() {
@@ -7756,6 +7779,10 @@
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
       if (String(node.capabilityId || node.key || "") === "moments_sales_coach") {
+        loadEmbeddedMomentsCoach(fields);
+        return;
+      }
+      if (String(node.capabilityId || node.key || "") === "moments_sales_coach_legacy") {
         setTimeout(() => {
           momentsCoachRestoreDraft();
           if (localStorage.getItem("lobster_moments_coach_guide_dismissed") !== "1") $("momentsCoachGuide")?.classList.remove("hidden");
@@ -26998,6 +27025,11 @@
 
     $("liveExecutorResultBackdrop")?.addEventListener("click", closeLiveExecutorResultModal);
     $("liveExecutorResultClose")?.addEventListener("click", closeLiveExecutorResultModal);
+    window.addEventListener("message", (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.source !== "moments-coach" || event.data?.type !== "moments-coach-back") return;
+      $("topBackBtn")?.click();
+    });
     $("creationQuickBackdrop")?.addEventListener("click", closeCreationQuickSheet);
     $("creationQuickClose")?.addEventListener("click", closeCreationQuickSheet);
     $("creationQuickGrid")?.addEventListener("click", (evt) => {
