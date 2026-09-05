@@ -7660,13 +7660,13 @@
       fields.dataset.momentsCoachLoaded = "1";
       try {
         const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
-        const response = await fetch(`/h5-static/moments-coach.html?brand=${brand}&embedded=1&v=20260905-coach-workbench-v1`, { credentials: "include" });
+        const response = await fetch(`/h5-static/moments-coach.html?brand=${brand}&embedded=1&v=20260905-coach-workbench-v2`, { credentials: "include" });
         if (!response.ok) throw new Error(`加载朋友圈印钞机失败（${response.status}）`);
         const html = await response.text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         fields.innerHTML = doc.body?.innerHTML || "";
         const script = document.createElement("script");
-        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-coach-workbench-v2`;
+        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-coach-workbench-v3`;
         script.async = false;
         document.body.appendChild(script);
       } catch (err) {
