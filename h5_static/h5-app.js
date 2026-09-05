@@ -7656,7 +7656,7 @@
     }
 
     async function loadEmbeddedMomentsCoach(fields) {
-      if (!fields || fields.dataset.momentsCoachLoaded === "1") return;
+      if (!fields || (fields.dataset.momentsCoachLoaded === "1" && fields.querySelector("#momentsApp"))) return;
       fields.dataset.momentsCoachLoaded = "1";
       try {
         const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
