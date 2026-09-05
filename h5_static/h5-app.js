@@ -7635,7 +7635,7 @@
 
     function momentsCoachFieldsHtml() {
       const embeddedBrand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
-      return `<iframe class="moments-coach-inline-frame" title="朋友圈印钞机" src="/h5-static/moments-coach.html?brand=${embeddedBrand}&embedded=1&v=20260905-inline-v1"></iframe>`;
+      return `<iframe class="moments-coach-inline-frame" title="朋友圈印钞机" src="/h5-static/moments-coach.html?brand=${embeddedBrand}&embedded=1&v=20260905-inline-v2"></iframe>`;
 
       return `<section class="moments-coach-app">
         <header class="moments-coach-topbar"><div><p>朋友圈成交文案教练</p><h3>把真实经历，写成让人愿意靠近的朋友圈</h3></div><div class="moments-coach-top-actions"><span>仅生成草稿，发布前需确认</span><button type="button" id="momentsCoachGuideOpen">微信浮窗</button></div></header>
