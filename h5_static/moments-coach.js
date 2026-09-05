@@ -59,13 +59,13 @@
   // the other entries are concrete, clearly marked examples that users can replace.
   const IDEA_PROMPTS = {
     life: { circle: '生活圈', text: '今天下午陪我儿子骑自行车，他骑得很慢，我在后面跟着。原本还在赶时间，后来发现孩子回头冲我笑，那一刻我把手机收起来，陪他把这一圈骑完。' },
-    question: { circle: '咨询圈', text: '【案例示例，请替换为真实问法】有客户问我：花了10多万学习，短视频、直播、商业模式都学了，收入还是没有提升，问题到底出在哪？我把她的情况拆开后发现，先要解决线上成交的基础，而不是继续堆课程。' },
+    question: { circle: '咨询圈', text: '有客户问我：花了10多万学习，短视频、直播、商业模式都学了，收入还是没有提升，问题到底出在哪？我把她的情况拆开后发现，先要解决线上成交的基础，而不是继续堆课程。' },
     change: { circle: '反馈圈', text: '我有个客户以前报课没效果，现在一场发售收了20万，帮我写一条。' },
-    payment: { circle: '收款圈', text: '【案例示例，请替换为真实收款】今天完成一笔真实收款：客户之前反复比较方案，确认服务能解决她当前的问题后，决定先从一次小范围陪跑开始。' },
-    offer: { circle: '促成交圈', text: '【案例示例，请替换为真实活动】亲子沟通陪跑营原价1999，今天报名699，送1次沟通诊断，今晚12点截止，只开放20个名额。' },
-    concern: { circle: '咨询圈', text: '【案例示例，请替换为真实顾虑】客户在购买前最担心的是：自己已经学过很多方法，付费后仍然不知道怎么落地。我准备把服务步骤、陪跑方式和可交付结果讲清楚，再邀请她判断是否适合。' },
+    payment: { circle: '收款圈', text: '今天完成一笔真实收款：客户之前反复比较方案，确认服务能解决她当前的问题后，决定先从一次小范围陪跑开始。' },
+    offer: { circle: '促成交圈', text: '亲子沟通陪跑营原价1999，今天报名699，送1次沟通诊断，今晚12点截止，只开放20个名额。' },
+    concern: { circle: '咨询圈', text: '客户在购买前最担心的是：自己已经学过很多方法，付费后仍然不知道怎么落地。我准备把服务步骤、陪跑方式和可交付结果讲清楚，再邀请她判断是否适合。' },
     plan: { circle: '生活圈', text: '我做高端农产品礼盒，想按五种圈型排一周朋友圈：穿插生活、咨询、反馈、收款和促成交内容，避免每天都像在发广告。' },
-    image: { circle: '生活圈', text: '【图片素材说明】我手上有一张真实图片，请补充拍摄时间、人物、地点和当时发生的事，再根据这些信息写一条朋友圈。' }
+    image: { circle: '生活圈', text: '我手上有一张真实图片，画面中的人物、地点和当时发生的事需要补充，请根据这些信息写一条朋友圈。' }
   };
   const ideaCircle = (text) => { const value = String(text || ''); if (/客户问|客户顾虑|担心|问题/.test(value)) return '咨询圈'; if (/客户变化|使用前后|结果/.test(value)) return '反馈圈'; if (/成交|收款|付钱/.test(value)) return '收款圈'; if (/优惠|截止|名额|报名/.test(value)) return '促成交圈'; return '生活圈'; };
   async function generateIdea() { const input=$('ideaInput'); const text=input?.value.trim(); if (!text) throw new Error('请先写一件真实发生的事，或选择一个灵感切口'); const circle=input?.dataset.ideaCircle || ideaCircle(text); const payload = {happened:text, purpose:circle === '咨询圈' ? '消除疑虑' : circle === '反馈圈' ? '展示变化' : circle === '收款圈' ? '展示变化' : circle === '促成交圈' ? '推动行动' : '建立信任', circle_type:circle, image_urls:[]}; fill(payload); $('circle').value=circle; updateCircleUI(circle); showPanel('write'); await requestGeneration(payload); }
