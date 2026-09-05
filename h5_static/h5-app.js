@@ -7666,7 +7666,7 @@
         const doc = new DOMParser().parseFromString(html, "text/html");
         fields.innerHTML = doc.body?.innerHTML || "";
         const script = document.createElement("script");
-        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-coach-workbench-v1`;
+        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-coach-workbench-v2`;
         script.async = false;
         document.body.appendChild(script);
       } catch (err) {
@@ -26635,6 +26635,9 @@
     $("topBackBtn").addEventListener("click", () => {
       const activeView = document.querySelector(".view.active");
       const activeId = activeView ? String(activeView.id || "") : "";
+      if (activeId === "abilityView" && document.body.classList.contains("moments-coach-embedded") && typeof window.__momentsCoachBack === "function") {
+        if (window.__momentsCoachBack()) return;
+      }
       if (activeId === "abilityView") {
         const lookup = activeAbilityLookup();
         if (String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID) {

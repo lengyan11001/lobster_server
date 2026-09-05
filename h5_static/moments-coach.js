@@ -96,4 +96,9 @@
     } catch (x) { button.disabled = false; toast(x.message); }
   }, true);
   try{fill(JSON.parse(localStorage.getItem('lobster_moments_coach_draft')||'null')||{});}catch{} updateCircleUI($('circle')?.value || ''); showPanel('home');
+  window.__momentsCoachBack = () => {
+    if (!isCurrentCoach()) return false;
+    if (currentPanel() !== 'home' || panelHistory.length) { goBackPanel(); return true; }
+    return false;
+  };
 })();
