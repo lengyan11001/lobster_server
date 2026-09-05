@@ -10268,6 +10268,7 @@
     .moments-coach-mode .ability-workbench-actions { display:none; }
     .moments-coach-mode .ability-workbench-form,
     .moments-coach-mode .ability-workbench-fields { display:block; }
+    .moments-coach-inline-frame { display:block; width:100%; min-height:720px; height:720px; border:0; background:#fff; }
     .moments-coach-app { width:100%; max-width:1120px; margin:0 auto; color:#18233a; }
     .moments-coach-topbar { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:30px 34px 26px; color:#fff; background:linear-gradient(120deg,#174ec2 0%,#2563eb 58%,#1d7ae5 100%); border-radius:10px 10px 0 0; }
     .moments-coach-topbar p { margin:0 0 8px; color:rgba(255,255,255,.76); font-size:13px; font-weight:700; }

@@ -7634,6 +7634,9 @@
     }
 
     function momentsCoachFieldsHtml() {
+      const embeddedBrand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
+      return `<iframe class="moments-coach-inline-frame" title="朋友圈印钞机" src="/h5-static/moments-coach.html?brand=${embeddedBrand}&embedded=1&v=20260905-inline-v1"></iframe>`;
+
       return `<section class="moments-coach-app">
         <header class="moments-coach-topbar"><div><p>朋友圈成交文案教练</p><h3>把真实经历，写成让人愿意靠近的朋友圈</h3></div><div class="moments-coach-top-actions"><span>仅生成草稿，发布前需确认</span><button type="button" id="momentsCoachGuideOpen">微信浮窗</button></div></header>
         <div class="moments-coach-guide hidden" id="momentsCoachGuide"><div><strong>添加到微信浮窗</strong><span>在微信内打开本页，点右上角“…”后选择“添加到浮窗”。下次从浮窗回来会恢复当前草稿。</span></div><button type="button" id="momentsCoachGuideClose" aria-label="关闭浮窗引导">关闭</button></div>
@@ -26993,6 +26996,21 @@
       const taskCard = evt.target.closest("[data-live-task-id]");
       if (taskCard && (evt.target.closest(".live-executor-open-result") || taskCard.classList.contains("has-result"))) {
         openLiveExecutorTaskResult(taskCard.dataset.liveTaskId || "").catch((err) => toast(err.message || "结果读取失败"));
+      }
+    });
+
+    window.addEventListener("message", (event) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || data.source !== "moments-coach") return;
+      const frame = document.querySelector(".moments-coach-inline-frame");
+      if (data.type === "moments-coach-height") {
+        const height = Number(data.height);
+        if (frame && Number.isFinite(height) && height > 0) frame.style.height = `${Math.ceil(height)}px`;
+        return;
+      }
+      if (data.type === "moments-coach-back" && frame) {
+        $("topBackBtn")?.click();
       }
     });
     $("liveExecutorResultBackdrop")?.addEventListener("click", closeLiveExecutorResultModal);
