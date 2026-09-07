@@ -6,6 +6,48 @@ import pytest
 from fastapi import HTTPException
 
 
+def test_personal_profile_survives_live_template_save():
+    from backend.app.api import ip_content_studio as studio
+
+    existing = {
+        "basic_profile": {"name": "阿玲", "role": "企业顾问"},
+        "business_description": {"product": "AI员工"},
+        "profile_name": "阿玲",
+    }
+    incoming = {
+        "language": "zh-CN",
+        "target_language": "简体中文",
+        "common": "目标语种：简体中文",
+        "basic_profile": {"name": "阿玲", "role": "企业顾问"},
+        "business_description": {"product": "AI员工"},
+        "profile_name": "阿玲",
+        "role": "企业顾问",
+        "product": "AI员工",
+    }
+
+    saved = studio._personal_default_requirements_for_save(
+        incoming, existing, {"source": "online_personal_profile"}
+    )
+
+    assert saved["basic_profile"]["name"] == "阿玲"
+    assert saved["business_description"]["product"] == "AI员工"
+    assert saved["profile_name"] == "阿玲"
+
+
+def test_empty_profile_save_does_not_erase_existing_profile():
+    from backend.app.api import ip_content_studio as studio
+
+    existing = {"basic_profile": {"name": "阿玲"}, "profile_name": "阿玲"}
+    saved = studio._personal_default_requirements_for_save(
+        {"basic_profile": {}, "profile_name": ""},
+        existing,
+        {"source": "online_personal_profile"},
+    )
+
+    assert saved["basic_profile"]["name"] == "阿玲"
+    assert saved["profile_name"] == "阿玲"
+
+
 def test_collects_tikhub_billboard_search_list():
     from backend.app.api import ip_content_studio as studio
 

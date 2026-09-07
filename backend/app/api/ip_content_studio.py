@@ -3216,6 +3216,20 @@ def _personal_profile_fields(requirements: Any) -> dict[str, Any]:
     return out
 
 
+def _personal_profile_has_values(requirements: Any) -> bool:
+    """Return whether a profile payload contains any user-entered value."""
+    for value in _personal_profile_fields(requirements).values():
+        if isinstance(value, dict):
+            if any(str(item or "").strip() for item in value.values()):
+                return True
+        elif isinstance(value, (list, tuple, set)):
+            if any(str(item or "").strip() for item in value):
+                return True
+        elif str(value or "").strip():
+            return True
+    return False
+
+
 def _allows_personal_profile_update(meta: Any) -> bool:
     source = ""
     if isinstance(meta, dict):
@@ -3225,7 +3239,13 @@ def _allows_personal_profile_update(meta: Any) -> bool:
 
 def _personal_default_requirements_for_save(incoming: Any, existing: Any, meta: Any) -> dict[str, Any]:
     if _allows_personal_profile_update(meta):
-        return dict(incoming or {}) if isinstance(incoming, dict) else {}
+        req = dict(incoming or {}) if isinstance(incoming, dict) else {}
+        # Older clients can submit an empty hidden form while the page is
+        # still restoring the saved profile. Never let that race erase a
+        # previously saved profile; an explicit per-field edit still wins.
+        if not _personal_profile_has_values(req) and _personal_profile_has_values(existing):
+            req.update(_personal_profile_fields(existing))
+        return req
     req = _strip_personal_profile_requirements(incoming)
     req.update(_personal_profile_fields(existing))
     return req
@@ -5779,6 +5799,7 @@ def save_personal_default_ip_content_config(
     template_requirement_overrides: dict[str, Any] = {}
     if template_ref is not None:
         source_requirements = dict(template_ref.requirements or {})
+        incoming_profile = _personal_profile_fields(body.requirements)
         incoming_non_profile = _strip_personal_profile_requirements(body.requirements)
         source = _clean_text((body.meta or {}).get("source"), 80)
         if not incoming_non_profile:
@@ -5796,7 +5817,10 @@ def save_personal_default_ip_content_config(
                 for key, value in incoming_non_profile.items()
                 if source_requirements.get(key) != value
             }
-        incoming_requirements = template_requirement_overrides
+        # Keep profile fields on the personal row even when the selected
+        # template is live. Only non-profile fields are treated as template
+        # overrides so saving the survey cannot discard the profile.
+        incoming_requirements = {**template_requirement_overrides, **incoming_profile}
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = (
