@@ -10,7 +10,7 @@ from starlette.requests import Request
 from backend.app.api.auth import get_current_user
 from backend.app.api import scheduled_tasks
 from backend.app.db import get_db
-from backend.app.models import H5ChatEvent, H5ChatMessage, ScheduledTask, ScheduledTaskRun
+from backend.app.models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, ScheduledTask, ScheduledTaskRun
 
 
 def _task(user_id: int, *, title: str = "周期任务", schedule_type: str = "daily_times") -> ScheduledTask:
@@ -449,6 +449,34 @@ def test_background_cleanup_fails_abandoned_client_run_and_mirror(db_session, te
     assert stale.progress["stage"] == "client_progress_timeout"
     assert message.status == "failed"
     assert fresh.status == "processing"
+
+
+def test_background_cleanup_keeps_stale_run_while_owning_device_is_still_online(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    monkeypatch.setenv("LOBSTER_CLIENT_RUN_HARD_TIMEOUT_SECONDS", "3600")
+    stale = _run(
+        run_id="stale-but-online-client-run",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="douyin_leads",
+        status="processing",
+        created_at=now - timedelta(hours=3),
+    )
+    stale.updated_at = now - timedelta(hours=3)
+    presence = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="test-installation",
+        last_seen_at=now - timedelta(seconds=20),
+        created_at=now - timedelta(hours=3),
+    )
+    db_session.add_all([stale, presence])
+    db_session.commit()
+
+    failed = scheduled_tasks._fail_abandoned_client_runs(db_session, now)
+    db_session.commit()
+
+    assert failed == 0
+    assert stale.status == "processing"
 
 
 def test_workflow_node_deadline_uses_run_day_timezone_and_overnight_window():

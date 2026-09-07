@@ -210,11 +210,31 @@ _REQUEST_GUARD_READ_BYPASS_PATHS = {
 }
 
 
+def control_workload_kind(method: str, path: str) -> str:
+    """Identify client task-control traffic that must survive UI request load."""
+    method = str(method or "").upper()
+    path = str(path or "").rstrip("/") or "/"
+    if method == "POST" and path == "/api/h5-chat/device-heartbeat":
+        return "device_heartbeat"
+    if method == "GET" and path in {
+        "/api/scheduled-tasks/pending",
+        "/api/scheduled-tasks/publish/pending",
+    }:
+        return "task_claim"
+    if method == "POST" and path.startswith("/api/scheduled-tasks/runs/") and path.endswith(
+        ("/event", "/complete", "/publish-complete")
+    ):
+        return "task_control"
+    return ""
+
+
 def request_workload_kind(method: str, path: str) -> str:
     """Classify dynamic requests that may need a database connection."""
     method = str(method or "").upper()
     path = str(path or "").rstrip("/") or "/"
     if method in {"OPTIONS", "HEAD"} or path in _REQUEST_GUARD_BYPASS_PATHS:
+        return ""
+    if control_workload_kind(method, path):
         return ""
     if method == "GET" and path in _REQUEST_GUARD_READ_BYPASS_PATHS:
         return ""
@@ -282,8 +302,14 @@ def install_workload_guard(app: FastAPI) -> BoundedWorkGate:
         queue_limit=_env_int("SERVER_HEAVY_MAX_QUEUE", 24, minimum=0, maximum=500),
         wait_timeout_seconds=_env_int("SERVER_HEAVY_QUEUE_TIMEOUT_SECONDS", 120, minimum=5, maximum=900),
     )
+    control_gate = BoundedWorkGate(
+        concurrency=_env_int("SERVER_CONTROL_MAX_CONCURRENCY", 4, minimum=1, maximum=32),
+        queue_limit=_env_int("SERVER_CONTROL_MAX_QUEUE", 100, minimum=0, maximum=1000),
+        wait_timeout_seconds=_env_int("SERVER_CONTROL_QUEUE_TIMEOUT_SECONDS", 30, minimum=1, maximum=120),
+    )
     app.state.request_work_gate = request_gate
     app.state.heavy_work_gate = gate
+    app.state.control_work_gate = control_gate
 
     @app.exception_handler(SQLAlchemyTimeoutError)
     async def database_pool_timeout(request: Request, exc: SQLAlchemyTimeoutError):
@@ -303,12 +329,18 @@ def install_workload_guard(app: FastAPI) -> BoundedWorkGate:
 
     @app.middleware("http")
     async def bounded_heavy_workload(request: Request, call_next):
+        control_kind = control_workload_kind(request.method, request.url.path)
         request_kind = request_workload_kind(request.method, request.url.path)
         heavy_kind = heavy_workload_kind(request.method, request.url.path)
-        if not request_kind and not heavy_kind:
+        if not control_kind and not request_kind and not heavy_kind:
             return await call_next(request)
 
         async def run_request():
+            if control_kind:
+                async with control_gate.slot() as control_lease:
+                    response = await call_next(request)
+                    response.headers["X-Control-Queue-Ms"] = str(control_lease.waited_ms)
+                    return response
             if not request_kind:
                 return await call_next(request)
             async with request_gate.slot() as request_lease:
@@ -327,10 +359,13 @@ def install_workload_guard(app: FastAPI) -> BoundedWorkGate:
                 return response
         except WorkloadQueueFull as exc:
             logger.warning(
-                "workload overloaded method=%s path=%s request_active=%s request_waiting=%s "
-                "heavy_active=%s heavy_waiting=%s error=%s",
+                "workload overloaded method=%s path=%s control_kind=%s control_active=%s control_waiting=%s "
+                "request_active=%s request_waiting=%s heavy_active=%s heavy_waiting=%s error=%s",
                 request.method,
                 request.url.path,
+                control_kind or "-",
+                control_gate.active,
+                control_gate.waiting,
                 request_gate.active,
                 request_gate.waiting,
                 gate.active,
@@ -339,7 +374,7 @@ def install_workload_guard(app: FastAPI) -> BoundedWorkGate:
             )
             return JSONResponse(
                 status_code=503,
-                headers={"Retry-After": "15" if heavy_kind else "3"},
+                headers={"Retry-After": "15" if heavy_kind else "1" if control_kind else "3"},
                 content={"detail": "当前访问量较大，系统正在排队处理，请稍后重试"},
             )
 

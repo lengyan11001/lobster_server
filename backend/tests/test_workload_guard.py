@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from backend.app.services.workload_guard import (
     BoundedWorkGate,
     WorkloadQueueFull,
+    control_workload_kind,
     heavy_workload_kind,
     install_workload_guard,
     request_workload_kind,
@@ -176,6 +177,24 @@ def test_dynamic_request_admission_classification(method: str, path: str, expect
     assert request_workload_kind(method, path) == expected
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "expected"),
+    [
+        ("POST", "/api/h5-chat/device-heartbeat", "device_heartbeat"),
+        ("GET", "/api/scheduled-tasks/pending", "task_claim"),
+        ("GET", "/api/scheduled-tasks/publish/pending", "task_claim"),
+        ("POST", "/api/scheduled-tasks/runs/run-1/event", "task_control"),
+        ("POST", "/api/scheduled-tasks/runs/run-1/complete", "task_control"),
+        ("POST", "/api/scheduled-tasks/runs/run-1/publish-complete", "task_control"),
+        ("POST", "/api/scheduled-tasks/runs/run-1/cancel", ""),
+    ],
+)
+def test_task_control_routes_are_classified_separately(method: str, path: str, expected: str) -> None:
+    assert control_workload_kind(method, path) == expected
+    if expected:
+        assert request_workload_kind(method, path) == ""
+
+
 def test_request_admission_fails_fast_without_blocking_health(monkeypatch) -> None:
     async def scenario() -> None:
         monkeypatch.setenv("SERVER_REQUEST_MAX_CONCURRENCY", "1")
@@ -208,5 +227,39 @@ def test_request_admission_fails_fast_without_blocking_health(monkeypatch) -> No
             completed = await asyncio.wait_for(holder, timeout=1)
             assert completed.status_code == 200
             assert completed.headers["x-request-queue-ms"] == "0"
+
+    asyncio.run(scenario())
+
+
+def test_task_control_request_is_not_blocked_by_saturated_regular_gate(monkeypatch) -> None:
+    async def scenario() -> None:
+        monkeypatch.setenv("SERVER_REQUEST_MAX_CONCURRENCY", "1")
+        monkeypatch.setenv("SERVER_REQUEST_MAX_QUEUE", "0")
+        monkeypatch.setenv("SERVER_CONTROL_MAX_CONCURRENCY", "1")
+        monkeypatch.setenv("SERVER_CONTROL_MAX_QUEUE", "0")
+        app = FastAPI()
+        install_workload_guard(app)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        @app.get("/api/hold")
+        async def hold_request():
+            entered.set()
+            await release.wait()
+            return {"ok": True}
+
+        @app.post("/api/h5-chat/device-heartbeat")
+        async def heartbeat_request():
+            return {"ok": True}
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            holder = asyncio.create_task(client.get("/api/hold"))
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            heartbeat = await client.post("/api/h5-chat/device-heartbeat")
+            assert heartbeat.status_code == 200
+            assert heartbeat.headers["x-control-queue-ms"] == "0"
+            release.set()
+            assert (await asyncio.wait_for(holder, timeout=1)).status_code == 200
 
     asyncio.run(scenario())

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import ipaddress
+import logging
 import os
 import uuid
 import re
@@ -71,6 +72,7 @@ from ..services.h5_chat_sessions import ensure_system_task_session
 from ..services.installation_slot_ownership import assert_installation_slot_owner
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _TASK_KINDS = {"chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
 _SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"}
@@ -3135,6 +3137,76 @@ def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> boo
     return last_activity < now - timedelta(minutes=timeout_minutes)
 
 
+def _client_run_device_heartbeat_grace_seconds() -> int:
+    try:
+        value = int(os.environ.get("LOBSTER_CLIENT_RUN_DEVICE_HEARTBEAT_GRACE_SECONDS") or "150")
+    except (TypeError, ValueError):
+        value = 150
+    return max(90, min(900, value))
+
+
+def _client_run_online_hard_timeout_seconds() -> int:
+    """Maximum unreported runtime while the owning Online process is still alive.
+
+    Precise Douyin touch may legitimately take close to six hours, so this is
+    deliberately longer than the ordinary stale-progress timeout. It is only
+    used after the device heartbeat has proved that the client itself remains
+    online; offline clients continue to use the normal short timeout.
+    """
+    try:
+        value = int(os.environ.get("LOBSTER_CLIENT_RUN_ONLINE_HARD_TIMEOUT_SECONDS") or "28800")
+    except (TypeError, ValueError):
+        value = 28800
+    return max(3600, min(24 * 60 * 60, value))
+
+
+def _client_run_has_fresh_device_heartbeat(db: Session, row: ScheduledTaskRun, now: datetime) -> bool:
+    installation_id = str(row.claimed_by_installation_id or row.installation_id or "").strip()
+    if not installation_id:
+        return False
+    seen_at = (
+        db.query(H5ChatDevicePresence.last_seen_at)
+        .filter(
+            H5ChatDevicePresence.user_id == row.user_id,
+            H5ChatDevicePresence.installation_id == installation_id,
+        )
+        .scalar()
+    )
+    if not seen_at:
+        return False
+    return (now - seen_at).total_seconds() <= _client_run_device_heartbeat_grace_seconds()
+
+
+def _client_run_is_within_online_grace(db: Session, row: ScheduledTaskRun, now: datetime) -> bool:
+    """Keep a running task alive during temporary progress-report outages."""
+    if not _client_run_has_fresh_device_heartbeat(db, row, now):
+        return False
+    started_at = row.claimed_at or row.started_at or row.created_at or row.updated_at
+    if started_at is None:
+        return False
+    elapsed_seconds = max(0.0, (now - started_at).total_seconds())
+    hard_timeout_seconds = _client_run_online_hard_timeout_seconds()
+    if elapsed_seconds < hard_timeout_seconds:
+        logger.warning(
+            "scheduled task heartbeat grace run_id=%s user_id=%s installation_id=%s elapsed_seconds=%s hard_timeout_seconds=%s",
+            row.id,
+            row.user_id,
+            row.claimed_by_installation_id or row.installation_id or "",
+            int(elapsed_seconds),
+            hard_timeout_seconds,
+        )
+        return True
+    logger.warning(
+        "scheduled task online hard timeout run_id=%s user_id=%s installation_id=%s elapsed_seconds=%s hard_timeout_seconds=%s",
+        row.id,
+        row.user_id,
+        row.claimed_by_installation_id or row.installation_id or "",
+        int(elapsed_seconds),
+        hard_timeout_seconds,
+    )
+    return False
+
+
 def _fail_previous_client_runs(
     db: Session,
     *,
@@ -3693,7 +3765,10 @@ def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> 
         .limit(200)
         .all()
     )
+    failed = 0
     for row in rows:
+        if _client_run_is_within_online_grace(db, row, now):
+            continue
         message = "客户端长时间未上报执行进度，本轮已自动结束；请确认设备在线后重新执行。"
         row.status = "failed"
         row.error = message
@@ -3720,7 +3795,8 @@ def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> 
             "error",
             {"error": message, "reason": "client_progress_timeout"},
         )
-    return len(rows)
+        failed += 1
+    return failed
 
 
 def _run_async_blocking(coro: Any) -> Any:
@@ -5362,6 +5438,8 @@ def pending_scheduled_task_runs(
     )
     for row in stale_rows:
         if not _client_processing_run_is_stale(row, now):
+            continue
+        if _client_run_is_within_online_grace(db, row, now):
             continue
         row.status = "failed"
         row.error = "客户端长时间未上报进度，本轮任务已结束"
