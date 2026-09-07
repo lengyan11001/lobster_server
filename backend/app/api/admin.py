@@ -613,6 +613,41 @@ def admin_user_detail(
     }
 
 
+@router.get("/admin/api/remote-support/devices", summary="管理员查看已开启远程支持的 Online 设备")
+def admin_remote_support_devices(
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """Read remote-support state from the main Online heartbeat table.
+
+    This deliberately does not contact the standalone ToDesk service.  Only
+    devices that explicitly reported ``remote_support_enabled`` are returned.
+    """
+    now = datetime.utcnow()
+    rows = (
+        db.query(H5ChatDevicePresence, User)
+        .join(User, User.id == H5ChatDevicePresence.user_id)
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .limit(1000)
+        .all()
+    )
+    devices = []
+    for presence, user in rows:
+        payload = presence.account_payload if isinstance(presence.account_payload, dict) else {}
+        capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), list) else []
+        if "remote_support_enabled" not in {str(v) for v in capabilities}:
+            continue
+        devices.append({
+            "installation_id": presence.installation_id,
+            "device_name": presence.display_name or presence.installation_id,
+            "user_id": user.id,
+            "username": getattr(user, "email", None) or getattr(user, "username", None) or str(user.id),
+            "online": is_device_online(presence.last_seen_at, now=now),
+            "last_seen_at": presence.last_seen_at.isoformat() if presence.last_seen_at else None,
+        })
+    return {"devices": devices, "count": len(devices)}
+
+
 class AddCreditsBody(BaseModel):
     user_id: int
     amount: float

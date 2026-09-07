@@ -378,6 +378,7 @@ body{background:#edf2f7}
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
       <div class="nav-tab" data-icon="数" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询记录</div>
       <div class="nav-tab" data-icon="牌" data-nav="brands" id="brandsNavTab" onclick="switchNav('brands')">品牌管理</div>
+      <div class="nav-tab" data-icon="远" data-nav="remoteSupport" id="remoteSupportNavTab" onclick="switchNav('remoteSupport')" style="display:none">远程支持设备</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
     </div>
   </aside>
@@ -405,6 +406,16 @@ body{background:#edf2f7}
       <h3>OEM 品牌</h3>
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">启用后该品牌的 H5、小程序和 Online 才能注册及登录。历史用户统一属于必火。</p>
       <div id="brandsTable"><div class="empty">加载中...</div></div>
+    </div>
+  </div>
+
+  <div class="container" id="pageRemoteSupport" style="display:none">
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <h3 style="margin:0">已开启远程支持的设备</h3>
+        <button class="btn btn-outline btn-sm" type="button" onclick="loadRemoteSupportDevices()">刷新</button>
+      </div>
+      <div id="remoteSupportTable" style="margin-top:14px"><div class="empty">加载中…</div></div>
     </div>
   </div>
 
@@ -1141,6 +1152,8 @@ function showDashboard() {
   loadUserBrandOptions();
   const brandsTab = document.getElementById('brandsNavTab');
   if (brandsTab) brandsTab.style.display = isAdmin() ? '' : 'none';
+  const remoteTab = document.getElementById('remoteSupportNavTab');
+  if (remoteTab) remoteTab.style.display = isAdmin() ? '' : 'none';
 
   requestAnimationFrame(() => {
     statsCache = null;
@@ -1160,12 +1173,14 @@ function navTitle(nav) {
     tikhubRecords: '数据查询记录',
     brands: '品牌管理',
     commissions: '分润记录',
+    remoteSupport: '远程支持设备',
   }[nav] || '首页数据大盘';
 }
 
 function switchNav(nav) {
   if (nav === 'commissions' && !isAgent()) nav = 'stats';
   if (nav === 'brands' && !isAdmin()) nav = 'stats';
+  if (nav === 'remoteSupport' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
@@ -1186,6 +1201,8 @@ function switchNav(nav) {
   if (pageCommissions) pageCommissions.style.display = nav === 'commissions' ? '' : 'none';
   const pageBrands = document.getElementById('pageBrands');
   if (pageBrands) pageBrands.style.display = nav === 'brands' ? '' : 'none';
+  const pageRemoteSupport = document.getElementById('pageRemoteSupport');
+  if (pageRemoteSupport) pageRemoteSupport.style.display = nav === 'remoteSupport' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'customers') loadCustomers(customerPage || 1);
@@ -1195,6 +1212,22 @@ function switchNav(nav) {
   if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
   if (nav === 'commissions') loadCommissions(0);
   if (nav === 'brands') loadBrands();
+  if (nav === 'remoteSupport') loadRemoteSupportDevices();
+}
+
+async function loadRemoteSupportDevices() {
+  const target = document.getElementById('remoteSupportTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/admin/api/remote-support/devices');
+    const items = Array.isArray(data.devices) ? data.devices : [];
+    if (!items.length) { target.innerHTML = '<div class="empty">暂无已开启远程支持的设备</div>'; return; }
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>设备</th><th>所属账号</th><th>安装槽位</th><th>状态</th><th>最后心跳</th></tr></thead><tbody>'
+      + items.map(function(item) {
+        return '<tr><td>' + escapeHtml(item.device_name || '-') + '</td><td>' + escapeHtml(item.username || String(item.user_id || '-')) + '</td><td><code>' + escapeHtml(item.installation_id || '-') + '</code></td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.last_seen_at || '-') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
 }
 
 async function loadBrands() {
