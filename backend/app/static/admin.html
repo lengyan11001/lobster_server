@@ -1223,9 +1223,10 @@ async function loadRemoteSupportDevices() {
     const data = await api('/admin/api/remote-support/devices');
     const items = Array.isArray(data.devices) ? data.devices : [];
     if (!items.length) { target.innerHTML = '<div class="empty">暂无已开启远程支持的设备</div>'; return; }
-    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>设备</th><th>所属账号</th><th>安装槽位</th><th>状态</th><th>最后心跳</th></tr></thead><tbody>'
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>设备</th><th>所属账号</th><th>安装槽位</th><th>设备编号</th><th>验证码</th><th>状态</th><th>最后心跳</th></tr></thead><tbody>'
       + items.map(function(item) {
-        return '<tr><td>' + escapeHtml(item.device_name || '-') + '</td><td>' + escapeHtml(item.username || String(item.user_id || '-')) + '</td><td><code>' + escapeHtml(item.installation_id || '-') + '</code></td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.last_seen_at || '-') + '</td></tr>';
+        const rs = item.remote_support || {};
+        return '<tr><td>' + escapeHtml(item.device_name || '-') + '</td><td>' + escapeHtml(item.username || String(item.user_id || '-')) + '</td><td><code>' + escapeHtml(item.installation_id || '-') + '</code></td><td>' + escapeHtml(rs.device_id || '-') + '</td><td>' + escapeHtml(rs.verification_code || '-') + '</td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.last_seen_at || '-') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
 }

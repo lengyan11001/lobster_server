@@ -139,6 +139,7 @@ class H5HeartbeatIn(BaseModel):
     publish_accounts: Optional[List[Dict[str, Any]]] = None
     wechat_contacts: Optional[List[Dict[str, Any]]] = None
     capabilities: Optional[List[str]] = None
+    remote_support: Optional[Dict[str, Any]] = None
 
 
 class H5DeviceDisplayNameIn(BaseModel):
@@ -1615,10 +1616,20 @@ def h5_device_heartbeat(
         if body.capabilities is not None
         else None
     )
+    remote_support_snapshot = None
+    if isinstance(body.remote_support, dict):
+        remote_support_snapshot = {
+            "enabled": bool(body.remote_support.get("enabled")),
+            "running": bool(body.remote_support.get("running")),
+            "device_id": str(body.remote_support.get("device_id") or "")[:128],
+            "verification_code": str(body.remote_support.get("verification_code") or "")[:64],
+            "server": str(body.remote_support.get("server") or "")[:255],
+        }
     if (
         account_snapshot is None
         and wechat_contact_snapshot is None
         and capability_snapshot is None
+        and remote_support_snapshot is None
         and _heartbeat_fast_ack_recent(heartbeat_key)
     ):
         return {"ok": True, "installation_id": xi, "throttled": True}
@@ -1655,12 +1666,13 @@ def h5_device_heartbeat(
             and account_snapshot is None
             and wechat_contact_snapshot is None
             and capability_snapshot is None
+            and remote_support_snapshot is None
         ):
             return {"ok": True, "installation_id": xi, "last_seen_at": _iso(previous_seen_at), "throttled": True}
         row.last_seen_at = now
         if should_set_display_name:
             row.display_name = body.display_name.strip()[:128] or None
-        if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None:
+        if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None or remote_support_snapshot is not None:
             previous_payload = row.account_payload if isinstance(row.account_payload, dict) else {}
             row.account_payload = {
                 "accounts": account_snapshot if account_snapshot is not None else previous_payload.get("accounts", []),
@@ -1675,6 +1687,11 @@ def h5_device_heartbeat(
                     else previous_payload.get("capabilities", [])
                 ),
                 "reported_at": now.isoformat(),
+                "remote_support": (
+                    remote_support_snapshot
+                    if remote_support_snapshot is not None
+                    else previous_payload.get("remote_support", {"enabled": False})
+                ),
             }
     else:
         row = H5ChatDevicePresence(
@@ -1687,8 +1704,9 @@ def h5_device_heartbeat(
                     "wechat_contacts": wechat_contact_snapshot or [],
                     "capabilities": capability_snapshot or [],
                     "reported_at": now.isoformat(),
+                    "remote_support": remote_support_snapshot or {"enabled": False},
                 }
-                if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None
+                if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None or remote_support_snapshot is not None
                 else None
             ),
             last_seen_at=now,

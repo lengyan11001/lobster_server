@@ -635,7 +635,8 @@ def admin_remote_support_devices(
     for presence, user in rows:
         payload = presence.account_payload if isinstance(presence.account_payload, dict) else {}
         capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), list) else []
-        if "remote_support_enabled" not in {str(v) for v in capabilities}:
+        remote_support = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
+        if not bool(remote_support.get("enabled")) and "remote_support_enabled" not in {str(v) for v in capabilities}:
             continue
         devices.append({
             "installation_id": presence.installation_id,
@@ -644,6 +645,7 @@ def admin_remote_support_devices(
             "username": getattr(user, "email", None) or getattr(user, "username", None) or str(user.id),
             "online": is_device_online(presence.last_seen_at, now=now),
             "last_seen_at": presence.last_seen_at.isoformat() if presence.last_seen_at else None,
+            "remote_support": remote_support,
         })
     return {"devices": devices, "count": len(devices)}
 
