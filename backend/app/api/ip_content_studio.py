@@ -33,6 +33,11 @@ from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
 from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
+from .comfly_proxy import (
+    _execute_image_generation_request,
+    _extract_image_result_urls,
+    _save_generated_images_best_effort_by_user_id,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -3698,6 +3703,265 @@ def _server_bearer_for_user(user: User) -> str:
     return f"Bearer {token}"
 
 
+def _workflow_moment_image_prompts(record: IPContentDraftRecord) -> list[str]:
+    """Return exactly three stable prompts for the workflow's first Moments row."""
+    meta = record.meta if isinstance(record.meta, dict) else {}
+    raw = meta.get("image_prompts") if isinstance(meta.get("image_prompts"), list) else []
+    prompts = [
+        _clean_long_text(value, 1800)
+        for value in raw
+        if _clean_long_text(value, 1800)
+    ][:3]
+    base = _clean_long_text(record.image_prompt or record.content or record.title or "朋友圈配图", 1800)
+    if not prompts:
+        prompts = [base]
+    while len(prompts) < 3:
+        variant = len(prompts) + 1
+        prompts.append(
+            f"{base}\n这是同一条朋友圈内容的第 {variant} 张配图，请更换构图、主体动作和景别，保持主题一致，不要出现文字、水印或二维码。"
+        )
+    return prompts[:3]
+
+
+def _workflow_moment_reference_urls(record: IPContentDraftRecord) -> list[str]:
+    meta = record.meta if isinstance(record.meta, dict) else {}
+    raw = meta.get("reference_image_urls") if isinstance(meta.get("reference_image_urls"), list) else []
+    return _extract_reference_image_urls(raw, limit=8)
+
+
+async def _generate_workflow_first_moment_images(
+    *,
+    db: Session,
+    current_user: User,
+    record: IPContentDraftRecord,
+    run_id: str,
+    progress: ScheduleProgress = None,
+) -> dict[str, Any]:
+    """Generate and persist three images for the first Moments draft in a workflow.
+
+    The normal workbench keeps image generation manual.  Workflow execution is
+    the one intentional exception: it needs durable public URLs/asset IDs
+    before the child publish node is allowed to claim the run.  Existing
+    images are reused so recovery never charges or generates the same image a
+    second time.
+    """
+    meta = dict(record.meta or {}) if isinstance(record.meta, dict) else {}
+    existing = meta.get("images") if isinstance(meta.get("images"), list) else []
+    existing_by_index: dict[int, dict[str, Any]] = {}
+    for item in existing:
+        if not isinstance(item, dict):
+            continue
+        url = _clean_long_text(item.get("image_url") or item.get("url"), 4096)
+        if not url:
+            continue
+        try:
+            image_index = int(item.get("index") or 0)
+        except (TypeError, ValueError):
+            image_index = 0
+        if 1 <= image_index <= 3:
+            existing_by_index[image_index] = dict(item)
+    if record.image_url and 1 not in existing_by_index:
+        existing_by_index[1] = {
+            "image_url": _clean_long_text(record.image_url, 4096),
+            "image_asset_id": _clean_text(record.image_asset_id, 128),
+            "image_prompt": _clean_long_text(record.image_prompt, 1800),
+            "index": 1,
+        }
+
+    prompts = _workflow_moment_image_prompts(record)
+    references = _workflow_moment_reference_urls(record)
+    image_model = (
+        os.environ.get("IP_CONTENT_STUDIO_IMAGE_MODEL")
+        or os.environ.get("COMFLY_WORKFLOW_IMAGE_MODEL")
+        or "openai/gpt-image-2"
+    ).strip() or "openai/gpt-image-2"
+    batch_id = _clean_text(meta.get("image_batch_id"), 96) or f"workflow_moment_img_{uuid.uuid4().hex[:12]}"
+    images: list[dict[str, Any]] = [existing_by_index[index] for index in sorted(existing_by_index)]
+    errors: list[dict[str, Any]] = []
+
+    # Do not hold an old read transaction while waiting for upstream image
+    # providers.  The image persistence helper uses its own short-lived DB
+    # session, then we write the draft record below.
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    def persist_image_progress() -> None:
+        """Checkpoint generated images so a worker restart can resume safely."""
+        current_images = [existing_by_index[item_index] for item_index in sorted(existing_by_index)]
+        complete_now = len(current_images) >= 3
+        meta["images"] = current_images[:3]
+        meta["image_prompts"] = prompts
+        meta["image_batch_id"] = batch_id
+        meta["image_status"] = "completed" if complete_now else ("partial" if current_images else "failed")
+        meta["image_progress"] = f"{len(current_images)}/3"
+        meta["image_complete"] = complete_now
+        meta["image_errors"] = errors[:3]
+        meta["image_updated_at"] = _utcnow().isoformat()
+        record.meta = dict(meta)
+        first = current_images[0] if current_images else {}
+        record.image_url = _clean_long_text(first.get("image_url"), 4096) or None
+        record.image_asset_id = _clean_text(first.get("image_asset_id"), 128) or None
+        record.image_prompt = _clean_long_text(prompts[0], 2000) or record.image_prompt
+        record.selected = True
+        record.updated_at = _utcnow()
+        db.add(record)
+        try:
+            db.commit()
+            db.refresh(record)
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "[ip-content] workflow Moments image checkpoint failed user_id=%s record_id=%s",
+                current_user.id,
+                record.record_id,
+                exc_info=True,
+            )
+
+    for index, prompt in enumerate(prompts, start=1):
+        if index in existing_by_index:
+            continue
+        _emit_schedule_progress(
+            progress,
+            "moments_image_start",
+            f"正在生成朋友圈第 {index}/3 张图片",
+            {"record_id": record.record_id, "index": index, "batch_id": batch_id},
+        )
+        body: dict[str, Any] = {
+            "model": image_model,
+            "prompt": prompt,
+            "n": 1,
+            "size": "1024x1024",
+            "image_size": "1024x1024",
+        }
+        if references:
+            # Keep the same reference-image semantics as the manual workbench;
+            # the image proxy will route this through its edit/fallback chain.
+            body["image_urls"] = references[:8]
+        try:
+            response = await _execute_image_generation_request(
+                request_user_id=int(current_user.id),
+                billing_user_id=int(current_user.id),
+                model=image_model,
+                body=body,
+                persist_assets=False,
+            )
+            raw_urls = _extract_image_result_urls(response if isinstance(response, dict) else {})
+            saved_assets = await _save_generated_images_best_effort_by_user_id(
+                int(current_user.id),
+                response_payload=response if isinstance(response, dict) else {},
+                prompt=prompt,
+                model=image_model,
+                limit=1,
+                exclude_urls=references,
+            )
+            asset = saved_assets[0] if saved_assets else {}
+            url = _clean_long_text(asset.get("source_url") or asset.get("url") or (raw_urls[0] if raw_urls else ""), 4096)
+            if not url:
+                raise RuntimeError("图片生成成功但没有可发布的公网链接")
+            item = {
+                "image_url": url,
+                "image_asset_id": _clean_text(asset.get("asset_id") or "", 128),
+                "image_prompt": prompt,
+                "generated_prompt": prompt,
+                "index": index,
+                "created_at": _utcnow().isoformat(),
+                "batch_id": batch_id,
+                "reference_image_urls": references,
+            }
+            existing_by_index[index] = item
+            images = [existing_by_index[item_index] for item_index in sorted(existing_by_index)]
+            # Checkpoint every successful image.  If the client/server worker
+            # restarts while producing image 2 or 3, the next run reuses the
+            # already persisted image instead of charging and generating it
+            # again.
+            persist_image_progress()
+            _emit_schedule_progress(
+                progress,
+                "moments_image_done",
+                f"朋友圈第 {index}/3 张图片已生成",
+                {
+                    "record_id": record.record_id,
+                    "index": index,
+                    "batch_id": batch_id,
+                    "image_asset_id": item.get("image_asset_id") or "",
+                },
+            )
+        except Exception as exc:
+            error_text = _clean_long_text(getattr(exc, "detail", None) or str(exc), 800)
+            errors.append({"index": index, "error": error_text or "图片生成失败"})
+            logger.warning(
+                "[ip-content] workflow Moments image failed user_id=%s record_id=%s index=%s error=%s",
+                current_user.id,
+                record.record_id,
+                index,
+                error_text,
+            )
+
+    images = [existing_by_index[item_index] for item_index in sorted(existing_by_index)]
+    complete = len(images) >= 3
+    meta["images"] = images[:3]
+    meta["image_prompts"] = prompts
+    meta["image_batch_id"] = batch_id
+    meta["image_batch_created_at"] = _utcnow().isoformat()
+    meta["image_status"] = "completed" if complete else ("partial" if images else "failed")
+    meta["image_progress"] = f"{len(images)}/3"
+    meta["image_complete"] = complete
+    meta["image_errors"] = errors[:3]
+    meta["image_updated_at"] = _utcnow().isoformat()
+    record.meta = meta
+    first_image = images[0] if images else {}
+    record.image_url = _clean_long_text(first_image.get("image_url"), 4096) or None
+    record.image_asset_id = _clean_text(first_image.get("image_asset_id"), 128) or None
+    record.image_prompt = _clean_long_text(prompts[0], 2000) or record.image_prompt
+    record.selected = True
+    record.updated_at = _utcnow()
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    image_urls = [
+        _clean_long_text(item.get("image_url"), 4096)
+        for item in images[:3]
+        if _clean_long_text(item.get("image_url"), 4096)
+    ]
+    image_asset_ids = [
+        _clean_text(item.get("image_asset_id"), 128)
+        for item in images[:3]
+        if _clean_text(item.get("image_asset_id"), 128)
+    ]
+    publish_draft = {
+        "status": "ready" if complete else ("partial" if image_urls else "failed"),
+        "platform": "wechat_moments",
+        "media_type": "image_text",
+        "title": "",
+        "content": _clean_long_text(record.content, 8000),
+        "description": _clean_long_text(record.content, 8000),
+        "asset_id": image_asset_ids[0] if image_asset_ids else "",
+        "source_url": image_urls[0] if image_urls else "",
+        "url": image_urls[0] if image_urls else "",
+        "image_urls": image_urls,
+        "image_asset_ids": image_asset_ids,
+        "source_record_id": record.record_id,
+        "source_task": "moments_candidate",
+        "image_complete": complete,
+        "image_progress": f"{len(images)}/3",
+        "image_errors": errors[:3],
+    }
+    return {
+        "batch_id": batch_id,
+        "record_id": record.record_id,
+        "image_model": image_model,
+        "image_count": len(images),
+        "image_complete": complete,
+        "image_urls": image_urls,
+        "image_asset_ids": image_asset_ids,
+        "errors": errors[:3],
+        "publish_draft": publish_draft,
+    }
+
+
 async def _sync_keyword_row(
     *,
     db: Session,
@@ -4754,6 +5018,18 @@ async def run_ip_content_daily_scheduled(
     progress: ScheduleProgress = None,
 ) -> dict[str, Any]:
     runtime_options = dict(options or {})
+    # Workflow nodes are the only IP-daily execution path that automatically
+    # materializes Moments images.  Manual/scheduled studio runs retain the
+    # existing manual image-generation behavior.
+    h5_context = runtime_options.get("h5_context") if isinstance(runtime_options.get("h5_context"), dict) else {}
+    workflow_node_execution = bool(
+        runtime_options.pop("_workflow_node_execution", False)
+        # Inline system workflows use template_id=0, so the key/node markers
+        # are the authoritative signal that this is a workflow invocation.
+        or h5_context.get("workflow_template_id")
+        or h5_context.get("workflow_template_key")
+        or h5_context.get("workflow_node_id")
+    )
     live_personal_template = str(runtime_options.get("template_source") or "").strip().lower() == "personal_current"
     if live_personal_template:
         runtime_options = _use_current_personal_template_options(
@@ -4961,6 +5237,7 @@ async def run_ip_content_daily_scheduled(
 
     auth_token = _server_bearer_for_user(current_user)
     generated_groups: list[dict[str, Any]] = []
+    workflow_publish_draft: dict[str, Any] = {}
 
     async def generate_group(
         *,
@@ -5000,24 +5277,62 @@ async def run_ip_content_daily_scheduled(
             task_label=task_label,
             reference_image_urls=reference_image_urls,
         )
-        generated_groups.append(
-            {
-                "status": generated.get("status") or "completed",
-                "task": record_task,
-                "group_id": generated.get("group_id") or "",
-                "count": int(generated.get("count") or 0),
-                "target_count": int(generated.get("target_count") or count or 0),
-                "batch_count": int(generated.get("batch_count") or 1),
-                "completed_batches": int(generated.get("completed_batches") or 0),
-                "failed_count": int(generated.get("failed_count") or 0),
-                "failed_batches": generated.get("failed_batches") or [],
-                "requirements": generated.get("requirements") or "",
-                "records": generated.get("records") or [],
-                "source_items": generated.get("source_items") or [],
-                "reference_image_urls": generated.get("reference_image_urls") or [],
-                "batches": generated.get("batches") or [],
-            }
-        )
+        group_payload: dict[str, Any] = {
+            "status": generated.get("status") or "completed",
+            "task": record_task,
+            "group_id": generated.get("group_id") or "",
+            "count": int(generated.get("count") or 0),
+            "target_count": int(generated.get("target_count") or count or 0),
+            "batch_count": int(generated.get("batch_count") or 1),
+            "completed_batches": int(generated.get("completed_batches") or 0),
+            "failed_count": int(generated.get("failed_count") or 0),
+            "failed_batches": generated.get("failed_batches") or [],
+            "requirements": generated.get("requirements") or "",
+            "records": generated.get("records") or [],
+            "source_items": generated.get("source_items") or [],
+            "reference_image_urls": generated.get("reference_image_urls") or [],
+            "batches": generated.get("batches") or [],
+        }
+        if workflow_node_execution and record_task == "moments_candidate" and generated.get("records"):
+            raw_first_record = (generated.get("records") or [None])[0]
+            first_record_id = (
+                str(raw_first_record.get("record_id") or "").strip()
+                if isinstance(raw_first_record, dict)
+                else ""
+            )
+            first_record = (
+                db.query(IPContentDraftRecord)
+                .filter(
+                    IPContentDraftRecord.user_id == current_user.id,
+                    IPContentDraftRecord.record_id == first_record_id,
+                )
+                .first()
+                if first_record_id
+                else None
+            )
+            if first_record is not None:
+                image_generation = await _generate_workflow_first_moment_images(
+                    db=db,
+                    current_user=current_user,
+                    record=first_record,
+                    run_id=run_id,
+                    progress=progress,
+                )
+                refreshed_first = _draft_record_payload(first_record)
+                records_payload = list(group_payload.get("records") or [])
+                if records_payload:
+                    records_payload[0] = refreshed_first
+                group_payload["records"] = records_payload
+                group_payload["image_generation"] = image_generation
+                group_payload["publish_draft"] = image_generation.get("publish_draft") or {}
+                workflow_publish_draft = dict(image_generation.get("publish_draft") or {})
+            else:
+                group_payload["image_generation"] = {
+                    "image_count": 0,
+                    "image_complete": False,
+                    "errors": [{"error": "朋友圈首条生成记录不存在"}],
+                }
+        generated_groups.append(group_payload)
 
     industry_rows = (
         _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=40)
@@ -5101,9 +5416,18 @@ async def run_ip_content_daily_scheduled(
         "sync_results": sync_results,
         "groups": generated_groups,
         "records_by_task": records_by_task,
+        "publish_draft": workflow_publish_draft,
         "image_generation": {
-            "manual": True,
-        "note": "朋友圈图片不由定时任务自动生成；请在执行详情或朋友圈图文工作台手动触发。",
+            "manual": not workflow_node_execution,
+            "automatic": workflow_node_execution and "moments_candidate" in selected_tasks,
+            "selected_record": workflow_publish_draft.get("source_record_id") if workflow_publish_draft else "",
+            "image_count": len(workflow_publish_draft.get("image_urls") or []) if workflow_publish_draft else 0,
+            "image_complete": bool(workflow_publish_draft.get("image_complete")) if workflow_publish_draft else False,
+            "note": (
+                "朋友圈首条文案已自动生成 3 张配图，可由下级节点发布到朋友圈。"
+                if workflow_node_execution and "moments_candidate" in selected_tasks
+                else "朋友圈图片请在执行详情或朋友圈图文工作台手动触发。"
+            ),
         },
     }
 

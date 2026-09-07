@@ -3283,6 +3283,7 @@ async def _execute_image_generation_request(
     billing_user_id: int,
     model: str,
     body: Dict[str, Any],
+    persist_assets: bool = True,
 ) -> Dict[str, Any]:
     openai_official_first = _openai_official_image_first_for_user(billing_user_id)
     attempt_models = _image_generation_model_attempts_for_user(
@@ -3413,14 +3414,18 @@ async def _execute_image_generation_request(
                         _comfly_headers(attempt_model),
                         _TIMEOUT_IMAGE,
                     )
-                asset_persistence_queued = _queue_generated_image_asset_persistence(
-                    billing_user_id,
-                    response_payload=resp,
-                    prompt=str(body.get("prompt") or ""),
-                    model=attempt_model,
-                    limit=int(body.get("n") or body.get("num_images") or 1),
-                    exclude_urls=reference_urls,
-                ) if isinstance(resp, dict) else False
+                asset_persistence_queued = (
+                    _queue_generated_image_asset_persistence(
+                        billing_user_id,
+                        response_payload=resp,
+                        prompt=str(body.get("prompt") or ""),
+                        model=attempt_model,
+                        limit=int(body.get("n") or body.get("num_images") or 1),
+                        exclude_urls=reference_urls,
+                    )
+                    if persist_assets and isinstance(resp, dict)
+                    else False
+                )
                 if isinstance(resp, dict) and attempt_model != model:
                     resp = dict(resp)
                     fallback = resp.setdefault("_lobster_fallback", {})
@@ -3515,14 +3520,18 @@ async def _execute_image_generation_request(
         ):
             try:
                 resp = await _openmind_image_request(upstream_body)
-                asset_persistence_queued = _queue_generated_image_asset_persistence(
-                    billing_user_id,
-                    response_payload=resp,
-                    prompt=str(body.get("prompt") or ""),
-                    model=attempt_model,
-                    limit=int(body.get("n") or body.get("num_images") or 1),
-                    exclude_urls=reference_urls,
-                ) if isinstance(resp, dict) else False
+                asset_persistence_queued = (
+                    _queue_generated_image_asset_persistence(
+                        billing_user_id,
+                        response_payload=resp,
+                        prompt=str(body.get("prompt") or ""),
+                        model=attempt_model,
+                        limit=int(body.get("n") or body.get("num_images") or 1),
+                        exclude_urls=reference_urls,
+                    )
+                    if persist_assets and isinstance(resp, dict)
+                    else False
+                )
                 if isinstance(resp, dict):
                     resp = dict(resp)
                     fallback = resp.setdefault("_lobster_fallback", {})

@@ -5,6 +5,9 @@
   const $ = (id) => document.getElementById(id);
   const coachRoot = $('momentsApp');
   const isCurrentCoach = () => document.getElementById('momentsApp') === coachRoot;
+  // The embedded page lives inside the host workbench form. Its controls are
+  // navigation/actions, never a generic task submission.
+  coachRoot?.querySelectorAll('button').forEach(button => { button.type = 'button'; });
   const readToken = () => localStorage.getItem(`lobster_h5_token:${brand}`) || localStorage.getItem('lobster_h5_token') || '';
   const toast = (msg) => { const el = $('toast'); if (!el) return; el.textContent = String(msg || '操作失败'); el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); };
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -24,7 +27,9 @@
     if (!response.ok) throw new Error(data.detail || data.message || `请求失败（${response.status}）`);
     return data;
   }
-  const panels = () => [...document.querySelectorAll('[data-panel]')];
+  // The embedded coach shares the host document with the workbench. Keep its
+  // navigation state inside the coach so host panels cannot affect back.
+  const panels = () => coachRoot ? [...coachRoot.querySelectorAll('[data-panel]')] : [];
   let panelHistory = [];
   const currentPanel = () => panels().find(p => !p.classList.contains('hidden'))?.dataset.panel || 'home';
   const showPanel = (name, options = {}) => { const current = currentPanel(); if (options.push && current !== name) panelHistory.push(current); if (name === 'home' && options.reset !== false) panelHistory = []; panels().forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name)); if (['history','materials','plan'].includes(name)) loadList(name).catch(e => toast(e.message)); window.scrollTo({top:0, behavior:'smooth'}); };
@@ -37,7 +42,7 @@
     '收款圈': { eyebrow:'收款圈', title:'收款圈', description:'用一个收款，引爆收款。', visible:['problem','desired','change'], labels:{problem:'客户情况',desired:'报名的课程 / 购买的产品',change:'我能带他拿到的结果'}, placeholders:{problem:'比如：花了10多万学习，收入没有提升，越来越焦虑',desired:'比如：我的文案私教',change:'比如：带他把能力变成钱，有钱有闲又有爱'}},
     '促成交圈': { eyebrow:'促成交圈', title:'促成交', description:'让用户忍不住立刻给你付钱。', visible:['desired','problem','change'], labels:{desired:'用户想获得什么结果',problem:'产品和优惠',change:'截止或名额'}, placeholders:{desired:'比如：让孩子愿意沟通，家庭氛围变轻松',problem:'比如：亲子沟通陪跑营，原价1999，今天699，送1次诊断',change:'比如：今晚12点截止，只开放20个名额'}}
   };
-  const updateCircleUI = (value) => { const cfg = CIRCLE_UI[value] || CIRCLE_UI['']; const eyebrow=$('circleEyebrow'), title=$('circleTitle'), desc=$('circleDescription'); if(eyebrow) eyebrow.textContent=cfg.eyebrow; if(title) title.textContent=cfg.title; if(desc) desc.textContent=cfg.description; document.querySelectorAll('[data-circle-field]').forEach((el)=>{ const key=el.dataset.circleField; const show=cfg.visible.includes(key); el.classList.toggle('circle-field-hidden', !show); const label=el.querySelector('.field-label'); const input=el.querySelector('textarea'); if(label) label.textContent=cfg.labels[key] || CIRCLE_UI[''].labels[key] || label.textContent; if(input && cfg.placeholders[key]) input.placeholder=cfg.placeholders[key]; }); const optional=document.querySelector('[data-circle-optional]'); if(optional) optional.classList.toggle('circle-field-hidden', !!value); const direction=$('circleDirection'); if(direction) direction.classList.toggle('circle-field-hidden', !!value); const card=document.querySelector('.compose-card'); if(card) card.classList.toggle('circle-specific', !!value); };
+  const updateCircleUI = (value) => { const cfg = CIRCLE_UI[value] || CIRCLE_UI['']; const eyebrow=$('circleEyebrow'), title=$('circleTitle'), desc=$('circleDescription'); if(eyebrow) eyebrow.textContent=cfg.eyebrow; if(title) title.textContent=cfg.title; if(desc) desc.textContent=cfg.description; coachRoot?.querySelectorAll('[data-circle-field]').forEach((el)=>{ const key=el.dataset.circleField; const show=cfg.visible.includes(key); el.classList.toggle('circle-field-hidden', !show); const label=el.querySelector('.field-label'); const input=el.querySelector('textarea'); if(label) label.textContent=cfg.labels[key] || CIRCLE_UI[''].labels[key] || label.textContent; if(input && cfg.placeholders[key]) input.placeholder=cfg.placeholders[key]; }); const optional=coachRoot?.querySelector('[data-circle-optional]'); if(optional) optional.classList.toggle('circle-field-hidden', !!value); const direction=$('circleDirection'); if(direction) direction.classList.toggle('circle-field-hidden', !!value); const card=coachRoot?.querySelector('.compose-card'); if(card) card.classList.toggle('circle-specific', !!value); };
   const snapshot = () => { const circle = $('circle')?.value || ''; const visible = (CIRCLE_UI[circle] || CIRCLE_UI['']).visible; return { happened: visible.includes('happened') ? ($('happened')?.value.trim() || '') : '', customer_problem: visible.includes('problem') ? ($('problem')?.value.trim() || '') : '', customer_question: visible.includes('question') ? ($('question')?.value.trim() || '') : '', desired_result: visible.includes('desired') ? ($('desired')?.value.trim() || '') : '', current_change: visible.includes('change') ? ($('change')?.value.trim() || '') : '', purpose: $('purpose')?.value || '', circle_type: circle, image_urls: ($('images')?.value || '').split(/[\n,，；;]/).map(x => x.trim()).filter(Boolean) }; };
   const fill = (v) => { const map = {happened:'happened',customer_problem:'problem',customer_question:'question',desired_result:'desired',current_change:'change',purpose:'purpose',circle_type:'circle',image_urls:'images'}; Object.entries(map).forEach(([k,id]) => { if ($(id)) $(id).value = Array.isArray(v?.[k]) ? v[k].join('\n') : (v?.[k] || ''); }); updateCircleUI(v?.circle_type || $('circle')?.value || ''); };
   const renderResults = (items) => { const box = $('results'); if (!box) return; box.innerHTML = `<div class="result-heading"><div><span class="eyebrow">生成完成</span><h2>选一条最像你会说的话</h2></div><small>发布前请核对素材真实性</small></div><div class="result-grid">${(items || []).map(item => `<article class="result" data-id="${esc(item.record_id)}"><header><span>${esc(item.circle_type || '朋友圈')}</span><b>${esc(item.version_type || '文案')}</b></header><h3>${esc(item.title || '')}</h3><pre>${esc(item.body || '')}</pre><div class="result-note"><b>配图建议</b><p>${esc(item.image_suggestion || '按内容选择真实场景图片')}</p><b>衔接建议</b><p>${esc(item.transition || '结合上一条内容自然发布')}</p></div><label class="confirm"><input type="checkbox" data-confirm>我已核对素材，确认发布</label><button type="button" data-image>生成配图</button><button type="button" data-publish disabled>选择此版并发布</button></article>`).join('')}</div>`; };
@@ -91,6 +96,8 @@
   document.addEventListener('change', (e) => { if (!isCurrentCoach()) return; if (e.target.id === 'circle') updateCircleUI(e.target.value); });
   document.addEventListener('click', (e) => {
     if (!isCurrentCoach()) return;
+    const coachButton = e.target.closest('#momentsApp button');
+    if (coachButton) coachButton.type = 'button';
     const schoolBack=e.target.closest('[data-school-back]');
     if (schoolBack) { e.preventDefault(); showPanel(schoolBack.dataset.schoolBack, {push:false, reset:false}); return; }
     const schoolCategory=e.target.closest('[data-school-category]');

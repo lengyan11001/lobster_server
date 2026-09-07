@@ -544,7 +544,7 @@
       },
       "ip_content_moments": {
         label: "朋友圈图文",
-        description: "基于关键词、同行和记忆资料生成朋友圈图文与配图提示词。",
+        description: "基于关键词、同行和记忆资料生成首条朋友圈图文并自动生成 3 张配图。",
         packageId: "ip_content_moments_skill",
         department: "AI营销创作",
         serverTask: true,
@@ -786,7 +786,7 @@
                 key: "ip_content_moments",
                 label: "朋友圈图文",
                 mark: "圈",
-                description: "生成朋友圈图文内容和配图提示词。",
+                description: "生成首条朋友圈图文内容并自动生成 3 张配图。",
                 capabilityId: "ip_content_moments",
                 packageId: "ip_content_moments_skill",
                 serverTask: true,
@@ -5719,7 +5719,7 @@
             source_workflow_node_label: String(parentNode && (parentNode.ability_label || parentNode.note) || ""),
             platform,
             media_type: mediaType,
-            ai_publish_copy: true,
+            ai_publish_copy: !(platform === "wechat_moments" && String(parentNode && parentNode.ability_key || "").trim() === "ip_content_moments"),
           },
         },
       };
@@ -7755,14 +7755,29 @@
       if (!fields || (fields.dataset.momentsCoachLoaded === "1" && fields.querySelector("#momentsApp"))) return;
       fields.dataset.momentsCoachLoaded = "1";
       try {
+        // The standalone coach page normally loads this stylesheet from its <head>.
+        // When its body is embedded into the workbench, that <head> is not copied,
+        // so explicitly load the product stylesheet before booting its interactions.
+        const coachStyleHref = "/h5-static/moments-coach.css?v=20260905-circle-ui-v2";
+        const coachStyle = document.querySelector('link[href*="moments-coach.css"]') || document.createElement("link");
+        coachStyle.rel = "stylesheet";
+        coachStyle.href = coachStyleHref;
+        coachStyle.dataset.momentsCoachStyle = "1";
+        if (!coachStyle.parentNode) document.head.appendChild(coachStyle);
+        if (!document.querySelector('style[data-moments-coach-reset="1"]')) {
+          const reset = document.createElement("style");
+          reset.dataset.momentsCoachReset = "1";
+          reset.textContent = ".moments-app button{box-shadow:none;}";
+          document.head.appendChild(reset);
+        }
         const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
-        const response = await fetch(`/h5-static/moments-coach.html?brand=${brand}&embedded=1&v=20260905-coach-workbench-v2`, { credentials: "include" });
+        const response = await fetch(`/h5-static/moments-coach.html?brand=${brand}&embedded=1&v=20260905-circle-navigation-v1`, { credentials: "include" });
         if (!response.ok) throw new Error(`加载朋友圈印钞机失败（${response.status}）`);
         const html = await response.text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         fields.innerHTML = doc.body?.innerHTML || "";
         const script = document.createElement("script");
-        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-coach-workbench-v3`;
+        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-circle-navigation-v1`;
         script.async = false;
         document.body.appendChild(script);
       } catch (err) {
@@ -7875,6 +7890,10 @@
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
       if (String(node.capabilityId || node.key || "") === "moments_sales_coach") {
+        if (submit) {
+          submit.disabled = true;
+          submit.classList.add("hidden");
+        }
         loadEmbeddedMomentsCoach(fields);
         return;
       }
@@ -28703,6 +28722,11 @@
     });
     $("abilityWorkbenchForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
+      // The embedded moments coach owns its own navigation and actions. Its
+      // buttons live inside this outer form, but must never dispatch a generic
+      // ability task when a user enters a second-level page.
+      const activeAbility = activeAbilityLookup();
+      if (String(activeAbility?.node?.capabilityId || activeAbility?.node?.key || "") === "moments_sales_coach" || evt.target?.querySelector?.("#momentsApp")) return;
       submitAbilityWorkbench().catch((err) => toast(err.message || "提交失败"));
     });
 

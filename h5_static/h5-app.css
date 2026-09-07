@@ -8754,6 +8754,7 @@
       min-height: 36px;
       padding: 0;
       color: #475569;
+      font: 400 24px/1 Arial, sans-serif;
     }
 
     .top-action {
@@ -10276,7 +10277,21 @@
     .moments-coach-mode > .department-breadcrumb,
     .moments-coach-mode > .ability-child-grid { display:none; }
     .moments-coach-mode > .ability-workbench { display:block; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; backdrop-filter:none; }
-    body.moments-coach-embedded #topBackBtn { display:inline-flex !important; align-items:center; justify-content:center; line-height:1; text-align:center; }
+    body.moments-coach-embedded #topBackBtn {
+      display:inline-flex !important;
+      align-items:center;
+      justify-content:center;
+      line-height:1;
+      text-align:center;
+      font-size:0;
+    }
+    body.moments-coach-embedded #topBackBtn::before {
+      content:"←";
+      display:block;
+      color:currentColor;
+      font:400 24px/1 Arial, sans-serif;
+      transform:none;
+    }
     body.moments-coach-embedded .moments-app .mc-header .mc-brand > .icon-btn { display:none !important; }
     body.moments-coach-embedded .moments-app .sub-head .back-link { display:none !important; }
     body.moments-coach-embedded .moments-app label.confirm,

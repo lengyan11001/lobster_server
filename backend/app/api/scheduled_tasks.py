@@ -1598,9 +1598,10 @@ def _workflow_parent_finished_at(
         scheduled_at + timedelta(minutes=timezone_offset)
     ).date()
 
+    # The parent may be a server-side IP content run; workflow context is the
+    # authoritative relationship, not the run's task_kind.
     query = db.query(ScheduledTaskRun).filter(
         ScheduledTaskRun.user_id == task.user_id,
-        ScheduledTaskRun.task_kind == "client_workflow",
         ScheduledTaskRun.status == "completed",
     )
     if installation_id:
@@ -1615,6 +1616,7 @@ def _workflow_parent_finished_at(
             or_(
                 ScheduledTaskRun.installation_id.in_(tuple(ids)),
                 ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+                ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
             )
         )
 
@@ -3854,6 +3856,17 @@ def _execute_server_side_run(
                 run.payload = payload
                 run.updated_at = now
                 db.flush()
+            # Let the IP content runner distinguish a workflow node from a
+            # manually scheduled studio run.  This marker is consumed only by
+            # the Moments image materializer and does not alter other options.
+            if isinstance(payload, dict) and isinstance(run_context, dict) and (
+                run_context.get("workflow_template_id")
+                or run_context.get("workflow_template_key")
+                or run_context.get("workflow_node_id")
+            ):
+                payload = dict(payload)
+                payload["_workflow_node_execution"] = True
+                run.payload = payload
         if run.task_kind == "ip_content_daily":
             ip_label = _ip_content_kind_label(payload)
             progress("start", f"服务器开始执行 {ip_label}", {"timeout_seconds": timeout_seconds})
@@ -3869,7 +3882,12 @@ def _execute_server_side_run(
                     timeout=timeout_seconds,
                 )
             )
-            result_text = f"{ip_label}已生成，朋友圈图片请在详情里手动触发。"
+            image_generation = result.get("image_generation") if isinstance(result, dict) else {}
+            if isinstance(image_generation, dict) and image_generation.get("automatic"):
+                image_count = int(image_generation.get("image_count") or 0)
+                result_text = f"{ip_label}已生成，首条朋友圈图文已自动生成 {image_count}/3 张配图。"
+            else:
+                result_text = f"{ip_label}已生成，朋友圈图片请在详情里手动触发。"
         elif run.task_kind == "lead_collection_templates":
             progress("start", "服务器开始执行线索采集模板", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
@@ -4256,6 +4274,7 @@ _WORKFLOW_MATERIAL_ID_KEYS = {
     "final_video_asset_id",
     "video_material_id",
     "image_asset_id",
+    "image_asset_ids",
     "cover_asset_id",
     "final_image_asset_id",
     "image_material_id",
@@ -4269,6 +4288,7 @@ _WORKFLOW_MATERIAL_URL_KEYS = {
     "video_uri",
     "video_file_url",
     "image_url",
+    "image_urls",
     "cover_url",
     "image_file_url",
     "url",
@@ -4294,6 +4314,20 @@ _WORKFLOW_MATERIAL_SKIP_KEYS = {"params", "input_refs", "request", "prompt", "re
 def _workflow_result_has_publishable_material(value: Any) -> bool:
     """Match the material references consumed by the client publish resolver."""
     if isinstance(value, dict):
+        image_generation = value.get("image_generation")
+        if (
+            isinstance(image_generation, dict)
+            and bool(image_generation.get("automatic"))
+            and not bool(image_generation.get("image_complete"))
+        ):
+            return False
+        publish_draft = value.get("publish_draft")
+        if (
+            isinstance(publish_draft, dict)
+            and str(publish_draft.get("source_task") or "").strip() == "moments_candidate"
+            and publish_draft.get("image_complete") is False
+        ):
+            return False
         for key, item in value.items():
             normalized_key = str(key or "").strip().lower()
             if normalized_key in _WORKFLOW_MATERIAL_SKIP_KEYS:
@@ -4359,9 +4393,11 @@ def _workflow_dependency_state(
     timezone_offset = max(-720, min(840, timezone_offset))
     target_local_date = (scheduled_at + timedelta(minutes=timezone_offset)).date()
 
+    # Server-side IP content nodes (including 朋友圈图文) are valid workflow
+    # parents just like client_workflow nodes. Match by workflow context below
+    # instead of excluding them by task_kind.
     query = db.query(ScheduledTaskRun).filter(
         ScheduledTaskRun.user_id == task.user_id,
-        ScheduledTaskRun.task_kind == "client_workflow",
         ScheduledTaskRun.status.in_(tuple(_RUNNING_STATUSES | _FINAL_STATUSES)),
     )
     if installation_id:
@@ -4369,6 +4405,7 @@ def _workflow_dependency_state(
             or_(
                 ScheduledTaskRun.installation_id == installation_id,
                 ScheduledTaskRun.claimed_by_installation_id == installation_id,
+                ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
             )
         )
     parent_runs: list[ScheduledTaskRun] = []
@@ -4406,7 +4443,6 @@ def _workflow_dependency_state(
         db.query(ScheduledTask)
         .filter(
             ScheduledTask.user_id == task.user_id,
-            ScheduledTask.task_kind == "client_workflow",
             ScheduledTask.status == "active",
         )
         .order_by(ScheduledTask.id.asc())
