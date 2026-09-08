@@ -649,7 +649,7 @@ def admin_remote_support_devices(
     if x_admin_token:
         try:
             remote = _remote_support_service_request("GET", "/api/remote-admin/devices", admin_token=x_admin_token)
-            return {"devices": remote.get("devices") or [], "count": len(remote.get("devices") or []), "updated_at": remote.get("updatedAt")}
+            return {"devices": remote.get("devices") or [], "count": len(remote.get("devices") or []), "updated_at": remote.get("updatedAt"), "public_url": str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")}
         except HTTPException as exc:
             if exc.status_code not in {503, 404}:
                 raise
@@ -669,7 +669,7 @@ def admin_remote_support_devices(
             "last_seen_at": presence.last_seen_at.isoformat() if presence and presence.last_seen_at else None,
             "remote_support": remote_support,
         })
-    return {"devices": devices, "count": len(devices)}
+    return {"devices": devices, "count": len(devices), "public_url": str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")}
 
 
 @router.get("/admin/api/remote-support/controller-auth")
@@ -698,8 +698,9 @@ def admin_add_remote_support_device(
     x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
     db: Session = Depends(get_db),
 ):
+    remote_result = None
     if x_admin_token:
-        return _remote_support_service_request("POST", "/api/remote-admin/devices", admin_token=x_admin_token, json_body={
+        remote_result = _remote_support_service_request("POST", "/api/remote-admin/devices", admin_token=x_admin_token, json_body={
             "deviceId": body.device_id,
             "verificationCode": body.verification_code or "",
             "label": body.label or "",
@@ -716,39 +717,49 @@ def admin_add_remote_support_device(
     row.label = (body.label or "").strip()[:255] or None
     row.enabled = bool(body.enabled)
     db.commit()
+    if remote_result is not None:
+        remote_result.setdefault("device_id", device_id)
+        remote_result.setdefault("enabled", row.enabled)
+        return remote_result
     return {"ok": True, "device_id": device_id, "enabled": row.enabled}
 
 
 @router.patch("/admin/api/remote-support/devices/{device_id}")
 def admin_update_remote_support_device(device_id: str, body: RemoteSupportAuthorizationBody, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
+    remote_result = None
     if x_admin_token:
-        return _remote_support_service_request("PATCH", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token, json_body={"label": body.label or "", "monitorAlways": False})
+        remote_result = _remote_support_service_request("PATCH", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token, json_body={"label": body.label or "", "monitorAlways": False})
     row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
     if not row:
         raise HTTPException(status_code=404, detail="remote_device_not_found")
     row.label = (body.label or "").strip()[:255] or None
     row.enabled = bool(body.enabled)
     db.commit()
-    return {"ok": True, "device_id": row.device_id, "enabled": row.enabled}
+    return remote_result or {"ok": True, "device_id": row.device_id, "enabled": row.enabled}
 
 
 @router.delete("/admin/api/remote-support/devices/{device_id}")
 def admin_delete_remote_support_device(device_id: str, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
+    remote_result = None
     if x_admin_token:
-        return _remote_support_service_request("DELETE", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token)
+        remote_result = _remote_support_service_request("DELETE", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token)
     row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
     if not row:
         raise HTTPException(status_code=404, detail="remote_device_not_found")
     db.delete(row)
     db.commit()
-    return {"ok": True}
+    return remote_result or {"ok": True}
 
 
 @router.post("/admin/api/remote-support/controller-session")
 def admin_remote_support_controller_session(ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token")):
     if not x_admin_token:
         raise HTTPException(status_code=401, detail="missing_admin_token")
-    return _remote_support_service_request("POST", "/api/remote-admin/controller-session", admin_token=x_admin_token, json_body={})
+    result = _remote_support_service_request("POST", "/api/remote-admin/controller-session", admin_token=x_admin_token, json_body={})
+    public_url = str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")
+    if public_url:
+        result["public_url"] = public_url
+    return result
 
 
 class AddCreditsBody(BaseModel):

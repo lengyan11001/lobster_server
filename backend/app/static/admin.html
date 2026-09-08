@@ -1258,7 +1258,8 @@ async function removeRemoteSupportDevice(deviceId) {
 async function openRemoteSupportDevice(deviceId) {
   try {
     const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
-    window.open('/remote/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener');
+    const base = String(data.public_url || location.origin).replace(/\/$/, '');
+    window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener');
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -1295,7 +1296,7 @@ async function removeRemoteSupportDevice(deviceId) {
 }
 
 async function openRemoteSupportDevice(deviceId) {
-  try { const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' }); window.open('/remote/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener'); }
+  try { const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' }); const base = String(data.public_url || location.origin).replace(/\/$/, ''); window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener'); }
   catch (e) { toast(e.message, 'error'); }
 }
 

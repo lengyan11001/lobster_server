@@ -14,7 +14,7 @@ if (RESERVED_MAIN_PORTS.has(PORT)) {
   console.error(`Refusing to start remote support on reserved main-service port ${PORT}; use 38080 or another dedicated port.`);
   process.exit(78);
 }
-const HOST = process.env.HOST || "0.0.0.0";
+const HOST = process.env.HOST || "127.0.0.1";
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "state.json");
@@ -802,14 +802,14 @@ async function requireMainAdmin(req, res, next) {
   next();
 }
 
-function issueSession(user) {
+function issueSession(user, ttlMs = SESSION_TTL_MS) {
   const token = makeSessionToken();
   state.sessions.push({
     tokenHash: hashToken(token),
     userId: user.id,
     createdAt: iso(),
     lastSeen: iso(),
-    expiresAt: now() + SESSION_TTL_MS
+    expiresAt: now() + Math.max(60_000, Number(ttlMs) || SESSION_TTL_MS)
   });
   user.lastLoginAt = iso();
   saveState();
@@ -1344,7 +1344,7 @@ function handleBinaryDeviceFrame(ws, raw) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString(), port: PORT });
+  res.json({ ok: true, time: new Date().toISOString(), port: PORT, mainAuthOnly: !ALLOW_SELF_SERVICE });
 });
 
 app.get("/api/releases/windows-agent", (req, res) => {
@@ -1410,6 +1410,10 @@ app.get("/api/releases/macos-agent", (req, res) => {
 });
 
 app.post("/api/auth/register", (req, res) => {
+  if (!ALLOW_SELF_SERVICE) {
+    res.status(404).json({ error: "self_service_disabled" });
+    return;
+  }
   const username = normalizeUsername(req.body.username);
   const password = String(req.body.password || "");
   if (username.length < 2 || username.length > 64 || password.length < 6) {
@@ -1437,6 +1441,10 @@ app.post("/api/auth/register", (req, res) => {
 });
 
 app.post("/api/auth/login", (req, res) => {
+  if (!ALLOW_SELF_SERVICE) {
+    res.status(404).json({ error: "self_service_disabled" });
+    return;
+  }
   const usernameKey = normalizeUsername(req.body.username).toLowerCase();
   const password = String(req.body.password || "");
   const user = state.users.find((item) => item.usernameKey === usernameKey);
@@ -1459,6 +1467,10 @@ app.post("/api/auth/logout", requireSession, (req, res) => {
 });
 
 app.post("/api/admin/login", (req, res) => {
+  if (!ALLOW_SELF_SERVICE) {
+    res.status(404).json({ error: "self_service_disabled" });
+    return;
+  }
   const usernameKey = normalizeUsername((req.body || {}).username).toLowerCase();
   const password = String((req.body || {}).password || "");
   const admin = state.admins.find((item) => item.usernameKey === usernameKey && item.status === "active");
@@ -1491,8 +1503,8 @@ app.post("/api/remote-admin/controller-session", requireMainAdmin, (req, res) =>
     res.status(500).json({ error: "remote_admin_user_missing" });
     return;
   }
-  const token = issueSession(user);
-  res.json({ ok: true, token, user: publicUser(user) });
+  const token = issueSession(user, RELAY_SESSION_TTL_MS);
+  res.json({ ok: true, token, user: publicUser(user), expiresAt: iso(now() + RELAY_SESSION_TTL_MS), ttlSeconds: Math.floor(RELAY_SESSION_TTL_MS / 1000) });
 });
 
 app.get("/api/remote-admin/devices", requireMainAdmin, (req, res) => {

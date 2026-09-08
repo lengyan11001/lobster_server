@@ -127,8 +127,10 @@ WorkingDirectory=$ROOT/remote_support_server
 EnvironmentFile=$ROOT/.env
 Environment=PORT=38080
 Environment=LOBSTER_REMOTE_PORT=38080
+Environment=HOST=127.0.0.1
+Environment=DATA_DIR=$ROOT/remote_support_data
+Environment=LOBSTER_REMOTE_ALLOW_SELF_SERVICE=false
 Environment=LOBSTER_REMOTE_MAIN_API_BASE=http://127.0.0.1:8000
-Environment=LOBSTER_REMOTE_PUBLIC_BASE_PATH=/remote
 ExecStart=$NODE $ROOT/remote_support_server/src/server.js
 Restart=always
 RestartSec=5

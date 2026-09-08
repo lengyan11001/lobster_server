@@ -2426,6 +2426,18 @@ async function boot() {
   setAuthMode("login");
   showLogin();
   closeScreen(false);
+  try {
+    const health = await fetch("/api/health", { cache: "no-store" }).then((response) => response.json());
+    if (health.mainAuthOnly) {
+      const panel = document.getElementById("authPanel");
+      if (panel && !sessionToken) {
+        panel.innerHTML = '<div class="hint">请从主系统管理后台进入远程设备控制，不在此处单独注册或登录。</div>';
+      }
+    }
+  } catch {
+    // Continue with the normal session bootstrap; the API call below gives
+    // the authoritative error if the relay is unavailable.
+  }
   if (!sessionToken) {
     setUser(null);
     return;
