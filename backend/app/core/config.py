@@ -172,7 +172,10 @@ class Settings(BaseSettings):
     auth_server_base: Optional[str] = None
     remote_support_service_key: Optional[str] = None
     remote_support_service_url: str = "http://127.0.0.1:38080"
-    remote_support_public_url: str = "https://todesk.bhzn.top"
+    # Until the dedicated DNS name is pointed at this host and issued a
+    # certificate, keep the public control UI on the existing TLS endpoint.
+    # The relay process and data remain isolated on port 38080.
+    remote_support_public_url: str = "https://bhzn.top/remote"
     """HiFly 默认 API Token；用户不显式传 token 时，服务端用它访问 HiFly。"""
     hifly_default_token: Optional[str] = None
     """HiFly 消费者站 JWT；用于调用 hifly.cc 内部接口（如声音 preview），过期需手动更新。"""
