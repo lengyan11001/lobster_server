@@ -3,6 +3,7 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+export PATH="$ROOT/.runtime/node/bin:$PATH"
 
 if [ -f "$ROOT/remote_support_server/src/server.js" ] && ! grep -q '^REMOTE_SUPPORT_SERVICE_KEY=' "$ROOT/.env" 2>/dev/null; then
   echo "REMOTE_SUPPORT_SERVICE_KEY=$(openssl rand -hex 32)" >> "$ROOT/.env"
