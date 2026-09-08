@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BHZN 远程设备控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="loginView" class="login-view">
+    <section class="login-card">
+      <div class="brand login-brand">
+        <div class="mark">BH</div>
+        <div>
+          <h1>BHZN 远程设备</h1>
+          <p id="serverState">请先登录</p>
+        </div>
+      </div>
+
+      <section id="authPanel" class="panel-section">
+        <div class="segmented">
+          <button id="loginModeBtn" type="button" class="seg active">登录</button>
+          <button id="registerModeBtn" type="button" class="seg">注册</button>
+        </div>
+        <form id="authForm" class="stack-form">
+          <label for="usernameInput">用户名</label>
+          <input id="usernameInput" autocomplete="username" placeholder="请输入用户名">
+          <label for="passwordInput">密码</label>
+          <input id="passwordInput" autocomplete="current-password" type="password" placeholder="不少于 6 位">
+          <button id="authSubmitBtn" type="submit">登录</button>
+        </form>
+        <div id="authHint" class="hint">注册后需要管理员审核，通过后才能进入控制台。</div>
+      </section>
+
+    </section>
+  </main>
+
+  <main id="appShell" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="mark">BH</div>
+        <div>
+          <h1>远程设备</h1>
+          <p>设备控制台</p>
+        </div>
+      </div>
+
+      <section id="bindPanel" class="panel-section">
+        <div class="section-title">添加设备</div>
+        <form id="addForm" class="stack-form">
+          <label for="deviceIdInput">设备 ID</label>
+          <input id="deviceIdInput" autocomplete="off" placeholder="例如 8392-5714">
+          <label for="deviceCodeInput">设备验证码</label>
+          <input id="deviceCodeInput" autocomplete="off" inputmode="numeric" placeholder="设备端显示的验证码">
+          <button type="submit">匹配并添加</button>
+        </form>
+        <div id="bindHint" class="hint">只有设备 ID 和验证码同时匹配，才会保存到你的设备记录。</div>
+      </section>
+
+      <section id="filePanel" class="panel-section">
+        <div class="section-title">文件下发</div>
+        <form id="fileTransferForm" class="stack-form">
+          <label for="fileDeviceSelect">目标设备</label>
+          <select id="fileDeviceSelect"></select>
+          <label for="fileInput">选择文件</label>
+          <input id="fileInput" type="file">
+          <button id="fileSubmitBtn" type="submit">上传并下发</button>
+        </form>
+        <div id="fileHint" class="hint">文件会保存到设备端下载目录，不会自动打开或执行。</div>
+        <div id="fileTransferLog" class="file-transfer-log"></div>
+      </section>
+
+    </aside>
+
+    <section class="stage">
+      <header class="toolbar">
+        <div>
+          <div id="activeTitle" class="active-title">未打开屏幕</div>
+          <div id="activeMeta" class="active-meta">点击下方设备入口，打开对应设备屏幕。</div>
+        </div>
+        <div class="stage-tabs">
+          <button id="controlTabBtn" class="stage-tab active" type="button">远程控制</button>
+          <button id="wallTabBtn" class="stage-tab" type="button">屏幕墙</button>
+          <button id="filesTabBtn" class="stage-tab" type="button">文件传输</button>
+        </div>
+        <div class="account-menu">
+          <button id="accountMenuBtn" class="avatar-button" type="button" aria-haspopup="true" aria-expanded="false">
+            <span id="avatarInitial">-</span>
+          </button>
+          <div id="accountDropdown" class="account-dropdown hidden">
+            <div class="account-summary">
+              <strong id="accountName">-</strong>
+              <span id="accountStatus">-</span>
+            </div>
+            <a href="/downloads/bhzn-todesk-debug.apk">下载 Android APK</a>
+            <a href="/downloads/BHZN-ToDesk-Agent-Setup.exe">下载 Windows 安装包</a>
+            <a href="/downloads/BHZN-ToDesk-Agent-mac-arm64.zip">下载 macOS M 系列包</a>
+            <a href="/downloads/BHZN-ToDesk-Agent-mac-x86_64.zip">下载 macOS Intel 包</a>
+            <a href="/cms.html" target="_blank" rel="noreferrer">CMS 审核后台</a>
+            <button id="logoutBtn" class="menu-danger" type="button">退出登录</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="stage-body">
+        <div id="deviceShelf" class="device-shelf"></div>
+
+        <div id="screenWorkspace" class="screen-workspace">
+          <div id="viewerWrap" class="viewer-wrap closed">
+            <div id="viewer" class="viewer">
+              <video id="rtcVideo" class="rtc-video hidden" autoplay playsinline muted></video>
+              <canvas id="screenCanvas" width="360" height="720" tabindex="0"></canvas>
+              <div id="emptyState" class="empty-state">
+                <strong>等待设备画面</strong>
+                <span>选择已绑定且在线的设备后，设备画面会显示在这里。</span>
+              </div>
+            </div>
+            <div class="screen-actions">
+              <select id="qualitySelect" aria-label="画质档位">
+                <option value="balanced">平衡 1080p/18fps</option>
+                <option value="data">省流量 720p/10fps</option>
+                <option value="hd">高清 2K/24fps</option>
+                <option value="lan">局域网 4K/30fps</option>
+              </select>
+              <button id="closeScreenBtn" type="button">关闭屏幕</button>
+              <button id="fullscreenBtn" type="button">全屏</button>
+              <button id="backBtn" type="button" disabled>返回</button>
+              <button id="homeBtn" type="button" disabled>Home</button>
+              <button id="homeSwipeBtn" type="button" disabled>上滑返回</button>
+              <button id="stopBtn" class="danger-small" type="button" disabled>停止控制</button>
+            </div>
+          </div>
+          <div id="screenPlaceholder" class="screen-placeholder">
+            <strong>未打开设备屏幕</strong>
+            <span>点击上方任意已添加设备，即可展示该设备屏幕。</span>
+          </div>
+        </div>
+
+        <section id="screenWall" class="screen-wall hidden">
+          <header class="wall-toolbar">
+            <div>
+              <strong>屏幕墙</strong>
+              <span>勾选“时刻监控”的在线设备会在这里持续展示。</span>
+            </div>
+          </header>
+          <div id="screenWallGrid" class="screen-wall-grid"></div>
+          <div id="screenWallEmpty" class="screen-wall-empty">
+            <strong>暂无监控画面</strong>
+            <span>在设备卡片上勾选“时刻监控”，在线且已开屏幕权限的设备会自动显示。</span>
+          </div>
+          <div id="wallControlWindow" class="wall-control-window hidden">
+            <header class="wall-control-titlebar">
+              <div>
+                <strong id="wallControlTitle">-</strong>
+                <span id="wallControlMeta">-</span>
+              </div>
+              <div class="wall-control-title-actions">
+                <button id="wallControlFullscreenBtn" type="button">全屏</button>
+                <button id="wallControlCloseBtn" type="button">关闭</button>
+              </div>
+            </header>
+            <div class="wall-control-body">
+              <div id="wallControlViewer" class="wall-control-viewer">
+                <canvas id="wallControlCanvas" width="360" height="720" tabindex="0"></canvas>
+                <div id="wallControlEmpty" class="wall-control-empty">等待监控画面</div>
+              </div>
+              <div class="wall-control-actions">
+                <button id="wallControlBackBtn" type="button" disabled>返回</button>
+                <button id="wallControlHomeBtn" type="button" disabled>Home</button>
+                <button id="wallControlHomeSwipeBtn" type="button" disabled>上滑返回</button>
+              </div>
+            </div>
+            <span class="wall-resize-handle wall-resize-nw" data-wall-resize="nw" aria-hidden="true"></span>
+            <span class="wall-resize-handle wall-resize-ne" data-wall-resize="ne" aria-hidden="true"></span>
+            <span class="wall-resize-handle wall-resize-sw" data-wall-resize="sw" aria-hidden="true"></span>
+            <span class="wall-resize-handle wall-resize-se" data-wall-resize="se" aria-hidden="true"></span>
+          </div>
+        </section>
+
+        <section id="fileTransferWorkspace" class="file-transfer-workspace hidden">
+          <header class="file-transfer-toolbar">
+            <div>
+              <strong>文件传输</strong>
+              <span id="fileTransferSummary">暂无传输记录</span>
+            </div>
+          </header>
+          <div id="fileTransferTable" class="file-transfer-table"></div>
+          <div id="fileTransferEmpty" class="file-transfer-empty">
+            <strong>暂无文件记录</strong>
+            <span>左侧上传并下发文件后，这里会显示设备接收状态和保存路径。</span>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

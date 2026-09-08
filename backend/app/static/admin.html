@@ -415,6 +415,12 @@ body{background:#edf2f7}
         <h3 style="margin:0">已开启远程支持的设备</h3>
         <button class="btn btn-outline btn-sm" type="button" onclick="loadRemoteSupportDevices()">刷新</button>
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+        <input id="remoteDeviceIdInput" placeholder="设备编号，例如 O27N-2OJE" style="min-width:190px">
+        <input id="remoteDeviceCodeInput" placeholder="验证码" inputmode="numeric" style="width:120px">
+        <input id="remoteDeviceLabelInput" placeholder="设备备注" style="min-width:180px">
+        <button class="btn btn-primary btn-sm" type="button" onclick="addRemoteSupportDevice()">添加设备</button>
+      </div>
       <div id="remoteSupportTable" style="margin-top:14px"><div class="empty">加载中…</div></div>
     </div>
   </div>
@@ -1229,6 +1235,68 @@ async function loadRemoteSupportDevices() {
         return '<tr><td>' + escapeHtml(item.device_name || '-') + '</td><td>' + escapeHtml(item.username || String(item.user_id || '-')) + '</td><td><code>' + escapeHtml(item.installation_id || '-') + '</code></td><td>' + escapeHtml(rs.device_id || '-') + '</td><td>' + escapeHtml(rs.verification_code || '-') + '</td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.last_seen_at || '-') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function addRemoteSupportDevice() {
+  const deviceId = (document.getElementById('remoteDeviceIdInput')?.value || '').trim();
+  const verificationCode = (document.getElementById('remoteDeviceCodeInput')?.value || '').trim();
+  const label = (document.getElementById('remoteDeviceLabelInput')?.value || '').trim();
+  if (!deviceId || !verificationCode) { toast('请填写设备编号和验证码', 'error'); return; }
+  try {
+    await api('/admin/api/remote-support/devices', { method: 'POST', body: JSON.stringify({ device_id: deviceId, verification_code: verificationCode, label }) });
+    toast('设备已添加到管理员授权列表');
+    await loadRemoteSupportDevices();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function removeRemoteSupportDevice(deviceId) {
+  if (!confirm('确定移除该设备的远程授权？')) return;
+  try { await api('/admin/api/remote-support/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' }); await loadRemoteSupportDevices(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function openRemoteSupportDevice(deviceId) {
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    window.open('/remote/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadRemoteSupportDevices() {
+  const target = document.getElementById('remoteSupportTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">Loading...</div>';
+  try {
+    const data = await api('/admin/api/remote-support/devices');
+    const items = Array.isArray(data.devices) ? data.devices : [];
+    if (!items.length) { target.innerHTML = '<div class="empty">暂无管理员添加的远程设备</div>'; return; }
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>设备</th><th>设备编号</th><th>状态</th><th>链路</th><th>操作</th></tr></thead><tbody>'
+      + items.map(function(item) {
+        const id = item.id || item.device_id || '';
+        const traffic = item.traffic || {};
+        return '<tr><td>' + escapeHtml(item.label || item.name || item.device_name || '-') + '</td><td><code>' + escapeHtml(id) + '</code></td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.activePath || traffic.activePath || '-') + '</td><td><button class="btn btn-primary btn-sm" onclick="openRemoteSupportDevice(\'' + escapeHtml(id) + '\')">远程</button> <button class="btn btn-outline btn-sm" onclick="removeRemoteSupportDevice(\'' + escapeHtml(id) + '\')">移除</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function addRemoteSupportDevice() {
+  const deviceId = (document.getElementById('remoteDeviceIdInput')?.value || '').trim();
+  const verificationCode = (document.getElementById('remoteDeviceCodeInput')?.value || '').trim();
+  const label = (document.getElementById('remoteDeviceLabelInput')?.value || '').trim();
+  if (!deviceId || !verificationCode) { toast('请填写设备编号和验证码', 'error'); return; }
+  try { await api('/admin/api/remote-support/devices', { method: 'POST', body: JSON.stringify({ device_id: deviceId, verification_code: verificationCode, label }) }); await loadRemoteSupportDevices(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function removeRemoteSupportDevice(deviceId) {
+  if (!confirm('确定移除该设备的远程授权？')) return;
+  try { await api('/admin/api/remote-support/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' }); await loadRemoteSupportDevices(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function openRemoteSupportDevice(deviceId) {
+  try { const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' }); window.open('/remote/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener'); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
 async function loadBrands() {

@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
@@ -37,6 +37,27 @@ from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _remote_support_service_request(method: str, path: str, *, admin_token: str, json_body: Optional[dict] = None) -> dict:
+    base = str(getattr(settings, "remote_support_service_url", "http://127.0.0.1:38080") or "").rstrip("/")
+    key = str(getattr(settings, "remote_support_service_key", "") or "").strip()
+    if not key:
+        raise HTTPException(status_code=503, detail="远程支持服务密钥未配置")
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.request(
+                method,
+                f"{base}{path}",
+                headers={"Authorization": f"Bearer {admin_token}", "X-Remote-Service-Key": key},
+                json=json_body,
+            )
+        data = response.json() if response.content else {}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"远程支持服务不可用: {exc}") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=data.get("error") or data.get("detail") or "远程支持请求失败")
+    return data
 
 ADMIN_TOKEN_PREFIX = "lobster-admin-"
 AGENT_TOKEN_PREFIX = "lobster-agent-"
@@ -616,6 +637,7 @@ def admin_user_detail(
 @router.get("/admin/api/remote-support/devices", summary="管理员查看已开启远程支持的 Online 设备")
 def admin_remote_support_devices(
     ctx: AdminContext = Depends(_require_admin),
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
     db: Session = Depends(get_db),
 ):
     """Read remote-support state from the main Online heartbeat table.
@@ -624,30 +646,109 @@ def admin_remote_support_devices(
     devices that explicitly reported ``remote_support_enabled`` are returned.
     """
     now = datetime.utcnow()
-    rows = (
-        db.query(H5ChatDevicePresence, User)
-        .join(User, User.id == H5ChatDevicePresence.user_id)
-        .order_by(H5ChatDevicePresence.last_seen_at.desc())
-        .limit(1000)
-        .all()
-    )
+    if x_admin_token:
+        try:
+            remote = _remote_support_service_request("GET", "/api/remote-admin/devices", admin_token=x_admin_token)
+            return {"devices": remote.get("devices") or [], "count": len(remote.get("devices") or []), "updated_at": remote.get("updatedAt")}
+        except HTTPException as exc:
+            if exc.status_code not in {503, 404}:
+                raise
+    rows = db.query(RemoteSupportDeviceAuthorization).order_by(RemoteSupportDeviceAuthorization.updated_at.desc()).limit(1000).all()
     devices = []
-    for presence, user in rows:
-        payload = presence.account_payload if isinstance(presence.account_payload, dict) else {}
-        capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), list) else []
+    for authorization in rows:
+        presence = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.installation_id == (authorization.installation_id or "")).order_by(H5ChatDevicePresence.last_seen_at.desc()).first() if authorization.installation_id else None
+        payload = presence.account_payload if presence and isinstance(presence.account_payload, dict) else {}
         remote_support = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
-        if not bool(remote_support.get("enabled")) and "remote_support_enabled" not in {str(v) for v in capabilities}:
-            continue
         devices.append({
-            "installation_id": presence.installation_id,
-            "device_name": presence.display_name or presence.installation_id,
-            "user_id": user.id,
-            "username": getattr(user, "email", None) or getattr(user, "username", None) or str(user.id),
-            "online": is_device_online(presence.last_seen_at, now=now),
-            "last_seen_at": presence.last_seen_at.isoformat() if presence.last_seen_at else None,
+            "id": authorization.id,
+            "device_id": authorization.device_id,
+            "installation_id": authorization.installation_id or (presence.installation_id if presence else ""),
+            "device_name": authorization.label or (presence.display_name if presence else authorization.device_id),
+            "enabled": bool(authorization.enabled),
+            "online": bool(presence and is_device_online(presence.last_seen_at, now=now)),
+            "last_seen_at": presence.last_seen_at.isoformat() if presence and presence.last_seen_at else None,
             "remote_support": remote_support,
         })
     return {"devices": devices, "count": len(devices)}
+
+
+@router.get("/admin/api/remote-support/controller-auth")
+def admin_remote_support_controller_auth(
+    x_remote_service_key: Optional[str] = Header(None, alias="X-Remote-Service-Key"),
+    ctx: AdminContext = Depends(_require_admin),
+):
+    expected = str(getattr(settings, "remote_support_service_key", "") or "").strip()
+    if not expected or x_remote_service_key != expected:
+        raise HTTPException(status_code=401, detail="remote_service_unauthorized")
+    return {"ok": True, "admin": True, "user_id": "lobster-main-admin"}
+
+
+class RemoteSupportAuthorizationBody(BaseModel):
+    device_id: str
+    verification_code: Optional[str] = None
+    installation_id: Optional[str] = None
+    label: Optional[str] = None
+    enabled: bool = True
+
+
+@router.post("/admin/api/remote-support/devices")
+def admin_add_remote_support_device(
+    body: RemoteSupportAuthorizationBody,
+    ctx: AdminContext = Depends(_require_admin),
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    db: Session = Depends(get_db),
+):
+    if x_admin_token:
+        return _remote_support_service_request("POST", "/api/remote-admin/devices", admin_token=x_admin_token, json_body={
+            "deviceId": body.device_id,
+            "verificationCode": body.verification_code or "",
+            "label": body.label or "",
+            "monitorAlways": False,
+        })
+    device_id = body.device_id.strip().upper()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id_required")
+    row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id).first()
+    if row is None:
+        row = RemoteSupportDeviceAuthorization(device_id=device_id)
+        db.add(row)
+    row.installation_id = (body.installation_id or "").strip() or None
+    row.label = (body.label or "").strip()[:255] or None
+    row.enabled = bool(body.enabled)
+    db.commit()
+    return {"ok": True, "device_id": device_id, "enabled": row.enabled}
+
+
+@router.patch("/admin/api/remote-support/devices/{device_id}")
+def admin_update_remote_support_device(device_id: str, body: RemoteSupportAuthorizationBody, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
+    if x_admin_token:
+        return _remote_support_service_request("PATCH", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token, json_body={"label": body.label or "", "monitorAlways": False})
+    row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="remote_device_not_found")
+    row.label = (body.label or "").strip()[:255] or None
+    row.enabled = bool(body.enabled)
+    db.commit()
+    return {"ok": True, "device_id": row.device_id, "enabled": row.enabled}
+
+
+@router.delete("/admin/api/remote-support/devices/{device_id}")
+def admin_delete_remote_support_device(device_id: str, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
+    if x_admin_token:
+        return _remote_support_service_request("DELETE", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token)
+    row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="remote_device_not_found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/remote-support/controller-session")
+def admin_remote_support_controller_session(ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token")):
+    if not x_admin_token:
+        raise HTTPException(status_code=401, detail="missing_admin_token")
+    return _remote_support_service_request("POST", "/api/remote-admin/controller-session", admin_token=x_admin_token, json_body={})
 
 
 class AddCreditsBody(BaseModel):

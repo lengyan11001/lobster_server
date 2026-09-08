@@ -277,6 +277,14 @@ def _migrate_h5_device_presence_account_payload():
         logger.warning("Migration h5_chat_device_presence.account_payload skipped: %s", e)
 
 
+def _migrate_remote_support_device_authorizations():
+    """Create the administrator-owned remote device allow-list."""
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.RemoteSupportDeviceAuthorization.__table__])
+    except Exception as e:
+        logger.warning("Migration remote support device authorizations skipped: %s", e)
+
+
 def _migrate_h5_chat_mastra_columns():
     """Add fields used by Mastra conversations and their multimodal inputs."""
     from sqlalchemy import inspect, text
@@ -1204,6 +1212,7 @@ def create_app() -> FastAPI:
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
         _migrate_h5_device_presence_account_payload()
+        _migrate_remote_support_device_authorizations()
         _migrate_h5_chat_mastra_columns()
         _migrate_h5_home_preference_columns()
         _ensure_default_user()

@@ -64,6 +64,9 @@ certs/**/*.pem
 certs/**/*.key
 certs/**/*.crt
 
+# Remote support Agent binaries are release artifacts, not source files.
+remote_support_server/public/downloads/
+
 # 系统/编辑器
 .DS_Store
 Thumbs.db

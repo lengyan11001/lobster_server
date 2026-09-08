@@ -1196,6 +1196,21 @@ class H5ChatDevicePresence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class RemoteSupportDeviceAuthorization(Base):
+    """Explicit administrator allow-list for remote-support devices."""
+
+    __tablename__ = "remote_support_device_authorizations"
+    __table_args__ = (UniqueConstraint("device_id", name="uq_remote_support_authorized_device"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class H5MountedAccountDefault(Base):
     """Default mounted account/device picked from H5 for publish and lead tasks."""
 

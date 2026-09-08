@@ -20,6 +20,10 @@ if [ ! -x "$NODE" ]; then
   echo "Run: $ROOT/scripts/install_mastra_runtime.sh $ROOT" >&2
   exit 1
 fi
+if [ ! -f "$ROOT/remote_support_server/src/server.js" ]; then
+  echo "[ERR] remote support server source is missing: $ROOT/remote_support_server/src/server.js" >&2
+  exit 1
+fi
 
 sudo tee /etc/systemd/system/lobster-backend.service >/dev/null <<UNIT
 [Unit]
@@ -108,6 +112,28 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+sudo tee /etc/systemd/system/lobster-remote-support.service >/dev/null <<UNIT
+[Unit]
+Description=Lobster Remote Support Relay
+After=network.target lobster-backend.service
+Wants=lobster-backend.service
+
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$ROOT/remote_support_server
+EnvironmentFile=$ROOT/.env
+Environment=LOBSTER_REMOTE_MAIN_API_BASE=http://127.0.0.1:8000
+Environment=LOBSTER_REMOTE_PUBLIC_BASE_PATH=/remote
+ExecStart=$NODE $ROOT/remote_support_server/src/server.js
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 sudo systemctl daemon-reload
-sudo systemctl enable lobster-backend lobster-background lobster-mcp lobster-mastra
+sudo systemctl enable lobster-backend lobster-background lobster-mcp lobster-mastra lobster-remote-support
 echo "[OK] systemd units installed for $ROOT as user $USER_NAME"

@@ -170,6 +170,8 @@ class Settings(BaseSettings):
     capability_upstream_urls_json: Optional[str] = None
     reddit_comment2video_backend_url: Optional[str] = None
     auth_server_base: Optional[str] = None
+    remote_support_service_key: Optional[str] = None
+    remote_support_service_url: str = "http://127.0.0.1:38080"
     """HiFly 默认 API Token；用户不显式传 token 时，服务端用它访问 HiFly。"""
     hifly_default_token: Optional[str] = None
     """HiFly 消费者站 JWT；用于调用 hifly.cc 内部接口（如声音 preview），过期需手动更新。"""

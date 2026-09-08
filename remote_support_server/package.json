@@ -1,0 +1,17 @@
+{
+  "name": "bhzn-todesk-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Device relay and H5 console for BHZN remote support.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test:rtc": "node test-rtc-signaling.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "nanoid": "^5.1.5",
+    "ws": "^8.18.3"
+  }
+}

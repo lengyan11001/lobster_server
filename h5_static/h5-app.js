@@ -5565,6 +5565,11 @@
       return String(meta.system_template_key || "").trim();
     }
 
+    function workflowTemplateIsLegacySystemMirror(tpl) {
+      const meta = tpl && tpl.meta && typeof tpl.meta === "object" ? tpl.meta : {};
+      return String(meta.source || "").trim() === "system_mirror" && !!workflowSystemTemplateKey(tpl);
+    }
+
     function workflowTemplateIsSales(tpl) {
       if (!tpl) return false;
       const meta = tpl.meta && typeof tpl.meta === "object" ? tpl.meta : {};
@@ -6511,7 +6516,9 @@
         ...systemRows,
         ...userRows.filter((tpl) => {
           const id = String(tpl && tpl.id || "");
-          return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);
+          return !workflowTemplateIsLegacySystemMirror(tpl)
+            && !workflowSystemTemplateKey(tpl)
+            && !mergedIds.has(id);
         }),
       ];
     }
@@ -6520,6 +6527,14 @@
       const sid = String(id || "");
       const direct = workflowTemplateRows().find((tpl) => String(tpl && tpl.id || "") === sid);
       if (direct) return direct;
+      const legacyMirror = userWorkflowTemplateRows().find((tpl) => (
+        String(tpl && tpl.id || "") === sid && workflowTemplateIsLegacySystemMirror(tpl)
+      ));
+      if (legacyMirror) {
+        const key = workflowSystemTemplateKey(legacyMirror);
+        const catalog = systemWorkflowTemplates().find((tpl) => workflowSystemTemplateKey(tpl) === key);
+        if (catalog) return catalog;
+      }
       return personalSystemWorkflowTemplate(sid)
         || systemWorkflowTemplates().find((tpl) => String(tpl && tpl.id || "") === sid)
         || null;

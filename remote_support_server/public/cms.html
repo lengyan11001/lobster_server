@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BHZN CMS 审核后台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="cms-shell">
+    <header class="cms-header">
+      <div class="brand">
+        <div class="mark">BH</div>
+        <div>
+          <h1>CMS 审核后台</h1>
+          <p id="cmsState">请登录管理员账号</p>
+        </div>
+      </div>
+      <form id="adminForm" class="admin-form">
+        <input id="adminUsernameInput" autocomplete="username" placeholder="管理员账号">
+        <input id="adminPasswordInput" type="password" autocomplete="current-password" placeholder="管理员密码">
+        <button id="adminSubmitBtn" type="submit">登录</button>
+        <button id="adminLogoutBtn" class="secondary-btn hidden" type="button">退出</button>
+      </form>
+    </header>
+
+    <section id="cmsContent" class="cms-grid hidden">
+      <div class="cms-panel">
+        <div class="panel-title">用户审核</div>
+        <div id="userTable" class="table-list"></div>
+      </div>
+      <div class="cms-panel">
+        <div class="panel-title">设备绑定记录</div>
+        <div id="bindingTable" class="table-list"></div>
+      </div>
+      <div class="cms-panel cms-panel-wide">
+        <div class="panel-title">账号连接监控</div>
+        <div id="accountConnectionTable" class="table-list"></div>
+      </div>
+      <div class="cms-panel cms-panel-wide">
+        <div class="panel-title">链路监控</div>
+        <div id="linkTable" class="table-list"></div>
+      </div>
+      <div class="cms-panel cms-panel-wide">
+        <div class="panel-title">Online 远程支持设备（已打开）</div>
+        <div id="remoteDeviceTable" class="table-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/cms.js"></script>
+</body>
+</html>

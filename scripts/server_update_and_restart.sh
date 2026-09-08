@@ -4,6 +4,10 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+if [ -f "$ROOT/remote_support_server/src/server.js" ] && ! grep -q '^REMOTE_SUPPORT_SERVICE_KEY=' "$ROOT/.env" 2>/dev/null; then
+  echo "REMOTE_SUPPORT_SERVICE_KEY=$(openssl rand -hex 32)" >> "$ROOT/.env"
+fi
+
 PREV_COMMIT="$(git rev-parse HEAD)"
 echo "$PREV_COMMIT" > "$ROOT/.deploy_rollback_commit"
 echo "[备份] 当前版本 $PREV_COMMIT 已记录到 .deploy_rollback_commit"
@@ -17,6 +21,11 @@ if [ -n "$DIRTY_TRACKED" ]; then
   BACKUP_PATCH="$BACKUP_DIR/$(date +%Y%m%d_%H%M%S)_${PREV_COMMIT}.patch"
   git diff > "$BACKUP_PATCH"
   echo "[WARN] tracked working tree changes backed up to $BACKUP_PATCH"
+fi
+
+if [ -f "$ROOT/remote_support_server/package.json" ]; then
+  echo "[Remote] 安装远程支持中继依赖 ..."
+  (cd "$ROOT/remote_support_server" && npm install --omit=dev)
 fi
 git reset --hard origin/main
 POST_RESET_DIRTY="$(git status --porcelain --untracked-files=no)"
@@ -53,6 +62,9 @@ bash "$ROOT/scripts/build_mastra_if_needed.sh" "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
+  if [ -f "$ROOT/scripts/install_remote_support_nginx.sh" ]; then
+    bash "$ROOT/scripts/install_remote_support_nginx.sh" || echo "[WARN] remote support nginx route was not changed"
+  fi
   echo "[重启] 后端服务先更新，H5 保持在线并在最后快速重启 ..."
   H5_UNIT=""
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-h5\.service'; then
@@ -70,7 +82,11 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
     MASTRA_UNIT="lobster-mastra"
   fi
-  sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
+  if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
+    echo "[Remote] 安装远程支持 systemd 服务 ..."
+    bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
+  fi
+  sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-remote-support lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
   # 确保 8001/8000 端口无残留进程
   for PORT in 8001 8000 4111; do
@@ -82,6 +98,9 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     fi
   done
   sudo systemctl start lobster-mcp lobster-backend
+  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
+    sudo systemctl start lobster-remote-support
+  fi
   sudo systemctl start "$MASTRA_UNIT"
   if [ -n "$BG_UNIT" ]; then
     sudo systemctl start "$BG_UNIT"
@@ -128,7 +147,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
       exit 1
     fi
   fi
-  sudo systemctl status lobster-backend lobster-mcp $MASTRA_UNIT $BG_UNIT $H5_UNIT --no-pager || true
+  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support $MASTRA_UNIT $BG_UNIT $H5_UNIT --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."

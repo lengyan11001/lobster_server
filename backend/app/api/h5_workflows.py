@@ -2383,6 +2383,11 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
             .all()
         )
         system_rows = [row for row in system_rows if _is_system_catalog_template(row)]
+        system_catalog_keys = {
+            _clean_text((row.meta or {}).get("system_template_key"), 128)
+            for row in system_rows
+            if isinstance(row.meta, dict)
+        }
         template_scope = (
             or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == installation_id)
             if installation_id
@@ -2394,6 +2399,7 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
             .order_by(H5WorkflowTemplate.updated_at.desc())
             .all()
         )
+        own_rows = [row for row in own_rows if not _is_legacy_system_mirror(row, system_catalog_keys)]
         grants = (
             db.query(H5WorkflowTemplateGrant)
             .filter(H5WorkflowTemplateGrant.target_user_id == owner.id, H5WorkflowTemplateGrant.status == "active")
@@ -2525,6 +2531,15 @@ def _is_system_catalog_template(row: Optional[H5WorkflowTemplate]) -> bool:
     )
 
 
+def _is_legacy_system_mirror(row: Optional[H5WorkflowTemplate], catalog_keys: set[str]) -> bool:
+    """Hide old per-user system mirrors once shared catalog rows exist."""
+    if row is None or int(row.owner_user_id or 0) == _SYSTEM_WORKFLOW_OWNER_ID:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    key = _clean_text(meta.get("system_template_key"), 128)
+    return _clean_text(meta.get("source"), 64) == "system_mirror" and key in catalog_keys
+
+
 def _accessible_template(db: Session, template_id: int, owner_user_id: int) -> H5WorkflowTemplate:
     row = db.query(H5WorkflowTemplate).filter(H5WorkflowTemplate.id == template_id, H5WorkflowTemplate.status == "active").first()
     if not row:
@@ -2532,6 +2547,20 @@ def _accessible_template(db: Session, template_id: int, owner_user_id: int) -> H
     if _is_system_catalog_template(row):
         return row
     if row.owner_user_id == owner_user_id:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        key = _clean_text(meta.get("system_template_key"), 128)
+        if _clean_text(meta.get("source"), 64) == "system_mirror" and key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+            catalog_rows = (
+                db.query(H5WorkflowTemplate)
+                .filter(
+                    H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+                    H5WorkflowTemplate.status == "active",
+                )
+                .all()
+            )
+            for candidate in catalog_rows:
+                if _is_system_catalog_template(candidate) and _clean_text((candidate.meta or {}).get("system_template_key"), 128) == key:
+                    return candidate
         return row
     grant = (
         db.query(H5WorkflowTemplateGrant)
