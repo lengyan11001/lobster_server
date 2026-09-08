@@ -100,7 +100,6 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   sleep 1
   for PORT in 8001 8000 38080 4111; do
   # 确保 8001/8000 端口无残留进程
-  for PORT in 8001 8000 4111; do
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
     if [ -n "$PID_ON_PORT" ]; then
       echo "[清理] 端口 $PORT 仍被进程 $PID_ON_PORT 占用，强制结束"
