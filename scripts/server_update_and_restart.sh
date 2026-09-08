@@ -97,7 +97,11 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     echo "[Remote] refresh remote support systemd unit"
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
   else
-    sudo systemctl disable --now lobster-remote-support 2>/dev/null || true
+    # Remote support is an independently deployed service. A normal product
+    # release must leave its process and port untouched.
+    if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
+      echo "[Remote] leave independently managed relay unchanged"
+    fi
   fi
   sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
