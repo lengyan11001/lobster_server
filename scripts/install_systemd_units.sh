@@ -123,6 +123,7 @@ Type=simple
 User=$USER_NAME
 WorkingDirectory=$ROOT/remote_support_server
 EnvironmentFile=$ROOT/.env
+Environment=PORT=38080
 Environment=LOBSTER_REMOTE_MAIN_API_BASE=http://127.0.0.1:8000
 Environment=LOBSTER_REMOTE_PUBLIC_BASE_PATH=/remote
 ExecStart=$NODE $ROOT/remote_support_server/src/server.js
