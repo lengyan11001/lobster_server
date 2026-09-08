@@ -5,7 +5,15 @@ const http = require("http");
 const path = require("path");
 const { WebSocket, WebSocketServer } = require("ws");
 
-const PORT = Number(process.env.PORT || 38080);
+// Remote support owns a dedicated listener.  These ports belong to the main
+// Lobster services and must never be reused by the relay, even if an old
+// systemd override or environment variable is present.
+const PORT = Number(process.env.PORT || process.env.LOBSTER_REMOTE_PORT || 38080);
+const RESERVED_MAIN_PORTS = new Set([8000, 8001, 8010, 4111]);
+if (RESERVED_MAIN_PORTS.has(PORT)) {
+  console.error(`Refusing to start remote support on reserved main-service port ${PORT}; use 38080 or another dedicated port.`);
+  process.exit(78);
+}
 const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");

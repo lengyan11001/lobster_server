@@ -65,7 +65,7 @@ SMS_SEND_COOLDOWN_SEC = 60
 SMS_MAX_PER_HOUR = 10
 PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
-# 新注册用户满额新人分（在线独立认证下按 installation_id 仅首注发放，同机再注册为 0），最多 4 位小数
+# 新注册用户满额新人分：同一 OEM 内按手机号仅首次注册发放，跨 OEM 独立计算。
 REGISTER_INITIAL_CREDITS = Decimal("1000.0000")
 DEFAULT_ONLINE_USER_CREDITS = Decimal("99999.0000")
 
@@ -689,7 +689,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     )
     db.add(user)
     db.flush()
-    apply_installation_signup_bonus_for_new_user(db, user, reg_iid)
+    apply_installation_signup_bonus_for_new_user(db, user, phone=mobile, brand_mark=brand_mark)
     db.commit()
     db.refresh(user)
     _remote = getattr(request.client, "host", None) if request.client else None
@@ -1153,7 +1153,7 @@ def wechat_miniprogram_login(
         )
         db.add(user)
         db.flush()
-        apply_installation_signup_bonus_for_new_user(db, user, wx_iid if slots else None)
+        apply_installation_signup_bonus_for_new_user(db, user, brand_mark=brand_mark)
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data=access_token_claims(user))
@@ -1229,7 +1229,7 @@ def wechat_callback(
         )
         db.add(user)
         db.flush()
-        apply_installation_signup_bonus_for_new_user(db, user, wx_iid if slots else None)
+        apply_installation_signup_bonus_for_new_user(db, user, brand_mark=brand_mark)
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data=access_token_claims(user))

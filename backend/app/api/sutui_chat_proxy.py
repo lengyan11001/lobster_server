@@ -140,6 +140,24 @@ async def _stream_chat_upstream(
 def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
     """If a model has a direct API key configured, return route info; else None."""
     mid = (model or "").strip()
+    change2pro_key = (
+        getattr(settings, "change2pro_api_key", None)
+        or os.environ.get("CHANGE2PRO_API_KEY")
+        or ""
+    ).strip()
+    change2pro_model = (
+        getattr(settings, "change2pro_chat_model", None)
+        or os.environ.get("CHANGE2PRO_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    change2pro_model = _strip_provider_prefix(change2pro_model)
+    if change2pro_key and mid == change2pro_model:
+        base = (
+            getattr(settings, "change2pro_api_base", None)
+            or os.environ.get("CHANGE2PRO_API_BASE")
+            or "https://api.change2pro.com"
+        ).rstrip("/")
+        return {"api_base": base, "api_key": change2pro_key, "provider": "change2pro"}
     yyapi_key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
     yyapi_model = (
         getattr(settings, "yyapi_chat_model", None)
@@ -173,6 +191,32 @@ def _yyapi_chat_configured() -> bool:
     return bool(key)
 
 
+def _change2pro_chat_configured() -> bool:
+    key = (
+        getattr(settings, "change2pro_api_key", None)
+        or os.environ.get("CHANGE2PRO_API_KEY")
+        or ""
+    ).strip()
+    return bool(key)
+
+
+def _change2pro_chat_model_id() -> str:
+    raw = (
+        getattr(settings, "change2pro_chat_model", None)
+        or os.environ.get("CHANGE2PRO_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    return _strip_provider_prefix(raw) or "gpt-5.6-sol"
+
+
+def _change2pro_direct_route(model: str = "") -> Optional[Dict[str, str]]:
+    target = _change2pro_chat_model_id()
+    route = _get_direct_route((model or target).strip() or target)
+    if route and route.get("provider") == "change2pro":
+        return route
+    return None
+
+
 def _yyapi_chat_model_id() -> str:
     raw = (
         getattr(settings, "yyapi_chat_model", None)
@@ -185,10 +229,18 @@ def _yyapi_chat_model_id() -> str:
 def _yyapi_direct_route(model: str = "") -> Optional[Dict[str, str]]:
     """Return the configured YYAPI route without exposing its secret to callers."""
     target = _yyapi_chat_model_id()
-    route = _get_direct_route((model or target).strip() or target)
-    if route and route.get("provider") == "yyapi":
-        return route
-    return None
+    requested = (model or target).strip() or target
+    if requested != target:
+        return None
+    key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    if not key:
+        return None
+    base = (
+        getattr(settings, "yyapi_api_base", None)
+        or os.environ.get("YYAPI_API_BASE")
+        or "https://www.yyapi.cloud"
+    ).rstrip("/")
+    return {"api_base": base, "api_key": key, "provider": "yyapi"}
 
 
 # ---------------------------------------------------------------------------
@@ -1070,6 +1122,7 @@ def _sutui_chat_model_candidates(
 
     # Provider order is server-owned.  Callers may send any legacy model id;
     # that id is only a later fallback and never determines the provider.
+    change2pro_model = _change2pro_chat_model_id() if _change2pro_chat_configured() else ""
     yyapi_model = _yyapi_chat_model_id() if _yyapi_chat_configured() else ""
 
     def add(mid: str) -> None:
@@ -1078,6 +1131,8 @@ def _sutui_chat_model_candidates(
             seen.add(model)
             out.append(model)
 
+    if change2pro_model:
+        add(change2pro_model)
     if yyapi_model:
         add(yyapi_model)
     # Keep the multimodal-capable APIZ route ahead of DeepSeek.  DeepSeek Chat
@@ -1107,7 +1162,10 @@ def _sutui_chat_model_candidates(
         before_disabled = list(out)
         # ``gpt-5.6-sol`` is disabled on the xskill route by default, but the
         # same id is the configured YYAPI model and must remain available.
-        out = [m for m in out if m not in disabled or m == yyapi_model]
+        out = [
+            m for m in out
+            if m not in disabled or m in {yyapi_model, change2pro_model}
+        ]
         skipped_disabled = set(before_disabled) - set(out)
         if skipped_disabled:
             logger.info("[sutui-chat] skipping disabled chat models: %s", skipped_disabled)
@@ -1162,6 +1220,21 @@ def _sutui_chat_attempts_for_models(
                 "timeout": direct_timeout,
                 "is_direct": True,
             })
+            if dr.get("provider") == "change2pro":
+                # Change2Pro and YYAPI intentionally use the same model id;
+                # preserve YYAPI as the next direct fallback instead of
+                # losing it during candidate de-duplication.
+                yyapi = _yyapi_direct_route(mid)
+                if yyapi:
+                    attempts.append({
+                        "model": mid,
+                        "api_base": yyapi["api_base"],
+                        "api_key": yyapi["api_key"],
+                        "provider": "direct:yyapi",
+                        "timeout": direct_timeout,
+                        "is_direct": True,
+                    })
+                continue
             if dr.get("provider") == "yyapi":
                 # Do not duplicate the YYAPI model through xskill.  The next
                 # model candidate is the actual fallback route.

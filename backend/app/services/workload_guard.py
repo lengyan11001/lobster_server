@@ -293,7 +293,7 @@ def heavy_workload_kind(method: str, path: str) -> str:
 
 def install_workload_guard(app: FastAPI) -> BoundedWorkGate:
     request_gate = BoundedWorkGate(
-        concurrency=_env_int("SERVER_REQUEST_MAX_CONCURRENCY", 12, minimum=1, maximum=128),
+        concurrency=_env_int("SERVER_REQUEST_MAX_CONCURRENCY", 24, minimum=1, maximum=128),
         queue_limit=_env_int("SERVER_REQUEST_MAX_QUEUE", 48, minimum=0, maximum=1000),
         wait_timeout_seconds=_env_int("SERVER_REQUEST_QUEUE_TIMEOUT_SECONDS", 10, minimum=1, maximum=120),
     )

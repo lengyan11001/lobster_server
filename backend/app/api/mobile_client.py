@@ -43,7 +43,7 @@ from ..services.device_presence import is_device_online
 from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash, initialize_phone_default_password
 from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _sms_challenge_target, _verify_sms_challenge
 from .auth import _get_wechat_access_token
-from .installation_slots import parse_installation_id_strict
+from .installation_slots import apply_installation_signup_bonus_for_new_user, parse_installation_id_strict
 from .mobile_identity import (
     is_wechat_session_user,
     latest_mobile_binding,
@@ -149,6 +149,7 @@ def _get_or_create_phone_user(db: Session, mobile: str, brand_mark: str) -> tupl
     )
     db.add(user)
     db.flush()
+    apply_installation_signup_bonus_for_new_user(db, user, phone=mobile, brand_mark=brand_mark)
     for pkg_id in _DEFAULT_PHONE_UNLOCK_PACKAGES:
         db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
     db.flush()

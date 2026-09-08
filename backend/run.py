@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(_root, ".env"), override=False)
 
 # 全日志：由 LOG_LEVEL 控制，默认 debug（.env 可设 LOG_LEVEL=info 仅关键信息）
-_log_level_name = os.environ.get("LOG_LEVEL", "debug").strip().lower()
+_log_level_name = os.environ.get("LOG_LEVEL", "info").strip().lower()
 _log_level = getattr(logging, _log_level_name.upper(), logging.DEBUG)
 logging.basicConfig(
     level=_log_level,

@@ -6,7 +6,7 @@ cd "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
 INSTALL_REMOTE_SUPPORT="${INSTALL_REMOTE_SUPPORT:-0}"
 
-if [ -f "$ROOT/remote_support_server/src/server.js" ] && ! grep -q '^REMOTE_SUPPORT_SERVICE_KEY=' "$ROOT/.env" 2>/dev/null; then
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/remote_support_server/src/server.js" ] && ! grep -q '^REMOTE_SUPPORT_SERVICE_KEY=' "$ROOT/.env" 2>/dev/null; then
   echo "REMOTE_SUPPORT_SERVICE_KEY=$(openssl rand -hex 32)" >> "$ROOT/.env"
 fi
 
@@ -102,6 +102,13 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
   for PORT in 8001 8000 4111; do
+    PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
+    if [ -n "$PID_ON_PORT" ]; then
+      echo "[ERR] port $PORT is still occupied by PID(s) $PID_ON_PORT after stopping Lobster units; refusing to kill an unknown process" >&2
+      sudo ss -ltnp "sport = :$PORT" 2>/dev/null || true
+      exit 1
+    fi
+    : <<'LEGACY_PORT_CLEANUP'
   # 确保 8001/8000 端口无残留进程
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
     if [ -n "$PID_ON_PORT" ]; then
@@ -109,6 +116,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
       sudo fuser -k "$PORT/tcp" 2>/dev/null || true
       sleep 1
     fi
+LEGACY_PORT_CLEANUP
   done
   sudo systemctl start lobster-mcp lobster-backend
   if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then

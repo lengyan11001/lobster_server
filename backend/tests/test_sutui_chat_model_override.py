@@ -99,6 +99,7 @@ def test_mastra_requires_deepseek_even_when_global_chain_omits_it(monkeypatch):
 
 
 def test_configured_yyapi_is_first_but_keeps_direct_fallbacks(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_key", None, raising=False)
     monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
     monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_base", "https://www.yyapi.cloud")
     monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
@@ -126,6 +127,7 @@ def test_yyapi_route_keeps_fallback_candidates(monkeypatch):
 
 
 def test_image_candidates_put_seed_after_yyapi_and_never_use_deepseek(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_key", None, raising=False)
     monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
     monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
     monkeypatch.delenv("SUTUI_CHAT_DISABLED_MODELS_JSON", raising=False)
@@ -135,6 +137,24 @@ def test_image_candidates_put_seed_after_yyapi_and_never_use_deepseek(monkeypatc
 
     attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
     assert [(a["model"], a["provider"]) for a in attempts] == [
+        ("gpt-5.6-sol", "direct:yyapi"),
+        ("apiz/seed-2.0-mini", "xskill"),
+    ]
+
+
+def test_change2pro_is_first_and_yyapi_is_same_model_fallback(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_key", "test-change2pro-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_base", "https://api.change2pro.com")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
+
+    candidates = _sutui_chat_model_candidates("deepseek-chat", has_images=True)
+    attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
+
+    assert candidates[:2] == ["gpt-5.6-sol", "apiz/seed-2.0-mini"]
+    assert [(a["model"], a["provider"]) for a in attempts[:3]] == [
+        ("gpt-5.6-sol", "direct:change2pro"),
         ("gpt-5.6-sol", "direct:yyapi"),
         ("apiz/seed-2.0-mini", "xskill"),
     ]

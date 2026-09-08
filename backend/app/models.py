@@ -1548,12 +1548,17 @@ class H5WorkflowActivation(Base):
 
 
 class InstallationSignupBonusClaim(Base):
-    """在线独立认证：每个 installation_id 仅首名注册用户可获得新人积分（防同机多号刷分）。"""
+    """Online registration bonus claim, unique per phone number and OEM."""
 
     __tablename__ = "installation_signup_bonus_claims"
+    __table_args__ = (
+        UniqueConstraint("phone", "brand_mark", name="uq_installation_signup_bonus_claim_phone_brand"),
+    )
 
     installation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 

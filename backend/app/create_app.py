@@ -1123,12 +1123,83 @@ def _migrate_sutui_recon_balance_remote_prev():
         logger.warning("Migration sutui_recon balance_remote_prev skipped: %s", e)
 
 
+def _migrate_installation_signup_bonus_claims():
+    """Add phone/OEM claim keys and migrate legacy device claims in place."""
+    from sqlalchemy import inspect, text
+
+    from . import models
+    from .db import SessionLocal
+    from .services.brand_context import phone_from_account_email, user_brand_mark
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("installation_signup_bonus_claims"):
+            return
+        columns = {column["name"] for column in insp.get_columns("installation_signup_bonus_claims")}
+        with engine.begin() as conn:
+            if "phone" not in columns:
+                conn.execute(text("ALTER TABLE installation_signup_bonus_claims ADD COLUMN phone VARCHAR(32)"))
+            if "brand_mark" not in columns:
+                conn.execute(text("ALTER TABLE installation_signup_bonus_claims ADD COLUMN brand_mark VARCHAR(64)"))
+
+        db = SessionLocal()
+        try:
+            claims = (
+                db.query(models.InstallationSignupBonusClaim, models.User)
+                .outerjoin(models.User, models.User.id == models.InstallationSignupBonusClaim.user_id)
+                .order_by(
+                    models.InstallationSignupBonusClaim.created_at.asc(),
+                    models.InstallationSignupBonusClaim.installation_id.asc(),
+                )
+                .all()
+            )
+            claimed_keys: set[tuple[str, str]] = set()
+            for claim, user in claims:
+                phone = phone_from_account_email(user.email) if user is not None else ""
+                brand = user_brand_mark(user) if user is not None else ""
+                if not phone or not brand:
+                    continue
+                key = (phone, brand)
+                if key in claimed_keys:
+                    # Keep the earliest historical claim; duplicate device claims
+                    # must not occupy the new phone/OEM unique key.
+                    claim.phone = None
+                    claim.brand_mark = None
+                    continue
+                claim.phone = phone
+                claim.brand_mark = brand
+                claimed_keys.add(key)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("Migration installation_signup_bonus_claims data skipped: %s", e)
+        finally:
+            db.close()
+
+        index_name = "uq_installation_signup_bonus_claim_phone_brand"
+        refreshed = inspect(engine)
+        index_names = {item["name"] for item in refreshed.get_indexes("installation_signup_bonus_claims")}
+        unique_names = {item.get("name") for item in refreshed.get_unique_constraints("installation_signup_bonus_claims")}
+        if index_name not in index_names and index_name not in unique_names:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX uq_installation_signup_bonus_claim_phone_brand "
+                        "ON installation_signup_bonus_claims (phone, brand_mark)"
+                    )
+                )
+        logger.info("[startup] installation signup bonus claims use phone + OEM keys")
+    except Exception as e:
+        logger.warning("Migration installation_signup_bonus_claims skipped: %s", e)
+
+
 def _backfill_installation_signup_bonus_claims():
-    """已有 user_installations 的设备视为已占用新人礼包，避免上线后同机多号再领满额分。"""
+    """Mark legacy phone users with an installation as having claimed their bonus."""
     from sqlalchemy import inspect
 
     from . import models
     from .db import SessionLocal
+    from .services.brand_context import phone_from_account_email, user_brand_mark
 
     try:
         insp = inspect(engine)
@@ -1136,31 +1207,40 @@ def _backfill_installation_signup_bonus_claims():
             return
         db = SessionLocal()
         try:
-            if db.query(models.InstallationSignupBonusClaim).count() > 0:
-                return
-            distinct_iids = [r[0] for r in db.query(models.UserInstallation.installation_id).distinct().all()]
-            if not distinct_iids:
-                return
-            for iid in distinct_iids:
-                first = (
-                    db.query(models.UserInstallation)
-                    .filter(models.UserInstallation.installation_id == iid)
-                    .order_by(models.UserInstallation.created_at.asc(), models.UserInstallation.user_id.asc())
-                    .first()
-                )
-                if first is not None:
-                    db.add(
-                        models.InstallationSignupBonusClaim(
-                            installation_id=first.installation_id,
-                            user_id=first.user_id,
-                            created_at=first.created_at,
-                        )
-                    )
-            db.commit()
-            logger.info(
-                "[启动] installation_signup_bonus_claims 已从 user_installations 回填 %s 条",
-                len(distinct_iids),
+            claimed_keys = {
+                (str(phone), str(brand))
+                for phone, brand in db.query(
+                    models.InstallationSignupBonusClaim.phone,
+                    models.InstallationSignupBonusClaim.brand_mark,
+                ).all()
+                if phone and brand
+            }
+            installations = (
+                db.query(models.UserInstallation, models.User)
+                .join(models.User, models.User.id == models.UserInstallation.user_id)
+                .order_by(models.UserInstallation.created_at.asc(), models.UserInstallation.user_id.asc())
+                .all()
             )
+            added = 0
+            for installation, user in installations:
+                phone = phone_from_account_email(user.email)
+                brand = user_brand_mark(user)
+                if not phone or (phone, brand) in claimed_keys:
+                    continue
+                db.add(
+                    models.InstallationSignupBonusClaim(
+                        installation_id=f"phone:{brand}:{phone}",
+                        user_id=user.id,
+                        phone=phone,
+                        brand_mark=brand,
+                        created_at=installation.created_at,
+                    )
+                )
+                claimed_keys.add((phone, brand))
+                added += 1
+            if added:
+                db.commit()
+                logger.info("[startup] installation signup bonus claims backfilled %s phone/OEM rows", added)
         except Exception as e:
             db.rollback()
             logger.warning("Backfill installation_signup_bonus_claims failed: %s", e)
@@ -1203,6 +1283,7 @@ def create_app() -> FastAPI:
         _migrate_recharge_callback_audit()
         _migrate_credits_decimal_sqlite()
         _migrate_credits_decimal_mysql()
+        _migrate_installation_signup_bonus_claims()
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_capability_configs_extra_config()

@@ -231,6 +231,9 @@ class Settings(BaseSettings):
     # ── 直连 LLM API（优先于 xskill.ai 中转）──
     deepseek_api_key: Optional[str] = None
     deepseek_api_base: str = "https://api.deepseek.com"
+    change2pro_api_key: Optional[str] = None
+    change2pro_api_base: str = "https://api.change2pro.com"
+    change2pro_chat_model: str = "gpt-5.6-sol"
     yyapi_api_key: Optional[str] = None
     yyapi_api_base: str = "https://www.yyapi.cloud"
     yyapi_chat_model: str = "gpt-5.6-sol"
