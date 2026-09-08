@@ -6,6 +6,7 @@ ROOT="${1:-/opt/lobster-server}"
 USER_NAME="${LOBSTER_SERVICE_USER:-ubuntu}"
 PY="$ROOT/.venv/bin/python3"
 NODE="$ROOT/.runtime/node/bin/node"
+INSTALL_REMOTE_SUPPORT="${INSTALL_REMOTE_SUPPORT:-0}"
 
 if [ ! -x "$PY" ]; then
   echo "[ERR] Python not found: $PY" >&2
@@ -20,7 +21,7 @@ if [ ! -x "$NODE" ]; then
   echo "Run: $ROOT/scripts/install_mastra_runtime.sh $ROOT" >&2
   exit 1
 fi
-if [ ! -f "$ROOT/remote_support_server/src/server.js" ]; then
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ ! -f "$ROOT/remote_support_server/src/server.js" ]; then
   echo "[ERR] remote support server source is missing: $ROOT/remote_support_server/src/server.js" >&2
   exit 1
 fi
@@ -112,6 +113,7 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ]; then
 sudo tee /etc/systemd/system/lobster-remote-support.service >/dev/null <<UNIT
 [Unit]
 Description=Lobster Remote Support Relay
@@ -134,7 +136,11 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 UNIT
+fi
 
 sudo systemctl daemon-reload
-sudo systemctl enable lobster-backend lobster-background lobster-mcp lobster-mastra lobster-remote-support
+sudo systemctl enable lobster-backend lobster-background lobster-mcp lobster-mastra
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ]; then
+  sudo systemctl enable lobster-remote-support
+fi
 echo "[OK] systemd units installed for $ROOT as user $USER_NAME"

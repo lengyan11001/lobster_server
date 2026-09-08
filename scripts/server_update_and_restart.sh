@@ -4,6 +4,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
+INSTALL_REMOTE_SUPPORT="${INSTALL_REMOTE_SUPPORT:-0}"
 
 if [ -f "$ROOT/remote_support_server/src/server.js" ] && ! grep -q '^REMOTE_SUPPORT_SERVICE_KEY=' "$ROOT/.env" 2>/dev/null; then
   echo "REMOTE_SUPPORT_SERVICE_KEY=$(openssl rand -hex 32)" >> "$ROOT/.env"
@@ -24,7 +25,7 @@ if [ -n "$DIRTY_TRACKED" ]; then
   echo "[WARN] tracked working tree changes backed up to $BACKUP_PATCH"
 fi
 
-if [ -f "$ROOT/remote_support_server/package.json" ]; then
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/remote_support_server/package.json" ]; then
   echo "[Remote] 安装远程支持中继依赖 ..."
   if [ -x "$ROOT/.runtime/node/bin/npm" ]; then
     "$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/remote_support_server" install --omit=dev
@@ -70,7 +71,7 @@ bash "$ROOT/scripts/build_mastra_if_needed.sh" "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
-  if [ -f "$ROOT/scripts/install_remote_support_nginx.sh" ]; then
+  if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/scripts/install_remote_support_nginx.sh" ]; then
     bash "$ROOT/scripts/install_remote_support_nginx.sh" || echo "[WARN] remote support nginx route was not changed"
   fi
   echo "[重启] 后端服务先更新，H5 保持在线并在最后快速重启 ..."
@@ -90,15 +91,17 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
     MASTRA_UNIT="lobster-mastra"
   fi
-  if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
-    echo "[Remote] 安装远程支持 systemd 服务 ..."
+  # Remote support is isolated from the main product deployment.  A normal
+  # release must neither install nor start its relay service.
+  if [ "$INSTALL_REMOTE_SUPPORT" = "1" ]; then
+    echo "[Remote] refresh remote support systemd unit"
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
+  else
+    sudo systemctl disable --now lobster-remote-support 2>/dev/null || true
   fi
-  echo "[Remote] refresh remote support systemd unit"
-  bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
-  sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-remote-support lobster-mcp lobster-backend 2>/dev/null || true
+  sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
-  for PORT in 8001 8000 38080 4111; do
+  for PORT in 8001 8000 4111; do
   # 确保 8001/8000 端口无残留进程
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
     if [ -n "$PID_ON_PORT" ]; then
@@ -108,7 +111,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     fi
   done
   sudo systemctl start lobster-mcp lobster-backend
-  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
+  if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
     sudo systemctl start lobster-remote-support
   fi
   sudo systemctl start "$MASTRA_UNIT"
