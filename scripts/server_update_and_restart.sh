@@ -94,8 +94,11 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     echo "[Remote] 安装远程支持 systemd 服务 ..."
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
   fi
+  echo "[Remote] refresh remote support systemd unit"
+  bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
   sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-remote-support lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
+  for PORT in 8001 8000 38080 4111; do
   # 确保 8001/8000 端口无残留进程
   for PORT in 8001 8000 4111; do
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
