@@ -35,8 +35,12 @@ location /remote/ {
 NGINX
 
 sudo install -m 0644 /tmp/lobster-remote-support-nginx.conf /etc/nginx/snippets/lobster-remote-support.conf
-if ! sudo grep -q 'include /etc/nginx/snippets/lobster-remote-support.conf;' /etc/nginx/sites-available/lobster; then
-  sudo sed -i '/server_name bhzn.top www.bhzn.top;/a\    include /etc/nginx/snippets/lobster-remote-support.conf;' /etc/nginx/sites-available/lobster
+SITE_CONF="/etc/nginx/sites-enabled/lobster"
+if [ ! -f "$SITE_CONF" ]; then
+  SITE_CONF="/etc/nginx/sites-available/lobster"
+fi
+if ! sudo grep -q 'include /etc/nginx/snippets/lobster-remote-support.conf;' "$SITE_CONF"; then
+  sudo sed -i '/server_name bhzn\.top www\.bhzn\.top;/a\    include /etc/nginx/snippets/lobster-remote-support.conf;' "$SITE_CONF"
 fi
 sudo nginx -t
 sudo systemctl reload nginx
