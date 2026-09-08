@@ -25,7 +25,14 @@ fi
 
 if [ -f "$ROOT/remote_support_server/package.json" ]; then
   echo "[Remote] 安装远程支持中继依赖 ..."
-  (cd "$ROOT/remote_support_server" && npm install --omit=dev)
+  if [ -x "$ROOT/.runtime/node/bin/npm" ]; then
+    "$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/remote_support_server" install --omit=dev
+  elif command -v npm >/dev/null 2>&1; then
+    npm --prefix "$ROOT/remote_support_server" install --omit=dev
+  else
+    echo "[ERR] Node.js/npm is required for remote support dependencies"
+    exit 1
+  fi
 fi
 git reset --hard origin/main
 POST_RESET_DIRTY="$(git status --porcelain --untracked-files=no)"
