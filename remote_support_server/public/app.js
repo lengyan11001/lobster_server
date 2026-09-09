@@ -46,6 +46,18 @@ const fileTransferWorkspace = document.getElementById("fileTransferWorkspace");
 const fileTransferSummary = document.getElementById("fileTransferSummary");
 const fileTransferTable = document.getElementById("fileTransferTable");
 const fileTransferEmpty = document.getElementById("fileTransferEmpty");
+
+// In a direct admin session the surrounding admin page already provides the
+// device-binding entry point. Move the existing file-transfer form into the
+// Files tab instead of rendering a second left sidebar. This keeps the same
+// form/handlers and makes uploads available without duplicating IDs or logic.
+if (document.body.classList.contains("direct-control")) {
+  const filePanel = document.getElementById("filePanel");
+  if (filePanel && fileTransferWorkspace) {
+    fileTransferWorkspace.prepend(filePanel);
+    filePanel.classList.add("direct-file-panel");
+  }
+}
 const screenWallGrid = document.getElementById("screenWallGrid");
 const screenWallEmpty = document.getElementById("screenWallEmpty");
 const wallControlWindow = document.getElementById("wallControlWindow");

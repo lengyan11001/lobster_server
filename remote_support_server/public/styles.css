@@ -381,9 +381,26 @@ input[type="file"] {
 }
 
 /* When opened from the main admin console with ?device=..., go straight to
-   the selected controller instead of presenting a second device-selection UI. */
-body.direct-control .stage-tabs,
+   the selected controller instead of presenting a second device-selection UI.
+   The admin console already owns device binding; keep the remote page's
+   control/wall/file tabs available in the embedded view. */
 body.direct-control .device-shelf {
+  display: none;
+}
+
+body.direct-control .sidebar {
+  display: none;
+}
+
+body.direct-control .shell {
+  grid-template-columns: 1fr;
+}
+
+body.direct-control .stage-tabs {
+  display: flex;
+}
+
+body.direct-control .account-menu {
   display: none;
 }
 
@@ -613,6 +630,19 @@ body.direct-control .screen-workspace {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
+}
+
+body.direct-control .file-transfer-workspace {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+/* The direct admin view moves the existing upload form into the Files tab so
+   file transfer remains usable after the duplicate left sidebar is removed. */
+.file-transfer-workspace .direct-file-panel {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
 }
 
 .wall-toolbar {
