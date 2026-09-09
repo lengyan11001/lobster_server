@@ -573,7 +573,7 @@ function renderDevices() {
       </div>
       <label class="monitor-toggle">
         <input type="checkbox" ${device.monitorAlways ? "checked" : ""}>
-        <span>时刻监控</span>
+        <span>加入屏幕墙</span>
       </label>
     `;
     card.addEventListener("click", () => startControl(device.id));
