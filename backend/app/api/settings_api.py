@@ -424,6 +424,32 @@ def bind_unique_installation_id(
         .first()
     )
     current_is_signed = _is_signed_installation_id_for_user(current_installation_id, current_user.id)
+    # A copied installation can present a signed slot that is already active
+    # on another machine.  Only split it when that other machine is currently
+    # online; an offline/reinstalled client is allowed to retain its signed
+    # slot so OTA/restart does not unexpectedly move its data.
+    signed_slot_machine_conflict = False
+    if current_is_signed and has_machine_identity:
+        other_machine = (
+            db.query(UserMachineIdentity)
+            .filter(
+                UserMachineIdentity.user_id == current_user.id,
+                UserMachineIdentity.installation_id == current_installation_id,
+                UserMachineIdentity.machine_instance_id != machine_id,
+            )
+            .first()
+        )
+        if other_machine is not None:
+            online_cutoff = datetime.utcnow() - timedelta(seconds=120)
+            signed_slot_machine_conflict = bool(
+                db.query(H5ChatDevicePresence.id)
+                .filter(
+                    H5ChatDevicePresence.user_id == current_user.id,
+                    H5ChatDevicePresence.installation_id == current_installation_id,
+                    H5ChatDevicePresence.last_seen_at >= online_cutoff,
+                )
+                .first()
+            )
     stale_slot = ""
     if body.force_new:
         installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, f"{machine_id}-{secrets.token_hex(8)}")
@@ -437,7 +463,7 @@ def bind_unique_installation_id(
         duplicate_before = False
         signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
         signature_reason = "known_machine"
-    elif current_is_signed:
+    elif current_is_signed and not signed_slot_machine_conflict:
         # A signed slot is the final effective slot. Keep it stable even if an
         # OTA repairs/recreates the local machine identity later.
         installation_id = current_installation_id
@@ -480,16 +506,33 @@ def bind_unique_installation_id(
             )
             .first()
         )
-        duplicate_before = bool(usage_before.get("taken") or same_user_machine_conflict)
+        duplicate_before = bool(
+            usage_before.get("taken")
+            or same_user_machine_conflict
+            or signed_slot_machine_conflict
+        )
         if duplicate_before:
             installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, machine_id)
             signed = True
-            signature_reason = "duplicate_machine" if same_user_machine_conflict and not usage_before.get("taken") else "duplicate"
+            signature_reason = (
+                "duplicate_machine"
+                if (same_user_machine_conflict or signed_slot_machine_conflict)
+                and not usage_before.get("taken")
+                else "duplicate"
+            )
         else:
             installation_id = preferred_id
             signed = False
             signature_reason = ""
-    replaced = current_installation_id if current_installation_id and current_installation_id != installation_id else ""
+    # Splitting a copied online slot is allocation, not migration.  Keep the
+    # original device's tasks/templates untouched.
+    replaced = (
+        current_installation_id
+        if current_installation_id
+        and current_installation_id != installation_id
+        and not signed_slot_machine_conflict
+        else ""
+    )
 
     migrated = {}
     if replaced:
