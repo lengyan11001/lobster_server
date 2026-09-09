@@ -610,7 +610,10 @@ function monitoredDevices() {
 }
 
 function canMonitorDevice(device) {
-  return Boolean(device?.online && hasScreenPermission(device) && !supportsRtc(device));
+  // The wall is a multi-device preview.  It deliberately uses the relay
+  // preview path even for RTC-capable agents, so one device's RTC capability
+  // cannot make it disappear from the wall.
+  return Boolean(device?.online && hasScreenPermission(device));
 }
 
 function deviceIdByMonitorSession(targetSessionId) {
@@ -684,7 +687,13 @@ function syncMonitorSessions() {
     if (!wanted.has(device.id)) continue;
     if (monitorSessions.has(device.id) || pendingControlIntents.get(device.id) === "monitor") continue;
     pendingControlIntents.set(device.id, "monitor");
-    ws.send(JSON.stringify({ type: "control", deviceId: device.id, mode: "monitor" }));
+    ws.send(JSON.stringify({
+      type: "control",
+      deviceId: device.id,
+      mode: "monitor",
+      relayFallback: true,
+      reason: "screen_wall"
+    }));
   }
 }
 
@@ -1286,11 +1295,9 @@ function setStageTab(tab) {
   fileTransferWorkspace.classList.toggle("hidden", activeStageTab !== "files");
   if (activeStageTab === "wall") {
     if (activeDeviceId) pendingControlIntents.delete(activeDeviceId);
-    if (screenOpen) closeScreen(true);
     wallRenderKey = "";
     renderScreenWall();
   } else if (activeStageTab === "files") {
-    if (screenOpen) closeScreen(true);
     closeWallControl();
     clearMonitorSessions(true);
     wallRenderKey = "";

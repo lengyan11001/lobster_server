@@ -356,15 +356,11 @@ input[type="file"] {
 }
 
 .stage-body.wall-mode {
-  grid-template-rows: 1fr;
+  grid-template-rows: auto 1fr;
 }
 
 .stage-body.files-mode {
   grid-template-rows: 1fr;
-}
-
-.stage-body.wall-mode .device-shelf {
-  display: none;
 }
 
 .stage-body.files-mode .device-shelf {
@@ -384,10 +380,6 @@ input[type="file"] {
    the selected controller instead of presenting a second device-selection UI.
    The admin console already owns device binding; keep the remote page's
    control/wall/file tabs available in the embedded view. */
-body.direct-control .device-shelf {
-  display: none;
-}
-
 body.direct-control .sidebar {
   display: none;
 }
@@ -411,7 +403,7 @@ body.direct-control .login-view {
 }
 
 body.direct-control .stage-body {
-  grid-template-rows: 1fr;
+  grid-template-rows: auto 1fr;
 }
 
 body.direct-control .screen-workspace {

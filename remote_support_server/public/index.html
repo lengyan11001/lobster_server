@@ -13,7 +13,11 @@
     // login/device-picker shell never flashes inside the admin window.
     (() => {
       const query = new URLSearchParams(window.location.search);
-      if (query.get("device")) document.body.classList.add("direct-control");
+      // The admin console embeds the complete remote workspace.  `device` is
+      // kept for backwards compatibility (it can still preselect a device),
+      // while `direct=1` only removes the standalone login/sidebar chrome and
+      // must not hide the shared device list used by Remote and Wall tabs.
+      if (query.get("device") || query.get("direct") === "1") document.body.classList.add("direct-control");
     })();
   </script>
   <main id="loginView" class="login-view">

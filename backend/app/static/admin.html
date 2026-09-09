@@ -177,8 +177,10 @@ tr:hover{background:var(--bg)}
 .remote-device-title strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .remote-device-title code{font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .remote-device-meta{display:grid;gap:4px;margin:10px 0;color:var(--text-secondary);font-size:12px;line-height:1.45}
-.remote-device-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.remote-device-actions{display:flex;gap:6px}
+ .remote-device-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .remote-monitor-toggle{display:flex;align-items:center;gap:6px;margin:8px 0 10px;font-size:12px;color:var(--text-secondary);cursor:pointer}
+ .remote-monitor-toggle input{margin:0;accent-color:var(--primary)}
+ .remote-device-actions{display:flex;gap:6px}
 .remote-device-actions .btn{flex:1}
 .remote-control-panel{margin-top:16px;border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden}
 .remote-control-panel[hidden]{display:none}
@@ -4018,11 +4020,36 @@ async function loadRemoteSupportDevices() {
       const id = card.getAttribute('data-device-id') || '';
       const open = card.querySelector('.remote-open-btn');
       const remove = card.querySelector('.remote-remove-btn');
+      const monitorLabel = document.createElement('label');
+      monitorLabel.className = 'remote-monitor-toggle';
+      const monitorInput = document.createElement('input');
+      monitorInput.type = 'checkbox';
+      monitorInput.checked = Boolean((items.find(function(item) { return String(item.device_id || item.id || '') === id; }) || {}).monitorAlways);
+      monitorInput.setAttribute('data-monitor-toggle', '');
+      monitorLabel.appendChild(monitorInput);
+      monitorLabel.appendChild(document.createTextNode(' 加入屏幕墙'));
+      const actions = card.querySelector('.remote-device-actions');
       if (open) open.addEventListener('click', function() { openRemoteSupportDevice(id); });
       if (remove) remove.addEventListener('click', function() { removeRemoteSupportDevice(id); });
     });
   } catch (e) {
     target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message || e) + '</div>';
+  }
+}
+
+async function updateRemoteSupportMonitor(deviceId, enabled, card) {
+  const title = card && card.querySelector('.remote-device-title strong');
+  const label = title ? title.textContent.trim() : '';
+  try {
+    await api('/admin/api/remote-support/devices/' + encodeURIComponent(deviceId), {
+      method: 'PATCH',
+      body: JSON.stringify({ device_id: deviceId, label: label, enabled: true, monitorAlways: Boolean(enabled) })
+    });
+    toast(enabled ? '已加入屏幕墙' : '已移出屏幕墙', 'success');
+  } catch (e) {
+    const input = card && card.querySelector('[data-monitor-toggle]');
+    if (input) input.checked = !enabled;
+    toast(e.message || String(e), 'error');
   }
 }
 
@@ -4044,6 +4071,9 @@ async function openRemoteSupportDevice(deviceId) {
     const meta = document.getElementById('remoteSupportControlMeta');
     if (title) title.textContent = '远程控制 · ' + (card && card.querySelector('.remote-device-title strong') ? card.querySelector('.remote-device-title strong').textContent : deviceId);
     if (meta) meta.textContent = '正在连接设备 ' + deviceId;
+    // Open the complete workspace, not a single-device child page.  The
+    // embedded app owns the Remote/Wall/File tabs and the shared device list;
+    // the clicked device is only used as the initial Remote selection.
     frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1';
     panel.hidden = false;
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });

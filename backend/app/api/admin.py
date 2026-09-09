@@ -689,6 +689,7 @@ class RemoteSupportAuthorizationBody(BaseModel):
     installation_id: Optional[str] = None
     label: Optional[str] = None
     enabled: bool = True
+    monitorAlways: Optional[bool] = None
 
 
 @router.post("/admin/api/remote-support/devices")
@@ -704,7 +705,7 @@ def admin_add_remote_support_device(
             "deviceId": body.device_id,
             "verificationCode": body.verification_code or "",
             "label": body.label or "",
-            "monitorAlways": False,
+            "monitorAlways": bool(body.monitorAlways),
         })
     device_id = body.device_id.strip().upper()
     if not device_id:
@@ -728,7 +729,10 @@ def admin_add_remote_support_device(
 def admin_update_remote_support_device(device_id: str, body: RemoteSupportAuthorizationBody, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
     remote_result = None
     if x_admin_token:
-        remote_result = _remote_support_service_request("PATCH", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token, json_body={"label": body.label or "", "monitorAlways": False})
+        patch_body = {"label": body.label or ""}
+        if body.monitorAlways is not None:
+            patch_body["monitorAlways"] = bool(body.monitorAlways)
+        remote_result = _remote_support_service_request("PATCH", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token, json_body=patch_body)
     row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
     if not row:
         raise HTTPException(status_code=404, detail="remote_device_not_found")
