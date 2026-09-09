@@ -98,7 +98,16 @@ app.use("/downloads", express.static(path.join(PUBLIC_DIR, "downloads"), {
 }));
 app.use(express.static(PUBLIC_DIR, {
   extensions: ["html"],
-  maxAge: "10s"
+  // The controller is opened from the admin console and must pick up the
+  // current direct-control/fallback logic immediately after a deployment.
+  // Caching an old app.js here can leave users on the pre-relay interaction.
+  maxAge: 0,
+  setHeaders(res, filePath) {
+    if (/\.(?:html?|js|css)$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "no-store, max-age=0, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+    }
+  }
 }));
 
 const server = http.createServer(app);

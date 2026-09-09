@@ -7,6 +7,15 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <script>
+    // The admin console opens this page with a signed session and a target
+    // device.  Mark direct mode before the first paint so the standalone
+    // login/device-picker shell never flashes inside the admin window.
+    (() => {
+      const query = new URLSearchParams(window.location.search);
+      if (query.get("device")) document.body.classList.add("direct-control");
+    })();
+  </script>
   <main id="loginView" class="login-view">
     <section class="login-card">
       <div class="brand login-brand">

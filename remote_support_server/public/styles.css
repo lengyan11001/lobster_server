@@ -387,6 +387,12 @@ body.direct-control .device-shelf {
   display: none;
 }
 
+/* Direct sessions are already authenticated by the main admin console.  Keep
+   the login view from flashing while the controller validates the token. */
+body.direct-control .login-view {
+  display: none !important;
+}
+
 body.direct-control .stage-body {
   grid-template-rows: 1fr;
 }
