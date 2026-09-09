@@ -1131,17 +1131,25 @@ def _sutui_chat_model_candidates(
             seen.add(model)
             out.append(model)
 
+    # Text-only work (memory generation, IP content, WeChat reply/classification,
+    # etc.) should use the direct DeepSeek route first.  The newly-added model
+    # endpoints have recently been timing out; putting them before DeepSeek
+    # made every ordinary request wait for the long upstream timeout before the
+    # fallback chain could do useful work.
+    #
+    # DeepSeek Chat is text-only and must not receive image parts.  Multimodal
+    # requests therefore keep the image-capable APIZ route first and omit
+    # DeepSeek from the candidate list entirely.
+    if has_images:
+        add(_MULTIMODAL_FALLBACK_MODEL)
+    else:
+        add(_TEXT_FALLBACK_MODEL)
     if change2pro_model:
         add(change2pro_model)
     if yyapi_model:
         add(yyapi_model)
-    # Keep the multimodal-capable APIZ route ahead of DeepSeek.  DeepSeek Chat
-    # is text-only, so it must never be selected for a request containing an
-    # image part.  For text-only requests it remains the final provider-owned
-    # fallback, as requested by the server routing policy.
-    add(_MULTIMODAL_FALLBACK_MODEL)
     if not has_images:
-        add(_TEXT_FALLBACK_MODEL)
+        add(_MULTIMODAL_FALLBACK_MODEL)
     if init and not (has_images and _is_text_only_deepseek_model(init)):
         add(init)
     configured_chain = (
