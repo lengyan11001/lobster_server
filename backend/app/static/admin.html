@@ -164,6 +164,29 @@ tr:hover{background:var(--bg)}
 .juhe-admin-result{border:1px solid var(--border);border-radius:10px;background:#fff;padding:12px;min-height:120px;max-height:520px;overflow:auto}
 .juhe-admin-result pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text-secondary)}
 
+/* Remote support admin cards and embedded controller */
+.remote-device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:14px}
+.remote-device-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.remote-device-form input{height:32px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:12px;min-width:0;width:180px}
+.remote-device-form input.remote-code-input{width:110px}
+.remote-device-form .btn{height:32px;padding:6px 10px;font-size:12px}
+.remote-device-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px;box-shadow:var(--shadow);min-width:0}
+.remote-device-card.is-active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,.12)}
+.remote-device-card-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.remote-device-title{display:grid;gap:4px;min-width:0}
+.remote-device-title strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-device-title code{font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-device-meta{display:grid;gap:4px;margin:10px 0;color:var(--text-secondary);font-size:12px;line-height:1.45}
+.remote-device-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-device-actions{display:flex;gap:6px}
+.remote-device-actions .btn{flex:1}
+.remote-control-panel{margin-top:16px;border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden}
+.remote-control-panel[hidden]{display:none}
+.remote-control-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.remote-control-panel-head strong{font-size:14px}
+.remote-control-panel-head span{display:block;font-size:11px;color:var(--text-secondary);margin-top:3px}
+.remote-support-frame{display:block;width:100%;height:680px;border:0;background:#f5f7fa}
+
 /* Mobile responsive */
 @media(max-width:768px){
   .topbar{padding:10px 12px;flex-wrap:wrap;gap:8px}
@@ -415,13 +438,23 @@ body{background:#edf2f7}
         <h3 style="margin:0">已开启远程支持的设备</h3>
         <button class="btn btn-outline btn-sm" type="button" onclick="loadRemoteSupportDevices()">刷新</button>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-        <input id="remoteDeviceIdInput" placeholder="设备编号，例如 O27N-2OJE" style="min-width:190px">
-        <input id="remoteDeviceCodeInput" placeholder="验证码" inputmode="numeric" style="width:120px">
-        <input id="remoteDeviceLabelInput" placeholder="设备备注" style="min-width:180px">
+      <div class="remote-device-form">
+        <input id="remoteDeviceIdInput" placeholder="设备编号，例如 O27N-2OJE">
+        <input id="remoteDeviceCodeInput" class="remote-code-input" placeholder="验证码" inputmode="numeric">
+        <input id="remoteDeviceLabelInput" placeholder="设备备注">
         <button class="btn btn-primary btn-sm" type="button" onclick="addRemoteSupportDevice()">添加设备</button>
       </div>
-      <div id="remoteSupportTable" style="margin-top:14px"><div class="empty">加载中…</div></div>
+      <div id="remoteSupportTable" class="remote-device-grid"><div class="empty">加载中…</div></div>
+      <section id="remoteSupportControlPanel" class="remote-control-panel" hidden>
+        <div class="remote-control-panel-head">
+          <div>
+            <strong id="remoteSupportControlTitle">远程控制</strong>
+            <span id="remoteSupportControlMeta">请选择设备</span>
+          </div>
+          <button class="btn btn-outline btn-compact" type="button" onclick="closeRemoteSupportDevice()">关闭窗口</button>
+        </div>
+        <iframe id="remoteSupportFrame" class="remote-support-frame" title="远程设备控制窗口" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
+      </section>
     </div>
   </div>
 
@@ -3947,6 +3980,84 @@ function renderTopConsumers(items) {
     </div>`;
   });
   el.innerHTML = html;
+}
+/* Final remote-support admin UI overrides.  Kept at the end so legacy duplicate
+   handlers above cannot replace the card/embedded-window interaction. */
+async function loadRemoteSupportDevices() {
+  const target = document.getElementById('remoteSupportTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/admin/api/remote-support/devices');
+    const items = Array.isArray(data.devices) ? data.devices : [];
+    if (!items.length) {
+      target.innerHTML = '<div class="empty">暂无管理员添加的远程设备</div>';
+      return;
+    }
+    target.innerHTML = items.map(function(item) {
+      // The fallback main-server response also has a numeric authorization id;
+      // always prefer the actual ToDesk device id for controller routing.
+      const id = String(item.device_id || item.id || '');
+      const traffic = item.traffic || {};
+      const remote = item.remote_support || {};
+      const online = Boolean(item.online);
+      const path = item.activePath || traffic.activePath || '未建立链路';
+      const sessions = Number(item.activeSessionCount || traffic.activeSessionCount || traffic.activeRtcSessions || 0) || 0;
+      const label = item.label || item.name || item.device_name || '未命名设备';
+      const platform = item.platform || item.agentVersion || remote.platform || 'Online Agent';
+      return '<article class="remote-device-card ' + (online ? 'is-online' : 'is-offline') + '" data-device-id="' + escapeHtml(id) + '">' +
+        '<div class="remote-device-card-head"><div class="remote-device-title"><strong>' + escapeHtml(label) +
+        '</strong><code>' + escapeHtml(id) + '</code></div><span class="badge ' + (online ? 'badge-green' : 'badge-yellow') + '">' +
+        (online ? '在线' : '离线') + '</span></div>' +
+        '<div class="remote-device-meta"><span>链路：' + escapeHtml(path) + '</span><span>会话：' + sessions +
+        '</span><span>' + escapeHtml(platform) + '</span>' + (item.last_seen_at ? '<span>最后心跳：' + escapeHtml(item.last_seen_at) + '</span>' : '') +
+        '</div><div class="remote-device-actions"><button class="btn btn-primary btn-compact remote-open-btn" type="button">远程</button>' +
+        '<button class="btn btn-outline btn-compact remote-remove-btn" type="button">移除</button></div></article>';
+    }).join('');
+    target.querySelectorAll('.remote-device-card').forEach(function(card) {
+      const id = card.getAttribute('data-device-id') || '';
+      const open = card.querySelector('.remote-open-btn');
+      const remove = card.querySelector('.remote-remove-btn');
+      if (open) open.addEventListener('click', function() { openRemoteSupportDevice(id); });
+      if (remove) remove.addEventListener('click', function() { removeRemoteSupportDevice(id); });
+    });
+  } catch (e) {
+    target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message || e) + '</div>';
+  }
+}
+
+async function openRemoteSupportDevice(deviceId) {
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || 'https://todesk.bhzn.top').replace(/\/$/, '');
+    const frame = document.getElementById('remoteSupportFrame');
+    const panel = document.getElementById('remoteSupportControlPanel');
+    const cards = Array.from(document.querySelectorAll('.remote-device-card'));
+    const card = cards.find(function(item) { return item.getAttribute('data-device-id') === String(deviceId); });
+    if (!frame || !panel) {
+      window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener');
+      return;
+    }
+    cards.forEach(function(item) { item.classList.remove('is-active'); });
+    if (card) card.classList.add('is-active');
+    const title = document.getElementById('remoteSupportControlTitle');
+    const meta = document.getElementById('remoteSupportControlMeta');
+    if (title) title.textContent = '远程控制 · ' + (card && card.querySelector('.remote-device-title strong') ? card.querySelector('.remote-device-title strong').textContent : deviceId);
+    if (meta) meta.textContent = '正在连接设备 ' + deviceId;
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId);
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    toast(e.message || String(e), 'error');
+  }
+}
+
+function closeRemoteSupportDevice() {
+  const frame = document.getElementById('remoteSupportFrame');
+  const panel = document.getElementById('remoteSupportControlPanel');
+  if (frame) frame.src = 'about:blank';
+  if (panel) panel.hidden = true;
+  document.querySelectorAll('.remote-device-card.is-active').forEach(function(item) { item.classList.remove('is-active'); });
 }
 </script>
 </body>
