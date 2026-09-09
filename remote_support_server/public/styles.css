@@ -380,6 +380,21 @@ input[type="file"] {
   align-items: stretch;
 }
 
+/* When opened from the main admin console with ?device=..., go straight to
+   the selected controller instead of presenting a second device-selection UI. */
+body.direct-control .stage-tabs,
+body.direct-control .device-shelf {
+  display: none;
+}
+
+body.direct-control .stage-body {
+  grid-template-rows: 1fr;
+}
+
+body.direct-control .screen-workspace {
+  padding-top: 12px;
+}
+
 .placeholder-card {
   width: 100%;
   min-height: 96px;

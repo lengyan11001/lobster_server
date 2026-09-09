@@ -132,7 +132,20 @@ let inputSerial = 0;
 let rtcState = null;
 let selectedQualityProfile = localStorage.getItem("bhzn_quality_profile") || "balanced";
 const requestedDeviceId = initialRemoteQuery.get("device") || "";
+let requestedControlStarted = false;
+if (requestedDeviceId && document.body) document.body.classList.add("direct-control");
 const wallTileSizes = new Map();
+
+function maybeStartRequestedDevice() {
+  if (!requestedDeviceId || requestedControlStarted || !sessionToken || currentUser?.status !== "approved") return;
+  if (!ws || ws.readyState !== WebSocket.OPEN || !devices.length) return;
+  const wanted = String(requestedDeviceId).trim().toUpperCase();
+  const device = devices.find((item) => String(item.id || "").trim().toUpperCase() === wanted);
+  if (!device) return;
+  requestedControlStarted = true;
+  // Let the device list/render pass settle before opening the control session.
+  setTimeout(() => startControl(device.id), 80);
+}
 
 const qualityProfiles = {
   data: { profile: "data", label: "省流量", maxSide: 1280, fps: 10, jpegQuality: 42, bitrateKbps: 1200 },
@@ -366,6 +379,7 @@ function connect() {
       syncMonitorSessions();
       renderScreenWall();
       resumeActiveControl();
+      maybeStartRequestedDevice();
     }
     if (msg.type === "file-transfer" && msg.transfer) {
       upsertFileTransfer(msg.transfer);
@@ -2453,6 +2467,7 @@ async function boot() {
       syncMonitorSessions();
       renderScreenWall();
       await loadFileTransfers();
+      maybeStartRequestedDevice();
     }
   } catch {
     sessionToken = "";

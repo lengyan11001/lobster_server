@@ -4035,7 +4035,7 @@ async function openRemoteSupportDevice(deviceId) {
     const cards = Array.from(document.querySelectorAll('.remote-device-card'));
     const card = cards.find(function(item) { return item.getAttribute('data-device-id') === String(deviceId); });
     if (!frame || !panel) {
-      window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener');
+      window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1', '_blank', 'noopener');
       return;
     }
     cards.forEach(function(item) { item.classList.remove('is-active'); });
@@ -4044,7 +4044,7 @@ async function openRemoteSupportDevice(deviceId) {
     const meta = document.getElementById('remoteSupportControlMeta');
     if (title) title.textContent = '远程控制 · ' + (card && card.querySelector('.remote-device-title strong') ? card.querySelector('.remote-device-title strong').textContent : deviceId);
     if (meta) meta.textContent = '正在连接设备 ' + deviceId;
-    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId);
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1';
     panel.hidden = false;
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
