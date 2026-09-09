@@ -1382,16 +1382,26 @@ function fallbackToRelay(reason = "fallback") {
   closeRtc(reason, true);
   if (!deviceId || !ws || ws.readyState !== WebSocket.OPEN) return;
   pendingControlIntents.delete(deviceId);
-  activeMeta.textContent = `WebRTC 直连失败（${reason}），未启用 JPEG 中转`;
   sessionId = "";
+  activeMeta.textContent = `WebRTC 直连失败（${reason}），正在切换 JPEG 中转`;
+  // WebRTC is preferred, but a timeout must never leave the viewer blank.
+  // The relay explicitly requires this opt-in for RTC-capable devices.
+  ws.send(JSON.stringify({
+    type: "control",
+    deviceId,
+    mode: "control",
+    relayFallback: true,
+    reason: `rtc_fallback:${reason}`
+  }));
 }
 
 async function handleRtcReady(msg) {
   if (msg.deviceId !== activeDeviceId || !screenOpen) return;
   if (!window.RTCPeerConnection) {
-    sessionId = "";
-    pendingControlIntents.delete(msg.deviceId);
-    activeMeta.textContent = "当前浏览器不支持 WebRTC";
+    if (msg.sessionId && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "rtc-stop", sessionId: msg.sessionId, deviceId: msg.deviceId, reason: "rtc_unsupported" }));
+    }
+    fallbackToRelay("rtc_unsupported");
     return;
   }
   closeRtc("replaced", false);
@@ -1406,8 +1416,10 @@ async function handleRtcReady(msg) {
   const controlChannel = pc.createDataChannel("control", { ordered: true });
   const wantsVideoTrack = Boolean(device?.rtcCapabilities?.video);
   if (!wantsVideoTrack) {
-    closeRtc("video_track_required", false);
-    activeMeta.textContent = "设备未提供 WebRTC 视频轨道";
+    if (msg.sessionId && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "rtc-stop", sessionId: msg.sessionId, deviceId: msg.deviceId, reason: "video_track_unavailable" }));
+    }
+    fallbackToRelay("video_track_unavailable");
     return;
   }
   pc.addTransceiver("video", { direction: "recvonly" });
@@ -2438,7 +2450,14 @@ stopBtn.addEventListener("click", () => {
 
 async function boot() {
   setAuthMode("login");
-  showLogin();
+  // A controller token is injected by the main admin console.  Do not flash
+  // the standalone login page while that token is being validated.
+  if (sessionToken) {
+    loginView.classList.add("hidden");
+    appShell.classList.remove("hidden");
+  } else {
+    showLogin();
+  }
   closeScreen(false);
   try {
     const health = await fetch("/api/health", { cache: "no-store" }).then((response) => response.json());
@@ -2473,6 +2492,7 @@ async function boot() {
     sessionToken = "";
     localStorage.removeItem("bhzn_session_token");
     setUser(null);
+    showLogin();
   }
 }
 
