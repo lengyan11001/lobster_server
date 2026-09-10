@@ -1385,7 +1385,9 @@ function supportsRtc(device) {
 }
 
 function rtcFirstFrameTimeoutMs(device) {
-  return devicePlatform(device) === "android" ? 15000 : 8000;
+  // 局域网首连要等 ICE + H.264 编码器初始化；原来的 8 秒太紧，会先连上
+  // host 直连又很快熔断回落到中继（表现为画面突然变慢/黑一下）。
+  return devicePlatform(device) === "android" ? 25000 : 20000;
 }
 
 function isControlStarting(deviceId = activeDeviceId) {
