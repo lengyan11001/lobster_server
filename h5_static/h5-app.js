@@ -3960,6 +3960,9 @@
       if (field) field.classList.toggle("hidden", !showGroupInvite);
       $("workflowNodeNativeWhatsappField")?.classList.toggle("hidden", !showWhatsapp);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
+      // 精准获客AI 的关键词全部由 AI 生成，不需要用户填、也不从 Online 取，
+      // 所以这个节点直接隐藏“精准获客参数”输入框。
+      $("workflowNodeDouyinKeywordField")?.classList.toggle("hidden", showDouyinAiKeywords);
       $("workflowNodeDouyinAiKeywordField")?.classList.toggle("hidden", !showDouyinAiKeywords);
       $("workflowNodeDouyinTouchField")?.classList.toggle("hidden", !showDouyinPreciseTouch);
       syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);

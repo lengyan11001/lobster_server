@@ -1758,8 +1758,10 @@
             <textarea id="workflowNodeNativeWhatsappInstruction" rows="3" placeholder="可选：回复语气、业务边界和语言要求"></textarea>
           </div>
           <div class="field full hidden" id="workflowNodeDouyinCollectionField">
-            <label for="workflowNodeDouyinKeyword">精准获客参数</label>
-            <textarea id="workflowNodeDouyinKeyword" rows="3" placeholder="留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"></textarea>
+            <div class="field full" id="workflowNodeDouyinKeywordField">
+              <label for="workflowNodeDouyinKeyword">精准获客参数</label>
+              <textarea id="workflowNodeDouyinKeyword" rows="3" placeholder="留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"></textarea>
+            </div>
             <div class="field full hidden" id="workflowNodeDouyinAiKeywordField">
               <label>AI 选词设置（精准获客AI）</label>
               <label class="subtle" for="workflowNodeDouyinAiKeywordCount">每轮关键词数量</label>
