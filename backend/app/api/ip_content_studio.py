@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -3608,9 +3608,46 @@ def _personal_default_template_reference(
     return template
 
 
+def _personal_default_row_for_slot(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+    *,
+    active_only: bool = True,
+    fallback_to_account: bool = True,
+) -> Optional[IPContentScheduleTemplate]:
+    """Return the personal-default row that belongs to one installation slot.
+
+    Slot rows win. A brand new device (or legacy data written before slots
+    existed) has no row of its own, so the account-level row with an empty
+    ``installation_id`` is returned until that device saves its own default.
+    """
+    slot = _clean_text(installation_id, 128)
+
+    def _query(slot_id: str) -> Optional[IPContentScheduleTemplate]:
+        query = db.query(IPContentScheduleTemplate).filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.installation_id == slot_id,
+        )
+        if active_only:
+            query = query.filter(IPContentScheduleTemplate.status == "active")
+        return query.order_by(
+            IPContentScheduleTemplate.updated_at.desc(),
+            IPContentScheduleTemplate.id.desc(),
+        ).first()
+
+    if slot:
+        row = _query(slot)
+        if row is not None or not fallback_to_account:
+            return row
+    return _query("")
+
+
 def _current_personal_template_for_execution(
     db: Session,
     user_id: int,
+    installation_id: str = "",
 ) -> Optional[IPContentScheduleTemplate]:
     """Resolve the template selected in Personal Settings at execution time.
 
@@ -3619,16 +3656,7 @@ def _current_personal_template_for_execution(
     personal row when no explicit selection exists preserves the legacy
     personal-default behaviour while still making the selected template live.
     """
-    personal = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == int(user_id),
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+    personal = _personal_default_row_for_slot(db, int(user_id), installation_id)
     if personal is None:
         return None
     selected = _granted_template_for_user(
@@ -3639,10 +3667,18 @@ def _current_personal_template_for_execution(
     return selected or personal
 
 
+def _payload_installation_id(payload: Any) -> str:
+    """Installation slot recorded in a task/run payload, or "" when unknown."""
+    data = payload if isinstance(payload, dict) else {}
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    return _clean_text(context.get("installation_id") or data.get("installation_id"), 128)
+
+
 def _use_current_personal_template_options(
     db: Session,
     user_id: int,
     options: Any,
+    installation_id: str = "",
 ) -> dict[str, Any]:
     """Replace stale template snapshots with the currently selected template.
 
@@ -3652,17 +3688,8 @@ def _use_current_personal_template_options(
     an activation-time snapshot.
     """
     out = dict(options) if isinstance(options, dict) else {}
-    personal = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == int(user_id),
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
-    template = _current_personal_template_for_execution(db, int(user_id))
+    personal = _personal_default_row_for_slot(db, int(user_id), installation_id)
+    template = _current_personal_template_for_execution(db, int(user_id), installation_id)
     if personal is None or template is None:
         # A live workflow must fail closed when the current IP template was
         # removed or is no longer accessible; never revive its old snapshot.
@@ -3753,7 +3780,12 @@ def _refresh_personal_workflow_ip_daily_payloads(
     changed = 0
     for task in task_rows:
         payload = dict(task.payload) if isinstance(task.payload, dict) else {}
-        payload = _use_current_personal_template_options(db, int(user_id), payload)
+        payload = _use_current_personal_template_options(
+            db,
+            int(user_id),
+            payload,
+            installation_id=_payload_installation_id(payload),
+        )
         if payload != (task.payload or {}):
             task.payload = _jsonable(payload)
             task.updated_at = _utcnow()
@@ -3770,7 +3802,12 @@ def _refresh_personal_workflow_ip_daily_payloads(
             .all()
         )
         for run in pending_runs:
-            refreshed = _use_current_personal_template_options(db, int(user_id), run.payload or {})
+            refreshed = _use_current_personal_template_options(
+                db,
+                int(user_id),
+                run.payload or {},
+                installation_id=_payload_installation_id(run.payload or {}),
+            )
             if refreshed != (run.payload or {}):
                 run.payload = _jsonable(refreshed)
                 run.updated_at = _utcnow()
@@ -5142,11 +5179,18 @@ async def run_ip_content_daily_scheduled(
         or h5_context.get("workflow_node_id")
     )
     live_personal_template = str(runtime_options.get("template_source") or "").strip().lower() == "personal_current"
+    # Workflow/device runs carry the slot in their context so the per-device
+    # personal default is resolved instead of the account-level one.
+    personal_installation_id = _clean_text(
+        h5_context.get("installation_id") or runtime_options.get("installation_id"),
+        128,
+    )
     if live_personal_template:
         runtime_options = _use_current_personal_template_options(
             db,
             int(current_user.id),
             runtime_options,
+            installation_id=personal_installation_id,
         )
     live_keyword_owner_id = runtime_options.pop("_keyword_owner_user_id", None)
     live_competitor_owner_id = runtime_options.pop("_competitor_owner_user_id", None)
@@ -5222,15 +5266,10 @@ async def run_ip_content_daily_scheduled(
     if live_personal_template:
         # Report the same effective current-personal view that fed execution;
         # do not expose the selected template's stale resource snapshot.
-        live_personal_row = (
-            db.query(IPContentScheduleTemplate)
-            .filter(
-                IPContentScheduleTemplate.user_id == int(current_user.id),
-                IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-                IPContentScheduleTemplate.status == "active",
-            )
-            .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-            .first()
+        live_personal_row = _personal_default_row_for_slot(
+            db,
+            int(current_user.id),
+            personal_installation_id,
         )
         if live_personal_row is not None:
             template_payload = _personal_default_template_payload_with_resources(db, live_personal_row)
@@ -5876,28 +5915,24 @@ def copy_schedule_template(
 
 @router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")
 def get_personal_default_ip_content_config(
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == current_user.id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+    # Personal defaults are per installation slot: a device that never saved
+    # its own default keeps showing the shared account-level row.
+    row = _personal_default_row_for_slot(db, current_user.id, x_installation_id)
     return {"ok": True, "item": _personal_default_template_payload_with_resources(db, row)}
 
 
 @router.put("/api/ip-content/personal-default", summary="保存用户个人默认 IP 日更配置")
 def save_personal_default_ip_content_config(
     body: ScheduleTemplateBody,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    slot = _clean_text(x_installation_id, 128)
     template_ref = _personal_default_template_reference(db, current_user, body)
     body_fields = getattr(body, "model_fields_set", None)
     if body_fields is None:
@@ -5946,18 +5981,20 @@ def save_personal_default_ip_content_config(
         incoming_memory_doc_ids,
         memory_docs,
     )
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == current_user.id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-        )
-        .order_by(IPContentScheduleTemplate.id.desc())
-        .first()
+    # Never fall back to the account-level row on save: writing from a device
+    # must create/update only that device's slot row so the other devices keep
+    # their own default.
+    row = _personal_default_row_for_slot(
+        db,
+        current_user.id,
+        slot,
+        active_only=False,
+        fallback_to_account=False,
     )
     if row is None:
         row = IPContentScheduleTemplate(
             user_id=current_user.id,
+            installation_id=slot,
             name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
         )
         db.add(row)
@@ -6248,17 +6285,20 @@ def delete_schedule_template(
     row.status = "deleted"
     row.updated_at = _utcnow()
 
-    personal_default = (
+    # Every slot keeps its own personal-default row, so drop the deleted
+    # template reference from all of them.
+    personal_defaults = (
         db.query(IPContentScheduleTemplate)
         .filter(
             IPContentScheduleTemplate.user_id == current_user.id,
             IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
             IPContentScheduleTemplate.status == "active",
         )
-        .order_by(IPContentScheduleTemplate.id.desc())
-        .first()
+        .all()
     )
-    if personal_default is not None and personal_default.id != row.id:
+    for personal_default in personal_defaults:
+        if personal_default.id == row.id:
+            continue
         default_meta = dict(personal_default.meta or {})
         if str(default_meta.get("current_template_id") or "") == str(row.id):
             default_meta.pop("current_template_id", None)

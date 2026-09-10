@@ -586,12 +586,22 @@ class IPContentScheduleTemplate(Base):
 
     __tablename__ = "ip_content_schedule_templates"
     __table_args__ = (
-        UniqueConstraint("user_id", "name", name="uq_ip_content_schedule_template_user_name"),
+        UniqueConstraint(
+            "user_id",
+            "installation_id",
+            "name",
+            name="uq_ip_content_schedule_template_user_slot_name",
+        ),
         Index("ix_ip_content_schedule_templates_user_status", "user_id", "status"),
+        Index("ix_ip_content_schedule_templates_user_slot_status", "user_id", "installation_id", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # Empty keeps account-level rows (legacy data and H5 without a selected
+    # device) shared by every slot; a non-empty value binds the row to one
+    # installation slot so two devices never overwrite each other's default.
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     keyword_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     competitor_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)

@@ -41,7 +41,7 @@ from .scheduled_tasks import (
     _local_bestseller_profile_from_persona,
     _serialize_task,
 )
-from .ip_content_studio import _personal_default_resource_overrides
+from .ip_content_studio import _personal_default_resource_overrides, _personal_default_row_for_slot
 from ..services.user_feature_flags import user_feature_flags
 
 router = APIRouter()
@@ -892,17 +892,12 @@ def _clean_id_list(value: Any, limit: int = 50) -> list[int]:
     return out
 
 
-def _personal_default_template(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
-    return (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == user_id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+def _personal_default_template(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+) -> Optional[IPContentScheduleTemplate]:
+    return _personal_default_row_for_slot(db, int(user_id), installation_id)
 
 
 def _first_req_text(requirements: dict[str, Any], *keys: str, limit: int = 500) -> str:
@@ -2004,7 +1999,7 @@ def _prepare_sales_workflow_nodes(
     for node in prepared:
         _normalize_sales_native_wechat_node(node)
     prepared = _ensure_sales_douyin_add_friend_children(prepared)
-    personal = _personal_default_template(db, owner.id)
+    personal = _personal_default_template(db, owner.id, installation_id)
     current_template = _current_personal_schedule_template(db, owner.id, personal)
     reference_template = current_template or personal
     digital_human_template_id = _sales_digital_human_template_id(personal, current_template)
@@ -2759,6 +2754,9 @@ def _activate_nodes_for_device(
                 payload["douyin_execution_mode"] = "one_shot"
             payload["h5_context"] = {
                 **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
+                # The activation belongs to one installation slot; execution
+                # resolves that device's personal default template.
+                "installation_id": installation_id,
                 "workflow_template_id": template_id,
                 "workflow_template_name": template_name,
                 "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",

@@ -261,6 +261,61 @@ def _migrate_ip_content_schedule_template_memory_doc_ids():
         logger.warning("Migration ip_content_schedule_templates.memory_doc_ids skipped: %s", e)
 
 
+def _migrate_ip_content_schedule_template_installation():
+    """Bind IP daily templates (including the personal default) to a slot.
+
+    The legacy unique constraint on ``(user_id, name)`` rejects a second
+    personal-default row for the same account, which is exactly what a
+    per-device default needs, so it is replaced by
+    ``(user_id, installation_id, name)``.
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("ip_content_schedule_templates"):
+            return
+        cols = {c["name"] for c in insp.get_columns("ip_content_schedule_templates")}
+        with engine.begin() as conn:
+            if "installation_id" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE ip_content_schedule_templates "
+                        "ADD COLUMN installation_id VARCHAR(128) NOT NULL DEFAULT ''"
+                    )
+                )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ip_content_schedule_templates_installation_id "
+                    "ON ip_content_schedule_templates (installation_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ip_content_schedule_templates_user_slot_status "
+                    "ON ip_content_schedule_templates (user_id, installation_id, status)"
+                )
+            )
+            if engine.dialect.name == "postgresql":
+                # PostgreSQL can drop the legacy constraint in place. SQLite
+                # cannot, but new databases are created from the current model
+                # and already carry the slot-aware constraint.
+                conn.execute(
+                    text(
+                        "ALTER TABLE ip_content_schedule_templates "
+                        "DROP CONSTRAINT IF EXISTS uq_ip_content_schedule_template_user_name"
+                    )
+                )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_content_schedule_template_user_slot_name "
+                    "ON ip_content_schedule_templates (user_id, installation_id, name)"
+                )
+            )
+    except Exception as e:
+        logger.warning("Migration ip_content_schedule_templates.installation_id skipped: %s", e)
+
+
 def _migrate_ip_content_profile_surveys():
     """Create reusable profile survey records and link them from templates."""
     from sqlalchemy import inspect, text
@@ -1406,6 +1461,7 @@ def create_app() -> FastAPI:
         _migrate_h5_workflow_template_installation()
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
+        _migrate_ip_content_schedule_template_installation()
         _migrate_ip_content_profile_surveys()
         _migrate_h5_device_presence_account_payload()
         _migrate_remote_support_device_authorizations()

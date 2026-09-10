@@ -47,6 +47,7 @@ from .ip_content_studio import (
     _current_template_id_from_meta,
     _draft_record_payload,
     _granted_template_for_user,
+    _personal_default_row_for_slot,
     _personal_default_template_payload_with_resources,
     _personal_profile_fields,
     _use_current_personal_template_options,
@@ -165,17 +166,12 @@ def _h5_dh_provider() -> str:
     return _DIGITAL_HUMAN_PROVIDER_V2
 
 
-def _h5_dh_personal_default_template(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
-    return (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == user_id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+def _h5_dh_personal_default_template(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+) -> Optional[IPContentScheduleTemplate]:
+    return _personal_default_row_for_slot(db, int(user_id), installation_id)
 
 
 def _h5_dh_current_template(
@@ -314,8 +310,8 @@ def _h5_dh_template_language(requirements: Dict[str, Any], template: Optional[IP
     return raw or "zh-CN"
 
 
-def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
-    personal = _h5_dh_personal_default_template(db, user_id)
+def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") -> Dict[str, Any]:
+    personal = _h5_dh_personal_default_template(db, user_id, installation_id)
     current_template = _h5_dh_current_template(db, user_id, personal)
     reference_template = current_template or personal
     reference_owner_id = int(reference_template.user_id) if reference_template else int(user_id)
@@ -529,7 +525,7 @@ def _enrich_linkedin_mining_keywords(
     uses_placeholder = not current or all(item.lower() in _LINKEDIN_PLACEHOLDER_KEYWORDS for item in current)
     if not uses_placeholder:
         return payload
-    context = _h5_dh_context_params(db, target_user_id)
+    context = _h5_dh_context_params(db, target_user_id, _slot_from_payload(payload))
     keywords = [
         _h5_dh_clean_text(item, 120)
         for item in (context.get("keyword_texts") if isinstance(context.get("keyword_texts"), list) else [])
@@ -593,7 +589,7 @@ def _maybe_convert_h5_digital_human_task(
     )
     params.setdefault("sales_node_label", label)
     params.setdefault("task_title", label)
-    context_params = _h5_dh_context_params(db, target_user_id)
+    context_params = _h5_dh_context_params(db, target_user_id, _slot_from_payload(h5_context))
     for key, value in context_params.items():
         if value and not params.get(key):
             params[key] = value
@@ -813,17 +809,19 @@ def _first_profile_text(*values: Any, limit: int = 300) -> str:
     return ""
 
 
-def _personal_default_requirements(db: Session, user_id: int) -> Dict[str, Any]:
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == user_id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+def _slot_from_payload(payload: Any, *fallbacks: str) -> str:
+    """Installation slot recorded in a task payload, else the given fallbacks."""
+    data = payload if isinstance(payload, dict) else {}
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    for value in (context.get("installation_id"), data.get("installation_id"), *fallbacks):
+        text = str(value or "").strip()
+        if text:
+            return text[:128]
+    return ""
+
+
+def _personal_default_requirements(db: Session, user_id: int, installation_id: str = "") -> Dict[str, Any]:
+    row = _personal_default_row_for_slot(db, int(user_id), installation_id)
     if row is None:
         return {}
     effective = _personal_default_template_payload_with_resources(db, row)
@@ -1081,7 +1079,7 @@ def _live_personal_template_validation(
 
     action = _clean_profile_text(source.get("action"), 80).lower()
     capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
-    context = _h5_dh_context_params(db, int(target_user_id))
+    context = _h5_dh_context_params(db, int(target_user_id), _slot_from_payload(source))
     missing: List[str] = []
 
     if action in _LOCAL_BESTSELLER_ACTIONS:
@@ -1201,12 +1199,13 @@ def _refresh_live_personal_template_payload(
         return source
     action = _clean_profile_text(source.get("action"), 80).lower()
     capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
-    personal = _h5_dh_personal_default_template(db, int(target_user_id))
+    personal_slot = _slot_from_payload(source)
+    personal = _h5_dh_personal_default_template(db, int(target_user_id), personal_slot)
     # A live workflow must not fall back to the activation snapshot when the
     # current personal template was removed or is temporarily unavailable.
     # Resolve an empty server context so stale template-owned fields are
     # cleared and the normal server-side validation can report the omission.
-    context_params = _h5_dh_context_params(db, int(target_user_id))
+    context_params = _h5_dh_context_params(db, int(target_user_id), personal_slot)
     if personal is None and task_kind == "client_workflow" and action in _LOCAL_BESTSELLER_ACTIONS:
         params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
         if not params.get("profile_override") and _clean_profile_text(params.get("profile_source"), 32).lower() != "custom":
@@ -3270,10 +3269,15 @@ def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Di
         ):
             # Workflow IP-daily nodes are live references. Keep node-specific
             # counts/tasks, but discard any activation-time template snapshot.
+            targets = _clean_installation_ids(task.target_installation_ids or [])
             run_payload = _use_current_personal_template_options(
                 db,
                 int(task.user_id),
                 dict(payload),
+                installation_id=_slot_from_payload(
+                    payload,
+                    targets[0] if len(targets) == 1 else "",
+                ),
             )
     if task.task_kind == "linkedin_mining":
         run_payload = _enrich_linkedin_mining_keywords(
@@ -3915,6 +3919,7 @@ def _execute_server_side_run(
                     db,
                     int(run.user_id),
                     payload,
+                    installation_id=_slot_from_payload(payload, str(run.installation_id or "")),
                 )
                 run.payload = payload
                 run.updated_at = now
