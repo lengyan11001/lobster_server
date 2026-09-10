@@ -25820,7 +25820,23 @@
           img.src = url;
           img.alt = name;
           img.className = "bubble-attachment-zoomable";
-          img.addEventListener("click", function () { richLightbox(url); });
+          img.classList.add("rich-pending");
+          img.addEventListener("load", function () { img.classList.remove("rich-pending"); });
+          img.addEventListener("error", function () {
+            // 生成中显示骨架；失败给可点重试的占位，避免整块空白
+            img.classList.remove("rich-pending");
+            img.classList.add("rich-media-failed");
+            img.title = "\u52a0\u8f7d\u5931\u8d25\uff0c\u70b9\u51fb\u91cd\u8bd5";
+          });
+          img.addEventListener("click", function () {
+            if (img.classList.contains("rich-media-failed")) {
+              img.classList.remove("rich-media-failed");
+              img.classList.add("rich-pending");
+              img.src = url + (url.indexOf("?") < 0 ? "?" : "&") + "_retry=" + Date.now();
+              return;
+            }
+            richLightbox(url);
+          });
           card.appendChild(img);
         } else if (type === "video" && url) {
           const video = document.createElement("video");
