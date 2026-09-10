@@ -70,6 +70,23 @@
       "capabilities": {},
       "tags": ["WhatsApp", "Twilio", "chat"]
     },
+    "personal_whatsapp_assistant": {
+      "name": "个人whatapp助手",
+      "description": "接管 Windows 桌面版 WhatsApp，按轮次读取未读私聊并自动回复。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {
+        "online.whatsapp_takeover": {
+          "name": "个人whatapp助手",
+          "action": "native_whatsapp_poll",
+          "execution_target": "online",
+          "task_kind": "client_workflow"
+        }
+      },
+      "tags": ["WhatsApp", "桌面客户端", "chat", "automation"]
+    },
     "openclaw_weixin_channel": {
       "name": "微信助手 (OpenClaw)",
       "description": "技能商店入口可见性由服务器配置；点「扫码授权」由本机 lobster_online 调 OpenClaw 微信插件登录，与认证中心无关。授权后 JWT 绑定沿用既有逻辑。",

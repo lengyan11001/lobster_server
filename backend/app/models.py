@@ -38,6 +38,8 @@ class User(Base):
     agent_openclaw_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_task_dispatch_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # Short operator-facing label shown in the admin user list.
+    admin_remark: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -469,6 +471,25 @@ class IPContentDraftRecord(Base):
     )
 
 
+class IPContentProfileSurvey(Base):
+    """Reusable personal-IP survey record for a specific persona."""
+
+    __tablename__ = "ip_content_profile_surveys"
+    __table_args__ = (
+        Index("ix_ip_content_profile_surveys_user_status", "user_id", "status"),
+        Index("ix_ip_content_profile_surveys_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False, default="资料调查")
+    requirements: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class MomentsCoachMaterial(Base):
     """Verified real-life material used by the WeChat Moments sales coach."""
 
@@ -576,6 +597,7 @@ class IPContentScheduleTemplate(Base):
     competitor_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     memory_doc_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     memory_docs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    survey_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     requirements: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
     meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -1934,6 +1956,25 @@ class Customer(Base):
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     last_contact_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CustomerAuthorization(Base):
+    """A grant allowing another user to operate on a customer's record."""
+
+    __tablename__ = "customer_authorizations"
+    __table_args__ = (
+        UniqueConstraint("customer_id", "grantee_user_id", name="uq_customer_authorization_customer_grantee"),
+        Index("ix_customer_authorizations_grantee_status", "grantee_user_id", "status"),
+        Index("ix_customer_authorizations_customer_status", "customer_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    customer_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    grantee_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

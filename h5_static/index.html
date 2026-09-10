@@ -1306,6 +1306,11 @@
                   <span id="personalSurveyCompletionText">已填写 0/14</span>
                 </div>
                 <div id="personalSurveyQuestionList" class="personal-survey-list"></div>
+                <div class="personal-list-page-head">
+                  <strong>已保存的资料调查</strong>
+                  <button type="button" id="personalNewSurveyBtn">新增记录</button>
+                </div>
+                <div class="personal-list" id="personalSurveyList"></div>
                 <div class="personal-survey-actions">
                   <button type="button" id="personalSaveProfileBtn">保存资料调查</button>
                 </div>
@@ -1732,6 +1737,19 @@
               <input id="workflowNodeNativeWechatGroupInviteEnabled" type="checkbox">
               <span>命中拉群规则后立即执行</span>
             </label>
+          </div>
+          <div class="field full hidden" id="workflowNodeNativeWhatsappField">
+            <label>WhatsApp 参数</label>
+            <label for="workflowNodeNativeWhatsappAccountId">账号标识</label>
+            <input id="workflowNodeNativeWhatsappAccountId" type="text" value="desktop-whatsapp-default" readonly>
+            <label for="workflowNodeNativeWhatsappInterval">消息轮询间隔（秒）</label>
+            <input id="workflowNodeNativeWhatsappInterval" type="number" min="1" max="300" step="1" value="15">
+            <label for="workflowNodeNativeWhatsappTakeoverMinutes">接管时长（分钟）</label>
+            <input id="workflowNodeNativeWhatsappTakeoverMinutes" type="number" min="1" max="1440" step="1" value="30">
+            <label for="workflowNodeNativeWhatsappMaxUnread">每轮最多会话数</label>
+            <input id="workflowNodeNativeWhatsappMaxUnread" type="number" min="1" max="100" step="1" value="50">
+            <label for="workflowNodeNativeWhatsappInstruction">回复要求</label>
+            <textarea id="workflowNodeNativeWhatsappInstruction" rows="3" placeholder="可选：回复语气、业务边界和语言要求"></textarea>
           </div>
           <div class="field full hidden" id="workflowNodeDouyinCollectionField">
             <label for="workflowNodeDouyinKeyword">精准获客参数</label>
@@ -2182,6 +2200,10 @@
             <option value="ru">Русский</option>
             <option value="ar">العربية</option>
           </select>
+        </div>
+        <div class="personal-field">
+          <label for="personalTemplateSurvey">资料调查记录</label>
+          <select id="personalTemplateSurvey"><option value="">不关联</option></select>
         </div>
         <div class="personal-field personal-digital-human-field">
           <div class="personal-digital-human-field-head">

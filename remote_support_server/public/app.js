@@ -1,6 +1,7 @@
 const serverState = document.getElementById("serverState");
 const REMOTE_BASE = window.location.pathname.startsWith("/remote") ? "/remote" : "";
 const initialRemoteQuery = new URLSearchParams(window.location.search);
+const requestedStageTab = initialRemoteQuery.get("tab") || "";
 const queryAdminSession = initialRemoteQuery.get("admin_session");
 if (queryAdminSession) {
   localStorage.setItem("bhzn_session_token", queryAdminSession);
@@ -598,6 +599,23 @@ function renderDevices() {
     deviceShelf.appendChild(card);
   }
 }
+
+// The admin console adds/removes bindings outside this iframe.  Refresh the
+// shelf in place so an active remote session is not torn down just because the
+// device-management modal was submitted.
+window.addEventListener("message", async (event) => {
+  if (event.data?.type !== "refresh-devices" || !sessionToken || currentUser?.status !== "approved") return;
+  try {
+    const list = await api("/api/devices");
+    devices = list.devices || [];
+    renderDevices();
+    syncMonitorSessions();
+    renderScreenWall();
+    await loadFileTransfers();
+  } catch {
+    // Keep the last known device state when a transient refresh fails.
+  }
+});
 
 function shouldKeepMonitoring(deviceId) {
   if (!deviceId) return false;
@@ -1308,6 +1326,12 @@ function setStageTab(tab) {
     wallRenderKey = "";
   } else if (previousTab === "files") {
     renderFileTransferWorkspace();
+  }
+}
+
+function applyRequestedStageTab() {
+  if (["control", "wall", "files"].includes(requestedStageTab)) {
+    setStageTab(requestedStageTab);
   }
 }
 
@@ -2043,6 +2067,7 @@ authForm.addEventListener("submit", async (event) => {
       syncMonitorSessions();
       renderScreenWall();
       await loadFileTransfers();
+      applyRequestedStageTab();
       if (requestedDeviceId) {
         setTimeout(() => startControl(requestedDeviceId), 300);
       }
@@ -2505,6 +2530,7 @@ async function boot() {
       syncMonitorSessions();
       renderScreenWall();
       await loadFileTransfers();
+      applyRequestedStageTab();
       maybeStartRequestedDevice();
     }
   } catch {

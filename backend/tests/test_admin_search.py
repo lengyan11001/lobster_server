@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api import admin as admin_api
 from backend.app.db import get_db
-from backend.app.models import CreditLedger, User
+from backend.app.models import CreditLedger, IPContentScheduleTemplate, User
 
 
 def _client_for_admin_context(db_session_factory, context: admin_api.AdminContext) -> TestClient:
@@ -125,6 +125,89 @@ def test_agent_user_list_includes_self_first_without_expanding_subordinate_permi
     detail = client.get(f"/admin/api/user/{agent.id}")
     assert detail.status_code == 200
     assert detail.json()["user"]["id"] == agent.id
+
+
+def test_admin_user_remark_round_trip(db_session_factory, db_session):
+    user = User(
+        email="remark-user@test.local",
+        hashed_password="x",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _client_for_admin_context(
+        db_session_factory,
+        admin_api.AdminContext(role="admin"),
+    )
+    response = client.post(
+        "/admin/api/user-remark",
+        json={"user_id": user.id, "remark": "重点跟进"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["admin_remark"] == "重点跟进"
+    listed = client.get("/admin/api/users?q=remark-user@test.local")
+    assert listed.status_code == 200
+    assert listed.json()["users"][0]["admin_remark"] == "重点跟进"
+
+    cleared = client.post(
+        "/admin/api/user-remark",
+        json={"user_id": user.id, "remark": ""},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["user"]["admin_remark"] == ""
+
+
+def test_template_grant_user_phone_search_does_not_treat_phone_as_user_id(
+    db_session_factory,
+    db_session,
+):
+    owner = User(
+        email="template-owner@test.local",
+        hashed_password="x",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    target = User(
+        email="18025408349@sms.lobster.local",
+        hashed_password="x",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([owner, target])
+    db_session.commit()
+    db_session.refresh(owner)
+    template = IPContentScheduleTemplate(
+        user_id=owner.id,
+        name="phone-search-template",
+        status="active",
+    )
+    db_session.add(template)
+    db_session.commit()
+    db_session.refresh(template)
+
+    client = _client_for_admin_context(
+        db_session_factory,
+        admin_api.AdminContext(role="admin"),
+    )
+    response = client.get(
+        f"/admin/api/ip-content/templates/{template.id}/grant-users"
+        "?page=1&page_size=20&q=18025408349"
+    )
+
+    assert response.status_code == 200
+    assert [item["email"] for item in response.json()["items"]] == [
+        "18025408349@sms.lobster.local"
+    ]
 
 
 def test_admin_skill_visibility_lists_and_saves_social_leads_permissions(db_session_factory, db_session, monkeypatch):

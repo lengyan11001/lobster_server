@@ -10,7 +10,7 @@ from backend.app.api import admin as admin_api
 from backend.app.api.auth import get_current_user
 from backend.app.api.customer_management import router as customer_router
 from backend.app.db import get_db
-from backend.app.models import RecorderAudioRecord, User
+from backend.app.models import CustomerAuthorization, RecorderAudioRecord, User
 
 
 def _user_client(db_session_factory, user_id: int) -> TestClient:
@@ -82,6 +82,20 @@ def test_customer_isolation_between_users(db_session_factory, db_session, test_u
     assert other_client.get("/api/customers").json()["total"] == 0
 
 
+def test_customer_authorization_is_visible_in_user_api(db_session_factory, db_session, test_user, other_user):
+    owner_client = _user_client(db_session_factory, test_user.id)
+    created = owner_client.post("/api/customers", json={"name": "共享客户"})
+    customer_id = created.json()["customer"]["id"]
+    db_session.add(CustomerAuthorization(customer_id=customer_id, owner_user_id=test_user.id, grantee_user_id=other_user.id, status="active"))
+    db_session.commit()
+    grantee_client = _user_client(db_session_factory, other_user.id)
+    listing = grantee_client.get("/api/customers")
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["access_type"] == "authorized"
+    assert grantee_client.get(f"/api/customers/{customer_id}").status_code == 200
+
+
 def test_agent_customer_scope_only_includes_descendants(db_session_factory, db_session):
     agent = User(email="customer-agent@test.local", hashed_password="x", credits=Decimal("10"), role="user", preferred_model="sutui", is_agent=True, agent_level=1, brand_mark="bihuo", created_at=datetime.utcnow())
     child = User(email="customer-child@test.local", hashed_password="x", credits=Decimal("10"), role="user", preferred_model="sutui", parent_user_id=None, brand_mark="bihuo", created_at=datetime.utcnow())
@@ -99,6 +113,29 @@ def test_agent_customer_scope_only_includes_descendants(db_session_factory, db_s
     assert blocked.status_code == 200
     assert blocked.json()["customer"]["owner_user_id"] == agent.id
     assert client.get("/admin/api/customers").json()["total"] == 2
+
+
+def test_admin_customer_authorization_is_visible_to_grantee(db_session_factory, db_session):
+    owner = User(email="customer-owner@test.local", hashed_password="x", credits=Decimal("10"), role="user", is_agent=True, agent_level=1, brand_mark="bihuo", created_at=datetime.utcnow())
+    grantee = User(email="customer-grantee@test.local", hashed_password="x", credits=Decimal("10"), role="user", is_agent=True, agent_level=1, brand_mark="bihuo", created_at=datetime.utcnow())
+    db_session.add_all([owner, grantee])
+    db_session.commit()
+    db_session.refresh(owner)
+    db_session.refresh(grantee)
+    owner_client = TestClient(_admin_app(db_session_factory, admin_api.AdminContext(role="agent", user_id=owner.id, brand_mark="bihuo")))
+    created = owner_client.post("/admin/api/customers", json={"name": "可授权客户"})
+    assert created.status_code == 200
+    customer_id = created.json()["customer"]["id"]
+    grant = owner_client.post(f"/admin/api/customers/{customer_id}/authorizations", json={"grantee_user_id": grantee.id})
+    assert grant.status_code == 200
+    grantee_client = TestClient(_admin_app(db_session_factory, admin_api.AdminContext(role="agent", user_id=grantee.id, brand_mark="bihuo")))
+    listing = grantee_client.get("/admin/api/customers")
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["access_type"] == "authorized"
+    revoked = owner_client.delete(f"/admin/api/customers/{customer_id}/authorizations/{grantee.id}")
+    assert revoked.status_code == 200
+    assert grantee_client.get("/admin/api/customers").json()["total"] == 0
 
 
 def _admin_app(db_session_factory, context: admin_api.AdminContext) -> FastAPI:

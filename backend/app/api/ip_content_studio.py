@@ -28,7 +28,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
@@ -599,12 +599,19 @@ class ScheduleTemplateBody(BaseModel):
     competitor_ids: list[int] = Field(default_factory=list)
     memory_doc_ids: list[str] = Field(default_factory=list)
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
+    survey_id: Optional[int] = None
     requirements: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScheduleTemplateCopyBody(BaseModel):
     name: str = Field("", max_length=160)
+
+
+class ProfileSurveyBody(BaseModel):
+    name: str = Field("", max_length=160)
+    requirements: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScheduledDailyRunOptions(BaseModel):
@@ -2826,6 +2833,7 @@ def _template_payload(
         "competitor_ids": _clean_int_ids(row.competitor_ids, 50),
         "memory_doc_ids": memory_doc_ids,
         "memory_docs": memory_docs,
+        "survey_id": int(getattr(row, "survey_id", 0) or 0) or None,
         "requirements": row.requirements or {},
         "status": row.status,
         "source": source,
@@ -2839,6 +2847,59 @@ def _template_payload(
     if competitors is not None:
         payload["competitors"] = [_competitor_payload(item) for item in competitors]
     return payload
+
+
+def _profile_survey_payload(row: Optional[IPContentProfileSurvey]) -> Optional[dict[str, Any]]:
+    if row is None:
+        return None
+    return {
+        "id": int(row.id),
+        "user_id": int(row.user_id),
+        "name": row.name or "资料调查",
+        "requirements": row.requirements or {},
+        "status": row.status,
+        "meta": row.meta or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _survey_for_template(db: Session, row: IPContentScheduleTemplate) -> Optional[IPContentProfileSurvey]:
+    if not getattr(row, "survey_id", None):
+        return None
+    return db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == int(getattr(row, "survey_id", 0)),
+        IPContentProfileSurvey.user_id == int(row.user_id),
+        IPContentProfileSurvey.status == "active",
+    ).first()
+
+
+def _owned_survey(db: Session, user_id: int, survey_id: Any) -> Optional[IPContentProfileSurvey]:
+    try:
+        sid = int(survey_id or 0)
+    except Exception:
+        sid = 0
+    if sid <= 0:
+        return None
+    return db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == sid,
+        IPContentProfileSurvey.user_id == int(user_id),
+        IPContentProfileSurvey.status == "active",
+    ).first()
+
+
+def _copy_survey_for_user(db: Session, source: Optional[IPContentProfileSurvey], user_id: int) -> Optional[int]:
+    if source is None:
+        return None
+    row = IPContentProfileSurvey(
+        user_id=int(user_id),
+        name=source.name or "资料调查",
+        requirements=_jsonable(source.requirements or {}),
+        meta={**(source.meta or {}), "copied_from_survey_id": int(source.id)},
+    )
+    db.add(row)
+    db.flush()
+    return int(row.id)
 
 
 def _rows_ordered_by_ids(rows: list[Any], ids: list[int]) -> list[Any]:
@@ -2889,6 +2950,8 @@ def _template_payload_with_resources(
 ) -> dict[str, Any]:
     keywords, competitors = _template_resource_rows(db, row)
     payload = _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
+    survey = _survey_for_template(db, row)
+    payload["survey"] = _profile_survey_payload(survey)
     memory_doc_ids, memory_docs = _canonical_template_memory_selection(
         db,
         int(row.user_id),
@@ -2909,6 +2972,8 @@ def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate])
             "competitor_ids": [],
             "memory_doc_ids": [],
             "memory_docs": [],
+            "survey_id": None,
+            "survey": None,
             "requirements": {},
             "status": "empty",
             "meta": {"source": "personal_settings", "is_personal_default": True},
@@ -2952,6 +3017,11 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
     payload = _personal_default_template_payload(row)
     if row is None:
         return payload
+    survey = _survey_for_template(db, row)
+    payload["survey"] = _profile_survey_payload(survey)
+    payload["survey_id"] = int(getattr(row, "survey_id", 0) or 0) or None
+    if survey is not None:
+        payload["requirements"] = {**(survey.requirements or {}), **_personal_profile_fields(row.requirements)}
     reference = _granted_template_for_user(db, int(row.user_id), _current_template_id_from_meta(row.meta)) or row
     overrides = _personal_default_resource_overrides(row, reference)
     if int(reference.id or 0) != int(row.id or 0):
@@ -2980,6 +3050,12 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
             **requirement_overrides,
             **_personal_profile_fields(row.requirements),
         }
+        if getattr(reference, "survey_id", None):
+            ref_survey = _survey_for_template(db, reference)
+            if ref_survey:
+                payload["survey_id"] = int(ref_survey.id)
+                payload["survey"] = _profile_survey_payload(ref_survey)
+                payload["requirements"] = {**(ref_survey.requirements or {}), **_personal_profile_fields(row.requirements)}
     if row is not None:
         payload["requirements"] = _enrich_personal_profile_requirements_with_assets(
             db, int(row.user_id), payload.get("requirements")
@@ -5607,6 +5683,80 @@ def list_competitors(
     return {"items": [_competitor_payload(row) for row in rows]}
 
 
+@router.get("/api/ip-content/profile-surveys", summary="资料调查记录列表")
+def list_profile_surveys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(IPContentProfileSurvey)
+        .filter(IPContentProfileSurvey.user_id == current_user.id, IPContentProfileSurvey.status == "active")
+        .order_by(IPContentProfileSurvey.updated_at.desc(), IPContentProfileSurvey.id.desc())
+        .all()
+    )
+    return {"items": [_profile_survey_payload(row) for row in rows]}
+
+
+@router.post("/api/ip-content/profile-surveys", summary="新增资料调查记录")
+def create_profile_survey(
+    body: ProfileSurveyBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = IPContentProfileSurvey(
+        user_id=int(current_user.id),
+        name=_clean_text(body.name, 160) or "资料调查",
+        requirements=_jsonable(body.requirements or {}),
+        meta=_jsonable(body.meta or {}),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _profile_survey_payload(row)}
+
+
+@router.patch("/api/ip-content/profile-surveys/{survey_id}", summary="更新资料调查记录")
+def update_profile_survey(
+    survey_id: int,
+    body: ProfileSurveyBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == survey_id,
+        IPContentProfileSurvey.user_id == current_user.id,
+        IPContentProfileSurvey.status == "active",
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="资料调查记录不存在")
+    row.name = _clean_text(body.name, 160) or row.name or "资料调查"
+    row.requirements = _jsonable(body.requirements or {})
+    row.meta = _jsonable(body.meta or {})
+    row.updated_at = _utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _profile_survey_payload(row)}
+
+
+@router.delete("/api/ip-content/profile-surveys/{survey_id}", summary="删除资料调查记录")
+def delete_profile_survey(
+    survey_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == survey_id,
+        IPContentProfileSurvey.user_id == current_user.id,
+        IPContentProfileSurvey.status == "active",
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="资料调查记录不存在")
+    row.status = "deleted"
+    row.updated_at = _utcnow()
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/api/ip-content/schedule-templates", summary="IP 日更定时任务模板列表")
 def list_schedule_templates(
     current_user: User = Depends(get_current_user),
@@ -5679,6 +5829,7 @@ def copy_schedule_template(
         int(current_user.id),
         installation_id or "template-copy",
     )
+    copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source), int(current_user.id))
     requested_name = body.name if body is not None else ""
     row = IPContentScheduleTemplate(
         user_id=int(current_user.id),
@@ -5687,6 +5838,7 @@ def copy_schedule_template(
         competitor_ids=competitor_ids,
         memory_doc_ids=memory_doc_ids,
         memory_docs=memory_docs,
+        survey_id=copied_survey_id,
         requirements=_jsonable(source.requirements or {}),
         meta=_jsonable({
             **(source.meta or {}),
@@ -5793,6 +5945,25 @@ def save_personal_default_ip_content_config(
             name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
         )
         db.add(row)
+    requested_survey_id = body.survey_id
+    if requested_survey_id is None and template_ref is not None:
+        requested_survey_id = template_ref.survey_id
+    if requested_survey_id is not None:
+        survey = _owned_survey(db, int(current_user.id), requested_survey_id)
+        if survey is None:
+            raise HTTPException(status_code=400, detail="资料调查记录不存在")
+        row.survey_id = int(survey.id)
+    elif _allows_personal_profile_update(body.meta) and _personal_profile_has_values(body.requirements):
+        # Keep old clients working: a profile save creates a reusable record.
+        survey = IPContentProfileSurvey(
+            user_id=int(current_user.id),
+            name=_clean_text((body.meta or {}).get("survey_name"), 160) or "资料调查",
+            requirements=_jsonable(body.requirements or {}),
+            meta={"source": "personal_settings"},
+        )
+        db.add(survey)
+        db.flush()
+        row.survey_id = int(survey.id)
     existing_requirements = row.requirements if row is not None else {}
     existing_meta = row.meta if row is not None and isinstance(row.meta, dict) else {}
     incoming_requirements = body.requirements
@@ -5840,6 +6011,8 @@ def save_personal_default_ip_content_config(
     )
     row.requirements = _jsonable(normalized_requirements)
     meta = {**(body.meta or {}), "source": "personal_settings", "is_personal_default": True}
+    if row.survey_id:
+        meta["survey_id"] = int(row.survey_id)
     if template_ref is not None:
         meta["current_template_id"] = int(template_ref.id)
         meta["source_template_owner_user_id"] = int(template_ref.user_id)
@@ -5880,6 +6053,7 @@ def save_schedule_template(
         raise HTTPException(status_code=400, detail="请填写模板名称")
     source_template = _granted_template_for_user(db, int(current_user.id), _current_template_id_from_meta(body.meta))
     live_granted_source = source_template is not None and int(source_template.user_id) != int(current_user.id)
+    copied_survey_id = None
     if live_granted_source:
         keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
             db,
@@ -5888,6 +6062,7 @@ def save_schedule_template(
             "template-save",
         )
         requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
+        copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id))
         meta = {
             **(body.meta or {}),
             "source": "user_copy",
@@ -5908,6 +6083,7 @@ def save_schedule_template(
                 db, source_template, int(current_user.id), "template-save"
             )
             requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
+            copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id))
             meta = {
                 **(body.meta or {}),
                 "source": "user_copy",
@@ -5920,6 +6096,9 @@ def save_schedule_template(
             memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
             requirements = _strip_personal_profile_requirements(body.requirements)
             meta = body.meta or {}
+        if body.survey_id:
+            if _owned_survey(db, int(current_user.id), body.survey_id) is None:
+                raise HTTPException(status_code=400, detail="资料调查记录不存在")
     memory_doc_ids, memory_docs = _canonical_template_memory_selection(
         db,
         int(current_user.id),
@@ -5933,6 +6112,7 @@ def save_schedule_template(
         competitor_ids=competitor_ids,
         memory_doc_ids=memory_doc_ids,
         memory_docs=memory_docs,
+        survey_id=copied_survey_id if copied_survey_id is not None else (body.survey_id if body.survey_id else None),
         requirements=_jsonable(requirements),
         meta=_jsonable(meta),
     )
@@ -5977,6 +6157,7 @@ def update_schedule_template(
                 competitor_ids=competitor_ids,
                 memory_doc_ids=memory_doc_ids,
                 memory_docs=memory_docs,
+                survey_id=_copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id)),
                 requirements=_jsonable({**(source_template.requirements or {}), **(body.requirements or {})}),
                 meta=_jsonable({
                     **(body.meta or {}),
@@ -6010,6 +6191,11 @@ def update_schedule_template(
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = memory_doc_ids
     row.memory_docs = memory_docs
+    if body.survey_id is not None:
+        survey = _owned_survey(db, int(current_user.id), body.survey_id)
+        if survey is None:
+            raise HTTPException(status_code=400, detail="资料调查记录不存在")
+        row.survey_id = int(survey.id)
     row.requirements = _jsonable(_strip_personal_profile_requirements(body.requirements))
     row.meta = _jsonable(body.meta or {})
     row.status = "active"

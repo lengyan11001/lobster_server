@@ -55,11 +55,13 @@ _WORKFLOW_CHILD_CLIENT_ACTIONS = {
     "native_wechat_poll",
     "native_wechat_add_friend",
     "native_wechat_moments_engage",
+    "native_whatsapp_poll",
 }
 _WORKFLOW_CHILD_ACTION_TYPES = {
     "client_workflow",
     "native_wechat_add_friend",
     "native_wechat_moments_engage",
+    "native_whatsapp_poll",
 }
 _SYSTEM_WORKFLOW_OWNER_ID = 0
 _SYSTEM_WORKFLOW_CATALOG_SOURCE = "system_catalog"
@@ -88,6 +90,7 @@ _WORKFLOW_NODE_CAPABILITY_IDS = {
     "ip_content_oral": "ip_content_oral",
     "ip_content_moments": "ip_content_moments",
     "wewrite.article.pipeline": "wewrite.article.pipeline",
+    "native_whatsapp_poll": "online.whatsapp_takeover",
 }
 _WORKFLOW_NODE_PACKAGE_IDS = {
     "hifly.video.create_by_tts": "hifly_digital_human_skill",
@@ -103,6 +106,7 @@ _WORKFLOW_NODE_PACKAGE_IDS = {
     "reddit_leads": "reddit_leads",
     "x_leads": "x_leads",
     "tiktok_leads": "tiktok_leads",
+    "native_whatsapp_poll": "personal_whatsapp_assistant",
 }
 _WORKFLOW_ACTION_CAPABILITY_IDS = {
     "image_studio_generate": "goal.image.pipeline",
@@ -125,6 +129,7 @@ _WORKFLOW_PACKAGE_LABELS = {
     "reddit_leads": "Reddit线索采集",
     "x_leads": "X线索采集",
     "tiktok_leads": "TikTok线索采集",
+    "personal_whatsapp_assistant": "个人whatapp助手",
 }
 
 
@@ -1655,7 +1660,11 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     return result
 
 
-_NATIVE_WECHAT_WORKFLOW_ACTIONS = _WORKFLOW_CHILD_CLIENT_ACTIONS
+_NATIVE_WECHAT_WORKFLOW_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_add_friend",
+    "native_wechat_moments_engage",
+}
 
 
 def _native_wechat_key_from_sales_note(note: Any) -> str:
@@ -2062,6 +2071,7 @@ def _prepare_sales_workflow_nodes(
     has_ip_daily = False
     has_local_bestseller = False
     has_wechat = False
+    has_whatsapp = False
     missing: list[str] = []
 
     for node in prepared:
@@ -2121,6 +2131,9 @@ def _prepare_sales_workflow_nodes(
 
         if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
             has_wechat = True
+
+        if task_kind == "client_workflow" and action == "native_whatsapp_poll":
+            has_whatsapp = True
 
         if task_kind == "client_workflow" and action == "native_wechat_poll":
             payload = dict(payload)
@@ -2272,6 +2285,8 @@ def _prepare_sales_workflow_nodes(
         missing.append("IP日更：缺少当前使用模板")
     if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
         missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
+    if has_whatsapp and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+        missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
     if has_hifly:
         if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
             if not hifly_avatar_rows:

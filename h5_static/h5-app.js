@@ -311,6 +311,7 @@
       personalCompetitors: [],
       personalCompetitorCandidates: [],
       personalMemoryDocs: [],
+      personalSurveys: [],
       personalTemplates: [],
       personalEditingTemplateId: "",
       personalTemplateBaseMeta: {},
@@ -593,6 +594,12 @@
         department: "AI获客",
         routeTab: "douyinLeadsSchedule",
       },
+      "online.whatsapp_takeover": {
+        label: "个人whatapp助手",
+        description: "接管 Windows 桌面版 WhatsApp，按轮次处理私聊消息。",
+        packageId: "personal_whatsapp_assistant",
+        department: "私域销冠",
+      },
     };
     const TASK_DEPARTMENTS = ["AI营销创作", "AI获客", "私域销冠", "海外平台"];
     const SCHEDULED_TASK_CAPABILITY_IDS = [
@@ -687,6 +694,16 @@
         dispatchKind: "client_workflow",
         workflowAction: "wecom_poll_reply",
         hidden: true,
+      },
+      {
+        key: "native_whatsapp_poll",
+        capabilityId: "online.whatsapp_takeover",
+        packageId: "personal_whatsapp_assistant",
+        label: "个人whatapp助手",
+        department: "私域销冠",
+        mark: "W",
+        dispatchKind: "client_workflow",
+        workflowAction: "native_whatsapp_poll",
       },
       {
         key: "publish_center",
@@ -890,6 +907,16 @@
               },
             ],
           },
+          {
+            key: "native_whatsapp_poll",
+            label: "个人whatapp助手",
+            mark: "W",
+            description: "接管 Windows 桌面版 WhatsApp，按轮次处理私聊消息。",
+            capabilityId: "online.whatsapp_takeover",
+            packageId: "personal_whatsapp_assistant",
+            workQuickKey: "native_whatsapp_poll",
+            workflowAction: "native_whatsapp_poll",
+          },
         ],
       },
       {
@@ -1010,7 +1037,7 @@
       if (!node) return false;
       const id = String(node.id || "");
       const key = String(node.ability_key || node.key || "");
-      if (isNativeWechatWorkflowKey(key)) return false;
+      if (isNativeWechatWorkflowKey(key) || key === "native_whatsapp_poll") return false;
       if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
       if (key === "douyin_leads" && isSalesDouyinCollectionNode(node)) return false;
       if (key === "douyin_leads" && isSalesDouyinPreciseTouchNode(node)) return false;
@@ -1098,6 +1125,29 @@
         };
       }
       throw new Error("这个个微节点暂不支持加入工作流");
+    }
+
+    function nativeWhatsappWorkflowPlan(note, params = {}) {
+      const prompt = String(note || "").trim();
+      const source = params && typeof params === "object" ? params : {};
+      const accountId = String(source.account_id || "desktop-whatsapp-default").trim() || "desktop-whatsapp-default";
+      return {
+        title: "个人WhatsApp助手",
+        task_kind: "client_workflow",
+        content: "H5 工作流：个人WhatsApp助手",
+        payload: {
+          action: "native_whatsapp_poll",
+          params: {
+            account_id: accountId,
+            message_poll_interval_seconds: Math.max(1, Math.min(300, Number(source.message_poll_interval_seconds || 15))),
+            takeover_session_minutes: Math.max(1, Math.min(1440, Number(source.takeover_session_minutes || 30))),
+            max_unread_per_round: Math.max(1, Math.min(100, Number(source.max_unread_per_round || 50))),
+            reply_instruction: String(source.reply_instruction || "").trim().slice(0, 4000),
+            note: prompt,
+            prompt,
+          },
+        },
+      };
     }
 
     function salesWorkflowPlaceholderPlan(row) {
@@ -2853,6 +2903,7 @@
         native_wechat_poll: "native_wechat_poll",
         native_wechat_add_friend: "native_wechat_add_friend",
         native_wechat_moments_engage: "native_wechat_moments_engage",
+        native_whatsapp_poll: "native_whatsapp_poll",
         publish_content: "publish_center",
       }[raw] || (raw.startsWith("local_bestseller_") ? "local_bestseller" : "");
     }
@@ -3603,7 +3654,7 @@
         : nodeOrKey && (nodeOrKey.key || nodeOrKey.workQuickKey || nodeOrKey.ability_key);
       const normalized = String(key || "").trim();
       if (normalized === "douyin_leads") return "抖音";
-      if (normalized.startsWith("native_wechat_")) return "个微";
+      if (normalized.startsWith("native_wechat_") || normalized === "native_whatsapp_poll") return "个微";
       return "AI营销";
     }
 
@@ -3668,6 +3719,11 @@
     function workflowLookupIsNativeWechatMoments(lookup) {
       const node = lookup && lookup.node || {};
       return String(node.key || node.workQuickKey || "").trim() === "native_wechat_moments_engage";
+    }
+
+    function workflowLookupIsNativeWhatsapp(lookup) {
+      const node = lookup && lookup.node || {};
+      return String(node.key || node.workQuickKey || "").trim() === "native_whatsapp_poll";
     }
 
     function workflowMomentContacts(scope = "param") {
@@ -3880,6 +3936,7 @@
       const lookup = workflowSelectedNodeLookup();
       const showGroupInvite = workflowLookupIsNativeWechatTakeover(lookup);
       const showMoments = workflowLookupIsNativeWechatMoments(lookup);
+      const showWhatsapp = workflowLookupIsNativeWhatsapp(lookup);
       const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
       const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "search_collect";
@@ -3887,6 +3944,7 @@
         && salesWorkflowActionForNote(selectedNote) === "precise_touch";
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
+      $("workflowNodeNativeWhatsappField")?.classList.toggle("hidden", !showWhatsapp);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
       $("workflowNodeDouyinTouchField")?.classList.toggle("hidden", !showDouyinPreciseTouch);
       syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);
@@ -3895,6 +3953,13 @@
       if (checkbox && !showGroupInvite) checkbox.checked = false;
       else if (checkbox && reset) checkbox.checked = false;
       if (reset && showMoments) initializeWorkflowMomentPicker("node", []);
+      if (reset && showWhatsapp) {
+        setFieldValue("workflowNodeNativeWhatsappAccountId", "desktop-whatsapp-default");
+        setFieldValue("workflowNodeNativeWhatsappInterval", 15);
+        setFieldValue("workflowNodeNativeWhatsappTakeoverMinutes", 30);
+        setFieldValue("workflowNodeNativeWhatsappMaxUnread", 50);
+        setFieldValue("workflowNodeNativeWhatsappInstruction", "");
+      }
       if (reset && showDouyinCollection) {
         setFieldValue("workflowNodeDouyinKeyword", "");
         setFieldValue("workflowNodeDouyinRegions", "全国");
@@ -4157,6 +4222,13 @@
       if (key === "comfly.seedance.tvc.pipeline") return workflowCapabilityFieldsHtml("comfly.seedance.tvc.pipeline");
       if (key === "comfly.daihuo.pipeline") return workflowCapabilityFieldsHtml("comfly.daihuo.pipeline");
       if (key === "hifly.video.create_by_tts") return workflowCapabilityFieldsHtml("hifly.video.create_by_tts");
+      if (key === "native_whatsapp_poll") {
+        return taskFieldHtml("账号标识", workInputHtml("workflowParamNativeWhatsappAccountId", "text", "desktop-whatsapp-default", 'readonly'))
+          + taskFieldHtml("消息轮询间隔（秒）", workInputHtml("workflowParamNativeWhatsappInterval", "number", "15", 'min="1" max="300" step="1"'))
+          + taskFieldHtml("接管时长（分钟）", workInputHtml("workflowParamNativeWhatsappTakeoverMinutes", "number", "30", 'min="1" max="1440" step="1"'))
+          + taskFieldHtml("每轮最多会话数", workInputHtml("workflowParamNativeWhatsappMaxUnread", "number", "50", 'min="1" max="100" step="1"'))
+          + taskFieldHtml("回复要求", taskTextareaHtml("workflowParamNativeWhatsappInstruction", "可选：回复语气、业务边界和语言要求"), true);
+      }
       if (key === "douyin_leads") {
         if (item && item.privateTakeover) {
           return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡")))
@@ -4197,6 +4269,13 @@
       if (key === "native_wechat_poll") {
         return taskFieldHtml("是否拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
+      }
+      if (key === "native_whatsapp_poll") {
+        return taskFieldHtml("账号标识", workInputHtml("workflowParamNativeWhatsappAccountId", "text", "desktop-whatsapp-default", 'readonly'))
+          + taskFieldHtml("消息轮询间隔（秒）", workInputHtml("workflowParamNativeWhatsappInterval", "number", "15", 'min="1" max="300" step="1"'))
+          + taskFieldHtml("接管时长（分钟）", workInputHtml("workflowParamNativeWhatsappTakeoverMinutes", "number", "30", 'min="1" max="1440" step="1"'))
+          + taskFieldHtml("每轮最多会话数", workInputHtml("workflowParamNativeWhatsappMaxUnread", "number", "50", 'min="1" max="100" step="1"'))
+          + taskFieldHtml("回复要求", taskTextareaHtml("workflowParamNativeWhatsappInstruction", "可选：回复语气、业务边界和语言要求"), true);
       }
       if (key === "native_wechat_add_friend") {
         return taskFieldHtml("手机号/微信号", taskTextareaHtml("workflowParamNativeWechatTargets", "多个目标用逗号或换行分隔"), true)
@@ -4556,6 +4635,15 @@
       if (key === "comfly.seedance.tvc.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.seedance.tvc.pipeline", label: quick.label || "创意分镜头视频" });
       if (key === "comfly.daihuo.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.daihuo.pipeline", label: quick.label || "爆款TVC" });
       if (key === "hifly.video.create_by_tts") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "hifly.video.create_by_tts", label: quick.label || "数字人口播" });
+      if (key === "native_whatsapp_poll") {
+        return nativeWhatsappWorkflowPlan(workflowParamValue("workflowParamNativeWhatsappInstruction"), {
+          account_id: workflowParamValue("workflowParamNativeWhatsappAccountId") || "desktop-whatsapp-default",
+          message_poll_interval_seconds: workflowParamNumber("workflowParamNativeWhatsappInterval", 15, 1, 300),
+          takeover_session_minutes: workflowParamNumber("workflowParamNativeWhatsappTakeoverMinutes", 30, 1, 1440),
+          max_unread_per_round: workflowParamNumber("workflowParamNativeWhatsappMaxUnread", 50, 1, 100),
+          reply_instruction: workflowParamValue("workflowParamNativeWhatsappInstruction"),
+        });
+      }
       if (key === "douyin_leads") {
         if (workflowNode && isSalesDouyinPrivateNode(workflowNode)) {
           return {
@@ -4704,6 +4792,15 @@
           group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled"),
           moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
         }, { requireTargets: key !== "native_wechat_poll" });
+      }
+      if (key === "native_whatsapp_poll") {
+        return nativeWhatsappWorkflowPlan(workflowParamValue("workflowParamNativeWhatsappInstruction"), {
+          account_id: workflowParamValue("workflowParamNativeWhatsappAccountId") || "desktop-whatsapp-default",
+          message_poll_interval_seconds: workflowParamNumber("workflowParamNativeWhatsappInterval", 15, 1, 300),
+          takeover_session_minutes: workflowParamNumber("workflowParamNativeWhatsappTakeoverMinutes", 30, 1, 1440),
+          max_unread_per_round: workflowParamNumber("workflowParamNativeWhatsappMaxUnread", 50, 1, 100),
+          reply_instruction: workflowParamValue("workflowParamNativeWhatsappInstruction"),
+        });
       }
       return collectWorkflowCapabilityPlan(quick || {});
     }
@@ -4903,6 +5000,14 @@
             group_invite_rule_status: "pending_rules",
             trigger: "qualified_intent",
           } : { group_invite_enabled: false });
+      } else if (nodeKey === "native_whatsapp_poll") {
+        plan = nativeWhatsappWorkflowPlan(note, {
+          account_id: workflowParamValue("workflowNodeNativeWhatsappAccountId") || "desktop-whatsapp-default",
+          message_poll_interval_seconds: workflowParamNumber("workflowNodeNativeWhatsappInterval", 15, 1, 300),
+          takeover_session_minutes: workflowParamNumber("workflowNodeNativeWhatsappTakeoverMinutes", 30, 1, 1440),
+          max_unread_per_round: workflowParamNumber("workflowNodeNativeWhatsappMaxUnread", 50, 1, 100),
+          reply_instruction: workflowParamValue("workflowNodeNativeWhatsappInstruction"),
+        });
       } else if (nodeKey === "native_wechat_moments_engage") {
         const wxNos = workflowMomentSelectedValues("node");
         if (!wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
@@ -5018,6 +5123,11 @@
       params.workflow_node_end_time = endTime || "";
       params.sales_schedule_start = startTime || "";
       params.sales_schedule_end = endTime || "";
+      if (payload.action === "native_whatsapp_poll") {
+        const durationMinutes = salesWorkflowDurationMinutes({ time: startTime || "", endTime: endTime || "" });
+        if (durationMinutes > 0) params.takeover_session_minutes = durationMinutes;
+        else delete params.takeover_session_minutes;
+      }
       payload.params = params;
       next.payload = payload;
       return next;
@@ -6068,6 +6178,14 @@
       if (nodeInfo.key === "native_wechat_poll") {
         setFieldValue("workflowParamNativeWechatGroupInviteEnabled", params.group_invite_enabled === true);
         setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
+        return;
+      }
+      if (nodeInfo.key === "native_whatsapp_poll") {
+        setFieldValue("workflowParamNativeWhatsappAccountId", params.account_id || "desktop-whatsapp-default");
+        setFieldValue("workflowParamNativeWhatsappInterval", params.message_poll_interval_seconds || 15);
+        setFieldValue("workflowParamNativeWhatsappTakeoverMinutes", params.takeover_session_minutes || 30);
+        setFieldValue("workflowParamNativeWhatsappMaxUnread", params.max_unread_per_round || 50);
+        setFieldValue("workflowParamNativeWhatsappInstruction", params.reply_instruction || "");
         return;
       }
       if (String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage") {
@@ -19189,6 +19307,11 @@
       return (Array.isArray(data.items) ? data.items : []).filter((row) => !isPersonalDefaultTemplate(row));
     }
 
+    async function loadPersonalSurveys() {
+      const data = await api("/api/ip-content/profile-surveys", { cache: "no-store" }).catch(() => ({ items: [] }));
+      return Array.isArray(data.items) ? data.items : [];
+    }
+
     function fillPersonalSurveyFields(item) {
       const req = (item && item.requirements) || {};
       const profile = req.basic_profile && typeof req.basic_profile === "object" ? req.basic_profile : req.profile || {};
@@ -19232,7 +19355,13 @@
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       state.personalSelectedDigitalHumanTemplate = normalizePersonalDigitalHumanTemplate(meta.digital_human_template);
       state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(meta.digital_human_resources);
+      if (item.survey && item.survey.requirements) fillPersonalSurveyFields(item.survey);
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
+      const surveySelect = $("personalTemplateSurvey");
+      if (surveySelect) {
+        surveySelect.innerHTML = `<option value="">不关联</option>` + (state.personalSurveys || []).map((survey) => `<option value="${escapeHtml(String(survey.id))}">${escapeHtml(survey.name || `资料调查 #${survey.id}`)}</option>`).join("");
+        surveySelect.value = item.survey_id ? String(item.survey_id) : "";
+      }
       setPersonalTemplateLanguage(ipTemplateLanguage(item));
     }
 
@@ -19257,17 +19386,19 @@
       }
       state.personalSettingsLoading = true;
       try {
-        const [keywords, competitors, defaults, memories, templates] = await Promise.all([
+        const [keywords, competitors, defaults, memories, templates, surveys] = await Promise.all([
           api("/api/ip-content/keywords").catch(() => ({ items: [] })),
           api("/api/ip-content/competitors").catch(() => ({ items: [] })),
           api("/api/ip-content/personal-default").catch(() => ({ item: null })),
           loadPersonalMemoryDocs().catch(() => []),
           loadPersonalTemplateRows().catch(() => []),
+          loadPersonalSurveys().catch(() => []),
         ]);
         state.personalKeywords = Array.isArray(keywords.items) ? keywords.items : [];
         state.personalCompetitors = Array.isArray(competitors.items) ? competitors.items : [];
         state.personalMemoryDocs = Array.isArray(memories) ? memories : [];
         state.personalTemplates = Array.isArray(templates) ? templates : [];
+        state.personalSurveys = Array.isArray(surveys) ? surveys : [];
         applyPersonalSurvey(defaults.item || {});
         state.personalSettingsLoaded = true;
       } finally {
@@ -20178,6 +20309,12 @@
 
     function renderPersonalSettings() {
       syncAgentManageEntry();
+      const surveySelect = $("personalTemplateSurvey");
+      if (surveySelect) {
+        const selected = surveySelect.value || String(state.personalDefault?.survey_id || "");
+        surveySelect.innerHTML = `<option value="">不关联</option>` + (state.personalSurveys || []).map((survey) => `<option value="${escapeHtml(String(survey.id))}">${escapeHtml(survey.name || `资料调查 #${survey.id}`)}</option>`).join("");
+        surveySelect.value = selected;
+      }
       setPersonalSettingsTab(state.personalSettingsTab);
       const tpl = $("personalTemplateList");
       if (tpl) {
@@ -20269,6 +20406,16 @@
       renderPersonalGeneratedDocs();
       renderPersonalDigitalHumanTemplateSummary();
       renderPersonalDigitalHumanResources();
+      const surveyList = $("personalSurveyList");
+      if (surveyList) {
+        const rows = Array.isArray(state.personalSurveys) ? state.personalSurveys : [];
+        const currentId = String(state.personalDefault?.survey_id || "");
+        surveyList.innerHTML = rows.length ? rows.map((row) => {
+          const id = String(row.id || "");
+          const active = id === currentId ? " active" : "";
+          return `<div class="personal-row${active}"><span>${escapeHtml(row.name || `资料调查 #${id}`)}${id === currentId ? "（当前）" : ""}</span><div class="personal-row-actions"><button type="button" data-use-personal-survey="${escapeHtml(id)}">编辑</button><button type="button" data-delete-personal-survey="${escapeHtml(id)}">删除</button></div></div>`;
+        }).join("") : `<div class="personal-empty">暂无资料调查记录</div>`;
+      }
     }
 
     async function savePersonalProfile(btn = null) {
@@ -20276,6 +20423,10 @@
       personalSetBusy(btn, true, "保存中...");
       try {
         const existing = state.personalDefault || {};
+        const surveyData = await api("/api/ip-content/profile-surveys", {
+          method: "POST",
+          json: { name: personalFieldValue("personalProfileName") || "资料调查", requirements: personalSurveyRequirements(), meta: { source: "h5_personal_profile" } },
+        });
         const data = await api("/api/ip-content/personal-default", {
           method: "PUT",
           json: {
@@ -20285,10 +20436,13 @@
             memory_doc_ids: Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : [],
             memory_docs: Array.isArray(existing.memory_docs) ? existing.memory_docs : [],
             requirements: personalSurveyRequirements(),
-            meta: { ...(existing.meta || {}), source: "h5_personal_profile" },
+            survey_id: surveyData.item?.id || null,
+            meta: { ...(existing.meta || {}), source: "h5_personal_profile", survey_id: surveyData.item?.id || null },
           },
         });
         state.personalDefault = data.item || { requirements: personalSurveyRequirements() };
+        state.personalSurveys = [surveyData.item, ...(state.personalSurveys || []).filter((row) => String(row.id) !== String(surveyData.item?.id))].filter(Boolean);
+        renderPersonalSettings();
         personalSetStatus("资料调查已保存。");
       } finally {
         personalSetBusy(btn, false);
@@ -20312,6 +20466,7 @@
         competitor_ids: personalExistingIntIds(personalCleanIntIds(state.personalSelectedCompetitors), state.personalCompetitors),
         memory_doc_ids: memoryIds,
         memory_docs: selectedDocs,
+        survey_id: (($('personalTemplateSurvey') && $('personalTemplateSurvey').value) || state.personalDefault?.survey_id || null),
         requirements,
         meta: {
           ...(state.personalTemplateBaseMeta || {}),
@@ -20338,6 +20493,20 @@
       if (!options.silent) toast("已保存");
     }
 
+    async function usePersonalSurvey(id) {
+      const row = (state.personalSurveys || []).find((item) => String(item.id) === String(id));
+      if (!row) return;
+      fillPersonalSurveyFields({ requirements: row.requirements || {} });
+      state.personalDefault = { ...(state.personalDefault || {}), survey_id: row.id };
+      renderPersonalSettings();
+    }
+
+    async function deletePersonalSurvey(id) {
+      await api(`/api/ip-content/profile-surveys/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.personalSurveys = (state.personalSurveys || []).filter((row) => String(row.id) !== String(id));
+      renderPersonalSettings();
+    }
+
     async function usePersonalTemplate(templateId, btn = null) {
       const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(templateId || ""));
       if (!row) throw new Error("模板不存在");
@@ -20360,6 +20529,7 @@
             competitor_ids: Array.isArray(row.competitor_ids) ? row.competitor_ids : [],
             memory_doc_ids: Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids : [],
             memory_docs: Array.isArray(row.memory_docs) ? row.memory_docs : [],
+            survey_id: row.survey_id || null,
             requirements: templateRequirementsWithLanguage({
               ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : {}),
               ...stripPersonalSurveyRequirements(row.requirements),
@@ -27933,6 +28103,16 @@
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
     $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
+    $("personalNewSurveyBtn")?.addEventListener("click", () => {
+      ["personalProfileName", "personalGender", "personalProfilePhoto", "personalBirthEra", "personalCurrentProvince", "personalCurrentCity", "personalHometown", "personalRole", "personalShareTopic", "personalVideoStyle", "personalAfterViewAction", "personalBusinessProduct", "personalTargetCustomer", "personalAdvantages"].forEach((id) => setPersonalFieldValue(id, ""));
+      renderPersonalSurveyWizard();
+    });
+    $("personalSurveyList")?.addEventListener("click", (evt) => {
+      const use = evt.target.closest("[data-use-personal-survey]");
+      if (use) { usePersonalSurvey(use.dataset.usePersonalSurvey).catch((err) => toast(err.message || "读取资料调查失败")); return; }
+      const del = evt.target.closest("[data-delete-personal-survey]");
+      if (del) deletePersonalSurvey(del.dataset.deletePersonalSurvey).catch((err) => toast(err.message || "删除失败"));
+    });
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().then(closePersonalTemplateModal).catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", startNewPersonalTemplate);
     $("personalTemplateBackdrop")?.addEventListener("click", closePersonalTemplateModal);

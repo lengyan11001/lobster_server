@@ -108,6 +108,23 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
             }
         ),
     },
+    "online.whatsapp_takeover": {
+        "name": "个人whatapp助手",
+        "description": "接管本机 Windows 桌面版 WhatsApp，按轮次读取未读私聊并自动生成回复。",
+        "keywords": ["WhatsApp", "whatapp", "私信接管", "自动回复", "桌面客户端"],
+        "execution_target": "online",
+        "task_kind": "client_workflow",
+        "action": "native_whatsapp_poll",
+        "arg_schema": _schema(
+            {
+                "account_id": {"type": "string", "default": "desktop-whatsapp-default"},
+                "message_poll_interval_seconds": {"type": "integer", "minimum": 1, "maximum": 300, "default": 15},
+                "takeover_session_minutes": {"type": "integer", "minimum": 1, "maximum": 1440, "default": 30},
+                "max_unread_per_round": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+                "reply_instruction": {"type": "string", "maxLength": 4000, "default": ""},
+            }
+        ),
+    },
     "online.wechat_add_friend": {
         "name": "个人微信加好友",
         "description": "通过本机个人微信按手机号或微信号添加好友。",

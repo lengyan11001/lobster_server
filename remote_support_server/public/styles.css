@@ -410,6 +410,9 @@ body.direct-control .screen-workspace {
   padding-top: 12px;
 }
 
+/* In the embedded workspace the three stage tabs stay at the top and the
+   device shelf belongs underneath them, matching the standalone console. */
+
 .placeholder-card {
   width: 100%;
   min-height: 96px;

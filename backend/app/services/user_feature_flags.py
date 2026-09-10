@@ -336,7 +336,7 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
     },
     {
         "id": BIHUO_25_VIDEO_SKILL_ID,
-        "name": "必火2.5入口",
+        "name": "数字人2.5入口",
         "store_visibility": "入口权限",
         "unlock_price_yuan": None,
         "unlock_price_credits": None,

@@ -261,6 +261,58 @@ def _migrate_ip_content_schedule_template_memory_doc_ids():
         logger.warning("Migration ip_content_schedule_templates.memory_doc_ids skipped: %s", e)
 
 
+def _migrate_ip_content_profile_surveys():
+    """Create reusable profile survey records and link them from templates."""
+    from sqlalchemy import inspect, text
+
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.IPContentProfileSurvey.__table__])
+        insp = inspect(engine)
+        if insp.has_table("ip_content_schedule_templates"):
+            cols = [c["name"] for c in insp.get_columns("ip_content_schedule_templates")]
+            if "survey_id" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE ip_content_schedule_templates ADD COLUMN survey_id INTEGER"))
+        # Preserve every existing user's current profile as the first survey
+        # record. This is intentionally idempotent and only runs for rows that
+        # have no linked record yet.
+        db = SessionLocal()
+        try:
+            defaults = db.query(models.IPContentScheduleTemplate).filter(
+                models.IPContentScheduleTemplate.status == "active",
+                models.IPContentScheduleTemplate.survey_id.is_(None),
+            ).all()
+            for row in defaults:
+                meta = row.meta if isinstance(row.meta, dict) else {}
+                row_name = str(row.name or "")
+                if not (meta.get("is_personal_default") or "默认" in row_name or "榛" in row_name or "default" in row_name.lower()):
+                    continue
+                requirements = row.requirements if isinstance(row.requirements, dict) else {}
+                profile_keys = {"basic_profile", "business_description", "profile_name", "name", "gender", "product", "target_customer", "advantages"}
+                def _has_profile_value(value):
+                    if isinstance(value, dict):
+                        return any(_has_profile_value(item) for item in value.values())
+                    if isinstance(value, (list, tuple, set)):
+                        return any(_has_profile_value(item) for item in value)
+                    return bool(str(value or "").strip())
+                if not any(_has_profile_value(value) for key, value in requirements.items() if key in profile_keys):
+                    continue
+                survey = models.IPContentProfileSurvey(
+                    user_id=row.user_id,
+                    name="资料调查",
+                    requirements=requirements,
+                    meta={"source": "migration"},
+                )
+                db.add(survey)
+                db.flush()
+                row.survey_id = survey.id
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Migration ip_content_profile_surveys skipped: %s", e)
+
+
 def _migrate_h5_device_presence_account_payload():
     """Store the latest publish-account snapshot reported by each online device."""
     from sqlalchemy import inspect, text
@@ -283,6 +335,14 @@ def _migrate_remote_support_device_authorizations():
         Base.metadata.create_all(bind=engine, tables=[models.RemoteSupportDeviceAuthorization.__table__])
     except Exception as e:
         logger.warning("Migration remote support device authorizations skipped: %s", e)
+
+
+def _migrate_customer_authorizations():
+    """Create customer sharing grants used by the admin customer console."""
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.CustomerAuthorization.__table__])
+    except Exception as e:
+        logger.warning("Migration customer authorizations skipped: %s", e)
 
 
 def _migrate_h5_chat_mastra_columns():
@@ -736,6 +796,58 @@ def _migrate_user_agent_task_dispatch_enabled():
         logger.info("[启动] users 已增加列 agent_task_dispatch_enabled")
     except Exception as e:
         logger.warning("Migration user agent_task_dispatch_enabled skipped: %s", e)
+
+
+def _migrate_user_admin_remark():
+    """Add the operator-facing remark shown beside accounts in the admin list."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        columns = {column["name"] for column in insp.get_columns("users")}
+        if "admin_remark" in columns:
+            return
+        column_type = "VARCHAR(500)"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    f"ALTER TABLE users ADD COLUMN admin_remark {column_type} "
+                    "NOT NULL DEFAULT ''"
+                )
+            )
+        logger.info("[startup] users added column admin_remark")
+    except Exception as e:
+        logger.warning("Migration user admin_remark skipped: %s", e)
+
+
+def _migrate_user_agent_columns():
+    """Add agent relationship columns required by the current User model.
+
+    Some overseas installations were created before the agent fields were
+    introduced. SQLAlchemy selects every mapped column when authenticating, so
+    a missing column breaks even the password-login endpoint with a 500.
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = {c["name"] for c in insp.get_columns("users")}
+        dname = engine.dialect.name
+        with engine.begin() as conn:
+            if "is_agent" not in cols:
+                sql = "ALTER TABLE users ADD COLUMN is_agent BOOLEAN NOT NULL DEFAULT 0"
+                if dname in {"mysql", "mariadb"}:
+                    sql = "ALTER TABLE users ADD COLUMN is_agent BOOLEAN NOT NULL DEFAULT FALSE"
+                conn.execute(text(sql))
+            if "parent_user_id" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN parent_user_id INTEGER"))
+        logger.info("[startup] users agent columns migration checked")
+    except Exception as e:
+        logger.warning("Migration user agent columns skipped: %s", e)
 
 
 def _migrate_user_agent_level():
@@ -1276,6 +1388,8 @@ def create_app() -> FastAPI:
         _migrate_user_llm_model_override()
         _migrate_user_agent_openclaw_memory_enabled()
         _migrate_user_agent_task_dispatch_enabled()
+        _migrate_user_admin_remark()
+        _migrate_user_agent_columns()
         _migrate_user_agent_level()
         _migrate_wecom_config_secret()
         _migrate_wecom_agent_id()
@@ -1292,8 +1406,10 @@ def create_app() -> FastAPI:
         _migrate_h5_workflow_template_installation()
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
+        _migrate_ip_content_profile_surveys()
         _migrate_h5_device_presence_account_payload()
         _migrate_remote_support_device_authorizations()
+        _migrate_customer_authorizations()
         _migrate_h5_chat_mastra_columns()
         _migrate_h5_home_preference_columns()
         _ensure_default_user()

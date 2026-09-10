@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
@@ -245,6 +245,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
         "parent_user_id": u.parent_user_id,
+        "admin_remark": (getattr(u, "admin_remark", "") or "").strip(),
         "brand_mark": user_brand_mark(u),
         "is_overseas_user": bool(getattr(u, "is_overseas_user", False)),
         "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
@@ -289,20 +290,39 @@ def _admin_customer_owner_ids(db: Session, ctx: AdminContext) -> list[int]:
     return list(dict.fromkeys([int(ctx.user_id or 0), *_agent_visible_user_ids(db, int(ctx.user_id or 0))]))
 
 
-def _admin_customer_row(db: Session, ctx: AdminContext, customer_id: int) -> Customer:
+def _admin_customer_query(db: Session, ctx: AdminContext):
+    """Customers owned by the operator's scope plus active grants to the operator."""
     owner_ids = _admin_customer_owner_ids(db, ctx)
-    row = db.query(Customer).filter(Customer.id == customer_id, Customer.owner_user_id.in_(owner_ids)).first()
+    query = db.query(Customer).filter(Customer.owner_user_id.in_(owner_ids))
+    if ctx.role != "admin" and ctx.user_id:
+        granted_ids = db.query(CustomerAuthorization.customer_id).filter(
+            CustomerAuthorization.grantee_user_id == int(ctx.user_id),
+            CustomerAuthorization.status == "active",
+        )
+        query = db.query(Customer).filter(or_(Customer.owner_user_id.in_(owner_ids), Customer.id.in_(granted_ids)))
+    return query
+
+
+def _admin_customer_row(db: Session, ctx: AdminContext, customer_id: int) -> Customer:
+    row = _admin_customer_query(db, ctx).filter(Customer.id == customer_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="客户不存在")
     return row
 
 
-def _admin_customer_payload(row: Customer, owner: User | None, communications_count: int = 0) -> dict:
+def _admin_customer_payload(row: Customer, owner: User | None, communications_count: int = 0, *, access_type: str = "owner", brand_name: str | None = None) -> dict:
     from .customer_management import _customer_payload
 
     payload = _customer_payload(row, owner=owner)
     payload["communications_count"] = communications_count
+    payload["access_type"] = access_type
+    payload["owner_brand_mark"] = user_brand_mark(owner) if owner else ""
+    payload["owner_brand_name"] = brand_name or payload["owner_brand_mark"] or ("admin" if int(row.owner_user_id or 0) == 0 else "")
     return payload
+
+
+class CustomerAuthorizationBody(BaseModel):
+    grantee_user_id: int
 
 
 class AdminCustomerBody(BaseModel):
@@ -897,6 +917,11 @@ class SetUserLlmModelBody(BaseModel):
     model: str = ""
 
 
+class SetUserAdminRemarkBody(BaseModel):
+    user_id: int
+    remark: str = Field(default="", max_length=500)
+
+
 @router.post("/admin/api/reset-password")
 def admin_reset_password(
     body: ResetPasswordBody,
@@ -937,7 +962,7 @@ def admin_list_customers(
     page = max(1, min(int(page or 1), 100000))
     page_size = max(1, min(int(page_size or 20), 100))
     owner_ids = _admin_customer_owner_ids(db, ctx)
-    query = db.query(Customer).filter(Customer.owner_user_id.in_(owner_ids))
+    query = _admin_customer_query(db, ctx)
     if owner_user_id is not None:
         if int(owner_user_id) not in owner_ids:
             raise HTTPException(status_code=404, detail="用户不存在")
@@ -946,13 +971,80 @@ def admin_list_customers(
     if text_value:
         like = f"%{text_value}%"
         query = query.filter(or_(Customer.name.ilike(like), Customer.company.ilike(like), Customer.phone.ilike(like), Customer.email.ilike(like)))
+    base_query = query
     if str(status or "").strip():
         query = query.filter(Customer.status == str(status).strip())
     total = query.count()
+    stats_total = base_query.count()
+    status_rows = base_query.with_entities(Customer.status, func.count(Customer.id)).group_by(Customer.status).all()
+    oem_rows = base_query.outerjoin(User, User.id == Customer.owner_user_id).with_entities(Customer.owner_user_id, User.brand_mark, func.count(Customer.id)).group_by(Customer.owner_user_id, User.brand_mark).all()
     rows = query.order_by(Customer.updated_at.desc(), Customer.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     owner_map = {u.id: u for u in db.query(User).filter(User.id.in_([r.owner_user_id for r in rows])).all()} if rows else {}
     counts = {cid: count for cid, count in db.query(CustomerCommunication.customer_id, func.count(CustomerCommunication.id)).filter(CustomerCommunication.customer_id.in_([r.id for r in rows])).group_by(CustomerCommunication.customer_id).all()} if rows else {}
-    return {"items": [_admin_customer_payload(row, owner_map.get(row.owner_user_id), counts.get(row.id, 0)) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
+    brand_rows = db.query(BrandConfig).all()
+    brand_names = {r.mark: r.display_name for r in brand_rows}
+    brand_names.update({mark: str(config.get("display_name") or mark) for mark, config in BUILTIN_BRANDS.items()})
+    grant_ids = set()
+    if ctx.role != "admin" and ctx.user_id and rows:
+        grant_ids = {cid for (cid,) in db.query(CustomerAuthorization.customer_id).filter(CustomerAuthorization.grantee_user_id == int(ctx.user_id), CustomerAuthorization.status == "active", CustomerAuthorization.customer_id.in_([r.id for r in rows])).all()}
+    items = []
+    for row in rows:
+        owner = owner_map.get(row.owner_user_id)
+        mark = user_brand_mark(owner) if owner else ("admin" if int(row.owner_user_id or 0) == 0 else "")
+        items.append(_admin_customer_payload(row, owner, counts.get(row.id, 0), access_type="authorized" if row.id in grant_ids and row.owner_user_id != int(ctx.user_id or 0) else "owner", brand_name=brand_names.get(mark, mark)))
+    by_oem = {}
+    for owner_id, mark, count in oem_rows:
+        key = str(mark or ("admin" if int(owner_id or 0) == 0 else "unknown"))
+        by_oem[key] = by_oem.get(key, 0) + int(count or 0)
+    return {"items": items, "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total, "stats": {"total": stats_total, "filtered_total": total, "by_status": {str(key or "unknown"): int(value or 0) for key, value in status_rows}, "by_oem": by_oem}}
+
+
+@router.get("/admin/api/customers/{customer_id}/authorizations")
+def admin_list_customer_authorizations(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    rows = db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == customer.id, CustomerAuthorization.status == "active").order_by(CustomerAuthorization.created_at.desc()).all()
+    users = {u.id: u for u in db.query(User).filter(User.id.in_([r.grantee_user_id for r in rows])).all()} if rows else {}
+    return {"items": [{"id": row.id, "customer_id": row.customer_id, "grantee_user_id": row.grantee_user_id, "grantee": _user_public_payload(users[row.grantee_user_id]) if row.grantee_user_id in users else None, "created_at": row.created_at.isoformat() if row.created_at else None} for row in rows]}
+
+
+@router.post("/admin/api/customers/{customer_id}/authorizations")
+def admin_grant_customer(customer_id: int, body: CustomerAuthorizationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    if ctx.role != "admin" and customer.owner_user_id not in owner_ids:
+        raise HTTPException(status_code=403, detail="只有客户所属用户可以授权")
+    target = db.query(User).filter(User.id == int(body.grantee_user_id)).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="被授权用户不存在")
+    owner = db.query(User).filter(User.id == customer.owner_user_id).first()
+    owner_mark = user_brand_mark(owner) if owner else ctx.brand_mark
+    if user_brand_mark(target) != owner_mark:
+        raise HTTPException(status_code=403, detail="只能授权给同一 OEM 下的用户")
+    if int(target.id) == int(customer.owner_user_id):
+        raise HTTPException(status_code=400, detail="客户所属用户无需重复授权")
+    row = db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == customer.id, CustomerAuthorization.grantee_user_id == target.id).first()
+    if row is None:
+        row = CustomerAuthorization(customer_id=customer.id, owner_user_id=customer.owner_user_id, grantee_user_id=target.id, status="active")
+        db.add(row)
+    else:
+        row.owner_user_id = customer.owner_user_id
+        row.status = "active"
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "authorization": {"id": row.id, "customer_id": row.customer_id, "grantee_user_id": row.grantee_user_id, "grantee": _user_public_payload(target), "created_at": row.created_at.isoformat() if row.created_at else None}}
+
+
+@router.delete("/admin/api/customers/{customer_id}/authorizations/{grantee_user_id}")
+def admin_revoke_customer(customer_id: int, grantee_user_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    if ctx.role != "admin" and customer.owner_user_id not in _admin_customer_owner_ids(db, ctx):
+        raise HTTPException(status_code=403, detail="只有客户所属用户可以取消授权")
+    row = db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == customer.id, CustomerAuthorization.grantee_user_id == int(grantee_user_id), CustomerAuthorization.status == "active").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="授权记录不存在")
+    row.status = "revoked"
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/admin/api/customers")
@@ -994,6 +1086,9 @@ def admin_update_customer(customer_id: int, body: AdminCustomerBody, ctx: AdminC
 @router.delete("/admin/api/customers/{customer_id}")
 def admin_delete_customer(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
     row = _admin_customer_row(db, ctx, customer_id)
+    if ctx.role != "admin" and row.owner_user_id not in _admin_customer_owner_ids(db, ctx):
+        raise HTTPException(status_code=403, detail="Authorized users cannot delete the source customer")
+    db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == row.id).delete(synchronize_session=False)
     db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
@@ -1034,7 +1129,7 @@ def _admin_communication_payload(row: CustomerCommunication, recording: Recorder
 
 @router.patch("/admin/api/customer-communications/{communication_id}")
 def admin_update_communication(communication_id: int, body: AdminCommunicationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
-    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id, CustomerCommunication.owner_user_id.in_(_admin_customer_owner_ids(db, ctx))).first()
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="沟通记录不存在")
     customer = _admin_customer_row(db, ctx, row.customer_id)
@@ -1056,7 +1151,7 @@ def admin_update_communication(communication_id: int, body: AdminCommunicationBo
 
 @router.delete("/admin/api/customer-communications/{communication_id}")
 def admin_delete_communication(communication_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
-    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id, CustomerCommunication.owner_user_id.in_(_admin_customer_owner_ids(db, ctx))).first()
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="沟通记录不存在")
     customer = _admin_customer_row(db, ctx, row.customer_id)
@@ -1085,7 +1180,11 @@ def admin_customer_detail(customer_id: int, ctx: AdminContext = Depends(_verify_
     recording_ids = [c.recording_id for c in communications if c.recording_id]
     recordings = {r.id: r for r in db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id.in_(recording_ids), RecorderAudioRecord.user_id == row.owner_user_id).all()} if recording_ids else {}
     from .customer_management import _communication_payload
-    return {"customer": _admin_customer_payload(row, owner, len(communications)), "communications": [_communication_payload(item, recordings.get(item.recording_id)) for item in communications]}
+    is_granted = bool(ctx.role != "admin" and ctx.user_id and row.owner_user_id != int(ctx.user_id) and db.query(CustomerAuthorization.id).filter(CustomerAuthorization.customer_id == row.id, CustomerAuthorization.grantee_user_id == int(ctx.user_id), CustomerAuthorization.status == "active").first())
+    brand_mark = user_brand_mark(owner) if owner else ("admin" if int(row.owner_user_id or 0) == 0 else "")
+    brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first() if brand_mark else None
+    brand_name = (brand_row.display_name if brand_row else None) or str((BUILTIN_BRANDS.get(brand_mark) or {}).get("display_name") or brand_mark)
+    return {"customer": _admin_customer_payload(row, owner, len(communications), access_type="authorized" if is_granted else "owner", brand_name=brand_name), "communications": [_communication_payload(item, recordings.get(item.recording_id)) for item in communications]}
 
 
 @router.post("/admin/api/user-llm-model")
@@ -1113,6 +1212,25 @@ def admin_set_user_llm_model(
         user.email,
         model or "-",
     )
+    return {"ok": True, "user": _user_public_payload(user)}
+
+
+@router.post("/admin/api/user-remark")
+def admin_set_user_remark(
+    body: SetUserAdminRemarkBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """Create or replace the short operator remark for a managed user."""
+    _assert_can_manage_user(db, ctx, body.user_id, allow_agent_self=True)
+    user = db.query(User).filter(User.id == body.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.admin_remark = (body.remark or "").strip()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    logger.info("[admin/user-remark] user_id=%s remark_present=%s", user.id, bool(user.admin_remark))
     return {"ok": True, "user": _user_public_payload(user)}
 
 
@@ -1585,10 +1703,16 @@ def admin_ip_template_grant_users(
     if term:
         like = f"%{term}%"
         conds = [User.email.ilike(like)]
+        # Phone accounts are numeric strings too.  Only add the ID branch
+        # when the value fits the database's INTEGER range; otherwise a
+        # PostgreSQL comparison against users.id raises integer-out-of-range
+        # before the email match can be evaluated.
         if term.isdigit():
             try:
-                conds.append(User.id == int(term))
-            except Exception:
+                id_value = int(term)
+                if 0 < id_value <= 2_147_483_647:
+                    conds.append(User.id == id_value)
+            except (TypeError, ValueError, OverflowError):
                 pass
         query = query.filter(or_(*conds))
 

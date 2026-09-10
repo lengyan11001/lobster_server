@@ -10,7 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Customer, CustomerCommunication, RecorderAudioRecord, User
+from ..models import Customer, CustomerAuthorization, CustomerCommunication, RecorderAudioRecord, User
 from .auth import get_current_user
 
 router = APIRouter()
@@ -91,6 +91,18 @@ def _owned_customer(db: Session, user_id: int, customer_id: int) -> Customer:
     return row
 
 
+def _accessible_customer(db: Session, user_id: int, customer_id: int) -> Customer:
+    row = db.query(Customer).outerjoin(
+        CustomerAuthorization,
+        (CustomerAuthorization.customer_id == Customer.id)
+        & (CustomerAuthorization.grantee_user_id == user_id)
+        & (CustomerAuthorization.status == "active"),
+    ).filter(Customer.id == customer_id, or_(Customer.owner_user_id == user_id, CustomerAuthorization.id.is_not(None))).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return row
+
+
 def _owned_communication(db: Session, user_id: int, communication_id: int) -> CustomerCommunication:
     row = db.query(CustomerCommunication).filter(
         CustomerCommunication.id == communication_id,
@@ -151,7 +163,12 @@ def list_customers(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Customer).filter(Customer.owner_user_id == current_user.id)
+    query = db.query(Customer).outerjoin(
+        CustomerAuthorization,
+        (CustomerAuthorization.customer_id == Customer.id)
+        & (CustomerAuthorization.grantee_user_id == current_user.id)
+        & (CustomerAuthorization.status == "active"),
+    ).filter(or_(Customer.owner_user_id == current_user.id, CustomerAuthorization.id.is_not(None)))
     text = q.strip()
     if text:
         like = f"%{text}%"
@@ -160,7 +177,7 @@ def list_customers(
         query = query.filter(Customer.status == status.strip())
     total = query.count()
     rows = query.order_by(Customer.updated_at.desc(), Customer.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    return {"items": [_customer_payload(row) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
+    return {"items": [{**_customer_payload(row), "access_type": "owner" if row.owner_user_id == current_user.id else "authorized"} for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
 
 
 @router.post("/api/customers")
@@ -177,7 +194,7 @@ def create_customer(body: CustomerBody, current_user: User = Depends(get_current
 
 @router.patch("/api/customers/{customer_id}")
 def update_customer(customer_id: int, body: CustomerBody, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    row = _owned_customer(db, current_user.id, customer_id)
+    row = _accessible_customer(db, current_user.id, customer_id)
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="客户姓名不能为空")
@@ -193,6 +210,7 @@ def update_customer(customer_id: int, body: CustomerBody, current_user: User = D
 @router.delete("/api/customers/{customer_id}")
 def delete_customer(customer_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     row = _owned_customer(db, current_user.id, customer_id)
+    db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == row.id).delete(synchronize_session=False)
     db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
@@ -201,7 +219,7 @@ def delete_customer(customer_id: int, current_user: User = Depends(get_current_u
 
 @router.post("/api/customers/{customer_id}/communications")
 def create_communication(customer_id: int, body: CommunicationBody, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    customer = _owned_customer(db, current_user.id, customer_id)
+    customer = _accessible_customer(db, current_user.id, customer_id)
     row = _save_communication(db, customer, body)
     recording = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == row.recording_id).first() if row.recording_id else None
     return {"ok": True, "communication": _communication_payload(row, recording)}
@@ -209,14 +227,17 @@ def create_communication(customer_id: int, body: CommunicationBody, current_user
 
 @router.patch("/api/customer-communications/{communication_id}")
 def update_communication(communication_id: int, body: CommunicationBody, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    row = _owned_communication(db, current_user.id, communication_id)
-    recording = _recording_for_user(db, current_user.id, body.recording_id)
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="娌熼€氳褰曚笉瀛樺湪")
+    _accessible_customer(db, current_user.id, row.customer_id)
+    recording = _recording_for_user(db, row.owner_user_id, body.recording_id)
     row.communication_type = (body.communication_type or "note").strip()[:32] or "note"
     row.occurred_at = body.occurred_at or row.occurred_at or datetime.utcnow()
     row.content = body.content.strip()
     row.recording_id = recording.id if recording else None
     row.summary = body.summary.strip() or (recording.summary_text.strip() if recording else "")
-    customer = _owned_customer(db, current_user.id, row.customer_id)
+    customer = _accessible_customer(db, current_user.id, row.customer_id)
     customer.last_contact_at = row.occurred_at
     db.commit()
     db.refresh(row)
@@ -225,8 +246,10 @@ def update_communication(communication_id: int, body: CommunicationBody, current
 
 @router.delete("/api/customer-communications/{communication_id}")
 def delete_communication(communication_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    row = _owned_communication(db, current_user.id, communication_id)
-    customer = _owned_customer(db, current_user.id, row.customer_id)
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="娌熼€氳褰曚笉瀛樺湪")
+    customer = _accessible_customer(db, current_user.id, row.customer_id)
     db.delete(row)
     db.flush()
     _refresh_last_contact(db, customer)
@@ -255,8 +278,8 @@ def list_customer_recordings_for_customer(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _owned_customer(db, current_user.id, customer_id)
-    query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == current_user.id, RecorderAudioRecord.status == "completed")
+    customer = _accessible_customer(db, current_user.id, customer_id)
+    query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == customer.owner_user_id, RecorderAudioRecord.status == "completed")
     total = query.count()
     rows = query.order_by(RecorderAudioRecord.recorded_at.desc().nullslast(), RecorderAudioRecord.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"items": [{"id": row.id, "name": row.display_name or row.file_name, "summary": row.summary_text or "", "recorded_at": row.recorded_at.isoformat() if row.recorded_at else row.created_at.isoformat(), "status": row.status} for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
@@ -270,7 +293,7 @@ def customer_detail(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    customer = _owned_customer(db, current_user.id, customer_id)
+    customer = _accessible_customer(db, current_user.id, customer_id)
     communication_query = db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == customer.id)
     total = communication_query.count()
     communications = communication_query.order_by(CustomerCommunication.occurred_at.desc(), CustomerCommunication.id.desc()).offset((page - 1) * page_size).limit(page_size).all()

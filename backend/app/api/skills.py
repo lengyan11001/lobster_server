@@ -26,6 +26,7 @@ BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
 # Keep this separate from the original homepage seed marker. Older accounts
 # may already have v1 while still missing the employee defaults added later.
 _DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v3"
+_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER = "__personal_whatsapp_assistant_visibility_seeded_v1"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -105,6 +106,7 @@ REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
 DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
     "my_ai_employees_entry": (
         "local_bestseller_skill",
+        "personal_whatsapp_assistant",
     ),
     "ai_marketing_entry": (
         "comfly_ecommerce_detail_skill",
@@ -201,6 +203,26 @@ def _user_visible_package_ids(
             db.rollback()
         rows.update(baseline)
         rows.add(_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER)
+    if _PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER not in rows:
+        if "personal_whatsapp_assistant" not in rows:
+            db.add(
+                UserSkillVisibility(
+                    user_id=user.id,
+                    package_id="personal_whatsapp_assistant",
+                )
+            )
+        db.add(
+            UserSkillVisibility(
+                user_id=user.id,
+                package_id=_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER,
+            )
+        )
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        rows.add("personal_whatsapp_assistant")
+        rows.add(_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER)
     return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 

@@ -148,6 +148,12 @@ tr:hover{background:var(--bg)}
 .claim-bar input:focus{outline:none;border-color:var(--agent-color)}
 .agent-banner{padding:12px 24px;background:var(--agent-bg);border-bottom:1px solid #fde68a;font-size:13px;color:#92400e;text-align:center}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.user-remark-wrap{display:inline-flex;vertical-align:middle;margin-left:6px;max-width:180px}
+.user-remark{border:0;background:transparent;padding:2px 5px;border-radius:4px;cursor:pointer;font:inherit;font-size:12px;line-height:1.4;text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-remark-empty{color:var(--primary);border:1px dashed var(--primary);}
+.user-remark-empty:hover{background:#eef2ff}
+.user-remark-filled{color:var(--text-secondary);background:#f1f5f9}
+.user-remark-filled:hover{color:var(--primary);background:#eef2ff}
 .agent-action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .agent-action-row select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:180px;background:#fff}
 .juhe-admin-grid{display:grid;grid-template-columns:minmax(320px,.78fr) minmax(520px,1.22fr);gap:16px;align-items:start}
@@ -170,6 +176,32 @@ tr:hover{background:var(--bg)}
 .remote-device-form input{height:32px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:12px;min-width:0;width:180px}
 .remote-device-form input.remote-code-input{width:110px}
 .remote-device-form .btn{height:32px;padding:6px 10px;font-size:12px}
+.remote-support-tabs{display:flex;gap:4px;margin:-4px 0 18px;background:var(--bg);padding:4px;border-radius:8px;border:1px solid var(--border)}
+.remote-support-tab{border:0;background:transparent;padding:9px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;color:var(--text-secondary)}
+.remote-support-tab.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
+.remote-support-view[hidden]{display:none}
+.remote-support-toolbar{display:flex;gap:8px;align-items:center;flex-shrink:0}
+.remote-support-note{font-size:12px;color:var(--text-secondary);margin:6px 0 0}
+.remote-wall-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.remote-wall-frame{height:760px}
+.remote-device-modal[hidden]{display:none}
+.remote-device-modal{position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;padding:20px}
+.remote-device-modal-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.48)}
+.remote-device-modal-card{position:relative;width:min(440px,100%);background:var(--card);border-radius:12px;box-shadow:0 18px 60px rgba(15,23,42,.24);padding:20px}
+.remote-device-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.remote-device-modal-head h3{margin:0;font-size:16px}
+.remote-device-modal-close{border:0;background:transparent;color:var(--text-secondary);font-size:24px;line-height:1;cursor:pointer;padding:2px 6px}
+.remote-device-modal-body{display:grid;gap:12px}
+.remote-device-modal-body label{display:grid;gap:6px;font-size:12px;color:var(--text-secondary)}
+.remote-device-modal-body input{height:36px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;color:var(--text)}
+.remote-device-modal-body input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,.12)}
+.remote-device-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+/* The embedded remote workspace is the single source of truth for device
+   cards.  Do not render a second admin-side card grid above the three stage
+   tabs shown by the workspace. */
+#pageRemoteSupport .remote-support-tabs,#pageRemoteSupport #remoteWallView{display:none!important}
+#pageRemoteSupport #remoteSupportTable{display:none!important}
+#pageRemoteSupport #remoteSupportControlPanel{display:block!important}
 .remote-device-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px;box-shadow:var(--shadow);min-width:0}
 .remote-device-card.is-active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,.12)}
 .remote-device-card-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
@@ -436,18 +468,24 @@ body{background:#edf2f7}
 
   <div class="container" id="pageRemoteSupport" style="display:none">
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <h3 style="margin:0">已开启远程支持的设备</h3>
-        <button class="btn btn-outline btn-sm" type="button" onclick="loadRemoteSupportDevices()">刷新</button>
+      <div class="remote-support-tabs" role="tablist" aria-label="远程支持功能">
+        <button id="remoteDevicesTab" class="remote-support-tab active" type="button" role="tab" aria-selected="true" onclick="switchRemoteSupportView('devices')">远程设备</button>
+        <button id="remoteWallTab" class="remote-support-tab" type="button" role="tab" aria-selected="false" onclick="switchRemoteSupportView('wall')">屏幕墙</button>
       </div>
-      <div class="remote-device-form">
-        <input id="remoteDeviceIdInput" placeholder="设备编号，例如 O27N-2OJE">
-        <input id="remoteDeviceCodeInput" class="remote-code-input" placeholder="验证码" inputmode="numeric">
-        <input id="remoteDeviceLabelInput" placeholder="设备备注">
-        <button class="btn btn-primary btn-sm" type="button" onclick="addRemoteSupportDevice()">添加设备</button>
-      </div>
-      <div id="remoteSupportTable" class="remote-device-grid"><div class="empty">加载中…</div></div>
-      <section id="remoteSupportControlPanel" class="remote-control-panel" hidden>
+
+      <section id="remoteDevicesView" class="remote-support-view">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <h3 style="margin:0">已添加的远程设备</h3>
+            <p class="remote-support-note">设备在这里统一维护；勾选“加入屏幕墙”后，会在屏幕墙中显示。</p>
+          </div>
+          <div class="remote-support-toolbar">
+            <button class="btn btn-primary btn-sm" type="button" onclick="openRemoteDeviceModal()">添加设备</button>
+            <button class="btn btn-outline btn-sm" type="button" onclick="loadRemoteSupportDevices()">刷新</button>
+          </div>
+        </div>
+        <div id="remoteSupportTable" class="remote-device-grid"><div class="empty">加载中…</div></div>
+        <section id="remoteSupportControlPanel" class="remote-control-panel" hidden>
         <div class="remote-control-panel-head">
           <div>
             <strong id="remoteSupportControlTitle">远程控制</strong>
@@ -456,7 +494,32 @@ body{background:#edf2f7}
           <button class="btn btn-outline btn-compact" type="button" onclick="closeRemoteSupportDevice()">关闭窗口</button>
         </div>
         <iframe id="remoteSupportFrame" class="remote-support-frame" title="远程设备控制窗口" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
+        </section>
       </section>
+
+      <section id="remoteWallView" class="remote-support-view" hidden>
+        <div class="remote-wall-head">
+          <div>
+            <h3 style="margin:0">屏幕墙</h3>
+            <p class="remote-support-note">这里只显示已在设备列表中勾选“加入屏幕墙”的设备。</p>
+          </div>
+          <button class="btn btn-outline btn-sm" type="button" onclick="reloadRemoteSupportWall()">刷新</button>
+        </div>
+        <iframe id="remoteSupportWallFrame" class="remote-support-frame remote-wall-frame" title="远程设备屏幕墙" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
+      </section>
+    </div>
+
+    <div id="remoteDeviceModal" class="remote-device-modal" hidden>
+      <div class="remote-device-modal-backdrop" onclick="closeRemoteDeviceModal()"></div>
+      <div class="remote-device-modal-card" role="dialog" aria-modal="true" aria-labelledby="remoteDeviceModalTitle">
+        <div class="remote-device-modal-head"><h3 id="remoteDeviceModalTitle">添加远程设备</h3><button class="remote-device-modal-close" type="button" onclick="closeRemoteDeviceModal()" aria-label="关闭">×</button></div>
+        <div class="remote-device-modal-body">
+          <label>设备编号<input id="remoteDeviceIdInput" placeholder="例如 O27N-2OJE" autocomplete="off"></label>
+          <label>验证码<input id="remoteDeviceCodeInput" class="remote-code-input" placeholder="设备端显示的验证码" inputmode="numeric" autocomplete="off"></label>
+          <label>设备备注<input id="remoteDeviceLabelInput" placeholder="可选，例如：前台电脑" autocomplete="off"></label>
+        </div>
+        <div class="remote-device-modal-actions"><button class="btn btn-outline btn-sm" type="button" onclick="closeRemoteDeviceModal()">取消</button><button class="btn btn-primary btn-sm" type="button" onclick="addRemoteSupportDevice()">确认添加</button></div>
+      </div>
     </div>
   </div>
 
@@ -556,6 +619,7 @@ body{background:#edf2f7}
         <div><h1>客户管理</h1><p>维护客户资料，记录沟通历史，并关联录音摘要。</p></div>
         <button class="btn btn-primary btn-compact" type="button" onclick="openCustomerEditor()">新增客户</button>
       </div>
+      <div id="customerStats" class="stats-grid"></div>
       <div class="card">
         <div class="search-bar" style="margin-bottom:14px">
           <input type="text" id="customerSearchInput" placeholder="搜索姓名、公司、电话或邮箱" onkeydown="if(event.key==='Enter')loadCustomers(1)">
@@ -896,6 +960,23 @@ body{background:#edf2f7}
   </div>
 </div>
 
+<!-- 客户授权弹窗 -->
+<div class="modal-mask" id="customerAuthorizationModal" onclick="if(event.target===this)closeCustomerAuthorization()">
+  <div class="modal-card" style="max-width:720px">
+    <h3 id="customerAuthorizationTitle">授权客户数据</h3>
+    <div class="modal-sub">授权后，对方可以查看并维护该客户及沟通记录，客户归属不会改变。</div>
+    <div class="search-bar" style="margin:14px 0 10px">
+      <input type="text" id="customerAuthorizationSearch" placeholder="输入用户手机号或账号" onkeydown="if(event.key==='Enter')searchCustomerAuthorizationUsers()">
+      <button class="btn btn-primary btn-sm" type="button" onclick="searchCustomerAuthorizationUsers()">查询用户</button>
+    </div>
+    <div id="customerAuthorizationSearchResults"></div>
+    <h4 style="font-size:13px;margin:18px 0 8px">已授权用户</h4>
+    <div id="customerAuthorizationList"><div class="empty">加载中...</div></div>
+    <div class="error-msg" id="customerAuthorizationError" style="text-align:left;min-height:18px"></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-compact" type="button" onclick="closeCustomerAuthorization()">关闭</button></div>
+  </div>
+</div>
+
 <!-- 客户沟通记录弹窗 -->
 <div class="modal-mask" id="customerCommunicationModal" onclick="if(event.target===this)closeCustomerCommunication()">
   <div class="modal-card" style="max-width:720px">
@@ -950,6 +1031,7 @@ let customerPage = 1;
 let customerRows = [];
 let customerDetailId = 0;
 let customerCommunicationsPage = 1;
+let customerAuthorizationId = 0;
 const COMMISSION_PAGE_SIZE = 100;
 const GENERATION_RECORD_PAGE_SIZE = 20;
 const TIKHUB_RECORD_PAGE_SIZE = 20;
@@ -1259,6 +1341,13 @@ function switchNav(nav) {
 async function loadRemoteSupportDevices() {
   const target = document.getElementById('remoteSupportTable');
   if (!target) return;
+  target.style.display = 'none';
+  const panel = document.getElementById('remoteSupportControlPanel');
+  if (panel) panel.hidden = false;
+  refreshRemoteSupportWorkspace();
+  return;
+  /* Kept below for backwards-compatible reference; the embedded workspace
+     now owns the authoritative device shelf and stage tabs. */
   target.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const data = await api('/admin/api/remote-support/devices');
@@ -1270,6 +1359,33 @@ async function loadRemoteSupportDevices() {
         return '<tr><td>' + escapeHtml(item.device_name || '-') + '</td><td>' + escapeHtml(item.username || String(item.user_id || '-')) + '</td><td><code>' + escapeHtml(item.installation_id || '-') + '</code></td><td>' + escapeHtml(rs.device_id || '-') + '</td><td>' + escapeHtml(rs.verification_code || '-') + '</td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.last_seen_at || '-') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+let remoteWorkspaceLoading = false;
+function refreshRemoteSupportWorkspace() {
+  const frame = document.getElementById('remoteSupportFrame');
+  if (frame && frame.dataset.ready === '1' && frame.contentWindow) {
+    frame.contentWindow.postMessage({ type: 'refresh-devices' }, '*');
+    return;
+  }
+  if (frame) frame.dataset.ready = '';
+  remoteWorkspaceLoading = false;
+  ensureRemoteSupportWorkspace();
+}
+async function ensureRemoteSupportWorkspace() {
+  const frame = document.getElementById('remoteSupportFrame');
+  if (!frame || frame.dataset.ready === '1' || remoteWorkspaceLoading) return;
+  remoteWorkspaceLoading = true;
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || 'https://todesk.bhzn.top').replace(/\/$/, '');
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&direct=1&tab=control';
+    frame.onload = function() { frame.dataset.ready = '1'; remoteWorkspaceLoading = false; };
+  } catch (e) {
+    remoteWorkspaceLoading = false;
+    const meta = document.getElementById('remoteSupportControlMeta');
+    if (meta) meta.textContent = '远程工作区加载失败：' + (e.message || String(e));
+  }
 }
 
 async function addRemoteSupportDevice() {
@@ -1426,21 +1542,78 @@ async function loadCustomers(page) {
     const params = new URLSearchParams({page: String(customerPage), page_size: '20', q: q.trim(), status});
     const data = await api(customerApiPath('?' + params.toString()));
     customerRows = data.items || [];
+    renderCustomerStats(data.stats || {});
     if (!customerRows.length) {
       target.innerHTML = '<div class="empty">暂无客户记录</div>';
     } else {
-      target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>姓名</th><th>公司/职位</th><th>电话</th><th>归属</th><th>状态</th><th>沟通</th><th>最近联系</th><th>操作</th></tr></thead><tbody>' + customerRows.map((row) => `<tr>
+      target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>姓名</th><th>公司/职位</th><th>电话</th><th>归属</th><th>OEM</th><th>状态</th><th>沟通</th><th>最近联系</th><th>操作</th></tr></thead><tbody>' + customerRows.map((row) => `<tr>
         <td><strong>${escapeHtml(row.name)}</strong>${row.tags?.length ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(row.tags.join(' · '))}</div>` : ''}</td>
         <td>${escapeHtml(row.company || '-')}<div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(row.position || '')}</div></td>
         <td>${escapeHtml(row.phone || '-')}</td><td>${escapeHtml(row.owner_label || ('#' + row.owner_user_id))}</td>
+        <td>${escapeHtml(row.owner_brand_name || row.owner_brand_mark || '-')}</td>
         <td><span class="badge ${row.status === 'won' ? 'badge-green' : row.status === 'lost' ? 'badge-red' : 'badge-blue'}">${escapeHtml(customerStatusLabel(row.status))}</span></td>
         <td>${Number(row.communications_count || 0)}</td><td style="font-size:11px;color:var(--text-secondary)">${row.last_contact_at ? new Date(row.last_contact_at).toLocaleString('zh-CN') : '-'}</td>
-        <td><button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id})">详情</button></td></tr>`).join('') + '</tbody></table></div>';
+        <td><button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id})">详情</button> <button class="btn btn-outline btn-sm" type="button" onclick="openCustomerAuthorization(${row.id})">授权</button></td></tr>`).join('') + '</tbody></table></div>';
     }
     const pager = document.getElementById('customersPagination');
     const pages = Math.ceil((data.total || 0) / (data.page_size || 20));
     pager.innerHTML = pages > 1 ? `${customerPage > 1 ? `<button class="btn btn-outline btn-sm" type="button" onclick="loadCustomers(${customerPage - 1})">上一页</button>` : ''}<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ${customerPage}/${pages} 页（共 ${data.total} 条）</span>${customerPage < pages ? `<button class="btn btn-outline btn-sm" type="button" onclick="loadCustomers(${customerPage + 1})">下一页</button>` : ''}` : '';
   } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+function renderCustomerStats(stats) {
+  const target = document.getElementById('customerStats');
+  if (!target) return;
+  const byStatus = stats.by_status || {};
+  const byOem = stats.by_oem || {};
+  const statusText = Object.entries(byOem).map(([key, value]) => `${escapeHtml(key)} ${Number(value)}`).join(' · ') || '暂无 OEM 数据';
+  target.innerHTML = `<div class="stats-card"><div class="sc-label">客户总数</div><div class="sc-value">${Number(stats.total || 0)}</div><div class="sc-sub">当前筛选 ${Number(stats.filtered_total || stats.total || 0)} 条</div></div><div class="stats-card"><div class="sc-label">跟进中</div><div class="sc-value">${Number(byStatus.active || 0)}</div></div><div class="stats-card"><div class="sc-label">已成交</div><div class="sc-value">${Number(byStatus.won || 0)}</div></div><div class="stats-card"><div class="sc-label">已暂停</div><div class="sc-value">${Number(byStatus.lost || 0)}</div></div><div class="stats-card"><div class="sc-label">OEM 分布</div><div class="sc-sub" style="line-height:1.6">${statusText}</div></div>`;
+}
+
+async function openCustomerAuthorization(customerId) {
+  customerAuthorizationId = Number(customerId || 0);
+  const row = customerRows.find((item) => Number(item.id) === customerAuthorizationId);
+  document.getElementById('customerAuthorizationTitle').textContent = `授权客户数据${row?.name ? '：' + row.name : ''}`;
+  document.getElementById('customerAuthorizationSearch').value = '';
+  document.getElementById('customerAuthorizationSearchResults').innerHTML = '';
+  document.getElementById('customerAuthorizationError').textContent = '';
+  document.getElementById('customerAuthorizationModal').classList.add('show');
+  await loadCustomerAuthorizations();
+}
+
+function closeCustomerAuthorization() { document.getElementById('customerAuthorizationModal').classList.remove('show'); customerAuthorizationId = 0; }
+
+async function loadCustomerAuthorizations() {
+  const target = document.getElementById('customerAuthorizationList');
+  if (!target || !customerAuthorizationId) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api(customerApiPath('/' + customerAuthorizationId + '/authorizations'));
+    const items = data.items || [];
+    target.innerHTML = items.length ? '<div class="table-wrap"><table><thead><tr><th>账号</th><th>OEM</th><th>授权时间</th><th>操作</th></tr></thead><tbody>' + items.map((item) => `<tr><td>${escapeHtml(item.grantee?.email || ('#' + item.grantee_user_id))}</td><td>${escapeHtml(item.grantee?.brand_mark || '-')}</td><td>${item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '-'}</td><td><button class="btn btn-danger btn-sm" type="button" onclick="revokeCustomerAuthorization(${item.grantee_user_id})">取消授权</button></td></tr>`).join('') + '</tbody></table></div>' : '<div class="empty">暂无授权用户</div>';
+  } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+async function searchCustomerAuthorizationUsers() {
+  const target = document.getElementById('customerAuthorizationSearchResults');
+  const q = (document.getElementById('customerAuthorizationSearch').value || '').trim();
+  if (!target || !q) { if (target) target.innerHTML = ''; return; }
+  target.innerHTML = '<div class="empty">查询中...</div>';
+  try {
+    const data = await api('/admin/api/users?page=1&page_size=20&q=' + encodeURIComponent(q) + '&brand=all');
+    const users = (data.users || []).filter((user) => Number(user.id) !== Number((customerRows.find((item) => Number(item.id) === customerAuthorizationId) || {}).owner_user_id));
+    target.innerHTML = users.length ? '<div class="table-wrap"><table><thead><tr><th>账号</th><th>OEM</th><th></th></tr></thead><tbody>' + users.map((user) => `<tr><td>${escapeHtml(user.email || ('#' + user.id))}</td><td>${escapeHtml(user.brand_mark || '-')}</td><td><button class="btn btn-primary btn-sm" type="button" onclick="grantCustomerAuthorization(${user.id})">授权</button></td></tr>`).join('') + '</tbody></table></div>' : '<div class="empty">未找到用户</div>';
+  } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+async function grantCustomerAuthorization(userId) {
+  const error = document.getElementById('customerAuthorizationError'); error.textContent = '';
+  try { await api(customerApiPath('/' + customerAuthorizationId + '/authorizations'), {method:'POST', body: JSON.stringify({grantee_user_id: Number(userId)})}); await loadCustomerAuthorizations(); toast('客户数据已授权'); } catch (e) { error.textContent = e.message; }
+}
+
+async function revokeCustomerAuthorization(userId) {
+  if (!confirm('确定取消该用户的客户数据授权？')) return;
+  try { await api(customerApiPath('/' + customerAuthorizationId + '/authorizations/' + Number(userId)), {method:'DELETE'}); await loadCustomerAuthorizations(); toast('授权已取消'); } catch (e) { toast(e.message, 'error'); }
 }
 
 function customerFormPayload() {
@@ -1557,11 +1730,15 @@ function renderUserTable(users, containerId, title) {
   html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
+    const remark = String(u.admin_remark || '').trim();
+    const remarkHtml = remark
+      ? `<button type="button" class="user-remark user-remark-filled" title="点击编辑备注" onclick='editUserRemark(${u.id}, ${JSON.stringify(remark).replace(/'/g, '&#39;')})'>${escapeHtml(remark)}</button>`
+      : `<button type="button" class="user-remark user-remark-empty" onclick="editUserRemark(${u.id}, '')">添加备注</button>`;
     const agentLabel = u.agent_level === 2 ? '二级代理' : (u.is_agent ? '代理' : '-');
     const brandName = ((ADMIN_BRANDS[u.brand_mark] || {}).name) || u.brand_mark || '-';
     html += `<tr>
       <td>${u.id}</td>
-      <td>${email}</td>
+      <td>${escapeHtml(email)} <span class="user-remark-wrap">${remarkHtml}</span></td>
       <td><strong>${escapeHtml(brandName)}</strong><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(u.brand_mark || '-')}</div></td>
       <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
@@ -1574,6 +1751,23 @@ function renderUserTable(users, containerId, title) {
   }
   html += '</tbody></table></div>';
   el.innerHTML = html;
+}
+
+async function editUserRemark(userId, currentRemark) {
+  const value = window.prompt('用户备注（500字以内，留空可清除）', currentRemark || '');
+  if (value === null) return;
+  const remark = value.trim();
+  if (remark.length > 500) { toast('备注不能超过500字', 'error'); return; }
+  try {
+    const data = await api('/admin/api/user-remark', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, remark })
+    });
+    const row = (data || {}).user || {};
+    if (currentUserId === userId) currentUserData = row;
+    await loadAllUsers(currentPage);
+    toast(remark ? '备注已保存' : '备注已清除');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 function accountLabel(email) {
@@ -3988,6 +4182,11 @@ function renderTopConsumers(items) {
 async function loadRemoteSupportDevices() {
   const target = document.getElementById('remoteSupportTable');
   if (!target) return;
+  target.style.display = 'none';
+  const panel = document.getElementById('remoteSupportControlPanel');
+  if (panel) panel.hidden = false;
+  refreshRemoteSupportWorkspace();
+  return;
   target.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const data = await api('/admin/api/remote-support/devices');
@@ -4029,6 +4228,10 @@ async function loadRemoteSupportDevices() {
       monitorLabel.appendChild(monitorInput);
       monitorLabel.appendChild(document.createTextNode(' 加入屏幕墙'));
       const actions = card.querySelector('.remote-device-actions');
+      if (actions) card.insertBefore(monitorLabel, actions);
+      monitorLabel.addEventListener('click', function(event) { event.stopPropagation(); });
+      monitorInput.addEventListener('click', function(event) { event.stopPropagation(); });
+      monitorInput.addEventListener('change', function() { updateRemoteSupportMonitor(id, monitorInput.checked, card); });
       if (open) open.addEventListener('click', function() { openRemoteSupportDevice(id); });
       if (remove) remove.addEventListener('click', function() { removeRemoteSupportDevice(id); });
     });
@@ -4053,6 +4256,26 @@ async function updateRemoteSupportMonitor(deviceId, enabled, card) {
   }
 }
 
+async function addRemoteSupportDevice() {
+  const deviceId = (document.getElementById('remoteDeviceIdInput')?.value || '').trim();
+  const verificationCode = (document.getElementById('remoteDeviceCodeInput')?.value || '').trim();
+  const label = (document.getElementById('remoteDeviceLabelInput')?.value || '').trim();
+  if (!deviceId || !verificationCode) { toast('请填写设备编号和验证码', 'error'); return; }
+  try {
+    await api('/admin/api/remote-support/devices', {
+      method: 'POST',
+      body: JSON.stringify({ device_id: deviceId, verification_code: verificationCode, label })
+    });
+    closeRemoteDeviceModal();
+    ['remoteDeviceIdInput', 'remoteDeviceCodeInput', 'remoteDeviceLabelInput'].forEach(function(id) {
+      const input = document.getElementById(id);
+      if (input) input.value = '';
+    });
+    toast('设备已添加到管理员授权列表', 'success');
+    await loadRemoteSupportDevices();
+  } catch (e) { toast(e.message || String(e), 'error'); }
+}
+
 async function openRemoteSupportDevice(deviceId) {
   try {
     const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
@@ -4074,10 +4297,52 @@ async function openRemoteSupportDevice(deviceId) {
     // Open the complete workspace, not a single-device child page.  The
     // embedded app owns the Remote/Wall/File tabs and the shared device list;
     // the clicked device is only used as the initial Remote selection.
-    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1';
+    switchRemoteSupportView('devices');
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1&tab=control';
     panel.hidden = false;
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
+    toast(e.message || String(e), 'error');
+  }
+}
+
+function openRemoteDeviceModal() {
+  const modal = document.getElementById('remoteDeviceModal');
+  if (!modal) return;
+  modal.hidden = false;
+  const input = document.getElementById('remoteDeviceIdInput');
+  if (input) setTimeout(function() { input.focus(); }, 0);
+}
+
+function closeRemoteDeviceModal() {
+  const modal = document.getElementById('remoteDeviceModal');
+  if (modal) modal.hidden = true;
+}
+
+function switchRemoteSupportView(view) {
+  const isWall = view === 'wall';
+  const devicesView = document.getElementById('remoteDevicesView');
+  const wallView = document.getElementById('remoteWallView');
+  const devicesTab = document.getElementById('remoteDevicesTab');
+  const wallTab = document.getElementById('remoteWallTab');
+  if (devicesView) devicesView.hidden = isWall;
+  if (wallView) wallView.hidden = !isWall;
+  if (devicesTab) { devicesTab.classList.toggle('active', !isWall); devicesTab.setAttribute('aria-selected', String(!isWall)); }
+  if (wallTab) { wallTab.classList.toggle('active', isWall); wallTab.setAttribute('aria-selected', String(isWall)); }
+  if (isWall) reloadRemoteSupportWall();
+}
+
+async function reloadRemoteSupportWall() {
+  const frame = document.getElementById('remoteSupportWallFrame');
+  if (!frame || frame.dataset.loading === '1') return;
+  frame.dataset.loading = '1';
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || 'https://todesk.bhzn.top').replace(/\/$/, '');
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&direct=1&tab=wall';
+    frame.onload = function() { frame.dataset.loading = '0'; };
+  } catch (e) {
+    frame.dataset.loading = '0';
     toast(e.message || String(e), 'error');
   }
 }
