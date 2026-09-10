@@ -1472,6 +1472,9 @@ def _public_url(raw: Any) -> str:
             "object_desc.media.0.url",
             "object_desc.media.0.video_url",
             "object_desc.media.0.full_url",
+            "objectDesc.media.0.url",
+            "objectDesc.media.0.videoUrl",
+            "objectDesc.media.0.fullUrl",
             "share_info.share_url",
             "aweme_info.share_url",
             "aweme_info.share_info.share_url",
@@ -1515,6 +1518,10 @@ def _cover_url(raw: Any) -> str:
             "object_desc.media.0.thumb_url",
             "object_desc.media.0.thumbUrl",
             "object_desc.media.0.url",
+            "objectDesc.media.0.coverUrl",
+            "objectDesc.media.0.thumbUrl",
+            "objectDesc.media.0.fullCoverUrl",
+            "objectDesc.media.0.url",
             "contact.cover_img_url",
             "video.cover.url_list.0",
             "aweme_info.video.cover.url_list.0",
@@ -1615,6 +1622,19 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         value = stats.get(key) if key in stats else source.get(key)
         if value not in (None, ""):
             out[key] = value
+    # WeChat Channels V2 returns counters in camelCase.  Keep the API output
+    # stable by normalizing those fields to the existing snake_case names.
+    for source_key, output_key in (
+        ("readCount", "read_count"),
+        ("likeCount", "like_count"),
+        ("commentCount", "comment_count"),
+        ("forwardCount", "forward_count"),
+        ("favCount", "fav_count"),
+        ("followCount", "follow_count"),
+    ):
+        value = stats.get(source_key) if source_key in stats else source.get(source_key)
+        if output_key not in out and value not in (None, ""):
+            out[output_key] = value
     return out
 
 
@@ -1936,6 +1956,8 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "keyword",
             "name",
             "object_desc.description",
+            "objectDesc.description",
+            "objectDesc.flowCardDesc.description",
             "aweme_info.desc",
             "aweme_info.caption",
             "full_text",
@@ -1950,7 +1972,20 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ],
     )
     title = _normalize_wechat_channels_video_title(title) or title
-    description = _first(field_item, ["description", "public_description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
+    description = _first(
+        field_item,
+        [
+            "description",
+            "public_description",
+            "desc",
+            "summary",
+            "challenge_name",
+            "object_desc.description",
+            "objectDesc.description",
+            "objectDesc.flowCardDesc.description",
+            "aweme_info.desc",
+        ],
+    )
     if not description:
         description = _first(field_item, ["full_text", "text", "body", "selftext", "legacy.full_text", "legacy.description", "public_description"])
     item_key = _first(

@@ -812,6 +812,55 @@ def test_collects_legacy_wechat_channels_objects_as_posts():
     assert normalized["metrics"]["fav_count"] == 41
 
 
+def test_normalizes_wechat_channels_v2_camel_case_video_fields():
+    from backend.app.api import ip_content_studio as studio
+
+    raw = {
+        "id": "15007290119030311436",
+        "nickname": "人民日报",
+        "username": "v2_test_user@finder",
+        "createtime": 1789008393,
+        "readCount": 123,
+        "likeCount": 45,
+        "commentCount": 6,
+        "forwardCount": 7,
+        "favCount": 8,
+        "objectDesc": {
+            "description": "当把评论区网友们唱的《夜空中最亮的星》合在一起……",
+            "media": [
+                {
+                    "thumbUrl": "https://example.com/thumb.jpg",
+                    "fullCoverUrl": "https://example.com/full.jpg",
+                    "url": "https://example.com/video.mp4",
+                }
+            ],
+        },
+    }
+
+    normalized = studio._normalize_item(
+        raw,
+        user_id=31,
+        query_id="query-id",
+        platform="wechat_channels",
+        source_type="home_page",
+        idx=0,
+    )
+
+    assert normalized["item_key"] == "15007290119030311436"
+    assert normalized["title"] == "当把评论区网友们唱的《夜空中最亮的星》合在一起……"
+    assert normalized["description"] == normalized["title"]
+    assert normalized["public_url"] == "https://example.com/video.mp4"
+    assert normalized["cover_url"] == "https://example.com/thumb.jpg"
+    assert normalized["publish_time"] == "1789008393"
+    assert normalized["metrics"] == {
+        "read_count": 123,
+        "like_count": 45,
+        "comment_count": 6,
+        "forward_count": 7,
+        "fav_count": 8,
+    }
+
+
 def test_sync_wechat_channels_competitor_uses_v2_user_videos_without_legacy_fallback(monkeypatch):
     from datetime import datetime
     from types import SimpleNamespace
