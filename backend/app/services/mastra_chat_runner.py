@@ -42,12 +42,24 @@ def _strip_fake_tool_markup(value: Any) -> str:
         logger.warning(
             "[dispatch-clean] stripped fake tool markup (%d -> %d chars)", len(raw), len(cleaned)
         )
-        cleaned = cleaned.strip() or profile.fake_tool_fallback_text
+        # 刻意不在这里塞兜底文案：调用方需要能区分"清空了"和"本来就有正文"，
+        # 否则"整段都是工具调用残留"会被包装成一句正常回复。
+        return cleaned.strip()
     return cleaned
 
 _WORKER_ID = "mastra-server"
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _STREAM_EVENT_TYPES = {"thinking", "tool_start", "tool_end", "progress"}
+
+# 整段回复只有工具调用残留时给用户的说明（不再把标签写进对话）
+_EMPTY_REPLY_NOTICE = (
+    "这次模型只返回了工具调用指令，没有可显示的正文，我已经把它拦下来了。"
+    "请再说一次你要执行的任务，我重新调度。"
+)
+
+
+class _JunkOnlyFinal(RuntimeError):
+    """最终回复整段都是工具调用残留：先重试，别把垃圾写进对话。"""
 
 
 @dataclass(frozen=True)
@@ -988,11 +1000,17 @@ async def _run_job_request(job: MastraChatJob) -> None:
         text = delta_buffer
         delta_buffer = ""
         last_delta_flush = asyncio.get_running_loop().time()
-        await _append_event(job.message_id, "delta", {"text": _strip_fake_tool_markup(text)})
+        # 流式也必须过 guard：不然 <||DSML|| …> 这种信封会一片一片飘进对话框
+        cleaned = stream_guard.feed(text)
+        if cleaned:
+            await _append_event(job.message_id, "delta", {"text": cleaned})
 
     attempts = _stream_retry_attempts()
     for attempt in range(1, attempts + 1):
         final_received = False
+        stream_guard = _model_reply_profiles.StreamGuard(
+            profile=_model_reply_profiles.profile_for("")
+        )
         try:
             async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
                 async with client.stream(
@@ -1024,25 +1042,66 @@ async def _run_job_request(job: MastraChatJob) -> None:
                             await _append_event(job.message_id, event_type, payload)
                             continue
                         if event_type == "final":
+                            raw_reply = str(event.get("reply") or "")
+                            dispatches = list(event.get("dispatches") or [])
+                            media_tasks = list(event.get("media_tasks") or [])
+                            saved_assets = list(event.get("saved_assets") or [])
+                            cleaned_reply = _strip_fake_tool_markup(raw_reply)
+                            if (
+                                raw_reply.strip()
+                                and not cleaned_reply
+                                and not dispatches
+                                and not media_tasks
+                                and not saved_assets
+                            ):
+                                logger.warning(
+                                    "[dispatch-clean] junk-only final message=%s raw=%s",
+                                    job.message_id,
+                                    raw_reply[:400],
+                                )
+                                raise _JunkOnlyFinal("模型只返回了工具调用残留")
                             final_received = True
                             await asyncio.to_thread(
                                 _complete_sync,
                                 job.message_id,
-                                str(event.get("reply") or ""),
-                                list(event.get("dispatches") or []),
+                                raw_reply,
+                                dispatches,
                                 event.get("usage") if isinstance(event.get("usage"), dict) else None,
-                                list(event.get("media_tasks") or []),
-                                list(event.get("saved_assets") or []),
+                                media_tasks,
+                                saved_assets,
                             )
                             continue
                         if event_type == "error":
                             raise RuntimeError(str(event.get("error") or "AI 调度失败"))
             await flush_delta()
+            tail = stream_guard.flush()
+            if tail:
+                await _append_event(job.message_id, "delta", {"text": tail})
             if not final_received:
                 raise RuntimeError("AI 调度服务未返回最终结果")
             return
         except asyncio.CancelledError:
             raise
+        except _JunkOnlyFinal:
+            await flush_delta()
+            if attempt < attempts:
+                await _append_event(
+                    job.message_id,
+                    "progress",
+                    {"text": f"模型这次只回了工具调用指令，正在重试（{attempt + 1}/{attempts}）"},
+                )
+                await asyncio.sleep(min(1.5 * attempt, 4.0))
+                continue
+            await asyncio.to_thread(
+                _complete_sync,
+                job.message_id,
+                _EMPTY_REPLY_NOTICE,
+                [],
+                None,
+                [],
+                [],
+            )
+            return
         except Exception as exc:
             await flush_delta()
             if observed_media_tasks:

@@ -194,3 +194,94 @@ def test_proxy_stream_event_guard_uses_tool_names():
 
     assert b"listSystem" not in first
     assert b"listSystem" not in second
+
+
+# 线上真实 case（2026-09-10）：DeepSeek 把 DSML 信封写成全角竖线 ｜（U+FF5C），
+# 旧逻辑只认 "<||DSML"，于是闭合标签一路漏进正文，用户看到的就是 "</invoke>"。
+PIPE = "\uff5c"  # ｜
+
+
+def _prod_dsml_text() -> str:
+    return (
+        f"{LT}{PIPE}{PIPE}DSML{PIPE}{PIPE} calls{GT}" + "\n"
+        f"{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} invoke{GT}" + "\n"
+        f"\u9996\u5e27 \u6765\u6e90\u56fe{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} parameter{GT}" + "\n"
+        f"{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} invoke{GT}" + "\n"
+        f"{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} calls{GT}"
+    )
+
+
+def test_fullwidth_dsml_envelope_is_fully_stripped():
+    module = _module()
+    profile = module.profile_for("deepseek-flash")
+
+    cleaned, changed = module.strip_fake_tool_text(_prod_dsml_text(), profile, ())
+    assert changed is True
+    assert cleaned == ""
+    assert "DSML" not in cleaned
+    assert PIPE not in cleaned
+
+
+def test_fullwidth_dsml_envelope_keeps_answer_around_it():
+    module = _module()
+    profile = module.profile_for("deepseek-flash")
+    text = "\u597d\u7684\uff0c\u6211\u6765\u5904\u7406\n" + _prod_dsml_text() + "\n\u5df2\u5b8c\u6210"
+
+    cleaned, changed = module.strip_fake_tool_text(text, profile, ())
+    assert changed is True
+    assert "DSML" not in cleaned
+    assert cleaned.startswith("\u597d\u7684\uff0c\u6211\u6765\u5904\u7406")
+    assert cleaned.endswith("\u5df2\u5b8c\u6210")
+
+
+def test_literal_escape_pipe_form_is_stripped():
+    module = _module()
+    profile = module.profile_for("deepseek-flash")
+    text = "\u63a5\u5165\n" + r"</\uff5c\uff5cDSML\uff5c\uff5c invoke>" + "\n\u5b8c\u4e8b"
+
+    cleaned, changed = module.strip_fake_tool_text(text, profile, ())
+    assert changed is True
+    assert "DSML" not in cleaned
+    assert "uff5c" not in cleaned
+    assert "\u63a5\u5165" in cleaned and "\u5b8c\u4e8b" in cleaned
+
+
+def test_stream_guard_swallows_split_fullwidth_dsml_envelope():
+    module = _module()
+    guard = module.guard_for("deepseek-flash", ("listSystemCapabilities",))
+
+    # 线上就是这么一片一片吐出来的
+    emitted = guard.feed(LT)
+    emitted += guard.feed(f"{PIPE}{PIPE}DSML{PIPE}{PIPE} calls{GT}")
+    emitted += guard.feed(f"{GT}\n{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} invoke{GT}")
+    emitted += guard.feed(
+        f"\u9996\u5e27 \u6765\u6e90\u56fe{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} parameter{GT}"
+        f"\n{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} invoke{GT}"
+    )
+    emitted += guard.feed(f"\n{LT}/{PIPE}{PIPE}DSML{PIPE}{PIPE} calls")
+    emitted += guard.feed(GT)
+    emitted += guard.flush()
+
+    assert emitted == ""
+
+
+def test_stream_guard_keeps_real_text_around_fullwidth_envelope():
+    module = _module()
+    guard = module.guard_for("deepseek-flash", ())
+    emitted = guard.feed("\u6b63\u5728\u5904\u7406 ") + guard.feed(_prod_dsml_text()) + guard.feed(" \u5df2\u5b8c\u6210")
+    emitted += guard.flush()
+
+    assert "DSML" not in emitted
+    assert PIPE not in emitted
+    assert emitted.startswith("\u6b63\u5728\u5904\u7406")
+    assert emitted.endswith("\u5df2\u5b8c\u6210")
+
+
+def test_fullwidth_pipe_in_plain_answer_survives():
+    module = _module()
+    profile = module.profile_for("deepseek-flash")
+    sample = f"\u4ef7\u683c{PIPE}\u9ad8\u6e05\uff0c\u5efa\u8bae\u9009\u5b83"
+
+    cleaned, changed = module.strip_fake_tool_text(sample, profile, ())
+    assert changed is False
+    assert cleaned == sample

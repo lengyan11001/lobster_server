@@ -89,6 +89,87 @@ _PAYLOAD_HINTS: Tuple[str, ...] = (
 _DSML_START_RE = re.compile(r"(?i)<\s*[\|\uff5c]{1,}\s*DSML")
 _FENCE_RE = re.compile(r"```[a-zA-Z0-9_+-]*\s*([\s\S]*?)```")
 
+# 伪竖线：模型（尤其 DeepSeek）会把 | 写成全角 ｜（U+FF5C），
+# 极端情况下还会把 ``\uff5c`` 这六个字符直接当正文吐出来。
+# 识别前统一成 ASCII "|"，删除时再映射回原文下标，正文本身不被改写。
+_PIPE_LOOKALIKES = frozenset({"\uff5c", "\uffe8", "\u2758", "\u2502", "\u00a6", "\u01c0"})
+_LITERAL_ESCAPE_PIPES: Tuple[str, ...] = ("\\uff5c", "\\uffe8", "\\u2758", "\\u2502")
+
+# 带 DSML 标记的标签：开 / 闭 / 孤立都算，标签名可省、允许带属性（name=x）
+# （``<||DSML|| calls>``、``</||DSML|| invoke>``、``<||DSML|| invoke name=x>``）
+_DSML_TAG_BODY = r"<\s*/?\s*\|{0,4}\s*DSML\s*\|{0,4}\s*[A-Za-z_]*[^>]{0,120}?(?:>|$)"
+_DSML_MARKED_TAG_RE = re.compile(r"(?is)" + _DSML_TAG_BODY)
+# 开标签（``<||DSML|| calls>`` / ``<||DSML|| invoke …>``）
+_DSML_OPEN_TAG_RE = re.compile(r"(?is)<\s*\|{0,4}\s*DSML\s*\|{0,4}\s*[A-Za-z_]*[^>]{0,120}?(?:>|$)")
+# 信封收尾标签：``</||DSML|| calls>``（``calls`` 是信封层，invoke/parameter 是内层）
+# 这里必须要求真的出现 ``>``：流式时 ``</||DSML|| calls`` 只是半截，
+# 提前判定收尾会把后面补上的 ``>`` 当成正文吐出去。
+_DSML_ENVELOPE_END_RE = re.compile(
+    r"(?is)<\s*/?\s*\|{0,4}\s*DSML\s*\|{0,4}\s*calls?\s*\|{0,4}\s*>"
+)
+# 没有尖括号的 DSML 残片（流式被切断时常见）：``||DSML|| calls>``
+_DSML_BARE_FRAGMENT_RE = re.compile(r"(?is)\|{1,4}\s*DSML\s*\|{0,4}\s*[A-Za-z_]*\s*>?")
+# 孤立闭合标签：``</invoke>``、``</ || parameter >``
+_ORPHAN_CLOSE_TAG_RE = re.compile(
+    r"(?is)</\s*\|{0,4}\s*(?:" + "|".join(ENVELOPE_WORDS) + r"|calls?)\s*\|{0,4}\s*>"
+)
+
+
+def _flatten_for_detection(text: str) -> Tuple[str, list[list[int]]]:
+    """把伪竖线统一成 ``|``，返回 (归一化文本, 每个字符对应的原文下标列表)。
+
+    字面量 ``\uff5c`` 这种六个字符的写法会折叠成一个 ``|``，
+    所以映射是"一个归一化字符 → 原文若干下标"，删除时整组一起删；
+    正文里真正的全角竖线因为没被删除，会原样保留。
+    """
+    chars: list[str] = []
+    index_map: list[list[int]] = []
+    lowered = text.lower()
+    position = 0
+    length = len(text)
+    while position < length:
+        char = text[position]
+        if char == "\\":
+            matched = next(
+                (esc for esc in _LITERAL_ESCAPE_PIPES if lowered.startswith(esc, position)),
+                None,
+            )
+            if matched:
+                chars.append("|")
+                index_map.append(list(range(position, position + len(matched))))
+                position += len(matched)
+                continue
+        chars.append("|" if char in _PIPE_LOOKALIKES else char)
+        index_map.append([position])
+        position += 1
+    return "".join(chars), index_map
+
+
+def _unclosed_envelope_start(text: str) -> Optional[int]:
+    """开了头但还没出现收尾标签的 DSML 信封起始下标（没有则 None）。"""
+    flat, index_map = _flatten_for_detection(text)
+    match = _DSML_OPEN_TAG_RE.search(flat)
+    if not match:
+        return None
+    if _DSML_ENVELOPE_END_RE.search(flat, match.end()):
+        return None
+    return index_map[match.start()][0]
+
+
+def _envelope_end_index(text: str) -> Optional[int]:
+    """信封收尾标签结束处的下标（原文下标，没有则 None）。"""
+    flat, index_map = _flatten_for_detection(text)
+    # 从开标签之后开始找收尾标签：开标签自己（<||DSML|| calls>）也符合收尾形状，
+    # 从 0 开始找会把它当成信封结束，后面的参数值就漏出去了。
+    start = 0
+    open_match = _DSML_OPEN_TAG_RE.search(flat)
+    if open_match:
+        start = open_match.end()
+    match = _DSML_ENVELOPE_END_RE.search(flat, start)
+    if not match or match.end() <= match.start():
+        return None
+    return index_map[match.end() - 1][-1] + 1
+
 
 @dataclass(frozen=True)
 class ModelProfile:
@@ -366,36 +447,78 @@ def strip_fake_tool_text(
     """按结构清掉正文里的假工具调用；返回 (清理后文本, 是否有改动)。"""
     if not isinstance(text, str) or not text:
         return text, False
-    changed = False
-    # 1) DSML 标记族：按行清掉带标记的行（标记后面的内容也属于这次调用）
-    if _DSML_START_RE.search(text):
-        lines = text.splitlines(keepends=True)
-        kept = [line for line in lines if not _DSML_START_RE.search(line)]
-        if len(kept) != len(lines):
-            text = "".join(kept)
-            changed = True
-    # 2) 信封族 / 工具名标签 / 未闭合 / 孤立闭合
-    regexes = _tag_regexes(profile, tool_names)
-    text, n = regexes["pair"].subn("", text)
-    changed |= bool(n)
-    text, n = regexes["tail"].subn("", text)
-    changed |= bool(n)
-    text, n = regexes["stray"].subn("", text)
-    changed |= bool(n)
-    # 3) 自造标签（块内容像调用）
-    def _drop_payload(match: "re.Match[str]") -> str:
-        nonlocal changed
-        block = match.group(0)
-        lowered = block.lower()
-        if any(hint in lowered for hint in _PAYLOAD_HINTS):
-            changed = True
-            return ""
-        return block
+    flat, index_map = _flatten_for_detection(text)
+    drop: list[bool] = [False] * len(text)
 
-    text = regexes["payload"].sub(_drop_payload, text)
-    # 4) JSON / 代码块形式
+    def remove(start: int, end: int) -> None:
+        nonlocal flat, index_map
+        start = max(0, int(start))
+        end = min(int(end), len(flat))
+        if end <= start:
+            return
+        for group in index_map[start:end]:
+            for position in group:
+                drop[position] = True
+        flat = flat[:start] + flat[end:]
+        index_map = index_map[:start] + index_map[end:]
+
+    def remove_all(pattern: Pattern[str], predicate=None) -> None:
+        while True:
+            hit = None
+            for candidate in pattern.finditer(flat):
+                if predicate is None or predicate(flat[candidate.start() : candidate.end()]):
+                    hit = candidate
+                    break
+            if hit is None:
+                return
+            remove(hit.start(), hit.end())
+
+    # 1) DSML 信封：从开标签起到最后一个 DSML 标签止，
+    #    中间的参数值（例如"首帧 来源图"）和残留的 '>' 都属于这次调用，不能留给用户
+    while True:
+        first_open = _DSML_OPEN_TAG_RE.search(flat)
+        if not first_open:
+            break
+        last_tag = None
+        for match in _DSML_MARKED_TAG_RE.finditer(flat, first_open.end()):
+            last_tag = match
+        remove(
+            first_open.start(),
+            last_tag.end() if last_tag is not None else len(flat),
+        )
+
+    regexes = _tag_regexes(profile, tool_names)
+    # 2) 通用成对块：必须先按结构整体拿掉。否则闭合标签被单独删掉后，
+    #    "未闭合标签"分支会把标签之后的所有正文一起吞掉（线上踩过）。
+    remove_all(regexes["pair"])
+    # 3) DSML 标记族：按行清掉带标记的行（标记后面的内容也属于这次调用）
+    if _DSML_START_RE.search(flat):
+        cursor = 0
+        for line in flat.splitlines(keepends=True):
+            line_end = cursor + len(line)
+            if _DSML_START_RE.search(line):
+                remove(cursor, line_end)
+            cursor = line_end
+        if cursor < len(flat) and _DSML_START_RE.search(flat[cursor:]):
+            remove(cursor, len(flat))
+    # 4) 剩下没被覆盖的 DSML 标签 / 无尖括号残片 / 孤立闭合标签
+    for regex in (_DSML_MARKED_TAG_RE, _DSML_BARE_FRAGMENT_RE, _ORPHAN_CLOSE_TAG_RE):
+        remove_all(regex)
+    # 5) 未闭合标签块 / 孤立闭合标签（通用结构识别）
+    remove_all(regexes["tail"])
+    remove_all(regexes["stray"])
+    # 6) 自造标签（块内容像调用）
+    remove_all(
+        regexes["payload"],
+        lambda block: any(hint in block.lower() for hint in _PAYLOAD_HINTS),
+    )
+
+    changed = any(drop)
+    if changed:
+        text = "".join(char for index, char in enumerate(text) if not drop[index])
+    # 7) JSON / 代码块形式
     text, n = _strip_json_tool_calls(text, tool_names)
-    changed |= bool(n)
+    changed = changed or bool(n)
     return text.strip(), changed
 
 
@@ -458,6 +581,9 @@ class StreamGuard:
     tool_names: Tuple[str, ...] = ()
     hold: str = ""
     dropped: bool = False
+    # 已经吃到 DSML 信封开头、正在等收尾标签：这期间什么都不放出去，
+    # 否则信封里的参数值（"首帧 来源图"这种）会被当成正文吐出来。
+    in_envelope: bool = False
     _hold_limit: int = 4000
 
     @property
@@ -477,6 +603,24 @@ class StreamGuard:
         return self._drain(final=True)
 
     def _drain(self, *, final: bool) -> str:
+        if self.in_envelope:
+            end = _envelope_end_index(self.hold)
+            if end is None:
+                if final or len(self.hold) > self._hold_limit:
+                    self.dropped = True
+                    self.hold = ""
+                    self.in_envelope = False
+                return ""
+            self.dropped = True
+            self.hold = self.hold[end:]
+            self.in_envelope = False
+        # 先看"开了头但没闭合"的信封：这类必须整段扣住，
+        # 否则里面的参数值会被当成正文吐出去
+        start = _unclosed_envelope_start(self.hold)
+        if start is not None:
+            self.in_envelope = True
+            emit, self.hold = self.hold[:start], self.hold[start:]
+            return emit
         cleaned, removed = strip_fake_tool_text(self.hold, self.profile, self.tool_names)
         if removed:
             self.dropped = True
@@ -499,7 +643,18 @@ class StreamGuard:
 
     def _pending_start(self, text: str) -> Optional[int]:
         """返回需要继续观察的下标：从最后一个可能开启假调用的标记开始。"""
-        candidates = [i for i in (text.rfind("<"), text.rfind("{"), text.rfind("`")) if i >= 0]
+        candidates = [
+            i
+            for i in (
+                text.rfind("<"),
+                text.rfind("{"),
+                text.rfind("`"),
+                text.rfind("\uff5c"),
+                text.rfind("|"),
+                text.rfind("DSML"),
+            )
+            if i >= 0
+        ]
         if not candidates:
             return None
         cut = max(candidates)
@@ -510,28 +665,39 @@ class StreamGuard:
 
 def _could_start_fake_call(tail: str) -> bool:
     """这段尾部是否值得继续扣住观察（宽进严出，宁可多扣一小会儿）。"""
-    if tail.startswith("<"):
-        if _DSML_START_RE.match(tail):
+    if not tail:
+        return False
+    flat = _flatten_for_detection(tail)[0]
+    if flat.startswith("<"):
+        if _DSML_START_RE.match(flat) or _DSML_MARKED_TAG_RE.match(flat):
             return True
-        match = re.match(r"(?is)<\s*/?\s*([A-Za-z_|\uff5c])", tail)
+        match = re.match(r"(?is)<\s*/?\s*([A-Za-z_|])", flat)
         if not match:
-            return False  # 例：价格<100
+            # 还只是 "<"、"</"、"<|"、"</||" 这种标签前缀，先扣住再说
+            probe = flat[1:].lstrip()
+            if probe.startswith("/"):
+                probe = probe[1:].lstrip()
+            return not probe.strip().lstrip("|").strip()
         name = match.group(1).lower()
-        rest = tail[match.end(1):]
-        more = re.match(r"[A-Za-z0-9_|\uff5c:.-]{0,60}", rest)
+        rest = flat[match.end(1) :]
+        more = re.match(r"[A-Za-z0-9_|:.-]{0,60}", rest)
         if more:
             name += more.group(0).lower()
-        name = name.strip("|").replace("\uff5c", "")
+        name = name.strip("|")
         if not name:
             return True
         if name in set(ENVELOPE_WORDS) or name in set(KNOWN_TOOL_NAMES):
             return True
         all_names = set(ENVELOPE_WORDS) | set(KNOWN_TOOL_NAMES)
         return any(candidate.startswith(name) for candidate in all_names)
-    if tail.startswith("{"):
-        return _json_object_prefix_ok(tail)
-    if tail.startswith("`"):
-        stripped = tail.lstrip("`")
+    if flat.startswith("|"):
+        if _DSML_BARE_FRAGMENT_RE.match(flat):
+            return True
+        return not flat.strip("| \t\r\n")
+    if flat.startswith("{"):
+        return _json_object_prefix_ok(flat)
+    if flat.startswith("`"):
+        stripped = flat.lstrip("`")
         if len(stripped) < 8:
             return True
         return _json_object_prefix_ok(stripped.lstrip("json").lstrip())
@@ -540,14 +706,21 @@ def _could_start_fake_call(tail: str) -> bool:
 
 def _is_fake_call_start(tail: str) -> bool:
     """严格判断：这段尾部**确实**是假调用（用于流结束时的取舍）。"""
-    if _DSML_START_RE.match(tail):
+    if not tail:
+        return False
+    flat = _flatten_for_detection(tail)[0]
+    if (
+        _DSML_START_RE.match(flat)
+        or _DSML_MARKED_TAG_RE.match(flat)
+        or _DSML_BARE_FRAGMENT_RE.match(flat)
+    ):
         return True
-    match = re.match(r"(?is)<\s*/?\s*([A-Za-z_|\uff5c][A-Za-z0-9_|\uff5c:.-]{0,60})", tail)
+    match = re.match(r"(?is)<\s*/?\s*([A-Za-z_|][A-Za-z0-9_|:.-]{0,60})", flat)
     if match:
-        name = match.group(1).lower().strip("|").replace("\uff5c", "")
+        name = match.group(1).lower().strip("|")
         return name in set(ENVELOPE_WORDS) or name in set(KNOWN_TOOL_NAMES)
-    lowered = tail.lower()
-    if tail.startswith("{") or tail.startswith("`"):
+    lowered = flat.lower()
+    if flat.startswith("{") or flat.startswith("`"):
         return any(f'"{key}' in lowered for key in _JSON_CALL_KEYS) or "tool_call" in lowered
     return False
 
