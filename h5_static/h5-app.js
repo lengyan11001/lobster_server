@@ -26623,20 +26623,28 @@
       const reject = $("chatApprovalReject");
       if (approve) approve.disabled = true;
       if (reject) reject.disabled = true;
+      let decided = false;
       try {
         await api(`/api/mastra-chat/approvals/${encodeURIComponent(id)}/decision`, {
           method: "POST",
           json: { decision },
         });
+        decided = true;
         state.pendingApprovals = (state.pendingApprovals || []).filter((row) => row.id !== id);
         state.activeApprovalId = "";
+        // 确认后先给明确反馈再关弹窗：与 Online 一致，避免用户以为没生效又去对话里重复确认
+        const reason = $("chatApprovalReason");
+        if (reason && decision === "approve") reason.textContent = "已确认，任务已下发，等待执行…";
         $("chatApprovalModal")?.classList.add("hidden");
         if (decision === "approve") toast("已确认，正在执行");
         ensureConversationComposerReady({ scroll: false });
         setTimeout(showNextPendingApproval, 80);
       } finally {
-        if (approve) approve.disabled = false;
-        if (reject) reject.disabled = false;
+        // 成功时不恢复按钮：保持不可重复点击，等这次执行结束再走新一轮确认
+        if (!decided) {
+          if (approve) approve.disabled = false;
+          if (reject) reject.disabled = false;
+        }
       }
     }
 
