@@ -29,6 +29,7 @@ from ..models import BillingIdempotency, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.daily_credit_limit import assert_daily_limit_allows
+from ..services import model_reply_profiles as _model_profiles
 from ..services.model_usage_monitor import log_model_usage_event
 from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_audit, log_xskill_http
 from ..services.sutui_pricing import (
@@ -1312,58 +1313,45 @@ _FAKE_TOOL_CALL_RE = __import__("re").compile(
 )
 
 
-def _response_has_fake_tool_text(data: Any) -> bool:
-    """Detect deepseek-style fake tool calls embedded in text content."""
+def _model_profile(model_id: Any):
+    """??????????????default ? = ??????"""
+    return _model_profiles.profile_for(str(model_id or ""))
+
+
+def _response_has_fake_tool_text(data: Any, profile: Any = None) -> bool:
+    """Detect model-specific fake tool calls embedded in text content."""
     if not isinstance(data, dict):
         return False
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         return False
+    prof = profile or _model_profiles.profile_for("")
     msg = (choices[0] if isinstance(choices[0], dict) else {}).get("message", {})
     content = msg.get("content") if isinstance(msg, dict) else None
-    if isinstance(content, str) and _FAKE_TOOL_CALL_RE.search(content):
-        return True
-    return False
+    return _model_profiles.fake_tool_hit(content, prof)
 
 
-_DSML_BLOCK_RE = __import__("re").compile(
-    r"<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>[\s\S]*?"
-    r"(?:<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>|$)",
-)
-
-
-def _strip_fake_tool_text_from_response(data: Any) -> bool:
-    """Strip DSML / fake tool call markup from content in-place. Returns True if cleaned."""
-    if not isinstance(data, dict):
+def _strip_fake_tool_text_from_response(data: Any, profile: Any = None) -> bool:
+    """???????????????????????? True?"""
+    prof = profile or _model_profiles.profile_for("")
+    if not _model_profiles.apply_to_completion(data, prof):
         return False
-    choices = data.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return False
-    msg = (choices[0] if isinstance(choices[0], dict) else {}).get("message")
-    if not isinstance(msg, dict):
-        return False
-    content = msg.get("content")
-    if not isinstance(content, str):
-        return False
-    if not _FAKE_TOOL_CALL_RE.search(content):
-        return False
-    cleaned = _DSML_BLOCK_RE.sub("", content).strip()
-    if not cleaned:
-        cleaned = "好的，我来为您总结一下已获取的信息。"
-    if cleaned != content:
-        msg["content"] = cleaned
-        logger.warning("[dsml-clean] stripped fake tool markup from response content (%d→%d chars)",
-                       len(content), len(cleaned))
-        return True
-    return False
+    logger.warning("[fake-tool-clean] profile=%s stripped fake tool markup from response", prof.id)
+    return True
 
 
-_MAX_TOOL_CALL_ROUNDS = 4
+def _enforce_max_tool_call_rounds(body: Dict[str, Any], trace_id: str, profile: Any = None) -> bool:
+    """????????????????? tools?????????
 
-
-def _enforce_max_tool_call_rounds(body: Dict[str, Any], trace_id: str) -> bool:
-    """If conversation already has >= _MAX_TOOL_CALL_ROUNDS tool call round-trips,
-    remove tools to force a text-only response. Returns True if tools were stripped."""
+    ??????????0 = ???????????????
+    """
+    prof = profile or _model_profiles.profile_for("")
+    try:
+        limit = int(getattr(prof, "strip_tools_after_rounds", 4) or 0)
+    except (TypeError, ValueError):
+        limit = 4
+    if limit <= 0:
+        return False
     tools = body.get("tools")
     if not isinstance(tools, list) or not tools:
         return False
@@ -1374,21 +1362,30 @@ def _enforce_max_tool_call_rounds(body: Dict[str, Any], trace_id: str) -> bool:
     for m in msgs:
         if isinstance(m, dict) and (m.get("role") or "").strip().lower() == "tool":
             rounds += 1
-    if rounds < _MAX_TOOL_CALL_ROUNDS:
+    if rounds < limit:
         return False
     body.pop("tools", None)
     body.pop("tool_choice", None)
     logger.warning(
-        "[chat_trace] trace_id=%s enforce_max_tool_rounds: %d tool rounds detected (max=%d), "
-        "stripped tools to force text response",
-        trace_id, rounds, _MAX_TOOL_CALL_ROUNDS,
+        "[chat_trace] trace_id=%s enforce_max_tool_rounds: %d tool rounds detected "
+        "(max=%d profile=%s), stripped tools to force text response",
+        trace_id, rounds, limit, prof.id,
     )
     return True
 
 
-def _openai_completion_missing_tool_calls(data: Any, request_body: Dict[str, Any]) -> bool:
-    """请求中传了 tools 且 tool_choice 非 none，但响应不含 tool_calls——模型未遵从 tool 指令，值得换模型重试。
-    包括检测 deepseek 在文本中伪造工具调用标记的情况。"""
+def _openai_completion_missing_tool_calls(
+    data: Any,
+    request_body: Dict[str, Any],
+    profile: Any = None,
+) -> bool:
+    """???? tools ????? tool_calls????????????? ????????
+
+    ?????????? retry_when_tools_ignored ???
+    """
+    prof = profile or _model_profiles.profile_for("")
+    if not getattr(prof, "retry_when_tools_ignored", True):
+        return False
     if not isinstance(request_body, dict):
         return False
     tools = request_body.get("tools")
@@ -1405,12 +1402,59 @@ def _openai_completion_missing_tool_calls(data: Any, request_body: Dict[str, Any
     msg = choices[0].get("message") if isinstance(choices[0], dict) else None
     if not isinstance(msg, dict):
         return False
-    if _response_has_fake_tool_text(data):
+    if _response_has_fake_tool_text(data, prof):
         return True
     tcs = msg.get("tool_calls")
     if isinstance(tcs, list) and len(tcs) > 0:
         return False
     return True
+
+
+def _sse_delta_bytes(text: str) -> bytes:
+    payload = {"choices": [{"index": 0, "delta": {"content": text}}]}
+    return ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+
+
+def _guard_sse_event(event: bytes, guard: Any) -> bytes:
+    """?????????????????????????"""
+    if guard is None or not getattr(guard, "enabled", False):
+        return event + b"\n\n"
+    text = event.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    if not stripped.startswith("data:"):
+        return event + b"\n\n"
+    payload = stripped[5:].strip()
+    if not payload or payload == "[DONE]":
+        return event + b"\n\n"
+    try:
+        obj = json.loads(payload)
+    except json.JSONDecodeError:
+        return event + b"\n\n"
+    if not isinstance(obj, dict):
+        return event + b"\n\n"
+    changed = False
+    choices = obj.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            if getattr(guard.profile, "strip_reasoning_content", False):
+                for key in ("reasoning_content", "reasoning", "thinking"):
+                    if delta.get(key):
+                        delta.pop(key, None)
+                        changed = True
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                new_content = guard.feed(content)
+                if new_content != content:
+                    delta["content"] = new_content
+                    changed = True
+    if not changed:
+        return event + b"\n\n"
+    return ("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode("utf-8")
 
 
 def _sutui_chat_abort_model_fallback(http_status: int, data: Any) -> bool:
@@ -2110,7 +2154,8 @@ async def sutui_chat_completions(
         )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     _enforce_single_search_models_tool_call(body, trace_id)
-    _enforce_max_tool_call_rounds(body, trace_id)
+    # 每个模型自己的工具轮数上限（档案里配置），互不影响。
+    _enforce_max_tool_call_rounds(body, trace_id, _model_profile(body.get("model")))
 
     bm = brand_mark_for_jwt_claim(getattr(current_user, "brand_mark", None))
     stream = bool(body.get("stream"))
@@ -2267,13 +2312,14 @@ async def sutui_chat_completions(
                 break
 
             if _openai_nonstream_completion_usable(data, r.status_code):
-                if _openai_completion_missing_tool_calls(data, body):
+                _attempt_profile = _model_profile(mid_try)
+                if _openai_completion_missing_tool_calls(data, body, _attempt_profile):
                     _forced_ok = False
                     if not body.get("_tool_forced"):
                         logger.info(
                             "[chat_trace] trace_id=%s tool_calls_missing model=%s provider=%s "
                             "→ retry tool_choice=required (fake_text=%s)",
-                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data),
+                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data, _attempt_profile),
                         )
                         body["tool_choice"] = "required"
                         body["_tool_forced"] = True
@@ -2289,7 +2335,7 @@ async def sutui_chat_completions(
                             body.pop("_tool_forced", None)
                             body["tool_choice"] = "auto"
                         if d2 and _openai_nonstream_completion_usable(d2, getattr(r2, "status_code", 0)):
-                            if not _openai_completion_missing_tool_calls(d2, body):
+                            if not _openai_completion_missing_tool_calls(d2, body, _attempt_profile):
                                 data = d2
                                 r = r2
                                 _forced_ok = True
@@ -2301,7 +2347,7 @@ async def sutui_chat_completions(
                         logger.warning(
                             "[chat_trace] trace_id=%s tool_calls_missing model=%s provider=%s after forced retry, "
                             "fallback to next (fake_text=%s)",
-                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data),
+                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data, _attempt_profile),
                         )
                         if attempt_idx < len(attempts) - 1:
                             continue
@@ -2432,7 +2478,7 @@ async def sutui_chat_completions(
 
         out = data
         if isinstance(out, dict) and r.status_code == 200:
-            _strip_fake_tool_text_from_response(out)
+            _strip_fake_tool_text_from_response(out, _model_profile(winning_model or mid_try))
         resp_status = r.status_code
         if r.status_code in (402, 403):
             out = _normalize_upstream_xskill_pool_errors_for_client(data)
@@ -2593,6 +2639,9 @@ async def sutui_chat_completions(
                                     "http_status": 200,
                                 },
                             )
+                            # 只有档案声明了流式清理的模型才走 guard；默认模型零改动。
+                            stream_guard = _model_profiles.guard_for(mid_try)
+                            guard_pending = bytearray()
                             async for chunk in resp.aiter_bytes():
                                 before_event_count = stream_event_count
                                 line_buf.extend(chunk)
@@ -2628,7 +2677,17 @@ async def sutui_chat_completions(
                                         or u.get("total_tokens") is not None
                                     ):
                                         last_usage = u
-                                if stream_event_count > 0 and stream_error_payload is None:
+                                if stream_guard.enabled:
+                                    guard_pending.extend(chunk)
+                                    if stream_event_count > 0 and stream_error_payload is None:
+                                        guard_events = bytes(guard_pending).split(b"\n\n")
+                                        guard_pending = bytearray(guard_events.pop())
+                                        guarded_out = bytearray()
+                                        for guard_event in guard_events:
+                                            guarded_out += _guard_sse_event(guard_event, stream_guard)
+                                        if guarded_out:
+                                            yield bytes(guarded_out)
+                                elif stream_event_count > 0 and stream_error_payload is None:
                                     for pending_chunk in pending_stream_chunks:
                                         yield pending_chunk
                                     pending_stream_chunks.clear()
@@ -2678,6 +2737,18 @@ async def sutui_chat_completions(
                                     continue
                                 yield _stream_upstream_error_sse_bytes(502, empty_stream_error)
                                 return
+                            if stream_guard.enabled:
+                                guard_tail = bytes(guard_pending).strip()
+                                guard_tail_text = (
+                                    stream_guard.feed(guard_tail.decode("utf-8", errors="replace"))
+                                    if guard_tail
+                                    else ""
+                                )
+                                guard_tail_text += stream_guard.flush()
+                                if guard_tail_text:
+                                    yield _sse_delta_bytes(guard_tail_text)
+                                elif stream_guard.dropped:
+                                    yield _sse_delta_bytes(stream_guard.profile.fake_tool_fallback_text)
                             stream_completed_ok = True
                             _record_model_success(f"{mid_try}@{att['provider']}")
                             break
