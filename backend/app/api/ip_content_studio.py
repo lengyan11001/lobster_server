@@ -2952,6 +2952,13 @@ def _template_payload_with_resources(
     payload = _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
     survey = _survey_for_template(db, row)
     payload["survey"] = _profile_survey_payload(survey)
+    if survey is not None:
+        # Keep the template's non-profile generation settings, while its
+        # linked survey supplies the current persona at read/run time.
+        payload["requirements"] = {
+            **(row.requirements or {}),
+            **(survey.requirements or {}),
+        }
     memory_doc_ids, memory_docs = _canonical_template_memory_selection(
         db,
         int(row.user_id),
@@ -3045,17 +3052,25 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
         payload["memory_docs"] = row.memory_docs or [] if overrides["memory_doc_ids"] else (reference.memory_docs or [])
         meta = row.meta if isinstance(row.meta, dict) else {}
         requirement_overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
-        payload["requirements"] = {
-            **(reference.requirements or {}),
-            **requirement_overrides,
-            **_personal_profile_fields(row.requirements),
-        }
-        if getattr(reference, "survey_id", None):
-            ref_survey = _survey_for_template(db, reference)
-            if ref_survey:
-                payload["survey_id"] = int(ref_survey.id)
-                payload["survey"] = _profile_survey_payload(ref_survey)
-                payload["requirements"] = {**(ref_survey.requirements or {}), **_personal_profile_fields(row.requirements)}
+        ref_survey = _survey_for_template(db, reference)
+        if ref_survey is not None:
+            # The selected template's survey is the authoritative persona.
+            # Never overlay an old personal-row profile snapshot on it.
+            payload["survey_id"] = int(ref_survey.id)
+            payload["survey"] = _profile_survey_payload(ref_survey)
+            payload["requirements"] = {
+                **(reference.requirements or {}),
+                **(ref_survey.requirements or {}),
+                **requirement_overrides,
+            }
+        else:
+            payload["survey_id"] = None
+            payload["survey"] = None
+            payload["requirements"] = {
+                **(reference.requirements or {}),
+                **requirement_overrides,
+                **_personal_profile_fields(row.requirements),
+            }
     if row is not None:
         payload["requirements"] = _enrich_personal_profile_requirements_with_assets(
             db, int(row.user_id), payload.get("requirements")
@@ -5178,7 +5193,7 @@ async def run_ip_content_daily_scheduled(
                 template = None
         if template is None:
             raise HTTPException(status_code=404, detail="IP 日更模板不存在")
-        template_payload = _template_payload(template)
+        template_payload = _template_payload_with_resources(db, template)
         if not keyword_ids and not live_personal_template:
             keyword_ids = _clean_int_ids(template.keyword_ids, 50)
         if live_keyword_owner_id:
@@ -5197,7 +5212,8 @@ async def run_ip_content_daily_scheduled(
             competitor_ids = template_competitor_ids
             if not live_competitor_owner_id:
                 competitor_owner_user_id = int(template.user_id)
-        merged_requirements = dict(template.requirements or {})
+        # Read the linked survey now, not from a workflow/task snapshot.
+        merged_requirements = dict(template_payload.get("requirements") or {})
         merged_requirements.update({k: v for k, v in requirements.items() if _clean_long_text(v, 1)})
         requirements = merged_requirements
         if not memory_docs_raw and not live_personal_template:
@@ -5945,14 +5961,16 @@ def save_personal_default_ip_content_config(
             name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
         )
         db.add(row)
-    requested_survey_id = body.survey_id
-    if requested_survey_id is None and template_ref is not None:
-        requested_survey_id = template_ref.survey_id
+    survey_selection_sent = "survey_id" in body_fields
+    # A selected template's relationship is authoritative and remains live.
+    requested_survey_id = template_ref.survey_id if template_ref is not None else body.survey_id
     if requested_survey_id is not None:
         survey = _owned_survey(db, int(current_user.id), requested_survey_id)
         if survey is None:
             raise HTTPException(status_code=400, detail="资料调查记录不存在")
         row.survey_id = int(survey.id)
+    elif template_ref is not None or survey_selection_sent:
+        row.survey_id = None
     elif _allows_personal_profile_update(body.meta) and _personal_profile_has_values(body.requirements):
         # Keep old clients working: a profile save creates a reusable record.
         survey = IPContentProfileSurvey(
@@ -6191,11 +6209,16 @@ def update_schedule_template(
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = memory_doc_ids
     row.memory_docs = memory_docs
-    if body.survey_id is not None:
+    body_fields = getattr(body, "model_fields_set", None)
+    if body_fields is None:
+        body_fields = getattr(body, "__fields_set__", set())
+    if "survey_id" in body_fields and body.survey_id is not None:
         survey = _owned_survey(db, int(current_user.id), body.survey_id)
         if survey is None:
             raise HTTPException(status_code=400, detail="资料调查记录不存在")
         row.survey_id = int(survey.id)
+    elif "survey_id" in body_fields:
+        row.survey_id = None
     row.requirements = _jsonable(_strip_personal_profile_requirements(body.requirements))
     row.meta = _jsonable(body.meta or {})
     row.status = "active"

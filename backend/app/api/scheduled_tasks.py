@@ -826,21 +826,8 @@ def _personal_default_requirements(db: Session, user_id: int) -> Dict[str, Any]:
     )
     if row is None:
         return {}
-    personal_requirements = row.requirements if isinstance(row.requirements, dict) else {}
-    selected = _granted_template_for_user(
-        db,
-        int(user_id),
-        _current_template_id_from_meta(row.meta),
-    )
-    if selected is None or int(selected.id or 0) == int(row.id or 0):
-        return dict(personal_requirements)
-    meta = row.meta if isinstance(row.meta, dict) else {}
-    overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
-    return {
-        **(selected.requirements or {}),
-        **overrides,
-        **_personal_profile_fields(personal_requirements),
-    }
+    effective = _personal_default_template_payload_with_resources(db, row)
+    return dict(effective.get("requirements") or {})
 
 
 def _local_bestseller_profile_from_persona(requirements: Dict[str, Any]) -> Dict[str, str]:

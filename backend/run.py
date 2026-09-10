@@ -101,11 +101,15 @@ if __name__ == "__main__":
         workers = max(1, int(workers_raw))
     except ValueError:
         workers = 1
-    max_requests_raw = (os.environ.get("BACKEND_MAX_REQUESTS") or "2000").strip()
+    # A fixed low request limit makes equally-loaded workers retire together.
+    # Long polling/SSE can then hold all workers in graceful shutdown. Disable
+    # request-count recycling by default; an operator may still opt in.
+    max_requests_raw = (os.environ.get("BACKEND_MAX_REQUESTS") or "0").strip()
     try:
-        max_requests = max(100, int(max_requests_raw))
+        parsed_max_requests = int(max_requests_raw)
+        max_requests = max(1000, parsed_max_requests) if parsed_max_requests > 0 else None
     except ValueError:
-        max_requests = 2000
+        max_requests = None
     _logger.info(
         "[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s workers=%s max_requests=%s",
         host,
@@ -122,4 +126,5 @@ if __name__ == "__main__":
         log_level=_log_level_name,
         workers=workers,
         limit_max_requests=max_requests,
+        timeout_graceful_shutdown=30,
     )

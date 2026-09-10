@@ -72,7 +72,7 @@
     },
     "personal_whatsapp_assistant": {
       "name": "个人whatapp助手",
-      "description": "接管 Windows 桌面版 WhatsApp，按轮次读取未读私聊并自动回复。",
+      "description": "管理 Windows 桌面版 WhatsApp：同步会话和通讯录、查看与回复消息、添加联系人并执行私聊接管。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,

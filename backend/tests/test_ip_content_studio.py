@@ -1164,6 +1164,109 @@ def test_personal_default_template_payload_marks_source():
     assert payload["meta"]["is_personal_default"] is True
 
 
+def test_template_payload_resolves_linked_survey_live(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentProfileSurvey, IPContentScheduleTemplate
+
+    survey = IPContentProfileSurvey(
+        user_id=test_user.id,
+        name="餐饮老板人设",
+        requirements={"profile_name": "第一版", "product": "餐饮培训"},
+        status="active",
+    )
+    db_session.add(survey)
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="餐饮模板",
+        survey_id=survey.id,
+        requirements={"language": "zh-CN"},
+        status="active",
+    )
+    db_session.add(template)
+    db_session.commit()
+
+    first = studio._template_payload_with_resources(db_session, template)
+    assert first["survey_id"] == survey.id
+    assert first["requirements"]["profile_name"] == "第一版"
+    assert first["requirements"]["language"] == "zh-CN"
+
+    survey.requirements = {"profile_name": "第二版", "product": "餐饮咨询"}
+    db_session.commit()
+    refreshed = studio._template_payload_with_resources(db_session, template)
+    assert refreshed["requirements"]["profile_name"] == "第二版"
+    assert refreshed["requirements"]["product"] == "餐饮咨询"
+
+
+def test_current_template_survey_change_is_live_for_existing_workflow(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentProfileSurvey, IPContentScheduleTemplate
+
+    first_survey = IPContentProfileSurvey(
+        user_id=test_user.id, name="人设一", requirements={"profile_name": "人设一"}, status="active"
+    )
+    second_survey = IPContentProfileSurvey(
+        user_id=test_user.id, name="人设二", requirements={"profile_name": "人设二"}, status="active"
+    )
+    db_session.add_all([first_survey, second_survey])
+    db_session.flush()
+    selected = IPContentScheduleTemplate(
+        user_id=test_user.id, name="当前模板", survey_id=first_survey.id, status="active"
+    )
+    db_session.add(selected)
+    db_session.flush()
+    personal = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name=studio._PERSONAL_DEFAULT_TEMPLATE_NAME,
+        requirements={"profile_name": "旧快照"},
+        meta={"current_template_id": selected.id},
+        status="active",
+    )
+    db_session.add(personal)
+    db_session.commit()
+
+    old_run = studio._use_current_personal_template_options(
+        db_session, test_user.id, {"template_source": "personal_current"}
+    )
+    assert old_run["requirements"]["profile_name"] == "人设一"
+
+    studio.update_schedule_template(
+        selected.id,
+        studio.ScheduleTemplateBody(name="当前模板", survey_id=second_survey.id),
+        current_user=test_user,
+        db=db_session,
+    )
+    next_run = studio._use_current_personal_template_options(
+        db_session, test_user.id, {"template_source": "personal_current"}
+    )
+    assert next_run["requirements"]["profile_name"] == "人设二"
+
+
+def test_update_template_can_clear_survey_relation(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentProfileSurvey, IPContentScheduleTemplate
+
+    survey = IPContentProfileSurvey(
+        user_id=test_user.id, name="待解除", requirements={"profile_name": "待解除"}, status="active"
+    )
+    db_session.add(survey)
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id, name="可解除模板", survey_id=survey.id, status="active"
+    )
+    db_session.add(template)
+    db_session.commit()
+
+    studio.update_schedule_template(
+        template.id,
+        studio.ScheduleTemplateBody(name="可解除模板", survey_id=None),
+        current_user=test_user,
+        db=db_session,
+    )
+    db_session.refresh(template)
+    assert template.survey_id is None
+
+
 def test_ip_content_batch_sizes_split_into_stable_chunks():
     from backend.app.api import ip_content_studio as studio
 

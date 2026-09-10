@@ -25898,8 +25898,12 @@
       if (state.pollers.has(messageId)) return;
       let last = lastEventId;
       const timer = setInterval(async () => {
+        if (document.visibilityState === "hidden") return;
         try {
-          const data = await api(`/api/h5-chat/messages/${messageId}?after_event_id=${last}`);
+          // SSE fallback is a safety net, not a realtime transport. Avoid the
+          // previous 1.4-second loop and do not multiply each poll with the
+          // global GET retry policy.
+          const data = await api(`/api/h5-chat/messages/${messageId}?after_event_id=${last}`, { maxAttempts: 1 });
           for (const ev of data.events || []) {
             last = Math.max(last, ev.id || 0);
             handleEvent(ev, bubble, messageId);
@@ -25934,7 +25938,7 @@
           closeStream(messageId);
           ensureConversationComposerReady();
         }
-      }, 1400);
+      }, 5000);
       state.pollers.set(messageId, timer);
     }
 
