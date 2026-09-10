@@ -146,6 +146,23 @@ def test_nonstream_cleanup_drops_unclosed_tool_tag():
     assert "dispatchOnlineTask" not in message["content"]
 
 
+def test_dsml_marker_with_space_between_pipes_and_keyword():
+    """DeepSeek 真实输出的标记里，DSML 与关键词之间会多一个空格。"""
+    module = _profiles_module()
+    marker = "<" + "||" + "DSML" + "||"
+    text = marker + " calls>\n" + marker + " invoke name=query\n" + "\u63a5\u5165 deepseek"
+    profile = module.profile_for("deepseek-flash")
+
+    assert module.fake_tool_hit(text, profile) is True
+    message = {"role": "assistant", "content": text}
+    assert module.sanitize_message_content(message, profile) is True
+    assert "DSML" not in message["content"]
+
+    guard = module.guard_for("deepseek-flash")
+    emitted = guard.feed(text) + guard.flush()
+    assert "DSML" not in emitted
+
+
 def test_nonstream_apply_cleans_only_matching_profile():
     module = _profiles_module()
     deepseek = module.profile_for("deepseek-v4-flash")

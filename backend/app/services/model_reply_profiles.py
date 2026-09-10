@@ -48,6 +48,7 @@ DEFAULT_FAKE_TOOL_PATTERNS: Tuple[str, ...] = (
 )
 
 DEFAULT_BLOCK_PATTERNS: Tuple[str, ...] = (
+    r"(?is)<\s*[\uff5c|]{1,}\s*DSML[\s\S]*$",
     r"<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>[\s\S]*?"
     r"(?:<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>|$)",
 )
