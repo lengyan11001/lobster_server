@@ -49,7 +49,9 @@ router = APIRouter()
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
-_DEVICE_ONLINE_TTL_SECONDS = 120
+# 在线判定窗口：客户端上报的设备心跳有节流（写入最快 20s 一次，实际间隔可能到
+# 数分钟），窗口比心跳间隔略长才不会出现"刚显示在线、两分钟就掉线"的闪烁。
+_DEVICE_ONLINE_TTL_SECONDS = 300
 _WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_channels": "视频号", "wechat_moments": "朋友圈图文"}
 _WORKFLOW_CHILD_CLIENT_ACTIONS = {
     "native_wechat_poll",
