@@ -220,6 +220,8 @@ tr:hover{background:var(--bg)}
 .remote-control-panel-head strong{font-size:14px}
 .remote-control-panel-head span{display:block;font-size:11px;color:var(--text-secondary);margin-top:3px}
 .remote-support-frame{display:block;width:100%;height:680px;border:0;background:#f5f7fa}
+#pageRemoteSupport{padding:0;max-width:none}
+#pageRemoteSupport .remote-support-frame{height:calc(100vh - 86px);min-height:720px;border-radius:10px}
 
 /* Mobile responsive */
 @media(max-width:768px){
@@ -467,60 +469,7 @@ body{background:#edf2f7}
   </div>
 
   <div class="container" id="pageRemoteSupport" style="display:none">
-    <div class="card">
-      <div class="remote-support-tabs" role="tablist" aria-label="远程支持功能">
-        <button id="remoteDevicesTab" class="remote-support-tab active" type="button" role="tab" aria-selected="true" onclick="switchRemoteSupportView('devices')">远程设备</button>
-        <button id="remoteWallTab" class="remote-support-tab" type="button" role="tab" aria-selected="false" onclick="switchRemoteSupportView('wall')">屏幕墙</button>
-      </div>
-
-      <section id="remoteDevicesView" class="remote-support-view">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-          <div>
-            <h3 style="margin:0">已添加的远程设备</h3>
-            <p class="remote-support-note">设备在这里统一维护；勾选“加入屏幕墙”后，会在屏幕墙中显示。</p>
-          </div>
-          <div class="remote-support-toolbar">
-            <button class="btn btn-primary btn-sm" type="button" onclick="openRemoteDeviceModal()">添加设备</button>
-            <button class="btn btn-outline btn-sm" type="button" onclick="loadRemoteSupportDevices()">刷新</button>
-          </div>
-        </div>
-        <div id="remoteSupportTable" class="remote-device-grid"><div class="empty">加载中…</div></div>
-        <section id="remoteSupportControlPanel" class="remote-control-panel" hidden>
-        <div class="remote-control-panel-head">
-          <div>
-            <strong id="remoteSupportControlTitle">远程控制</strong>
-            <span id="remoteSupportControlMeta">请选择设备</span>
-          </div>
-          <button class="btn btn-outline btn-compact" type="button" onclick="closeRemoteSupportDevice()">关闭窗口</button>
-        </div>
-        <iframe id="remoteSupportFrame" class="remote-support-frame" title="远程设备控制窗口" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
-        </section>
-      </section>
-
-      <section id="remoteWallView" class="remote-support-view" hidden>
-        <div class="remote-wall-head">
-          <div>
-            <h3 style="margin:0">屏幕墙</h3>
-            <p class="remote-support-note">这里只显示已在设备列表中勾选“加入屏幕墙”的设备。</p>
-          </div>
-          <button class="btn btn-outline btn-sm" type="button" onclick="reloadRemoteSupportWall()">刷新</button>
-        </div>
-        <iframe id="remoteSupportWallFrame" class="remote-support-frame remote-wall-frame" title="远程设备屏幕墙" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
-      </section>
-    </div>
-
-    <div id="remoteDeviceModal" class="remote-device-modal" hidden>
-      <div class="remote-device-modal-backdrop" onclick="closeRemoteDeviceModal()"></div>
-      <div class="remote-device-modal-card" role="dialog" aria-modal="true" aria-labelledby="remoteDeviceModalTitle">
-        <div class="remote-device-modal-head"><h3 id="remoteDeviceModalTitle">添加远程设备</h3><button class="remote-device-modal-close" type="button" onclick="closeRemoteDeviceModal()" aria-label="关闭">×</button></div>
-        <div class="remote-device-modal-body">
-          <label>设备编号<input id="remoteDeviceIdInput" placeholder="例如 O27N-2OJE" autocomplete="off"></label>
-          <label>验证码<input id="remoteDeviceCodeInput" class="remote-code-input" placeholder="设备端显示的验证码" inputmode="numeric" autocomplete="off"></label>
-          <label>设备备注<input id="remoteDeviceLabelInput" placeholder="可选，例如：前台电脑" autocomplete="off"></label>
-        </div>
-        <div class="remote-device-modal-actions"><button class="btn btn-outline btn-sm" type="button" onclick="closeRemoteDeviceModal()">取消</button><button class="btn btn-primary btn-sm" type="button" onclick="addRemoteSupportDevice()">确认添加</button></div>
-      </div>
-    </div>
+    <iframe id="remoteSupportFrame" class="remote-support-frame" title="远程设备控制台" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
   </div>
 
   <!-- Page: Users -->
@@ -1340,7 +1289,7 @@ function switchNav(nav) {
 
 async function loadRemoteSupportDevices() {
   const target = document.getElementById('remoteSupportTable');
-  if (!target) return;
+  if (!target) { ensureRemoteSupportWorkspace(); return; }
   target.style.display = 'none';
   const panel = document.getElementById('remoteSupportControlPanel');
   if (panel) panel.hidden = false;
@@ -1416,7 +1365,7 @@ async function openRemoteSupportDevice(deviceId) {
 
 async function loadRemoteSupportDevices() {
   const target = document.getElementById('remoteSupportTable');
-  if (!target) return;
+  if (!target) { ensureRemoteSupportWorkspace(); return; }
   target.innerHTML = '<div class="empty">Loading...</div>';
   try {
     const data = await api('/admin/api/remote-support/devices');
@@ -4181,7 +4130,7 @@ function renderTopConsumers(items) {
    handlers above cannot replace the card/embedded-window interaction. */
 async function loadRemoteSupportDevices() {
   const target = document.getElementById('remoteSupportTable');
-  if (!target) return;
+  if (!target) { ensureRemoteSupportWorkspace(); return; }
   target.style.display = 'none';
   const panel = document.getElementById('remoteSupportControlPanel');
   if (panel) panel.hidden = false;

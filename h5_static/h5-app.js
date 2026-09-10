@@ -313,6 +313,7 @@
       personalMemoryDocs: [],
       personalSurveys: [],
       personalTemplates: [],
+      personalEditingSurveyId: "",
       personalEditingTemplateId: "",
       personalTemplateBaseMeta: {},
       personalTemplateLanguage: "zh-CN",
@@ -19338,6 +19339,10 @@
 
     function applyPersonalSurvey(item) {
       state.personalDefault = item || {};
+      const surveyId = String((item && item.survey_id) || "");
+      const survey = (state.personalSurveys || []).find((row) => String(row.id || "") === surveyId);
+      state.personalEditingSurveyId = surveyId;
+      setPersonalFieldValue("personalSurveyName", (survey && survey.name) || "默认资料");
       fillPersonalSurveyFields(state.personalDefault);
     }
 
@@ -20413,7 +20418,8 @@
         surveyList.innerHTML = rows.length ? rows.map((row) => {
           const id = String(row.id || "");
           const active = id === currentId ? " active" : "";
-          return `<div class="personal-row${active}"><span>${escapeHtml(row.name || `资料调查 #${id}`)}${id === currentId ? "（当前）" : ""}</span><div class="personal-row-actions"><button type="button" data-use-personal-survey="${escapeHtml(id)}">编辑</button><button type="button" data-delete-personal-survey="${escapeHtml(id)}">删除</button></div></div>`;
+          const currentBadge = id === currentId ? `<span class="personal-current-badge">当前</span>` : "";
+          return `<div class="personal-row personal-survey-record${active}"><div class="personal-survey-record-main"><span class="personal-survey-record-icon" aria-hidden="true">资</span><div class="personal-survey-record-copy"><strong>${escapeHtml(row.name || `资料调查 #${id}`)}</strong><small>个人 IP 基础资料</small></div>${currentBadge}</div><div class="personal-row-actions"><button type="button" data-use-personal-survey="${escapeHtml(id)}">编辑</button><button class="is-danger" type="button" data-delete-personal-survey="${escapeHtml(id)}">删除</button></div></div>`;
         }).join("") : `<div class="personal-empty">暂无资料调查记录</div>`;
       }
     }
@@ -20423,9 +20429,10 @@
       personalSetBusy(btn, true, "保存中...");
       try {
         const existing = state.personalDefault || {};
-        const surveyData = await api("/api/ip-content/profile-surveys", {
-          method: "POST",
-          json: { name: personalFieldValue("personalProfileName") || "资料调查", requirements: personalSurveyRequirements(), meta: { source: "h5_personal_profile" } },
+        const editingId = String(state.personalEditingSurveyId || "");
+        const surveyData = await api(editingId ? `/api/ip-content/profile-surveys/${encodeURIComponent(editingId)}` : "/api/ip-content/profile-surveys", {
+          method: editingId ? "PATCH" : "POST",
+          json: { name: personalFieldValue("personalSurveyName") || "默认资料", requirements: personalSurveyRequirements(), meta: { source: "h5_personal_profile" } },
         });
         const data = await api("/api/ip-content/personal-default", {
           method: "PUT",
@@ -20441,6 +20448,7 @@
           },
         });
         state.personalDefault = data.item || { requirements: personalSurveyRequirements() };
+        state.personalEditingSurveyId = String(surveyData.item?.id || "");
         state.personalSurveys = [surveyData.item, ...(state.personalSurveys || []).filter((row) => String(row.id) !== String(surveyData.item?.id))].filter(Boolean);
         renderPersonalSettings();
         personalSetStatus("资料调查已保存。");
@@ -20496,6 +20504,8 @@
     async function usePersonalSurvey(id) {
       const row = (state.personalSurveys || []).find((item) => String(item.id) === String(id));
       if (!row) return;
+      state.personalEditingSurveyId = String(row.id || "");
+      setPersonalFieldValue("personalSurveyName", row.name || "默认资料");
       fillPersonalSurveyFields({ requirements: row.requirements || {} });
       state.personalDefault = { ...(state.personalDefault || {}), survey_id: row.id };
       renderPersonalSettings();
@@ -20504,6 +20514,10 @@
     async function deletePersonalSurvey(id) {
       await api(`/api/ip-content/profile-surveys/${encodeURIComponent(id)}`, { method: "DELETE" });
       state.personalSurveys = (state.personalSurveys || []).filter((row) => String(row.id) !== String(id));
+      if (String(state.personalEditingSurveyId || "") === String(id)) {
+        state.personalEditingSurveyId = "";
+        setPersonalFieldValue("personalSurveyName", "默认资料");
+      }
       renderPersonalSettings();
     }
 
@@ -28108,6 +28122,8 @@
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
     $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalNewSurveyBtn")?.addEventListener("click", () => {
+      state.personalEditingSurveyId = "";
+      setPersonalFieldValue("personalSurveyName", "默认资料");
       ["personalProfileName", "personalGender", "personalProfilePhoto", "personalBirthEra", "personalCurrentProvince", "personalCurrentCity", "personalHometown", "personalRole", "personalShareTopic", "personalVideoStyle", "personalAfterViewAction", "personalBusinessProduct", "personalTargetCustomer", "personalAdvantages"].forEach((id) => setPersonalFieldValue(id, ""));
       renderPersonalSurveyWizard();
     });

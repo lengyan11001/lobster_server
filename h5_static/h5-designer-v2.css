@@ -2112,6 +2112,139 @@ body.messages-view-active .global-chat-fab {
   white-space: nowrap;
 }
 
+.personal-survey-name-field {
+  display: grid;
+  gap: 6px;
+  padding: 14px 0;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.personal-survey-name-field > span {
+  color: #17233d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.personal-survey-name-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 1px solid #e8edf5;
+  border-radius: 12px;
+  outline: 0;
+  color: #17233d;
+  background: #f6f8fc;
+  font-size: 14px;
+}
+
+.personal-survey-name-field input:focus {
+  border-color: rgba(47, 111, 237, .48);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, .08);
+}
+
+.personal-survey-name-field small {
+  color: #8a94a6;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.personal-survey-record {
+  min-height: 62px;
+  padding: 10px 11px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, .82);
+}
+
+.personal-survey-record.active {
+  border-color: rgba(47, 111, 237, .24);
+  background: #f4f7ff;
+}
+
+.personal-survey-record-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.personal-survey-record-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #2f6fed;
+  background: #e8f0ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.personal-survey-record-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.personal-survey-record-copy strong,
+.personal-survey-record-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personal-survey-record-copy strong {
+  color: #17233d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.personal-survey-record-copy small {
+  color: #8a94a6;
+  font-size: 10px;
+}
+
+.personal-current-badge {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: #28705a;
+  background: #e7f7ef;
+  font-size: 10px;
+}
+
+.personal-survey-record .personal-row-actions button {
+  padding: 6px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #526078;
+  background: #fff;
+}
+
+.personal-survey-record .personal-row-actions button.is-danger {
+  border-color: #f3d7d4;
+  color: #b5473d;
+  background: #fff8f7;
+}
+
+@media (max-width: 520px) {
+  .personal-survey-record {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .personal-survey-record-main {
+    flex: 1 1 100%;
+  }
+
+  .personal-survey-record .personal-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 .personal-survey-list {
   display: block;
 }

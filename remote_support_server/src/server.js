@@ -1617,7 +1617,11 @@ app.get("/api/devices", requireApprovedUser, (req, res) => {
 });
 
 app.post("/api/bindings", requireApprovedUser, (req, res) => {
-  if (!ALLOW_SELF_SERVICE) {
+  // The embedded Lobster admin workspace uses the dedicated main-admin user.
+  // It must be able to submit the same E-drive binding form shown in the
+  // workspace, while ordinary relay users remain blocked when self service is
+  // disabled.
+  if (!ALLOW_SELF_SERVICE && req.auth.user.id !== MAIN_ADMIN_USER_ID) {
     res.status(403).json({ error: "admin_binding_required" });
     return;
   }

@@ -150,3 +150,22 @@ def test_website_ota_with_launcher_does_not_replace_the_desktop_directory(tmp_pa
         "desktop/launcher.pyc",
         "CLIENT_CODE_VERSION.json",
     ]
+
+
+def test_website_ota_carries_remote_support_agent(tmp_path):
+    module = _load_publish_module()
+    agent_path = "desktop/BHZN-ToDesk-Agent.exe"
+    zip_path = tmp_path / "website-with-remote-agent.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("backend/app.pyc", b"compiled")
+        archive.writestr(agent_path, b"MZ compiled remote support agent")
+        archive.writestr("CLIENT_CODE_VERSION.json", "{}")
+
+    paths = module.manifest_paths_for_zip(zip_path)
+
+    # System Config reports "未安装" whenever this executable is missing, so a
+    # website OTA that omits it leaves every client without remote support.
+    assert agent_path in paths
+    # The manifest must stay granular: publishing "desktop" would make the
+    # updater reconcile the whole directory and delete unrelated client files.
+    assert "desktop" not in paths

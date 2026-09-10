@@ -172,7 +172,7 @@ def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
             or "https://www.yyapi.cloud"
         ).rstrip("/")
         return {"api_base": base, "api_key": yyapi_key, "provider": "yyapi"}
-    if mid in ("deepseek-chat", "deepseek-reasoner"):
+    if mid in ("deepseek-flash", "deepseek-chat", "deepseek-reasoner"):
         key = (getattr(settings, "deepseek_api_key", None) or "").strip()
         if key:
             base = (getattr(settings, "deepseek_api_base", None) or "https://api.deepseek.com").rstrip("/")
@@ -188,6 +188,11 @@ def _yyapi_chat_configured() -> bool:
     YYAPI request must be allowed to continue to the remaining candidates.
     """
     key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    return bool(key)
+
+
+def _deepseek_chat_configured() -> bool:
+    key = (getattr(settings, "deepseek_api_key", None) or os.environ.get("DEEPSEEK_API_KEY") or "").strip()
     return bool(key)
 
 
@@ -973,6 +978,7 @@ _XSKILL_V3_CREDITS_PER_USD = 400
 # catalog advertises this model as text+image -> text; unlike DeepSeek Chat it
 # can safely receive the base64 image parts prepared above.
 _MULTIMODAL_FALLBACK_MODEL = "apiz/seed-2.0-mini"
+_PRIMARY_DEEPSEEK_MODEL = "deepseek-flash"
 _TEXT_FALLBACK_MODEL = "deepseek-chat"
 
 
@@ -1131,18 +1137,13 @@ def _sutui_chat_model_candidates(
             seen.add(model)
             out.append(model)
 
-    # Text-only work (memory generation, IP content, WeChat reply/classification,
-    # etc.) should use the direct DeepSeek route first.  The newly-added model
-    # endpoints have recently been timing out; putting them before DeepSeek
-    # made every ordinary request wait for the long upstream timeout before the
-    # fallback chain could do useful work.
-    #
-    # DeepSeek Chat is text-only and must not receive image parts.  Multimodal
-    # requests therefore keep the image-capable APIZ route first and omit
-    # DeepSeek from the candidate list entirely.
-    if has_images:
-        add(_MULTIMODAL_FALLBACK_MODEL)
-    else:
+    # DeepSeek V4.1 Flash is the primary direct route for both text and vision.
+    # The official ``deepseek-flash`` endpoint supports image_url content, tool
+    # calls, JSON output, and thinking/non-thinking modes. Legacy DeepSeek Chat
+    # remains a text-only fallback for callers and older jobs.
+    if _deepseek_chat_configured():
+        add(_PRIMARY_DEEPSEEK_MODEL)
+    if not has_images:
         add(_TEXT_FALLBACK_MODEL)
     if change2pro_model:
         add(change2pro_model)
@@ -1246,6 +1247,11 @@ def _sutui_chat_attempts_for_models(
             if dr.get("provider") == "yyapi":
                 # Do not duplicate the YYAPI model through xskill.  The next
                 # model candidate is the actual fallback route.
+                continue
+            if dr.get("provider") == "deepseek" and mid == _PRIMARY_DEEPSEEK_MODEL:
+                # deepseek-flash is an official-only id; do not retry this id
+                # against xskill after the direct route fails. Continue with
+                # the actual fallback candidate instead.
                 continue
         v3 = _get_v3_route(mid, token)
         if v3 and token:

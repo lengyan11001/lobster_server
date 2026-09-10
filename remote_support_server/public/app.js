@@ -47,18 +47,40 @@ const fileTransferWorkspace = document.getElementById("fileTransferWorkspace");
 const fileTransferSummary = document.getElementById("fileTransferSummary");
 const fileTransferTable = document.getElementById("fileTransferTable");
 const fileTransferEmpty = document.getElementById("fileTransferEmpty");
+const openAddDeviceBtn = document.getElementById("openAddDeviceBtn");
+const addDeviceModal = document.getElementById("addDeviceModal");
+const addDeviceModalBody = document.getElementById("addDeviceModalBody");
 
 // In a direct admin session the surrounding admin page already provides the
 // device-binding entry point. Move the existing file-transfer form into the
 // Files tab instead of rendering a second left sidebar. This keeps the same
 // form/handlers and makes uploads available without duplicating IDs or logic.
 if (document.body.classList.contains("direct-control")) {
+  const bindPanel = document.getElementById("bindPanel");
+  if (bindPanel && addDeviceModalBody) addDeviceModalBody.appendChild(bindPanel);
   const filePanel = document.getElementById("filePanel");
   if (filePanel && fileTransferWorkspace) {
     fileTransferWorkspace.prepend(filePanel);
     filePanel.classList.add("direct-file-panel");
   }
 }
+
+function setAddDeviceModal(open) {
+  if (!addDeviceModal) return;
+  addDeviceModal.classList.toggle("hidden", !open);
+  addDeviceModal.setAttribute("aria-hidden", String(!open));
+  if (open) setTimeout(() => deviceIdInput?.focus(), 0);
+}
+
+openAddDeviceBtn?.addEventListener("click", () => setAddDeviceModal(true));
+document.querySelectorAll("[data-close-add-device]").forEach((button) => {
+  button.addEventListener("click", () => setAddDeviceModal(false));
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && addDeviceModal && !addDeviceModal.classList.contains("hidden")) {
+    setAddDeviceModal(false);
+  }
+});
 const screenWallGrid = document.getElementById("screenWallGrid");
 const screenWallEmpty = document.getElementById("screenWallEmpty");
 const wallControlWindow = document.getElementById("wallControlWindow");
@@ -600,15 +622,16 @@ function renderDevices() {
   }
 }
 
-// The admin console adds/removes bindings outside this iframe.  Refresh the
-// shelf in place so an active remote session is not torn down just because the
-// device-management modal was submitted.
+// Keep the shelf refreshable without tearing down an active remote session.
+// The main admin now uses this workspace's own add-device modal and device
+// cards, but the message remains useful for external refresh requests.
 window.addEventListener("message", async (event) => {
   if (event.data?.type !== "refresh-devices" || !sessionToken || currentUser?.status !== "approved") return;
   try {
     const list = await api("/api/devices");
     devices = list.devices || [];
     renderDevices();
+    setAddDeviceModal(false);
     syncMonitorSessions();
     renderScreenWall();
     await loadFileTransfers();
@@ -2135,6 +2158,7 @@ addForm.addEventListener("submit", async (event) => {
     devices = data.devices || devices;
     bindHint.textContent = "设备已添加";
     renderDevices();
+    setAddDeviceModal(false);
     startControl(data.device.id);
   } catch (error) {
     bindHint.textContent = errorText(error.data || { error: error.message });

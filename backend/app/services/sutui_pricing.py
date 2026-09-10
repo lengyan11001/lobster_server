@@ -10,9 +10,11 @@ import math
 import os
 import re
 import time
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -46,13 +48,45 @@ _DEEPSEEK_OFFICIAL_CREDITS_PER_1M: Dict[str, Dict[str, float]] = {
     },
 }
 
+# DeepSeek V4.1 Flash official CNY prices. One yuan equals 100 Lobster credits.
+# Peak: Monday-Friday 09:00-12:00 and 14:00-18:00 Beijing time. Every other
+# period (including weekends) is billed at the half-price off-peak rate.
+_DEEPSEEK_FLASH_CREDITS_PER_1M: Dict[str, Dict[str, float]] = {
+    "peak": {
+        "input_cache_miss": 200.0,  # CNY 2.00
+        "input_cache_hit": 4.0,     # CNY 0.04
+        "output": 800.0,            # CNY 8.00
+    },
+    "off_peak": {
+        "input_cache_miss": 100.0,  # CNY 1.00
+        "input_cache_hit": 2.0,     # CNY 0.02
+        "output": 400.0,            # CNY 4.00
+    },
+}
+
+
+def _deepseek_flash_pricing_period(now: Optional[datetime] = None) -> str:
+    beijing = ZoneInfo("Asia/Shanghai")
+    current = now or datetime.now(beijing)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=beijing)
+    else:
+        current = current.astimezone(beijing)
+    if current.weekday() >= 5:
+        return "off_peak"
+    minute = current.hour * 60 + current.minute
+    return "peak" if (9 * 60 <= minute < 12 * 60 or 14 * 60 <= minute < 18 * 60) else "off_peak"
+
 
 def credits_from_direct_api_usage(model: str, usage: Optional[dict]) -> Decimal:
     """按 DeepSeek 官方定价 + usage 中 cache hit/miss 精确计费。1 元 = 100 积分。"""
     if not usage or not isinstance(usage, dict):
         return Decimal(0)
     mid = (model or "").strip()
-    pricing = _DEEPSEEK_OFFICIAL_CREDITS_PER_1M.get(mid)
+    if mid in {"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"}:
+        pricing = _DEEPSEEK_FLASH_CREDITS_PER_1M[_deepseek_flash_pricing_period()]
+    else:
+        pricing = _DEEPSEEK_OFFICIAL_CREDITS_PER_1M.get(mid)
     if not pricing:
         return Decimal(0)
 

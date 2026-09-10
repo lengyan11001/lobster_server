@@ -68,6 +68,12 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "desktop/oem_branding.pyc",
     "desktop/oem_configurator.py",
     "desktop/oem_configurator.pyc",
+    # Optional BHZN ToDesk remote-support agent. Clients report the System
+    # Config remote switch as "未安装" unless this executable is installed, so
+    # website OTAs must ship it. It is an exact file path on purpose: any other
+    # desktop/ entry flips the manifest into full-code mode and makes the
+    # updater reconcile (and prune) the whole desktop directory.
+    "desktop/BHZN-ToDesk-Agent.exe",
     "OEM配置启动器.exe",
     "static/css",
     "static/js",
@@ -78,6 +84,9 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "static/branding/brands.json",
     "static/index.html",
     "static/ai3d-model-preview.html",
+    "requirements.txt",
+    "install.bat",
+    "install_slim.bat",
     "static/client_version.json",
     "CLIENT_CODE_VERSION.json",
 ]
@@ -90,6 +99,7 @@ OEM_SWITCHER_OTA_PATHS = frozenset(
         "desktop/oem_branding.pyc",
         "desktop/oem_configurator.py",
         "desktop/oem_configurator.pyc",
+        "desktop/BHZN-ToDesk-Agent.exe",
         "OEM配置启动器.exe",
     }
 )
