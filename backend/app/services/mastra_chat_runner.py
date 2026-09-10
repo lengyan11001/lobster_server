@@ -17,12 +17,33 @@ from ..api.h5_chat import _add_event, _finish_mastra_parent_from_children
 from ..db import SessionLocal
 from ..models import H5ChatApproval, H5ChatEvent, H5ChatMessage, H5ChatSession, User
 from .brand_context import user_brand_mark
+from . import model_reply_profiles as _model_reply_profiles
 from .mastra_attachment_security import (
     UnsafeMastraImageError,
     assert_safe_remote_mastra_images,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_fake_tool_markup(value: Any) -> str:
+    """剥掉"把工具调用写进正文"的残留（DSML / XML / JSON 等形式）。
+
+    代理层已经按模型档案清过一遍，这里再兜一层：mastra 侧也会自己把模型想调的
+    工具渲染成文本回传（``<tool_calls><invoke name=...>`` 这类），必须在写库
+    和推事件之前清掉，否则会话记忆会反复照抄。
+    """
+    raw = str(value or "")
+    if not raw.strip():
+        return raw
+    profile = _model_reply_profiles.profile_for("")
+    cleaned, changed = _model_reply_profiles.strip_fake_tool_text(raw, profile, ())
+    if changed:
+        logger.warning(
+            "[dispatch-clean] stripped fake tool markup (%d -> %d chars)", len(raw), len(cleaned)
+        )
+        cleaned = cleaned.strip() or profile.fake_tool_fallback_text
+    return cleaned
 
 _WORKER_ID = "mastra-server"
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -593,6 +614,7 @@ def _complete_sync(
                 approval.updated_at = now
             db.commit()
             return
+        reply = _strip_fake_tool_markup(reply)
         clean_reply = (reply or "").strip() or (
             "任务已下发，正在等待 Online 执行。" if dispatches else "处理完成。"
         )
@@ -966,7 +988,7 @@ async def _run_job_request(job: MastraChatJob) -> None:
         text = delta_buffer
         delta_buffer = ""
         last_delta_flush = asyncio.get_running_loop().time()
-        await _append_event(job.message_id, "delta", {"text": text})
+        await _append_event(job.message_id, "delta", {"text": _strip_fake_tool_markup(text)})
 
     attempts = _stream_retry_attempts()
     for attempt in range(1, attempts + 1):
