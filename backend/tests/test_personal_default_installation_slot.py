@@ -142,3 +142,49 @@ def test_task_payload_slot_is_used_by_run_payload(db_session, test_user):
     assert scheduled_tasks._slot_from_payload(payload) == "slot-x"
     assert scheduled_tasks._slot_from_payload({"h5_context": {}}) == ""
     assert scheduled_tasks._slot_from_payload({"h5_context": {}}, "slot-fallback") == "slot-fallback"
+
+
+def test_empty_account_row_falls_back_to_row_with_digital_human(db_session, test_user):
+    """账号级默认行是空壳时，不能让它盖掉用户在设备槽位里选好的数字人配置。"""
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentScheduleTemplate
+
+    name = studio._PERSONAL_DEFAULT_TEMPLATE_NAME
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            installation_id="",
+            name=name,
+            requirements={},
+            meta={"is_personal_default": True, "digital_human_resources": {"avatars": [], "voices": []}},
+            status="active",
+        )
+    )
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            installation_id="slot-with-dh",
+            name=name,
+            requirements={},
+            meta={
+                "is_personal_default": True,
+                "digital_human_template": {"scene": "realMan", "style_id": "style-1"},
+                "digital_human_resources": {"avatars": [{"id": "a1"}], "voices": [{"id": "v1"}]},
+            },
+            status="active",
+        )
+    )
+    db_session.commit()
+
+    # 另一个槽位没存过自己的行 → 回落到账号级空壳 → 再兜到有数字人的那行
+    row = studio._personal_default_row_for_slot(db_session, test_user.id, "slot-unknown")
+    assert studio._personal_default_has_digital_human(row) is True
+    assert row.installation_id == "slot-with-dh"
+
+    # 全都没有数字人配置时，行为保持不变（仍返回账号级行）
+    db_session.query(IPContentScheduleTemplate).filter(
+        IPContentScheduleTemplate.installation_id == "slot-with-dh"
+    ).update({IPContentScheduleTemplate.status: "deleted"})
+    db_session.commit()
+    row2 = studio._personal_default_row_for_slot(db_session, test_user.id, "slot-unknown")
+    assert row2.installation_id == ""

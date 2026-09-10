@@ -3676,7 +3676,52 @@ def _personal_default_row_for_slot(
         row = _query(slot)
         if row is not None or not fallback_to_account:
             return row
-    return _query("")
+    row = _query("")
+    # 历史遗留的账号级行可能是空壳（例如数字人形象/声音从未配置），而用户实际
+    # 在某个槽位里选过。回落到这种空壳会让"界面已选、启动说没选"。
+    if row is not None and not _personal_default_has_digital_human(row):
+        richer = _personal_default_row_with_digital_human(db, int(user_id), exclude_id=int(row.id))
+        if richer is not None:
+            return richer
+    return row
+
+
+def _personal_default_has_digital_human(row: Optional[IPContentScheduleTemplate]) -> bool:
+    """该默认行是否配置过数字人形象/声音。"""
+    if row is None:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if meta.get("digital_human_template") or meta.get("digital_human_template_configured"):
+        return True
+    resources = meta.get("digital_human_resources")
+    if isinstance(resources, dict) and (resources.get("avatars") or resources.get("voices")):
+        return True
+    return False
+
+
+def _personal_default_row_with_digital_human(
+    db: Session,
+    user_id: int,
+    *,
+    exclude_id: int = 0,
+) -> Optional[IPContentScheduleTemplate]:
+    """该用户最近一条配置过数字人的默认行（用于账号级空壳的兜底）。"""
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    for candidate in rows:
+        if exclude_id and int(candidate.id) == int(exclude_id):
+            continue
+        if _personal_default_has_digital_human(candidate):
+            return candidate
+    return None
 
 
 def _current_personal_template_for_execution(
