@@ -1447,7 +1447,13 @@ function closeRtc(reason = "closed", notify = true) {
 
 function fallbackToRelay(reason = "fallback") {
   const deviceId = rtcState?.deviceId || activeDeviceId;
+  // 切换传输（RTC ↔ JPEG 中继）时保留最后一帧：之前会清屏，用户看到的就是"黑一下"。
+  const keepLastFrame = lastFrameTimestamp > 0;
   closeRtc(reason, true);
+  if (keepLastFrame) {
+    viewer.classList.add("has-frame");
+    screenPlaceholder.classList.add("hidden");
+  }
   if (!deviceId || !ws || ws.readyState !== WebSocket.OPEN) return;
   pendingControlIntents.delete(deviceId);
   sessionId = "";
