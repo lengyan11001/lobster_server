@@ -952,6 +952,66 @@ def create_mastra_message(
     queue_mode = (body.queue_mode or "normal").strip().lower()
     if queue_mode not in ("normal", "steer"):
         raise HTTPException(status_code=400, detail="queue_mode 必须是 normal 或 steer")
+    # User confirmed via the card and then typed a confirmation again: while the same
+    # session already has an executing / just-finished approval, answer with a notice
+    # instead of dispatching a second generation (this shipped two images in the past).
+    _confirm_words = (
+        "\u786e\u8ba4",
+        "\u786e\u8ba4\u6267\u884c",
+        "\u5f00\u59cb\u6267\u884c",
+        "\u6267\u884c\u5427",
+        "\u597d\u7684\u6267\u884c",
+        "ok",
+    )
+    if content and len(content) <= 12 and any(word in content.lower() for word in _confirm_words):
+        recent_approval = (
+            db.query(H5ChatApproval)
+            .filter(
+                H5ChatApproval.user_id == owner.id,
+                H5ChatApproval.session_id == session.id,
+                H5ChatApproval.status.in_(("executing", "completed")),
+            )
+            .order_by(H5ChatApproval.updated_at.desc())
+            .first()
+        )
+        if (
+            recent_approval is not None
+            and recent_approval.updated_at is not None
+            and (datetime.utcnow() - recent_approval.updated_at).total_seconds() <= 120
+        ):
+            skip_now = datetime.utcnow()
+            skip_row = H5ChatMessage(
+                id=uuid.uuid4().hex,
+                user_id=owner.id,
+                session_id=session.id,
+                installation_id=_selected_installation(request, body.installation_id),
+                parent_message_id=None,
+                mode="mastra",
+                queue_mode="normal",
+                queue_priority=0,
+                content=content,
+                attachments=None,
+                status="completed",
+                reply_text=(
+                    "\u5df2\u5728\u6267\u884c\uff0c\u65e0\u9700\u518d\u6b21\u786e\u8ba4\u3002"
+                    "\u53ef\u4ee5\u7b49\u5b83\u8dd1\u5b8c\uff0c\u6216\u70b9\u300c\u53d6\u6d88\u300d\u540e\u91cd\u65b0\u4e0b\u8fbe\u3002"
+                ),
+                created_at=skip_now,
+                updated_at=skip_now,
+                finished_at=skip_now,
+            )
+            db.add(skip_row)
+            session.last_message_at = skip_now
+            session.updated_at = skip_now
+            _add_event(
+                db,
+                skip_row,
+                "final",
+                {"reply_text": skip_row.reply_text, "skipped_duplicate_confirmation": True},
+            )
+            db.commit()
+            db.refresh(skip_row)
+            return {"ok": True, "message": _serialize_message(skip_row), "events": []}
     target = None
     if queue_mode == "steer":
         target_id = (body.target_message_id or "").strip()
