@@ -24807,10 +24807,175 @@
       return textEl;
     }
 
+    const RICH_URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
+    const RICH_KINDS = [
+      [/\.(png|jpe?g|gif|webp|bmp|avif|svg)(?:[?#].*)?$/i, "image"],
+      [/\.(mp4|webm|mov|m4v|avi|mkv)(?:[?#].*)?$/i, "video"],
+      [/\.(mp3|wav|m4a|aac|ogg|flac)(?:[?#].*)?$/i, "audio"],
+      [/\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|csv|txt|md|json)(?:[?#].*)?$/i, "file"],
+    ];
+
+    function richUrlKind(url) {
+      const clean = String(url || "").trim();
+      if (!/^https?:\/\//i.test(clean)) return "";
+      for (let i = 0; i < RICH_KINDS.length; i += 1) {
+        if (RICH_KINDS[i][0].test(clean)) return RICH_KINDS[i][1];
+      }
+      return "link";
+    }
+
+    function richHost(url) {
+      try { return new URL(url).host.replace(/^www\./i, ""); } catch (e) { return "链接"; }
+    }
+
+    function richIsAlone(line) {
+      const value = String(line || "").trim();
+      return /^https?:\/\/\S+$/i.test(value) ? value : "";
+    }
+
+    function richLightbox(url) {
+      let box = document.getElementById("richLightbox");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "richLightbox";
+        box.className = "rich-lightbox hidden";
+        box.innerHTML = '<img alt="" /><button type="button" aria-label="\u5173\u95ed">\u00d7</button>';
+        box.addEventListener("click", function () { box.classList.add("hidden"); });
+        document.body.appendChild(box);
+      }
+      const img = box.querySelector("img");
+      if (img) img.src = url;
+      box.classList.remove("hidden");
+    }
+
+    function richImageGrid(urls) {
+      const host = document.createElement("div");
+      host.className = "rich-media-grid" + (urls.length > 1 ? " is-multi" : "");
+      urls.forEach(function (url) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "rich-media-item";
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "\u56fe\u7247";
+        img.loading = "lazy";
+        button.appendChild(img);
+        button.addEventListener("click", function () { richLightbox(url); });
+        host.appendChild(button);
+      });
+      return host;
+    }
+
+    function richMediaGroup(urls, kind) {
+      if (kind === "image") return richImageGrid(urls);
+      const host = document.createElement("div");
+      host.className = "rich-media-block";
+      urls.forEach(function (url) {
+        let node;
+        if (kind === "video") {
+          node = document.createElement("video");
+          node.controls = true;
+          node.playsInline = true;
+          node.preload = "metadata";
+        } else if (kind === "audio") {
+          node = document.createElement("audio");
+          node.controls = true;
+          node.preload = "metadata";
+        } else {
+          node = document.createElement("a");
+          node.className = "rich-file-row";
+          node.href = mediaProxyUrl(url, "inline", filenameFromUrl(url, "\u6587\u4ef6"));
+          node.target = "_blank";
+          node.rel = "noopener noreferrer";
+          node.textContent = "\u6587\u4ef6\uff1a" + filenameFromUrl(url, "\u4e0b\u8f7d");
+        }
+        if (node.tagName !== "A") node.src = url;
+        host.appendChild(node);
+      });
+      return host;
+    }
+
+    function richLinkCard(url) {
+      const card = document.createElement("a");
+      card.className = "rich-link-card";
+      card.href = url;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      const host = document.createElement("span");
+      host.className = "rich-link-host";
+      host.textContent = richHost(url);
+      const path = document.createElement("span");
+      path.className = "rich-link-path";
+      path.textContent = decodeURIComponent(String(url).replace(/^https?:\/\/[^/]+/i, "") || "/").slice(0, 80);
+      card.appendChild(host);
+      card.appendChild(path);
+      return card;
+    }
+
+    function renderRichText(host, raw) {
+      host.textContent = "";
+      const lines = String(raw || "").split(/\r?\n/);
+      let buffer = [];
+      function flush() {
+        if (!buffer.length) return;
+        const block = document.createElement("div");
+        block.className = "rich-paragraph";
+        block.innerHTML = linkifyText(buffer.join("\n"));
+        host.appendChild(block);
+        buffer = [];
+      }
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const trimmed = line.trim();
+        if (/^```/.test(trimmed)) {
+          const code = [];
+          index += 1;
+          while (index < lines.length && !/^```/.test(lines[index].trim())) {
+            code.push(lines[index]);
+            index += 1;
+          }
+          flush();
+          const pre = document.createElement("pre");
+          pre.className = "rich-code";
+          const codeEl = document.createElement("code");
+          codeEl.textContent = code.join("\n");
+          pre.appendChild(codeEl);
+          host.appendChild(pre);
+          continue;
+        }
+        const url = richIsAlone(trimmed);
+        if (!url) {
+          buffer.push(line);
+          continue;
+        }
+        const kind = richUrlKind(url);
+        flush();
+        if (kind === "link") {
+          host.appendChild(richLinkCard(url));
+          continue;
+        }
+        const group = [url];
+        while (index + 1 < lines.length) {
+          const next = richIsAlone(lines[index + 1]);
+          if (!next || richUrlKind(next) !== kind) break;
+          group.push(next);
+          index += 1;
+        }
+        host.appendChild(richMediaGroup(group, kind));
+      }
+      flush();
+      if (!host.childNodes.length && String(raw || "").trim()) {
+        const block = document.createElement("div");
+        block.className = "rich-paragraph";
+        block.innerHTML = linkifyText(String(raw || ""));
+        host.appendChild(block);
+      }
+    }
+
     function renderBubbleText(bubble) {
       const textEl = ensureBubbleTextElement(bubble);
       if (!textEl) return;
-      textEl.innerHTML = linkifyText(bubble._rawText || "");
+      renderRichText(textEl, bubble._rawText || "");
     }
 
     function collectMediaUrls(payload) {
