@@ -627,9 +627,25 @@ function renderDevices() {
 // 焦点时立即刷新一次。没有这段时只有整页刷新才会更新设备状态。
 async function refreshDeviceShelf() {
   if (!sessionToken || currentUser?.status !== "approved") return;
+  // 用户正在操作时不要重绘设备卡片：轮询重绘会把刚点的"加入屏幕墙"覆盖回去，
+  // 表现就是"点了没啥用"。
+  if (document.querySelector(".modal:not(.hidden), .dialog:not(.hidden)")) return;
+  if (typeof deviceShelf !== "undefined" && deviceShelf && deviceShelf.matches(":hover")) return;
   try {
     const list = await api("/api/devices");
-    devices = list.devices || [];
+    const incoming = list.devices || [];
+    const localFlags = {};
+    (devices || []).forEach(function (item) {
+      if (item && item.id) localFlags[item.id] = item.monitorAlways;
+    });
+    // 服务端还没回写时保留本地勾选状态，避免视觉上被刷回去
+    devices = incoming.map(function (item) {
+      if (!item || !item.id) return item;
+      if (localFlags[item.id] !== undefined && localFlags[item.id] !== item.monitorAlways) {
+        return Object.assign({}, item, { monitorAlways: localFlags[item.id] });
+      }
+      return item;
+    });
     renderDevices();
     syncMonitorSessions();
     renderScreenWall();
