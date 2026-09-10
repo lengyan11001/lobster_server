@@ -25762,6 +25762,8 @@
           const img = document.createElement("img");
           img.src = url;
           img.alt = name;
+          img.className = "bubble-attachment-zoomable";
+          img.addEventListener("click", function () { richLightbox(url); });
           card.appendChild(img);
         } else if (type === "video" && url) {
           const video = document.createElement("video");
