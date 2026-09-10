@@ -102,6 +102,50 @@ def test_stream_guard_is_disabled_for_other_models():
     assert guard.enabled is False
 
 
+def test_stream_guard_drops_block_that_follows_normal_text():
+    module = _profiles_module()
+    guard = module.guard_for("deepseek-v4-flash")
+
+    # 模型先吐普通文字，再吐假工具块（本次线上就是这样）
+    assert guard.feed("\u8c03\n") == "\u8c03\n"
+    assert guard.feed("<listSystemCapabilities>") == ""
+    assert guard.feed("<query>\u6587\u7ae0</query>") == ""
+    assert guard.feed("</listSystemCapabilities>") == ""
+    assert guard.feed("\u597d\u7684") == "\u597d\u7684"
+    assert guard.flush() == ""
+
+
+def test_stream_guard_keeps_unrelated_angle_text():
+    module = _profiles_module()
+    guard = module.guard_for("deepseek-chat")
+
+    assert guard.feed("\u4ef7\u683c<100 \u5143") == "\u4ef7\u683c<100 \u5143"
+    assert guard.feed("<div>\u6b63\u5e38HTML") == "<div>\u6b63\u5e38HTML"
+    assert guard.flush() == ""
+
+
+def test_stream_guard_drops_unclosed_block_at_flush():
+    module = _profiles_module()
+    guard = module.guard_for("deepseek-chat")
+
+    assert guard.feed("\u8c03\n") == "\u8c03\n"
+    assert guard.feed("<dispatchOnlineTask><capability_id>douyin") == ""
+    assert guard.flush() == ""
+    assert guard.dropped is True
+
+
+def test_nonstream_cleanup_drops_unclosed_tool_tag():
+    module = _profiles_module()
+    profile = module.profile_for("deepseek-chat")
+    message = {
+        "role": "assistant",
+        "content": "\u8c03\n<dispatchOnlineTask><capability_id>douyin",
+    }
+
+    assert module.sanitize_message_content(message, profile) is True
+    assert "dispatchOnlineTask" not in message["content"]
+
+
 def test_nonstream_apply_cleans_only_matching_profile():
     module = _profiles_module()
     deepseek = module.profile_for("deepseek-v4-flash")

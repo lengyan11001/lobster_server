@@ -315,6 +315,10 @@ def _strip_blocks(text: str, profile: ModelProfile) -> Tuple[str, bool]:
     for rex in compile_patterns(profile, "xml", (
         r"(?is)<\s*([A-Za-z_][A-Za-z0-9_:.-]*)\b[^>]*>[\s\S]*?<\s*/\s*\1\s*>",
         r"(?is)<\s*(?:tool_call|function_call|invoke)\b[^>]*>[\s\S]*$",
+        # 已知工具名的标签，闭合标签还没吐完（流被截断）也整段删掉
+        r"(?is)<\s*(?:" + "|".join(sorted(XML_TOOL_TAGS, key=len, reverse=True)) + r")\b[^>]*>[\s\S]*$",
+        # 只剩一个孤立闭合标签（开头已被删掉）时也清掉，避免后续正文被扣住
+        r"(?is)</\s*(?:" + "|".join(sorted(XML_TOOL_TAGS, key=len, reverse=True)) + r")\s*>",
     )):
         def _drop(match: "re.Match[str]") -> str:
             nonlocal removed
@@ -390,40 +394,54 @@ class StreamGuard:
         return self._drain(final=True)
 
     def _drain(self, *, final: bool) -> str:
-        out = ""
-        while True:
-            cleaned, removed = _strip_blocks(self.hold, self.profile)
-            if removed:
-                self.dropped = True
-                self.hold = cleaned
-            break
-        if not self.hold:
-            return out
-        if not final and self._maybe_block_start(self.hold):
-            if len(self.hold) <= self._hold_limit:
-                return out
-        if final and self._maybe_block_start(self.hold):
-            # 流结束时仍是没闭合的假工具调用 → 丢弃
+        cleaned, removed = _strip_blocks(self.hold, self.profile)
+        if removed:
             self.dropped = True
-            self.hold = ""
-            return out
-        out += self.hold
-        self.hold = ""
-        return out
+            self.hold = cleaned
+        if not self.hold:
+            return ""
+        # 普通文本里也可能夹着一个还没吐完的假工具块，先扣住那一段再放行前缀。
+        cut = self._pending_start(self.hold)
+        if cut is not None:
+            if final:
+                self.dropped = True
+                emit, self.hold = self.hold[:cut], ""
+                return emit
+            emit, self.hold = self.hold[:cut], self.hold[cut:]
+            return emit
+        emit, self.hold = self.hold, ""
+        return emit
 
-    def _maybe_block_start(self, text: str) -> bool:
-        stripped = text.lstrip()
-        if not stripped.startswith("<"):
-            return False
-        match = re.match(r"^<\s*/?\s*([A-Za-z_|\uff5c][A-Za-z0-9_|\uff5c:.-]{0,40})?", text.lstrip())
-        if not match:
-            return True
-        name = (match.group(1) or "").lower().strip("|").replace("\uff5c", "")
-        if not name:
-            return True
-        if name in XML_TOOL_TAGS:
-            return True
-        return any(tag.startswith(name) or name.startswith(tag) for tag in XML_TOOL_TAGS)
+    def _pending_start(self, text: str) -> Optional[int]:
+        """返回需要继续扣住的下标；没有可疑片段返回 None。"""
+        idx = text.rfind("<")
+        if idx < 0:
+            return None
+        tail = text[idx:]
+        if len(tail) > self._hold_limit:
+            return None
+        return idx if _tail_could_be_tool_block(tail) else None
+
+
+def _tail_could_be_tool_block(tail: str) -> bool:
+    """``<`` 开头的一小段是否可能是（已知工具名的）假工具块开头。"""
+    if not tail.startswith("<"):
+        return False
+    match = re.match(r"(?is)<\s*/?\s*([A-Za-z_|\uff5c])", tail)
+    if not match:
+        # '<' 后面不是标签起始字符（例如 "价格<100"）→ 正常文本
+        return False
+    name = match.group(1).lower()
+    rest = tail[match.end(1):]
+    more = re.match(r"[A-Za-z0-9_|\uff5c:.-]{0,40}", rest)
+    if more:
+        name += more.group(0).lower()
+    name = name.strip("|").replace("\uff5c", "")
+    if not name:
+        return True
+    if name in XML_TOOL_TAGS:
+        return True
+    return any(tag.startswith(name) for tag in XML_TOOL_TAGS)
 
 
 def guard_for(model_id: str) -> StreamGuard:
