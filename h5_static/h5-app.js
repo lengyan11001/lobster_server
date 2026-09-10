@@ -994,6 +994,9 @@
       { time: "10:30", endTime: "11:00", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "11:00", endTime: "11:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
       { time: "11:30", endTime: "12:45", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { customer_scope: "current_collection_batch" } },
+      // 只出现在“节点选择列表”里（pickerOnly），不会自动并入已有工作流，
+      // 所以不影响任何老节点和老排期。
+      { time: "", endTime: "", key: "douyin_leads", label: "抖音精准获客AI", note: "抖音精准获客AI", pickerOnly: true, params: { ai_keywords: true, ai_keyword_count: 3, ai_keyword_avoid_days: 7, ai_keyword_publish_days: 7, customer_scope: "current_collection_batch" } },
       { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
       { time: "13:45", endTime: "14:15", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "14:15", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
@@ -1274,6 +1277,13 @@
       if (text.includes("主动私信") || text.includes("私信10")) return "direct_message";
       if (text.includes("私信接管") || text.includes("私信引流")) return "stranger_message";
       return "search_collect";
+    }
+
+    // “精准获客AI”节点：关键词由 AI 每轮决定（客户端据此生成关键词并做去重）。
+    function salesWorkflowIsAiKeywordNote(value) {
+      const text = String(value || "");
+      if (!text) return false;
+      return /精准获客\s*AI/i.test(text) || /AI\s*获客/i.test(text) || /AI\s*关键词/i.test(text);
     }
 
     const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["follow_comment", "mention_comment", "direct_message"];
@@ -3686,7 +3696,9 @@
         const key = String(lookup && lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
         if (!key) return false;
         const identity = key === "douyin_leads"
-          ? `${key}@@${salesWorkflowActionForNote(lookup.optionLabel || lookup.defaultNote || "")}`
+          ? (salesWorkflowIsAiKeywordNote(lookup.optionLabel || lookup.defaultNote)
+            ? `${key}@@ai_keywords`
+            : `${key}@@${salesWorkflowActionForNote(lookup.optionLabel || lookup.defaultNote || "")}`)
           : key;
         if (seen.has(identity)) return false;
         seen.add(identity);
@@ -3941,12 +3953,14 @@
       const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
       const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "search_collect";
+      const showDouyinAiKeywords = showDouyinCollection && salesWorkflowIsAiKeywordNote(selectedNote);
       const showDouyinPreciseTouch = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "precise_touch";
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
       $("workflowNodeNativeWhatsappField")?.classList.toggle("hidden", !showWhatsapp);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
+      $("workflowNodeDouyinAiKeywordField")?.classList.toggle("hidden", !showDouyinAiKeywords);
       $("workflowNodeDouyinTouchField")?.classList.toggle("hidden", !showDouyinPreciseTouch);
       syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);
       syncWorkflowMomentPicker("node", showMoments);
@@ -3966,6 +3980,9 @@
         setFieldValue("workflowNodeDouyinRegions", "全国");
         setFieldValue("workflowNodeDouyinMaxResults", 50);
         setFieldValue("workflowNodeDouyinMode", "script");
+        setFieldValue("workflowNodeDouyinAiKeywordCount", 3);
+        setFieldValue("workflowNodeDouyinAiKeywordAvoidDays", 7);
+        setFieldValue("workflowNodeDouyinAiKeywordPublishDays", 7);
         setFieldValue("workflowNodeDouyinReplyPreciseComments", false);
         setFieldValue("workflowNodeDouyinReplyCommentMode", "");
         setFieldValue("workflowNodeDouyinReplyCommentText", "");
@@ -5065,12 +5082,25 @@
       ) {
         const keyword = workflowParamValue("workflowNodeDouyinKeyword");
         const regions = workSplitList(workflowParamValue("workflowNodeDouyinRegions"));
+        const aiKeywordNode = salesWorkflowIsAiKeywordNote(lookup.defaultNote || lookup.optionLabel || note);
         const collectionParams = {
           regions: regions.length ? regions : ["全国"],
           max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
           mode: workflowParamValue("workflowNodeDouyinMode") || "script",
           customer_scope: "current_collection_batch",
         };
+        if (aiKeywordNode) {
+          const aiKeywordCount = workflowParamNumber("workflowNodeDouyinAiKeywordCount", 3, 1, 8);
+          const aiKeywordAvoidDays = workflowParamNumber("workflowNodeDouyinAiKeywordAvoidDays", 7, 1, 60);
+          const aiKeywordPublishDays = workflowParamNumber("workflowNodeDouyinAiKeywordPublishDays", 7, 1, 180);
+          collectionParams.ai_keywords = true;
+          collectionParams.ai_keyword_count = aiKeywordCount;
+          collectionParams.ai_keyword_avoid_days = aiKeywordAvoidDays;
+          collectionParams.ai_keyword_publish_days = aiKeywordPublishDays;
+          // 保证新视频：按最新发布 + 最近 N 天筛选
+          collectionParams.search_sort_type = "1";
+          collectionParams.search_publish_time = String(aiKeywordPublishDays);
+        }
         if (workflowParamChecked("workflowNodeDouyinReplyPreciseComments")) {
           const replyMode = workflowParamValue("workflowNodeDouyinReplyCommentMode");
           const replyText = workflowParamValue("workflowNodeDouyinReplyCommentText");
@@ -5084,7 +5114,9 @@
         }
         if (keyword) collectionParams.keyword = keyword;
         plan = {
-          title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
+          title: aiKeywordNode
+            ? "抖音精准获客AI"
+            : (keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词"),
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
           payload: {
@@ -5566,6 +5598,8 @@
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
       SALES_WORKFLOW_PRESET.forEach((row, index) => {
+        // pickerOnly 只作为可选节点出现在节点选择列表里，绝不自动并入工作流。
+        if (row && row.pickerOnly) return;
         if (isSalesWechatAddFriendRow(row)) {
           return;
         }

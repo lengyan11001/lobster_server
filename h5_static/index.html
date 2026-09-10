@@ -1760,6 +1760,15 @@
           <div class="field full hidden" id="workflowNodeDouyinCollectionField">
             <label for="workflowNodeDouyinKeyword">精准获客参数</label>
             <textarea id="workflowNodeDouyinKeyword" rows="3" placeholder="留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"></textarea>
+            <div class="field full hidden" id="workflowNodeDouyinAiKeywordField">
+              <label>AI 选词设置（精准获客AI）</label>
+              <label class="subtle" for="workflowNodeDouyinAiKeywordCount">每轮关键词数量</label>
+              <input id="workflowNodeDouyinAiKeywordCount" type="number" min="1" max="8" step="1" value="3">
+              <label class="subtle" for="workflowNodeDouyinAiKeywordAvoidDays">关键词去重天数（这几天用过的词不再用）</label>
+              <input id="workflowNodeDouyinAiKeywordAvoidDays" type="number" min="1" max="60" step="1" value="7">
+              <label class="subtle" for="workflowNodeDouyinAiKeywordPublishDays">只搜最近多少天发布的新视频</label>
+              <input id="workflowNodeDouyinAiKeywordPublishDays" type="number" min="1" max="180" step="1" value="7">
+            </div>
             <label for="workflowNodeDouyinRegions">地区</label>
             <input id="workflowNodeDouyinRegions" type="text" value="全国" placeholder="全国，或用逗号分隔多个城市">
             <label for="workflowNodeDouyinMaxResults">搜索数量</label>
