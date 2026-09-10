@@ -1318,8 +1318,28 @@ def _model_profile(model_id: Any):
     return _model_profiles.profile_for(str(model_id or ""))
 
 
-def _response_has_fake_tool_text(data: Any, profile: Any = None) -> bool:
-    """Detect model-specific fake tool calls embedded in text content."""
+def _request_tool_names(body: Any) -> Tuple[str, ...]:
+    """Tools declared by this request: the key signal for spotting fake calls."""
+    data = body if isinstance(body, dict) else {}
+    tools = data.get("tools")
+    names: List[str] = []
+    if isinstance(tools, list):
+        for item in tools:
+            if not isinstance(item, dict):
+                continue
+            fn = item.get("function") if isinstance(item.get("function"), dict) else item
+            name = str((fn or {}).get("name") or "").strip()
+            if name:
+                names.append(name)
+    return tuple(names)
+
+
+def _response_has_fake_tool_text(
+    data: Any,
+    profile: Any = None,
+    tool_names: Tuple[str, ...] = (),
+) -> bool:
+    """Detect fake tool calls written as text (structural, any wrapper)."""
     if not isinstance(data, dict):
         return False
     choices = data.get("choices")
@@ -1328,13 +1348,17 @@ def _response_has_fake_tool_text(data: Any, profile: Any = None) -> bool:
     prof = profile or _model_profiles.profile_for("")
     msg = (choices[0] if isinstance(choices[0], dict) else {}).get("message", {})
     content = msg.get("content") if isinstance(msg, dict) else None
-    return _model_profiles.fake_tool_hit(content, prof)
+    return _model_profiles.fake_tool_hit(content, prof, tool_names)
 
 
-def _strip_fake_tool_text_from_response(data: Any, profile: Any = None) -> bool:
-    """???????????????????????? True?"""
+def _strip_fake_tool_text_from_response(
+    data: Any,
+    profile: Any = None,
+    tool_names: Tuple[str, ...] = (),
+) -> bool:
+    """Strip fake tool calls written as text; returns True when cleaned."""
     prof = profile or _model_profiles.profile_for("")
-    if not _model_profiles.apply_to_completion(data, prof):
+    if not _model_profiles.apply_to_completion(data, prof, tool_names):
         return False
     logger.warning("[fake-tool-clean] profile=%s stripped fake tool markup from response", prof.id)
     return True
@@ -2162,6 +2186,7 @@ async def sutui_chat_completions(
     model_id = (body.get("model") or "").strip()
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
+    _req_tool_names = _request_tool_names(body)
     _req_has_images = _request_has_multimodal_images(body)
     force_exact_model = False
     preferred_model_fallback_chain = (
@@ -2319,7 +2344,8 @@ async def sutui_chat_completions(
                         logger.info(
                             "[chat_trace] trace_id=%s tool_calls_missing model=%s provider=%s "
                             "→ retry tool_choice=required (fake_text=%s)",
-                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data, _attempt_profile),
+                            trace_id, mid_try, att["provider"],
+                            _response_has_fake_tool_text(data, _attempt_profile, _req_tool_names),
                         )
                         body["tool_choice"] = "required"
                         body["_tool_forced"] = True
@@ -2347,7 +2373,8 @@ async def sutui_chat_completions(
                         logger.warning(
                             "[chat_trace] trace_id=%s tool_calls_missing model=%s provider=%s after forced retry, "
                             "fallback to next (fake_text=%s)",
-                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data, _attempt_profile),
+                            trace_id, mid_try, att["provider"],
+                            _response_has_fake_tool_text(data, _attempt_profile, _req_tool_names),
                         )
                         if attempt_idx < len(attempts) - 1:
                             continue
@@ -2478,7 +2505,11 @@ async def sutui_chat_completions(
 
         out = data
         if isinstance(out, dict) and r.status_code == 200:
-            _strip_fake_tool_text_from_response(out, _model_profile(winning_model or mid_try))
+            _strip_fake_tool_text_from_response(
+                out,
+                _model_profile(winning_model or mid_try),
+                _req_tool_names,
+            )
         resp_status = r.status_code
         if r.status_code in (402, 403):
             out = _normalize_upstream_xskill_pool_errors_for_client(data)
@@ -2640,7 +2671,7 @@ async def sutui_chat_completions(
                                 },
                             )
                             # 只有档案声明了流式清理的模型才走 guard；默认模型零改动。
-                            stream_guard = _model_profiles.guard_for(mid_try)
+                            stream_guard = _model_profiles.guard_for(mid_try, _req_tool_names)
                             guard_pending = bytearray()
                             async for chunk in resp.aiter_bytes():
                                 before_event_count = stream_event_count
