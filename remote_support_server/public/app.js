@@ -623,6 +623,27 @@ function renderDevices() {
 }
 
 // Keep the shelf refreshable without tearing down an active remote session.
+// 设备上/下线状态：控制台自己定时刷新（页面可见时每 10 秒），回到前台或重新获得
+// 焦点时立即刷新一次。没有这段时只有整页刷新才会更新设备状态。
+async function refreshDeviceShelf() {
+  if (!sessionToken || currentUser?.status !== "approved") return;
+  try {
+    const list = await api("/api/devices");
+    devices = list.devices || [];
+    renderDevices();
+    syncMonitorSessions();
+    renderScreenWall();
+  } catch {
+    // 保留最后一次已知状态，等下次轮询再试
+  }
+}
+setInterval(() => {
+  if (document.visibilityState === "visible") refreshDeviceShelf();
+}, 10000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshDeviceShelf();
+});
+window.addEventListener("focus", () => refreshDeviceShelf());
 // The main admin now uses this workspace's own add-device modal and device
 // cards, but the message remains useful for external refresh requests.
 window.addEventListener("message", async (event) => {
