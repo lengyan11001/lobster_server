@@ -25830,10 +25830,7 @@
       el.appendChild(textEl);
       renderBubbleText(el);
       if (role === "bot") {
-        const steps = document.createElement("div");
-        steps.className = "steps";
-        el.appendChild(steps);
-        el._steps = steps;
+        el._steps = createChatProcessPanel(el);
       }
       $("messages").appendChild(el);
       $("messages").scrollTop = $("messages").scrollHeight;
@@ -25913,12 +25910,61 @@
     function addStep(bubble, text) {
       if (!SHOW_INTERNAL_STEPS || !bubble || !bubble._steps || !text) return;
       const existing = Array.from(bubble._steps.children || []);
-      if (existing.length && existing[existing.length - 1].textContent === text) return;
-      const s = document.createElement("span");
-      s.className = "step";
-      s.textContent = text;
-      bubble._steps.appendChild(s);
-      while (bubble._steps.children.length > 6) bubble._steps.firstElementChild?.remove();
+      const panel = bubble._processPanel;
+      const isRepeat = existing.length && existing[existing.length - 1].textContent === text;
+      if (!isRepeat) {
+        const s = document.createElement("span");
+        s.className = "step";
+        s.textContent = text;
+        bubble._steps.appendChild(s);
+        while (bubble._steps.children.length > 60) bubble._steps.firstElementChild?.remove();
+      }
+      if (panel) {
+        panel.classList.add("is-running");
+        panel.classList.remove("is-done");
+        const current = panel.querySelector(".chat-process-current");
+        if (current) current.textContent = text;
+        const count = panel.querySelector(".chat-process-count");
+        const total = bubble._steps.children.length;
+        if (count) count.textContent = total > 1 ? `${total} 步` : "";
+      }
+    }
+
+    // 过程面板：执行中只有一行"当前步骤"在更新（不刷屏），
+    // 结束后折叠成"过程 · N 步"，点开可以看完整步骤。
+    function createChatProcessPanel(bubble) {
+      const panel = document.createElement("div");
+      panel.className = "chat-process is-running";
+      panel.innerHTML = [
+        '<button type="button" class="chat-process-head">',
+        '<span class="chat-process-dot" aria-hidden="true"></span>',
+        '<span class="chat-process-current">正在处理…</span>',
+        '<span class="chat-process-count"></span>',
+        '<span class="chat-process-chevron" aria-hidden="true"></span>',
+        "</button>",
+        '<div class="chat-process-steps hidden"></div>',
+      ].join("");
+      const head = panel.querySelector(".chat-process-head");
+      const steps = panel.querySelector(".chat-process-steps");
+      head?.addEventListener("click", () => {
+        const willOpen = steps.classList.contains("hidden");
+        steps.classList.toggle("hidden", !willOpen);
+        panel.classList.toggle("is-open", willOpen);
+      });
+      bubble.appendChild(panel);
+      bubble._processPanel = panel;
+      return steps;
+    }
+
+    function finishChatProcess(bubble) {
+      const panel = bubble && bubble._processPanel;
+      if (!panel) return;
+      panel.classList.remove("is-running", "is-open");
+      panel.classList.add("is-done");
+      panel.querySelector(".chat-process-steps")?.classList.add("hidden");
+      const count = panel.querySelector(".chat-process-count");
+      const total = bubble._steps ? bubble._steps.children.length : 0;
+      if (count && total) count.textContent = `${total} 步`;
     }
 
     function setBubbleText(bubble, text) {
@@ -26156,6 +26202,7 @@
         setBubbleText(bubble, reply);
         renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
         renderPublishDraftActions(bubble, ev.payload || {});
+        finishChatProcess(bubble);
         if (!historical) {
           closeStream(messageId);
           ensureConversationComposerReady();
@@ -26167,6 +26214,7 @@
       if (ev.type === "error") {
         bubble.classList.add("err");
         setBubbleText(bubble, (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败");
+        finishChatProcess(bubble);
         if (!historical) {
           closeStream(messageId);
           ensureConversationComposerReady();
@@ -26175,6 +26223,7 @@
       if (ev.type === "cancelled") {
         bubble.classList.remove("err");
         setBubbleText(bubble, (ev.payload && ev.payload.text) || "已停止当前任务");
+        finishChatProcess(bubble);
         if (!historical) {
           closeStream(messageId);
           ensureConversationComposerReady({ scroll: false });
