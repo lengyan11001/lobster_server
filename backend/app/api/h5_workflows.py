@@ -902,6 +902,23 @@ def _personal_default_template(
     return _personal_default_row_for_slot(db, int(user_id), installation_id)
 
 
+def _account_level_persona_requirements(db: Session, user_id: int) -> dict[str, Any]:
+    """账号级「个人默认配置」行的资料调查（设备槽位行是空壳时用它兜底）。"""
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+            IPContentScheduleTemplate.installation_id == "",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    requirements = row.requirements if row and isinstance(row.requirements, dict) else {}
+    return requirements
+
+
 def _first_req_text(requirements: dict[str, Any], *keys: str, limit: int = 500) -> str:
     req = requirements if isinstance(requirements, dict) else {}
     basic = req.get("basic_profile") if isinstance(req.get("basic_profile"), dict) else {}
@@ -2261,6 +2278,18 @@ def _prepare_sales_workflow_nodes(
         missing.append("IP人设定位：请先完成资料调查并保存")
     else:
         profile_missing = _missing_sales_persona_fields(requirements)
+        if profile_missing:
+            # 设备槽位行可能只有骨架（language/common），人设是空的
+            # （客户端某些版本这么写过）。账号级行如果人设齐全就用它，
+            # 否则用户界面上明明填好了，启动却被判"资料调查全缺失"。
+            fallback_requirements = _account_level_persona_requirements(db, owner.id)
+            if fallback_requirements and not _missing_sales_persona_fields(fallback_requirements):
+                logger.info(
+                    "[sales-activation] slot %s persona incomplete; using account-level persona",
+                    installation_id,
+                )
+                requirements = fallback_requirements
+                profile_missing = []
         if profile_missing:
             missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
         if not keywords:
