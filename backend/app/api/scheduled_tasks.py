@@ -174,6 +174,63 @@ def _h5_dh_personal_default_template(
     return _personal_default_row_for_slot(db, int(user_id), installation_id)
 
 
+def _h5_dh_requirements_is_empty(value: Any) -> bool:
+    """资料调查是不是空壳（``{}`` / 只有空字段）。"""
+    if not isinstance(value, dict):
+        return True
+    for item in value.values():
+        if isinstance(item, dict):
+            if any(str(x or "").strip() for x in item.values()):
+                return False
+        elif isinstance(item, (list, tuple, set)):
+            if any(str(x or "").strip() for x in item):
+                return False
+        elif str(item or "").strip():
+            return False
+    return True
+
+
+def _h5_dh_persona_requirements(
+    db: Session,
+    user_id: int,
+    personal: Optional[IPContentScheduleTemplate],
+) -> dict:
+    """取这次要用的资料调查。
+
+    设备槽位行可能是空壳（客户端只存了资源、没存人设，例如 ``requirements`` 是 ``{}``）。
+    这种情况下如果直接用它，用户界面看着配好了、启动却说"资料调查全缺失"。
+    所以槽位行没有人设时回落到账号级行的人设（资源仍然用槽位行的）。
+    """
+    raw_requirements = getattr(personal, "requirements", None) if personal else None
+    requirements = raw_requirements if isinstance(raw_requirements, dict) else {}
+    if not _h5_dh_requirements_is_empty(requirements):
+        return requirements
+    slot = str(getattr(personal, "installation_id", "") or "").strip()
+    if not slot:
+        return requirements
+    account_rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+            IPContentScheduleTemplate.installation_id == "",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    for row in account_rows:
+        candidate = row.requirements if isinstance(row.requirements, dict) else {}
+        if not _h5_dh_requirements_is_empty(candidate):
+            logger.info(
+                "[h5-dh] slot %s has empty persona; falling back to account-level row %s",
+                slot,
+                row.id,
+            )
+            return candidate
+    return requirements
+
+
 def _h5_dh_current_template(
     db: Session,
     user_id: int,
@@ -321,6 +378,10 @@ def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") 
     # task payload is authoritative here.
     effective = _personal_default_template_payload_with_resources(db, personal)
     requirements = effective.get("requirements") if isinstance(effective.get("requirements"), dict) else {}
+    if _h5_dh_requirements_is_empty(requirements):
+        # 槽位行只有资源没有资料调查（客户端曾经这么写过）时，人设回落到账号级行，
+        # 否则会出现"设备上看着配好了、启动却报资料调查全缺失"。
+        requirements = _h5_dh_persona_requirements(db, user_id, personal)
     keyword_ids = _h5_dh_clean_id_list(effective.get("keyword_ids"), 100)
     competitor_ids = _h5_dh_clean_id_list(effective.get("competitor_ids"), 100)
     keyword_rows = effective.get("keywords") if isinstance(effective.get("keywords"), list) else []

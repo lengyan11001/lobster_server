@@ -188,3 +188,41 @@ def test_empty_account_row_falls_back_to_row_with_digital_human(db_session, test
     db_session.commit()
     row2 = studio._personal_default_row_for_slot(db_session, test_user.id, "slot-unknown")
     assert row2.installation_id == ""
+
+
+def test_persona_falls_back_to_account_row_when_slot_row_is_empty(db_session, test_user):
+    """槽位行只有资源、没存资料调查时，人设要用账号级行，别报"资料调查全缺失"。"""
+    from backend.app.api import scheduled_tasks
+    from backend.app.models import IPContentScheduleTemplate
+
+    account_row = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="个人默认配置",
+        installation_id="",
+        status="active",
+        requirements={"basic_profile": {"profile_name": "账号人设"}},
+        keyword_ids=[1],
+        meta={"source": "test"},
+    )
+    slot_row = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="个人默认配置",
+        installation_id="slot-empty-persona",
+        status="active",
+        requirements={},
+        keyword_ids=[1, 2, 3],
+        meta={"source": "test"},
+    )
+    db_session.add_all([account_row, slot_row])
+    db_session.commit()
+
+    context = scheduled_tasks._h5_dh_context_params(db_session, test_user.id, "slot-empty-persona")
+    assert context["requirements"]["basic_profile"]["profile_name"] == "账号人设"
+    # 资源仍然以槽位行为准
+    assert context["keyword_ids"] == [1, 2, 3]
+
+    # 槽位行自己有人设时，不回落到账号级
+    slot_row.requirements = {"basic_profile": {"profile_name": "槽位人设"}}
+    db_session.commit()
+    context2 = scheduled_tasks._h5_dh_context_params(db_session, test_user.id, "slot-empty-persona")
+    assert context2["requirements"]["basic_profile"]["profile_name"] == "槽位人设"
