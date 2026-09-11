@@ -190,8 +190,8 @@ def test_empty_account_row_falls_back_to_row_with_digital_human(db_session, test
     assert row2.installation_id == ""
 
 
-def test_persona_falls_back_to_account_row_when_slot_row_is_empty(db_session, test_user):
-    """槽位行只有资源、没存资料调查时，人设要用账号级行，别报"资料调查全缺失"。"""
+def test_slot_row_without_persona_does_not_borrow_the_account_persona(db_session, test_user):
+    """槽位行没有人设时**不能**回落到账号级人设：宁可拦下启动，也不要拿错的资料生成。"""
     from backend.app.api import scheduled_tasks
     from backend.app.models import IPContentScheduleTemplate
 
@@ -217,7 +217,8 @@ def test_persona_falls_back_to_account_row_when_slot_row_is_empty(db_session, te
     db_session.commit()
 
     context = scheduled_tasks._h5_dh_context_params(db_session, test_user.id, "slot-empty-persona")
-    assert context["requirements"]["basic_profile"]["profile_name"] == "账号人设"
+    # 不再借用账号级人设（避免"模板没配人设，却拿旧默认人设生成"）
+    assert not (context.get("requirements") or {}).get("basic_profile")
     # 资源仍然以槽位行为准
     assert context["keyword_ids"] == [1, 2, 3]
 

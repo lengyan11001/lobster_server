@@ -42,7 +42,11 @@ from .scheduled_tasks import (
     _local_bestseller_profile_from_persona,
     _serialize_task,
 )
-from .ip_content_studio import _personal_default_resource_overrides, _personal_default_row_for_slot
+from .ip_content_studio import (
+    _personal_default_resource_overrides,
+    _personal_default_row_for_slot,
+    _survey_for_template,
+)
 from ..services.user_feature_flags import user_feature_flags
 
 logger = logging.getLogger(__name__)
@@ -903,23 +907,6 @@ def _personal_default_template(
     installation_id: str = "",
 ) -> Optional[IPContentScheduleTemplate]:
     return _personal_default_row_for_slot(db, int(user_id), installation_id)
-
-
-def _account_level_persona_requirements(db: Session, user_id: int) -> dict[str, Any]:
-    """账号级「个人默认配置」行的资料调查（设备槽位行是空壳时用它兜底）。"""
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == int(user_id),
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-            IPContentScheduleTemplate.installation_id == "",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
-    requirements = row.requirements if row and isinstance(row.requirements, dict) else {}
-    return requirements
 
 
 def _first_req_text(requirements: dict[str, Any], *keys: str, limit: int = 500) -> str:
@@ -2024,6 +2011,9 @@ def _prepare_sales_workflow_nodes(
     personal = _personal_default_template(db, owner.id, installation_id)
     current_template = _current_personal_schedule_template(db, owner.id, personal)
     reference_template = current_template or personal
+    # 人设必须以"当前模板关联的资料调查"为准。模板没挂资料调查就直接拦下，
+    # 不能再回落去取个人默认行里残留的旧人设（否则换模板后内容还是旧行业）。
+    template_survey = _survey_for_template(db, reference_template) if reference_template is not None else None
     digital_human_template_id = _sales_digital_human_template_id(personal, current_template)
     reference_owner_id = int(reference_template.user_id) if reference_template else int(owner.id)
     # Activation and runtime use the same server-side effective template
@@ -2281,18 +2271,14 @@ def _prepare_sales_workflow_nodes(
         missing.append("IP人设定位：请先完成资料调查并保存")
     else:
         profile_missing = _missing_sales_persona_fields(requirements)
-        if profile_missing:
-            # 设备槽位行可能只有骨架（language/common），人设是空的
-            # （客户端某些版本这么写过）。账号级行如果人设齐全就用它，
-            # 否则用户界面上明明填好了，启动却被判"资料调查全缺失"。
-            fallback_requirements = _account_level_persona_requirements(db, owner.id)
-            if fallback_requirements and not _missing_sales_persona_fields(fallback_requirements):
-                logger.info(
-                    "[sales-activation] slot %s persona incomplete; using account-level persona",
-                    installation_id,
-                )
-                requirements = fallback_requirements
-                profile_missing = []
+        if template_survey is None:
+            # 当前模板没关联资料调查：不再用个人默认行里的旧人设兜底，直接拦下，
+            # 让用户去模板里选好资料调查再启用。
+            missing.append(
+                "IP人设定位-模板：当前模板还没有关联资料调查（人设），"
+                "请先在模板里选择资料调查后再启用"
+            )
+            profile_missing = []
         if profile_missing:
             missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
         if not keywords:

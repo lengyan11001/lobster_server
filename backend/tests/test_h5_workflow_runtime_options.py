@@ -220,6 +220,13 @@ def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_sess
     monkeypatch.setattr(h5_workflows, "_active_competitors_for_ids", active_competitors)
     monkeypatch.setattr(h5_workflows, "_missing_sales_persona_fields", lambda requirements: [])
     monkeypatch.setattr(h5_workflows, "_device_is_online", lambda db, user_id, installation_id: True)
+    # 现在人设必须以"当前模板关联的资料调查"为准：这里给当前模板挂一份资料调查，
+    # 否则启动会被新规则拦下（模板未关联资料调查）。
+    monkeypatch.setattr(
+        h5_workflows,
+        "_survey_for_template",
+        lambda db, row: SimpleNamespace(id=1, requirements={"industry": "new"}),
+    )
 
     nodes = [
         {
@@ -403,3 +410,77 @@ def test_publish_default_uses_payload_installation_id_when_column_is_empty(db_se
     params = prepared[0]["children"][0]["plan"]["payload"]["params"]
     assert params["installation_id"] == installation_id
     assert params["publish_installation_id"] == installation_id
+
+
+def test_sales_activation_is_blocked_when_the_template_has_no_persona_survey(monkeypatch, db_session, test_user):
+    """当前模板没关联资料调查时直接拦下：不许拿个人默认行里的旧人设顶上。
+
+    线上出现过"模板换成新行业了，生成的数字人内容还是旧行业"就是这条兜底造成的。
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    personal = SimpleNamespace(
+        id=13,
+        user_id=test_user.id,
+        installation_id="slot-no-survey",
+        requirements={"basic_profile": {"profile_name": "旧行业人设"}},
+        meta={},
+    )
+    current = SimpleNamespace(id=14, user_id=test_user.id, requirements={}, meta={})
+    monkeypatch.setattr(h5_workflows, "_personal_default_template", lambda db, user_id, installation_id="": personal)
+    monkeypatch.setattr(h5_workflows, "_current_personal_schedule_template", lambda db, user_id, row: current)
+    monkeypatch.setattr(h5_workflows, "_survey_for_template", lambda db, row: None)
+    monkeypatch.setattr(
+        h5_workflows,
+        "_h5_dh_context_params",
+        lambda db, user_id, installation_id="": {
+            "requirements": {"basic_profile": {"profile_name": "旧行业人设"}},
+            "keyword_ids": [1],
+            "competitors": ["x"],
+            "competitor_ids": [1],
+            "memory_docs": [{"id": 1, "title": "m"}],
+            "memory_doc_ids": ["1"],
+        },
+    )
+    monkeypatch.setattr(h5_workflows, "_personal_default_resource_overrides", lambda personal, current: {
+        "keyword_ids": False,
+        "competitor_ids": False,
+        "memory_doc_ids": False,
+    })
+    monkeypatch.setattr(h5_workflows, "_active_keywords_for_ids", lambda db, user_id, ids: [SimpleNamespace()])
+    monkeypatch.setattr(
+        h5_workflows,
+        "_active_competitors_for_ids",
+        lambda db, user_id, ids: [SimpleNamespace(last_fetch_at=datetime.utcnow())],
+    )
+    monkeypatch.setattr(h5_workflows, "_missing_sales_persona_fields", lambda requirements: [])
+    monkeypatch.setattr(h5_workflows, "_device_is_online", lambda db, user_id, installation_id: True)
+    monkeypatch.setattr(h5_workflows, "_sales_digital_human_provider", lambda extra, template: "shanjian_v2")
+    monkeypatch.setattr(h5_workflows, "_sales_digital_human_template_id", lambda personal, current: "style-x")
+    monkeypatch.setattr(h5_workflows, "_has_active_keywords", lambda *args, **kwargs: True)
+    monkeypatch.setattr(h5_workflows, "_has_active_competitors", lambda *args, **kwargs: True)
+    monkeypatch.setattr(h5_workflows, "_has_active_memory_docs", lambda *args, **kwargs: True)
+
+    nodes = [
+        {
+            "id": "sales-digital",
+            "department_id": "sales",
+            "plan": {
+                "task_kind": "client_workflow",
+                "payload": {"action": "shanjian_digital_human_video", "params": {}},
+            },
+        }
+    ]
+
+    with pytest.raises(HTTPException) as excinfo:
+        h5_workflows._prepare_sales_workflow_nodes(
+            db=db_session,
+            owner=test_user,
+            installation_id="slot-no-survey",
+            template_name="销售员工",
+            nodes=nodes,
+            snapshot_extra=None,
+        )
+
+    assert "资料调查" in str(excinfo.value.detail)
