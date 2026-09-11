@@ -58,6 +58,25 @@ _EMPTY_REPLY_NOTICE = (
 )
 
 
+def _is_placeholder_reply(value: Any) -> bool:
+    """这句是不是"模型其实没给正文、被兜底文案顶上来"的占位句。
+
+    代理层会把"整段都是工具调用残留"的回复替换成 profile 的兜底文案，
+    runner 只看到一句正常中文，就会当成结果直接结束（用户看到的"停在那里、
+    没有结果"）。这里认出它，按"没拿到正文"处理，触发重试。
+    """
+    text_value = str(value or "").strip()
+    if not text_value:
+        return False
+    profile = _model_reply_profiles.profile_for("")
+    known = {
+        str(getattr(profile, "fake_tool_fallback_text", "") or "").strip(),
+        str(getattr(_model_reply_profiles, "DEFAULT_FALLBACK_TEXT", "") or "").strip(),
+    }
+    known.discard("")
+    return text_value in known
+
+
 class _JunkOnlyFinal(RuntimeError):
     """最终回复整段都是工具调用残留：先重试，别把垃圾写进对话。"""
 
@@ -1049,7 +1068,7 @@ async def _run_job_request(job: MastraChatJob) -> None:
                             cleaned_reply = _strip_fake_tool_markup(raw_reply)
                             if (
                                 raw_reply.strip()
-                                and not cleaned_reply
+                                and (not cleaned_reply or _is_placeholder_reply(raw_reply))
                                 and not dispatches
                                 and not media_tasks
                                 and not saved_assets

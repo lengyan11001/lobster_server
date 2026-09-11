@@ -2080,3 +2080,13 @@ def test_mastra_media_generation_is_guarded_and_polled_to_terminal():
     assert source.count("if (mediaExecution.hasPending())") >= 2
     assert "parameter_schema: parameterSchema" in capability_search
     assert "按照 parameter_schema 的类型、必填项、默认值和范围" in source
+
+
+def test_placeholder_fallback_reply_counts_as_missing_content():
+    """代理层把"只有工具调用残留"的回复替换成兜底文案时，
+    runner 必须把它当成"没拿到正文"，不能直接当结果结束（会表现为任务停住没结果）。"""
+    from backend.app.services import mastra_chat_runner as runner
+
+    assert runner._is_placeholder_reply("好的，我来为您总结一下已获取的信息。") is True
+    assert runner._is_placeholder_reply("小猫抓老鼠的视频已提交生成") is False
+    assert runner._is_placeholder_reply("") is False
