@@ -29,6 +29,7 @@ from mcp.video_model_resolve import (
     APIZ_VEO31_IMAGE_MODEL,
     APIZ_VEO31_REFERENCE_MODEL,
     APIZ_VEO31_TEXT_MODEL,
+    DASHSCOPE_WAN30_VIDEO_MODEL,
     SUTUI_GROK_15_IMAGE_MODEL,
     resolve_default_video_model_id,
     resolve_video_model_id,
@@ -3771,6 +3772,47 @@ def _normalize_video_generate_payload(
         _merge_common_video_ui_fields(out, payload)
         return out
 
+    # 千问万相 3.0：统一模型名，服务端适配 DashScope input/parameters 契约。
+    if model == DASHSCOPE_WAN30_VIDEO_MODEL:
+        raw_duration = _payload_get_duration_raw(payload)
+        if str(raw_duration or "").strip().lower() in {"-1", "-1s"}:
+            wan_duration = -1
+        else:
+            wan_duration = max(2, min(30, duration_sec))
+        raw_ratio = _payload_get_aspect_ratio(payload)
+        ratio_value = str(raw_ratio or "").strip().lower().replace(" ", "").replace("：", ":")
+        ratio_value = {
+            "auto": "adaptive",
+            "automatic": "adaptive",
+            "default": "adaptive",
+            "original": "adaptive",
+            "adapt": "adaptive",
+            "landscape": "16:9",
+            "horizontal": "16:9",
+            "portrait": "9:16",
+            "vertical": "9:16",
+            "square": "1:1",
+        }.get(ratio_value, ratio_value)
+        if ratio_value not in {"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}:
+            ratio_value = "adaptive"
+        resolution_value = str(payload.get("resolution") or "1080P").strip().upper()
+        if resolution_value in {"AUTO", "AUTOMATIC", "DEFAULT", "ORIGINAL"}:
+            resolution_value = "1080P"
+        if resolution_value not in {"480P", "720P", "1080P"}:
+            resolution_value = "720P"
+        out = {
+            "model": model,
+            "prompt": prompt,
+            "duration": wan_duration,
+            "ratio": ratio_value,
+            "resolution": resolution_value,
+        }
+        if first_url:
+            out["image_url"] = first_url
+        if payload.get("prompt_extend") is not None:
+            out["prompt_extend"] = bool(payload.get("prompt_extend"))
+        return out
+
     # fal-ai/minimax/hailuo*：Pro 无 duration（固定196积分），Standard 有 duration（字符串）
     if "hailuo" in model or "minimax" in model:
         out = {"model": model, "prompt": prompt}
@@ -4294,7 +4336,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     _fmt = _mv.get("api_format", "")
                     if _fmt == "dalle":
                         _comfly_image_models.append(_mk)
-                    elif _fmt in ("unified_video",):
+                    elif _fmt in ("unified_video", "dashscope_wan30"):
                         _comfly_video_models.append(_mk)
             except Exception:
                 pass

@@ -62,6 +62,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from mcp.comfly_upstream import (  # noqa: E402
+    call_comfly_task_query,
+    call_comfly_video_generate,
     estimate_comfly_credits,
     get_comfly_config,
     lookup_comfly_model,
@@ -664,6 +666,28 @@ def _model_token_group(model_id: str) -> str:
 
 def _normalized_model_id(model_id: str) -> str:
     return (model_id or "").strip().lower().replace("_", "-")
+
+
+_DASHSCOPE_WAN30_MODEL_ALIASES = frozenset(
+    {
+        "wan3.0",
+        "wan3.0-video",
+        "wanv3.0",
+        "wan/v3.0",
+        "万相3.0",
+        "万相3.0-video",
+    }
+)
+
+
+def _is_dashscope_wan30_model(model_id: str) -> bool:
+    """Accept the public wan3.0 label while keeping one priced upstream model."""
+    normalized = str(model_id or "").strip().lower().replace(" ", "")
+    return normalized in _DASHSCOPE_WAN30_MODEL_ALIASES
+
+
+def _canonical_video_model(model_id: str) -> str:
+    return "wan3.0-video" if _is_dashscope_wan30_model(model_id) else str(model_id or "").strip()
 
 
 _GPT_IMAGE_2_REQUEST_ALIASES = {
@@ -2629,14 +2653,14 @@ async def _openmind_video_content(task_id: str, model: str = "") -> Response:
 def _task_id_from_response(resp: Dict[str, Any]) -> str:
     if not isinstance(resp, dict):
         return ""
-    for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
-        value = resp.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    data = resp.get("data")
-    if isinstance(data, dict):
+    containers = [resp]
+    for container_key in ("data", "output"):
+        container = resp.get(container_key)
+        if isinstance(container, dict):
+            containers.append(container)
+    for container in containers:
         for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
-            value = data.get(key)
+            value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return ""
@@ -2961,6 +2985,17 @@ async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str =
         raise HTTPException(400, "missing task_id")
     kind = (api_kind or "").strip().lower()
     route_model = (model or "").strip()
+    if kind == "dashscope_wan30":
+        response = await call_comfly_task_query(
+            tid,
+            token_group="dashscope_wan30",
+            api_format="dashscope_wan30",
+        )
+        if isinstance(response, dict) and response.get("error"):
+            error = response.get("error")
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise RuntimeError(message or "DashScope Wan3.0 查询失败")
+        return response
     if kind in {"grok_v1", "comfyui_grok_v1"}:
         resp = await _comfly_request(
             "GET",
@@ -4169,9 +4204,13 @@ async def proxy_videos_generations_submit(
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
-    model = (body.get("model") or "").strip()
+    requested_model = (body.get("model") or "").strip()
+    model = _canonical_video_model(requested_model)
     if not model:
         raise HTTPException(400, "缺少 model")
+    if model != requested_model:
+        body = dict(body)
+        body["model"] = model
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
 
@@ -4195,7 +4234,14 @@ async def proxy_videos_generations_submit(
     )
 
     try:
-        if _is_grok_api_format(entry) or _is_comfyui_grok_api_format(entry):
+        api_format = str(entry.get("api_format") or "").strip().lower()
+        if api_format == "dashscope_wan30":
+            resp = await call_comfly_video_generate(model, body)
+            if isinstance(resp, dict) and resp.get("error"):
+                error = resp.get("error")
+                message = error.get("message") if isinstance(error, dict) else str(error)
+                raise RuntimeError(message or "DashScope Wan3.0 提交失败")
+        elif _is_grok_api_format(entry) or _is_comfyui_grok_api_format(entry):
             resp = await _submit_comfly_grok15_video(body, model, entry)
         else:
             resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
@@ -4230,9 +4276,13 @@ async def proxy_videos_generations_submit(
         (resp.get("data", {}) or {}).get("task_id") if isinstance(resp.get("data"), dict) else resp.get("task_id")
     )
     api_kind = (
-        "comfyui_grok_v1"
-        if _is_comfyui_grok_api_format(entry)
-        else ("grok_v1" if _is_grok_api_format(entry) else "veo_v2")
+        "dashscope_wan30"
+        if str(entry.get("api_format") or "").strip().lower() == "dashscope_wan30"
+        else (
+            "comfyui_grok_v1"
+            if _is_comfyui_grok_api_format(entry)
+            else ("grok_v1" if _is_grok_api_format(entry) else "veo_v2")
+        )
     )
     _remember_proxy_video_task(task_id, api_kind, model)
     _audit("video_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
@@ -4247,8 +4297,16 @@ async def proxy_videos_generations_submit(
         user_id=billing_user_id,
         requested_model=model,
         model=model,
-        provider="comfyui" if _is_comfyui_grok_api_format(entry) else "comfly",
-        channel="comfyui" if _is_comfyui_grok_api_format(entry) else "comfly",
+        provider=(
+            "dashscope"
+            if api_kind == "dashscope_wan30"
+            else ("comfyui" if _is_comfyui_grok_api_format(entry) else "comfly")
+        ),
+        channel=(
+            "dashscope"
+            if api_kind == "dashscope_wan30"
+            else ("comfyui" if _is_comfyui_grok_api_format(entry) else "comfly")
+        ),
         route=api_kind,
         endpoint="/api/comfly-proxy/v2/videos/generations",
         request_id=task_id or "",
@@ -4280,6 +4338,19 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
     low_model = raw_model.lower().replace("_", "-").replace(" ", "")
     low_channel = (channel or "").strip().lower()
     proxy_base = "/api/comfly-proxy"
+
+    if _is_dashscope_wan30_model(raw_model):
+        return {
+            "ok": True,
+            "model_family": "wan30",
+            "providers": [
+                {
+                    "channel": "dashscope",
+                    "model": "wan3.0-video",
+                    "base_url": proxy_base,
+                }
+            ],
+        }
 
     if low_model.startswith("apiz/veo3.1/image-to-video") or low_model.startswith("apiz/veo3.1/reference-to-video"):
         low_channel = "grok"
