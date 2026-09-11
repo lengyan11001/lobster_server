@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import re
 import threading
@@ -43,6 +44,8 @@ from .scheduled_tasks import (
 )
 from .ip_content_studio import _personal_default_resource_overrides, _personal_default_row_for_slot
 from ..services.user_feature_flags import user_feature_flags
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
