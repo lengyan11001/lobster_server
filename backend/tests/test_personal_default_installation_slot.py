@@ -226,3 +226,43 @@ def test_persona_falls_back_to_account_row_when_slot_row_is_empty(db_session, te
     db_session.commit()
     context2 = scheduled_tasks._h5_dh_context_params(db_session, test_user.id, "slot-empty-persona")
     assert context2["requirements"]["basic_profile"]["profile_name"] == "槽位人设"
+
+
+def test_saving_without_profile_fields_keeps_the_device_persona(db_session, test_user):
+    """切模板/加关键词这类保存不带人设字段时，不能把设备行的人设抹成空壳。"""
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentScheduleTemplate
+
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name=studio._PERSONAL_DEFAULT_TEMPLATE_NAME,
+            installation_id="slot-keep-profile",
+            status="active",
+            requirements={"basic_profile": {"name": "张三", "current_city": "深圳"}},
+            meta={"source": "test"},
+        )
+    )
+    db_session.commit()
+
+    # 模拟客户端"切模板"时的请求：只带模板公共字段，人设字段被剥掉
+    studio.save_personal_default_ip_content_config(
+        studio.ScheduleTemplateBody(
+            requirements={"common": "模板公共字段"},
+            meta={"source": "personal_settings_current_template"},
+        ),
+        x_installation_id="slot-keep-profile",
+        current_user=test_user,
+        db=db_session,
+    )
+
+    row = (
+        db_session.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == test_user.id,
+            IPContentScheduleTemplate.installation_id == "slot-keep-profile",
+        )
+        .one()
+    )
+    assert row.requirements.get("basic_profile", {}).get("name") == "张三"
+    assert row.requirements.get("common") == "模板公共字段"

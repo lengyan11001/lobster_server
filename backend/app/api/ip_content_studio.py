@@ -6106,6 +6106,12 @@ def save_personal_default_ip_content_config(
     if template_ref is not None:
         source_requirements = dict(template_ref.requirements or {})
         incoming_profile = _personal_profile_fields(body.requirements)
+        if not _personal_profile_has_values(incoming_profile):
+            # 老客户端在"切换/保存模板"时不会带资料调查字段（客户端会先把
+            # profile 字段剥掉）。这种请求不能把设备默认行上的人设抹掉，
+            # 否则行会变成"只剩骨架"的空壳：界面上看着配好了，启动却报
+            # "IP人设定位-资料调查：… 全缺失"。
+            incoming_profile = _personal_profile_fields(existing_requirements)
         incoming_non_profile = _strip_personal_profile_requirements(body.requirements)
         source = _clean_text((body.meta or {}).get("source"), 80)
         if not incoming_non_profile:
@@ -6127,6 +6133,12 @@ def save_personal_default_ip_content_config(
         # template is live. Only non-profile fields are treated as template
         # overrides so saving the survey cannot discard the profile.
         incoming_requirements = {**template_requirement_overrides, **incoming_profile}
+    if not _personal_profile_has_values(_personal_profile_fields(incoming_requirements)):
+        # 兜底：任何"没带资料调查字段"的保存（老客户端、只切模板、只加关键词）
+        # 都不允许把设备默认行上的人设抹成空壳。删除人设要走资料调查那条明确路径。
+        existing_profile = _personal_profile_fields(existing_requirements)
+        if _personal_profile_has_values(existing_profile):
+            incoming_requirements = {**incoming_requirements, **existing_profile}
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = (
