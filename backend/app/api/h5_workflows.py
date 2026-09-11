@@ -2009,7 +2009,10 @@ def _prepare_sales_workflow_nodes(
     # Activation and runtime use the same server-side effective template
     # context. Workflow nodes may retain action/timing controls, but they
     # never retain an activation-time copy of personal template resources.
-    template_context = _h5_dh_context_params(db, owner.id)
+    # 必须带上设备槽位：不带槽位时这里会回落到账号级（installation_id=""）
+    # 的空壳个人默认行，于是明明在槽位模板里选好了同行账号/关键词/记忆文件，
+    # 启动时仍然报"IP人设定位-模板：请在当前启用模板中选择 1 个同行账号"。
+    template_context = _h5_dh_context_params(db, owner.id, installation_id)
     resource_overrides = (
         _personal_default_resource_overrides(personal, reference_template)
         if personal and reference_template

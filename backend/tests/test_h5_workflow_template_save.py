@@ -765,3 +765,43 @@ def test_moments_workflow_node_selects_paginated_contacts_by_wechat_id():
     assert 'workflowMomentSelectedValues("param")' in script
     assert 'String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage"' in script
     assert ".workflow-moment-list" in styles
+
+
+def test_sales_activation_context_is_resolved_for_the_device_slot(db_session, test_user, monkeypatch):
+    """回归：启动校验必须按设备槽位解析个人默认资源。
+
+    传空槽位会回落到账号级（installation_id=""）的空壳行，导致明明在槽位模板里
+    选好了同行账号/关键词/记忆文件，启动时仍报"缺少 1 个同行账号"。
+    """
+    seen: list[str] = []
+    original = workflow_api._h5_dh_context_params
+
+    def spy(db, user_id, installation_id=""):
+        seen.append(str(installation_id))
+        return original(db, user_id, installation_id)
+
+    monkeypatch.setattr(workflow_api, "_h5_dh_context_params", spy)
+    nodes = [
+        {
+            "id": "sales_1",
+            "time": "06:00",
+            "department_id": "sales",
+            "ability_label": "创作同城爆款视频",
+            "plan": {
+                "task_kind": "client_workflow",
+                "payload": {"action": "local_bestseller_daily_video"},
+            },
+        }
+    ]
+
+    with pytest.raises(HTTPException):
+        workflow_api._prepare_sales_workflow_nodes(
+            db=db_session,
+            owner=test_user,
+            installation_id="slot-under-test",
+            template_name="销售24小时员工",
+            nodes=nodes,
+            snapshot_extra={"system_template_key": "system_sales"},
+        )
+
+    assert seen == ["slot-under-test"]

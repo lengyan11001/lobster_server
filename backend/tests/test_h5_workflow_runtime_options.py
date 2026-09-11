@@ -178,14 +178,19 @@ def test_current_ip_template_can_explicitly_report_missing_sales_template():
 def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_session, test_user):
     personal = SimpleNamespace(user_id=test_user.id, meta={})
     current = SimpleNamespace(user_id=test_user.id, meta={})
-    monkeypatch.setattr(h5_workflows, "_personal_default_template", lambda db, user_id: personal)
+    seen_slots: list[str] = []
+    monkeypatch.setattr(
+        h5_workflows,
+        "_personal_default_template",
+        lambda db, user_id, installation_id="": (seen_slots.append(str(installation_id)), personal)[1],
+    )
     monkeypatch.setattr(h5_workflows, "_current_personal_schedule_template", lambda db, user_id, row: current)
     monkeypatch.setattr(h5_workflows, "_sales_digital_human_provider", lambda extra, template: "shanjian_v2")
     monkeypatch.setattr(h5_workflows, "_sales_digital_human_template_id", lambda personal, current: "style-current")
     monkeypatch.setattr(
         h5_workflows,
         "_h5_dh_context_params",
-        lambda db, user_id: {
+        lambda db, user_id, installation_id="": {
             "requirements": {"industry": "new"},
             "keyword_ids": [11],
             "keyword_texts": ["new keyword"],
@@ -252,12 +257,18 @@ def test_sales_activation_replaces_stale_template_resources(monkeypatch, db_sess
     assert params["keyword_ids"] == [11]
     assert params["language"] == "en-US"
     assert queried_competitor_ids == [22]
+    # 启动校验必须按设备槽位解析模板资源，否则会读到账号级的空壳行。
+    assert seen_slots == ["online-1"]
 
 
 def test_h5_template_context_includes_competitor_ids(monkeypatch, db_session):
     personal = SimpleNamespace(user_id=31, meta={})
     current = SimpleNamespace(user_id=31, meta={})
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_personal_default_template", lambda db, user_id: personal)
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_h5_dh_personal_default_template",
+        lambda db, user_id, installation_id="": personal,
+    )
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_current_template", lambda db, user_id, row: current)
     monkeypatch.setattr(
         scheduled_tasks,
