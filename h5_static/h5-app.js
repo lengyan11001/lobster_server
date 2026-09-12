@@ -23,6 +23,24 @@
       const legacyToken = localStorage.getItem("lobster_h5_token") || "";
       if (legacyToken) localStorage.setItem(H5_TOKEN_KEY, legacyToken);
     }
+    // 后台系统模板编辑器桥接：/h5/?system_key=<key>[&token=<jwt>][&brand=<mark>]
+    // 走系统的共享模板读写接口，直接在 H5 的卡片+弹窗编辑器里改系统模板。
+    const H5_EDITOR_PARAMS = (() => {
+      try {
+        return new URLSearchParams(window.location.search || "");
+      } catch {
+        return null;
+      }
+    })();
+    const H5_SYSTEM_TEMPLATE_KEY = String((H5_EDITOR_PARAMS && H5_EDITOR_PARAMS.get("system_key")) || "").trim();
+    (() => {
+      const bridgeToken = String((H5_EDITOR_PARAMS && H5_EDITOR_PARAMS.get("token")) || "").trim();
+      if (!bridgeToken) return;
+      try {
+        localStorage.setItem(H5_TOKEN_KEY, bridgeToken);
+        if (H5_BRAND_MARK === "bihuo") localStorage.setItem("lobster_h5_token", bridgeToken);
+      } catch {}
+    })();
     function readCachedH5User() {
       if (!localStorage.getItem(H5_TOKEN_KEY)) return null;
       try {
@@ -270,6 +288,11 @@
       workflowGrantSelectedUserIds: {},
       workflowSubmitting: false,
       workflowSalesTemplateMigrationPending: false,
+      workflowSystemEditorKey: "",
+      workflowSystemEditorName: "",
+      workflowSystemEditorPublished: true,
+      workflowSystemEditorLoadedKey: "",
+      workflowSystemEditorOpening: false,
       workflowParamNodeId: "",
       workflowActionParentNodeId: "",
       workflowActionEditId: "",
@@ -6980,6 +7003,98 @@
       if (options.openList !== false) openCustomEmployeeList();
     }
 
+    function systemEditorModeActive() {
+      return !!String(state.workflowSystemEditorKey || "").trim();
+    }
+
+    function ensureSystemEditorBanner() {
+      let banner = $("workflowSystemEditorBanner");
+      if (banner) return banner;
+      const shell = document.querySelector("#workflowView .workflow-shell");
+      if (!shell) return null;
+      banner = document.createElement("div");
+      banner.id = "workflowSystemEditorBanner";
+      banner.className = "workflow-system-editor-banner hidden";
+      banner.style.cssText = "margin:0 0 10px;padding:10px 12px;border-radius:10px;background:#fff7e6;border:1px solid #ffd591;color:#874d00;font-size:12px;line-height:1.5";
+      shell.insertBefore(banner, shell.firstChild);
+      return banner;
+    }
+
+    function renderSystemEditorChrome() {
+      const editorOn = systemEditorModeActive();
+      ["workflowActivateBtn", "workflowStopBtn", "workflowDeleteTemplateBtn", "workflowTemplateListBtn"].forEach((id) => {
+        const el = $(id);
+        if (el) el.classList.toggle("hidden", editorOn);
+      });
+      const saveButton = $("workflowSaveTemplateBtn");
+      if (saveButton) saveButton.textContent = editorOn ? "保存并生效" : "保存模板";
+      const banner = ensureSystemEditorBanner();
+      if (!banner) return;
+      banner.classList.toggle("hidden", !editorOn);
+      if (editorOn) {
+        const published = state.workflowSystemEditorPublished !== false;
+        banner.textContent = `系统模板编辑中：${state.workflowSystemEditorName || state.workflowSystemEditorKey}（${published ? "已上架" : "已下架"}）· 保存后立即同步给正在直接启用该模板的用户`;
+      }
+    }
+
+    async function openSystemWorkflowTemplateEditor(key) {
+      const templateKey = String(key || "").trim();
+      if (!templateKey) return null;
+      const data = await api(`/api/h5-workflows/system-templates/${encodeURIComponent(templateKey)}`);
+      const resolvedKey = String((data && data.key) || templateKey).trim();
+      state.workflowSystemEditorKey = resolvedKey;
+      state.workflowSystemEditorName = String((data && data.name) || resolvedKey);
+      state.workflowSystemEditorPublished = !(data && data.published === false);
+      state.workflowSystemEditorLoadedKey = resolvedKey;
+      state.workflowSalesTemplateMigrationPending = false;
+      state.workflowEditingTemplateId = "";
+      state.workflowEditingTemplateMeta = { system_template_key: resolvedKey, source: "system" };
+      state.workflowViewingTemplateId = "";
+      state.workflowViewingTemplateKey = resolvedKey;
+      state.workflowNodesDraft = cloneWorkflowNodes((data && Array.isArray(data.nodes)) ? data.nodes : []);
+      if ($("workflowTemplateName")) $("workflowTemplateName").value = state.workflowSystemEditorName;
+      renderWorkflow();
+      switchTab("workflow");
+      return resolvedKey;
+    }
+
+    function maybeOpenSystemWorkflowEditor() {
+      if (!H5_SYSTEM_TEMPLATE_KEY || !state.token) return;
+      if (state.workflowSystemEditorLoadedKey === H5_SYSTEM_TEMPLATE_KEY) return;
+      if (state.workflowSystemEditorOpening) return;
+      state.workflowSystemEditorOpening = true;
+      openSystemWorkflowTemplateEditor(H5_SYSTEM_TEMPLATE_KEY)
+        .catch((err) => {
+          state.workflowSystemEditorLoadedKey = "";
+          toast((err && err.message) || "系统模板加载失败");
+          try {
+            switchTab("workflow");
+          } catch {}
+        })
+        .finally(() => {
+          state.workflowSystemEditorOpening = false;
+        });
+    }
+
+    async function saveSystemWorkflowTemplate({ notify = true } = {}) {
+      const key = String(state.workflowSystemEditorKey || "").trim();
+      if (!key) return null;
+      const nodes = cloneWorkflowNodes(state.workflowNodesDraft || []);
+      if (!nodes.length) throw new Error("请先添加至少一个节点");
+      if (!window.confirm(`确认保存系统模板「${state.workflowSystemEditorName || key}」并立即对所有直接启用该模板的用户生效？`)) {
+        return null;
+      }
+      const name = (($("workflowTemplateName") && $("workflowTemplateName").value) || "").trim();
+      const data = await api(`/api/h5-workflows/system-templates/${encodeURIComponent(key)}`, {
+        method: "POST",
+        json: { name, nodes, confirm: true },
+      });
+      if (notify) {
+        toast(`系统模板已生效：${Number((data && data.node_count) || nodes.length)} 个节点，已同步 ${Number((data && data.synced_mirrors) || 0)} 个用户`);
+      }
+      return data;
+    }
+
     function renderWorkflowGrantPanel() {
       const panel = $("workflowGrantPanel");
       const list = $("workflowSubUserList");
@@ -7006,6 +7121,7 @@
       renderWorkflowDayBoard();
       renderWorkflowTimeline();
       renderWorkflowTemplates();
+      renderSystemEditorChrome();
       renderWorkflowGrantPanel();
     }
 
@@ -7111,6 +7227,28 @@
     async function saveWorkflowTemplate({ notify = true } = {}) {
       if (state.workflowTemplateSaving) return;
       const name = ($("workflowTemplateName") && $("workflowTemplateName").value || "").trim();
+      if (systemEditorModeActive()) {
+        const saveButton = $("workflowSaveTemplateBtn");
+        const previousLabel = saveButton ? saveButton.textContent : "";
+        state.workflowTemplateSaving = true;
+        if (saveButton) {
+          saveButton.disabled = true;
+          saveButton.setAttribute("aria-busy", "true");
+          saveButton.textContent = "保存中…";
+        }
+        try {
+          await saveSystemWorkflowTemplate({ notify });
+        } finally {
+          state.workflowTemplateSaving = false;
+          if (saveButton) {
+            saveButton.disabled = false;
+            saveButton.removeAttribute("aria-busy");
+            saveButton.textContent = previousLabel || "保存并生效";
+          }
+          renderSystemEditorChrome();
+        }
+        return;
+      }
       if (!name) {
         $("workflowTemplateName")?.focus();
         throw new Error("请先给员工模板取一个名字");
@@ -17468,6 +17606,7 @@
       } else {
         $("topActions")?.classList.toggle("hidden", activeViewKey() !== "office" || !state.token);
       }
+      maybeOpenSystemWorkflowEditor();
     }
 
     async function showLoginShell() {
