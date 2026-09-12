@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -2670,13 +2670,41 @@ def _remember_proxy_video_task(task_id: str, api_kind: str = "", model: str = ""
     tid = (task_id or "").strip()
     if not tid:
         return
-    _proxy_video_task_meta[tid] = ((api_kind or "").strip(), (model or "").strip())
+    kind = (api_kind or "").strip()
+    route_model = (model or "").strip()
+    _proxy_video_task_meta[tid] = (kind, route_model)
     while len(_proxy_video_task_meta) > _MAX_PROXY_VIDEO_TASK_TRACK:
         _proxy_video_task_meta.popitem(last=False)
+    try:
+        cache_set(
+            f"comfly:video-task-meta:{tid}",
+            json.dumps({"api_kind": kind, "model": route_model}, ensure_ascii=False),
+            ttl_seconds=24 * 60 * 60,
+        )
+    except Exception:
+        logger.debug("failed to persist video task routing metadata", exc_info=True)
 
 
 def _proxy_video_task_hint(task_id: str) -> Tuple[str, str]:
-    return _proxy_video_task_meta.get((task_id or "").strip(), ("", ""))
+    tid = (task_id or "").strip()
+    if not tid:
+        return "", ""
+    remembered = _proxy_video_task_meta.get(tid)
+    if remembered:
+        return remembered
+    try:
+        raw = cache_get(f"comfly:video-task-meta:{tid}")
+        if raw:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(payload, dict):
+                kind = str(payload.get("api_kind") or "").strip()
+                route_model = str(payload.get("model") or "").strip()
+                if kind or route_model:
+                    _proxy_video_task_meta[tid] = (kind, route_model)
+                    return kind, route_model
+    except Exception:
+        logger.debug("failed to load persisted video task routing metadata", exc_info=True)
+    return "", ""
 
 def _require_model_entry(model: str) -> Dict[str, Any]:
     entry = lookup_comfly_model(model)
@@ -4319,12 +4347,20 @@ async def proxy_videos_generations_submit(
 async def proxy_videos_generations_poll(
     task_id: str,
     request: Request,
+    api_kind: str = Query("", description="显式指定任务提供商，例如 dashscope_wan30"),
+    model: str = Query("", description="显式指定上游模型，用于跨进程轮询路由"),
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
     remembered_kind, remembered_model = _proxy_video_task_hint(task_id)
+    requested_kind = (api_kind or "").strip().lower()
+    requested_model = (model or "").strip()
+    effective_kind = requested_kind or remembered_kind
+    effective_model = requested_model or remembered_model
+    if effective_kind == "dashscope_wan30" and not effective_model:
+        effective_model = "wan3.0-video"
     try:
-        resp = await _poll_comfly_video_task(task_id, remembered_model, remembered_kind)
+        resp = await _poll_comfly_video_task(task_id, effective_model, effective_kind)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
     return JSONResponse(resp)
