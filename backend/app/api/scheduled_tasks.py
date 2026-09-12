@@ -98,6 +98,9 @@ _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
 _SERIAL_CLIENT_WORKFLOW_ACTIONS = {
     "native_wechat_poll",
     "native_wechat_moments_engage",
+    # Sends drive the same WeChat window as the takeover; never run them in
+    # parallel with another WeChat UI action.
+    "native_wechat_send_message",
 }
 _NATIVE_WECHAT_RUNTIME_SETTING_KEYS = (
     "memory_doc_ids",
@@ -3096,7 +3099,12 @@ def _serial_client_run_is_blocked(
     return q.first() is not None
 
 
-_LONG_RUNNING_CLIENT_ACTIONS = {"native_wechat_poll", "native_wechat_moments_engage"}
+_LONG_RUNNING_CLIENT_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_moments_engage",
+    # The client waits up to 15 minutes for a multi-target send task.
+    "native_wechat_send_message",
+}
 
 
 def _client_processing_timeout_minutes(row: ScheduledTaskRun) -> int:

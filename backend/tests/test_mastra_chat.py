@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -2090,3 +2091,177 @@ def test_placeholder_fallback_reply_counts_as_missing_content():
     assert runner._is_placeholder_reply("好的，我来为您总结一下已获取的信息。") is True
     assert runner._is_placeholder_reply("小猫抓老鼠的视频已提交生成") is False
     assert runner._is_placeholder_reply("") is False
+
+
+def test_runner_reports_model_quota_error_instead_of_generic_outage(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatEvent, H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    parent = H5ChatMessage(
+        id="quota-mastra-message",
+        user_id=test_user.id,
+        mode="mastra",
+        content="通过微信给 九变1发信息",
+        status="processing",
+        claimed_by_installation_id="mastra-server",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    result = mastra_chat_runner._fallback_or_fail_sync(parent.id, "Payment Required")
+
+    assert result == "failed"
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        assert "额度不足" in saved.error
+        assert "402" in saved.error
+        assert "暂时中断" not in saved.error
+        error_event = (
+            session.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == parent.id, H5ChatEvent.event_type == "error")
+            .one()
+        )
+        # 上游原始错误仍保留在事件里，方便排查。
+        assert error_event.payload["detail"] == "Payment Required"
+
+
+def test_runner_reports_unsupported_model_error(db_session, db_session_factory, test_user, monkeypatch):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    parent = H5ChatMessage(
+        id="model-name-mastra-message",
+        user_id=test_user.id,
+        mode="mastra",
+        content="帮我看下能力",
+        status="processing",
+        claimed_by_installation_id="mastra-server",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    mastra_chat_runner._fallback_or_fail_sync(
+        parent.id,
+        "The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed gpt-5.6-sol.",
+    )
+
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        assert "模型名不被服务商支持" in saved.error
+
+
+def test_runner_keeps_generic_message_for_transport_failures(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    parent = H5ChatMessage(
+        id="generic-mastra-message",
+        user_id=test_user.id,
+        mode="mastra",
+        content="生成一张图片",
+        status="processing",
+        claimed_by_installation_id="mastra-server",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    mastra_chat_runner._fallback_or_fail_sync(parent.id, "connection refused")
+
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        assert "AI 调度服务暂时中断" in saved.error
+
+
+def test_catalog_and_dispatch_expose_wechat_send_message(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.api import scheduled_tasks
+    from backend.app.models import H5ChatDevicePresence, H5ChatMessage, ScheduledTaskRun
+    from backend.app.services.mastra_online_capabilities import (
+        mastra_online_capabilities,
+        normalize_mastra_online_params,
+    )
+
+    definition = mastra_online_capabilities()["online.wechat_send_message"]
+    assert definition["action"] == "native_wechat_send_message"
+    assert definition["execution_target"] == "online"
+    assert "online.wechat_send_message" in mastra_online_capabilities()
+
+    normalized = normalize_mastra_online_params(
+        "online.wechat_send_message",
+        {"targets": ["九变1"], "message": "记得去看演唱会"},
+    )
+    assert normalized["targets"] == ["九变1"]
+    assert normalized["message"] == "记得去看演唱会"
+    assert normalized["account_id"] == "pc-wechat-default"
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    parent = H5ChatMessage(
+        id="wechat-send-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        installation_id="desktop-a",
+        mode="mastra",
+        content="通过微信给 九变1发信息 去看演唱会",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    presence = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="desktop-a",
+        display_name="测试电脑",
+        last_seen_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([parent, presence])
+    db_session.commit()
+
+    client = _client(db_session_factory, test_user.id)
+    response = client.post(
+        "/api/mastra-chat/online-capability-dispatch",
+        json={
+            "capability_id": "online.wechat_send_message",
+            "params": {"targets": ["九变1"], "message": "记得去看演唱会"},
+            "reason": "用本机微信发一条消息",
+            "parent_message_id": parent.id,
+            "installation_id": "desktop-a",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["action"] == "native_wechat_send_message"
+    child_id = response.json()["message"]["id"]
+    with db_session_factory() as session:
+        run = session.query(ScheduledTaskRun).filter(ScheduledTaskRun.h5_message_id == child_id).one()
+        assert run.task_kind == "client_workflow"
+        assert run.payload["action"] == "native_wechat_send_message"
+        assert run.payload["params"] == {
+            "targets": ["九变1"],
+            "message": "记得去看演唱会",
+            "account_id": "pc-wechat-default",
+        }
+        assert scheduled_tasks._client_processing_timeout_minutes(run) == 45
+
+
+def test_wechat_send_message_capability_rejects_missing_message():
+    from backend.app.services.mastra_online_capabilities import (
+        OnlineCapabilityParamsError,
+        normalize_mastra_online_params,
+    )
+
+    with pytest.raises(OnlineCapabilityParamsError):
+        normalize_mastra_online_params("online.wechat_send_message", {"targets": ["九变1"]})

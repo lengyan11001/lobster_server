@@ -159,6 +159,36 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
             ["targets"],
         ),
     },
+    "online.wechat_send_message": {
+        "name": "微信发消息",
+        "description": (
+            "用本机个人微信给指定联系人或群发一条文本消息。收件人可以写微信备注名、昵称或微信号，"
+            "多个目标会逐个发送；发送前会核对当前会话是否就是这个收件人，对不上就跳过并说明原因。"
+        ),
+        "keywords": ["微信", "发消息", "发信息", "私信", "通知", "转告", "发给", "告诉", "发这个"],
+        "execution_target": "online",
+        "task_kind": "client_workflow",
+        "action": "native_wechat_send_message",
+        "arg_schema": _schema(
+            {
+                "targets": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "description": "收件人：微信备注名 / 昵称 / 微信号，可传多个",
+                },
+                "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "要发送的文本内容，原样发出，不要带引号或说明",
+                },
+                "account_id": {"type": "string", "default": "pc-wechat-default"},
+            },
+            ["targets", "message"],
+        ),
+    },
     "online.moments_generate_images": {
         "name": "朋友圈文案出图",
         "description": "为已生成的朋友圈文案批量生成配图，并将图片写回内容记录。",

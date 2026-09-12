@@ -198,6 +198,55 @@ def _is_retryable_mastra_stream_error(error: Exception) -> bool:
     )
 
 
+_MODEL_QUOTA_HINTS = (
+    "payment required",
+    "insufficient_quota",
+    "insufficient quota",
+    "insufficient balance",
+    "quota exceeded",
+    "exceeded your current quota",
+    "billing",
+    "no credit",
+    "not enough credit",
+    "out of credit",
+    "欠费",
+    "余额不足",
+    "额度不足",
+    "额度已用尽",
+)
+
+_MODEL_AUTH_HINTS = ("unauthorized", "invalid api key", "invalid_api_key", "authentication")
+_MODEL_RATE_LIMIT_HINTS = ("rate limit", "rate_limit", "too many requests", "429")
+_MODEL_UNKNOWN_HINTS = (
+    "supported api model names",
+    "model not found",
+    "unknown model",
+    "does not exist",
+    "invalid model",
+    "unsupported model",
+)
+
+
+def _friendly_mastra_error(detail: str) -> str:
+    """Translate an upstream model/transport failure into an actionable message.
+
+    A raw "Payment Required" used to surface as "AI 调度服务暂时中断", which
+    tells the user nothing and looks like a random outage.  Map the known
+    upstream rejections to what actually happened and what to do next.
+    """
+    raw = str(detail or "").strip()
+    lowered = raw.lower()
+    if any(hint in lowered for hint in _MODEL_QUOTA_HINTS) or "402" in lowered:
+        return "模型额度不足（402 Payment Required），本轮没有下发任务；充值模型额度后重试即可。"
+    if any(hint in lowered for hint in _MODEL_UNKNOWN_HINTS):
+        return f"模型名不被服务商支持（{raw[:160]}）：请在设置里改用服务商支持的模型后重试。"
+    if any(hint in lowered for hint in _MODEL_AUTH_HINTS):
+        return "模型服务鉴权失败（401），请检查模型密钥后重试。"
+    if any(hint in lowered for hint in _MODEL_RATE_LIMIT_HINTS):
+        return "模型服务限流（429），本轮没有下发任务，稍后重试即可。"
+    return "AI 调度服务暂时中断，本轮未下发任务，请重试。"
+
+
 def _internal_secret() -> str:
     configured = (os.environ.get("LOBSTER_MASTRA_INTERNAL_SECRET") or "").strip()
     if configured:
@@ -788,7 +837,9 @@ def _fallback_or_fail_sync(message_id: str, error: str) -> str:
             result = "waiting_online"
         else:
             row.status = "failed"
-            row.error = "AI 调度服务暂时中断，本轮未下发任务，请重试。"
+            # Keep the upstream detail in the event payload/log for diagnosis and
+            # show the user an actionable reason instead of a generic outage.
+            row.error = _friendly_mastra_error(error)
             row.finished_at = now
             row.updated_at = now
             _add_event(
