@@ -434,6 +434,7 @@ body{background:#edf2f7}
       <div class="nav-tab" data-icon="客" data-nav="customers" onclick="switchNav('customers')">客户管理</div>
       <div class="nav-tab" data-icon="代" data-nav="agents" id="agentsNavTab" onclick="switchNav('agents')">代理商管理</div>
       <div class="nav-tab" data-icon="模" data-nav="templates" onclick="switchNav('templates')">模板配置</div>
+      <div class="nav-tab" data-icon="系" data-nav="systemWorkflows" onclick="switchNav('systemWorkflows')">系统模板</div>
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
       <div class="nav-tab" data-icon="数" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询记录</div>
       <div class="nav-tab" data-icon="牌" data-nav="brands" id="brandsNavTab" onclick="switchNav('brands')">品牌管理</div>
@@ -651,20 +652,15 @@ body{background:#edf2f7}
   });
   function applyVisibility() {
     var card = document.getElementById('systemWorkflowCard'); if (!card) return;
-    if (!document.getElementById('swLauncher')) {
-      var btn = document.createElement('button');
-      btn.id = 'swLauncher'; btn.type = 'button'; btn.className = 'btn btn-primary btn-sm';
-      btn.textContent = '系统模板工作流';
-      btn.style.cssText = 'position:fixed;top:12px;right:16px;z-index:9998;box-shadow:0 6px 18px rgba(0,0,0,.18)';
-      document.body.appendChild(btn);
-      var overlay = document.createElement('div');
-      overlay.id = 'swOverlay';
-      overlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(12,20,36,.45);overflow:auto;padding:32px 16px';
-      var box = document.createElement('div');
-      box.style.cssText = 'max-width:1040px;margin:0 auto;background:#fff;border-radius:14px;padding:16px;box-shadow:0 18px 46px rgba(0,0,0,.22)';
-      box.appendChild(card); overlay.appendChild(box); document.body.appendChild(overlay);
-      btn.addEventListener('click', function () { overlay.style.display = 'block'; if (!loaded) load(); });
-      overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.style.display = 'none'; });
+    var host = document.getElementById('pageSystemWorkflows');
+    if (!host) {
+      var ref = document.getElementById('pageTemplates');
+      host = document.createElement('div'); host.id = 'pageSystemWorkflows';
+      if (ref) { host.className = ref.className; ref.parentNode.insertBefore(host, ref.nextSibling); }
+      else { document.body.appendChild(host); }
+      host.style.display = 'none';
+      var h = document.createElement('h1'); h.textContent = '系统模板工作流'; host.appendChild(h);
+      host.appendChild(card);
     }
     card.style.display = '';
     if (!loaded) load();
@@ -1372,6 +1368,7 @@ function navTitle(nav) {
     customers: '客户管理',
     agents: '代理商管理',
     templates: '模板配置',
+    systemWorkflows: '系统模板工作流',
     generationRecords: '素材生成记录',
     tikhubRecords: '数据查询记录',
     brands: '品牌管理',
@@ -1384,6 +1381,7 @@ function switchNav(nav) {
   if (nav === 'commissions' && !isAgent()) nav = 'stats';
   if (nav === 'brands' && !isAdmin()) nav = 'stats';
   if (nav === 'remoteSupport' && !isAdmin()) nav = 'stats';
+  if (nav === 'systemWorkflows' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
@@ -1394,6 +1392,8 @@ function switchNav(nav) {
   document.getElementById('pageStats').style.display = nav === 'stats' ? '' : 'none';
   const pageAgents = document.getElementById('pageAgents');
   if (pageAgents) pageAgents.style.display = nav === 'agents' ? '' : 'none';
+  const pageSystemWorkflows = document.getElementById('pageSystemWorkflows');
+  if (pageSystemWorkflows) pageSystemWorkflows.style.display = nav === 'systemWorkflows' ? '' : 'none';
   const pageTemplates = document.getElementById('pageTemplates');
   if (pageTemplates) pageTemplates.style.display = nav === 'templates' ? '' : 'none';
   const pageGenerationRecords = document.getElementById('pageGenerationRecords');
