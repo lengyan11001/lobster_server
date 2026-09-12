@@ -541,7 +541,118 @@ body{background:#edf2f7}
           <button class="btn btn-outline btn-sm" id="resetPwdBtn" onclick="openResetPassword()" style="margin-left:8px">重置密码</button>
         </div>
       </div>
-      <!-- admin-only: skill visibility -->
+<!-- admin-only: system workflow templates -->
+<div class="card" id="systemWorkflowCard" style="display:none">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+    <h3 style="margin:0">系统模板工作流</h3>
+    <button type="button" class="btn btn-primary btn-sm" id="swNewBtn">新增系统模板</button>
+  </div>
+  <p style="margin:6px 0 10px;color:var(--text-secondary);font-size:12px">
+    只有「上架」的系统模板用户端才能看到。编辑要二次确认才生效；保存后只同步「直接启用」该模板的用户，复制出去自己改过的不动。
+  </p>
+  <div id="swList"></div>
+  <div id="swEditor" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="swName" placeholder="系统模板名称" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;min-width:220px">
+      <label style="font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="swPublished"> 上架（用户可见）</label>
+      <button type="button" class="btn btn-sm" id="swDraftBtn">预览变更</button>
+      <button type="button" class="btn btn-primary btn-sm" id="swSaveBtn" disabled>确认生效</button>
+      <button type="button" class="btn btn-sm" id="swCancelBtn">取消</button>
+    </div>
+    <textarea id="swNodes" rows="14" spellcheck="false" style="width:100%;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;border:1px solid var(--border);border-radius:8px;padding:8px"></textarea>
+    <div id="swDiff" style="margin-top:8px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap"></div>
+  </div>
+</div>
+<script>
+(function () {
+  var items = [], editKey = '', isNew = false, confirmed = false, loaded = false;
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function listEl() { return document.getElementById('swList'); }
+  function render() {
+    var host = listEl(); if (!host) return;
+    host.innerHTML = items.length ? items.map(function (it) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="flex:1;min-width:0"><b>' + esc(it.name) + '</b> <span style="color:var(--text-secondary);font-size:12px">' + esc(it.key) + '</span>' +
+        '<div style="color:var(--text-secondary);font-size:12px">' + it.node_count + ' 个节点 · 直接启用 ' + it.direct_user_count + ' 人 · 更新 ' + esc(String(it.updated_at || '').replace('T', ' ').slice(0, 16)) + '</div></div>' +
+        '<label style="font-size:12px"><input type="checkbox" ' + (it.published ? 'checked' : '') + ' onchange="swToggle(\'' + esc(it.key) + '\', this.checked)"> 上架</label>' +
+        '<button type="button" class="btn btn-sm" onclick="swEdit(\'' + esc(it.key) + '\')">编辑</button></div>';
+    }).join('') : '<div style="color:var(--text-secondary);font-size:12px">暂无系统模板</div>';
+  }
+  function load(force) {
+    if (!listEl()) return Promise.resolve();
+    return api('/admin/api/system-workflows').then(function (r) {
+      items = (r && r.items) || []; loaded = true; render();
+    });
+  }
+  window.swLoad = load;
+  window.swToggle = function (key, published) {
+    return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/status', { method: 'POST', json: { published: !!published } })
+      .then(load).catch(function (e) { alert('上下架失败：' + (e && e.message || e)); return load(); });
+  };
+  window.swEdit = function (key) {
+    var it = null;
+    for (var i = 0; i < items.length; i++) if (items[i].key === key) it = items[i];
+    if (!it) return;
+    editKey = key; isNew = false; confirmed = false;
+    document.getElementById('swName').value = it.name || '';
+    document.getElementById('swPublished').checked = !!it.published;
+    document.getElementById('swNodes').value = JSON.stringify(it.nodes || [], null, 2);
+    document.getElementById('swDiff').textContent = '';
+    document.getElementById('swSaveBtn').disabled = true;
+    document.getElementById('swEditor').style.display = '';
+  };
+  function parsedNodes() {
+    try { var v = JSON.parse(document.getElementById('swNodes').value || '[]'); return Array.isArray(v) ? v : null; }
+    catch (e) { alert('节点 JSON 解析失败：' + e.message); return null; }
+  }
+  function summary(diff) {
+    var lines = ['节点数：' + diff.old_node_count + ' → ' + diff.new_node_count];
+    if (diff.added && diff.added.length) lines.push('新增：' + diff.added.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
+    if (diff.removed && diff.removed.length) lines.push('删除：' + diff.removed.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
+    if (diff.changed && diff.changed.length) lines.push('修改：' + diff.changed.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
+    return lines.join('\n');
+  }
+  function bind(id, fn) { var el = document.getElementById(id); if (el) el.addEventListener('click', fn); }
+  bind('swNewBtn', function () {
+    editKey = ''; isNew = true; confirmed = false;
+    document.getElementById('swName').value = ''; document.getElementById('swPublished').checked = false;
+    document.getElementById('swNodes').value = '[]'; document.getElementById('swDiff').textContent = '';
+    document.getElementById('swSaveBtn').disabled = true; document.getElementById('swEditor').style.display = '';
+  });
+  bind('swCancelBtn', function () { document.getElementById('swEditor').style.display = 'none'; editKey = ''; isNew = false; });
+  bind('swDraftBtn', function () {
+    var nodes = parsedNodes(); if (!nodes) return;
+    var body = { nodes: nodes }, path;
+    if (isNew) { document.getElementById('swDiff').textContent = '新模板：' + nodes.length + ' 个节点，确认后创建' + (document.getElementById('swPublished').checked ? '（上架）' : '（下架）'); }
+    else { api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/draft', { method: 'POST', json: body }).then(function (r) { document.getElementById('swDiff').textContent = summary(r.diff) + '\n将同步给直接启用该模板的 ' + r.direct_user_count + ' 个用户'; }); }
+    confirmed = true; document.getElementById('swSaveBtn').disabled = false;
+  });
+  bind('swSaveBtn', function () {
+    var nodes = parsedNodes(); if (!nodes) return;
+    if (!confirmed) { alert('请先点「预览变更」确认'); return; }
+    if (!window.confirm(isNew ? '确认创建这个系统模板？' : '确认让这次修改生效并同步给直接启用它的用户？')) return;
+    var published = document.getElementById('swPublished').checked;
+    if (isNew) {
+      api('/admin/api/system-workflows', { method: 'POST', json: { name: document.getElementById('swName').value.trim(), nodes: nodes, published: published } })
+        .then(function () { document.getElementById('swEditor').style.display = 'none'; return load(); })
+        .catch(function (e) { alert('创建失败：' + (e && e.message || e)); });
+    } else {
+      api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', json: { nodes: nodes, confirm: true } })
+        .then(function () { return api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/status', { method: 'POST', json: { published: published } }); })
+        .then(function () { document.getElementById('swEditor').style.display = 'none'; return load(); })
+        .catch(function (e) { alert('保存失败：' + (e && e.message || e)); });
+    }
+  });
+  function applyVisibility() {
+    var card = document.getElementById('systemWorkflowCard'); if (!card) return;
+    var ok = (typeof window.isLobsterAdmin === 'function') ? window.isLobsterAdmin() : (typeof isAdmin === 'function' ? isAdmin() : false);
+    card.style.display = ok ? '' : 'none';
+    if (ok && !loaded) load();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyVisibility); else applyVisibility();
+})();
+</script>
+<!-- admin-only: skill visibility -->
       <div class="card" id="skillVisCard" style="display:none">
         <h3>可见技能</h3>
         <div id="skillVisibilitySection">
@@ -2314,6 +2425,7 @@ function ensureUserDetailTabs() {
     ['generation', '生成记录'],
     ['tikhub', '数据查询'],
     ['skills', '技能/权限'],
+    ['systemWorkflows', '系统模板工作流'],
     ['devices', '设备/任务'],
     ['memory', 'OpenClaw 记忆'],
   ];
@@ -2347,7 +2459,8 @@ function ensureUserDetailTabs() {
   move('userTikhubRecordsCard', 'tikhub');
   move('agentToggleCard', 'skills');
   move('imageChannelCard', 'skills');
-  move('skillVisCard', 'skills');
+    move('skillVisCard', 'skills');
+    move('systemWorkflowCard', 'systemWorkflows');
   move('userDevicesTaskCard', 'devices');
   move('openclawMemoryAdminCard', 'memory');
   tabs.addEventListener('click', function(e) {
