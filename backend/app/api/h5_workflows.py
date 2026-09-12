@@ -124,6 +124,116 @@ def _enabled_system_workflow_keys() -> set:
     cached["keys"] = tuple(sorted(keys))
     return keys
 
+
+class SystemWorkflowTemplateIn(BaseModel):
+    name: str = ""
+    nodes: list[dict] = []
+    published: Optional[bool] = None
+    confirm: bool = False
+
+
+def _require_system_template_admin(current_user: User) -> None:
+    if str(getattr(current_user, "role", "") or "").strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可用")
+
+
+def _system_catalog_template_row(db: Session, key: str) -> Optional[H5WorkflowTemplate]:
+    rows = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+            H5WorkflowTemplate.status == "active",
+        )
+        .all()
+    )
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            continue
+        if str(meta.get("system_template_key") or "").strip() == key:
+            return row
+    return None
+
+
+@router.get("/api/h5-workflows/system-templates/{template_key}", summary="读取系统模板工作流（仅管理员，供编辑器使用）")
+def get_system_workflow_template(
+    template_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_system_template_admin(current_user)
+    key = _clean_text(template_key, 128)
+    row = _system_catalog_template_row(db, key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    return {
+        "ok": True,
+        "system_template": True,
+        "key": key,
+        "name": str(row.name or key),
+        "published": meta.get("system_published") is not False,
+        "nodes": list(row.nodes or []),
+    }
+
+
+@router.post("/api/h5-workflows/system-templates/{template_key}", summary="保存系统模板工作流（仅管理员，二次确认后生效并同步）")
+def save_system_workflow_template(
+    template_key: str,
+    body: SystemWorkflowTemplateIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_system_template_admin(current_user)
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="需要二次确认后才会生效")
+    key = _clean_text(template_key, 128)
+    row = _system_catalog_template_row(db, key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    now = datetime.utcnow()
+    row.nodes = nodes
+    name = str(body.name or "").strip()
+    if name:
+        row.name = name[:160]
+    meta = dict(row.meta or {})
+    if body.published is not None:
+        meta["system_published"] = bool(body.published)
+    row.meta = meta
+    row.updated_at = now
+    synced = 0
+    mirrors = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.status == "active",
+            H5WorkflowTemplate.owner_user_id != _SYSTEM_WORKFLOW_OWNER_ID,
+        )
+        .all()
+    )
+    for mirror in mirrors:
+        # 只覆盖"直接启用系统模板"的镜像；复制出去自己改过的没有 system_template_key。
+        mirror_meta = mirror.meta if isinstance(mirror.meta, dict) else {}
+        if str(mirror_meta.get("source") or "") != "system_mirror":
+            continue
+        if str(mirror_meta.get("system_template_key") or "").strip() != key:
+            continue
+        mirror.nodes = nodes
+        mirror.updated_at = now
+        synced += 1
+    db.commit()
+    try:
+        _SYSTEM_WORKFLOW_KEYS_CACHE["at"] = 0.0
+    except Exception:
+        pass
+    try:
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+    except Exception:
+        pass
+    return {"ok": True, "key": key, "node_count": len(nodes), "synced_mirrors": synced}
+
 _WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS = 3.0
 _WORKFLOW_TEMPLATE_CACHE_LOCK = threading.Lock()
 _WORKFLOW_TEMPLATE_CACHE: dict[tuple[int, str], tuple[float, list[dict[str, Any]]]] = {}
