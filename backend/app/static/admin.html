@@ -331,6 +331,12 @@ tr:hover{background:var(--bg)}
 #systemWorkflowCard .workflow-node-card.designer-workflow-node{grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 5px;}
 #systemWorkflowCard .designer-workflow-node .workflow-status-pill, #systemWorkflowCard .designer-workflow-node .workflow-node-action-menu summary{padding-left: 7px; padding-right: 7px;}
 .sw-card{display:block}
+#systemWorkflowCard .task-action-menu{position:relative}
+#systemWorkflowCard .task-action-list{position:static;top:auto;right:auto;left:auto;margin-top:6px;min-width:0;width:100%;z-index:auto;display:grid;gap:4px;padding:8px;border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 6px 18px rgba(23,35,61,.10)}
+#systemWorkflowCard .task-action-list button{width:100%;text-align:left;padding:8px 10px;border:0;border-radius:8px;background:transparent;color:inherit;font-size:13px;font-weight:600;cursor:pointer}
+#systemWorkflowCard .task-action-list button:hover{background:rgba(36,92,255,.08);color:#245cff}
+#systemWorkflowCard .task-action-list button.danger-text{color:#d9483b}
+#systemWorkflowCard .workflow-node-actions{align-items:flex-start;flex-wrap:wrap}
 .sw-card-row{display:flex;gap:10px;align-items:center}
 .sw-children{margin:8px 0 0 72px;border-left:2px solid #e2e8f0;padding-left:10px}
 .sw-child{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0}
