@@ -1078,7 +1078,17 @@ body{background:#edf2f7}
     document.getElementById('swSaveBtn').disabled = true; document.getElementById('swEditor').style.display = '';
   });
   bind('swAddNode', function () {
-    var row = toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, rows.length);
+    var first = presetAt(0);
+    var row = {
+      i: rows.length,
+      time: '09:00',
+      end: '',
+      preset: 0,
+      key: first ? first.key : '',
+      label: first ? first.label : '',
+      note: first ? first.note : '',
+      params: {}
+    };
     rows.push(row);
     renderRows();
     openNodeModal(rows.length - 1);
