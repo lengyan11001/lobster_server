@@ -1066,28 +1066,30 @@ body{background:#edf2f7}
         if (entry) entry.classList.toggle('task-menu-open', menu.open);
       });
     });
-    host.onclick = function (evt) {
-      var btn = evt.target.closest('[data-sw-act]');
-      var entry = evt.target.closest('.workflow-timeline-entry');
-      if (!btn || !entry) return;
-      var index = -1;
-      rows.forEach(function (r, i) { if (!index && entry === document.querySelectorAll('#swNodes .workflow-timeline-entry')[i]) index = i; });
-      if (index < 0) return;
-      var act = btn.getAttribute('data-sw-act');
-      var childIndex = Number(btn.getAttribute('data-child-index'));
-      if (act === 'del') { rows.splice(index, 1); renderRows(); return; }
-      if (act === 'up' && index > 0) { var t = rows[index]; rows[index] = rows[index - 1]; rows[index - 1] = t; renderRows(); return; }
-      if (act === 'down' && index < rows.length - 1) { var t2 = rows[index]; rows[index] = rows[index + 1]; rows[index + 1] = t2; renderRows(); return; }
-      if (act === 'toggle-children') { rows[index].collapsed = !(rows[index].collapsed === true); renderRows(); return; }
-      if (act === 'add-child') { openChildModal(index, -1); return; }
-      if (act === 'edit-child') { openChildModal(index, childIndex); return; }
-      if (act === 'del-child') {
-        var parent = rows[index];
-        if (parent && Array.isArray(parent.children) && childIndex >= 0) { parent.children.splice(childIndex, 1); renderRows(); }
-        return;
-      }
-      if (act === 'edit') openNodeModal(index);
-    };
+    Array.prototype.forEach.call(host.querySelectorAll('[data-sw-act]'), function (el) {
+      el.addEventListener('click', function (evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        var entry = el.closest('.workflow-timeline-entry');
+        var entries = Array.prototype.slice.call(host.querySelectorAll('.workflow-timeline-entry'));
+        var index = entries.indexOf(entry);
+        if (index < 0) return;
+        var act = el.getAttribute('data-sw-act');
+        var childIndex = Number(el.getAttribute('data-child-index'));
+        if (act === 'del') { rows.splice(index, 1); renderRows(); return; }
+        if (act === 'up' && index > 0) { var t = rows[index]; rows[index] = rows[index - 1]; rows[index - 1] = t; renderRows(); return; }
+        if (act === 'down' && index < rows.length - 1) { var t2 = rows[index]; rows[index] = rows[index + 1]; rows[index + 1] = t2; renderRows(); return; }
+        if (act === 'toggle-children') { rows[index].collapsed = !(rows[index].collapsed === true); renderRows(); return; }
+        if (act === 'add-child') { openChildModal(index, -1); return; }
+        if (act === 'edit-child') { openChildModal(index, childIndex); return; }
+        if (act === 'del-child') {
+          var parent = rows[index];
+          if (parent && Array.isArray(parent.children) && childIndex >= 0) { parent.children.splice(childIndex, 1); renderRows(); }
+          return;
+        }
+        if (act === 'edit') openNodeModal(index);
+      });
+    });
   }
   function buildNode(r) {
     var p = presetAt(r && r.preset);
