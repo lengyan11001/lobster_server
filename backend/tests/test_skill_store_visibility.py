@@ -204,9 +204,3 @@ def test_retired_hifly_digital_human_is_hidden_from_skill_store(db_session, db_s
 
     assert "hifly_digital_human_skill" not in domestic_ids
     assert "hifly_digital_human_skill" not in overseas_ids
-    # 数字人统一走 2.0：新包默认可见，并且它持有 hifly.video.create_by_tts 能力，
-    # 这样工作流节点的能力校验和计费口径都不受影响。
-    assert "shanjian_digital_human_skill" in domestic_ids
-    assert "shanjian_digital_human_skill" in overseas_ids
-    allowed = client.get("/skills/user-allowed-capability-ids").json()["capability_ids"]
-    assert "hifly.video.create_by_tts" in allowed

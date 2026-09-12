@@ -478,36 +478,6 @@
       },
       "tags": ["video", "digital-human", "必火"]
     },
-    "shanjian_digital_human_skill": {
-      "name": "必火数字人2.0",
-      "description": "数字人 2.0：用已训练好的形象分身 + 声音分身（可按天轮换）生成口播视频，生成完成后自动入库。老的必火数字人 1.0 已退役，数字人统一走这条。",
-      "type": "builtin",
-      "store_visibility": "online",
-      "default_installed": true,
-      "status": "available",
-      "capabilities": {
-        "hifly.video.create_by_tts": {
-          "description": "必火数字人 2.0 口播：传入 virtualman_id、speaker_id/text 后生成口播视频并入库（兼容原能力 ID，计费口径不变）。",
-          "upstream": "local",
-          "upstream_tool": "invoke",
-          "enabled": true,
-          "is_default": false,
-          "unit_credits": 0,
-          "arg_schema": {
-            "type": "object",
-            "properties": {
-              "title": {"type": "string"},
-              "virtualman_id": {"type": "string"},
-              "speaker_id": {"type": "string"},
-              "text": {"type": "string"},
-              "audio_url": {"type": "string"}
-            },
-            "required": ["virtualman_id", "text"]
-          }
-        }
-      },
-      "tags": ["video", "digital-human", "必火", "数字人2.0"]
-    },
     "cutcli_template_studio": {
       "name": "模板视频",
       "description": "选择服务器模板预览样片，上传视频或填写素材 ID，按原片比例和时长生成同款字幕包装视频。",

@@ -112,8 +112,7 @@ DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
     ),
     "ai_marketing_entry": (
         "comfly_ecommerce_detail_skill",
-        # 数字人统一走 2.0；1.0（hifly_digital_human_skill）已退役，不再默认可见。
-        "shanjian_digital_human_skill",
+        "hifly_digital_human_skill",
         "comfly_veo_skill",
         "comfly_seedance_tvc_skill",
         "goal_video_pipeline_skill",
