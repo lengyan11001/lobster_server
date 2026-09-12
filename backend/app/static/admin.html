@@ -560,7 +560,12 @@ body{background:#edf2f7}
       <button type="button" class="btn btn-primary btn-sm" id="swSaveBtn" disabled>确认生效</button>
       <button type="button" class="btn btn-sm" id="swCancelBtn">取消</button>
     </div>
-    <textarea id="swNodes" rows="14" spellcheck="false" style="width:100%;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;border:1px solid var(--border);border-radius:8px;padding:8px"></textarea>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+      <b style="font-size:13px">工作节点</b>
+      <button type="button" class="btn btn-sm" id="swAddNode">添加节点</button>
+      <span style="color:var(--text-secondary);font-size:12px">按时间段配置，与 Online 员工工作流一致</span>
+    </div>
+    <div id="swNodes" style="margin-top:6px"></div>
     <div id="swDiff" style="margin-top:8px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap"></div>
   </div>
 </div>
@@ -603,14 +608,125 @@ body{background:#edf2f7}
     editKey = key; isNew = false; confirmed = false;
     document.getElementById('swName').value = it.name || '';
     document.getElementById('swPublished').checked = !!it.published;
-    document.getElementById('swNodes').value = JSON.stringify(it.nodes || [], null, 2);
+    rows = (it.nodes || []).map(toRow);
+    renderRows();
     document.getElementById('swDiff').textContent = '';
     document.getElementById('swSaveBtn').disabled = true;
     document.getElementById('swEditor').style.display = '';
   };
-  function parsedNodes() {
-    try { var v = JSON.parse(document.getElementById('swNodes').value || '[]'); return Array.isArray(v) ? v : null; }
-    catch (e) { alert('节点 JSON 解析失败：' + e.message); return null; }
+  var TYPES = [
+    ['native_wechat_poll', '个微私信接管'],
+    ['native_wechat_moments_engage', '朋友圈点赞评论'],
+    ['douyin_leads|search_collect', '抖音精准获客'],
+    ['douyin_leads|account_nurture', '抖音自动养号'],
+    ['douyin_leads|stranger_message', '抖音私信接管'],
+    ['douyin_leads|precise_touch', '抖音精准用户触达'],
+    ['hifly.video.create_by_tts', '数字人口播视频'],
+    ['local_bestseller', '同城爆款视频'],
+    ['publish_content|douyin', '发布到抖音'],
+    ['publish_content|wechat_channels', '发布到视频号'],
+    ['publish_content|wechat_moments', '发布到朋友圈']
+  ];
+  function typeOpts(sel) {
+    return TYPES.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === sel ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('');
+  }
+  function toRow(node, index) {
+    var n = node && typeof node === 'object' ? node : {};
+    var payload = (n.plan && n.plan.payload) || {}, params = payload.params || {};
+    var key = String(n.ability_key || n.key || ''), type = key;
+    if (key === 'douyin_leads') type = 'douyin_leads|' + (String(params.sales_action || 'search_collect').trim() || 'search_collect');
+    if (key === 'publish_content') type = 'publish_content|' + (String(params.platform || 'douyin').trim() || 'douyin');
+    var known = TYPES.some(function (t) { return t[0] === type; });
+    return { i: index, time: String(n.time || '09:00'), end: String(n.end_time || ''), type: known ? type : 'native_wechat_poll',
+             label: String(n.ability_label || n.label || ''), note: String(n.note || ''), params: params };
+  }
+  function extraFields(r) {
+    function num(k, d) { return ' value="' + (r.params[k] == null ? d : r.params[k]) + '"'; }
+    if (r.type === 'native_wechat_poll') return '<label class="sw-f">间隔秒<input class="sw-p" data-k="message_poll_interval_seconds"' + num('message_poll_interval_seconds', 15) + '></label><label class="sw-f">接管分钟<input class="sw-p" data-k="takeover_session_minutes"' + num('takeover_session_minutes', 30) + '></label>';
+    if (r.type === 'douyin_leads|search_collect') return '<label class="sw-f">关键词<input class="sw-p sw-wide" data-k="keyword" value="' + esc(r.params.keyword || '') + '" placeholder="留空用设备已配关键词"></label><label class="sw-f">地区<input class="sw-p" data-k="regions" value="' + esc(Array.isArray(r.params.regions) ? r.params.regions.join('，') : (r.params.regions || '全国')) + '"></label><label class="sw-f">数量<input class="sw-p sw-num" data-k="max_results"' + num('max_results', 50) + '></label>';
+    if (r.type === 'douyin_leads|precise_touch') return '<label class="sw-f">触达数量<input class="sw-p sw-num" data-k="max_users"' + num('max_users', 20) + '></label>';
+    if (r.type === 'hifly.video.create_by_tts') return '<label class="sw-f">口播文案<input class="sw-p sw-wide" data-k="script" value="' + esc(r.params.script || r.params.prompt || '') + '" placeholder="留空按 IP 人设生成"></label>';
+    if (r.type.indexOf('publish_content|') === 0) return '<span style="font-size:12px;color:var(--text-secondary)">沿用上级节点素材，配文案带标签发布</span>';
+    if (r.type === 'native_wechat_moments_engage') return '<label class="sw-f">动作<select class="sw-p" data-k="moment_action"><option value="like_comment">点赞并评论</option><option value="like">只点赞</option><option value="comment">只评论</option></select></label>';
+    return '';
+  }
+  function renderRows() {
+    var host = document.getElementById('swNodes'); if (!host) return;
+    host.innerHTML = rows.length ? rows.map(function (r) {
+      return '<div class="sw-row" data-i="' + r.i + '" style="border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:6px">' +
+        '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+        '<input class="sw-t" type="time" value="' + esc(r.time) + '" style="width:100px">' +
+        '<input class="sw-e" type="time" value="' + esc(r.end) + '" style="width:100px">' +
+        '<select class="sw-k" style="min-width:160px">' + typeOpts(r.type) + '</select>' +
+        '<input class="sw-l" placeholder="节点名称" value="' + esc(r.label) + '" style="flex:1;min-width:140px">' +
+        '<button type="button" class="btn btn-sm sw-del">删除</button></div>' +
+        '<div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + extraFields(r) +
+        '<input class="sw-n" placeholder="节点说明" value="' + esc(r.note) + '" style="flex:1;min-width:160px"></div></div>';
+    }).join('') : '<div style="color:var(--text-secondary);font-size:12px">还没有节点，点「添加节点」</div>';
+    Array.prototype.forEach.call(host.querySelectorAll('.sw-del'), function (btn) {
+      btn.addEventListener('click', function () {
+        var box = btn.closest('.sw-row');
+        rows = rows.filter(function (r) { return String(r.i) !== String(box.getAttribute('data-i')); });
+        renderRows();
+      });
+    });
+    Array.prototype.forEach.call(host.querySelectorAll('.sw-k'), function (sel) {
+      sel.addEventListener('change', function () {
+        collectRows(); renderRows();
+      });
+    });
+    Array.prototype.forEach.call(host.querySelectorAll('.sw-p'), function (inp) {
+      if (inp.tagName === 'SELECT') return;
+      inp.addEventListener('input', function () { collectRows(); });
+    });
+  }
+  function buildNode(r) {
+    var parts = String(r.type || '').split('|'), key = parts[0], sub = parts[1] || '';
+    var params = Object.assign({}, r.params || {}), action = key, kind = 'client_workflow';
+    if (key === 'douyin_leads') {
+      action = sub || 'search_collect'; kind = 'douyin_leads'; params.sales_action = action;
+      if (action === 'search_collect') params.customer_scope = 'current_collection_batch';
+      if (action !== 'search_collect') { delete params.keyword; delete params.regions; delete params.max_results; }
+    } else if (key === 'publish_content') {
+      params.platform = sub || 'douyin'; params.source_mode = 'parent_latest_run';
+      params.media_type = params.platform === 'wechat_moments' ? 'image_text' : 'video';
+    } else if (key === 'hifly.video.create_by_tts') {
+      action = 'shanjian_digital_human_video';
+      params.virtualman_selection_mode = params.virtualman_selection_mode || 'daily_round_robin';
+      delete params.capability_id;
+    } else if (key === 'native_wechat_poll') {
+      params.account_id = params.account_id || 'pc-wechat-default';
+    } else if (key === 'native_wechat_moments_engage') {
+      params.account_id = params.account_id || 'pc-wechat-default';
+      params.moment_action = params.moment_action || 'like_comment';
+    } else if (key === 'local_bestseller') {
+      action = 'local_bestseller_daily_video';
+      params.day_mode = params.day_mode || 'workflow_elapsed'; params.days = params.days || 30;
+    }
+    return { time: r.time, end_time: r.end, time_range: r.time + (r.end ? '-' + r.end : ''),
+             ability_key: key, ability_label: r.label || (TYPES.filter(function (t) { return t[0] === r.type; })[0] || [])[1] || key,
+             note: r.note, plan: { title: r.label || key, task_kind: kind, content: r.note || r.label || key,
+             payload: { action: action, params: params } } };
+  }
+  function collectRows() {
+    var host = document.getElementById('swNodes'); if (!host) return rows.map(buildNode);
+    Array.prototype.forEach.call(host.querySelectorAll('.sw-row'), function (box) {
+      var i = box.getAttribute('data-i'), r = null;
+      rows.forEach(function (x) { if (String(x.i) === String(i)) r = x; });
+      if (!r) return;
+      r.time = String((box.querySelector('.sw-t') || {}).value || '');
+      r.end = String((box.querySelector('.sw-e') || {}).value || '');
+      r.type = String((box.querySelector('.sw-k') || {}).value || r.type);
+      r.label = String((box.querySelector('.sw-l') || {}).value || '').trim();
+      r.note = String((box.querySelector('.sw-n') || {}).value || '').trim();
+      Array.prototype.forEach.call(box.querySelectorAll('.sw-p'), function (inp) {
+        var k = inp.getAttribute('data-k'), v = String(inp.value || '').trim();
+        if (k === 'regions') r.params[k] = v ? v.split(/[，,]/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
+        else if (inp.className.indexOf('sw-num') >= 0) r.params[k] = Number(v || 0);
+        else r.params[k] = v;
+      });
+    });
+    return rows.map(buildNode);
   }
   function summary(diff) {
     var lines = ['节点数：' + diff.old_node_count + ' → ' + diff.new_node_count];
@@ -623,19 +739,27 @@ body{background:#edf2f7}
   bind('swNewBtn', function () {
     editKey = ''; isNew = true; confirmed = false;
     document.getElementById('swName').value = ''; document.getElementById('swPublished').checked = false;
-    document.getElementById('swNodes').value = '[]'; document.getElementById('swDiff').textContent = '';
+    rows = [toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, 0)];
+    renderRows();
+    document.getElementById('swDiff').textContent = '';
     document.getElementById('swSaveBtn').disabled = true; document.getElementById('swEditor').style.display = '';
+  });
+  bind('swAddNode', function () {
+    collectRows();
+    var next = rows.reduce(function (max, r) { return Math.max(max, Number(r.i) + 1); }, 0);
+    rows.push(toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, next));
+    renderRows();
   });
   bind('swCancelBtn', function () { document.getElementById('swEditor').style.display = 'none'; editKey = ''; isNew = false; });
   bind('swDraftBtn', function () {
-    var nodes = parsedNodes(); if (!nodes) return;
+    var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
     var body = { nodes: nodes }, path;
     if (isNew) { document.getElementById('swDiff').textContent = '新模板：' + nodes.length + ' 个节点，确认后创建' + (document.getElementById('swPublished').checked ? '（上架）' : '（下架）'); }
     else { api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/draft', { method: 'POST', json: body }).then(function (r) { document.getElementById('swDiff').textContent = summary(r.diff) + '\n将同步给直接启用该模板的 ' + r.direct_user_count + ' 个用户'; }); }
     confirmed = true; document.getElementById('swSaveBtn').disabled = false;
   });
   bind('swSaveBtn', function () {
-    var nodes = parsedNodes(); if (!nodes) return;
+    var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
     if (!confirmed) { alert('请先点「预览变更」确认'); return; }
     if (!window.confirm(isNew ? '确认创建这个系统模板？' : '确认让这次修改生效并同步给直接启用它的用户？')) return;
     var published = document.getElementById('swPublished').checked;
