@@ -82,6 +82,48 @@ _ENABLED_SYSTEM_WORKFLOW_KEYS = {
 _SALES_DH_PROVIDER_V2 = "shanjian_v2"
 _SALES_DH_PROVIDER_LEGACY = "hifly_legacy"
 
+# 上架中的系统模板 key 从 system_catalog 行动态读取（下架的不返回给用户端，
+# 所以上下架只靠服务端控制，客户端不需要改动）。目录还没建好时退回内置三条，
+# 避免把系统模板整体关掉。
+_SYSTEM_WORKFLOW_KEYS_TTL_SECONDS = 5.0
+_SYSTEM_WORKFLOW_KEYS_CACHE: dict = {"at": 0.0, "keys": tuple(sorted(_ENABLED_SYSTEM_WORKFLOW_KEYS))}
+
+
+def _enabled_system_workflow_keys() -> set:
+    now = time.monotonic()
+    cached = _SYSTEM_WORKFLOW_KEYS_CACHE
+    if now - float(cached.get("at") or 0.0) < _SYSTEM_WORKFLOW_KEYS_TTL_SECONDS:
+        return set(cached.get("keys") or ())
+    discovered: set = set()
+    catalog_rows = 0
+    try:
+        with SessionLocal() as session:
+            rows = (
+                session.query(H5WorkflowTemplate)
+                .filter(
+                    H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+                    H5WorkflowTemplate.status == "active",
+                )
+                .all()
+            )
+        for row in rows:
+            meta = row.meta if isinstance(row.meta, dict) else {}
+            if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+                continue
+            key = str(meta.get("system_template_key") or "").strip()
+            if not key:
+                continue
+            catalog_rows += 1
+            if meta.get("system_published") is False:
+                continue
+            discovered.add(key)
+    except Exception:
+        return set(_ENABLED_SYSTEM_WORKFLOW_KEYS)
+    keys = discovered if catalog_rows else set(_ENABLED_SYSTEM_WORKFLOW_KEYS)
+    cached["at"] = now
+    cached["keys"] = tuple(sorted(keys))
+    return keys
+
 _WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS = 3.0
 _WORKFLOW_TEMPLATE_CACHE_LOCK = threading.Lock()
 _WORKFLOW_TEMPLATE_CACHE: dict[tuple[int, str], tuple[float, list[dict[str, Any]]]] = {}
@@ -2332,7 +2374,7 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
     # reply mode/prompt that may still exist in the database; the actual run
     # resolves the current account's Online configuration.
     template_meta = row.meta if isinstance(row.meta, dict) else {}
-    is_system_key = _clean_text(template_meta.get("system_template_key"), 128) in _ENABLED_SYSTEM_WORKFLOW_KEYS
+    is_system_key = _clean_text(template_meta.get("system_template_key"), 128) in _enabled_system_workflow_keys()
     if (
         (source in {"system", "granted"} and is_system_key)
         or source == "system"
@@ -2494,7 +2536,7 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
     template_nodes = _canonical_workflow_nodes(template_nodes)
     if (
         _clean_text(snapshot.get("source"), 32).lower() in {"system", "granted"}
-        and _clean_text(snapshot.get("template_key"), 128) in _ENABLED_SYSTEM_WORKFLOW_KEYS
+        and _clean_text(snapshot.get("template_key"), 128) in _enabled_system_workflow_keys()
     ):
         template_nodes = _sanitize_system_douyin_collection_defaults(template_nodes)
     return {
@@ -2560,7 +2602,7 @@ def _is_system_catalog_template(row: Optional[H5WorkflowTemplate]) -> bool:
     meta = row.meta if isinstance(row.meta, dict) else {}
     return (
         _clean_text(meta.get("source"), 64) == _SYSTEM_WORKFLOW_CATALOG_SOURCE
-        and _clean_text(meta.get("system_template_key"), 128) in _ENABLED_SYSTEM_WORKFLOW_KEYS
+        and _clean_text(meta.get("system_template_key"), 128) in _enabled_system_workflow_keys()
     )
 
 
@@ -2582,7 +2624,7 @@ def _accessible_template(db: Session, template_id: int, owner_user_id: int) -> H
     if row.owner_user_id == owner_user_id:
         meta = row.meta if isinstance(row.meta, dict) else {}
         key = _clean_text(meta.get("system_template_key"), 128)
-        if _clean_text(meta.get("source"), 64) == "system_mirror" and key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        if _clean_text(meta.get("source"), 64) == "system_mirror" and key in _enabled_system_workflow_keys():
             catalog_rows = (
                 db.query(H5WorkflowTemplate)
                 .filter(
@@ -2723,9 +2765,9 @@ def _activate_nodes_for_device(
     snapshot_extra: Optional[dict[str, Any]] = None,
 ):
     snapshot_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
-    if snapshot_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if snapshot_key in _enabled_system_workflow_keys():
         nodes = _sanitize_system_douyin_collection_defaults(nodes)
-    if snapshot_key in _ENABLED_SYSTEM_WORKFLOW_KEYS and snapshot_key != "system_sales":
+    if snapshot_key in _enabled_system_workflow_keys() and snapshot_key != "system_sales":
         # These system catalogs also contain a Douyin collection node, but
         # are not full sales presets and therefore must not be forced through
         # the sales persona/resource validation path.
@@ -2903,7 +2945,7 @@ def create_workflow_template(
     meta = dict(body.meta or {})
     installation_id = _clean_text(body.installation_id or x_installation_id, 128)
     system_template_key = _clean_text(meta.get("system_template_key"), 128)
-    if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if system_template_key and system_template_key not in _enabled_system_workflow_keys():
         raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
     if system_template_key:
         existing = _system_workflow_template(db, owner.id, system_template_key, installation_id=installation_id)
@@ -2961,7 +3003,7 @@ def update_workflow_template(
     if body.meta:
         meta = dict(body.meta)
         system_template_key = _clean_text(meta.get("system_template_key"), 128)
-        if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        if system_template_key and system_template_key not in _enabled_system_workflow_keys():
             raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
         duplicate_system_template = system_template_key and _system_workflow_template(
             db,
@@ -3139,7 +3181,7 @@ def activate_workflow_template(
         if is_system_catalog
         else ({"source": "granted"} if is_granted_template else None)
     )
-    if system_template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if system_template_key in _enabled_system_workflow_keys():
         snapshot_extra = {
             **(snapshot_extra or {}),
             "template_key": system_template_key,
@@ -3180,14 +3222,14 @@ def activate_inline_workflow_template(
     template_key = (body.template_key or "").strip()[:128]
     if not template_key:
         raise HTTPException(status_code=400, detail="缺少系统模板标识")
-    if template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if template_key not in _enabled_system_workflow_keys():
         raise HTTPException(status_code=400, detail="该系统员工暂未开放")
     name = (body.name or "系统员工模板").strip()[:160] or "系统员工模板"
     raw_nodes = body.nodes or []
     # Inline activation is used by the system workflow cards.  Sanitize on
     # the server as well as in the UI so an older client cannot re-submit the
     # catalog's stale screenshot prompt/mode.
-    if template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if template_key in _enabled_system_workflow_keys():
         raw_nodes = _sanitize_system_douyin_collection_defaults(raw_nodes)
     nodes = _clean_nodes(raw_nodes)
     _assert_workflow_feature_permissions(db, owner.id, nodes)
