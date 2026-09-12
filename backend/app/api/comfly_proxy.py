@@ -2653,13 +2653,16 @@ async def _openmind_video_content(task_id: str, model: str = "") -> Response:
 def _task_id_from_response(resp: Dict[str, Any]) -> str:
     if not isinstance(resp, dict):
         return ""
-    containers = [resp]
-    for container_key in ("data", "output"):
+    # DashScope returns a request_id at the top level and the pollable task
+    # id under output.task_id. Always prefer the provider task id.
+    containers = []
+    for container_key in ("output", "data"):
         container = resp.get(container_key)
         if isinstance(container, dict):
             containers.append(container)
+    containers.append(resp)
     for container in containers:
-        for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
+        for key in ("task_id", "id", "video_id", "job_id", "generation_id", "run_id", "request_id"):
             value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()

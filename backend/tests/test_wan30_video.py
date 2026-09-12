@@ -164,6 +164,17 @@ def test_direct_proxy_extracts_dashscope_task_id_from_output():
     assert _task_id_from_response({"output": {"task_id": "wan-task-3"}}) == "wan-task-3"
 
 
+def test_direct_proxy_prefers_dashscope_output_task_over_request_id():
+    from backend.app.api.comfly_proxy import _task_id_from_response
+
+    assert _task_id_from_response(
+        {
+            "request_id": "wan-request-3",
+            "output": {"task_id": "wan-task-3"},
+        }
+    ) == "wan-task-3"
+
+
 def test_dashscope_wan30_config_uses_only_dedicated_key(monkeypatch):
     from mcp import comfly_upstream
 
