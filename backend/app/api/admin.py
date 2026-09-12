@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import uuid
+
 import asyncio
 import html
 import logging
@@ -2071,6 +2073,147 @@ class SystemWorkflowBody(BaseModel):
     confirm: bool = False
 
 
+class SystemWorkflowCreateBody(BaseModel):
+    name: str = ""
+    nodes: list[dict] = []
+    published: bool = False
+
+
+class SystemWorkflowStatusBody(BaseModel):
+    published: bool = True
+
+
+def _system_catalog_row(db: Session, key: str):
+    """按 key 取系统模板本体（不区分上架/下架）。"""
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    rows = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+            H5WorkflowTemplate.status == "active",
+        )
+        .all()
+    )
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            continue
+        if str(meta.get("system_template_key") or "").strip() == key:
+            return row
+    return None
+
+
+def _clear_workflow_template_cache() -> None:
+    try:
+        from .h5_workflows import _WORKFLOW_TEMPLATE_CACHE
+
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+    except Exception:
+        pass
+
+
+def _system_workflow_catalog_items(db: Session) -> List[Dict[str, Any]]:
+    """目录里的全部系统模板（含新增的），带上下架状态。"""
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    rows = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+            H5WorkflowTemplate.status == "active",
+        )
+        .order_by(H5WorkflowTemplate.id.asc())
+        .all()
+    )
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            continue
+        key = str(meta.get("system_template_key") or "").strip()
+        if not key:
+            continue
+        nodes = list(row.nodes or [])
+        mirrors = _system_workflow_rows(db, key)[1]
+        items.append(
+            {
+                "key": key,
+                "name": str(row.name or _SYSTEM_WORKFLOW_LABELS.get(key, key)),
+                "is_builtin": key in _SYSTEM_WORKFLOW_LABELS,
+                "published": meta.get("system_published") is not False,
+                "template_id": int(row.id),
+                "nodes": nodes,
+                "node_count": len(nodes),
+                "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+                "direct_user_count": len({int(item.owner_user_id or 0) for item in mirrors}),
+                "mirror_count": len(mirrors),
+            }
+        )
+    return items
+
+
+@router.post("/admin/api/system-workflows", summary="新建系统模板工作流（仅管理员）")
+def admin_create_system_workflow(
+    body: SystemWorkflowCreateBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    name = str(body.name or "").strip()[:160]
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写系统模板名称")
+    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    key = f"system_custom_{uuid.uuid4().hex[:8]}"
+    row = H5WorkflowTemplate(
+        owner_user_id=_SYSTEM_WORKFLOW_OWNER_ID,
+        installation_id="",
+        name=name,
+        nodes=nodes,
+        status="active",
+        meta={
+            "source": _SYSTEM_WORKFLOW_CATALOG_SOURCE,
+            "system_template_key": key,
+            # 新建默认下架：确认没问题再上架，避免刚建好就出现在用户端。
+            "system_published": bool(body.published),
+        },
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    _clear_workflow_template_cache()
+    return {"ok": True, "key": key, "template_id": int(row.id), "published": bool(body.published)}
+
+
+@router.post("/admin/api/system-workflows/{key}/status", summary="系统模板上下架（仅管理员）")
+def admin_set_system_workflow_status(
+    key: str,
+    body: SystemWorkflowStatusBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    row = _system_catalog_row(db, key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    meta = dict(row.meta or {})
+    meta["system_published"] = bool(body.published)
+    row.meta = meta
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    # 下架/上架只影响"用户端还能不能拿到这条系统模板"，客户端不需要改动。
+    _clear_workflow_template_cache()
+    return {"ok": True, "key": key, "published": bool(body.published)}
+
+
 def _system_workflow_signature(node: Dict[str, Any]) -> str:
     return "|".join(
         (
@@ -2117,7 +2260,7 @@ def admin_list_system_workflows(
     db: Session = Depends(get_db),
 ):
     _require_system_workflow_admin(ctx)
-    return {"ok": True, "items": [_system_workflow_summary(db, key) for key in _SYSTEM_WORKFLOW_LABELS]}
+    return {"ok": True, "items": _system_workflow_catalog_items(db)}
 
 
 @router.post("/admin/api/system-workflows/{key}/draft", summary="系统模板工作流草稿与变更摘要（仅管理员）")
