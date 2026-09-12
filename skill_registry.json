@@ -448,8 +448,8 @@
       "tags": ["image", "video", "audio", "ai"]
     },
     "hifly_digital_human_skill": {
-      "name": "必火数字人",
-      "description": "选择数字人和声音，输入口播文案后生成必火数字人视频，生成完成后自动入库。",
+      "name": "数字人",
+      "description": "选择数字人和声音，输入口播文案后生成数字人视频，生成完成后自动入库。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
