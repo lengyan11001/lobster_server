@@ -651,8 +651,21 @@ body{background:#edf2f7}
   });
   function applyVisibility() {
     var card = document.getElementById('systemWorkflowCard'); if (!card) return;
-    // 入口先显示，权限由服务端把关：非管理员打开只会看到"仅管理员可用"，
-    // 且所有写操作接口都会 403。（之前按前端角色隐藏，结果 admin 也被藏掉了。）
+    if (!document.getElementById('swLauncher')) {
+      var btn = document.createElement('button');
+      btn.id = 'swLauncher'; btn.type = 'button'; btn.className = 'btn btn-primary btn-sm';
+      btn.textContent = '系统模板工作流';
+      btn.style.cssText = 'position:fixed;top:12px;right:16px;z-index:9998;box-shadow:0 6px 18px rgba(0,0,0,.18)';
+      document.body.appendChild(btn);
+      var overlay = document.createElement('div');
+      overlay.id = 'swOverlay';
+      overlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(12,20,36,.45);overflow:auto;padding:32px 16px';
+      var box = document.createElement('div');
+      box.style.cssText = 'max-width:1040px;margin:0 auto;background:#fff;border-radius:14px;padding:16px;box-shadow:0 18px 46px rgba(0,0,0,.22)';
+      box.appendChild(card); overlay.appendChild(box); document.body.appendChild(overlay);
+      btn.addEventListener('click', function () { overlay.style.display = 'block'; if (!loaded) load(); });
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.style.display = 'none'; });
+    }
     card.style.display = '';
     if (!loaded) load();
   }
@@ -2432,7 +2445,6 @@ function ensureUserDetailTabs() {
     ['generation', '生成记录'],
     ['tikhub', '数据查询'],
     ['skills', '技能/权限'],
-    ['systemWorkflows', '系统模板工作流'],
     ['devices', '设备/任务'],
     ['memory', 'OpenClaw 记忆'],
   ];
@@ -2467,7 +2479,6 @@ function ensureUserDetailTabs() {
   move('agentToggleCard', 'skills');
   move('imageChannelCard', 'skills');
     move('skillVisCard', 'skills');
-    move('systemWorkflowCard', 'systemWorkflows');
   move('userDevicesTaskCard', 'devices');
   move('openclawMemoryAdminCard', 'memory');
   tabs.addEventListener('click', function(e) {
