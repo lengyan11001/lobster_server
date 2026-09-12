@@ -101,8 +101,6 @@ REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
     "media_edit_skill",
     "ecommerce_publish_skill",
     "ip_content_daily_skill",
-    # 必火数字人（数字人 1.0）：功能已退役，技能商店不再展示、也不可再安装/解锁。
-    "hifly_digital_human_skill",
 })
 
 DEFAULT_GROUP_PACKAGE_EXPANSIONS = {

@@ -53,9 +53,6 @@ RETIRED_PACKAGE_IDS = frozenset({
     # Compatibility alias for the former combined IP daily package. The
     # split packages below are the only new permissions/store entries.
     "ip_content_daily_skill",
-    # 必火数字人（数字人 1.0）：功能已退役，不再出现在管理后台权限列表、
-    # 技能商店和功能开关里。
-    "hifly_digital_human_skill",
 })
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     HOME_AI_CHAT_ENTRY_ID,
