@@ -219,6 +219,28 @@ tr:hover{background:var(--bg)}
 .remote-control-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)}
 .remote-control-panel-head strong{font-size:14px}
 .remote-control-panel-head span{display:block;font-size:11px;color:var(--text-secondary);margin-top:3px}
+/* system template card + modal editor */
+.sw-card{display:flex;gap:10px;align-items:center;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.sw-card-time{flex:0 0 60px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#245cff;color:#fff;border-radius:9px;padding:5px 0;font-size:12px;line-height:1.25}
+.sw-card-time b{font-size:13px}
+.sw-card-main{flex:1;min-width:0}
+.sw-card-title{font-size:13px;font-weight:600}
+.sw-card-sub{font-size:12px;color:var(--text-secondary);margin-top:2px;word-break:break-all}
+.sw-card-ops{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.sw-modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px}
+.sw-modal-mask.hidden{display:none}
+.sw-modal{background:#fff;border-radius:14px;width:min(760px,96vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(15,23,42,.25)}
+.sw-modal-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+.sw-modal-body{padding:14px 16px;overflow:auto}
+.sw-modal-foot{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+.sw-modal-grid{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.sw-f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)}
+.sw-grow{flex:1;min-width:190px}
+.sw-p{padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px;color:inherit;background:#fff}
+.sw-wide{min-width:240px}
+.sw-card-ops .btn,.sw-modal-foot .btn,.sw-modal-head .btn{width:auto;padding:5px 10px;white-space:nowrap}
+.sw-modal-foot .btn.btn-primary{flex:0 0 auto;min-width:120px}
+.sw-f .sw-p{width:100%}
 .remote-support-frame{display:block;width:100%;height:680px;border:0;background:#f5f7fa}
 #pageRemoteSupport{padding:0;max-width:none}
 #pageRemoteSupport .remote-support-frame{height:calc(100vh - 86px);min-height:720px;border-radius:10px}
@@ -552,32 +574,26 @@ body{background:#edf2f7}
     只有「上架」的系统模板用户端才能看到。编辑要二次确认才生效；保存后只同步「直接启用」该模板的用户，复制出去自己改过的不动。
   </p>
   <div id="swList"></div>
-  <div id="swCreatePanel" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+  <div id="swEditor" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <input id="swName" placeholder="系统模板名称" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;min-width:220px">
       <label style="font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="swPublished"> 上架（用户可见）</label>
-      <button type="button" class="btn btn-sm" id="swAddNode">添加节点</button>
-      <button type="button" class="btn btn-primary btn-sm" id="swCreateBtn">创建系统模板</button>
+      <button type="button" class="btn btn-sm" id="swDraftBtn">预览变更</button>
+      <button type="button" class="btn btn-primary btn-sm" id="swSaveBtn" disabled>确认生效</button>
       <button type="button" class="btn btn-sm" id="swCancelBtn">取消</button>
+    </div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+      <b style="font-size:13px">工作节点</b>
+      <button type="button" class="btn btn-sm" id="swAddNode">添加节点</button>
+      <span style="color:var(--text-secondary);font-size:12px">按时间段配置，与 Online 员工工作流一致</span>
     </div>
     <div id="swNodes" style="margin-top:6px"></div>
     <div id="swDiff" style="margin-top:8px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap"></div>
   </div>
-  <div id="swEditor" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <b style="font-size:13px">编辑系统模板</b>
-      <span id="swEditorMeta" style="font-size:12px;color:var(--text-secondary)"></span>
-      <button type="button" class="btn btn-sm" id="swReloadBtn">重新载入编辑器</button>
-      <button type="button" class="btn btn-sm" id="swRefreshListBtn">刷新列表</button>
-      <a class="btn btn-sm" id="swOpenTabBtn" href="#" target="_blank" rel="noopener">在新窗口打开</a>
-      <button type="button" class="btn btn-sm" id="swCloseEditorBtn">收起编辑器</button>
-    </div>
-    <iframe id="swEditorFrame" title="系统模板编辑器" style="display:block;width:100%;height:calc(100vh - 250px);min-height:760px;border:1px solid var(--border);border-radius:10px;margin-top:8px;background:#f5f7fa"></iframe>
-  </div>
 </div>
 <script>
 (function () {
-  var items = [], rows = [], editKey = '', isNew = false, confirmed = false, loaded = false, pollTimer = null, createOpen = false;
+  var items = [], rows = [], editKey = '', isNew = false, confirmed = false, loaded = false;
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function listEl() { return document.getElementById('swList'); }
   function render() {
@@ -604,64 +620,21 @@ body{background:#edf2f7}
   }
   window.swLoad = load;
   window.swToggle = function (key, published) {
-    return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/status', { method: 'POST', json: { published: !!published } })
+    return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/status', { method: 'POST', body: JSON.stringify({ published: !!published }) })
       .then(load).catch(function (e) { alert('上下架失败：' + (e && e.message || e)); return load(); });
   };
-  function brandMark() {
-    var raw = String((document.documentElement && document.documentElement.dataset && document.documentElement.dataset.brand) || '').trim().toLowerCase();
-    return /^[a-z][a-z0-9_-]{0,62}$/.test(raw) ? raw : 'bihuo';
-  }
-  function adminToken() {
-    var suffix = ':' + brandMark();
-    return String(localStorage.getItem('admin_token' + suffix) || localStorage.getItem('admin_token') || '');
-  }
-  function h5EditorToken() {
-    // 后台管理员 token 形如 lobster-agent-<jwt>；H5 只认裸 JWT。
-    var raw = adminToken();
-    var prefix = 'lobster-agent-';
-    return raw.indexOf(prefix) === 0 ? raw.slice(prefix.length) : '';
-  }
-  function editorUrl(key) {
-    var params = new URLSearchParams();
-    params.set('brand', brandMark());
-    params.set('system_key', String(key || ''));
-    var token = h5EditorToken();
-    if (token) params.set('token', token);
-    return '/h5/?' + params.toString();
-  }
-  function editorEls() {
-    return {
-      panel: document.getElementById('swEditor'),
-      frame: document.getElementById('swEditorFrame'),
-      meta: document.getElementById('swEditorMeta'),
-      tab: document.getElementById('swOpenTabBtn')
-    };
-  }
-  function stopEditorPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  }
-  function startEditorPolling() {
-    stopEditorPolling();
-    pollTimer = setInterval(function () {
-      var els = editorEls();
-      if (!els.panel || els.panel.style.display === 'none') { stopEditorPolling(); return; }
-      load(true);
-    }, 6000);
-  }
   window.swEdit = function (key) {
     var it = null;
     for (var i = 0; i < items.length; i++) if (items[i].key === key) it = items[i];
-    var els = editorEls();
-    if (!els.panel || !els.frame) return;
-    var url = editorUrl(key);
-    editKey = key;
-    document.getElementById('swCreatePanel').style.display = 'none';
-    createOpen = false;
-    if (els.tab) els.tab.setAttribute('href', url);
-    if (els.meta) els.meta.textContent = '（' + (it ? it.name + ' · ' + it.key + ' · ' + it.node_count + ' 个节点 · ' + (it.published ? '已上架' : '已下架') : key) + '）';
-    els.frame.src = url;
-    els.panel.style.display = '';
-    startEditorPolling();
+    if (!it) return;
+    editKey = key; isNew = false; confirmed = false;
+    document.getElementById('swName').value = it.name || '';
+    document.getElementById('swPublished').checked = !!it.published;
+    rows = (it.nodes || []).map(toRow);
+    renderRows();
+    document.getElementById('swDiff').textContent = '';
+    document.getElementById('swSaveBtn').disabled = true;
+    document.getElementById('swEditor').style.display = '';
   };
   var TYPES = [
     ['native_wechat_poll', '个微私信接管'],
@@ -699,35 +672,52 @@ body{background:#edf2f7}
     if (r.type === 'native_wechat_moments_engage') return '<label class="sw-f">动作<select class="sw-p" data-k="moment_action"><option value="like_comment">点赞并评论</option><option value="like">只点赞</option><option value="comment">只评论</option></select></label>';
     return '';
   }
+  function typeLabelOf(r) {
+    var hit = TYPES.filter(function (t) { return t[0] === r.type; })[0];
+    return hit ? hit[1] : String(r.type || '');
+  }
+  function nodeParamSummary(r) {
+    var p = r.params || {}, parts = [];
+    if (p.keyword) parts.push('关键词：' + p.keyword);
+    if (p.regions) parts.push('地区：' + (Array.isArray(p.regions) ? p.regions.join('/') : p.regions));
+    if (p.max_results !== undefined && p.max_results !== '') parts.push('数量：' + p.max_results);
+    if (p.max_users !== undefined && p.max_users !== '') parts.push('触达：' + p.max_users);
+    if (p.message_poll_interval_seconds !== undefined) parts.push('轮询 ' + p.message_poll_interval_seconds + 's');
+    if (p.takeover_session_minutes !== undefined) parts.push('接管 ' + p.takeover_session_minutes + 'min');
+    if (p.script) parts.push('口播：' + String(p.script).slice(0, 24));
+    if (p.moment_action) parts.push('动作：' + p.moment_action);
+    return parts.join(' · ');
+  }
   function renderRows() {
     var host = document.getElementById('swNodes'); if (!host) return;
-    host.innerHTML = rows.length ? rows.map(function (r) {
-      return '<div class="sw-row" data-i="' + r.i + '" style="border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:6px">' +
-        '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-        '<input class="sw-t" type="time" value="' + esc(r.time) + '" style="width:100px">' +
-        '<input class="sw-e" type="time" value="' + esc(r.end) + '" style="width:100px">' +
-        '<select class="sw-k" style="min-width:160px">' + typeOpts(r.type) + '</select>' +
-        '<input class="sw-l" placeholder="节点名称" value="' + esc(r.label) + '" style="flex:1;min-width:140px">' +
-        '<button type="button" class="btn btn-sm sw-del">删除</button></div>' +
-        '<div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + extraFields(r) +
-        '<input class="sw-n" placeholder="节点说明" value="' + esc(r.note) + '" style="flex:1;min-width:160px"></div></div>';
-    }).join('') : '<div style="color:var(--text-secondary);font-size:12px">还没有节点，点「添加节点」</div>';
-    Array.prototype.forEach.call(host.querySelectorAll('.sw-del'), function (btn) {
-      btn.addEventListener('click', function () {
-        var box = btn.closest('.sw-row');
-        rows = rows.filter(function (r) { return String(r.i) !== String(box.getAttribute('data-i')); });
-        renderRows();
-      });
-    });
-    Array.prototype.forEach.call(host.querySelectorAll('.sw-k'), function (sel) {
-      sel.addEventListener('change', function () {
-        collectRows(); renderRows();
-      });
-    });
-    Array.prototype.forEach.call(host.querySelectorAll('.sw-p'), function (inp) {
-      if (inp.tagName === 'SELECT') return;
-      inp.addEventListener('input', function () { collectRows(); });
-    });
+    rows.forEach(function (r, idx) { r.i = idx; });
+    host.innerHTML = rows.length ? rows.map(function (r, idx) {
+      var params = nodeParamSummary(r);
+      return '<div class="sw-card" data-i="' + idx + '">' +
+        '<div class="sw-card-time"><b>' + esc(r.time || '09:00') + '</b><span>' + esc(r.end || '') + '</span></div>' +
+        '<div class="sw-card-main">' +
+        '<div class="sw-card-title">' + esc(r.label || typeLabelOf(r)) + '</div>' +
+        '<div class="sw-card-sub">' + esc(typeLabelOf(r)) + (r.note ? ' · ' + esc(r.note) : '') + '</div>' +
+        (params ? '<div class="sw-card-sub">' + esc(params) + '</div>' : '') +
+        '</div>' +
+        '<div class="sw-card-ops">' +
+        '<button type="button" class="btn btn-sm" data-sw-act="up"' + (idx === 0 ? ' disabled' : '') + '>上移</button>' +
+        '<button type="button" class="btn btn-sm" data-sw-act="down"' + (idx === rows.length - 1 ? ' disabled' : '') + '>下移</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" data-sw-act="edit">编辑</button>' +
+        '<button type="button" class="btn btn-sm danger-text" data-sw-act="del">删除</button>' +
+        '</div></div>';
+    }).join('') : '<div style="color:var(--text-secondary);font-size:12px">还没有节点，点「添加节点」开始配置</div>';
+    host.onclick = function (evt) {
+      var btn = evt.target.closest('[data-sw-act]');
+      var card = evt.target.closest('.sw-card');
+      if (!btn || !card) return;
+      var i = Number(card.getAttribute('data-i'));
+      var act = btn.getAttribute('data-sw-act');
+      if (act === 'del') { rows.splice(i, 1); renderRows(); return; }
+      if (act === 'up' && i > 0) { var t = rows[i]; rows[i] = rows[i - 1]; rows[i - 1] = t; renderRows(); return; }
+      if (act === 'down' && i < rows.length - 1) { var t2 = rows[i]; rows[i] = rows[i + 1]; rows[i + 1] = t2; renderRows(); return; }
+      if (act === 'edit') openNodeModal(i);
+    };
   }
   function buildNode(r) {
     var parts = String(r.type || '').split('|'), key = parts[0], sub = parts[1] || '';
@@ -757,26 +747,91 @@ body{background:#edf2f7}
              note: r.note, plan: { title: r.label || key, task_kind: kind, content: r.note || r.label || key,
              payload: { action: action, params: params } } };
   }
-  function collectRows() {
-    var host = document.getElementById('swNodes'); if (!host) return rows.map(buildNode);
-    Array.prototype.forEach.call(host.querySelectorAll('.sw-row'), function (box) {
-      var i = box.getAttribute('data-i'), r = null;
-      rows.forEach(function (x) { if (String(x.i) === String(i)) r = x; });
-      if (!r) return;
-      r.time = String((box.querySelector('.sw-t') || {}).value || '');
-      r.end = String((box.querySelector('.sw-e') || {}).value || '');
-      r.type = String((box.querySelector('.sw-k') || {}).value || r.type);
-      r.label = String((box.querySelector('.sw-l') || {}).value || '').trim();
-      r.note = String((box.querySelector('.sw-n') || {}).value || '').trim();
-      Array.prototype.forEach.call(box.querySelectorAll('.sw-p'), function (inp) {
-        var k = inp.getAttribute('data-k'), v = String(inp.value || '').trim();
-        if (k === 'regions') r.params[k] = v ? v.split(/[，,]/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
-        else if (inp.className.indexOf('sw-num') >= 0) r.params[k] = Number(v || 0);
-        else r.params[k] = v;
-      });
+  function collectRows() { return rows.map(buildNode); }
+  var nodeModalIndex = -1;
+  function ensureNodeModal() {
+    var mask = document.getElementById('swNodeModal');
+    if (mask) return mask;
+    mask = document.createElement('div');
+    mask.id = 'swNodeModal';
+    mask.className = 'sw-modal-mask hidden';
+    mask.innerHTML = '<div class="sw-modal">' +
+      '<div class="sw-modal-head"><b>编辑工作节点</b><button type="button" class="btn btn-sm" data-sw-modal="close">关闭</button></div>' +
+      '<div class="sw-modal-body">' +
+      '<div class="sw-modal-grid">' +
+      '<label class="sw-f">开始时间<input class="sw-p" type="time" id="swModalTime"></label>' +
+      '<label class="sw-f">结束时间<input class="sw-p" type="time" id="swModalEndTime"></label>' +
+      '<label class="sw-f sw-grow">节点类型<select class="sw-p" id="swModalType"></select></label>' +
+      '<label class="sw-f sw-grow">节点名称<input class="sw-p" id="swModalLabel" placeholder="例如：创作同城爆款视频"></label>' +
+      '</div>' +
+      '<div class="sw-modal-grid" id="swModalExtra"></div>' +
+      '<label class="sw-f sw-grow">节点说明<input class="sw-p" id="swModalNote" placeholder="这一步让员工做什么"></label>' +
+      '</div>' +
+      '<div class="sw-modal-foot">' +
+      '<button type="button" class="btn btn-sm danger-text" data-sw-modal="delete">删除节点</button>' +
+      '<span style="flex:1"></span>' +
+      '<button type="button" class="btn btn-sm" data-sw-modal="cancel">取消</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-sw-modal="save">保存节点</button>' +
+      '</div></div>';
+    document.body.appendChild(mask);
+    mask.addEventListener('click', function (evt) {
+      var hit = evt.target.closest('[data-sw-modal]');
+      var act = hit ? hit.getAttribute('data-sw-modal') : (evt.target === mask ? 'close' : '');
+      if (act === 'close' || act === 'cancel') { mask.classList.add('hidden'); return; }
+      if (act === 'delete') { rows.splice(nodeModalIndex, 1); mask.classList.add('hidden'); renderRows(); return; }
+      if (act === 'save') { applyNodeModal(); }
     });
-    return rows.map(buildNode);
+    document.getElementById('swModalType').addEventListener('change', function () { fillNodeModalExtra(); });
+    return mask;
   }
+  function fillNodeModalExtra() {
+    var r = rows[nodeModalIndex]; if (!r) return;
+    var extra = document.getElementById('swModalExtra');
+    if (!extra) return;
+    var type = document.getElementById('swModalType').value;
+    extra.innerHTML = extraFields(Object.assign({}, r, { type: type }));
+  }
+  function openNodeModal(index) {
+    var r = rows[index]; if (!r) return;
+    nodeModalIndex = index;
+    ensureNodeModal();
+    document.getElementById('swModalTime').value = r.time || '09:00';
+    document.getElementById('swModalEndTime').value = r.end || '';
+    document.getElementById('swModalType').innerHTML = TYPES.map(function (t) {
+      return '<option value="' + t[0] + '"' + (t[0] === r.type ? ' selected' : '') + '>' + t[1] + '</option>';
+    }).join('');
+    document.getElementById('swModalLabel').value = r.label || '';
+    document.getElementById('swModalNote').value = r.note || '';
+    fillNodeModalExtra();
+    document.getElementById('swNodeModal').classList.remove('hidden');
+  }
+  function applyNodeModal() {
+    var r = rows[nodeModalIndex]; if (!r) return;
+    r.time = String((document.getElementById('swModalTime') || {}).value || '').trim() || '09:00';
+    r.end = String((document.getElementById('swModalEndTime') || {}).value || '').trim();
+    r.type = String((document.getElementById('swModalType') || {}).value || r.type);
+    r.label = String((document.getElementById('swModalLabel') || {}).value || '').trim();
+    r.note = String((document.getElementById('swModalNote') || {}).value || '').trim();
+    var extra = document.getElementById('swModalExtra');
+    if (extra) {
+      Array.prototype.forEach.call(extra.querySelectorAll('.sw-p'), function (inp) {
+        var k = inp.getAttribute('data-k');
+        if (!k) return;
+        var raw = String(inp.value || '').trim();
+        if (k === 'regions') {
+          r.params[k] = raw ? raw.split(/[，,、|]/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
+        } else if (String(inp.className || '').indexOf('sw-num') >= 0) {
+          r.params[k] = Number(raw || 0);
+        } else {
+          r.params[k] = raw;
+        }
+      });
+    }
+    if (!r.label) r.label = typeLabelOf(r);
+    document.getElementById('swNodeModal').classList.add('hidden');
+    renderRows();
+  }
+
   function summary(diff) {
     var lines = ['节点数：' + diff.old_node_count + ' → ' + diff.new_node_count];
     if (diff.added && diff.added.length) lines.push('新增：' + diff.added.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
@@ -791,35 +846,37 @@ body{background:#edf2f7}
     rows = [toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, 0)];
     renderRows();
     document.getElementById('swDiff').textContent = '';
-    document.getElementById('swCreatePanel').style.display = ''; document.getElementById('swEditor').style.display = 'none'; stopEditorPolling();
+    document.getElementById('swSaveBtn').disabled = true; document.getElementById('swEditor').style.display = '';
   });
   bind('swAddNode', function () {
-    collectRows();
-    var next = rows.reduce(function (max, r) { return Math.max(max, Number(r.i) + 1); }, 0);
-    rows.push(toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, next));
+    var row = toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, rows.length);
+    rows.push(row);
     renderRows();
+    openNodeModal(rows.length - 1);
   });
-  bind('swCancelBtn', function () { document.getElementById('swCreatePanel').style.display = 'none'; createOpen = false; editKey = ''; isNew = false; });
-  bind('swCreateBtn', function () {
+  bind('swCancelBtn', function () { document.getElementById('swEditor').style.display = 'none'; editKey = ''; isNew = false; });
+  bind('swDraftBtn', function () {
     var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
-    var name = (document.getElementById('swName').value || '').trim();
-    if (!name) { alert('请先填写系统模板名称'); return; }
-    if (!window.confirm('确认创建这个系统模板？')) return;
+    var body = { nodes: nodes }, path;
+    if (isNew) { document.getElementById('swDiff').textContent = '新模板：' + nodes.length + ' 个节点，确认后创建' + (document.getElementById('swPublished').checked ? '（上架）' : '（下架）'); }
+    else { api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/draft', { method: 'POST', body: JSON.stringify(body) }).then(function (r) { document.getElementById('swDiff').textContent = summary(r.diff) + '\n将同步给直接启用该模板的 ' + r.direct_user_count + ' 个用户'; }); }
+    confirmed = true; document.getElementById('swSaveBtn').disabled = false;
+  });
+  bind('swSaveBtn', function () {
+    var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
+    if (!confirmed) { alert('请先点「预览变更」确认'); return; }
+    if (!window.confirm(isNew ? '确认创建这个系统模板？' : '确认让这次修改生效并同步给直接启用它的用户？')) return;
     var published = document.getElementById('swPublished').checked;
-    api('/admin/api/system-workflows', { method: 'POST', json: { name: name, nodes: nodes, published: published } })
-      .then(function () { document.getElementById('swCreatePanel').style.display = 'none'; createOpen = false; return load(true); })
-      .catch(function (e) { alert('创建失败：' + (e && e.message || e)); });
-  });
-  bind('swReloadBtn', function () {
-    var els = editorEls();
-    if (els.frame && editKey) els.frame.src = editorUrl(editKey);
-  });
-  bind('swRefreshListBtn', function () { load(true); });
-  bind('swCloseEditorBtn', function () {
-    var els = editorEls();
-    if (els.panel) els.panel.style.display = 'none';
-    if (els.frame) els.frame.src = 'about:blank';
-    stopEditorPolling();
+    if (isNew) {
+      api('/admin/api/system-workflows', { method: 'POST', body: JSON.stringify({ name: document.getElementById('swName').value.trim(), nodes: nodes, published: published }) })
+        .then(function () { document.getElementById('swEditor').style.display = 'none'; return load(); })
+        .catch(function (e) { alert('创建失败：' + (e && e.message || e)); });
+    } else {
+      api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', body: JSON.stringify({ nodes: nodes, confirm: true }) })
+        .then(function () { return api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/status', { method: 'POST', body: JSON.stringify({ published: published }) }); })
+        .then(function () { document.getElementById('swEditor').style.display = 'none'; return load(); })
+        .catch(function (e) { alert('保存失败：' + (e && e.message || e)); });
+    }
   });
   function applyVisibility() {
     var card = document.getElementById('systemWorkflowCard'); if (!card) return;
