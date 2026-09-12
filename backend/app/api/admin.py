@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import H5WorkflowTemplate, AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
@@ -2009,6 +2009,27 @@ _SYSTEM_WORKFLOW_LABELS = {
 }
 
 
+def _system_workflow_key_labels(db: Session) -> Dict[str, str]:
+    """内置 3 个系统模板 + 目录里所有已存在的 system_custom_* 模板。"""
+    labels: Dict[str, str] = dict(_SYSTEM_WORKFLOW_LABELS)
+    try:
+        rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(H5WorkflowTemplate.owner_user_id == 0, H5WorkflowTemplate.status == "active")
+            .all()
+        )
+        for row in rows:
+            meta = row.meta if isinstance(row.meta, dict) else {}
+            if str(meta.get("source") or "") != "system_catalog":
+                continue
+            key = str(meta.get("system_template_key") or "").strip()
+            if key:
+                labels.setdefault(key, str(row.name or key))
+    except Exception:
+        logger.warning("system workflow catalog scan failed", exc_info=True)
+    return labels
+
+
 def _require_system_workflow_admin(ctx: "AdminContext") -> None:
     if str(getattr(ctx, "role", "") or "").strip().lower() != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可管理系统模板工作流")
@@ -2058,7 +2079,7 @@ def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
     nodes = list(catalog.nodes or []) if catalog is not None else []
     return {
         "key": key,
-        "name": _SYSTEM_WORKFLOW_LABELS.get(key, key),
+        "name": _system_workflow_key_labels(db).get(key, key),
         "template_id": int(catalog.id) if catalog is not None else None,
         "nodes": nodes,
         "node_count": len(nodes),
@@ -2141,7 +2162,7 @@ def _system_workflow_catalog_items(db: Session) -> List[Dict[str, Any]]:
         items.append(
             {
                 "key": key,
-                "name": str(row.name or _SYSTEM_WORKFLOW_LABELS.get(key, key)),
+                "name": str(row.name or _system_workflow_key_labels(db).get(key, key)),
                 "is_builtin": key in _SYSTEM_WORKFLOW_LABELS,
                 "published": meta.get("system_published") is not False,
                 "template_id": int(row.id),
@@ -2272,7 +2293,7 @@ def admin_draft_system_workflow(
 ):
     _require_system_workflow_admin(ctx)
     key = str(key or "").strip()
-    if key not in _SYSTEM_WORKFLOW_LABELS:
+    if key not in _system_workflow_key_labels(db):
         raise HTTPException(status_code=404, detail="系统模板不存在")
     nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
     if not nodes:
@@ -2282,7 +2303,7 @@ def admin_draft_system_workflow(
     return {
         "ok": True,
         "key": key,
-        "name": _SYSTEM_WORKFLOW_LABELS.get(key, key),
+        "name": _system_workflow_key_labels(db).get(key, key),
         "template_id": int(catalog.id) if catalog is not None else None,
         "diff": _system_workflow_diff(old_nodes, nodes),
         "new_nodes": _system_workflow_nodes_summary(nodes),
@@ -2300,7 +2321,7 @@ def admin_publish_system_workflow(
 ):
     _require_system_workflow_admin(ctx)
     key = str(key or "").strip()
-    if key not in _SYSTEM_WORKFLOW_LABELS:
+    if key not in _system_workflow_key_labels(db):
         raise HTTPException(status_code=404, detail="系统模板不存在")
     if not body.confirm:
         raise HTTPException(status_code=400, detail="需要二次确认后才会生效")
@@ -2329,7 +2350,7 @@ def admin_publish_system_workflow(
     return {
         "ok": True,
         "key": key,
-        "name": _SYSTEM_WORKFLOW_LABELS.get(key, key),
+        "name": _system_workflow_key_labels(db).get(key, key),
         "node_count": len(nodes),
         "mirror_count": len(mirrors),
         "synced_users": len(synced_users),

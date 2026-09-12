@@ -119,7 +119,7 @@ def _enabled_system_workflow_keys() -> set:
             discovered.add(key)
     except Exception:
         return set(_ENABLED_SYSTEM_WORKFLOW_KEYS)
-    keys = discovered if catalog_rows else set(_ENABLED_SYSTEM_WORKFLOW_KEYS)
+    keys = set(_ENABLED_SYSTEM_WORKFLOW_KEYS) | discovered
     cached["at"] = now
     cached["keys"] = tuple(sorted(keys))
     return keys
