@@ -1054,6 +1054,12 @@ body{background:#edf2f7}
         '</div>';
     };
     host.innerHTML = rows.map(nodeHtml).join('');
+    Array.prototype.forEach.call(host.querySelectorAll('.task-action-menu'), function (menu) {
+      menu.addEventListener('toggle', function () {
+        var entry = menu.closest('.workflow-timeline-entry') || menu.closest('.workflow-node-card');
+        if (entry) entry.classList.toggle('task-menu-open', menu.open);
+      });
+    });
     host.onclick = function (evt) {
       var btn = evt.target.closest('[data-sw-act]');
       var entry = evt.target.closest('.workflow-timeline-entry');
