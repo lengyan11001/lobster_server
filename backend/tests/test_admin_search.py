@@ -528,3 +528,34 @@ def test_admin_positive_credit_adjustment_does_not_use_agent_transfer(db_session
         ledger = session.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
         assert ledger.entry_type == "recharge"
         assert ledger.delta == Decimal("25.0000")
+
+
+def test_retired_hifly_digital_human_is_hidden_from_admin_permissions(db_session, db_session_factory):
+    """必火数字人（数字人 1.0）已退役：管理后台权限列表不再展示，也不能再加回来。"""
+    user = User(
+        email="retired-digital-human-admin@test.local",
+        hashed_password="x",
+        credits=Decimal("1.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _client_for_admin_context(db_session_factory, admin_api.AdminContext(role="admin"))
+
+    listing = client.get(f"/admin/api/user-skill-visibility/{user.id}")
+    assert listing.status_code == 200
+    package_ids = {pkg["id"] for pkg in listing.json()["all_packages"]}
+    assert "hifly_digital_human_skill" not in package_ids
+    # 仍然存在于注册表里（老数据/老模板还能读到），只是不再作为权限项出现。
+    assert "douyin_leads" in package_ids
+
+    added = client.post(
+        f"/admin/api/user-skill-visibility/{user.id}",
+        json={"add": ["hifly_digital_human_skill"], "unlock_add": ["hifly_digital_human_skill"]},
+    )
+    assert added.status_code == 200
+    assert "hifly_digital_human_skill" not in added.json()["added"]

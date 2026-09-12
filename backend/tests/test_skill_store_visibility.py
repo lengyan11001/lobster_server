@@ -176,3 +176,31 @@ def test_bihuo_25_is_visible_only_after_server_grant(db_session, db_session_fact
     assert allowed.status_code == 200
     assert allowed.json()["allowed"] is True
     assert package["default_installed"] is False
+
+
+def test_retired_hifly_digital_human_is_hidden_from_skill_store(db_session, db_session_factory, monkeypatch):
+    """必火数字人（数字人 1.0）已退役：技能商店（国内/海外）都不再展示。"""
+    from backend.app.models import User
+
+    user = User(
+        email="retired-digital-human@test.local",
+        hashed_password="x",
+        credits=Decimal("1.0000"),
+        role="user",
+        preferred_model="sutui",
+        is_overseas_user=False,
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _client_for_user(db_session_factory, monkeypatch, user.id)
+    domestic_ids = {item["id"] for item in client.get("/skills/store").json()["packages"]}
+    overseas_ids = {
+        item["id"]
+        for item in client.get("/skills/store", headers={"X-Lobster-Client-Overseas": "true"}).json()["packages"]
+    }
+
+    assert "hifly_digital_human_skill" not in domestic_ids
+    assert "hifly_digital_human_skill" not in overseas_ids
