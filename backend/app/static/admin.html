@@ -647,6 +647,10 @@ body{background:#edf2f7}
     var card = document.getElementById('systemWorkflowCard'); if (!card) return;
     var ok = (typeof window.isLobsterAdmin === 'function') ? window.isLobsterAdmin() : (typeof isAdmin === 'function' ? isAdmin() : false);
     card.style.display = ok ? '' : 'none';
+    // tab 按钮本身也只给管理员看（代理商看不到这个入口）。
+    Array.prototype.forEach.call(document.querySelectorAll('button,[role="tab"],a,li'), function (el) {
+      if (String(el.textContent || '').trim() === '系统模板工作流') el.style.display = ok ? '' : 'none';
+    });
     if (ok && !loaded) load();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyVisibility); else applyVisibility();
