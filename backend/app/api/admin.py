@@ -1998,6 +1998,201 @@ def admin_update_user_skill_visibility(
     }
 
 
+# ── 系统模板工作流（仅 admin 可看可改） ──
+
+_SYSTEM_WORKFLOW_LABELS = {
+    "system_sales": "销售全流程员工",
+    "system_short_video_wechat": "短视频+微信员工",
+    "system_douyin_leads": "抖音获客员工",
+}
+
+
+def _require_system_workflow_admin(ctx: "AdminContext") -> None:
+    if str(getattr(ctx, "role", "") or "").strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可管理系统模板工作流")
+
+
+def _system_workflow_nodes_summary(nodes: Any, limit: int = 80) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict):
+            continue
+        out.append(
+            {
+                "time": str(node.get("time") or ""),
+                "end_time": str(node.get("end_time") or ""),
+                "label": str(node.get("ability_label") or node.get("label") or node.get("note") or ""),
+                "key": str(node.get("ability_key") or node.get("key") or ""),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _system_workflow_rows(db: Session, key: str) -> tuple:
+    """Return (系统模板本体, 直接启用它的用户镜像列表)。"""
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    rows = db.query(H5WorkflowTemplate).filter(H5WorkflowTemplate.status == "active").all()
+    catalog = None
+    mirrors = []
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("system_template_key") or "").strip() != key:
+            continue
+        source = str(meta.get("source") or "").strip()
+        if int(row.owner_user_id or 0) == _SYSTEM_WORKFLOW_OWNER_ID and source == _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            catalog = row
+        elif int(row.owner_user_id or 0) != _SYSTEM_WORKFLOW_OWNER_ID and source == "system_mirror":
+            # 复制出去自己改过的模板在复制时已经去掉 system_template_key，不会命中这里。
+            mirrors.append(row)
+    return catalog, mirrors
+
+
+def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
+    catalog, mirrors = _system_workflow_rows(db, key)
+    nodes = list(catalog.nodes or []) if catalog is not None else []
+    return {
+        "key": key,
+        "name": _SYSTEM_WORKFLOW_LABELS.get(key, key),
+        "template_id": int(catalog.id) if catalog is not None else None,
+        "nodes": nodes,
+        "node_count": len(nodes),
+        "updated_at": catalog.updated_at.isoformat() if catalog is not None and catalog.updated_at else "",
+        "direct_user_count": len({int(row.owner_user_id or 0) for row in mirrors}),
+        "mirror_count": len(mirrors),
+    }
+
+
+class SystemWorkflowBody(BaseModel):
+    nodes: list[dict] = []
+    confirm: bool = False
+
+
+def _system_workflow_signature(node: Dict[str, Any]) -> str:
+    return "|".join(
+        (
+            str(node.get("time") or ""),
+            str(node.get("ability_key") or node.get("key") or ""),
+            str(node.get("ability_label") or node.get("label") or ""),
+        )
+    )
+
+
+def _system_workflow_diff(old_nodes: Any, new_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    import json as _json
+
+    old_list = [node for node in (old_nodes if isinstance(old_nodes, list) else []) if isinstance(node, dict)]
+    old_map = {_system_workflow_signature(node): node for node in old_list}
+    new_map = {_system_workflow_signature(node): node for node in new_nodes}
+
+    def brief(node: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "time": str(node.get("time") or ""),
+            "label": str(node.get("ability_label") or node.get("label") or node.get("note") or ""),
+            "key": str(node.get("ability_key") or node.get("key") or ""),
+        }
+
+    changed = [
+        brief(new_map[sig])
+        for sig in new_map
+        if sig in old_map
+        and _json.dumps(old_map[sig], sort_keys=True, ensure_ascii=False)
+        != _json.dumps(new_map[sig], sort_keys=True, ensure_ascii=False)
+    ]
+    return {
+        "old_node_count": len(old_list),
+        "new_node_count": len(new_nodes),
+        "added": [brief(new_map[sig]) for sig in new_map if sig not in old_map][:60],
+        "removed": [brief(old_map[sig]) for sig in old_map if sig not in new_map][:60],
+        "changed": changed[:60],
+    }
+
+
+@router.get("/admin/api/system-workflows", summary="系统模板工作流列表（仅管理员）")
+def admin_list_system_workflows(
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    return {"ok": True, "items": [_system_workflow_summary(db, key) for key in _SYSTEM_WORKFLOW_LABELS]}
+
+
+@router.post("/admin/api/system-workflows/{key}/draft", summary="系统模板工作流草稿与变更摘要（仅管理员）")
+def admin_draft_system_workflow(
+    key: str,
+    body: SystemWorkflowBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    if key not in _SYSTEM_WORKFLOW_LABELS:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    catalog, mirrors = _system_workflow_rows(db, key)
+    old_nodes = list(catalog.nodes or []) if catalog is not None else []
+    return {
+        "ok": True,
+        "key": key,
+        "name": _SYSTEM_WORKFLOW_LABELS.get(key, key),
+        "template_id": int(catalog.id) if catalog is not None else None,
+        "diff": _system_workflow_diff(old_nodes, nodes),
+        "new_nodes": _system_workflow_nodes_summary(nodes),
+        "mirror_count": len(mirrors),
+        "direct_user_count": len({int(row.owner_user_id or 0) for row in mirrors}),
+    }
+
+
+@router.post("/admin/api/system-workflows/{key}/publish", summary="系统模板工作流确认生效并同步（仅管理员）")
+def admin_publish_system_workflow(
+    key: str,
+    body: SystemWorkflowBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    if key not in _SYSTEM_WORKFLOW_LABELS:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="需要二次确认后才会生效")
+    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    catalog, mirrors = _system_workflow_rows(db, key)
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="系统模板本体不存在")
+    now = datetime.utcnow()
+    catalog.nodes = nodes
+    catalog.updated_at = now
+    synced_users = set()
+    for row in mirrors:
+        # 只覆盖"直接启用系统模板"的镜像；复制过的副本没有 system_template_key。
+        row.nodes = nodes
+        row.updated_at = now
+        synced_users.add(int(row.owner_user_id or 0))
+    db.commit()
+    try:
+        from .h5_workflows import _WORKFLOW_TEMPLATE_CACHE
+
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "key": key,
+        "name": _SYSTEM_WORKFLOW_LABELS.get(key, key),
+        "node_count": len(nodes),
+        "mirror_count": len(mirrors),
+        "synced_users": len(synced_users),
+    }
+
+
 # ── 数据统计 ──
 
 
