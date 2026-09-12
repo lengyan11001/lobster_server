@@ -53,6 +53,9 @@ RETIRED_PACKAGE_IDS = frozenset({
     # Compatibility alias for the former combined IP daily package. The
     # split packages below are the only new permissions/store entries.
     "ip_content_daily_skill",
+    # 智能视频 2.5（bihuo_25_video_skill / 管理后台「数字人2.5入口」）：已废弃，
+    # 技能商店、管理后台权限列表和功能开关都不再出现。
+    "bihuo_25_video_skill",
 })
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     HOME_AI_CHAT_ENTRY_ID,

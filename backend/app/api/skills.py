@@ -101,6 +101,8 @@ REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
     "media_edit_skill",
     "ecommerce_publish_skill",
     "ip_content_daily_skill",
+    # 智能视频 2.5：已废弃，不再展示、也不可安装/解锁。
+    "bihuo_25_video_skill",
 })
 
 DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
