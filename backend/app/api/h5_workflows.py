@@ -106,19 +106,19 @@ def _enabled_system_workflow_keys() -> set:
                 )
                 .all()
             )
-        for row in rows:
-            meta = row.meta if isinstance(row.meta, dict) else {}
-            if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
-                continue
-            key = str(meta.get("system_template_key") or "").strip()
-            if not key:
-                continue
-            catalog_rows += 1
-            if meta.get("system_published") is False:
-                continue
-            discovered.add(key)
+            for row in rows:
+                meta = dict(row.meta) if isinstance(row.meta, dict) else {}
+                catalog_rows += 1
+                if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+                    continue
+                key = str(meta.get("system_template_key") or "").strip()
+                if not key:
+                    continue
+                if meta.get("system_published") is False:
+                    continue
+                discovered.add(key)
     except Exception:
-        return set(_ENABLED_SYSTEM_WORKFLOW_KEYS)
+        logger.warning("enabled system workflow key scan failed", exc_info=True)
     keys = set(_ENABLED_SYSTEM_WORKFLOW_KEYS) | discovered
     cached["at"] = now
     cached["keys"] = tuple(sorted(keys))
