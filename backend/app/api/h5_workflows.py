@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import (
     ContentCompetitorAccount,
     H5WorkflowActivation,
