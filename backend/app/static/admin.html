@@ -241,6 +241,15 @@ tr:hover{background:var(--bg)}
 .sw-card-ops .btn,.sw-modal-foot .btn,.sw-modal-head .btn{width:auto;padding:5px 10px;white-space:nowrap}
 .sw-modal-foot .btn.btn-primary{flex:0 0 auto;min-width:120px}
 .sw-f .sw-p{width:100%}
+#systemWorkflowCard .btn-primary{width:auto}
+#systemWorkflowCard .btn{white-space:nowrap}
+.sw-card{display:block}
+.sw-card-row{display:flex;gap:10px;align-items:center}
+.sw-children{margin:8px 0 0 72px;border-left:2px solid #e2e8f0;padding-left:10px}
+.sw-child{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0}
+.sw-child-time{color:#245cff;font-weight:600;min-width:42px}
+.sw-child-label{flex:1;min-width:0}
+.sw-children-actions{margin:6px 0 0 72px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .remote-support-frame{display:block;width:100%;height:680px;border:0;background:#f5f7fa}
 #pageRemoteSupport{padding:0;max-width:none}
 #pageRemoteSupport .remote-support-frame{height:calc(100vh - 86px);min-height:720px;border-radius:10px}
@@ -831,15 +840,38 @@ body{background:#edf2f7}
     var key = String(n.ability_key || n.key || '').trim();
     var label = String(n.ability_label || n.label || '').trim();
     var note = String(n.note || '').trim();
+    var children = [];
+    var rawChildren = Array.isArray(n.children) ? n.children : (Array.isArray(n.actions) ? n.actions : []);
+    rawChildren.forEach(function (c) {
+      if (!c || typeof c !== 'object') return;
+      if (c.is_action_node === false) return;
+      var cp = (c.plan && c.plan.payload) || {}, cparams = cp.params || {};
+      var platform = String(c.platform || cparams.platform || '').trim();
+      var childLabel = String(c.ability_label || c.note || '').trim();
+      if (!platform) {
+        if (childLabel.indexOf('视频号') >= 0) platform = 'wechat_channels';
+        else if (childLabel.indexOf('朋友圈') >= 0) platform = 'wechat_moments';
+        else platform = 'douyin';
+      }
+      children.push({
+        time: String(c.time || n.time || '09:00'),
+        end: String(c.end_time || ''),
+        platform: platform,
+        label: childLabel,
+        note: String(c.note || '')
+      });
+    });
     return {
       i: index,
+      id: String(n.id || ''),
       time: String(n.time || '09:00'),
       end: String(n.end_time || ''),
       preset: presetByKeyLabel(key, label),
       key: key,
       label: label,
       note: note,
-      params: params
+      params: params,
+      children: children
     };
   }
   function extraFields(r) {
@@ -891,12 +923,17 @@ body{background:#edf2f7}
     if (p.moment_action) parts.push('动作：' + p.moment_action);
     return parts.join(' · ');
   }
+  function platformLabel(platform) {
+    return platform === 'wechat_channels' ? '发布到视频号' : (platform === 'wechat_moments' ? '发布到朋友圈' : '发布到抖音');
+  }
   function renderRows() {
     var host = document.getElementById('swNodes'); if (!host) return;
     rows.forEach(function (r, idx) { r.i = idx; });
     host.innerHTML = rows.length ? rows.map(function (r, idx) {
       var params = nodeParamSummary(r);
+      var children = Array.isArray(r.children) ? r.children : [];
       return '<div class="sw-card" data-i="' + idx + '">' +
+        '<div class="sw-card-row">' +
         '<div class="sw-card-time"><b>' + esc(r.time || '09:00') + '</b><span>' + esc(r.end || '') + '</span></div>' +
         '<div class="sw-card-main">' +
         '<div class="sw-card-title">' + esc(typeLabelOf(r) || r.label) + '</div>' +
@@ -908,6 +945,16 @@ body{background:#edf2f7}
         '<button type="button" class="btn btn-sm" data-sw-act="down"' + (idx === rows.length - 1 ? ' disabled' : '') + '>下移</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-sw-act="edit">编辑</button>' +
         '<button type="button" class="btn btn-sm danger-text" data-sw-act="del">删除</button>' +
+        '</div></div>' +
+        (children.length ? '<div class="sw-children">' + children.map(function (c, ci) {
+          return '<div class="sw-child"><span class="sw-child-time">' + esc(c.time || '') + '</span>' +
+            '<span class="sw-child-label">' + esc(c.label || platformLabel(c.platform)) + '</span>' +
+            '<button type="button" class="btn btn-sm" data-sw-act="edit-child" data-child-index="' + ci + '">编辑</button>' +
+            '<button type="button" class="btn btn-sm danger-text" data-sw-act="del-child" data-child-index="' + ci + '">删除</button></div>';
+        }).join('') + '</div>' : '') +
+        '<div class="sw-children-actions">' +
+        '<button type="button" class="btn btn-sm" data-sw-act="add-child">添加下级节点</button>' +
+        '<span style="font-size:12px;color:var(--text-secondary)">下级节点用上级节点素材，按平台配文案带标签发布</span>' +
         '</div></div>';
     }).join('') : '<div style="color:var(--text-secondary);font-size:12px">还没有节点，点「添加节点」开始配置</div>';
     host.onclick = function (evt) {
@@ -916,9 +963,17 @@ body{background:#edf2f7}
       if (!btn || !card) return;
       var i = Number(card.getAttribute('data-i'));
       var act = btn.getAttribute('data-sw-act');
+      var childIndex = Number(btn.getAttribute('data-child-index'));
       if (act === 'del') { rows.splice(i, 1); renderRows(); return; }
       if (act === 'up' && i > 0) { var t = rows[i]; rows[i] = rows[i - 1]; rows[i - 1] = t; renderRows(); return; }
       if (act === 'down' && i < rows.length - 1) { var t2 = rows[i]; rows[i] = rows[i + 1]; rows[i + 1] = t2; renderRows(); return; }
+      if (act === 'add-child') { openChildModal(i, -1); return; }
+      if (act === 'edit-child') { openChildModal(i, childIndex); return; }
+      if (act === 'del-child') {
+        var parent = rows[i];
+        if (parent && Array.isArray(parent.children) && childIndex >= 0) { parent.children.splice(childIndex, 1); renderRows(); }
+        return;
+      }
       if (act === 'edit') openNodeModal(i);
     };
   }
@@ -944,13 +999,55 @@ body{background:#edf2f7}
       params.day_mode = params.day_mode || 'workflow_elapsed';
       params.days = params.days || 30;
     }
+    if (r && typeof r === 'object' && !r.id) {
+      r.id = 'wf_' + Math.random().toString(36).slice(2, 10);
+    }
+    var parentId = String((r && r.id) || '');
+    var children = (Array.isArray(r && r.children) ? r.children : []).map(function (c, index) {
+      var platform = String((c && c.platform) || 'douyin');
+      var childLabel = String((c && c.label) || '').trim() || platformLabel(platform);
+      return {
+        id: parentId + '_action_' + (index + 1),
+        time: String((c && c.time) || r.time || '09:00'),
+        end_time: String((c && c.end) || ''),
+        parent_node_id: parentId,
+        action_type: 'publish',
+        type: 'publish',
+        platform: platform,
+        ability_key: 'publish_content',
+        ability_label: childLabel,
+        department_id: 'sales',
+        department_name: '销售部',
+        note: String((c && c.note) || '') || (childLabel + '，配文案、带标签发布'),
+        is_action_node: true,
+        param_configured: true,
+        plan: {
+          title: childLabel,
+          task_kind: 'client_workflow',
+          content: 'H5 工作流动作：' + childLabel,
+          payload: {
+            action: 'publish_content',
+            params: {
+              source_mode: 'parent_latest_run',
+              source_workflow_node_id: parentId,
+              source_workflow_node_label: label,
+              platform: platform,
+              media_type: platform === 'wechat_moments' ? 'image_text' : 'video',
+              note: childLabel
+            }
+          }
+        }
+      };
+    });
     return {
+      id: parentId,
       time: r.time,
       end_time: r.end,
       time_range: r.time + (r.end ? '-' + r.end : ''),
       ability_key: key,
       ability_label: label,
       note: note,
+      children: children,
       plan: { title: label, task_kind: kind, content: note, payload: { action: action, params: params } }
     };
   }
@@ -1058,6 +1155,84 @@ body{background:#edf2f7}
       });
     }
     document.getElementById('swNodeModal').classList.add('hidden');
+    renderRows();
+  }
+
+  var childModalParent = -1, childModalIndex = -1;
+  function ensureChildModal() {
+    var mask = document.getElementById('swChildModal');
+    if (mask) return mask;
+    mask = document.createElement('div');
+    mask.id = 'swChildModal';
+    mask.className = 'sw-modal-mask hidden';
+    mask.innerHTML = '<div class="sw-modal" style="width:min(560px,96vw)">' +
+      '<div class="sw-modal-head"><b>下级节点（发布动作）</b><button type="button" class="btn btn-sm" data-sw-child="close">关闭</button></div>' +
+      '<div class="sw-modal-body">' +
+      '<div class="sw-modal-grid">' +
+      '<label class="sw-f">发布时间<input class="sw-p" type="time" id="swChildTime"></label>' +
+      '<label class="sw-f">结束时间<input class="sw-p" type="time" id="swChildEndTime"></label>' +
+      '<label class="sw-f sw-grow">发布到<select class="sw-p" id="swChildPlatform">' +
+      '<option value="douyin">发布到抖音</option><option value="wechat_channels">发布到视频号</option><option value="wechat_moments">发布到朋友圈</option>' +
+      '</select></label>' +
+      '<label class="sw-f sw-grow">动作名称<input class="sw-p" id="swChildLabel" placeholder="留空按平台自动命名"></label>' +
+      '</div>' +
+      '<label class="sw-f sw-grow">说明<input class="sw-p" id="swChildNote" placeholder="留空按平台默认说明"></label>' +
+      '</div>' +
+      '<div class="sw-modal-foot">' +
+      '<button type="button" class="btn btn-sm danger-text" data-sw-child="delete">删除</button>' +
+      '<span style="flex:1"></span>' +
+      '<button type="button" class="btn btn-sm" data-sw-child="cancel">取消</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-sw-child="save">保存</button>' +
+      '</div></div>';
+    document.body.appendChild(mask);
+    mask.addEventListener('click', function (evt) {
+      var hit = evt.target.closest('[data-sw-child]');
+      var act = hit ? hit.getAttribute('data-sw-child') : (evt.target === mask ? 'close' : '');
+      if (act === 'close' || act === 'cancel') { mask.classList.add('hidden'); return; }
+      if (act === 'delete') {
+        var parent = rows[childModalParent];
+        if (parent && Array.isArray(parent.children) && childModalIndex >= 0) parent.children.splice(childModalIndex, 1);
+        mask.classList.add('hidden');
+        renderRows();
+        return;
+      }
+      if (act === 'save') { applyChildModal(); }
+    });
+    document.getElementById('swChildPlatform').addEventListener('change', function () {
+      var labelEl = document.getElementById('swChildLabel');
+      if (labelEl && !String(labelEl.value || '').trim()) labelEl.value = platformLabel(this.value);
+    });
+    return mask;
+  }
+  function openChildModal(parentIndex, childIndex) {
+    var parent = rows[parentIndex]; if (!parent) return;
+    if (!Array.isArray(parent.children)) parent.children = [];
+    childModalParent = parentIndex;
+    childModalIndex = childIndex;
+    var child = parent.children[childIndex] || { time: parent.time || '09:00', end: '', platform: 'douyin', label: '', note: '' };
+    ensureChildModal();
+    document.getElementById('swChildTime').value = child.time || '09:00';
+    document.getElementById('swChildEndTime').value = child.end || '';
+    document.getElementById('swChildPlatform').value = child.platform || 'douyin';
+    document.getElementById('swChildLabel').value = child.label || '';
+    document.getElementById('swChildNote').value = child.note || '';
+    document.getElementById('swChildModal').classList.remove('hidden');
+  }
+  function applyChildModal() {
+    var parent = rows[childModalParent]; if (!parent) return;
+    if (!Array.isArray(parent.children)) parent.children = [];
+    var platform = String(document.getElementById('swChildPlatform').value || 'douyin');
+    var label = String(document.getElementById('swChildLabel').value || '').trim() || platformLabel(platform);
+    var child = {
+      time: String(document.getElementById('swChildTime').value || '').trim() || parent.time || '09:00',
+      end: String(document.getElementById('swChildEndTime').value || '').trim(),
+      platform: platform,
+      label: label,
+      note: String(document.getElementById('swChildNote').value || '').trim() || (label + '，配文案、带标签发布')
+    };
+    if (childModalIndex >= 0) parent.children[childModalIndex] = child;
+    else parent.children.push(child);
+    document.getElementById('swChildModal').classList.add('hidden');
     renderRows();
   }
 
