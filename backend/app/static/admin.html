@@ -588,7 +588,7 @@ body{background:#edf2f7}
       <input id="swName" placeholder="系统模板名称" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;min-width:220px">
       <label style="font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="swPublished"> 上架（用户可见）</label>
       <button type="button" class="btn btn-sm" id="swDraftBtn">预览变更</button>
-      <button type="button" class="btn btn-primary btn-sm" id="swSaveBtn" disabled>确认生效</button>
+      <button type="button" class="btn btn-primary btn-sm" id="swSaveBtn">确认生效</button>
       <button type="button" class="btn btn-sm" id="swCancelBtn">取消</button>
     </div>
     <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
@@ -642,7 +642,6 @@ body{background:#edf2f7}
     rows = (it.nodes || []).map(toRow);
     renderRows();
     document.getElementById('swDiff').textContent = '';
-    document.getElementById('swSaveBtn').disabled = true;
     document.getElementById('swEditor').style.display = '';
   };
   // 与 H5 同源：直接镜像 h5_static/h5-app.js 里 SALES_WORKFLOW_PRESET（+ 发布动作），
@@ -1247,10 +1246,11 @@ body{background:#edf2f7}
   bind('swNewBtn', function () {
     editKey = ''; isNew = true; confirmed = false;
     document.getElementById('swName').value = ''; document.getElementById('swPublished').checked = false;
-    rows = [toRow({ time: '09:00', ability_key: 'native_wechat_poll', ability_label: '个微私信接管', note: '微信私信接管', plan: { payload: { params: { message_poll_interval_seconds: 15, takeover_session_minutes: 30 } } } }, 0)];
+    var firstPreset = presetAt(0);
+    rows = [firstPreset ? { i: 0, time: '09:00', end: '', preset: 0, key: firstPreset.key, label: firstPreset.label, note: firstPreset.note, params: {}, children: [] } : toRow({}, 0)];
     renderRows();
     document.getElementById('swDiff').textContent = '';
-    document.getElementById('swSaveBtn').disabled = true; document.getElementById('swEditor').style.display = '';
+    document.getElementById('swSaveBtn').disabled = false; document.getElementById('swEditor').style.display = '';
   });
   bind('swAddNode', function () {
     var first = presetAt(0);
@@ -1271,26 +1271,34 @@ body{background:#edf2f7}
   bind('swCancelBtn', function () { document.getElementById('swEditor').style.display = 'none'; editKey = ''; isNew = false; });
   bind('swDraftBtn', function () {
     var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
-    var body = { nodes: nodes }, path;
-    if (isNew) { document.getElementById('swDiff').textContent = '新模板：' + nodes.length + ' 个节点，确认后创建' + (document.getElementById('swPublished').checked ? '（上架）' : '（下架）'); }
-    else { api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/draft', { method: 'POST', body: JSON.stringify(body) }).then(function (r) { document.getElementById('swDiff').textContent = summary(r.diff) + '\n将同步给直接启用该模板的 ' + r.direct_user_count + ' 个用户'; }); }
-    confirmed = true; document.getElementById('swSaveBtn').disabled = false;
+    if (isNew) {
+      document.getElementById('swDiff').textContent = '新模板：' + nodes.length + ' 个节点，确认后创建' + (document.getElementById('swPublished').checked ? '（上架）' : '（下架）');
+      return;
+    }
+    api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/draft', { method: 'POST', body: JSON.stringify({ nodes: nodes }) })
+      .then(function (r) { document.getElementById('swDiff').textContent = summary(r.diff) + '\n将同步给直接启用该模板的 ' + r.direct_user_count + ' 个用户'; })
+      .catch(function (e) { document.getElementById('swDiff').textContent = '预览失败：' + (e && e.message || e); });
   });
   bind('swSaveBtn', function () {
     var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
-    if (!confirmed) { alert('请先点「预览变更」确认'); return; }
-    if (!window.confirm(isNew ? '确认创建这个系统模板？' : '确认让这次修改生效并同步给直接启用它的用户？')) return;
     var published = document.getElementById('swPublished').checked;
+    var saveButton = document.getElementById('swSaveBtn');
+    var restore = function () { if (saveButton) { saveButton.disabled = false; saveButton.textContent = '确认生效'; } };
+    if (saveButton) { saveButton.disabled = true; saveButton.textContent = '保存中…'; }
     if (isNew) {
-      api('/admin/api/system-workflows', { method: 'POST', body: JSON.stringify({ name: document.getElementById('swName').value.trim(), nodes: nodes, published: published }) })
-        .then(function () { document.getElementById('swEditor').style.display = 'none'; return load(); })
-        .catch(function (e) { alert('创建失败：' + (e && e.message || e)); });
-    } else {
-      api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', body: JSON.stringify({ nodes: nodes, confirm: true }) })
-        .then(function () { return api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/status', { method: 'POST', body: JSON.stringify({ published: published }) }); })
-        .then(function () { document.getElementById('swEditor').style.display = 'none'; return load(); })
-        .catch(function (e) { alert('保存失败：' + (e && e.message || e)); });
+      var name = (document.getElementById('swName').value || '').trim();
+      if (!name) { alert('请先填写系统模板名称'); restore(); return; }
+      api('/admin/api/system-workflows', { method: 'POST', body: JSON.stringify({ name: name, nodes: nodes, published: published }) })
+        .then(function () { document.getElementById('swEditor').style.display = 'none'; toast('系统模板已创建'); return load(true); })
+        .catch(function (e) { alert('创建失败：' + (e && e.message || e)); })
+        .then(restore);
+      return;
     }
+    api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', body: JSON.stringify({ nodes: nodes, confirm: true }) })
+      .then(function () { return api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/status', { method: 'POST', body: JSON.stringify({ published: published }) }); })
+      .then(function () { document.getElementById('swEditor').style.display = 'none'; toast('系统模板已生效，直接启用它的用户已同步'); return load(true); })
+      .catch(function (e) { alert('保存失败：' + (e && e.message || e)); })
+      .then(restore);
   });
   function applyVisibility() {
     var card = document.getElementById('systemWorkflowCard'); if (!card) return;
