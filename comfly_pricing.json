@@ -118,11 +118,11 @@
     },
     "wan3.0-video": {
       "price_type": "per_second",
-      "price_per_unit": 60,
+      "price_per_unit": 50,
       "api_format": "dashscope_wan30",
       "comfly_model": "wan3.0-video",
       "token_group": "dashscope_wan30",
-      "note": "DashScope 万相3.0，支持文生视频和首帧图生视频；按官方 0.6 元/秒折算为 60 基础积分/秒，用户倍率按全局配置计算。"
+      "note": "DashScope 万相3.0，支持文生视频和首帧图生视频；基础积分 50/秒，默认 2 倍用户价即 100 积分/秒。"
     },
     "seedance2.0-900": {
       "price_type": "per_call",
