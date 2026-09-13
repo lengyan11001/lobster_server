@@ -1613,7 +1613,7 @@ def list_ai_employees(company_id: int, user: Any = Depends(current_actor),
             else:
                 fallback = m.display_name
             db.add(MAiEmployee(company_id=company.id,
-                               name="虚拟员工 · " + (fallback or "设备"),
+                               name="虚拟员工 · " + (fallback or "设备") + " · " + slot.installation_id[:4],
                                installation_id=slot.installation_id,
                                owner_membership_id=m.id if m else None, capabilities=[],
                                created_by=getattr(user, "id", 0)))
@@ -1631,6 +1631,9 @@ def list_ai_employees(company_id: int, user: Any = Depends(current_actor),
         dispatched = (db.query(MDispatch).filter(MDispatch.node_id.isnot(None),
                                                  MDispatch.ai_employee_id == r.id)
                       .order_by(MDispatch.id.desc()).limit(20).all())
+        if r.name.count("·") < 2:
+            r.name = r.name + " · " + r.installation_id[:4]
+            db.flush()
         out.append({"id": r.id, "name": r.name, "installation_id": r.installation_id,
                     "owner_name": m.display_name if m else "", "online": online,
                     "last_seen": seen, "capabilities": r.capabilities or [],
