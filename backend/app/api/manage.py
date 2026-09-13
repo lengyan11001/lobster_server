@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..manage_models import (
     MAuditLog,
     MCheckup,
@@ -372,10 +372,10 @@ PLAN_SYSTEM = """你是「AI 项目总监」。你的唯一目标：让这个项
    "actions":[{"type":"hire|slot|budget|outsource|scope","what":"","when":""}]}]}"""
 
 
-def _template_plan(project: MProject, members: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _template_plan(ctx: Dict[str, Any], members: List[Dict[str, Any]]) -> Dict[str, Any]:
     names = [m["name"] for m in members] or ["待指派"]
-    start = project.start_at or date.today().isoformat()
-    end = project.end_at or ""
+    start = str(ctx.get("start_at") or date.today().isoformat())
+    end = str(ctx.get("end_at") or "")
     try:
         begin = datetime.strptime(start, "%Y-%m-%d").date()
     except ValueError:
@@ -408,7 +408,7 @@ def _template_plan(project: MProject, members: List[Dict[str, Any]]) -> Dict[str
                        "end_at": e.isoformat(), "goal": goals[i],
                        "owner_name": names[i % len(names)], "tasks": tasks})
     return {
-        "summary": project.name + "：按 " + str(span) + " 天周期拆成 4 个阶段，先跑通再放量。",
+        "summary": str(ctx.get("name") or "项目") + "：按 " + str(span) + " 天周期拆成 4 个阶段，先跑通再放量。",
         "phases": phases,
         "milestones": [{"title": "首个小目标达成", "at": (begin + timedelta(days=seg)).isoformat()}],
         "resource_gap": [{
@@ -469,104 +469,121 @@ async def _llm_json(token: str, system: str, payload: Dict[str, Any], *, timeout
 async def generate_plan(project_id: int, body: PlanIn, request: Request,
                         user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)) -> Dict[str, Any]:
-    project = db.query(MProject).filter(MProject.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    company = _require_company(db, project.company_id, user)
-    _require_plan_admin(db, company, user)
+    """生成规划。
 
-    members = (db.query(MMembership)
-               .filter(MMembership.company_id == company.id, MMembership.status == "active").all())
-    member_payload = []
-    for m in members:
-        roles = db.query(MMembershipRole).filter(MMembershipRole.membership_id == m.id).all()
-        member_payload.append({"membership_id": m.id, "name": m.display_name,
-                               "roles": [{"code": r.role_code, "level": r.level} for r in roles]})
+    关键：调 AI 可能耗时数十秒，PostgreSQL 的 idle_in_transaction_session_timeout
+    （本机 1min）会在等待期间掐掉处于事务中的连接。因此这里严格分三段：
+    短会话读取上下文 -> 无事务等待 AI -> 新会话写库。
+    """
+    db.close()  # 立刻归还请求级连接，后面不再用它
+
+    ctx: Dict[str, Any] = {}
+    member_payload: List[Dict[str, Any]] = []
+    company_id = 0
+    read_db = SessionLocal()
+    try:
+        project = read_db.query(MProject).filter(MProject.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        company = _require_company(read_db, project.company_id, user)
+        _require_plan_admin(read_db, company, user)
+        company_id = company.id
+        ctx = {"name": project.name, "goal": project.goal,
+               "success_criteria": project.success_criteria,
+               "start_at": project.start_at, "end_at": project.end_at,
+               "products": project.products or []}
+        members = (read_db.query(MMembership)
+                   .filter(MMembership.company_id == company_id, MMembership.status == "active").all())
+        for m in members:
+            roles = read_db.query(MMembershipRole).filter(MMembershipRole.membership_id == m.id).all()
+            member_payload.append({"membership_id": m.id, "name": m.display_name,
+                                   "roles": [{"code": r.role_code, "level": r.level} for r in roles]})
+    finally:
+        read_db.close()
 
     if body.mode == "template":
-        plan = _template_plan(project, member_payload)
+        plan = _template_plan(ctx, member_payload)
         source = "template"
     else:
         auth = str(request.headers.get("authorization") or "")
         token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
         if not token:
             raise HTTPException(status_code=401, detail="缺少登录令牌，无法调用 AI")
-        # PostgreSQL 的 idle-in-transaction 超时会在我们等 AI 的几十秒里掐掉连接，
-        # 所以先把事务收掉，AI 返回后再开新事务写库。
-        db.rollback()
         plan = await _llm_json(token, PLAN_SYSTEM, {
             "task": "generate_project_plan",
-            "project": {"name": project.name, "goal": project.goal,
-                        "success_criteria": project.success_criteria,
-                        "start_at": project.start_at, "end_at": project.end_at},
-            "products": project.products or [],
+            "project": {"name": ctx.get("name"), "goal": ctx.get("goal"),
+                        "success_criteria": ctx.get("success_criteria"),
+                        "start_at": ctx.get("start_at"), "end_at": ctx.get("end_at")},
+            "products": ctx.get("products") or [],
             "members": member_payload,
             "extra_requirements": body.extra_requirements,
         })
         source = "ai"
 
-    # 事务在 AI 调用前已结束，重新取一下对象（含模板分支的一致性）
-    project = db.query(MProject).filter(MProject.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    company = db.query(MCompany).filter(MCompany.id == project.company_id).first()
-
-    db.query(MPlanNode).filter(MPlanNode.project_id == project.id).delete()
-    order = 0
-    by_name = {m["name"]: m for m in member_payload}
-    for phase in plan.get("phases") or []:
-        order += 1
-        ph = MPlanNode(company_id=company.id, project_id=project.id, node_type="phase",
-                       title=str(phase.get("title") or "阶段"), detail=str(phase.get("goal") or ""),
-                       start_at=str(phase.get("start_at") or ""), end_at=str(phase.get("end_at") or ""),
-                       owner_name=str(phase.get("owner_name") or ""),
-                       requirement=str(phase.get("goal") or ""), order_index=order)
-        db.add(ph)
-        db.flush()
-        for task in phase.get("tasks") or []:
+    write_db = SessionLocal()
+    try:
+        project = write_db.query(MProject).filter(MProject.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        write_db.query(MPlanNode).filter(MPlanNode.project_id == project_id).delete()
+        order = 0
+        by_name = {m["name"]: m for m in member_payload}
+        for phase in plan.get("phases") or []:
             order += 1
-            owner = str(task.get("owner_name") or "").strip()
-            mid = by_name.get(owner, {}).get("membership_id")
-            db.add(MPlanNode(
-                company_id=company.id, project_id=project.id, parent_id=ph.id, node_type="task",
-                title=str(task.get("title") or "任务"), detail=str(task.get("detail") or ""),
-                owner_name=owner, owner_membership_id=mid,
-                owner_kind="human" if mid else "unassigned",
-                requirement=str(task.get("requirement") or ""),
-                start_at=str(task.get("start_at") or ""), end_at=str(task.get("end_at") or ""),
-                kpi=str(task.get("kpi") or ""), deliverable=str(task.get("deliverable") or ""),
-                order_index=order,
+            ph = MPlanNode(company_id=company_id, project_id=project_id, node_type="phase",
+                           title=str(phase.get("title") or "阶段"), detail=str(phase.get("goal") or ""),
+                           start_at=str(phase.get("start_at") or ""), end_at=str(phase.get("end_at") or ""),
+                           owner_name=str(phase.get("owner_name") or ""),
+                           requirement=str(phase.get("goal") or ""), order_index=order)
+            write_db.add(ph)
+            write_db.flush()
+            for task in phase.get("tasks") or []:
+                order += 1
+                owner = str(task.get("owner_name") or "").strip()
+                mid = by_name.get(owner, {}).get("membership_id")
+                write_db.add(MPlanNode(
+                    company_id=company_id, project_id=project_id, parent_id=ph.id, node_type="task",
+                    title=str(task.get("title") or "任务"), detail=str(task.get("detail") or ""),
+                    owner_name=owner, owner_membership_id=mid,
+                    owner_kind="human" if mid else "unassigned",
+                    requirement=str(task.get("requirement") or ""),
+                    start_at=str(task.get("start_at") or ""), end_at=str(task.get("end_at") or ""),
+                    kpi=str(task.get("kpi") or ""), deliverable=str(task.get("deliverable") or ""),
+                    order_index=order,
+                ))
+        for ms in plan.get("milestones") or []:
+            order += 1
+            write_db.add(MPlanNode(company_id=company_id, project_id=project_id, node_type="milestone",
+                                   title=str(ms.get("title") or "里程碑"),
+                                   start_at=str(ms.get("at") or ""), end_at=str(ms.get("at") or ""),
+                                   requirement=str(ms.get("criteria") or ""), order_index=order))
+
+        project.plan_source = source
+        project.arrangement_status = "draft"
+        project.status = "planning"
+
+        gaps = plan.get("resource_gap") or []
+        write_db.query(MCondition).filter(MCondition.project_id == project_id,
+                                          MCondition.source == "plan").delete()
+        for g in gaps:
+            write_db.add(MCondition(
+                company_id=company_id, project_id=project_id,
+                category=str(g.get("category") or "people"), title=str(g.get("title") or "条件"),
+                need=str(g.get("need") or ""), now_state=str(g.get("now") or ""),
+                gap=str(g.get("gap") or ""), impact=str(g.get("impact") or ""),
+                severity=str(g.get("severity") or "medium"), actions=g.get("actions") or [],
+                source="plan",
             ))
-    for ms in plan.get("milestones") or []:
-        order += 1
-        db.add(MPlanNode(company_id=company.id, project_id=project.id, node_type="milestone",
-                         title=str(ms.get("title") or "里程碑"), start_at=str(ms.get("at") or ""),
-                         end_at=str(ms.get("at") or ""), requirement=str(ms.get("criteria") or ""),
-                         order_index=order))
-
-    project.plan_source = source
-    project.arrangement_status = "draft"
-    project.status = "planning"
-
-    gaps = plan.get("resource_gap") or []
-    db.query(MCondition).filter(MCondition.project_id == project.id,
-                                MCondition.source == "plan").delete()
-    for g in gaps:
-        db.add(MCondition(
-            company_id=company.id, project_id=project.id,
-            category=str(g.get("category") or "people"), title=str(g.get("title") or "条件"),
-            need=str(g.get("need") or ""), now_state=str(g.get("now") or ""),
-            gap=str(g.get("gap") or ""), impact=str(g.get("impact") or ""),
-            severity=str(g.get("severity") or "medium"), actions=g.get("actions") or [],
-            source="plan",
-        ))
-    _audit(db, company.id, user.id, "plan.generate", "project", project.id,
-           {"source": source, "nodes": order, "gaps": len(gaps)})
-    db.commit()
-    nodes = (db.query(MPlanNode).filter(MPlanNode.project_id == project.id)
-             .order_by(MPlanNode.order_index).all())
+        _audit(write_db, company_id, user.id, "plan.generate", "project", project_id,
+               {"source": source, "nodes": order, "gaps": len(gaps)})
+        write_db.commit()
+        nodes = (write_db.query(MPlanNode).filter(MPlanNode.project_id == project_id)
+                 .order_by(MPlanNode.order_index).all())
+        out_nodes = [_node_json(n) for n in nodes]
+    finally:
+        write_db.close()
     return {"ok": True, "source": source, "summary": plan.get("summary") or "",
-            "nodes": [_node_json(n) for n in nodes], "resource_gap": gaps}
+            "nodes": out_nodes, "resource_gap": gaps}
 
 
 @router.patch("/nodes/{node_id}")
