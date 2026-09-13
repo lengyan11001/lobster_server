@@ -712,7 +712,9 @@ async def _llm_json(token: str, system: str, payload: Dict[str, Any], *, timeout
         "stream": False,
         "temperature": 0.2,
     }
-    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+    # 主站建任务要求带当前设备槽位（派给谁就带谁的 installation_id）
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json",
+               "X-Installation-Id": ai.installation_id}
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post("http://127.0.0.1:8000/api/sutui-chat/completions", json=body, headers=headers)
     if resp.status_code >= 400:
