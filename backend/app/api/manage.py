@@ -313,8 +313,9 @@ def create_company(body: CompanyIn, user: Any = Depends(current_actor),
                        industry=body.industry.strip(), owner_user_id=user.id)
     db.add(company)
     db.flush()
-    membership = MMembership(company_id=company.id, user_id=user.id,
-                             display_name=user.email.split("@")[0], dept="经营管理", remark="创建者")
+    membership = MMembership(company_id=company.id, user_id=getattr(user, "id", None),
+                             display_name=user.email.split("@")[0], email=user.email,
+                             dept="经营管理", remark="创建者")
     db.add(membership)
     db.flush()
     db.add(MMembershipRole(company_id=company.id, membership_id=membership.id, role_code="boss", level="p4"))
@@ -1576,6 +1577,19 @@ def list_ai_employees(company_id: int, user: Any = Depends(current_actor),
     company = _require_company(db, company_id, user)
     members = (db.query(MMembership)
                .filter(MMembership.company_id == company.id)).all()
+    # 自愈：老板的成员记录若没绑定 user_id（历史数据/早期 seed），补上，
+    # 否则查不到他名下的设备槽位，虚拟员工页会一直空着。
+    if company.owner_user_id:
+        owner_m = next((m for m in members if m.user_id == company.owner_user_id), None)
+        if owner_m is None:
+            orphan = next((m for m in members if not m.user_id and m.dept == "经营管理"), None)
+            if orphan is not None:
+                orphan.user_id = company.owner_user_id
+                subject = db.query(User).filter(User.id == company.owner_user_id).first()
+                if subject is not None and not orphan.email:
+                    orphan.email = subject.email
+                db.flush()
+                owner_m = orphan
     by_user = {m.user_id: m for m in members if m.user_id}
     if company.owner_user_id and company.owner_user_id not in by_user:
         owner_m = (db.query(MMembership)
@@ -1593,8 +1607,13 @@ def list_ai_employees(company_id: int, user: Any = Depends(current_actor),
             if slot.installation_id in known:
                 continue
             m = by_user.get(slot.user_id)
+            if not m:
+                subject = db.query(User).filter(User.id == slot.user_id).first()
+                fallback = (subject.email.split("@")[0] if subject and subject.email else "")
+            else:
+                fallback = m.display_name
             db.add(MAiEmployee(company_id=company.id,
-                               name="虚拟员工 · " + ((m.display_name if m else "") or "设备"),
+                               name="虚拟员工 · " + (fallback or "设备"),
                                installation_id=slot.installation_id,
                                owner_membership_id=m.id if m else None, capabilities=[],
                                created_by=getattr(user, "id", 0)))
