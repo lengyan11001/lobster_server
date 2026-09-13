@@ -608,6 +608,30 @@ def _template_plan(ctx: Dict[str, Any], members: List[Dict[str, Any]]) -> Dict[s
     }
 
 
+def _llm_token_for_company(db: Session, company: MCompany) -> str:
+    """给 AI 通道用的服务端令牌。
+
+    不能直接转发调用方的令牌：平台管理员登录拿到的是 lobster-admin-<pwd>，
+    不是 JWT，主站 /api/sutui-chat/completions 会判为无权限。
+    这里用公司老板（或任一已绑定账号的 boss/gm 成员）签发一个短期令牌，计费也落在公司账上。
+    """
+    from .auth import access_token_claims, create_access_token
+
+    owner = db.query(User).filter(User.id == company.owner_user_id).first()
+    if owner:
+        return create_access_token(data=access_token_claims(owner))
+    rows = (db.query(MMembership, User)
+            .join(User, User.id == MMembership.user_id)
+            .join(MMembershipRole, MMembershipRole.membership_id == MMembership.id)
+            .filter(MMembership.company_id == company.id,
+                    MMembership.status == "active",
+                    MMembershipRole.role_code.in_(("boss", "gm")))
+            .all())
+    for _membership, member_user in rows:
+        return create_access_token(data=access_token_claims(member_user))
+    raise HTTPException(status_code=503, detail="该公司没有可用于调用 AI 的账号，请先绑定老板账号")
+
+
 async def _llm_json(token: str, system: str, payload: Dict[str, Any], *, timeout: float = 150.0) -> Dict[str, Any]:
     body = {
         "model": "",
@@ -670,6 +694,7 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
         company = _require_company(read_db, project.company_id, user)
         _require_plan_admin(read_db, company, user)
         company_id = company.id
+        llm_token = _llm_token_for_company(read_db, company)
         ctx = {"name": project.name, "goal": project.goal,
                "success_criteria": project.success_criteria,
                "start_at": project.start_at, "end_at": project.end_at,
@@ -687,11 +712,7 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
         plan = _template_plan(ctx, member_payload)
         source = "template"
     else:
-        auth = str(request.headers.get("authorization") or "")
-        token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
-        if not token:
-            raise HTTPException(status_code=401, detail="缺少登录令牌，无法调用 AI")
-        plan = await _llm_json(token, PLAN_SYSTEM, {
+        plan = await _llm_json(llm_token, PLAN_SYSTEM, {
             "task": "generate_project_plan",
             "project": {"name": ctx.get("name"), "goal": ctx.get("goal"),
                         "success_criteria": ctx.get("success_criteria"),
