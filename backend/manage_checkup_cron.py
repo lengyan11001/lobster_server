@@ -1,11 +1,13 @@
 ﻿"""定时项目体检：每天 09:00 / 17:00 由 systemd timer 触发（幂等，可重复执行）。
 
-在服务器上跑：`python3 -m backend.manage_checkup_cron`
+服务器上跑：`python3 -m backend.manage_checkup_cron`
 - 按本机时区判断当前属于 0900 还是 1700 档
-- 遍历所有公司、所有未归档项目，生成对应档位的体检（已存在的跳过）
+- 遍历所有公司、所有未归档项目生成体检（已存在的跳过）
+- 默认走 AI（P7 提示词，早盘/收口 + 与上次对比）；设 MANAGE_CHECKUP_USE_AI=0 可退回规则版
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -27,34 +29,30 @@ logger = logging.getLogger("backend.manage_checkup_cron")
 
 
 def current_slot(now: datetime | None = None) -> str:
-    hour = (now or datetime.now()).hour
-    return "0900" if hour < 13 else "1700"
+    return "0900" if (now or datetime.now()).hour < 13 else "1700"
 
 
 def main() -> int:
-    from backend.app.api.manage import _build_checkup
+    from backend.app.api.manage import run_checkups_for_company
     from backend.app.db import SessionLocal
-    from backend.app.manage_models import MCheckup, MCompany, MProject
+    from backend.app.manage_models import MCompany
 
     slot = current_slot()
     today = date.today().isoformat()
+    use_ai = (os.environ.get("MANAGE_CHECKUP_USE_AI", "1").strip().lower()
+              not in ("0", "false", "no"))
     db = SessionLocal()
-    created = skipped = 0
+    created = ai_used = ai_failed = 0
     try:
-        for company in db.query(MCompany).filter(MCompany.status == "active").all():
-            projects = (db.query(MProject)
-                        .filter(MProject.company_id == company.id, MProject.status != "archived").all())
-            for project in projects:
-                exists = (db.query(MCheckup)
-                          .filter(MCheckup.project_id == project.id, MCheckup.slot == slot,
-                                  MCheckup.checked_on == today).first())
-                if exists:
-                    skipped += 1
-                    continue
-                db.add(_build_checkup(db, project, slot, today))
-                created += 1
+        companies = db.query(MCompany).filter(MCompany.status == "active").all()
+        for company in companies:
+            result = asyncio.run(run_checkups_for_company(db, company, slot, today, use_ai=use_ai))
+            created += result["created"]
+            ai_used += result["ai_used"]
+            ai_failed += result["ai_failed"]
         db.commit()
-        logger.info("[MANAGE-CHECKUP] slot=%s date=%s created=%s skipped=%s", slot, today, created, skipped)
+        logger.info("[MANAGE-CHECKUP] slot=%s date=%s companies=%s created=%s ai=%s ai_failed=%s",
+                    slot, today, len(companies), created, ai_used, ai_failed)
     except Exception:
         db.rollback()
         logger.exception("[MANAGE-CHECKUP] failed")

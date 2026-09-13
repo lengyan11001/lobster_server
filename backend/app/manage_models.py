@@ -195,3 +195,137 @@ class MAuditLog(Base):
     target_id = Column(String(48), default="", nullable=False)
     detail = Column(JSON, default=dict, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class MCustomer(Base):
+    """客户（业务岗）：商机阶段 / 跟进 / 成交。"""
+
+    __tablename__ = "m_customer"
+    __table_args__ = (Index("ix_m_customer_company_stage", "company_id", "stage"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    company_name = Column(String(160), default="", nullable=False)
+    phone = Column(String(64), default="", nullable=False)
+    wechat = Column(String(80), default="", nullable=False)
+    source = Column(String(48), default="", nullable=False)
+    stage = Column(String(24), default="lead", nullable=False)   # lead|contacted|proposal|negotiating|won|lost
+    amount = Column(Numeric(14, 2), default=0, nullable=False)
+    owner_membership_id = Column(Integer, nullable=True, index=True)
+    next_action = Column(String(200), default="", nullable=False)
+    next_follow_at = Column(String(16), default="", nullable=False)
+    last_follow_at = Column(String(16), default="", nullable=False)
+    notes = Column(Text, default="", nullable=False)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MCustomerLog(Base):
+    """客户跟进记录（时间线）。"""
+
+    __tablename__ = "m_customer_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    customer_id = Column(Integer, nullable=False, index=True)
+    actor_user_id = Column(Integer, nullable=True)
+    kind = Column(String(24), default="note", nullable=False)   # call|wechat|visit|note|stage
+    content = Column(Text, default="", nullable=False)
+    from_stage = Column(String(24), default="", nullable=False)
+    to_stage = Column(String(24), default="", nullable=False)
+    happened_at = Column(String(16), default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class MDelivery(Base):
+    """交付单（交付岗）：已成交客户 -> 交付 -> 验收。"""
+
+    __tablename__ = "m_delivery"
+    __table_args__ = (Index("ix_m_delivery_company_status", "company_id", "status"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    customer_id = Column(Integer, nullable=True, index=True)
+    project_id = Column(Integer, nullable=True)
+    name = Column(String(160), nullable=False)
+    status = Column(String(24), default="pending", nullable=False)  # pending|doing|review|accepted
+    owner_membership_id = Column(Integer, nullable=True)
+    promised_at = Column(String(16), default="", nullable=False)
+    delivered_at = Column(String(16), default="", nullable=False)
+    accepted_at = Column(String(16), default="", nullable=False)
+    note = Column(Text, default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MWorkLog(Base):
+    """工作记录（所有岗位提交）。"""
+
+    __tablename__ = "m_work_log"
+    __table_args__ = (Index("ix_m_work_log_company_created", "company_id", "created_at"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    membership_id = Column(Integer, nullable=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    author_name = Column(String(80), default="", nullable=False)
+    kind = Column(String(24), default="daily", nullable=False)   # daily|task|issue
+    content = Column(Text, default="", nullable=False)
+    minutes = Column(Integer, default=0, nullable=False)
+    project_id = Column(Integer, nullable=True)
+    node_id = Column(Integer, nullable=True)
+    worked_on = Column(String(10), default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class MAiEmployee(Base):
+    """虚拟员工（原系统设备槽位）。"""
+
+    __tablename__ = "m_ai_employee"
+    __table_args__ = (UniqueConstraint("company_id", "installation_id", name="uq_m_ai_employee_slot"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    installation_id = Column(String(128), nullable=False, index=True)
+    owner_membership_id = Column(Integer, nullable=True)
+    capabilities = Column(JSON, default=list, nullable=True)
+    status = Column(String(24), default="enabled", nullable=False)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class MPlanVersion(Base):
+    """规划版本快照（支持对比与回滚）。"""
+
+    __tablename__ = "m_plan_version"
+    __table_args__ = (UniqueConstraint("project_id", "version", name="uq_m_plan_version"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    source = Column(String(16), default="ai", nullable=False)
+    summary = Column(Text, default="", nullable=False)
+    requirement = Column(Text, default="", nullable=False)
+    snapshot = Column(JSON, default=dict, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class MDispatch(Base):
+    """节点 -> 虚拟员工 的派活记录（关联主站定时任务）。"""
+
+    __tablename__ = "m_dispatch"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    node_id = Column(Integer, nullable=False, index=True)
+    ai_employee_id = Column(Integer, nullable=True)
+    installation_id = Column(String(128), default="", nullable=False)
+    task_id = Column(String(64), default="", nullable=False)
+    run_id = Column(String(64), default="", nullable=False)
+    status = Column(String(24), default="requested", nullable=False)
+    error = Column(Text, default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
