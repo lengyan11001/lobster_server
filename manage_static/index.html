@@ -130,6 +130,26 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 .bar i{display:block;height:100%;border-radius:7px;background:linear-gradient(90deg,#22d3ee,#818cf8)}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:99;padding:11px 18px;border-radius:12px;background:rgba(10,14,26,.92);border:1px solid var(--w-line);font-size:13px;opacity:0;transition:opacity .3s}
 .toast.on{opacity:1}
+
+/* ---------- 计划脑图 ---------- */
+.mmwrap{position:relative;width:100%;min-height:340px;border-radius:12px;overflow:hidden;
+  background:radial-gradient(120% 90% at 8% 0%,rgba(34,211,238,.07),transparent 60%),
+             radial-gradient(90% 80% at 100% 100%,rgba(168,85,247,.07),transparent 60%),
+             rgba(255,255,255,.015);
+  border:1px solid var(--w-line)}
+.mmsvg{position:absolute;left:0;top:0;pointer-events:none}
+.mmnode{position:absolute;transform:translateY(-50%) scale(.9);opacity:0;
+  transition:opacity .45s var(--ease),transform .5s var(--ease);
+  padding:5px 10px;border-radius:10px;border:1px solid var(--w-line);
+  background:rgba(14,20,34,.94);font-size:12px;line-height:1.25;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.mmnode.on{opacity:1;transform:translateY(-50%) scale(1)}
+.mmnode:hover{border-color:var(--w-line2);background:rgba(24,33,54,.98)}
+.mmnode.root{border-color:rgba(34,211,238,.65);color:#a5f4fb;font-weight:600;
+  box-shadow:0 0 24px -6px rgba(34,211,238,.8)}
+.mmnode.phase{border-color:rgba(129,140,248,.55);color:#c7d2fe;font-weight:600}
+.mmnode.task.ok{border-color:rgba(52,211,153,.45)}
+.mmnode.task.miss{border-color:rgba(251,191,36,.55);color:#fcd34d}
 </style>
 </head>
 <body>
