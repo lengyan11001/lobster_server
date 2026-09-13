@@ -244,6 +244,28 @@ textarea:focus,input.tin:focus{border-color:rgba(34,211,238,.6);box-shadow:0 0 0
 .mini-btn:hover{border-color:var(--stroke2);background:rgba(255,255,255,.09)}
 .mini-btn.pri{border:0;color:#04121a;font-weight:600;background:linear-gradient(100deg,#67e8f9,#a5b4fc)}
 .mini-btn:disabled{opacity:.45;cursor:not-allowed}
+/* ---------- 工作安排表 ---------- */
+.arr-tb{width:100%;border-collapse:separate;border-spacing:0 6px;font-size:12.5px}
+.arr-tb th{text-align:left;color:var(--dim);font-weight:500;font-size:11.5px;letter-spacing:.06em;padding:0 10px 2px}
+.arr-tb td{background:rgba(255,255,255,.028);padding:10px;border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke);vertical-align:middle}
+.arr-tb td:first-child{border-left:1px solid var(--stroke);border-radius:12px 0 0 12px}
+.arr-tb td:last-child{border-right:1px solid var(--stroke);border-radius:0 12px 12px 0}
+.arr-tb tr{animation:rowIn .45s var(--ease) both}
+.arr-tb tr.locked td{opacity:.86}
+.arr-tb .nm{color:var(--txt)}
+.arr-tb .req{color:var(--muted);max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arr-tb .tm{font-family:var(--mono);font-size:12px;color:#bfe4ff;white-space:nowrap}
+.arr-tb .miss{color:#fcd34d}
+.arr-edit{height:28px;padding:0 11px;border-radius:9px;border:1px solid var(--stroke);background:rgba(255,255,255,.05);color:var(--txt);cursor:pointer;font-size:12px;transition:all .22s var(--ease)}
+.arr-edit:hover{border-color:rgba(34,211,238,.5);color:#a5f3fc;background:rgba(34,211,238,.09)}
+.edit-row{display:flex;gap:10px;align-items:center;margin-bottom:11px}
+.edit-row > label{width:70px;flex:0 0 70px;font-size:12px;color:var(--muted)}
+.edit-row .grow-i{flex:1;min-width:0}
+select.tin{height:38px;appearance:none;-webkit-appearance:none;color:var(--txt);cursor:pointer;background-color:rgba(255,255,255,.05);padding-right:30px;background-image:linear-gradient(45deg,transparent 50%,#8b98ae 50%),linear-gradient(135deg,#8b98ae 50%,transparent 50%);background-position:calc(100% - 16px) 17px,calc(100% - 11px) 17px;background-size:5px 5px,5px 5px;background-repeat:no-repeat;border:1px solid var(--stroke);border-radius:11px;outline:none;transition:all .25s var(--ease)}
+select.tin:focus{border-color:rgba(34,211,238,.6);box-shadow:0 0 0 3px rgba(34,211,238,.1)}
+select.tin option{background:#0b1220;color:#e9effb}
+input.tin{padding:0 11px;height:38px}
+
 /* ---------- 财务 ---------- */
 .wf{display:flex;align-items:flex-end;gap:9px;height:auto;min-height:168px;flex:1;padding-top:10px}
 .wf .col2{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px}
@@ -410,6 +432,19 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
               <div class="tasks" id="taskList"><span class="dim" style="font-size:12.5px">生成后逐步刷出…</span></div>
             </div>
           </div>
+        </div>
+        <!-- ===== 项目工作安排：人员 + 要求 + 时间节点 一起排 ===== -->
+        <div class="card glass" id="arrCard" style="margin-top:14px">
+          <div class="row" style="align-items:center;gap:12px;margin-bottom:12px">
+            <span style="font-size:13.5px;font-weight:600">项目工作安排</span>
+            <span class="tag" id="arrState">未开始</span>
+            <span class="dim" style="font-size:12px" id="arrHint">生成规划后，把人员 / 要求 / 时间节点一次排好</span>
+            <div class="grow"></div>
+            <span class="dim" style="font-size:12px" id="draftHint"></span>
+            <button class="mini-btn" id="saveDraftBtn" disabled>存草稿</button>
+            <button class="mini-btn pri" id="confirmBtn" disabled>确认安排</button>
+          </div>
+          <div id="arrTable"><div class="dim" style="font-size:12.5px;padding:8px 2px">还没有可安排的节点。</div></div>
         </div>
       </section>
 
@@ -878,6 +913,7 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
   function grow(ver){
     if (state.growing) return; state.growing = true;
     var tree = buildTree(ver), svg = $("#mind"), stage = $("#stage");
+    state.nodes = tree.nodes;
     svg.innerHTML = ""; stage.querySelectorAll(".mnode").forEach(function(el){ el.remove(); });
     var NS = "http://www.w3.org/2000/svg";
     var byId = {}; tree.nodes.forEach(function(n){ byId[n.id] = n; });
@@ -927,7 +963,9 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
         }
       }, 90 + i*105);
     });
-    setTimeout(function(){ state.growing = false; $("#reBtn").disabled = false; renderVerBar(); }, 90 + order.length*105);
+    setTimeout(function(){ state.growing = false; $("#reBtn").disabled = false; renderVerBar();
+      if (arr.status === "none" || !Object.keys(arr.items).length) { arr.status = "draft"; arr.ver = ver; }
+      renderArrangement(); }, 90 + order.length*105);
   }
 
   function pushTaskRow(n){
@@ -1025,6 +1063,185 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
       var keep = state.ver; grow(keep);
     }
   });
+
+
+  /* ================= 项目工作安排：人员 + 要求 + 时间节点 ================= */
+  var DRAFT_KEY = "manage_plan_draft_v1";
+  var OWNERS = ["陈默","林珂","小柯","周研","秦岚","虚拟员工·抖音A"];
+  var arr = { status: "none", items: {}, savedAt: "", ver: 1 };
+
+  function reqDefault(n){
+    var m = {
+      "抖音账号搭建与认证":"完成企业号认证、绑定支付与客服；提交账号截图与后台截图",
+      "选题库与脚本模板":"交付 30 个选题 + 5 套脚本模板；老板确认后入库复用",
+      "30 条短视频产能排期":"按周排产，周产能 ≥ 8 条；每条含脚本+封面+字幕",
+      "剪辑任务转派虚拟员工":"把批量剪辑转派虚拟员工，日产能 ≥ 15 条，人工只做审片",
+      "投流素材 A/B 测试":"每 2 周产出 4 组素材对照，CTR 提升 ≥ 20% 的素材加量",
+      "私信承接 SOP + 话术":"私信 5 分钟内首响；话术库 ≥ 20 条，含异议处理",
+      "线索清洗与分层":"按意向度分层 A/B/C，清洗后有效线索率 ≥ 60%",
+      "首周 3 场直播排期与脚本":"首周完成 3 场直播，每场 ≥ 60 分钟，出复盘报告",
+      "高意向客户 1v1 跟单":"A 类客户 48 小时内跟进，转化率目标 ≥ 25%",
+      "成交话术与异议库":"沉淀 ≥ 30 条真实异议与应答，新人可直接复用",
+      "交付验收单电子化":"交付后 3 日内发起电子验收，回款周期缩短至 7 天",
+      "季度复盘与复购方案":"每季度出复盘 + 复购方案，复购率目标 ≥ 30%",
+      "选题库与脚本模板（含直播）":"交付 30 个选题 + 5 套脚本模板 + 3 套直播脚本",
+      "阶段一 · 账号与内容基建":"完成账号认证与内容基建，具备日更能力；阶段末出基建验收单",
+      "阶段二 · 放量获客":"跑通投流 + 私信承接闭环，单月新增有效线索 ≥ 600，阶段末出投放复盘",
+      "阶段三 · 成交转化":"把线索转成合同，月成交 ≥ 10 万，阶段末出转化漏斗分析",
+      "阶段四 · 交付与复购":"完成交付验收与复购方案，回款周期 ≤ 7 天，阶段末出季度复盘",
+      "阶段一 · 内容产能突击":"日产能拉到 ≥ 15 条（含虚拟员工），阶段末出产能报表",
+      "阶段二 · 直播 + 放量":"首周 3 场直播跑通承接，投放 ROI ≥ 1.8，阶段末出直播复盘",
+      "阶段四 · 交付与结算":"交付验收电子化，回款周期 ≤ 7 天，阶段末出结算清单"
+    };
+    if (m[n]) return m[n];
+    if (String(n).indexOf("阶段") === 0) return "阶段目标对齐后确认；阶段末提交复盘与验收材料";
+    return "";
+  }
+  function tmDefault(n, ver){
+    var idx = n.mi != null ? n.mi : 0;
+    var base = ["09-15 → 09-28","09-29 → 11-05","11-06 → 12-05","12-06 → 12-15"];
+    return (n.type === "phase" && n.at) ? n.at.replace(" → ", "~").replace("→","~") : base[idx].replace(" → ","~");
+  }
+  function arrRow(n){
+    var k = n.type + "|" + n.label;
+    if (!arr.items[k]) arr.items[k] = { label:n.label, type:n.type, owner:n.who || (n.type === "phase" ? "陈默" : ""), req:reqDefault(n.label), tm:tmDefault(n, arr.ver), st:n.st || "未开始" };
+    return arr.items[k];
+  }
+  function arrComplete(it){ return !!(it.owner && it.req && it.tm); }
+
+  function renderArrangement(){
+    var nodes = (state.nodes || []).filter(function(n){ return n.type === "phase" || n.type === "task"; });
+    var box = $("#arrTable");
+    if (!nodes.length){ box.innerHTML = '<div class="dim" style="font-size:12.5px;padding:8px 2px">还没有可安排的节点。</div>'; return; }
+    var miss = 0;
+    var rows = nodes.map(function(n, i){
+      var it = arrRow(n);
+      if (!arrComplete(it)) miss++;
+      var stColor = it.st === "完成" ? "#6ee7b7" : (it.st === "逾期" ? "#fda4af" : (it.st === "进行中" ? "#fcd34d" : "#8b98ae"));
+      return '<tr data-k="'+ (n.type + "|" + n.label) +'" style="animation-delay:'+(i*.04)+'s">'
+        + '<td class="nm">'+ (n.type === "phase" ? "◈ " : "· ") + n.label
+        +   (n.type === "phase" ? '' : '<span class="lv">'+(n.mi!=null?("阶段"+(n.mi+1)):"")+'</span>') + '</td>'
+        + '<td>' + (it.owner ? it.owner : '<span class="miss">待指派</span>') + '</td>'
+        + '<td class="req" title="'+ String(it.req).replace(/"/g,"&quot;") +'">' + (it.req ? it.req : '<span class="miss">待填写要求</span>') + '</td>'
+        + '<td class="tm">' + (it.tm ? it.tm : '<span class="miss">待定</span>') + '</td>'
+        + '<td style="color:'+stColor+'">' + it.st + '</td>'
+        + '<td style="text-align:right"><button class="arr-edit" data-edit="'+(n.type + "|" + n.label)+'">编辑</button></td>'
+        + '</tr>';
+    }).join("");
+    box.innerHTML = '<table class="arr-tb"><thead><tr><th style="min-width:190px">节点</th><th style="min-width:96px">人员</th>'
+      + '<th>要求 / 交付标准</th><th style="min-width:132px">时间节点</th><th style="min-width:62px">状态</th><th></th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table>';
+    $$("#arrTable [data-edit]").forEach(function(b){
+      b.addEventListener("click", function(){ openNodeEditor(b.dataset.edit); });
+    });
+    var total = nodes.length, done = total - miss;
+    $("#arrHint").innerHTML = miss
+      ? ('人员 / 要求 / 时间节点已排 <strong style="color:#bfe4ff">'+done+'/'+total+'</strong>，还有 <span class="miss">'+miss+' 项待补充</span>')
+      : ('<span style="color:#6ee7b7">'+total+' 个节点已排齐：人员 · 要求 · 时间节点</span>');
+    updateArrState();
+  }
+
+  function updateArrState(){
+    var box = $("#arrState");
+    var map = { none:["未开始",""], draft:["草稿","wn"], confirmed:["已确认","ok"], changed:["已确认 · 有待确认变更","wn"] };
+    var v = map[arr.status] || map.none;
+    box.className = "tag " + v[1];
+    box.textContent = v[0];
+    $("#saveDraftBtn").disabled = arr.status === "none";
+    $("#confirmBtn").disabled = arr.status === "none";
+    $("#confirmBtn").textContent = arr.status === "changed" ? "确认变更" : "确认安排";
+    if (arr.savedAt) $("#draftHint").textContent = "草稿已保存 " + arr.savedAt;
+  }
+
+  /* ---------- 节点编辑抽屉 ---------- */
+  var editingKey = null;
+  function openNodeEditor(key){
+    var it = arr.items[key]; if (!it) return;
+    editingKey = key;
+    var opts = OWNERS.map(function(o){ return '<option'+(o===it.owner?" selected":"")+'>'+o+'</option>'; }).join("");
+    var sts = ["未开始","进行中","完成","逾期"].map(function(o){ return '<option'+(o===it.st?" selected":"")+'>'+o+'</option>'; }).join("");
+    var parts = it.tm.indexOf("~") > 0 ? it.tm.split("~") : [it.tm, it.tm];
+    openDrawer("工作安排 · 编辑节点", it.label,
+      '<div class="dsec"><h4>人员</h4>'
+      + '<div class="edit-row"><label>责任人</label><div class="grow-i"><select class="tin" id="edOwner"><option value="">待指派</option>'+opts+'</select></div></div>'
+      + '<div class="edit-row"><label>状态</label><div class="grow-i"><select class="tin" id="edSt">'+sts+'</select></div></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:2px">可指派给虚拟员工（槽位），下发后由客户端执行并自动回填进度</div></div>'
+      + '<div class="dsec"><h4>要求 / 交付标准</h4>'
+      + '<textarea id="edReq" rows="4" placeholder="要做什么、验收标准是什么">'+ (it.req || "") +'</textarea></div>'
+      + '<div class="dsec"><h4>时间节点</h4>'
+      + '<div class="edit-row"><label>开始</label><div class="grow-i"><input class="tin" id="edS" value="'+ (parts[0]||"").trim() +'" placeholder="09-15" /></div>'
+      + '<label style="width:auto;flex:0 0 auto">结束</label><div class="grow-i"><input class="tin" id="edE" value="'+ (parts[1]||"").trim() +'" placeholder="10-05" /></div></div>'
+      + '<div class="dim" style="font-size:11.5px">里程碑可在此留空，仅填截止日</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px">'
+      + '<button class="mini-btn" id="edCancel">取消</button>'
+      + '<button class="mini-btn" id="edSave">保存到草稿</button></div>');
+    $("#edCancel").addEventListener("click", closeDrawer);
+    $("#edSave").addEventListener("click", function(){
+      it.owner = $("#edOwner").value;
+      it.st = $("#edSt").value;
+      it.req = $("#edReq").value.trim();
+      var s1 = $("#edS").value.trim(), s2 = $("#edE").value.trim();
+      it.tm = s1 && s2 ? (s1 + " ~ " + s2) : (s1 || s2 || "");
+      arr.status = (arr.status === "confirmed") ? "changed" : "draft";
+      closeDrawer(); renderArrangement();
+      autosave();
+    });
+  }
+
+  /* ---------- 草稿 / 确认 ---------- */
+  function autosave(){
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ items: arr.items, status: arr.status, ver: arr.ver, savedAt: new Date().toLocaleString("zh-CN",{hour12:false}).slice(5,16) })); } catch(e){}
+    arr.savedAt = new Date().toLocaleString("zh-CN",{hour12:false}).slice(5,16);
+    updateArrState();
+  }
+  $("#saveDraftBtn").addEventListener("click", function(){
+    autosave();
+    var b = this, old = b.textContent;
+    b.textContent = "已保存 ✓";
+    setTimeout(function(){ b.textContent = old; }, 1200);
+  });
+  $("#confirmBtn").addEventListener("click", function(){
+    var nodes = (state.nodes || []).filter(function(n){ return n.type === "phase" || n.type === "task"; });
+    var bad = nodes.filter(function(n){ return !arrComplete(arrRow(n)); });
+    if (bad.length){
+      $("#arrHint").innerHTML = '<span class="miss">还有 '+bad.length+' 项没排齐（人员 / 要求 / 时间节点都要填），补齐后才能确认</span>';
+      return;
+    }
+    arr.status = "confirmed";
+    autosave();
+    openDrawer("确认安排", "工作安排已确认 · 共 " + nodes.length + " 个节点",
+      '<div class="dsec"><h4>已确认的内容</h4>'
+      + '<div class="mline"><span class="nm">人员</span><span class="mut">'+ nodes.length +' 个节点均已指派责任人</span></div>'
+      + '<div class="mline"><span class="nm">要求</span><span class="mut">每个节点都有明确的交付标准</span></div>'
+      + '<div class="mline"><span class="nm">时间节点</span><span class="mut">全部节点已排期，最早 '+ (nodes[0]?arrRow(nodes[0]).tm:"-") +'</span></div></div>'
+      + '<div class="dsec"><h4>确认之后</h4>'
+      + '<div class="mline"><span class="nm">节点仍可编辑</span><span class="mut">改动会生成「待确认变更」，重新确认后生效</span></div>'
+      + '<div class="mline"><span class="nm">下发执行</span><span class="mut">指派给虚拟员工的任务将下发到客户端，进度自动回填</span></div>'
+      + '<div class="mline"><span class="nm">存草稿</span><span class="mut">随时保存，下次打开可继续编辑</span></div></div>');
+  });
+
+  function restoreDraft(){
+    try {
+      var raw = localStorage.getItem(DRAFT_KEY); if (!raw) return false;
+      var d = JSON.parse(raw);
+      arr.items = d.items || {}; arr.status = d.status === "confirmed" ? "confirmed" : (d.status || "draft");
+      arr.ver = d.ver || 1; arr.savedAt = d.savedAt || "";
+      return true;
+    } catch(e){ return false; }
+  }
+  (function draftProbe(){
+    if (!localStorage.getItem(DRAFT_KEY)) return;
+    var b = document.createElement("button");
+    b.className = "mini-btn"; b.id = "restoreBtn"; b.textContent = "恢复草稿";
+    b.addEventListener("click", function(){
+      if (!restoreDraft()) return;
+      state.ver = arr.ver; $("#reBtn").disabled = false;
+      thinkThenGrow(arr.ver);
+      b.remove();
+    });
+    var host = $("#saveDraftBtn").parentNode;
+    host.insertBefore(b, $("#saveDraftBtn"));
+  })();
 
   /* 初始化 */
   renderBriefs(); renderVerBar();
