@@ -1718,6 +1718,15 @@ def _header_client_process_id(request: Request) -> str:
     ).strip()[:128]
 
 
+def _header_previous_client_exit_reason(request: Request) -> str:
+    """退出原因由重启后的客户端补报（上一轮进程被 /F 强杀，写不了自己）。"""
+    return (
+        request.headers.get("X-Previous-Client-Exit-Reason")
+        or request.headers.get("x-previous-client-exit-reason")
+        or ""
+    ).strip().lower()[:32]
+
+
 def _active_run_for_installation(
     db: Session,
     *,
@@ -2201,6 +2210,125 @@ def _find_duplicate_active_recurring_task(
     return None
 
 
+_TARGET_DIGEST_STATES = ("started", "succeeded", "failed", "not_started")
+
+
+def _target_detail_rows(result_payload: Any) -> List[Dict[str, Any]]:
+    """客户端逐目标明细；兼容被 mcp_result 包了一层的旧结果。"""
+    result = result_payload if isinstance(result_payload, dict) else {}
+    detail = result.get("targets_detail")
+    if not isinstance(detail, list) or not detail:
+        mcp = result.get("mcp_result")
+        detail = mcp.get("targets_detail") if isinstance(mcp, dict) else None
+    if not isinstance(detail, list):
+        return []
+    return [row for row in detail if isinstance(row, dict)]
+
+
+def _run_targets_digest(row: ScheduledTaskRun, *, compact: bool = False) -> Dict[str, Any]:
+    """节点执行情况：逐目标状态汇总 + 失败原因按原文聚合。
+
+    任务中心据此渲染统计行（「主要原因：抖音账号不在线 ×12」）与点击后的
+    详情抽屉（每个目标/动作走到哪、为什么失败、哪些还没启动可以重试）。
+
+    明细来自客户端上报的 ``result_payload.targets_detail``；没有明细的节点
+    （老客户端或未产生目标的节点）退回用 run 自身的失败信息给出一条原因，
+    保证任何节点都能显示「为什么」。
+    """
+    detail = _target_detail_rows(row.result_payload)
+    summary = {"selected": len(detail), "total": len(detail)}
+    for state in _TARGET_DIGEST_STATES:
+        summary[state] = 0
+    reasons: Dict[str, Dict[str, Any]] = {}
+    not_started_targets: List[str] = []
+
+    for entry in detail:
+        state = str(entry.get("state") or "").strip().lower()
+        if state not in {"selected", "started", "succeeded", "failed", "not_started"}:
+            state = "not_started"
+        if state == "selected":
+            state = "not_started"
+        if state == "started":
+            summary["started"] += 1
+        elif state == "succeeded":
+            summary["succeeded"] += 1
+            summary["started"] += 1
+        elif state == "failed":
+            summary["failed"] += 1
+            summary["started"] += 1
+        else:
+            summary["not_started"] += 1
+            name = str(entry.get("target") or "").strip()
+            if name and name not in not_started_targets:
+                not_started_targets.append(name)
+        if state != "failed":
+            continue
+        text = (
+            str(entry.get("reason") or "").strip()
+            or str(entry.get("error_code") or "").strip()
+            or "未记录失败原因"
+        )
+        bucket = reasons.setdefault(
+            text,
+            {
+                "code": str(entry.get("error_code") or "").strip(),
+                "text": text,
+                "count": 0,
+                "action": str(entry.get("action") or "").strip(),
+                "action_label": str(entry.get("action_label") or "").strip(),
+                "sample": [],
+                "at": "",
+            },
+        )
+        bucket["count"] += 1
+        target = str(entry.get("target") or "").strip()
+        if target and target not in bucket["sample"]:
+            bucket["sample"].append(target)
+        if not bucket["at"]:
+            bucket["at"] = str(entry.get("at") or "").strip()
+
+    source = "targets" if detail else "none"
+    if not detail:
+        status = str(row.status or "").strip().lower()
+        progress = row.progress if isinstance(row.progress, dict) else {}
+        code = str(progress.get("error_code") or "").strip()
+        text = str(row.error or "").strip() or code
+        if text and status in {"failed", "cancelled"}:
+            source = "run"
+            summary["failed"] = 1
+            summary["selected"] = 1
+            summary["total"] = 1
+            reasons[text] = {
+                "code": code,
+                "text": text,
+                "count": 1,
+                "action": "",
+                "action_label": "",
+                "sample": [],
+                "at": _iso(row.finished_at),
+            }
+
+    ordered = sorted(reasons.values(), key=lambda item: (-int(item["count"]), item["text"]))
+    limit = 5 if compact else 20
+    sample_limit = 2 if compact else 5
+    trimmed: List[Dict[str, Any]] = []
+    for bucket in ordered[:limit]:
+        item = dict(bucket)
+        item["sample"] = item["sample"][:sample_limit]
+        trimmed.append(item)
+    retry_targets = not_started_targets if not compact else not_started_targets[:20]
+    top = trimmed[0] if trimmed else None
+    return {
+        "source": source,
+        "summary": summary,
+        "reasons": trimmed,
+        "reason_count": len(ordered),
+        "not_started_targets": retry_targets,
+        "retry_not_started": len(not_started_targets),
+        "top_reason": (f"{top['text']} ×{top['count']}" if top else ""),
+    }
+
+
 def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
     payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
     return {
@@ -2221,6 +2349,8 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "result_text": row.result_text,
         "result_payload": row.result_payload or {},
         "error": row.error,
+        # 节点执行情况：统计行 + 点击后的目标/动作明细与失败原因。
+        "targets_digest": _run_targets_digest(row),
         "h5_message_id": row.h5_message_id,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
@@ -2524,6 +2654,9 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
         "result_text": _bounded_compact_text(row.result_text, 2000),
         "result_payload": compact_result,
         "error": _bounded_compact_text(row.error, 2000),
+        # 统计行要显示「主要原因」与「重试未启动的 N 个」，列表响应也带上
+        # （已裁剪：原因最多 5 条、样例 2 个、未启动目标 20 个）。
+        "targets_digest": _run_targets_digest(row, compact=True),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
         "claimed_at": _iso(row.claimed_at),
@@ -3201,6 +3334,23 @@ def _client_run_is_within_online_grace(db: Session, row: ScheduledTaskRun, now: 
     return False
 
 
+# 客户端「自己停的」退出原因：桌面端关窗 / OTA 更新重启 / 看门狗拉起后端 /
+# 清理残留后端 / 正常退出。与客户端 client_exit_marker 保持同步。
+_CLEAN_EXIT_REASONS = frozenset(
+    {
+        "clean",
+        "shutdown",
+        "restart",
+        "user_closed",
+        "update_restart",
+        "watchdog_kill",
+        "startup_cleanup",
+        "launcher_exit",
+    }
+)
+_CRASH_EXIT_REASONS = frozenset({"crash", "crashed", "abnormal", "exception"})
+
+
 def _fail_previous_client_runs(
     db: Session,
     *,
@@ -3208,6 +3358,7 @@ def _fail_previous_client_runs(
     installation_id: str,
     client_process_id: str,
     now: datetime,
+    reported_exit_reason: str = "",
 ) -> int:
     """Close runs owned by an earlier online process before claiming new work."""
     process_id = str(client_process_id or "").strip()
@@ -3238,10 +3389,15 @@ def _fail_previous_client_runs(
         # 没有标记时不能断言"客户端已重启"，按"进程更换/未收到正常退出"记录。
         previous_process_id = str(progress.get("client_process_id") or "").strip()
         exit_reason = str(progress.get("client_exit_reason") or "").strip().lower()
-        if exit_reason in {"clean", "shutdown", "restart", "user_closed"}:
+        if not exit_reason:
+            # The previous process was force-killed (``taskkill /F``), so it had
+            # no chance to record its own reason.  The restarted client reports
+            # it once, on the first claim after the restart.
+            exit_reason = str(reported_exit_reason or "").strip().lower()
+        if exit_reason in _CLEAN_EXIT_REASONS:
             error_code = "client_restart_clean"
             message = "客户端已正常重启，上一轮任务已中断"
-        elif exit_reason in {"crash", "crashed", "abnormal", "exception"}:
+        elif exit_reason in _CRASH_EXIT_REASONS:
             error_code = "client_crashed"
             message = "客户端异常退出，上一轮任务已中断"
         else:
@@ -5401,6 +5557,7 @@ def pending_scheduled_task_runs(
             installation_id=xi,
             client_process_id=client_process_id,
             now=now,
+            reported_exit_reason=_header_previous_client_exit_reason(request),
         )
         if interrupted:
             db.commit()

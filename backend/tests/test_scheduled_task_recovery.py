@@ -111,6 +111,220 @@ def test_client_restart_fails_previous_process_runs_and_keeps_current_run(db_ses
     assert other_device.status == "processing"
 
 
+def _previous_process_run(db_session, test_user, run_id: str, *, exit_reason: str | None = None):
+    now = datetime.utcnow()
+    row = _run(run_id=run_id, user_id=test_user.id, task_kind="client_workflow")
+    row.installation_id = "online-1"
+    row.claimed_by_installation_id = "online-1"
+    progress = {"stage": "running", "client_process_id": "old-process"}
+    if exit_reason is not None:
+        progress["client_exit_reason"] = exit_reason
+    row.progress = progress
+    db_session.add(row)
+    db_session.commit()
+    return row, now
+
+
+def test_reported_clean_restart_is_classified_as_clean(db_session, test_user):
+    """客户端重启后补报“自己停的”，不能再一律记成进程已更换。"""
+    row, now = _previous_process_run(db_session, test_user, "reported-clean")
+
+    failed = scheduled_tasks._fail_previous_client_runs(
+        db_session,
+        user_id=test_user.id,
+        installation_id="online-1",
+        client_process_id="new-process",
+        now=now,
+        reported_exit_reason="update_restart",
+    )
+    db_session.commit()
+    db_session.refresh(row)
+
+    assert failed == 1
+    assert row.status == "failed"
+    assert row.error == "客户端已正常重启，上一轮任务已中断"
+    assert row.progress["stage"] == "client_restart_clean"
+    assert row.progress["error_code"] == "client_restart_clean"
+    assert row.progress["client_exit_reason"] == "update_restart"
+    assert row.progress["previous_client_process_id"] == "old-process"
+
+
+def test_reported_crash_is_classified_as_crashed(db_session, test_user):
+    """上一轮没有退出标记 => 真崩溃。"""
+    row, now = _previous_process_run(db_session, test_user, "reported-crash")
+
+    failed = scheduled_tasks._fail_previous_client_runs(
+        db_session,
+        user_id=test_user.id,
+        installation_id="online-1",
+        client_process_id="new-process",
+        now=now,
+        reported_exit_reason="crash",
+    )
+    db_session.commit()
+    db_session.refresh(row)
+
+    assert failed == 1
+    assert row.error == "客户端异常退出，上一轮任务已中断"
+    assert row.progress["error_code"] == "client_crashed"
+    assert row.progress["client_exit_reason"] == "crash"
+
+
+def test_run_own_exit_reason_wins_over_reported_reason(db_session, test_user):
+    """run 自己记过原因时，以它为准，不被本次补报覆盖。"""
+    row, now = _previous_process_run(db_session, test_user, "own-reason", exit_reason="user_closed")
+
+    scheduled_tasks._fail_previous_client_runs(
+        db_session,
+        user_id=test_user.id,
+        installation_id="online-1",
+        client_process_id="new-process",
+        now=now,
+        reported_exit_reason="crash",
+    )
+    db_session.commit()
+    db_session.refresh(row)
+
+    assert row.progress["error_code"] == "client_restart_clean"
+    assert row.progress["client_exit_reason"] == "user_closed"
+
+
+def test_watchdog_and_launcher_reasons_are_treated_as_self_restart(db_session, test_user):
+    for reason in ("watchdog_kill", "user_closed", "startup_cleanup", "launcher_exit", "clean"):
+        row, now = _previous_process_run(db_session, test_user, f"reason-{reason}")
+        scheduled_tasks._fail_previous_client_runs(
+            db_session,
+            user_id=test_user.id,
+            installation_id="online-1",
+            client_process_id="new-process",
+            now=now,
+            reported_exit_reason=reason,
+        )
+        db_session.commit()
+        db_session.refresh(row)
+        assert row.progress["error_code"] == "client_restart_clean", reason
+
+
+def _target_rows():
+    rows = [{"target": "甲", "action": "direct_message", "state": "succeeded", "reason": ""}]
+    rows += [
+        {
+            "target": f"离线户{i}",
+            "action": "direct_message",
+            "action_label": "私信",
+            "state": "failed",
+            "error_code": "",
+            "reason": "抖音账号不在线",
+            "at": "2026-09-13 12:00:02",
+        }
+        for i in range(12)
+    ]
+    rows += [
+        {"target": "乙", "action": "direct_message", "state": "started", "reason": ""},
+        {"target": "关注评论", "action": "follow_comment", "state": "not_started", "reason": "前置动作未释放浏览器"},
+        {"target": "私信", "action": "direct_message", "state": "not_started", "reason": "前置动作未释放浏览器"},
+    ]
+    return rows
+
+
+def test_targets_digest_counts_states_and_ranks_reasons(db_session, test_user):
+    row = _run(run_id="digest-run", user_id=test_user.id, task_kind="client_workflow")
+    row.status = "completed"
+    row.result_payload = {"targets_detail": _target_rows()}
+    db_session.add(row)
+    db_session.commit()
+
+    digest = scheduled_tasks._run_targets_digest(row)
+
+    assert digest["source"] == "targets"
+    assert digest["summary"] == {
+        "selected": 16,
+        "total": 16,
+        "started": 14,
+        "succeeded": 1,
+        "failed": 12,
+        "not_started": 2,
+    }
+    assert digest["top_reason"] == "抖音账号不在线 ×12"
+    assert digest["reasons"][0]["count"] == 12
+    # 完整响应保留 5 个样例；compact 响应裁剪到 2 个（见 compact 用例）。
+    assert digest["reasons"][0]["sample"] == ["离线户0", "离线户1", "离线户2", "离线户3", "离线户4"]
+    assert digest["retry_not_started"] == 2
+    assert digest["not_started_targets"] == ["关注评论", "私信"]
+
+
+def test_targets_digest_falls_back_to_run_error(db_session, test_user):
+    row = _run(run_id="digest-fallback", user_id=test_user.id, task_kind="client_workflow")
+    row.status = "failed"
+    row.error = "客户端异常退出，上一轮任务已中断"
+    row.progress = {"error_code": "client_crashed"}
+    db_session.add(row)
+    db_session.commit()
+
+    digest = scheduled_tasks._run_targets_digest(row)
+
+    assert digest["source"] == "run"
+    assert digest["summary"]["failed"] == 1
+    assert digest["top_reason"] == "客户端异常退出，上一轮任务已中断 ×1"
+    assert digest["reasons"][0]["code"] == "client_crashed"
+
+
+def test_targets_digest_reads_nested_mcp_result_and_serializes(db_session, test_user):
+    row = _run(run_id="digest-nested", user_id=test_user.id, task_kind="client_workflow")
+    row.status = "completed"
+    row.result_payload = {"mcp_result": {"targets_detail": _target_rows()}}
+    db_session.add(row)
+    db_session.commit()
+
+    serialized = scheduled_tasks._serialize_run(row)
+    assert serialized["targets_digest"]["summary"]["failed"] == 12
+    compact = scheduled_tasks._serialize_run_compact(row)
+    assert compact["targets_digest"]["summary"]["failed"] == 12
+
+
+def test_targets_digest_compact_trims_samples_and_targets(db_session, test_user):
+    row = _run(run_id="digest-compact", user_id=test_user.id, task_kind="client_workflow")
+    row.status = "completed"
+    detail = _target_rows()
+    detail += [
+        {"target": f"未启动{i}", "action": "follow_comment", "state": "not_started", "reason": f"原因{i}"}
+        for i in range(30)
+    ]
+    row.result_payload = {"targets_detail": detail}
+    db_session.add(row)
+    db_session.commit()
+
+    digest = scheduled_tasks._run_targets_digest(row, compact=True)
+
+    assert len(digest["not_started_targets"]) == 20
+    assert digest["retry_not_started"] == 32
+    assert all(len(bucket["sample"]) <= 2 for bucket in digest["reasons"])
+
+
+def test_previous_exit_reason_header_is_normalised():
+    from starlette.requests import Request
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/scheduled-tasks/pending",
+            "headers": [(b"x-previous-client-exit-reason", b"  Update_Restart  ")],
+        }
+    )
+    assert scheduled_tasks._header_previous_client_exit_reason(request) == "update_restart"
+
+    empty = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/scheduled-tasks/pending",
+            "headers": [],
+        }
+    )
+    assert scheduled_tasks._header_previous_client_exit_reason(empty) == ""
+
+
 def test_scheduled_task_heartbeat_preserves_initial_claim_time(db_session, test_user):
     from starlette.requests import Request
 
