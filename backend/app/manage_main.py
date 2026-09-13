@@ -147,7 +147,7 @@ def manage_health() -> dict:
     return {"status": "ok", "service": "manage"}
 
 
-app.include_router(auth_router)
+app.include_router(auth_router, prefix="/auth")  # 与主站/h5 一致：登录 /auth/login-phone-password
 app.include_router(manage_router)
 
 _static_dir = Path(__file__).resolve().parent.parent.parent / "manage_static"
