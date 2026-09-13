@@ -164,9 +164,13 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       </div>
 
       <div id="loginBox" class="glass">
-        <h3>用现有账号登录</h3>
+        <h3>登录</h3>
+        <div style="display:flex;gap:6px;margin-bottom:14px">
+          <button class="btn sm" id="modeUser" style="flex:1">普通账号</button>
+          <button class="btn sm ghost" id="modeAdmin" style="flex:1">平台管理员</button>
+        </div>
         <div style="margin-bottom:10px">
-          <label class="fl">账号 / 手机号</label>
+          <label class="fl" id="accLabel">账号 / 手机号</label>
           <input id="acc" placeholder="邮箱 / 手机号" autocomplete="username" />
         </div>
         <div>
@@ -177,7 +181,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
           <button class="btn" id="doLogin" style="flex:1">登录</button>
         </div>
         <div class="err" id="loginErr"></div>
-        <div class="dim" style="font-size:11.5px">与 AI 员工客户端同一套账号体系</div>
+        <div class="dim" style="font-size:11.5px" id="loginHint">与 AI 员工客户端同一套账号体系</div>
       </div>
     </div>
 
@@ -304,17 +308,37 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   }
 
   /* ---------- 登录 ---------- */
+  var LOGIN_MODE = "user";
+  function setLoginMode(mode){
+    LOGIN_MODE = mode;
+    var isA = mode === "admin";
+    $("#modeUser").className = "btn sm" + (isA ? " ghost" : "");
+    $("#modeAdmin").className = "btn sm" + (isA ? "" : " ghost");
+    $("#accLabel").textContent = isA ? "管理员账号" : "账号 / 手机号";
+    $("#acc").placeholder = isA ? "管理后台管理员账号" : "邮箱 / 手机号";
+    $("#loginHint").textContent = isA
+      ? "与原管理后台同一套管理员账号密码（服务器 .env 配置）"
+      : "与 AI 员工客户端同一套账号体系";
+    $("#loginErr").textContent = "";
+  }
+  $("#modeUser").addEventListener("click", function(){ setLoginMode("user"); });
+  $("#modeAdmin").addEventListener("click", function(){ setLoginMode("admin"); });
+
   function doLogin(){
     var acc = $("#acc").value.trim(), pwd = $("#pwd").value;
     var btn = $("#doLogin");
     $("#loginErr").textContent = "";
     if (!acc || !pwd){ $("#loginErr").textContent = "请填写账号与密码"; return; }
     btn.disabled = true; btn.textContent = "登录中…";
-    api("/auth/login-phone-password", { method:"POST", body:{ account: acc, password: pwd } })
+    var isA = LOGIN_MODE === "admin";
+    var path = isA ? "/api/manage/admin/login" : "/auth/login-phone-password";
+    var body = isA ? { username: acc, password: pwd } : { account: acc, password: pwd };
+    api(path, { method:"POST", body: body })
       .then(function(res){
         var token = res.access_token || res.token || "";
         if (!token) throw new Error("登录返回异常");
         TOKEN = token; localStorage.setItem("manage_token", token);
+        localStorage.setItem("manage_login_mode", LOGIN_MODE);
         return bootApp();
       })
       .catch(function(e){ $("#loginErr").textContent = e.message || "登录失败"; })
@@ -800,6 +824,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   }
 
   /* ---------- 初始化 ---------- */
+  if (localStorage.getItem("manage_login_mode") === "admin"){ setLoginMode("admin"); }
   if (TOKEN){
     bootApp().catch(function(){ /* 已在 bootApp 里提示 */ });
   } else {

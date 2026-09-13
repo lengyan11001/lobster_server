@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..manage_models import (
     MAuditLog,
@@ -42,6 +43,8 @@ ROLE_LABEL = {
     "market": "市场", "hr": "人事", "supply": "采购",
 }
 FULL_ACCESS = {"boss", "gm"}
+# 与 api/admin.py 保持一致：管理后台管理员令牌形如 lobster-admin-<password>
+ADMIN_TOKEN_PREFIX = "lobster-admin-"
 
 
 def _roles_for(db: Session, company_id: int, user_id: int) -> List[MMembershipRole]:
@@ -158,6 +161,44 @@ class BossIn(BaseModel):
     company_name: str = ""
 
 
+class AdminActor:
+    """平台管理员（来自原管理后台的 lobster-admin- 令牌），没有 users 行。"""
+
+    id = 0
+    email = "platform-admin@local"
+    brand_mark = "bihuo"
+
+    def __init__(self, name: str = "admin") -> None:
+        self.role = "admin"
+        self.display_name = name or "admin"
+
+
+def _bearer_token(request: Request) -> str:
+    auth = str(request.headers.get("authorization") or "")
+    return auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
+
+
+async def current_actor(request: Request, db: Session = Depends(get_db)):
+    """manage 的主体：普通用户（JWT）或平台管理员（管理后台令牌）。
+
+    管理后台的管理员账号不在 users 表里，登录后拿到的是 lobster-admin-<password>，
+    这里同时接受它，避免「管理员登不进来」。
+    """
+    token = _bearer_token(request)
+    if token.startswith(ADMIN_TOKEN_PREFIX):
+        expected = (settings.lobster_admin_password or "").strip()
+        if not expected or token != ADMIN_TOKEN_PREFIX + expected:
+            raise HTTPException(status_code=401, detail="管理员令牌无效")
+        return AdminActor((getattr(settings, "lobster_admin_username", "") or "admin").strip())
+    from .auth import get_current_user
+
+    return await get_current_user(request=request, token=token, db=db)
+
+
+def _is_admin_actor(user: Any) -> bool:
+    return str(getattr(user, "role", "") or "").lower() == "admin" and getattr(user, "id", 0) == 0
+
+
 def _member_json(db: Session, m: MMembership) -> Dict[str, Any]:
     roles = db.query(MMembershipRole).filter(MMembershipRole.membership_id == m.id).all()
     return {
@@ -189,8 +230,33 @@ def _project_json(p: MProject) -> Dict[str, Any]:
     }
 
 
+class AdminLoginIn(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/admin/login")
+def manage_admin_login(body: AdminLoginIn, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """用原管理后台的管理员账号登录 manage（同一套 .env 凭据）。"""
+    username = body.username.strip()
+    password = body.password.strip()
+    admin_u = (getattr(settings, "lobster_admin_username", "") or "").strip()
+    admin_p = (getattr(settings, "lobster_admin_password", "") or "").strip()
+    if not admin_u or not admin_p:
+        raise HTTPException(status_code=503, detail="服务器未配置平台管理员账号")
+    if username != admin_u or password != admin_p:
+        raise HTTPException(status_code=400, detail="管理员账号或密码错误")
+    return {"ok": True, "access_token": ADMIN_TOKEN_PREFIX + admin_p, "role": "admin",
+            "display_name": "管理员"}
+
+
 @router.get("/bootstrap")
-def bootstrap(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
+def bootstrap(user: Any = Depends(current_actor), db: Session = Depends(get_db)) -> Dict[str, Any]:
+    if _is_admin_actor(user):
+        companies = [{"id": c.id, "name": c.name, "owner": False, "roles": []}
+                     for c in db.query(MCompany).order_by(MCompany.id).all()]
+        return {"user": {"id": 0, "email": user.email, "role": "admin", "brand_mark": user.brand_mark},
+                "is_platform_admin": True, "companies": companies, "roles": ROLE_LABEL}
     rows = (
         db.query(MMembership, MCompany)
         .join(MCompany, MCompany.id == MMembership.company_id)
@@ -217,7 +283,7 @@ def bootstrap(user: User = Depends(get_current_user), db: Session = Depends(get_
 
 
 @router.get("/directory/lookup")
-def directory_lookup(q: str = Query("", max_length=120), user: User = Depends(get_current_user),
+def directory_lookup(q: str = Query("", max_length=120), user: Any = Depends(current_actor),
                      db: Session = Depends(get_db)) -> Dict[str, Any]:
     key = (q or "").strip()
     if not key:
@@ -233,7 +299,7 @@ def directory_lookup(q: str = Query("", max_length=120), user: User = Depends(ge
 
 
 @router.post("/companies")
-def create_company(body: CompanyIn, user: User = Depends(get_current_user),
+def create_company(body: CompanyIn, user: Any = Depends(current_actor),
                    db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = MCompany(name=body.name.strip(), short_name=body.short_name.strip(),
                        industry=body.industry.strip(), owner_user_id=user.id)
@@ -250,7 +316,7 @@ def create_company(body: CompanyIn, user: User = Depends(get_current_user),
 
 
 @router.get("/members")
-def list_members(company_id: int, user: User = Depends(get_current_user),
+def list_members(company_id: int, user: Any = Depends(current_actor),
                  db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
     rows = (db.query(MMembership)
@@ -260,7 +326,7 @@ def list_members(company_id: int, user: User = Depends(get_current_user),
 
 
 @router.post("/members")
-def add_member(body: MemberIn, user: User = Depends(get_current_user),
+def add_member(body: MemberIn, user: Any = Depends(current_actor),
                db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, body.company_id, user)
     if body.user_id:
@@ -284,7 +350,7 @@ def add_member(body: MemberIn, user: User = Depends(get_current_user),
 
 
 @router.get("/products")
-def list_products(company_id: int, user: User = Depends(get_current_user),
+def list_products(company_id: int, user: Any = Depends(current_actor),
                   db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
     rows = db.query(MProduct).filter(MProduct.company_id == company_id).order_by(MProduct.id).all()
@@ -294,7 +360,7 @@ def list_products(company_id: int, user: User = Depends(get_current_user),
 
 
 @router.post("/products")
-def create_product(body: ProductIn, user: User = Depends(get_current_user),
+def create_product(body: ProductIn, user: Any = Depends(current_actor),
                    db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, body.company_id, user)
     row = MProduct(company_id=company.id, name=body.name.strip(), price=Decimal(str(body.price or 0)),
@@ -307,7 +373,7 @@ def create_product(body: ProductIn, user: User = Depends(get_current_user),
 
 
 @router.get("/projects")
-def list_projects(company_id: int, user: User = Depends(get_current_user),
+def list_projects(company_id: int, user: Any = Depends(current_actor),
                   db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
     rows = db.query(MProject).filter(MProject.company_id == company_id).order_by(MProject.id.desc()).all()
@@ -315,7 +381,7 @@ def list_projects(company_id: int, user: User = Depends(get_current_user),
 
 
 @router.post("/projects")
-def create_project(body: ProjectIn, user: User = Depends(get_current_user),
+def create_project(body: ProjectIn, user: Any = Depends(current_actor),
                    db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, body.company_id, user)
     if not body.name.strip():
@@ -340,7 +406,7 @@ def create_project(body: ProjectIn, user: User = Depends(get_current_user),
 
 
 @router.get("/projects/{project_id}")
-def project_detail(project_id: int, user: User = Depends(get_current_user),
+def project_detail(project_id: int, user: Any = Depends(current_actor),
                    db: Session = Depends(get_db)) -> Dict[str, Any]:
     project = db.query(MProject).filter(MProject.id == project_id).first()
     if not project:
@@ -467,7 +533,7 @@ async def _llm_json(token: str, system: str, payload: Dict[str, Any], *, timeout
 
 @router.post("/projects/{project_id}/plan")
 async def generate_plan(project_id: int, body: PlanIn, request: Request,
-                        user: User = Depends(get_current_user),
+                        user: Any = Depends(current_actor),
                         db: Session = Depends(get_db)) -> Dict[str, Any]:
     """生成规划。
 
@@ -587,7 +653,7 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
 
 
 @router.patch("/nodes/{node_id}")
-def patch_node(node_id: int, body: NodeIn, user: User = Depends(get_current_user),
+def patch_node(node_id: int, body: NodeIn, user: Any = Depends(current_actor),
                db: Session = Depends(get_db)) -> Dict[str, Any]:
     node = db.query(MPlanNode).filter(MPlanNode.id == node_id).first()
     if not node:
@@ -611,7 +677,7 @@ def patch_node(node_id: int, body: NodeIn, user: User = Depends(get_current_user
 
 
 @router.post("/projects/{project_id}/draft")
-def save_draft(project_id: int, body: DraftIn, user: User = Depends(get_current_user),
+def save_draft(project_id: int, body: DraftIn, user: Any = Depends(current_actor),
                db: Session = Depends(get_db)) -> Dict[str, Any]:
     project = db.query(MProject).filter(MProject.id == project_id).first()
     if not project:
@@ -627,7 +693,7 @@ def save_draft(project_id: int, body: DraftIn, user: User = Depends(get_current_
 
 
 @router.post("/projects/{project_id}/confirm")
-def confirm_arrangement(project_id: int, user: User = Depends(get_current_user),
+def confirm_arrangement(project_id: int, user: Any = Depends(current_actor),
                         db: Session = Depends(get_db)) -> Dict[str, Any]:
     project = db.query(MProject).filter(MProject.id == project_id).first()
     if not project:
@@ -720,7 +786,7 @@ def _build_checkup(db: Session, project: MProject, slot: str, today: str) -> MCh
 
 
 @router.post("/checkups/run")
-def run_checkups(body: CheckupRunIn, user: User = Depends(get_current_user),
+def run_checkups(body: CheckupRunIn, user: Any = Depends(current_actor),
                  db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, body.company_id, user)
     slot = body.slot if body.slot in ("0900", "1700") else "0900"
@@ -742,7 +808,7 @@ def run_checkups(body: CheckupRunIn, user: User = Depends(get_current_user),
 
 
 @router.get("/checkups")
-def list_checkups(company_id: int, slot: str = "1700", user: User = Depends(get_current_user),
+def list_checkups(company_id: int, slot: str = "1700", user: Any = Depends(current_actor),
                   db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
     today = date.today().isoformat()
@@ -766,7 +832,7 @@ def list_checkups(company_id: int, slot: str = "1700", user: User = Depends(get_
 
 
 @router.get("/conditions")
-def list_conditions(company_id: int, user: User = Depends(get_current_user),
+def list_conditions(company_id: int, user: Any = Depends(current_actor),
                     db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
     rows = (db.query(MCondition).filter(MCondition.company_id == company_id)
@@ -778,7 +844,7 @@ def list_conditions(company_id: int, user: User = Depends(get_current_user),
 
 
 @router.post("/conditions/{condition_id}/accept")
-def accept_condition(condition_id: int, body: AcceptIn, user: User = Depends(get_current_user),
+def accept_condition(condition_id: int, body: AcceptIn, user: Any = Depends(current_actor),
                      db: Session = Depends(get_db)) -> Dict[str, Any]:
     row = db.query(MCondition).filter(MCondition.id == condition_id).first()
     if not row:
@@ -797,7 +863,7 @@ def accept_condition(condition_id: int, body: AcceptIn, user: User = Depends(get
 
 
 @router.get("/finance")
-def list_finance(company_id: int, user: User = Depends(get_current_user),
+def list_finance(company_id: int, user: Any = Depends(current_actor),
                  db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
     rows = (db.query(MFinanceEntry).filter(MFinanceEntry.company_id == company_id)
@@ -811,7 +877,7 @@ def list_finance(company_id: int, user: User = Depends(get_current_user),
 
 
 @router.post("/finance")
-def create_finance(body: FinanceIn, user: User = Depends(get_current_user),
+def create_finance(body: FinanceIn, user: Any = Depends(current_actor),
                    db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, body.company_id, user)
     row = MFinanceEntry(company_id=company.id,
@@ -826,7 +892,7 @@ def create_finance(body: FinanceIn, user: User = Depends(get_current_user),
 
 
 @router.post("/admin/boss")
-def mark_boss(body: BossIn, user: User = Depends(get_current_user),
+def mark_boss(body: BossIn, user: Any = Depends(current_actor),
               db: Session = Depends(get_db)) -> Dict[str, Any]:
     if str(user.role or "").lower() != "admin":
         raise HTTPException(status_code=403, detail="只有平台管理员可以标记老板")
