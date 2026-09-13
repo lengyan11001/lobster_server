@@ -316,12 +316,22 @@ def create_company(body: CompanyIn, user: Any = Depends(current_actor),
 
 
 @router.get("/members")
-def list_members(company_id: int, user: Any = Depends(current_actor),
+def list_members(company_id: int, q: str = Query("", max_length=80),
+                 include_disabled: bool = Query(False),
+                 user: Any = Depends(current_actor),
                  db: Session = Depends(get_db)) -> Dict[str, Any]:
     _require_company(db, company_id, user)
-    rows = (db.query(MMembership)
-            .filter(MMembership.company_id == company_id, MMembership.status == "active")
-            .order_by(MMembership.id).all())
+    query = db.query(MMembership).filter(MMembership.company_id == company_id)
+    if not include_disabled:
+        query = query.filter(MMembership.status == "active")
+    rows = query.order_by(MMembership.id).all()
+    key = (q or "").strip().lower()
+    if key:
+        rows = [m for m in rows
+                if key in (m.display_name or "").lower()
+                or key in (m.dept or "").lower()
+                or key in (m.email or "").lower()
+                or key in (m.remark or "").lower()]
     return {"members": [_member_json(db, m) for m in rows]}
 
 
@@ -347,6 +357,64 @@ def add_member(body: MemberIn, user: Any = Depends(current_actor),
            {"role": body.role_code, "level": body.level, "linked_user": body.user_id})
     db.commit()
     return {"ok": True, "member": _member_json(db, membership)}
+
+
+
+
+class MemberPatchIn(BaseModel):
+    display_name: Optional[str] = None
+    dept: Optional[str] = None
+    remark: Optional[str] = None
+    load_pct: Optional[int] = None
+    status: Optional[str] = None
+    roles: Optional[List[Dict[str, Any]]] = None
+
+
+@router.patch("/members/{membership_id}")
+def update_member(membership_id: int, body: MemberPatchIn,
+                  user: Any = Depends(current_actor),
+                  db: Session = Depends(get_db)) -> Dict[str, Any]:
+    membership = db.query(MMembership).filter(MMembership.id == membership_id).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    company = _require_company(db, membership.company_id, user)
+    _require_plan_admin(db, company, user)
+    for field in ("display_name", "dept", "remark", "load_pct", "status"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(membership, field, value)
+    if body.roles is not None:
+        db.query(MMembershipRole).filter(MMembershipRole.membership_id == membership.id).delete()
+        seen = set()
+        for item in body.roles:
+            code = str((item or {}).get("code") or "").strip()
+            if not code or code in seen or code not in ROLE_LABEL:
+                continue
+            seen.add(code)
+            db.add(MMembershipRole(company_id=membership.company_id, membership_id=membership.id,
+                                   role_code=code, level=str((item or {}).get("level") or "p1")))
+    _audit(db, membership.company_id, getattr(user, "id", 0), "member.update", "membership",
+           membership.id, {"fields": list(body.dict(exclude_unset=True).keys())})
+    db.commit()
+    return {"ok": True, "member": _member_json(db, membership)}
+
+
+@router.delete("/members/{membership_id}")
+def delete_member(membership_id: int, user: Any = Depends(current_actor),
+                  db: Session = Depends(get_db)) -> Dict[str, Any]:
+    membership = db.query(MMembership).filter(MMembership.id == membership_id).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    company = _require_company(db, membership.company_id, user)
+    _require_plan_admin(db, company, user)
+    if membership.user_id and company.owner_user_id == membership.user_id:
+        raise HTTPException(status_code=400, detail="公司创建者不能被移除")
+    db.query(MMembershipRole).filter(MMembershipRole.membership_id == membership.id).delete()
+    db.delete(membership)
+    _audit(db, company.id, getattr(user, "id", 0), "member.delete", "membership", membership_id,
+           {"name": membership.display_name})
+    db.commit()
+    return {"ok": True, "deleted": membership_id}
 
 
 @router.get("/products")
@@ -403,6 +471,54 @@ def create_project(body: ProjectIn, user: Any = Depends(current_actor),
     _audit(db, company.id, user.id, "project.create", "project", project.id, {"name": project.name})
     db.commit()
     return {"ok": True, "project": _project_json(project)}
+
+
+
+
+class ProjectPatchIn(BaseModel):
+    name: Optional[str] = None
+    goal: Optional[str] = None
+    success_criteria: Optional[str] = None
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.patch("/projects/{project_id}")
+def update_project(project_id: int, body: ProjectPatchIn,
+                   user: Any = Depends(current_actor),
+                   db: Session = Depends(get_db)) -> Dict[str, Any]:
+    project = db.query(MProject).filter(MProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    company = _require_company(db, project.company_id, user)
+    _require_plan_admin(db, company, user)
+    for field in ("name", "goal", "success_criteria", "start_at", "end_at", "status"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(project, field, value)
+    _audit(db, company.id, getattr(user, "id", 0), "project.update", "project", project.id,
+           {"fields": list(body.dict(exclude_unset=True).keys())})
+    db.commit()
+    return {"ok": True, "project": _project_json(project)}
+
+
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: int, user: Any = Depends(current_actor),
+                   db: Session = Depends(get_db)) -> Dict[str, Any]:
+    project = db.query(MProject).filter(MProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    company = _require_company(db, project.company_id, user)
+    _require_plan_admin(db, company, user)
+    name = project.name
+    db.query(MPlanNode).filter(MPlanNode.project_id == project_id).delete()
+    db.query(MCheckup).filter(MCheckup.project_id == project_id).delete()
+    db.query(MCondition).filter(MCondition.project_id == project_id).delete()
+    db.delete(project)
+    _audit(db, company.id, getattr(user, "id", 0), "project.delete", "project", project_id, {"name": name})
+    db.commit()
+    return {"ok": True, "deleted": project_id}
 
 
 @router.get("/projects/{project_id}")

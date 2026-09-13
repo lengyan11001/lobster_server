@@ -6,7 +6,7 @@
 <title>MANAGE · 项目管理与 AI 赋能</title>
 <style>
 :root{
-  --bg:#05070f; --ink:#eaf1fb; --muted:#93a1b8; --dim:#5c6a80;
+  --bg:#05070f; --ink:#f2f6ff; --muted:#b6c1d2; --dim:#8b98ae;
   --w-glass:rgba(255,255,255,.045); --w-line:rgba(255,255,255,.10); --w-line2:rgba(255,255,255,.22);
   --accent:#22d3ee; --ok:#34d399; --warn:#fbbf24; --bad:#fb7185;
   --ease:cubic-bezier(.22,1,.36,1); --slow:26s; --slower:34s;
@@ -30,10 +30,11 @@ a{color:#8fb7ff;text-decoration:none}
 @keyframes drift2{to{transform:translate3d(-5vw,3vw,0) scale(1)}}
 .veil{position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 120%,rgba(5,7,15,.98) 0,rgba(5,7,15,.7) 42%,transparent 72%),linear-gradient(180deg,rgba(5,7,15,.6),rgba(5,7,15,.25) 40%,rgba(5,7,15,.95))}
 .grid{position:absolute;inset:0;opacity:.3;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:52px 52px;-webkit-mask-image:radial-gradient(100% 70% at 50% 0,#000,transparent 72%);mask-image:radial-gradient(100% 70% at 50% 0,#000,transparent 72%)}
-.glass{background:var(--w-glass);border:1px solid var(--w-line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:16px}
+.glass{background:rgba(11,16,28,.62);border:1px solid var(--w-line2);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:16px}
 .glass.card{padding:16px}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .mut{color:var(--muted)}.dim{color:var(--dim)}
+body{text-shadow:0 1px 2px rgba(0,0,0,.35)}
 .tag{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;border:1px solid var(--w-line);color:var(--muted);background:rgba(255,255,255,.03)}
 .tag.ok{border-color:rgba(52,211,153,.45);color:#6ee7b7;background:rgba(52,211,153,.08)}
 .tag.wn{border-color:rgba(251,191,36,.45);color:#fcd34d;background:rgba(251,191,36,.08)}
@@ -528,52 +529,117 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   }
 
   /* ================= 项目 ================= */
+  var PROJ_Q = "", PROJ_CACHE = [];
+
+  function projArrTag(p){
+    if (p.arrangement_status === "confirmed") return '<span class="tag ok">已确认</span>';
+    if (p.arrangement_status === "changed") return '<span class="tag wn">有待确认变更</span>';
+    return '<span class="tag">草稿</span>';
+  }
+
   function loadProjects(){
     api("/api/manage/projects?company_id=" + ACTIVE).then(function(d){
-      var ps = d.projects || [];
+      PROJ_CACHE = d.projects || [];
+      var k = PROJ_Q.toLowerCase();
+      var ps = PROJ_CACHE.filter(function(p){
+        if (!k) return true;
+        return String(p.name||"").toLowerCase().indexOf(k) >= 0
+            || String(p.goal||"").toLowerCase().indexOf(k) >= 0;
+      });
       $("#s-proj").innerHTML = '<div class="glass card">'
-        + '<div class="row" style="align-items:center;margin-bottom:10px">'
-        + '<b style="font-size:13.5px">项目列表</b><span class="dim" style="font-size:12px">点项目打开工作安排</span>'
-        + '<span class="grow"></span><button class="btn sm" id="newProj">＋ 新建项目</button></div>'
-        + (ps.length ? '<table class="tb"><thead><tr><th>项目</th><th>周期</th><th>安排</th><th class="right">操作</th></tr></thead><tbody>'
-            + ps.map(function(p){
-                var st = p.arrangement_status === "confirmed" ? '<span class="tag ok">已确认</span>'
-                       : (p.arrangement_status === "changed" ? '<span class="tag wn">有待确认变更</span>' : '<span class="tag">草稿</span>');
-                return '<tr><td><b>'+p.name+'</b><div class="dim" style="font-size:11.5px;margin-top:3px">'+(p.goal||"")+'</div></td>'
-                  + '<td class="dim">'+(p.start_at||"-")+' → '+(p.end_at||"-")+'</td>'
-                  + '<td>'+st+'<span class="dim" style="margin-left:8px;font-size:11.5px">'+(p.plan_source?("来源 "+p.plan_source):"未规划")+'</span></td>'
-                  + '<td class="right"><button class="btn sm ghost" data-proj="'+p.id+'">打开</button></td></tr>';
-              }).join("") + '</tbody></table>'
-          : '<div class="dim">还没有项目，点右上「新建项目」开始。</div>')
+        + '<div class="row" style="align-items:center;gap:10px;margin-bottom:12px">'
+        + '<b style="font-size:13.5px">项目</b>'
+        + '<span class="dim" style="font-size:12px">点「打开」进入工作安排</span>'
+        + '<span class="grow"></span>'
+        + '<input id="projQ" placeholder="搜索项目 / 目标" value="' + String(PROJ_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
+        + '<button class="btn sm" id="newProj">＋ 新建项目</button></div>'
+        + (ps.length
+            ? '<table class="tb"><thead><tr><th>项目</th><th>周期</th><th>安排</th><th class="right">操作</th></tr></thead><tbody>'
+              + ps.map(function(p){
+                  return '<tr><td><b>' + p.name + '</b><div class="dim" style="font-size:11.5px;margin-top:3px">' + (p.goal||"") + '</div></td>'
+                    + '<td class="dim num">' + (p.start_at||"-") + ' → ' + (p.end_at||"-") + '</td>'
+                    + '<td>' + projArrTag(p) + '<span class="dim" style="margin-left:8px;font-size:11.5px">' + (p.plan_source ? ("来源 " + p.plan_source) : "未规划") + '</span></td>'
+                    + '<td class="right" style="white-space:nowrap">'
+                    + '<button class="btn sm ghost" data-proj="' + p.id + '">打开</button> '
+                    + '<button class="btn sm ghost" data-pedit="' + p.id + '">编辑</button> '
+                    + '<button class="btn sm ghost" data-pdel="' + p.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button></td></tr>';
+                }).join("") + '</tbody></table>'
+            : '<div class="dim">' + (PROJ_Q ? "没有匹配的项目" : "还没有项目，点右上「新建项目」开始") + '</div>')
         + '</div>';
+      var qi = document.getElementById("projQ");
+      qi.addEventListener("input", function(){
+        clearTimeout(qi._t);
+        var v = qi.value;
+        qi._t = setTimeout(function(){ PROJ_Q = v.trim(); loadProjects(); }, 320);
+      });
+      document.getElementById("newProj").addEventListener("click", function(){ openProjectEditor(null); });
       $$("#s-proj [data-proj]").forEach(function(b){
         b.addEventListener("click", function(){ openProject(Number(b.dataset.proj)); });
       });
-      $("#newProj").addEventListener("click", openNewProject);
+      $$("#s-proj [data-pedit]").forEach(function(b){
+        b.addEventListener("click", function(){ openProjectEditor(Number(b.dataset.pedit)); });
+      });
+      $$("#s-proj [data-pdel]").forEach(function(b){
+        b.addEventListener("click", function(){ deleteProject(Number(b.dataset.pdel)); });
+      });
     }).catch(function(e){ showErr(e.message); });
   }
 
-  function openNewProject(){
+  function openProjectEditor(id){
+    var p = id ? PROJ_CACHE.filter(function(x){ return x.id === id; })[0] : null;
     var html = '<div class="dsec"><h4>项目信息</h4>'
-      + '<label class="fl">项目名称</label><input id="npName" style="margin-bottom:10px" placeholder="例如：抖音渠道 0→30 万" />'
-      + '<label class="fl">目标（AI 据此规划）</label><textarea id="npGoal" rows="2" placeholder="3 个月把抖音渠道做到月成交 30 万"></textarea>'
+      + '<label class="fl">项目名称</label><input id="npName" value="' + (p ? p.name : "") + '" style="margin-bottom:10px" placeholder="例如：抖音渠道 0→30 万" />'
+      + '<label class="fl">目标（AI 据此规划）</label><textarea id="npGoal" rows="3" placeholder="3 个月把抖音渠道做到月成交 30 万">' + (p ? (p.goal||"") : "") + '</textarea>'
+      + '<label class="fl" style="margin-top:10px">成功标准</label><input id="npCrit" value="' + (p ? (p.success_criteria||"") : "") + '" placeholder="例如：单月成交 ≥30 万且回款率 ≥80%" />'
       + '<div style="display:flex;gap:10px;margin-top:10px">'
-      + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" placeholder="2026-09-15" /></div>'
-      + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" placeholder="2026-12-15" /></div></div></div>'
+      + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
+      + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
+      + (p ? '<div style="margin-top:10px"><label class="fl">状态</label><select id="npStatus">'
+              + [["planning","规划中"],["running","执行中"],["done","已完成"],["archived","已归档"]].map(function(x){
+                  return '<option value="' + x[0] + '"' + (p.status === x[0] ? " selected" : "") + '>' + x[1] + '</option>'; }).join("")
+              + '</select></div>' : '')
+      + '</div>'
       + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="npCancel">取消</button>'
-      + '<button class="btn sm" id="npOk">创建</button></div>';
-    openDrawer("项目 · 新建", "创建一个项目", html);
-    $("#npCancel").addEventListener("click", closeDrawer);
-    $("#npOk").addEventListener("click", function(){
-      var name = $("#npName").value.trim();
+      + '<button class="btn sm" id="npOk">' + (p ? "保存" : "创建") + '</button></div>';
+    openDrawer(p ? "项目 · 编辑" : "项目 · 新建", p ? p.name : "创建一个项目", html);
+    document.getElementById("npCancel").addEventListener("click", closeDrawer);
+    document.getElementById("npOk").addEventListener("click", function(){
+      var name = document.getElementById("npName").value.trim();
       if (!name) return toast("请填项目名称", true);
-      api("/api/manage/projects", { method:"POST", body:{
-        company_id: ACTIVE, name: name, goal: $("#npGoal").value.trim(),
-        start_at: $("#npStart").value.trim(), end_at: $("#npEnd").value.trim(),
-      }}).then(function(res){
-        closeDrawer(); toast("已创建，接下来生成规划");
-        loadProjects(); openProject(res.project.id);
-      }).catch(function(e){ toast(e.message, true); });
+      var payload = {
+        name: name,
+        goal: document.getElementById("npGoal").value.trim(),
+        success_criteria: document.getElementById("npCrit").value.trim(),
+        start_at: document.getElementById("npStart").value.trim(),
+        end_at: document.getElementById("npEnd").value.trim(),
+      };
+      if (p){
+        payload.status = document.getElementById("npStatus").value;
+        api("/api/manage/projects/" + p.id, { method:"PATCH", body: payload })
+          .then(function(){ closeDrawer(); toast("已保存"); loadProjects(); loadBrief(); })
+          .catch(function(e){ toast(e.message, true); });
+      } else {
+        payload.company_id = ACTIVE;
+        api("/api/manage/projects", { method:"POST", body: payload })
+          .then(function(res){ closeDrawer(); toast("已创建，接下来生成规划"); loadProjects(); openProject(res.project.id); })
+          .catch(function(e){ toast(e.message, true); });
+      }
+    });
+  }
+
+  function deleteProject(id){
+    var p = PROJ_CACHE.filter(function(x){ return x.id === id; })[0];
+    if (!p) return;
+    openDrawer("项目 · 删除", p.name,
+      '<div class="dsec"><h4>确认删除</h4><div style="font-size:13px;line-height:1.7">将删除项目 <b>' + p.name
+      + '</b>，其工作安排（人员/要求/时间节点）、日检记录与达成条件一并删除，且不可恢复。</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="pdelNo">取消</button>'
+      + '<button class="btn sm" id="pdelYes" style="background:linear-gradient(100deg,#fda4af,#fb7185);color:#210a10">确认删除</button></div>');
+    document.getElementById("pdelNo").addEventListener("click", closeDrawer);
+    document.getElementById("pdelYes").addEventListener("click", function(){
+      api("/api/manage/projects/" + id, { method:"DELETE" })
+        .then(function(){ closeDrawer(); toast("已删除"); loadProjects(); loadBrief(); loadCond(); })
+        .catch(function(e){ toast(e.message, true); });
     });
   }
 
@@ -763,70 +829,137 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   }
 
   /* ================= 组织 ================= */
+  var ORG_Q = "", ORG_CACHE = [];
+
+  function memberCard(m){
+    var c = m.load > 88 ? "var(--bad)" : (m.load > 60 ? "var(--warn)" : "var(--ok)");
+    var roles = (m.roles || []).map(function(r){
+      return '<span class="tag cy">' + r.label + ' <b class="num">' + r.level + '</b></span>'; }).join("");
+    return '<div class="glass card" style="padding:14px">'
+      + '<div class="row" style="align-items:center;gap:11px;margin-bottom:9px">'
+      + '<div style="width:40px;height:40px;border-radius:13px;display:grid;place-items:center;font:600 14px var(--mono);color:#06121c;background:linear-gradient(140deg,#67e8f9,#a5b4fc)">' + String(m.name || "?").slice(0,1) + '</div>'
+      + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + m.name + '</b>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:3px">' + (m.dept || "未分组") + (m.user_id ? " · 已绑定账号" : " · 仅记录") + '</div></div>'
+      + '<span class="num" style="font-size:12px;color:' + c + '">' + m.load + '%</span></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">'
+      + (roles || '<span class="tag">未设岗位</span>') + '</div>'
+      + '<div class="dim" style="font-size:11.5px;margin-bottom:11px;min-height:18px">' + (m.remark || "—") + '</div>'
+      + '<div class="row" style="gap:7px;justify-content:flex-end">'
+      + '<button class="btn sm ghost" data-medit="' + m.id + '">编辑</button>'
+      + '<button class="btn sm ghost" data-mdel="' + m.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button>'
+      + '</div></div>';
+  }
+
   function loadOrg(){
-    api("/api/manage/members?company_id=" + ACTIVE).then(function(d){
-      var ms = d.members || [];
+    var qs = "/api/manage/members?company_id=" + ACTIVE + (ORG_Q ? "&q=" + encodeURIComponent(ORG_Q) : "");
+    api(qs).then(function(d){
+      ORG_CACHE = d.members || [];
       $("#s-org").innerHTML = '<div class="glass card">'
-        + '<div class="row" style="align-items:center;margin-bottom:10px">'
-        + '<b style="font-size:13.5px">成员</b><span class="dim" style="font-size:12px">岗位可多选，每个岗位单独设级别</span>'
-        + '<span class="grow"></span><button class="btn sm" id="addMem">＋ 添加成员（原系统账号）</button></div>'
-        + (ms.length ? '<div class="g3">' + ms.map(function(m){
-            var c = m.load > 88 ? "var(--bad)" : (m.load > 60 ? "var(--warn)" : "var(--ok)");
-            return '<div class="glass card" style="padding:14px">'
-              + '<div class="row" style="align-items:center;gap:11px;margin-bottom:9px">'
-              + '<div style="width:40px;height:40px;border-radius:13px;display:grid;place-items:center;font:600 14px var(--mono);color:#06121c;background:linear-gradient(140deg,#67e8f9,#a5b4fc)">'+String(m.name||"?").slice(0,1)+'</div>'
-              + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">'+m.name+'</b>'
-              + '<div class="dim" style="font-size:11.5px;margin-top:3px">'+(m.dept||"未分组")+(m.user_id?" · 已绑定账号":" · 仅记录")+'</div></div>'
-              + '<span class="num" style="font-size:12px;color:'+c+'">'+m.load+'%</span></div>'
-              + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">'
-              + (m.roles||[]).map(function(r){ return '<span class="tag cy">'+r.label+' <b class="num">'+r.level+'</b></span>'; }).join("")
-              + '</div>'
-              + '<div class="dim" style="font-size:11.5px">'+(m.remark||"—")+'</div></div>';
-          }).join("") + '</div>' : '<div class="dim">还没有成员，点右上添加。</div>')
+        + '<div class="row" style="align-items:center;gap:10px;margin-bottom:13px">'
+        + '<b style="font-size:13.5px">成员</b>'
+        + '<span class="dim" style="font-size:12px">岗位可多选，每个岗位单独设级别</span>'
+        + '<span class="grow"></span>'
+        + '<input id="orgQ" placeholder="搜索姓名 / 部门 / 备注" value="' + String(ORG_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
+        + '<button class="btn sm" id="addMem">＋ 添加成员</button></div>'
+        + (ORG_CACHE.length
+            ? '<div class="g3">' + ORG_CACHE.map(memberCard).join("") + '</div>'
+            : '<div class="dim">' + (ORG_Q ? "没有匹配的成员" : "还没有成员，点右上「添加成员」") + '</div>')
         + '</div>';
-      $("#addMem").addEventListener("click", openAddMember);
+      var qi = document.getElementById("orgQ");
+      qi.addEventListener("input", function(){
+        clearTimeout(qi._t);
+        var v = qi.value;
+        qi._t = setTimeout(function(){ ORG_Q = v.trim(); loadOrg(); }, 320);
+      });
+      document.getElementById("addMem").addEventListener("click", function(){ openMemberEditor(null); });
+      $$("#s-org [data-medit]").forEach(function(b){
+        b.addEventListener("click", function(){ openMemberEditor(Number(b.dataset.medit)); });
+      });
+      $$("#s-org [data-mdel]").forEach(function(b){
+        b.addEventListener("click", function(){ deleteMember(Number(b.dataset.mdel)); });
+      });
     }).catch(function(e){ showErr(e.message); });
   }
 
-  function openAddMember(){
-    var html = '<div class="dsec"><h4>查找原系统账号</h4>'
-      + '<div class="row" style="gap:8px"><input id="lkQ" placeholder="邮箱 / 企业微信 userid / openid" />'
-      + '<button class="btn sm" id="lkGo" style="height:38px">查找</button></div>'
-      + '<div class="dim" style="font-size:11.5px;margin-top:8px">不默认列出任何人：查到谁才能加谁。查不到可只用姓名登记（不参与登录）。</div>'
-      + '<div id="lkRes" style="margin-top:10px"></div></div>'
-      + '<div class="dsec"><h4>加入后分配</h4>'
-      + '<label class="fl">姓名（可留空，用账号名）</label><input id="mName" style="margin-bottom:10px" />'
+  var LEVELS = ["intern","p1","p2","p3","p4","lead"];
+
+  function openMemberEditor(id){
+    var m = id ? ORG_CACHE.filter(function(x){ return x.id === id; })[0] : null;
+    var picked = {};
+    (m ? (m.roles || []) : []).forEach(function(r){ picked[r.code] = r.level; });
+    var roleRows = Object.keys(ROLES).map(function(code){
+      var on = !!picked[code];
+      return '<div class="row" style="align-items:center;gap:8px;margin-bottom:7px">'
+        + '<button class="btn sm ' + (on ? "" : "ghost") + '" data-role="' + code + '" style="flex:1;justify-content:flex-start">' + ROLES[code] + '</button>'
+        + '<select data-rlevel="' + code + '" style="width:106px;height:30px"' + (on ? "" : " disabled") + '>'
+        + LEVELS.map(function(l){ return '<option' + (picked[code] === l ? " selected" : "") + '>' + l + '</option>'; }).join("")
+        + '</select></div>';
+    }).join("");
+    var html = '<div class="dsec"><h4>基本信息</h4>'
+      + '<label class="fl">姓名</label><input id="eName" value="' + (m ? m.name : "") + '" style="margin-bottom:10px" />'
       + '<div style="display:flex;gap:10px;margin-bottom:10px">'
-      + '<div style="flex:1"><label class="fl">岗位</label><select id="mRole"></select></div>'
-      + '<div style="flex:1"><label class="fl">级别</label><select id="mLevel">'
-      + ["intern","p1","p2","p3","p4","lead"].map(function(l){ return '<option'+(l==="p2"?" selected":"")+'>'+l+'</option>'; }).join("")
-      + '</select></div></div>'
-      + '<label class="fl">所属</label><input id="mDept" placeholder="例如：业务中心" style="margin-bottom:10px" />'
-      + '<label class="fl">备注</label><input id="mRemark" placeholder="基本情况描述" /></div>'
-      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="mCancel">关闭</button>'
-      + '<button class="btn sm" id="mOk">添加</button></div>';
-    openDrawer("组织架构 · 添加成员", "直接绑定原系统账号（不做导入）", html);
-    $("#mRole").innerHTML = Object.keys(ROLES).map(function(k){
-      return '<option value="'+k+'"'+(k==="sales"?" selected":"")+'>'+ROLES[k]+'</option>'; }).join("");
-    var found = null;
-    $("#lkGo").addEventListener("click", function(){
-      var q = $("#lkQ").value.trim();
-      if (!q) return;
-      api("/api/manage/directory/lookup?q=" + encodeURIComponent(q)).then(function(r){
-        found = r.found ? r.user : null;
-        $("#lkRes").innerHTML = found
-          ? '<div class="mline"><span style="flex:1">已找到：'+found.email+'<span class="dim" style="margin-left:8px">品牌 '+found.brand_mark+'</span></span><span class="tag ok">可绑定</span></div>'
-          : '<div class="mline"><span style="flex:1" class="miss">没找到该账号，可只登记姓名</span></div>';
-        if (found && !$("#mName").value) $("#mName").value = found.email.split("@")[0];
-      }).catch(function(e){ toast(e.message, true); });
+      + '<div style="flex:1"><label class="fl">部门</label><input id="eDept" value="' + (m ? (m.dept||"") : "") + '" /></div>'
+      + '<div style="flex:0 0 110px"><label class="fl">负载 %</label><input id="eLoad" value="' + (m ? m.load : 0) + '" /></div></div>'
+      + '<label class="fl">备注</label><input id="eRemark" value="' + (m ? (m.remark||"") : "") + '" placeholder="基本情况描述" /></div>'
+      + '<div class="dsec"><h4>岗位（可多选 · 每个岗位单独设级别）</h4>' + roleRows + '</div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="eCancel">取消</button>'
+      + '<button class="btn sm" id="eSave">' + (m ? "保存" : "添加") + '</button></div>';
+    openDrawer(m ? "组织架构 · 编辑成员" : "组织架构 · 添加成员", m ? m.name : "新增成员", html);
+    $$("#dBody [data-role]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var code = b.dataset.role;
+        if (picked[code]) { delete picked[code]; b.className = "btn sm ghost"; }
+        else { picked[code] = "p2"; b.className = "btn sm"; }
+        b.style.flex = "1"; b.style.justifyContent = "flex-start";
+        var sel = document.querySelector('#dBody [data-rlevel="' + code + '"]');
+        if (sel) { sel.disabled = !picked[code]; }
+      });
     });
-    $("#mCancel").addEventListener("click", closeDrawer);
-    $("#mOk").addEventListener("click", function(){
-      api("/api/manage/members", { method:"POST", body:{
-        company_id: ACTIVE, user_id: found ? found.id : null,
-        display_name: $("#mName").value.trim(), role_code: $("#mRole").value,
-        level: $("#mLevel").value, dept: $("#mDept").value.trim(), remark: $("#mRemark").value.trim(),
-      }}).then(function(){ closeDrawer(); toast("已添加"); loadOrg(); loadBrief(); })
+    document.getElementById("eCancel").addEventListener("click", closeDrawer);
+    document.getElementById("eSave").addEventListener("click", function(){
+      var name = document.getElementById("eName").value.trim();
+      if (!name) return toast("请填姓名", true);
+      var roles = Object.keys(picked).map(function(code){
+        var sel = document.querySelector('#dBody [data-rlevel="' + code + '"]');
+        return { code: code, level: sel ? sel.value : picked[code] };
+      });
+      if (!roles.length) return toast("至少选一个岗位", true);
+      var dept = document.getElementById("eDept").value.trim();
+      var load = Number(document.getElementById("eLoad").value || 0);
+      var remark = document.getElementById("eRemark").value.trim();
+      if (m){
+        api("/api/manage/members/" + m.id, { method:"PATCH", body:{
+          display_name: name, dept: dept, load_pct: load, remark: remark, roles: roles } })
+          .then(function(){ closeDrawer(); toast("已保存"); loadOrg(); loadBrief(); })
+          .catch(function(e){ toast(e.message, true); });
+      } else {
+        api("/api/manage/members", { method:"POST", body:{
+          company_id: ACTIVE, display_name: name, dept: dept, load_pct: load, remark: remark,
+          role_code: roles[0].code, level: roles[0].level } })
+          .then(function(res){
+            var mid = res && res.member && res.member.id;
+            if (mid && roles.length > 1){
+              return api("/api/manage/members/" + mid, { method:"PATCH", body:{ roles: roles } });
+            }
+          })
+          .then(function(){ closeDrawer(); toast("已添加"); loadOrg(); loadBrief(); })
+          .catch(function(e){ toast(e.message, true); });
+      }
+    });
+  }
+
+  function deleteMember(id){
+    var m = ORG_CACHE.filter(function(x){ return x.id === id; })[0];
+    if (!m) return;
+    openDrawer("组织架构 · 删除成员", m.name,
+      '<div class="dsec"><h4>确认删除</h4><div style="font-size:13px;line-height:1.7">将从公司移除 <b>'
+      + m.name + '</b>，其岗位设置一并删除；不影响该账号在原系统的数据。</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="delNo">取消</button>'
+      + '<button class="btn sm" id="delYes" style="background:linear-gradient(100deg,#fda4af,#fb7185);color:#210a10">确认删除</button></div>');
+    document.getElementById("delNo").addEventListener("click", closeDrawer);
+    document.getElementById("delYes").addEventListener("click", function(){
+      api("/api/manage/members/" + id, { method:"DELETE" })
+        .then(function(){ closeDrawer(); toast("已删除"); loadOrg(); loadBrief(); })
         .catch(function(e){ toast(e.message, true); });
     });
   }
