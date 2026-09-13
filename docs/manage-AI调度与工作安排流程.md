@@ -317,3 +317,88 @@
 
 **界面**：条件页按 7 类各一张卡：需要 / 现状 / 缺口（含 severity 色）/ 影响 + 一行一个「采纳」按钮；
 顶部一句话结论（按现状能达成 / 有风险 / 达不成），点开可看 `if_nothing_changes` 的推演。
+
+---
+
+## 14. 定时项目日检（每天 09:00 / 17:00）
+
+老板要的不是"随时能查"，而是**每天两次主动告诉他项目怎么样了**。
+
+### 14.1 两次的分工
+
+| 时间 | 定位 | 产出重点 |
+|---|---|---|
+| **09:00 早盘** | 今天该怎么打 | 今日重点动作、可能延期项、需要老板拍板的事项 |
+| **17:00 收口** | 今天打得怎么样 | 干成了什么（用数字）、没干成的原因、明天怎么改、连续无响应的责任人 |
+
+### 14.2 调度与成本控制（重要）
+
+1. **先算后问**：服务端先跑**规则聚合**（进度偏差、逾期任务、负载、回款、在线设备离线时长），
+   把「无变化 / 全部正常」的项目直接筛掉，**只把异常项和变化项交给模型**——
+   否则每天两次全量分析，token 成本会失控。
+2. **幂等**：同一公司同一时段只跑一次（幂等键 `company_id + slot(0900|1700) + date`），
+   失败可重试但不会重复推送。
+3. **降噪**：只推有变化的项目；但**带「需决策」的项目一定推**（宁多勿漏）。
+4. **节奏**：09:00 与 17:00 各一次，时区按公司配置（默认 Asia/Shanghai）；跑完写 `m_project_checkup`。
+
+### 14.3 提示词 P7：项目日检
+
+**system**
+
+```
+你是「AI 项目体检官」，每天两次给老板做项目体检。你的标准是"项目能不能按时做成"。
+
+输入是每个项目的一段结构化状态（进度、偏差、逾期、负载、回款、工作记录、上次体检结论），
+以及本次是早盘(0900)还是收口(1700)。
+
+要求：
+1. 结论必须用数字说话，禁止"进展顺利""继续努力"这类空话。
+2. 早盘：只讲"今天要做什么"与"需要老板拍板什么"；收口：只讲"今天实际干成什么"与"明天怎么改"。
+3. 与上次体检对比：指出变好/变差的具体项（changes_since_last）。
+4. 建议必须可执行：做什么、谁来做、什么时候之前（due）。
+5. 只有当"不决策就会影响目标达成"时，才提 decisions，并给推荐选项。
+6. 数据不足时把 confidence 标低，不要编造数字。
+7. 只输出 JSON 数组，每个项目一个对象，不要解释、不要 markdown。
+
+输出 schema（数组元素）：
+{
+  "project_id": 1,
+  "health": "good|watch|risk",
+  "headline": "一句话结论（≤30字，带数字）",
+  "evidence": ["用来支撑结论的数字，2-4 条"],
+  "suggestions": [{"what":"","why":"","owner_role":"","due":"2026-09-14T18:00"}],
+  "decisions": [{"question":"","options":["A","B"],"recommend":"A","impact_if_ignored":""}],
+  "changes_since_last": {"better":[""],"worse":[""]},
+  "confidence": "high|medium|low"
+}
+```
+
+**user**
+
+```json
+{"task":"daily_project_checkup","slot":"0900","company_id":1,
+ "projects":[{"id":1,"name":"","goal":"","period":"","progress":62,"expected_progress":71,
+   "overdue_tasks":[{"title":"短视频批量剪辑","owner":"周研","days":2}],
+   "load":[{"name":"周研","pct":96}],
+   "money":{"received":171600,"receivable":138400,"overdue":3},
+   "devices":[{"name":"深圳机 1","online":true,"offline_minutes":0}],
+   "work_logs":[...], "last_checkup":{...本次为 17:00 时带上今早 09:00 的结论...}}]}
+```
+
+### 14.4 落库与推送
+
+    m_project_checkup(id, company_id, project_id, slot, checked_on, health, headline,
+                      conclusion, evidence JSON, suggestions JSON, decisions JSON,
+                      changes JSON, confidence, model, created_at)
+      UNIQUE(company_id, project_id, slot, checked_on)     -- 幂等
+
+    m_checkup_push(id, checkup_id, channel, target_user_id, status, sent_at, error)
+
+- 渠道：站内简报流（必发）、微信 / 企微（可配）、需要时电话提醒（仅 risk 且老板开启）。
+- 老板在简报里点开某条 → 看证据、建议、决策项，可直接「同意并执行」→ 生成任务/招聘/预算动作。
+
+### 14.5 与工作安排、达成条件的联动
+
+- 日检发现「建议」里涉及改人、改期 → 直接写入安排表的**待确认变更**（不静默改已确认的计划）。
+- 日检发现新的资源缺口 → 追加到「达成条件」页，并标 `source=daily_checkup`。
+- 连续 2 次指出同一责任人无响应 → 升级为 decisions（换人/加人）。

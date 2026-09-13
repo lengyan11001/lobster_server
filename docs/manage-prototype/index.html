@@ -298,6 +298,19 @@ input.tin{padding:0 11px;height:38px}
 .imp-row.on{border-color:rgba(34,211,238,.6);background:rgba(34,211,238,.1)}
 .imp-row .ck{width:18px;height:18px;border-radius:6px;border:1px solid var(--stroke2);display:grid;place-items:center;font-size:11px;color:#06121c}
 .imp-row.on .ck{background:linear-gradient(140deg,#7dd3fc,#a5b4fc);border-color:transparent}
+/* ---------- 项目日检 ---------- */
+.ck{padding:13px;cursor:pointer;transition:transform .28s var(--ease),border-color .28s}
+.ck:hover{transform:translateY(-3px);border-color:var(--stroke2)}
+.ck .hd{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.ck .dot2{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.ck .pn{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ck .hl{font-size:12.5px;line-height:1.6;color:var(--muted);min-height:40px}
+.ck .adv{font-size:11.5px;color:#8fe3f5;margin-top:8px;line-height:1.55}
+.ck .dec{margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,.09);
+  font-size:11.5px;color:#fcd34d;display:flex;gap:6px;align-items:center}
+.tchip{height:26px;padding:0 10px;border-radius:9px;border:1px solid var(--stroke);background:rgba(255,255,255,.04);
+  color:var(--muted);font-size:12px;font-family:var(--mono);cursor:pointer;transition:all .22s var(--ease)}
+.tchip.on{border-color:rgba(168,85,247,.6);color:#e9d5ff;background:rgba(168,85,247,.12)}
 /* ---------- 财务 ---------- */
 .wf{display:flex;align-items:flex-end;gap:9px;height:auto;min-height:168px;flex:1;padding-top:10px}
 .wf .col2{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px}
@@ -392,6 +405,28 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
             <div class="v num" data-count="78" data-suffix="%">0%</div>
             <div class="d"><span class="down">▼ 4.1%</span><span class="dim">应收 ¥138,400</span></div>
             <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none"><path class="ln" style="stroke:#fbbf24;--len:260" d="M0 8 L22 10 L44 9 L66 14 L88 12 L110 17 L132 15 L154 20 L176 19 L200 23"/></svg>
+          </div>
+        </div>
+
+        <!-- ===== 项目日检：每天 09:00 / 17:00 自动分析 ===== -->
+        <div class="card glass" id="checkupCard" style="margin-bottom:14px;padding:0">
+          <div class="row" style="align-items:center;gap:12px;padding:15px 17px 12px">
+            <span class="pulse" style="background:#a855f7"></span>
+            <span style="font-size:13.5px;font-weight:600">项目日检</span>
+            <span class="dim" style="font-size:12px">每天 09:00 / 17:00 自动分析所有项目，给结论与优化建议</span>
+            <div class="grow"></div>
+            <div class="vbar" id="ckTimes"></div>
+            <span class="dim" style="font-size:12px" id="ckAt"></span>
+            <button class="mini-btn" id="ckSettings">⚙ 设置</button>
+            <button class="mini-btn pri" id="ckRun">立即体检</button>
+          </div>
+          <div class="hair"></div>
+          <div style="padding:13px 17px 15px">
+            <div class="row" style="align-items:center;gap:9px;margin-bottom:11px">
+              <span class="tag cy" id="ckVerdict">—</span>
+              <span class="dim" style="font-size:12px" id="ckNote"></span>
+            </div>
+            <div class="g4" id="ckList"></div>
           </div>
         </div>
 
@@ -763,6 +798,127 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
         facts:[["最多卡点","内容产能（影响 2 个项目）"],["最快改善","把剪辑转派虚拟员工"],["流程建议","验收单电子化，业务发起"],["复盘周期","每周一 09:00 自动生成"]],
         rows:[["内容产能","影响 2 个项目","建议转派虚拟员工","高"],["验收单流程","影响回款 ¥108,400","建议电子签","高"],["投放素材","CTR 下降 22%","建议换素材","中"]] } }
   ];
+
+  /* ================= 项目日检（09:00 / 17:00） ================= */
+  var CK = {
+    times: ["09:00", "17:00"],
+    active: "17:00",
+    runs: {
+      "09:00": {
+        at: "今天 09:00",
+        verdict: "4 个项目中 1 个需干预",
+        note: "早盘：给出今天的重点动作与需要老板拍板的事项",
+        items: [
+          { p:"抖音 0→30万 获客", h:"watch", head:"阶段二落后 5 天，卡在内容产能（日更 15 条未达标）",
+            adv:["把批量剪辑转派虚拟员工·剪辑B，今天先出 8 条","投放素材今天补 2 组，避免断档"],
+            dec:"是否增配 1 个剪辑槽位" },
+          { p:"私域复购提升计划", h:"good", head:"节奏正常，本周可完成 2 场社群活动",
+            adv:["维持当前排期，无阻塞"], dec:"" },
+          { p:"品牌视觉焕新", h:"good", head:"交付 88%，提案已通过客户评审",
+            adv:["可提前进入验收，释放设计产能"], dec:"" },
+          { p:"Q4 渠道招商", h:"risk", head:"启动 3 天 0 进展，商务未提交首批名单",
+            adv:["今天 18:00 前必须交首批 20 家","建议由林珂带小柯做，别让新人单跑"],
+            dec:"是否更换负责人" }
+        ]
+      },
+      "17:00": {
+        at: "今天 17:00",
+        verdict: "4 个项目中 2 个有改善、1 个仍卡",
+        note: "收口：今天干成了什么、明天怎么改",
+        items: [
+          { p:"抖音 0→30万 获客", h:"good", head:"剪辑已转派虚拟员工，今日产出 11 条（目标 15）",
+            adv:["按此节奏 2 天内追平产能","明天把素材老化率降到 30% 以下"],
+            dec:"" },
+          { p:"私域复购提升计划", h:"good", head:"第 1 场社群活动完成，参与 186 人，转化 7 单",
+            adv:["把话术沉淀进复用库，第 2 场直接用"], dec:"" },
+          { p:"品牌视觉焕新", h:"good", head:"验收单已发起，预计明天确认",
+            adv:["同步启动复购方案，别让设计空档"], dec:"" },
+          { p:"Q4 渠道招商", h:"risk", head:"名单仍为 0，负责人未响应（连续 2 次未回填）",
+            adv:["今晚必须换人接手，否则本周目标作废","建议由老板直接指派并设 1 天硬截止"],
+            dec:"更换负责人（建议林珂）" }
+        ]
+      }
+    }
+  };
+  var HCOLOR = { good:"#34d399", watch:"#fbbf24", risk:"#fb7185" };
+  var HLABEL = { good:"正常", watch:"需关注", risk:"有风险" };
+
+  function renderCheckup(){
+    var bar = document.getElementById("ckTimes");
+    if (bar) bar.innerHTML = CK.times.map(function(t){
+      return '<button class="tchip'+(t===CK.active?" on":"")+'" data-time="'+t+'">'+t+'</button>';
+    }).join("");
+    var run = CK.runs[CK.active] || CK.runs[CK.times[0]];
+    document.getElementById("ckAt").textContent = "最近一次 · " + run.at;
+    document.getElementById("ckVerdict").textContent = run.verdict;
+    document.getElementById("ckNote").textContent = run.note;
+    document.getElementById("ckList").innerHTML = run.items.map(function(it, i){
+      var c = HCOLOR[it.h] || "#8b98ae";
+      return '<div class="ck card glass soft" data-ck="'+i+'" style="animation:viewIn .5s var(--ease) both '+(i*0.05)+'s">'
+        + '<div class="hd"><span class="dot2" style="background:'+c+';box-shadow:0 0 10px '+c+'"></span>'
+        + '<span class="pn">'+it.p+'</span><div class="grow"></div>'
+        + '<span class="tag" style="color:'+c+';border-color:'+c+'66;height:19px;font-size:10.5px">'+HLABEL[it.h]+'</span></div>'
+        + '<div class="hl">'+it.head+'</div>'
+        + '<div class="adv">▸ '+it.adv[0]+'</div>'
+        + (it.dec ? '<div class="dec">⚑ 需决策：'+it.dec+'</div>' : '')
+        + '</div>';
+    }).join("");
+    $$("#ckList [data-ck]").forEach(function(el){
+      el.addEventListener("click", function(){ openCheckup(Number(el.dataset.ck)); });
+    });
+    $$("#ckTimes [data-time]").forEach(function(b){
+      b.addEventListener("click", function(){ CK.active = b.dataset.time; renderCheckup(); });
+    });
+  }
+
+  function openCheckup(i){
+    var run = CK.runs[CK.active], it = run.items[i];
+    var other = CK.active === "09:00" ? "17:00" : "09:00";
+    var o = (CK.runs[other] || {}).items.find(function(x){ return x.p === it.p; });
+    var c = HCOLOR[it.h];
+    openDrawer("项目日检 · " + run.at, it.p,
+      '<div class="dsec"><h4>结论</h4>'
+      + '<div class="row" style="align-items:center;gap:9px;margin-bottom:9px">'
+      + '<span class="tag" style="color:'+c+';border-color:'+c+'66">'+HLABEL[it.h]+'</span>'
+      + '<span class="dim" style="font-size:12px">'+run.at+' 自动生成</span></div>'
+      + '<div style="font-size:13.5px;line-height:1.75">'+it.head+'</div></div>'
+      + '<div class="dsec"><h4>优化建议</h4>'
+      + it.adv.map(function(a,k){ return '<div class="mline"><span class="nm">'+(k+1)+'. '+a+'</span></div>'; }).join("")
+      + '</div>'
+      + (it.dec ? '<div class="dsec" style="border-color:rgba(251,191,36,.4)"><h4>需要老板决策</h4>'
+          + '<div style="font-size:13.5px;color:#fcd34d">'+it.dec+'</div>'
+          + '<div class="row" style="gap:9px;margin-top:11px;justify-content:flex-end">'
+          + '<button class="mini-btn">暂不处理</button><button class="mini-btn pri">同意并执行</button></div></div>' : '')
+      + (o ? '<div class="dsec"><h4>与 '+other+' 那次的变化</h4>'
+          + '<div class="mline"><span class="nm">'+other+'</span><span class="mut">'+o.head+'</span></div>'
+          + '<div class="mline"><span class="nm">'+CK.active+'</span><span class="mut">'+it.head+'</span></div></div>' : '')
+      + '<div class="dsec"><h4>推送</h4>'
+      + '<div class="mline"><span class="nm">站内简报</span><span class="mut">已推送</span></div>'
+      + '<div class="mline"><span class="nm">微信 / 企微</span><span class="mut">按设置 · 仅推送需决策项</span></div></div>');
+  }
+
+  document.getElementById("ckSettings").addEventListener("click", function(){
+    openDrawer("项目日检 · 设置", "何时分析、分析什么、推到哪",
+      '<div class="dsec"><h4>每天分析时间</h4>'
+      + '<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:2px">'
+      + CK.times.map(function(t){ return '<span class="tchip on">'+t+'<span class="dim" style="margin-left:6px">×</span></span>'; }).join("")
+      + '<span class="tchip">＋ 加时间</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:10px">建议保留 09:00（早盘：今天干什么）与 17:00（收口：今天干成什么、明天怎么改）两次。</div></div>'
+      + '<div class="dsec"><h4>分析范围</h4>'
+      + '<div class="mline"><span class="nm">全部进行中的项目</span><span class="tag on">4 个</span></div>'
+      + '<div class="mline"><span class="nm">含已完成项目（只看风险）</span><span class="tag">关</span></div></div>'
+      + '<div class="dsec"><h4>推送</h4>'
+      + '<div class="mline"><span class="nm">站内简报流</span><span class="tag ok">开</span></div>'
+      + '<div class="mline"><span class="nm">微信 / 企微</span><span class="tag ok">开</span></div>'
+      + '<div class="mline"><span class="nm">只推有变化的项目</span><span class="tag ok">开</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:6px">没有变化时不打扰；有「需决策」的项目一定推送。</div></div>');
+  });
+
+  document.getElementById("ckRun").addEventListener("click", function(){
+    var b = this, old = b.textContent;
+    b.textContent = "分析中…";
+    setTimeout(function(){ b.textContent = old; CK.active = "17:00"; renderCheckup(); }, 1000);
+  });
 
   function sparkline(seed, color){
     var pts = [], y = 20, d = "";
@@ -1637,7 +1793,7 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
   })();
 
   /* 初始化 */
-  renderBriefs(); renderVerBar();
+  renderBriefs(); renderVerBar(); renderCheckup();
   setTimeout(function(){ countUp($("#s-dash")); }, 120);
 })();
 </script>
