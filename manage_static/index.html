@@ -1,0 +1,810 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>MANAGE · 项目管理与 AI 赋能</title>
+<style>
+:root{
+  --bg:#05070f; --ink:#eaf1fb; --muted:#93a1b8; --dim:#5c6a80;
+  --w-glass:rgba(255,255,255,.045); --w-line:rgba(255,255,255,.10); --w-line2:rgba(255,255,255,.22);
+  --accent:#22d3ee; --ok:#34d399; --warn:#fbbf24; --bad:#fb7185;
+  --ease:cubic-bezier(.22,1,.36,1); --slow:26s; --slower:34s;
+  --mono:ui-monospace,"JetBrains Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);overflow-x:hidden;
+  font:400 14.5px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#8fb7ff;text-decoration:none}
+.hide{display:none!important}
+/* 背景 */
+.bg{position:fixed;inset:0;z-index:0;overflow:hidden;background:radial-gradient(120% 90% at 12% -10%,#0d1930 0,transparent 60%),radial-gradient(90% 80% at 100% 0,#161033 0,transparent 55%),linear-gradient(180deg,#04060d,#070c18 60%,#04060d)}
+.bg video,.bg .poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.bg .poster{opacity:.9;animation:imgDrift var(--slower) var(--ease) infinite alternate;transition:opacity 1.2s var(--ease)}
+@keyframes imgDrift{from{transform:scale(1.04)}to{transform:scale(1.12) translate3d(-1.2%,-1%,0)}}
+.aurora{position:absolute;border-radius:50%;filter:blur(110px);mix-blend-mode:screen;opacity:.45}
+.a1{width:70vw;height:70vw;left:-12vw;top:-18vw;background:radial-gradient(circle,rgba(34,211,238,.5),transparent 60%);animation:drift1 var(--slow) var(--ease) infinite alternate}
+.a2{width:60vw;height:60vw;right:-14vw;top:-10vw;background:radial-gradient(circle,rgba(99,102,241,.45),transparent 60%);animation:drift2 var(--slow) var(--ease) infinite alternate;animation-delay:-8s}
+@keyframes drift1{to{transform:translate3d(4vw,2vw,0) scale(1.16)}}
+@keyframes drift2{to{transform:translate3d(-5vw,3vw,0) scale(1)}}
+.veil{position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 120%,rgba(5,7,15,.98) 0,rgba(5,7,15,.7) 42%,transparent 72%),linear-gradient(180deg,rgba(5,7,15,.6),rgba(5,7,15,.25) 40%,rgba(5,7,15,.95))}
+.grid{position:absolute;inset:0;opacity:.3;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:52px 52px;-webkit-mask-image:radial-gradient(100% 70% at 50% 0,#000,transparent 72%);mask-image:radial-gradient(100% 70% at 50% 0,#000,transparent 72%)}
+.glass{background:var(--w-glass);border:1px solid var(--w-line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:16px}
+.glass.card{padding:16px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.mut{color:var(--muted)}.dim{color:var(--dim)}
+.tag{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;border:1px solid var(--w-line);color:var(--muted);background:rgba(255,255,255,.03)}
+.tag.ok{border-color:rgba(52,211,153,.45);color:#6ee7b7;background:rgba(52,211,153,.08)}
+.tag.wn{border-color:rgba(251,191,36,.45);color:#fcd34d;background:rgba(251,191,36,.08)}
+.tag.bd{border-color:rgba(251,113,133,.45);color:#fda4af;background:rgba(251,113,133,.08)}
+.tag.cy{border-color:rgba(34,211,238,.45);color:#7fe6f7;background:rgba(34,211,238,.08)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+.btn{height:38px;padding:0 16px;border-radius:12px;border:0;cursor:pointer;font-size:13.5px;font-weight:600;color:#04121a;background:linear-gradient(100deg,#67e8f9,#818cf8 60%,#c084fc);transition:transform .4s var(--ease),box-shadow .4s var(--ease)}
+.btn:hover{transform:translateY(-1px);box-shadow:0 16px 36px -16px rgba(34,211,238,.9)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.btn.ghost{background:transparent;border:1px solid var(--w-line2);color:var(--ink);font-weight:500}
+.btn.ghost:hover{border-color:var(--accent);color:#a5f4fb;box-shadow:none}
+.btn.sm{height:30px;padding:0 12px;font-size:12.5px;border-radius:9px}
+input,select,textarea{width:100%;background:rgba(255,255,255,.045);border:1px solid var(--w-line);border-radius:11px;color:var(--ink);padding:0 11px;height:38px;font:inherit;font-size:13px;outline:none;transition:all .3s var(--ease)}
+textarea{height:auto;padding:9px 11px;resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:rgba(34,211,238,.6);box-shadow:0 0 0 3px rgba(34,211,238,.1)}
+select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:28px;background-image:linear-gradient(45deg,transparent 50%,#8b98ae 50%),linear-gradient(135deg,#8b98ae 50%,transparent 50%);background-position:calc(100% - 15px) 17px,calc(100% - 10px) 17px;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+select option{background:#0b1220;color:#e9effb}
+label.fl{display:block;font-size:11.5px;color:var(--dim);margin:0 0 6px 2px}
+/* Landing */
+#landing{position:relative;z-index:3;min-height:100dvh;display:flex;flex-direction:column;padding:0 6vw 30px}
+nav.top{display:flex;align-items:center;gap:14px;height:64px;margin-top:14px;padding:0 16px;animation:rise 1.1s var(--ease) both .1s}
+nav.top .logo{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font:700 12px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee);box-shadow:0 0 22px rgba(34,211,238,.45)}
+nav.top .nm{font-size:14px;font-weight:600;letter-spacing:.14em}
+nav.top .grow,.grow{flex:1}
+nav.top .links{display:flex;gap:18px;font-size:13px;color:var(--muted)}
+.hero{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:5vw;align-items:center;padding:5vh 0 2vh}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:999px;border:1px solid var(--w-line);background:var(--w-glass);color:var(--muted);font-size:12px;animation:rise 1.1s var(--ease) both .18s}
+h1{margin:22px 0 0;font-size:clamp(32px,4.2vw,58px);line-height:1.08;font-weight:650;letter-spacing:-.02em;animation:rise 1.3s var(--ease) both .28s}
+h1 em{font-style:normal;color:var(--accent);text-shadow:0 0 34px rgba(34,211,238,.55)}
+.sub{margin:18px 0 0;max-width:44ch;color:var(--muted);font-size:15.5px;line-height:1.8;animation:rise 1.3s var(--ease) both .42s}
+.btns{display:flex;gap:12px;margin-top:28px;animation:rise 1.3s var(--ease) both .56s}
+.btns .btn{height:48px;padding:0 24px;font-size:15px;border-radius:14px}
+.winwrap{position:relative}
+.win{border-radius:16px;overflow:hidden;background:rgba(10,14,26,.72);border:1px solid var(--w-line);box-shadow:0 50px 120px -40px rgba(0,0,0,.95);animation:rise 1.5s var(--ease) both .5s,floatY 18s ease-in-out infinite 2s}
+@keyframes floatY{0%,100%{transform:translateY(0) rotateX(2deg) rotateY(-6deg)}50%{transform:translateY(-14px) rotateX(1deg) rotateY(-4deg)}}
+.win .bar{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-bottom:1px solid var(--w-line);background:rgba(255,255,255,.03)}
+.win .bar i{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.16)}
+.win .bar .url{margin-left:8px;flex:1;height:19px;border-radius:6px;background:rgba(255,255,255,.05);font:500 11px var(--mono);color:var(--dim);display:flex;align-items:center;padding:0 9px}
+.win img{display:block;width:100%}
+.chip{position:absolute;display:flex;align-items:center;gap:9px;padding:10px 13px;border-radius:14px;background:rgba(10,14,26,.66);border:1px solid var(--w-line);backdrop-filter:blur(18px);font-size:12px;white-space:nowrap}
+.chip .t{color:var(--muted);font-size:10.5px}
+.chip .v{font-family:var(--mono);font-size:12.5px}
+.c1{left:-4%;bottom:12%;animation:rise 1.4s var(--ease) both .9s,floatY 22s ease-in-out infinite 2s}
+.c2{right:3%;top:-5%;animation:rise 1.4s var(--ease) both 1.05s,floatY 26s ease-in-out infinite 3s}
+.rise{animation:rise 1.2s var(--ease) both}
+@keyframes rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+.fadein{animation:fade .6s var(--ease) both}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+/* 登录面板 */
+#loginBox{margin-top:26px;max-width:400px;padding:22px;animation:rise 1.1s var(--ease) both .2s}
+#loginBox h3{margin:0 0 16px;font-size:16px}
+.err{color:#fda4af;font-size:12.5px;margin-top:10px;min-height:16px}
+/* App */
+#app{position:relative;z-index:3;min-height:100dvh;display:grid;grid-template-columns:74px 1fr;padding:12px}
+.rail{margin-right:12px;padding:12px 0;display:flex;flex-direction:column;align-items:center;gap:6px;border-radius:22px}
+.rail .logo{width:38px;height:38px;border-radius:12px;margin-bottom:12px;display:grid;place-items:center;font:700 14px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee)}
+.rail button{width:50px;height:50px;border-radius:14px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center;gap:2px;font-size:9.5px;transition:all .3s var(--ease)}
+.rail button .ic{font-size:16px}
+.rail button:hover{background:rgba(255,255,255,.06);color:var(--ink)}
+.rail button.on{color:#0a1520;background:linear-gradient(140deg,#7dd3fc,#a5b4fc)}
+.main{min-width:0;display:flex;flex-direction:column;gap:12px}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 16px}
+.topbar h2{margin:0;font-size:16px}
+.topbar .sub{font-size:12px;color:var(--dim);margin:0}
+.view{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;padding-bottom:16px}
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(max-width:1100px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:980px){.hero{grid-template-columns:1fr;gap:28px}.winwrap{order:-1}}
+.kpi .t{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.kpi .v{font-size:26px;font-weight:600;margin:8px 0 4px}
+.row{display:flex;gap:12px;align-items:flex-start}
+table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5px}
+.tb th{text-align:left;color:var(--dim);font-weight:500;font-size:11px;padding:0 10px 2px}
+.tb td{background:rgba(255,255,255,.028);padding:9px 10px;border-top:1px solid var(--w-line);border-bottom:1px solid var(--w-line)}
+.tb td:first-child{border-left:1px solid var(--w-line);border-radius:11px 0 0 11px}
+.tb td:last-child{border-right:1px solid var(--w-line);border-radius:0 11px 11px 0}
+.right{text-align:right}
+.clickable{cursor:pointer}
+.miss{color:#fcd34d}
+#mask{position:fixed;inset:0;z-index:50;background:rgba(3,6,12,.55);backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .35s}
+#mask.on{opacity:1;pointer-events:auto}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,96vw);z-index:51;transform:translateX(102%);transition:transform .52s var(--ease);display:flex;flex-direction:column;border-radius:0;border-right:0;overflow:hidden}
+#drawer.on{transform:none}
+.dhead{padding:16px 18px 12px;display:flex;gap:12px;align-items:flex-start}
+.dbody{flex:1;overflow:auto;padding:0 18px 20px;display:flex;flex-direction:column;gap:12px}
+.dsec{border:1px solid var(--w-line);border-radius:14px;padding:13px 14px;background:rgba(255,255,255,.028)}
+.dsec h4{margin:0 0 10px;font-size:12.5px;color:var(--muted)}
+.mline{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dashed rgba(255,255,255,.07);font-size:13px}
+.mline:last-child{border-bottom:0}
+.bar{height:7px;border-radius:7px;background:rgba(255,255,255,.07);overflow:hidden;flex:0 0 110px}
+.bar i{display:block;height:100%;border-radius:7px;background:linear-gradient(90deg,#22d3ee,#818cf8)}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:99;padding:11px 18px;border-radius:12px;background:rgba(10,14,26,.92);border:1px solid var(--w-line);font-size:13px;opacity:0;transition:opacity .3s}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="bg">
+  <video id="bgv" autoplay muted loop playsinline preload="auto" poster="media/hero.png">
+    <source src="media/hero-loop.mp4" type="video/mp4" />
+  </video>
+  <img class="poster" id="poster" src="media/hero.png" alt="" />
+  <div class="aurora a1"></div><div class="aurora a2"></div>
+  <div class="grid"></div>
+  <div class="veil"></div>
+</div>
+
+<!-- ================= 落地页 ================= -->
+<div id="landing">
+  <nav class="top glass">
+    <span class="logo">M</span><span class="nm">MANAGE</span>
+    <span class="links">
+      <a href="#" data-scroll="s-brief">简报</a>
+      <a href="#" data-scroll="s-proj">项目</a>
+      <a href="#" data-scroll="s-cond">达成条件</a>
+      <a href="#" data-scroll="s-fin">财务</a>
+    </span>
+    <span class="grow"></span>
+    <button class="btn sm ghost" id="toLogin">登录</button>
+  </nav>
+
+  <div class="hero">
+    <div>
+      <span class="eyebrow"><span class="dot" style="color:var(--accent)"></span>AI 每天 09:00 / 17:00 自动体检项目</span>
+      <h1>让每个项目<br /><em>真的做成</em></h1>
+      <p class="sub">老板只输入目标，AI 排出阶段、任务、责任人、要求与时间节点；
+      判断资源不够时，它会主动告诉你该招谁、该加什么。</p>
+      <div class="btns">
+        <button class="btn" id="ctaLogin">进入工作台</button>
+        <button class="btn ghost" id="ctaDemo">看一次规划演示</button>
+      </div>
+
+      <div id="loginBox" class="glass">
+        <h3>用现有账号登录</h3>
+        <div style="margin-bottom:10px">
+          <label class="fl">账号 / 手机号</label>
+          <input id="acc" placeholder="邮箱 / 手机号" autocomplete="username" />
+        </div>
+        <div>
+          <label class="fl">密码</label>
+          <input id="pwd" type="password" placeholder="密码" autocomplete="current-password" />
+        </div>
+        <div style="display:flex;gap:10px;margin-top:16px;align-items:center">
+          <button class="btn" id="doLogin" style="flex:1">登录</button>
+        </div>
+        <div class="err" id="loginErr"></div>
+        <div class="dim" style="font-size:11.5px">与 AI 员工客户端同一套账号体系</div>
+      </div>
+    </div>
+
+    <div class="winwrap">
+      <div class="win">
+        <div class="bar"><i></i><i></i><i></i><span class="url">manage.bhzn.top</span></div>
+        <img src="media/shot-dashboard.png" alt="manage 工作台" />
+      </div>
+      <div class="chip c1"><span class="dot" style="color:var(--accent)"></span><span><span class="t">AI 日检</span><br /><span class="v">09:00 · 17:00</span></span></div>
+      <div class="chip c2"><span class="dot" style="color:var(--accent)"></span><span><span class="t">达成条件</span><br /><span class="v" id="chipCond">— 项待补位</span></span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 应用 ================= -->
+<div id="app" class="hide">
+  <aside class="rail glass">
+    <div class="logo">M</div>
+    <button data-go="s-brief" class="on"><span class="ic">◈</span>简报</button>
+    <button data-go="s-proj"><span class="ic">✧</span>项目</button>
+    <button data-go="s-org"><span class="ic">◍</span>组织</button>
+    <button data-go="s-cond"><span class="ic">✦</span>条件</button>
+    <button data-go="s-fin"><span class="ic">◎</span>财务</button>
+  </aside>
+  <div class="main">
+    <div class="topbar glass">
+      <div>
+        <h2 id="pgTitle">经营简报</h2>
+        <p class="sub" id="pgSub">—</p>
+      </div>
+      <span class="grow"></span>
+      <select id="companySel" style="width:210px"></select>
+      <button class="btn sm ghost" id="reload">↻ 刷新</button>
+      <span class="chip" style="position:static" id="userChip">—</span>
+      <button class="btn sm ghost" id="logout">退出</button>
+    </div>
+    <div class="view">
+      <div id="errBox" class="glass card hide" style="border-color:rgba(251,113,133,.5);color:#fda4af"></div>
+
+      <section id="s-brief" class="view"></section>
+      <section id="s-proj" class="view hide"></section>
+      <section id="s-org" class="view hide"></section>
+      <section id="s-cond" class="view hide"></section>
+      <section id="s-fin" class="view hide"></section>
+    </div>
+  </div>
+</div>
+
+<div id="mask"></div>
+<aside id="drawer" class="glass">
+  <div class="dhead">
+    <div style="flex:1">
+      <div class="dim" id="dKind" style="font-size:11px;letter-spacing:.08em">—</div>
+      <div id="dTitle" style="font-size:15.5px;font-weight:600;margin-top:5px">—</div>
+    </div>
+    <button class="btn sm ghost" id="dClose">关闭</button>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(s){ return document.querySelector(s); };
+  var $$ = function(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); };
+  var TOKEN = localStorage.getItem("manage_token") || "";
+  var ME = null, COMPANIES = [], ACTIVE = null, ROLES = {};
+  var CHECKUP = { slot: "1700", items: [] };
+
+  /* ---------- 背景视频 ---------- */
+  (function bg(){
+    var v = document.getElementById("bgv"), p = document.getElementById("poster");
+    p.style.opacity = ".9";
+    function ok(){ v.style.display = "block"; v.style.opacity = "1"; p.style.opacity = "0"; v.play().catch(function(){}); }
+    function no(){ v.style.display = "none"; p.style.opacity = ".9"; }
+    v.addEventListener("loadeddata", function(){ if (v.videoWidth) ok(); else no(); }, { once:true });
+    v.addEventListener("error", no, { once:true });
+    setTimeout(function(){ if (!v.videoWidth) no(); }, 3000);
+  })();
+
+  function toast(msg, bad){
+    var t = $("#toast");
+    t.textContent = msg;
+    t.style.borderColor = bad ? "rgba(251,113,133,.6)" : "var(--w-line)";
+    t.classList.add("on");
+    clearTimeout(t._t); t._t = setTimeout(function(){ t.classList.remove("on"); }, 2600);
+  }
+  function showErr(msg){
+    var b = $("#errBox");
+    if (!msg){ b.classList.add("hide"); return; }
+    b.textContent = msg; b.classList.remove("hide");
+  }
+  function openDrawer(kind, title, html){
+    $("#dKind").textContent = kind; $("#dTitle").textContent = title;
+    $("#dBody").innerHTML = html;
+    $("#mask").classList.add("on"); $("#drawer").classList.add("on");
+  }
+  function closeDrawer(){ $("#mask").classList.remove("on"); $("#drawer").classList.remove("on"); }
+  $("#dClose").addEventListener("click", closeDrawer);
+  $("#mask").addEventListener("click", closeDrawer);
+
+  function api(path, opts){
+    opts = opts || {};
+    var headers = { "Accept":"application/json" };
+    if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+    if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+    return fetch(path, {
+      method: opts.method || "GET",
+      headers: headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    }).then(function(r){
+      return r.text().then(function(text){
+        var data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch(e){ data = { detail: text }; }
+        if (!r.ok){
+          var detail = data && data.detail;
+          if (Array.isArray(detail)) detail = detail.map(function(d){ return d.msg || JSON.stringify(d); }).join("; ");
+          throw new Error(detail || ("HTTP " + r.status));
+        }
+        return data;
+      });
+    });
+  }
+
+  /* ---------- 登录 ---------- */
+  function doLogin(){
+    var acc = $("#acc").value.trim(), pwd = $("#pwd").value;
+    var btn = $("#doLogin");
+    $("#loginErr").textContent = "";
+    if (!acc || !pwd){ $("#loginErr").textContent = "请填写账号与密码"; return; }
+    btn.disabled = true; btn.textContent = "登录中…";
+    api("/auth/login-phone-password", { method:"POST", body:{ account: acc, password: pwd } })
+      .then(function(res){
+        var token = res.access_token || res.token || "";
+        if (!token) throw new Error("登录返回异常");
+        TOKEN = token; localStorage.setItem("manage_token", token);
+        return bootApp();
+      })
+      .catch(function(e){ $("#loginErr").textContent = e.message || "登录失败"; })
+      .then(function(){ btn.disabled = false; btn.textContent = "登录"; });
+  }
+  $("#doLogin").addEventListener("click", doLogin);
+  $("#pwd").addEventListener("keydown", function(e){ if (e.key === "Enter") doLogin(); });
+  $("#toLogin").addEventListener("click", function(){ $("#acc").focus(); $("#loginBox").scrollIntoView({behavior:"smooth"}); });
+  $("#ctaLogin").addEventListener("click", function(){ $("#acc").focus(); $("#loginBox").scrollIntoView({behavior:"smooth"}); });
+  $("#ctaDemo").addEventListener("click", function(){ toast("登录后可点「生成规划」看 AI 现场出计划"); });
+  $("#logout").addEventListener("click", function(){
+    TOKEN = ""; localStorage.removeItem("manage_token");
+    $("#app").classList.add("hide"); $("#landing").classList.remove("hide");
+  });
+
+  function showApp(){
+    $("#landing").classList.add("hide");
+    $("#app").classList.remove("hide");
+  }
+
+  /* ---------- 启动 ---------- */
+  function bootApp(){
+    return api("/api/manage/bootstrap").then(function(data){
+      ME = data.user; COMPANIES = data.companies || []; ROLES = data.roles || {};
+      $("#userChip").textContent = ME.email + (data.is_platform_admin ? " · 平台管理员" : "");
+      if (!COMPANIES.length){
+        showApp(); renderEmptyCompany(); return;
+      }
+      ACTIVE = COMPANIES[0].id;
+      $("#companySel").innerHTML = COMPANIES.map(function(c){
+        return '<option value="'+c.id+'">'+c.name+(c.owner?"（我的）":"")+'</option>';
+      }).join("");
+      $("#companySel").value = String(ACTIVE);
+      showApp(); refreshAll();
+    }).catch(function(e){
+      if (String(e.message).indexOf("401") >= 0 || String(e.message).indexOf("Not authenticated") >= 0){
+        TOKEN = ""; localStorage.removeItem("manage_token");
+      }
+      $("#loginErr").textContent = e.message || "加载失败";
+      throw e;
+    });
+  }
+
+  function renderEmptyCompany(){
+    $("#pgTitle").textContent = "开始使用";
+    $("#pgSub").textContent = "你还没有公司，先创建一个";
+    $("#s-brief").innerHTML = '<div class="glass card"><h3 style="margin:0 0 12px">创建你的公司</h3>'
+      + '<label class="fl">公司名称</label><input id="newCoName" placeholder="例如：必火科技（深圳）" />'
+      + '<div style="margin-top:14px"><button class="btn" id="createCo">创建</button></div></div>';
+    $("#createCo").addEventListener("click", function(){
+      var name = $("#newCoName").value.trim();
+      if (!name) return toast("请填公司名称", true);
+      api("/api/manage/companies", { method:"POST", body:{ name:name } })
+        .then(function(){ toast("已创建"); return bootApp(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  $("#companySel").addEventListener("change", function(){
+    ACTIVE = Number(this.value); refreshAll();
+  });
+  $("#reload").addEventListener("click", function(){ refreshAll(); toast("已刷新"); });
+
+  var TITLES = {
+    "s-brief": ["经营简报", "AI 每天 09:00 / 17:00 自动体检所有项目"],
+    "s-proj": ["项目", "创建目标 → AI 规划 → 人员/要求/时间节点一次排好"],
+    "s-org": ["组织架构", "成员 · 岗位（可多选） · 级别 · 备注"],
+    "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
+    "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
+  };
+  $$(".rail button").forEach(function(b){
+    b.addEventListener("click", function(){
+      $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
+      b.classList.add("on");
+      var id = b.dataset.go;
+      ["s-brief","s-proj","s-org","s-cond","s-fin"].forEach(function(x){
+        document.getElementById(x).classList.toggle("hide", x !== id);
+      });
+      $("#pgTitle").textContent = TITLES[id][0];
+      $("#pgSub").textContent = TITLES[id][1];
+    });
+  });
+
+  function refreshAll(){
+    if (!ACTIVE) return;
+    showErr("");
+    loadBrief(); loadProjects(); loadOrg(); loadCond(); loadFin();
+  }
+
+  /* ================= 简报 ================= */
+  function healthTag(h){
+    var m = { good:["正常","ok"], watch:["需关注","wn"], risk:["有风险","bd"] }[h] || ["—",""];
+    return '<span class="tag '+m[1]+'">'+m[0]+'</span>';
+  }
+  function loadBrief(){
+    Promise.all([
+      api("/api/manage/finance?company_id=" + ACTIVE).catch(function(){ return { summary:{}, entries:[] }; }),
+      api("/api/manage/projects?company_id=" + ACTIVE).catch(function(){ return { projects:[] }; }),
+      api("/api/manage/conditions?company_id=" + ACTIVE).catch(function(){ return { conditions:[] }; }),
+      api("/api/manage/checkups?company_id=" + ACTIVE + "&slot=" + CHECKUP.slot).catch(function(){ return { items:[] }; }),
+    ]).then(function(res){
+      var fin = res[0].summary || {}, projects = res[1].projects || [];
+      var conds = res[2].conditions || [];
+      CHECKUP.items = res[3].items || [];
+      var pending = conds.filter(function(c){ return !c.decided; }).length;
+      document.getElementById("chipCond").textContent = pending + " 项待补位";
+      var mm = function(v){ return "¥" + Number(v || 0).toLocaleString("zh-CN"); };
+      var running = projects.filter(function(p){ return p.arrangement_status === "confirmed"; }).length;
+      $("#s-brief").innerHTML =
+        '<div class="g4">'
+        + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--ok)"></span>收入</div><div class="v num">'+mm(fin.income)+'</div><div class="dim" style="font-size:11.5px">已入账合计</div></div>'
+        + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--bad)"></span>开销</div><div class="v num">'+mm(fin.expense)+'</div><div class="dim" style="font-size:11.5px">含人力 / 投放 / 云服务</div></div>'
+        + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--accent)"></span>净额</div><div class="v num">'+mm(fin.net)+'</div><div class="dim" style="font-size:11.5px">收入 - 开销</div></div>'
+        + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--warn)"></span>项目</div><div class="v num">'+projects.length+'</div><div class="dim" style="font-size:11.5px">'+running+' 个已确认安排</div></div>'
+        + '</div>'
+        + '<div class="glass card" style="margin-top:12px">'
+        + '<div class="row" style="align-items:center;gap:10px;margin-bottom:10px">'
+        + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13.5px">项目日检</b>'
+        + '<span class="dim" style="font-size:12px">每天 09:00 / 17:00 自动分析，给结论与优化建议</span><span class="grow"></span>'
+        + '<span id="ckTimes"></span>'
+        + '<button class="btn sm ghost" id="ckRun">立即体检</button></div>'
+        + '<div id="ckList" class="g4"></div></div>';
+      renderCheckupList();
+      $("#ckRun").addEventListener("click", function(){
+        var b = this; b.disabled = true; b.textContent = "分析中…";
+        api("/api/manage/checkups/run", { method:"POST", body:{ company_id: ACTIVE, slot: CHECKUP.slot } })
+          .then(function(){ toast("已生成 " + CHECKUP.slot + " 体检"); return loadBrief(); })
+          .catch(function(e){ toast(e.message, true); })
+          .then(function(){ b.disabled = false; b.textContent = "立即体检"; });
+      });
+    });
+  }
+  function renderCheckupList(){
+    var box = document.getElementById("ckTimes");
+    if (box){
+      box.innerHTML = ["0900","1700"].map(function(s){
+        var label = s === "0900" ? "09:00" : "17:00";
+        return '<button class="btn sm ' + (s === CHECKUP.slot ? "" : "ghost") + '" data-slot="'+s+'" style="margin-right:6px">'+label+'</button>';
+      }).join("");
+      $$("#ckTimes [data-slot]").forEach(function(b){
+        b.addEventListener("click", function(){ CHECKUP.slot = b.dataset.slot; loadBrief(); });
+      });
+    }
+    var H = { good:"var(--ok)", watch:"var(--warn)", risk:"var(--bad)" };
+    var list = document.getElementById("ckList");
+    if (!list) return;
+    if (!CHECKUP.items.length){ list.innerHTML = '<div class="dim">暂无项目</div>'; return; }
+    list.innerHTML = CHECKUP.items.map(function(it, i){
+      var c = H[it.health] || "var(--dim)";
+      var adv = (it.suggestions && it.suggestions[0] && it.suggestions[0].what) || "暂无建议";
+      var dec = (it.decisions && it.decisions[0] && it.decisions[0].question) || "";
+      return '<div class="glass card clickable" data-ck="'+i+'" style="padding:13px">'
+        + '<div class="row" style="align-items:center;gap:8px;margin-bottom:8px">'
+        + '<span class="dot" style="color:'+c+'"></span><b style="font-size:12.5px">'+it.project+'</b>'
+        + '<span class="grow"></span>'+healthTag(it.health)+'</div>'
+        + '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;min-height:38px">'+it.headline+'</div>'
+        + '<div style="font-size:11.5px;color:#8fe3f5;margin-top:7px">▸ '+adv+'</div>'
+        + (dec ? '<div style="margin-top:8px;padding-top:7px;border-top:1px dashed rgba(255,255,255,.09);font-size:11.5px;color:#fcd34d">⚑ 需决策：'+dec+'</div>' : '')
+        + '</div>';
+    }).join("");
+    $$("#ckList [data-ck]").forEach(function(el){
+      el.addEventListener("click", function(){ openCheckup(Number(el.dataset.ck)); });
+    });
+  }
+  function openCheckup(i){
+    var it = CHECKUP.items[i]; if (!it) return;
+    var ev = (it.evidence || []).map(function(e){ return '<div class="mline"><span style="flex:1">'+e+'</span></div>'; }).join("");
+    var sg = (it.suggestions || []).map(function(s, k){
+      return '<div class="mline"><span style="flex:1">'+(k+1)+'. '+s.what+'<span class="dim" style="margin-left:6px">'+(s.why||"")+'</span></span><span class="dim">'+(s.due||"")+'</span></div>';
+    }).join("");
+    var dc = (it.decisions || []).map(function(d){
+      return '<div class="mline"><span style="flex:1;color:#fcd34d">'+d.question+'</span></div>'
+        + '<div class="dim" style="font-size:11.5px">建议：'+(d.recommend||"")+' · 忽略后果：'+(d.impact_if_ignored||"")+'</div>';
+    }).join("");
+    openDrawer("项目日检 · " + it.slot + " · " + it.checked_on, it.project,
+      '<div class="dsec"><h4>结论</h4><div style="font-size:13.5px;line-height:1.75">'+it.headline+'</div>'
+      + '<div style="margin-top:9px">'+healthTag(it.health)+' <span class="tag">置信度 '+(it.confidence||"-")+'</span></div></div>'
+      + (ev ? '<div class="dsec"><h4>支撑数字</h4>'+ev+'</div>' : '')
+      + (sg ? '<div class="dsec"><h4>优化建议</h4>'+sg+'</div>' : '')
+      + (dc ? '<div class="dsec" style="border-color:rgba(251,191,36,.4)"><h4>需要老板决策</h4>'+dc+'</div>' : ''));
+  }
+
+  /* ================= 项目 ================= */
+  function loadProjects(){
+    api("/api/manage/projects?company_id=" + ACTIVE).then(function(d){
+      var ps = d.projects || [];
+      $("#s-proj").innerHTML = '<div class="glass card">'
+        + '<div class="row" style="align-items:center;margin-bottom:10px">'
+        + '<b style="font-size:13.5px">项目列表</b><span class="dim" style="font-size:12px">点项目打开工作安排</span>'
+        + '<span class="grow"></span><button class="btn sm" id="newProj">＋ 新建项目</button></div>'
+        + (ps.length ? '<table class="tb"><thead><tr><th>项目</th><th>周期</th><th>安排</th><th class="right">操作</th></tr></thead><tbody>'
+            + ps.map(function(p){
+                var st = p.arrangement_status === "confirmed" ? '<span class="tag ok">已确认</span>'
+                       : (p.arrangement_status === "changed" ? '<span class="tag wn">有待确认变更</span>' : '<span class="tag">草稿</span>');
+                return '<tr><td><b>'+p.name+'</b><div class="dim" style="font-size:11.5px;margin-top:3px">'+(p.goal||"")+'</div></td>'
+                  + '<td class="dim">'+(p.start_at||"-")+' → '+(p.end_at||"-")+'</td>'
+                  + '<td>'+st+'<span class="dim" style="margin-left:8px;font-size:11.5px">'+(p.plan_source?("来源 "+p.plan_source):"未规划")+'</span></td>'
+                  + '<td class="right"><button class="btn sm ghost" data-proj="'+p.id+'">打开</button></td></tr>';
+              }).join("") + '</tbody></table>'
+          : '<div class="dim">还没有项目，点右上「新建项目」开始。</div>')
+        + '</div>';
+      $$("#s-proj [data-proj]").forEach(function(b){
+        b.addEventListener("click", function(){ openProject(Number(b.dataset.proj)); });
+      });
+      $("#newProj").addEventListener("click", openNewProject);
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  function openNewProject(){
+    var html = '<div class="dsec"><h4>项目信息</h4>'
+      + '<label class="fl">项目名称</label><input id="npName" style="margin-bottom:10px" placeholder="例如：抖音渠道 0→30 万" />'
+      + '<label class="fl">目标（AI 据此规划）</label><textarea id="npGoal" rows="2" placeholder="3 个月把抖音渠道做到月成交 30 万"></textarea>'
+      + '<div style="display:flex;gap:10px;margin-top:10px">'
+      + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" placeholder="2026-09-15" /></div>'
+      + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" placeholder="2026-12-15" /></div></div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="npCancel">取消</button>'
+      + '<button class="btn sm" id="npOk">创建</button></div>';
+    openDrawer("项目 · 新建", "创建一个项目", html);
+    $("#npCancel").addEventListener("click", closeDrawer);
+    $("#npOk").addEventListener("click", function(){
+      var name = $("#npName").value.trim();
+      if (!name) return toast("请填项目名称", true);
+      api("/api/manage/projects", { method:"POST", body:{
+        company_id: ACTIVE, name: name, goal: $("#npGoal").value.trim(),
+        start_at: $("#npStart").value.trim(), end_at: $("#npEnd").value.trim(),
+      }}).then(function(res){
+        closeDrawer(); toast("已创建，接下来生成规划");
+        loadProjects(); openProject(res.project.id);
+      }).catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  function openProject(pid){
+    api("/api/manage/projects/" + pid).then(function(d){
+      var p = d.project, nodes = d.nodes || [];
+      var tasks = nodes.filter(function(n){ return n.node_type === "task"; });
+      var phases = nodes.filter(function(n){ return n.node_type === "phase"; });
+      var missing = nodes.filter(function(n){
+        return (n.node_type === "phase" || n.node_type === "task") && !n.complete; }).length;
+      var stTag = p.arrangement_status === "confirmed" ? '<span class="tag ok">已确认</span>'
+                : (p.arrangement_status === "changed" ? '<span class="tag wn">有待确认变更</span>' : '<span class="tag">草稿</span>');
+      var rows = nodes.filter(function(n){ return n.node_type === "phase" || n.node_type === "task"; }).map(function(n){
+        return '<tr><td class="'+(n.complete?"":"miss")+'">'+(n.node_type === "phase" ? "◈ " : "· ")+n.title+'</td>'
+          + '<td class="'+(n.owner_name?"":"miss")+'">'+(n.owner_name || "待指派")+'</td>'
+          + '<td class="'+(n.requirement?"":"miss")+'" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(n.requirement || "待填写要求")+'</td>'
+          + '<td class="num '+(n.start_at&&n.end_at?"":"miss")+'">'+(n.start_at&&n.end_at ? (n.start_at+" ~ "+n.end_at) : "待定")+'</td>'
+          + '<td class="right"><button class="btn sm ghost" data-node="'+n.id+'">编辑</button></td></tr>';
+      }).join("");
+      var html = '<div class="dsec"><h4>项目</h4>'
+        + '<div style="font-size:13.5px;line-height:1.7">'+(p.goal||"—")+'</div>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:7px">'+(p.start_at||"")+' → '+(p.end_at||"")+' · 来源 '+(p.plan_source||"未规划")+'</div>'
+        + '<div style="margin-top:9px">'+stTag+' <span class="tag">'+(phases.length)+' 阶段 / '+tasks.length+' 任务</span>'
+        + (missing ? '<span class="tag wn" style="margin-left:6px">'+missing+' 项待补</span>' : '<span class="tag ok" style="margin-left:6px">已排齐</span>')
+        + '</div></div>'
+        + '<div class="dsec"><h4>工作安排（人员 · 要求 · 时间节点）</h4>'
+        + (rows ? '<table class="tb"><thead><tr><th>节点</th><th>人员</th><th>要求</th><th>时间节点</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'
+                : '<div class="dim">还没有规划。点下面「AI 生成规划」开始。</div>')
+        + '</div>'
+        + '<div class="row" style="gap:9px;flex-wrap:wrap;justify-content:flex-end">'
+        + '<button class="btn sm ghost" id="planTpl">用模板生成</button>'
+        + '<button class="btn sm" id="planAi">AI 生成规划</button>'
+        + '<button class="btn sm ghost" id="saveDraft">存草稿</button>'
+        + '<button class="btn sm" id="confirmArr">确认安排</button></div>';
+      openDrawer("项目 · 工作安排", p.name, html);
+      $$("#dBody [data-node]").forEach(function(b){
+        b.addEventListener("click", function(){ openNodeEditor(Number(b.dataset.node), nodes, pid); });
+      });
+      $("#saveDraft").addEventListener("click", function(){
+        api("/api/manage/projects/"+pid+"/draft", { method:"POST", body:{ payload:{ saved_at:new Date().toISOString() } } })
+          .then(function(){ toast("草稿已保存"); loadProjects(); })
+          .catch(function(e){ toast(e.message, true); });
+      });
+      $("#confirmArr").addEventListener("click", function(){
+        api("/api/manage/projects/"+pid+"/confirm", { method:"POST" })
+          .then(function(){ toast("安排已确认"); closeDrawer(); loadProjects(); loadBrief(); })
+          .catch(function(e){ toast(e.message, true); });
+      });
+      function runPlan(mode, btn){
+        btn.disabled = true; var old = btn.textContent; btn.textContent = "生成中…";
+        api("/api/manage/projects/"+pid+"/plan", { method:"POST", body:{ mode: mode } })
+          .then(function(res){ toast("已生成（来源 " + res.source + "）"); openProject(pid); loadBrief(); loadProjects(); })
+          .catch(function(e){ toast(e.message, true); })
+          .then(function(){ btn.disabled = false; btn.textContent = old; });
+      }
+      $("#planAi").addEventListener("click", function(){ runPlan("ai", this); });
+      $("#planTpl").addEventListener("click", function(){ runPlan("template", this); });
+    }).catch(function(e){ toast(e.message, true); });
+  }
+
+  function openNodeEditor(nid, nodes, pid){
+    var n = nodes.filter(function(x){ return x.id === nid; })[0];
+    if (!n) return;
+    var html = '<div class="dsec"><h4>节点</h4><div style="font-size:13.5px">'+n.title+'</div>'
+      + (n.detail ? '<div class="dim" style="font-size:12px;margin-top:6px">'+n.detail+'</div>' : '') + '</div>'
+      + '<div class="dsec"><h4>人员</h4><label class="fl">责任人</label>'
+      + '<input id="edOwner" value="'+(n.owner_name||"")+'" placeholder="姓名（可填虚拟员工）" style="margin-bottom:10px" />'
+      + '<label class="fl">状态</label><select id="edStatus">'
+      + ["not_started","in_progress","completed","blocked"].map(function(s){
+          var label = {not_started:"未开始",in_progress:"进行中",completed:"完成",blocked:"受阻"}[s];
+          return '<option value="'+s+'"'+(n.status===s?" selected":"")+'>'+label+'</option>'; }).join("")
+      + '</select></div>'
+      + '<div class="dsec"><h4>要求 / 交付标准</h4><textarea id="edReq" rows="4" placeholder="做成什么样才算完成">'+(n.requirement||"")+'</textarea></div>'
+      + '<div class="dsec"><h4>时间节点</h4><div style="display:flex;gap:10px">'
+      + '<div style="flex:1"><label class="fl">开始</label><input id="edStart" value="'+(n.start_at||"")+'" placeholder="2026-09-15" /></div>'
+      + '<div style="flex:1"><label class="fl">结束</label><input id="edEnd" value="'+(n.end_at||"")+'" placeholder="2026-10-05" /></div></div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="edBack">返回</button>'
+      + '<button class="btn sm" id="edSave">保存</button></div>';
+    openDrawer("工作安排 · 编辑节点", n.title, html);
+    $("#edBack").addEventListener("click", function(){ openProject(pid); });
+    $("#edSave").addEventListener("click", function(){
+      api("/api/manage/nodes/" + nid, { method:"PATCH", body:{
+        owner_name: $("#edOwner").value.trim(),
+        requirement: $("#edReq").value.trim(),
+        start_at: $("#edStart").value.trim(),
+        end_at: $("#edEnd").value.trim(),
+        status: $("#edStatus").value,
+      }}).then(function(){ toast("已保存"); openProject(pid); loadProjects(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  /* ================= 组织 ================= */
+  function loadOrg(){
+    api("/api/manage/members?company_id=" + ACTIVE).then(function(d){
+      var ms = d.members || [];
+      $("#s-org").innerHTML = '<div class="glass card">'
+        + '<div class="row" style="align-items:center;margin-bottom:10px">'
+        + '<b style="font-size:13.5px">成员</b><span class="dim" style="font-size:12px">岗位可多选，每个岗位单独设级别</span>'
+        + '<span class="grow"></span><button class="btn sm" id="addMem">＋ 添加成员（原系统账号）</button></div>'
+        + (ms.length ? '<div class="g3">' + ms.map(function(m){
+            var c = m.load > 88 ? "var(--bad)" : (m.load > 60 ? "var(--warn)" : "var(--ok)");
+            return '<div class="glass card" style="padding:14px">'
+              + '<div class="row" style="align-items:center;gap:11px;margin-bottom:9px">'
+              + '<div style="width:40px;height:40px;border-radius:13px;display:grid;place-items:center;font:600 14px var(--mono);color:#06121c;background:linear-gradient(140deg,#67e8f9,#a5b4fc)">'+String(m.name||"?").slice(0,1)+'</div>'
+              + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">'+m.name+'</b>'
+              + '<div class="dim" style="font-size:11.5px;margin-top:3px">'+(m.dept||"未分组")+(m.user_id?" · 已绑定账号":" · 仅记录")+'</div></div>'
+              + '<span class="num" style="font-size:12px;color:'+c+'">'+m.load+'%</span></div>'
+              + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">'
+              + (m.roles||[]).map(function(r){ return '<span class="tag cy">'+r.label+' <b class="num">'+r.level+'</b></span>'; }).join("")
+              + '</div>'
+              + '<div class="dim" style="font-size:11.5px">'+(m.remark||"—")+'</div></div>';
+          }).join("") + '</div>' : '<div class="dim">还没有成员，点右上添加。</div>')
+        + '</div>';
+      $("#addMem").addEventListener("click", openAddMember);
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  function openAddMember(){
+    var html = '<div class="dsec"><h4>查找原系统账号</h4>'
+      + '<div class="row" style="gap:8px"><input id="lkQ" placeholder="邮箱 / 企业微信 userid / openid" />'
+      + '<button class="btn sm" id="lkGo" style="height:38px">查找</button></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:8px">不默认列出任何人：查到谁才能加谁。查不到可只用姓名登记（不参与登录）。</div>'
+      + '<div id="lkRes" style="margin-top:10px"></div></div>'
+      + '<div class="dsec"><h4>加入后分配</h4>'
+      + '<label class="fl">姓名（可留空，用账号名）</label><input id="mName" style="margin-bottom:10px" />'
+      + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+      + '<div style="flex:1"><label class="fl">岗位</label><select id="mRole"></select></div>'
+      + '<div style="flex:1"><label class="fl">级别</label><select id="mLevel">'
+      + ["intern","p1","p2","p3","p4","lead"].map(function(l){ return '<option'+(l==="p2"?" selected":"")+'>'+l+'</option>'; }).join("")
+      + '</select></div></div>'
+      + '<label class="fl">所属</label><input id="mDept" placeholder="例如：业务中心" style="margin-bottom:10px" />'
+      + '<label class="fl">备注</label><input id="mRemark" placeholder="基本情况描述" /></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="mCancel">关闭</button>'
+      + '<button class="btn sm" id="mOk">添加</button></div>';
+    openDrawer("组织架构 · 添加成员", "直接绑定原系统账号（不做导入）", html);
+    $("#mRole").innerHTML = Object.keys(ROLES).map(function(k){
+      return '<option value="'+k+'"'+(k==="sales"?" selected":"")+'>'+ROLES[k]+'</option>'; }).join("");
+    var found = null;
+    $("#lkGo").addEventListener("click", function(){
+      var q = $("#lkQ").value.trim();
+      if (!q) return;
+      api("/api/manage/directory/lookup?q=" + encodeURIComponent(q)).then(function(r){
+        found = r.found ? r.user : null;
+        $("#lkRes").innerHTML = found
+          ? '<div class="mline"><span style="flex:1">已找到：'+found.email+'<span class="dim" style="margin-left:8px">品牌 '+found.brand_mark+'</span></span><span class="tag ok">可绑定</span></div>'
+          : '<div class="mline"><span style="flex:1" class="miss">没找到该账号，可只登记姓名</span></div>';
+        if (found && !$("#mName").value) $("#mName").value = found.email.split("@")[0];
+      }).catch(function(e){ toast(e.message, true); });
+    });
+    $("#mCancel").addEventListener("click", closeDrawer);
+    $("#mOk").addEventListener("click", function(){
+      api("/api/manage/members", { method:"POST", body:{
+        company_id: ACTIVE, user_id: found ? found.id : null,
+        display_name: $("#mName").value.trim(), role_code: $("#mRole").value,
+        level: $("#mLevel").value, dept: $("#mDept").value.trim(), remark: $("#mRemark").value.trim(),
+      }}).then(function(){ closeDrawer(); toast("已添加"); loadOrg(); loadBrief(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  /* ================= 达成条件 ================= */
+  var CAT = { people:"人", money:"钱", device:"设备 / 虚拟员工", material:"素材 / 工具",
+              channel:"渠道 / 关系", compliance:"资质 / 合规", time:"时间" };
+  function loadCond(){
+    api("/api/manage/conditions?company_id=" + ACTIVE).then(function(d){
+      var cs = d.conditions || [];
+      var pending = cs.filter(function(c){ return !c.decided; }).length;
+      $("#s-cond").innerHTML = '<div class="glass card"><div class="row" style="align-items:center;gap:10px">'
+        + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13.5px">AI 达成条件分析</b>'
+        + '<span class="dim" style="font-size:12px">以「把这个项目做成」为目标反推所需条件，不局限于现有资源</span>'
+        + '<span class="grow"></span><span class="tag '+(pending?"wn":"ok")+'">'+(pending? pending+" 项需要补位":"全部已处理")+'</span></div>'
+        + '<div class="dim" style="font-size:12px;margin-top:8px">招聘只是其中一种补位动作。AI 会同时考虑：人、钱、设备与虚拟员工、素材工具、渠道关系、资质、时间。</div></div>'
+        + (cs.length ? '<div class="g3" style="margin-top:12px">' + cs.map(function(c, i){
+            var lv = c.severity === "high" ? "var(--bad)" : (c.severity === "mid" || c.severity === "medium" ? "var(--warn)" : "var(--ok)");
+            var label = c.severity === "high" ? "影响达成" : ((c.severity === "mid" || c.severity === "medium") ? "需关注" : "可缓冲");
+            return '<div class="glass card" style="padding:14px'+(c.decided?';border-color:rgba(52,211,153,.35)':'')+'">'
+              + '<div class="row" style="align-items:center;gap:9px;margin-bottom:9px">'
+              + '<b style="font-size:13px">'+(CAT[c.category]||c.category)+' · '+c.title+'</b><span class="grow"></span>'
+              + (c.decided ? '<span class="tag ok">已处理</span>' : '<span class="tag" style="color:'+lv+';border-color:'+lv+'66">'+label+'</span>')
+              + '</div>'
+              + (c.decided ? '<div style="font-size:12.5px;color:#6ee7b7">'+c.decided+'</div>'
+                  : '<div style="font-size:12px;line-height:1.8">'
+                    + '<div><span class="dim">需要</span> '+c.need+'</div>'
+                    + '<div><span class="dim">现状</span> '+c.now+'</div>'
+                    + '<div><span class="dim">缺口</span> <span style="color:'+lv+'">'+c.gap+'</span></div>'
+                    + '<div style="margin-top:6px;color:var(--muted)">'+c.impact+'</div></div>'
+                    + '<div style="height:1px;background:var(--w-line);margin:11px 0"></div>'
+                    + (c.actions||[]).map(function(a, ai){
+                        return '<div class="row" style="align-items:center;gap:9px;margin-bottom:7px">'
+                          + '<span style="flex:1;font-size:12.5px">'+a.what+(a.when?'<span class="dim" style="margin-left:6px">'+a.when+'</span>':'')+'</span>'
+                          + '<button class="btn sm '+(ai===0?"":"ghost")+'" data-cond="'+c.id+'" data-idx="'+ai+'">采纳</button></div>';
+                      }).join(""))
+              + '</div>';
+          }).join("") + '</div>'
+          : '<div class="glass card" style="margin-top:12px"><div class="dim">还没有条件分析：在项目里点「AI 生成规划」，AI 会同时给出达成条件与补位建议。</div></div>');
+      $$("#s-cond [data-cond]").forEach(function(b){
+        b.addEventListener("click", function(){
+          api("/api/manage/conditions/" + b.dataset.cond + "/accept", { method:"POST", body:{ action_index: Number(b.dataset.idx) } })
+            .then(function(){ toast("已采纳"); loadCond(); loadBrief(); })
+            .catch(function(e){ toast(e.message, true); });
+        });
+      });
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  /* ================= 财务 ================= */
+  function loadFin(){
+    api("/api/manage/finance?company_id=" + ACTIVE).then(function(d){
+      var s = d.summary || {}, es = d.entries || [];
+      var mm = function(v){ return "¥" + Number(v || 0).toLocaleString("zh-CN"); };
+      $("#s-fin").innerHTML =
+        '<div class="g4">'
+        + '<div class="glass card kpi"><div class="t">收入</div><div class="v num">'+mm(s.income)+'</div></div>'
+        + '<div class="glass card kpi"><div class="t">开销</div><div class="v num">'+mm(s.expense)+'</div></div>'
+        + '<div class="glass card kpi"><div class="t">净额</div><div class="v num">'+mm(s.net)+'</div></div>'
+        + '<div class="glass card kpi"><div class="t">笔数</div><div class="v num">'+es.length+'</div></div></div>'
+        + '<div class="glass card" style="margin-top:12px">'
+        + '<div class="row" style="align-items:center;margin-bottom:10px"><b style="font-size:13.5px">流水</b>'
+        + '<span class="grow"></span><button class="btn sm" id="addFin">＋ 记一笔</button></div>'
+        + (es.length ? '<table class="tb"><thead><tr><th>日期</th><th>类型</th><th>摘要</th><th class="right">金额</th></tr></thead><tbody>'
+            + es.map(function(e){
+                var c = e.type === "income" ? "#6ee7b7" : "#fda4af";
+                return '<tr><td class="dim">'+e.on+'</td><td>'+(e.type==="income"?"收入":"开销")+'</td>'
+                  + '<td class="mut">'+e.summary+'</td>'
+                  + '<td class="right num" style="color:'+c+'">'+(e.type==="income"?"+":"-")+Number(e.amount||0).toLocaleString("zh-CN")+'</td></tr>';
+              }).join("") + '</tbody></table>' : '<div class="dim">还没有流水。</div>')
+        + '</div>';
+      $("#addFin").addEventListener("click", function(){
+        openDrawer("财务 · 记一笔", "收入 / 开销",
+          '<div class="dsec"><label class="fl">类型</label><select id="fType"><option value="income">收入</option><option value="expense">开销</option></select>'
+          + '<div style="margin-top:10px"><label class="fl">金额</label><input id="fAmt" placeholder="39800" /></div>'
+          + '<div style="margin-top:10px"><label class="fl">摘要</label><input id="fSum" placeholder="客户回款 / 投放充值" /></div>'
+          + '<div style="margin-top:10px"><label class="fl">日期</label><input id="fOn" placeholder="2026-09-14" /></div></div>'
+          + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="fCancel">取消</button>'
+          + '<button class="btn sm" id="fOk">保存</button></div>');
+        $("#fCancel").addEventListener("click", closeDrawer);
+        $("#fOk").addEventListener("click", function(){
+          api("/api/manage/finance", { method:"POST", body:{
+            company_id: ACTIVE, entry_type: $("#fType").value,
+            amount: Number($("#fAmt").value || 0), summary: $("#fSum").value.trim(),
+            happened_on: $("#fOn").value.trim(),
+          }}).then(function(){ closeDrawer(); toast("已记录"); loadFin(); loadBrief(); })
+            .catch(function(e){ toast(e.message, true); });
+        });
+      });
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  /* ---------- 初始化 ---------- */
+  if (TOKEN){
+    bootApp().catch(function(){ /* 已在 bootApp 里提示 */ });
+  } else {
+    fetch("/api/manage/health").catch(function(){});
+  }
+})();
+</script>
+</body>
+</html>
