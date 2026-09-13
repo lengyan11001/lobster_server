@@ -104,8 +104,9 @@ def test_client_restart_fails_previous_process_runs_and_keeps_current_run(db_ses
 
     assert failed == 1
     assert previous.status == "failed"
-    assert previous.error == "客户端已重启，上一轮任务已中断"
-    assert previous.progress["stage"] == "client_restarted"
+    assert previous.error == "客户端进程已更换（未收到正常退出标记），上一轮任务已中断"
+    assert previous.progress["stage"] == "client_gone_unknown"
+    assert previous.progress["error_code"] == "client_gone_unknown"
     assert current.status == "processing"
     assert other_device.status == "processing"
 

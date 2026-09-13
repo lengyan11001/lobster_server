@@ -3230,11 +3230,23 @@ def _fail_previous_client_runs(
         .all()
     )
     interrupted = 0
-    message = "客户端已重启，上一轮任务已中断"
     for row in rows:
         progress = row.progress if isinstance(row.progress, dict) else {}
         if str(progress.get("client_process_id") or "").strip() == process_id:
             continue
+        # 上一轮进程是被正常关掉、崩了、还是心跳丢失，用客户端上报的退出标记区分；
+        # 没有标记时不能断言"客户端已重启"，按"进程更换/未收到正常退出"记录。
+        previous_process_id = str(progress.get("client_process_id") or "").strip()
+        exit_reason = str(progress.get("client_exit_reason") or "").strip().lower()
+        if exit_reason in {"clean", "shutdown", "restart", "user_closed"}:
+            error_code = "client_restart_clean"
+            message = "客户端已正常重启，上一轮任务已中断"
+        elif exit_reason in {"crash", "crashed", "abnormal", "exception"}:
+            error_code = "client_crashed"
+            message = "客户端异常退出，上一轮任务已中断"
+        else:
+            error_code = "client_gone_unknown"
+            message = "客户端进程已更换（未收到正常退出标记），上一轮任务已中断"
         row.status = "failed"
         row.error = message
         row.finished_at = now
@@ -3242,9 +3254,12 @@ def _fail_previous_client_runs(
         row.progress = _merge_run_progress(
             row,
             {
-                "stage": "client_restarted",
+                "stage": error_code,
                 "text": message,
-                "reason": "client_process_restarted",
+                "reason": error_code,
+                "error_code": error_code,
+                "previous_client_process_id": previous_process_id,
+                "client_exit_reason": exit_reason,
                 "failed_at": now.isoformat(),
                 "client_process_id": process_id,
             },
@@ -3259,7 +3274,7 @@ def _fail_previous_client_runs(
             row.h5_message_id,
             row.user_id,
             "error",
-            {"error": message, "reason": "client_process_restarted"},
+            {"error": message, "reason": error_code, "error_code": error_code},
         )
         interrupted += 1
     return interrupted
