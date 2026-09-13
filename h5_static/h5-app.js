@@ -16283,7 +16283,7 @@
         leadCenter: ["客资线索", ""],
         tutorial: ["教程", ""],
         messages: ["AI 调度助手", "用文字或语音安排工作"],
-        voice: ["龙虾AI语音助手", ""],
+        voice: ["AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
         liveExecutor: ["现场执行台", "拍照、语音和四类现场任务"],
         recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"],
@@ -16712,7 +16712,7 @@
         const label = escapeHtml(String(item && item.label || `动作 ${index + 1}`));
         const kind = String(item && item.kind || "");
         const desc = kind === "submit_message"
-          ? "会下发到龙虾盒子中执行，处理完成后再把结果回给你"
+          ? "会下发到本机执行，处理完成后再把结果回给你"
           : "会在当前对话里继续整理和补充，适合先把内容说完整";
         return `
           <button class="voice-action-card voice-secondary-card" type="button" data-voice-action-index="${index}">
@@ -23570,14 +23570,14 @@
         return;
       }
       if (state.taskAbility === "ppt.create") {
-        host.innerHTML = taskFieldHtml("PPT主题", taskTextareaHtml("taskPptTopic", "例如：必火AI龙虾盒子招商路演PPT"), true)
+        host.innerHTML = taskFieldHtml("PPT主题", taskTextareaHtml("taskPptTopic", "例如：AI盒子招商路演PPT"), true)
           + taskFieldHtml("页数", `<input id="taskPptSlideCount" type="number" min="1" max="80" value="10" />`)
           + taskFieldHtml("风格要求", `<input id="taskPptInstructions" placeholder="例如：科技感、适合招商、案例更具体" />`)
           + taskFieldHtml("生成模式", taskSelectHtml("taskPptMode", optionHtml("ai", "AI视觉页") + optionHtml("outline", "结构化大纲")));
         return;
       }
       if (state.taskAbility === "create.video.pipeline") {
-        host.innerHTML = taskFieldHtml("视频主题", taskTextareaHtml("taskCreateVideoPrompt", "例如：给必火AI龙虾盒子生成一个30秒招商宣传视频"), true)
+        host.innerHTML = taskFieldHtml("视频主题", taskTextareaHtml("taskCreateVideoPrompt", "例如：给AI盒子生成一个30秒招商宣传视频"), true)
           + taskFieldHtml("时长秒数", `<input id="taskCreateVideoDuration" type="number" min="3" max="60" value="8" />`)
           + taskFieldHtml("分镜数量", `<input id="taskCreateVideoSceneCount" type="number" min="1" max="6" value="1" />`)
           + taskFieldHtml("画幅", taskSelectHtml("taskCreateVideoAspect", optionHtml("16:9", "16:9 横屏") + optionHtml("9:16", "9:16 竖屏") + optionHtml("1:1", "1:1 方图")));
@@ -24059,7 +24059,7 @@
             </div>
           </div>
           <div class="douyin-field full">
-            <div class="douyin-field-note">筛选规则按照龙虾盒子上的设置执行。</div>
+            <div class="douyin-field-note">筛选规则按照本机设备的设置执行。</div>
           </div>
         `;
       } else if (action === "comment_collect") {
