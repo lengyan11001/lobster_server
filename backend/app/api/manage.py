@@ -440,6 +440,56 @@ def create_product(body: ProductIn, user: Any = Depends(current_actor),
     return {"ok": True, "product_id": row.id}
 
 
+
+
+class ProductPatchIn(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    unit: Optional[str] = None
+    cycle_days: Optional[int] = None
+    deliverable: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.patch("/products/{product_id}")
+def update_product(product_id: int, body: ProductPatchIn,
+                   user: Any = Depends(current_actor),
+                   db: Session = Depends(get_db)) -> Dict[str, Any]:
+    row = db.query(MProduct).filter(MProduct.id == product_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    company = _require_company(db, row.company_id, user)
+    _require_plan_admin(db, company, user)
+    for field in ("name", "unit", "cycle_days", "deliverable", "description", "status"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(row, field, value)
+    if body.price is not None:
+        row.price = Decimal(str(body.price))
+    _audit(db, company.id, getattr(user, "id", 0), "product.update", "product", row.id)
+    db.commit()
+    return {"ok": True, "product": {"id": row.id, "name": row.name, "price": float(row.price or 0),
+                                    "unit": row.unit, "cycle_days": row.cycle_days,
+                                    "deliverable": row.deliverable, "description": row.description,
+                                    "status": row.status}}
+
+
+@router.delete("/products/{product_id}")
+def delete_product(product_id: int, user: Any = Depends(current_actor),
+                   db: Session = Depends(get_db)) -> Dict[str, Any]:
+    row = db.query(MProduct).filter(MProduct.id == product_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    company = _require_company(db, row.company_id, user)
+    _require_plan_admin(db, company, user)
+    db.delete(row)
+    _audit(db, company.id, getattr(user, "id", 0), "product.delete", "product", product_id,
+           {"name": row.name})
+    db.commit()
+    return {"ok": True, "deleted": product_id}
+
+
 @router.get("/projects")
 def list_projects(company_id: int, user: Any = Depends(current_actor),
                   db: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -476,6 +526,8 @@ def create_project(body: ProjectIn, user: Any = Depends(current_actor),
 
 
 class ProjectPatchIn(BaseModel):
+    product_ids: Optional[List[int]] = None
+    membership_ids: Optional[List[int]] = None
     name: Optional[str] = None
     goal: Optional[str] = None
     success_criteria: Optional[str] = None
@@ -497,6 +549,15 @@ def update_project(project_id: int, body: ProjectPatchIn,
         value = getattr(body, field)
         if value is not None:
             setattr(project, field, value)
+    if body.product_ids is not None:
+        rows = (db.query(MProduct).filter(MProduct.id.in_(body.product_ids)).all()
+                if body.product_ids else [])
+        project.products = [{"id": r.id, "name": r.name, "price": float(r.price or 0),
+                             "deliverable": r.deliverable} for r in rows]
+    if body.membership_ids is not None:
+        rows = (db.query(MMembership).filter(MMembership.id.in_(body.membership_ids)).all()
+                if body.membership_ids else [])
+        project.members = [{"id": r.id, "name": r.display_name} for r in rows]
     _audit(db, company.id, getattr(user, "id", 0), "project.update", "project", project.id,
            {"fields": list(body.dict(exclude_unset=True).keys())})
     db.commit()

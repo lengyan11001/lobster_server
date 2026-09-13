@@ -204,6 +204,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     <button data-go="s-brief" class="on"><span class="ic">◈</span>简报</button>
     <button data-go="s-proj"><span class="ic">✧</span>项目</button>
     <button data-go="s-org"><span class="ic">◍</span>组织</button>
+    <button data-go="s-prod"><span class="ic">▦</span>产品</button>
     <button data-go="s-cond"><span class="ic">✦</span>条件</button>
     <button data-go="s-fin"><span class="ic">◎</span>财务</button>
   </aside>
@@ -225,6 +226,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       <section id="s-brief" class="view"></section>
       <section id="s-proj" class="view hide"></section>
       <section id="s-org" class="view hide"></section>
+      <section id="s-prod" class="view hide"></section>
       <section id="s-cond" class="view hide"></section>
       <section id="s-fin" class="view hide"></section>
     </div>
@@ -413,6 +415,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     "s-brief": ["经营简报", "AI 每天 09:00 / 17:00 自动体检所有项目"],
     "s-proj": ["项目", "创建目标 → AI 规划 → 人员/要求/时间节点一次排好"],
     "s-org": ["组织架构", "成员 · 岗位（可多选） · 级别 · 备注"],
+    "s-prod": ["产品", "可销售的东西与其基本详情；项目里可以直接选"],
     "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
     "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
   };
@@ -421,7 +424,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-cond","s-fin"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-cond","s-fin"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
       $("#pgTitle").textContent = TITLES[id][0];
@@ -432,7 +435,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   function refreshAll(){
     if (!ACTIVE) return;
     showErr("");
-    loadBrief(); loadProjects(); loadOrg(); loadCond(); loadFin();
+    loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadCond(); loadFin();
   }
 
   /* ================= 简报 ================= */
@@ -587,44 +590,74 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 
   function openProjectEditor(id){
     var p = id ? PROJ_CACHE.filter(function(x){ return x.id === id; })[0] : null;
-    var html = '<div class="dsec"><h4>项目信息</h4>'
-      + '<label class="fl">项目名称</label><input id="npName" value="' + (p ? p.name : "") + '" style="margin-bottom:10px" placeholder="例如：抖音渠道 0→30 万" />'
-      + '<label class="fl">目标（AI 据此规划）</label><textarea id="npGoal" rows="3" placeholder="3 个月把抖音渠道做到月成交 30 万">' + (p ? (p.goal||"") : "") + '</textarea>'
-      + '<label class="fl" style="margin-top:10px">成功标准</label><input id="npCrit" value="' + (p ? (p.success_criteria||"") : "") + '" placeholder="例如：单月成交 ≥30 万且回款率 ≥80%" />'
-      + '<div style="display:flex;gap:10px;margin-top:10px">'
-      + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
-      + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
-      + (p ? '<div style="margin-top:10px"><label class="fl">状态</label><select id="npStatus">'
+    api("/api/manage/products?company_id=" + ACTIVE).then(function(pd){
+      var prods = pd.products || [];
+      var chosen = {};
+      (p ? (p.products || []) : []).forEach(function(x){ if (x && x.id) chosen[x.id] = true; });
+      var picker = prods.length
+        ? '<div style="display:flex;flex-direction:column;gap:7px">' + prods.map(function(x){
+            var on = !!chosen[x.id];
+            return '<button class="btn sm ' + (on ? "" : "ghost") + '" data-pick="' + x.id + '" '
+              + 'style="justify-content:flex-start;height:auto;padding:8px 11px;text-align:left">'
+              + '<span style="flex:1;min-width:0">' + x.name
+              + '<span class="dim" style="margin-left:8px;font-size:11.5px">¥'
+              + Number(x.price||0).toLocaleString("zh-CN") + (x.unit ? (" / " + x.unit) : "") + '</span></span>'
+              + '<span style="color:#7fe6f7;font-size:11.5px">' + (on ? "已选" : "点击选择") + '</span></button>';
+          }).join("") + '</div>'
+        : '<div class="dim" style="font-size:12.5px">还没有产品，先去「产品」页添加，再回来选。</div>';
+
+      var html = '<div class="dsec"><h4>项目信息</h4>'
+        + '<label class="fl">项目名称</label><input id="npName" value="' + (p ? p.name : "") + '" style="margin-bottom:10px" placeholder="例如：抖音渠道 0→30 万" />'
+        + '<label class="fl">目标（AI 据此规划）</label><textarea id="npGoal" rows="3" placeholder="3 个月把抖音渠道做到月成交 30 万">' + (p ? (p.goal||"") : "") + '</textarea>'
+        + '<label class="fl" style="margin-top:10px">成功标准</label><input id="npCrit" value="' + (p ? (p.success_criteria||"") : "") + '" placeholder="例如：单月成交 ≥30 万且回款率 ≥80%" />'
+        + '<div style="display:flex;gap:10px;margin-top:10px">'
+        + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
+        + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
+        + (p ? '<div style="margin-top:10px"><label class="fl">状态</label><select id="npStatus">'
               + [["planning","规划中"],["running","执行中"],["done","已完成"],["archived","已归档"]].map(function(x){
                   return '<option value="' + x[0] + '"' + (p.status === x[0] ? " selected" : "") + '>' + x[1] + '</option>'; }).join("")
               + '</select></div>' : '')
-      + '</div>'
-      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="npCancel">取消</button>'
-      + '<button class="btn sm" id="npOk">' + (p ? "保存" : "创建") + '</button></div>';
-    openDrawer(p ? "项目 · 编辑" : "项目 · 新建", p ? p.name : "创建一个项目", html);
-    document.getElementById("npCancel").addEventListener("click", closeDrawer);
-    document.getElementById("npOk").addEventListener("click", function(){
-      var name = document.getElementById("npName").value.trim();
-      if (!name) return toast("请填项目名称", true);
-      var payload = {
-        name: name,
-        goal: document.getElementById("npGoal").value.trim(),
-        success_criteria: document.getElementById("npCrit").value.trim(),
-        start_at: document.getElementById("npStart").value.trim(),
-        end_at: document.getElementById("npEnd").value.trim(),
-      };
-      if (p){
-        payload.status = document.getElementById("npStatus").value;
-        api("/api/manage/projects/" + p.id, { method:"PATCH", body: payload })
-          .then(function(){ closeDrawer(); toast("已保存"); loadProjects(); loadBrief(); })
-          .catch(function(e){ toast(e.message, true); });
-      } else {
-        payload.company_id = ACTIVE;
-        api("/api/manage/projects", { method:"POST", body: payload })
-          .then(function(res){ closeDrawer(); toast("已创建，接下来生成规划"); loadProjects(); openProject(res.project.id); })
-          .catch(function(e){ toast(e.message, true); });
-      }
-    });
+        + '</div>'
+        + '<div class="dsec"><h4>卖什么（可多选，AI 会按产品交付物排计划）</h4>' + picker + '</div>'
+        + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="npCancel">取消</button>'
+        + '<button class="btn sm" id="npOk">' + (p ? "保存" : "创建") + '</button></div>';
+      openDrawer(p ? "项目 · 编辑" : "项目 · 新建", p ? p.name : "创建一个项目", html);
+
+      $$("#dBody [data-pick]").forEach(function(b){
+        b.addEventListener("click", function(){
+          var pid2 = Number(b.dataset.pick);
+          if (chosen[pid2]) { delete chosen[pid2]; b.className = "btn sm ghost"; }
+          else { chosen[pid2] = true; b.className = "btn sm"; }
+          b.style.justifyContent = "flex-start"; b.style.height = "auto"; b.style.padding = "8px 11px"; b.style.textAlign = "left";
+          var tail = b.querySelector("span[style*='7fe6f7']");
+          if (tail) tail.textContent = chosen[pid2] ? "已选" : "点击选择";
+        });
+      });
+      document.getElementById("npCancel").addEventListener("click", closeDrawer);
+      document.getElementById("npOk").addEventListener("click", function(){
+        var name = document.getElementById("npName").value.trim();
+        if (!name) return toast("请填项目名称", true);
+        var payload = {
+          name: name,
+          goal: document.getElementById("npGoal").value.trim(),
+          success_criteria: document.getElementById("npCrit").value.trim(),
+          start_at: document.getElementById("npStart").value.trim(),
+          end_at: document.getElementById("npEnd").value.trim(),
+          product_ids: Object.keys(chosen).map(Number),
+        };
+        if (p){
+          payload.status = document.getElementById("npStatus").value;
+          api("/api/manage/projects/" + p.id, { method:"PATCH", body: payload })
+            .then(function(){ closeDrawer(); toast("已保存"); loadProjects(); loadBrief(); })
+            .catch(function(e){ toast(e.message, true); });
+        } else {
+          payload.company_id = ACTIVE;
+          api("/api/manage/projects", { method:"POST", body: payload })
+            .then(function(res){ closeDrawer(); toast("已创建，接下来生成规划"); loadProjects(); openProject(res.project.id); })
+            .catch(function(e){ toast(e.message, true); });
+        }
+      });
+    }).catch(function(e){ toast(e.message, true); });
   }
 
   function deleteProject(id){
@@ -643,6 +676,99 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     });
   }
 
+
+  function mountMindmap(){
+    var host = document.getElementById("mm");
+    if (!host) return;
+    var p = PROJ_CTX.project, nodes = PROJ_CTX.nodes, pid = PROJ_CTX.pid;
+    var phases = nodes.filter(function(n){ return n.node_type === "phase"; });
+    var tasks = nodes.filter(function(n){ return n.node_type === "task"; });
+    var W = Math.max(320, host.clientWidth || 700);
+    var rowH = 34, gap = 22, pad = 18;
+    var blocks = [], cursor = pad;
+    phases.forEach(function(ph){
+      var kids = tasks.filter(function(t){ return t.parent_id === ph.id; });
+      var h = Math.max(1, kids.length) * rowH;
+      blocks.push({ ph: ph, kids: kids, y0: cursor, h: h });
+      cursor += h + gap;
+    });
+    var orphans = tasks.filter(function(t){
+      return !t.parent_id || !phases.some(function(x){ return x.id === t.parent_id; }); });
+    if (orphans.length){
+      blocks.push({ ph: { id: 0, title: "未归入阶段" }, kids: orphans, y0: cursor, h: orphans.length * rowH });
+      cursor += orphans.length * rowH + gap;
+    }
+    var H = Math.max(300, cursor + pad);
+    host.style.height = H + "px";
+
+    var xRoot = 8, xPhase = Math.round(W * 0.28), xTask = Math.round(W * 0.50);
+    var wRoot = Math.round(W * 0.20), wPhase = Math.round(W * 0.20), wTask = W - xTask - 10;
+    var items = [{ id: "__root", cls: "root", x: xRoot, y: H / 2, w: wRoot, label: p.name }];
+    var edges = [];
+    blocks.forEach(function(b){
+      var cy = b.y0 + b.h / 2;
+      items.push({ id: "p" + b.ph.id, nodeId: b.ph.id, cls: "phase", x: xPhase, y: cy, w: wPhase,
+                   label: b.ph.title + " · " + b.kids.length + " 项" });
+      edges.push(["__root", "p" + b.ph.id]);
+      b.kids.forEach(function(k, i){
+        var y = b.y0 + i * rowH + rowH / 2;
+        items.push({ id: "t" + k.id, nodeId: k.id,
+                     cls: "task " + (k.complete ? "ok" : "miss"), x: xTask, y: y, w: wTask,
+                     label: k.title + " ｜ " + (k.owner_name || "待指派") });
+        edges.push(["p" + b.ph.id, "t" + k.id]);
+      });
+    });
+
+    var pos = {};
+    items.forEach(function(it){ pos[it.id] = it; });
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("class", "mmsvg");
+    svg.setAttribute("width", W); svg.setAttribute("height", H);
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    var paths = [];
+    edges.forEach(function(e){
+      var a = pos[e[0]], b = pos[e[1]];
+      if (!a || !b) return;
+      var x1 = a.x + a.w, y1 = a.y, x2 = b.x, y2 = b.y, mx = (x1 + x2) / 2;
+      var pa = document.createElementNS(NS, "path");
+      pa.setAttribute("d", "M" + x1 + " " + y1 + " C" + mx + " " + y1 + "," + mx + " " + y2 + "," + x2 + " " + y2);
+      pa.setAttribute("stroke", e[1].charAt(0) === "t" ? "rgba(129,140,248,.42)" : "rgba(34,211,238,.55)");
+      pa.setAttribute("fill", "none");
+      pa.setAttribute("stroke-width", "1.2");
+      var len = 160;
+      try { len = Math.max(40, pa.getTotalLength()); } catch (err) {}
+      pa.style.strokeDasharray = len;
+      pa.style.strokeDashoffset = len;
+      pa.style.transition = "stroke-dashoffset .6s var(--ease)";
+      svg.appendChild(pa);
+      paths.push(pa);
+    });
+    host.appendChild(svg);
+    var els = [];
+    items.forEach(function(it){
+      var d = document.createElement("div");
+      d.className = "mmnode " + it.cls;
+      d.style.left = it.x + "px";
+      d.style.top = it.y + "px";
+      d.style.width = it.w + "px";
+      d.textContent = it.label;
+      d.title = it.label;
+      if (it.nodeId){
+        d.addEventListener("click", function(){
+          var cur = PROJ_CTX.nodes;
+          openNodeEditor(it.nodeId, cur, pid);
+        });
+      }
+      host.appendChild(d);
+      els.push(d);
+    });
+    els.forEach(function(el, i){ setTimeout(function(){ el.classList.add("on"); }, 50 + i * 65); });
+    paths.forEach(function(pa, i){ setTimeout(function(){ pa.style.strokeDashoffset = 0; }, 50 + i * 65); });
+  }
+
+  var PROJ_CTX = { project: null, nodes: [], pid: 0 };
+
   var NODE_STATUS = { not_started:["未开始",""], in_progress:["进行中","wn"], completed:["完成","ok"], blocked:["受阻","bd"] };
 
   function openProject(pid){
@@ -656,6 +782,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       var pendingN = arr.length - doneN;
       var filter = "all";
       var folded = {};
+      var view = "list";
 
       function tagOf(n){
         var st = NODE_STATUS[n.status] || ["未开始",""];
@@ -744,6 +871,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         });
       }
       function draw(){
+        PROJ_CTX = { project: p, nodes: nodes, pid: pid };
         var stTag = p.arrangement_status === "confirmed" ? '<span class="tag ok">已确认</span>'
                   : (p.arrangement_status === "changed" ? '<span class="tag wn">有待确认变更</span>' : '<span class="tag">草稿</span>');
         var head = '<div class="dsec"><h4>项目</h4>'
@@ -753,18 +881,27 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
           + '<div style="margin-top:9px">' + stTag
           + (pendingN ? '<span class="tag wn" style="margin-left:6px">' + pendingN + ' 项待补</span>'
                       : '<span class="tag ok" style="margin-left:6px">已排齐</span>') + '</div></div>';
+        var tabs = '<div class="arrbar" style="margin-bottom:10px">'
+          + ['list:列表', 'mind:脑图'].map(function(x){
+              var kv = x.split(":");
+              return '<button class="btn sm ' + (view === kv[0] ? "" : "ghost") + '" data-view="' + kv[0] + '">' + kv[1] + '</button>';
+            }).join("")
+          + '<span class="grow"></span><span class="dim" style="font-size:11.5px">'
+          + (view === "mind" ? "点节点即可编辑；按阶段自动分支" : "点阶段标题可折叠") + '</span></div>';
+        var filters = ['all:全部', 'pending:待补', 'unassigned:仅未指派', 'ready:已排齐'].map(function(x){
+              var kv = x.split(":");
+              return '<button class="btn sm ' + (filter === kv[0] ? "" : "ghost") + '" data-filter="' + kv[0] + '">' + kv[1] + '</button>';
+            }).join("");
         var bar = '<div class="dsec"><h4>工作安排（人员 · 要求 · 时间节点）</h4>'
           + '<div class="arrsum" style="margin-bottom:10px">'
           + '<span>已排齐 <b style="color:var(--ink)">' + doneN + '/' + arr.length + '</b></span>'
           + '<span class="pbar"><i style="width:' + (arr.length ? Math.round(doneN/arr.length*100) : 0) + '%"></i></span>'
           + '<span class="dim">' + (arr.length ? Math.round(doneN/arr.length*100) + '%' : "—") + '</span></div>'
-          + '<div class="arrbar" style="margin-bottom:11px">'
-          + ['all:全部', 'pending:待补', 'unassigned:仅未指派', 'ready:已排齐'].map(function(x){
-              var kv = x.split(":");
-              return '<button class="btn sm ' + (filter === kv[0] ? "" : "ghost") + '" data-filter="' + kv[0] + '">' + kv[1] + '</button>';
-            }).join("")
-          + '<span class="grow"></span><span class="dim" style="font-size:11.5px">点阶段标题可折叠</span></div>'
-          + '<div id="arrBody">' + renderBody() + '</div></div>';
+          + tabs
+          + (view === "mind"
+              ? '<div id="mm" class="mmwrap"></div>'
+              : '<div class="arrbar" style="margin-bottom:11px">' + filters + '</div><div id="arrBody">' + renderBody() + '</div>')
+          + '</div>';
         var actions = '<div class="row" style="gap:9px;flex-wrap:wrap;justify-content:flex-end">'
           + '<button class="btn sm ghost" id="planTpl">用模板生成</button>'
           + '<button class="btn sm" id="planAi">AI 生成规划</button>'
@@ -772,6 +909,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
           + '<button class="btn sm" id="confirmArr">确认安排</button></div>';
         openDrawer("项目 · 工作安排", p.name, head + bar + actions);
         bind();
+        $$("#dBody [data-view]").forEach(function(b){
+          b.addEventListener("click", function(){ view = b.dataset.view; draw(); });
+        });
+        if (view === "mind"){ mountMindmap(); }
         $("#saveDraft").addEventListener("click", function(){
           api("/api/manage/projects/"+pid+"/draft", { method:"POST", body:{ payload:{ saved_at:new Date().toISOString() } } })
             .then(function(){ toast("草稿已保存"); loadProjects(); })
@@ -960,6 +1101,109 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     document.getElementById("delYes").addEventListener("click", function(){
       api("/api/manage/members/" + id, { method:"DELETE" })
         .then(function(){ closeDrawer(); toast("已删除"); loadOrg(); loadBrief(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  /* ================= 产品 ================= */
+  var PROD_Q = "", PROD_CACHE = [];
+
+  function loadProducts(){
+    api("/api/manage/products?company_id=" + ACTIVE).then(function(d){
+      PROD_CACHE = d.products || [];
+      var k = PROD_Q.toLowerCase();
+      var ps = PROD_CACHE.filter(function(x){
+        if (!k) return true;
+        return String(x.name||"").toLowerCase().indexOf(k) >= 0
+            || String(x.description||"").toLowerCase().indexOf(k) >= 0;
+      });
+      $("#s-prod").innerHTML = '<div class="glass card">'
+        + '<div class="row" style="align-items:center;gap:10px;margin-bottom:13px">'
+        + '<b style="font-size:13.5px">产品</b>'
+        + '<span class="dim" style="font-size:12px">销售的东西：价格 / 周期 / 交付物 / 说明</span>'
+        + '<span class="grow"></span>'
+        + '<input id="prodQ" placeholder="搜索产品" value="' + String(PROD_Q).replace(/"/g,"&quot;") + '" style="width:200px;height:34px" />'
+        + '<button class="btn sm" id="addProd">＋ 新增产品</button></div>'
+        + (ps.length ? '<div class="g3">' + ps.map(prodCard).join("") + '</div>'
+                     : '<div class="dim">' + (PROD_Q ? "没有匹配的产品" : "还没有产品，点右上「新增产品」") + '</div>')
+        + '</div>';
+      var qi = document.getElementById("prodQ");
+      qi.addEventListener("input", function(){
+        clearTimeout(qi._t); var v = qi.value;
+        qi._t = setTimeout(function(){ PROD_Q = v.trim(); loadProducts(); }, 300);
+      });
+      document.getElementById("addProd").addEventListener("click", function(){ openProductEditor(null); });
+      $$("#s-prod [data-pedit]").forEach(function(b){
+        b.addEventListener("click", function(){ openProductEditor(Number(b.dataset.pedit)); });
+      });
+      $$("#s-prod [data-pdel]").forEach(function(b){
+        b.addEventListener("click", function(){ deleteProduct(Number(b.dataset.pdel)); });
+      });
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  function prodCard(x){
+    return '<div class="glass card" style="padding:14px">'
+      + '<div class="row" style="align-items:baseline;gap:9px">'
+      + '<b style="font-size:13.5px">' + x.name + '</b><span class="grow"></span>'
+      + '<span class="num" style="color:#7fe6f7">¥' + Number(x.price||0).toLocaleString("zh-CN")
+      + (x.unit ? (" / " + x.unit) : "") + '</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:6px">'
+      + (x.cycle_days ? ("周期 " + x.cycle_days + " 天") : "无固定周期")
+      + (x.status === "active" ? ' · <span style="color:#6ee7b7">在售</span>' : ' · 已下架') + '</div>'
+      + '<div class="mut" style="font-size:12.5px;margin-top:9px;line-height:1.65">' + (x.deliverable || "—") + '</div>'
+      + (x.description ? '<div class="dim" style="font-size:11.5px;margin-top:7px">' + x.description + '</div>' : '')
+      + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
+      + '<button class="btn sm ghost" data-pedit="' + x.id + '">编辑</button>'
+      + '<button class="btn sm ghost" data-pdel="' + x.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button>'
+      + '</div></div>';
+  }
+
+  function openProductEditor(id){
+    var x = id ? PROD_CACHE.filter(function(y){ return y.id === id; })[0] : null;
+    var html = '<div class="dsec"><h4>产品信息</h4>'
+      + '<label class="fl">产品名称</label><input id="pdName" value="' + (x ? x.name : "") + '" style="margin-bottom:10px" placeholder="例如：抖音获客代运营" />'
+      + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+      + '<div style="flex:1"><label class="fl">价格</label><input id="pdPrice" value="' + (x ? x.price : "") + '" placeholder="39800" /></div>'
+      + '<div style="flex:0 0 110px"><label class="fl">单位</label><input id="pdUnit" value="' + (x ? (x.unit||"") : "") + '" placeholder="季 / 项目" /></div>'
+      + '<div style="flex:0 0 110px"><label class="fl">周期(天)</label><input id="pdCycle" value="' + (x ? (x.cycle_days||"") : "") + '" placeholder="90" /></div></div>'
+      + '<label class="fl">交付物</label><textarea id="pdDeliv" rows="2" placeholder="30 条短视频 + 4 场直播陪跑">' + (x ? (x.deliverable||"") : "") + '</textarea>'
+      + '<label class="fl" style="margin-top:10px">说明 / 适用场景</label><input id="pdDesc" value="' + (x ? (x.description||"") : "") + '" /></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="pdCancel">取消</button>'
+      + '<button class="btn sm" id="pdOk">' + (x ? "保存" : "创建") + '</button></div>';
+    openDrawer(x ? "产品 · 编辑" : "产品 · 新增", x ? x.name : "新增产品", html);
+    document.getElementById("pdCancel").addEventListener("click", closeDrawer);
+    document.getElementById("pdOk").addEventListener("click", function(){
+      var name = document.getElementById("pdName").value.trim();
+      if (!name) return toast("请填产品名称", true);
+      var payload = {
+        name: name,
+        price: Number(document.getElementById("pdPrice").value || 0),
+        unit: document.getElementById("pdUnit").value.trim(),
+        cycle_days: Number(document.getElementById("pdCycle").value || 0),
+        deliverable: document.getElementById("pdDeliv").value.trim(),
+        description: document.getElementById("pdDesc").value.trim(),
+      };
+      var req = x
+        ? api("/api/manage/products/" + x.id, { method:"PATCH", body: payload })
+        : api("/api/manage/products", { method:"POST", body: Object.assign({ company_id: ACTIVE }, payload) });
+      req.then(function(){ closeDrawer(); toast(x ? "已保存" : "已创建"); loadProducts(); })
+         .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  function deleteProduct(id){
+    var x = PROD_CACHE.filter(function(y){ return y.id === id; })[0];
+    if (!x) return;
+    openDrawer("产品 · 删除", x.name,
+      '<div class="dsec"><h4>确认删除</h4><div style="font-size:13px;line-height:1.7">将删除产品 <b>' + x.name
+      + '</b>。已经选进项目的记录里仍保留名称，但不再出现在可选列表。</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="pdDelNo">取消</button>'
+      + '<button class="btn sm" id="pdDelYes" style="background:linear-gradient(100deg,#fda4af,#fb7185);color:#210a10">确认删除</button></div>');
+    document.getElementById("pdDelNo").addEventListener("click", closeDrawer);
+    document.getElementById("pdDelYes").addEventListener("click", function(){
+      api("/api/manage/products/" + id, { method:"DELETE" })
+        .then(function(){ closeDrawer(); toast("已删除"); loadProducts(); })
         .catch(function(e){ toast(e.message, true); });
     });
   }
