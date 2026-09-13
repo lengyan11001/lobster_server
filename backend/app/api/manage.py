@@ -405,7 +405,8 @@ def _template_plan(project: MProject, members: List[Dict[str, Any]]) -> Dict[str
                 "kpi": "可量化指标", "deliverable": "可验收的产出物",
             })
         phases.append({"title": "阶段" + "一二三四"[i] + " · " + t, "start_at": s.isoformat(),
-                       "end_at": e.isoformat(), "goal": goals[i], "tasks": tasks})
+                       "end_at": e.isoformat(), "goal": goals[i],
+                       "owner_name": names[i % len(names)], "tasks": tasks})
     return {
         "summary": project.name + "：按 " + str(span) + " 天周期拆成 4 个阶段，先跑通再放量。",
         "phases": phases,
@@ -490,6 +491,9 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
         token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
         if not token:
             raise HTTPException(status_code=401, detail="缺少登录令牌，无法调用 AI")
+        # PostgreSQL 的 idle-in-transaction 超时会在我们等 AI 的几十秒里掐掉连接，
+        # 所以先把事务收掉，AI 返回后再开新事务写库。
+        db.rollback()
         plan = await _llm_json(token, PLAN_SYSTEM, {
             "task": "generate_project_plan",
             "project": {"name": project.name, "goal": project.goal,
@@ -500,6 +504,12 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
             "extra_requirements": body.extra_requirements,
         })
         source = "ai"
+
+    # 事务在 AI 调用前已结束，重新取一下对象（含模板分支的一致性）
+    project = db.query(MProject).filter(MProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    company = db.query(MCompany).filter(MCompany.id == project.company_id).first()
 
     db.query(MPlanNode).filter(MPlanNode.project_id == project.id).delete()
     order = 0
