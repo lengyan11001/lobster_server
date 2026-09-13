@@ -150,6 +150,17 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 .mmnode.phase{border-color:rgba(129,140,248,.55);color:#c7d2fe;font-weight:600}
 .mmnode.task.ok{border-color:rgba(52,211,153,.45)}
 .mmnode.task.miss{border-color:rgba(251,191,36,.55);color:#fcd34d}
+
+/* ---------- 登录特效 ---------- */
+.sweep{position:fixed;left:50%;top:50%;width:140vmax;height:2px;z-index:80;pointer-events:none;
+  transform:translate(-50%,-50%) scaleX(0);opacity:0;
+  background:linear-gradient(90deg,transparent,#a5f3fc,#e9d5ff,transparent)}
+.sweep.go{animation:sweepGo .8s cubic-bezier(.22,1,.36,1) forwards}
+@keyframes sweepGo{0%{opacity:0;transform:translate(-50%,-50%) scaleX(.08)}
+  30%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scaleX(1.2) scaleY(2.6)}}
+#landing.gone{opacity:0;transform:scale(1.02);transition:opacity .55s var(--ease),transform .7s var(--ease);pointer-events:none}
+#app.in{animation:appIn .7s var(--ease) both}
+@keyframes appIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 </style>
 </head>
 <body>
@@ -225,6 +236,9 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     <button data-go="s-proj"><span class="ic">✧</span>项目</button>
     <button data-go="s-org"><span class="ic">◍</span>组织</button>
     <button data-go="s-prod"><span class="ic">▦</span>产品</button>
+    <button data-go="s-crm"><span class="ic">◈</span>客户</button>
+    <button data-go="s-deliv"><span class="ic">▣</span>交付</button>
+    <button data-go="s-ai"><span class="ic">⬡</span>虚拟员工</button>
     <button data-go="s-cond"><span class="ic">✦</span>条件</button>
     <button data-go="s-fin"><span class="ic">◎</span>财务</button>
   </aside>
@@ -235,6 +249,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         <p class="sub" id="pgSub">—</p>
       </div>
       <span class="grow"></span>
+      <button class="btn sm ghost hide" id="newCompanyBtn">＋ 新建公司</button>
+      <button class="btn sm ghost hide" id="markBossBtn">标记老板</button>
       <select id="companySel" style="width:210px"></select>
       <button class="btn sm ghost" id="reload">↻ 刷新</button>
       <span class="chip" style="position:static" id="userChip">—</span>
@@ -247,6 +263,9 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       <section id="s-proj" class="view hide"></section>
       <section id="s-org" class="view hide"></section>
       <section id="s-prod" class="view hide"></section>
+      <section id="s-crm" class="view hide"></section>
+      <section id="s-deliv" class="view hide"></section>
+      <section id="s-ai" class="view hide"></section>
       <section id="s-cond" class="view hide"></section>
       <section id="s-fin" class="view hide"></section>
     </div>
@@ -265,6 +284,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   <div class="dbody" id="dBody"></div>
 </aside>
 <div class="toast" id="toast"></div>
+<div class="sweep" id="sweep"></div>
 
 <script>
 (function(){
@@ -362,7 +382,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         if (!token) throw new Error("登录返回异常");
         TOKEN = token; localStorage.setItem("manage_token", token);
         localStorage.setItem("manage_login_mode", LOGIN_MODE);
-        return bootApp();
+        var sw = document.getElementById("sweep");
+        sw.classList.remove("go"); void sw.offsetWidth; sw.classList.add("go");
+        document.getElementById("landing").classList.add("gone");
+        return new Promise(function(res){ setTimeout(res, 320); }).then(bootApp);
       })
       .catch(function(e){ $("#loginErr").textContent = e.message || "登录失败"; })
       .then(function(){ btn.disabled = false; btn.textContent = "登录"; });
@@ -384,8 +407,11 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   });
 
   function showApp(){
-    $("#landing").classList.add("hide");
-    $("#app").classList.remove("hide");
+    var lp = document.getElementById("landing");
+    lp.classList.add("gone");
+    setTimeout(function(){ lp.classList.add("hide"); }, 620);
+    var app = document.getElementById("app");
+    app.classList.remove("hide");
   }
 
   /* ---------- 启动 ---------- */
@@ -393,6 +419,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     return api("/api/manage/bootstrap").then(function(data){
       ME = data.user; COMPANIES = data.companies || []; ROLES = data.roles || {};
       $("#userChip").textContent = ME.email + (data.is_platform_admin ? " · 平台管理员" : "");
+      if (data.is_platform_admin){
+        document.getElementById("newCompanyBtn").classList.remove("hide");
+        document.getElementById("markBossBtn").classList.remove("hide");
+      }
       if (!COMPANIES.length){
         showApp(); renderEmptyCompany(); return;
       }
@@ -426,6 +456,42 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     });
   }
 
+  document.getElementById("newCompanyBtn").addEventListener("click", function(){
+    openDrawer("平台 · 新建公司", "创建一个新公司",
+      '<div class="dsec"><label class="fl">公司名称</label><input id="ncName" placeholder="例如：某某科技（广州）" style="margin-bottom:10px" />'
+      + '<label class="fl">行业</label><input id="ncInd" placeholder="企业服务 / 电商 / 教育" /></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="ncCancel">取消</button>'
+      + '<button class="btn sm" id="ncOk">创建</button></div>');
+    document.getElementById("ncCancel").addEventListener("click", closeDrawer);
+    document.getElementById("ncOk").addEventListener("click", function(){
+      var name = document.getElementById("ncName").value.trim();
+      if (!name) return toast("请填公司名称", true);
+      api("/api/manage/companies", { method:"POST", body:{ name: name, industry: document.getElementById("ncInd").value.trim() } })
+        .then(function(){ closeDrawer(); toast("已创建"); return bootApp(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  });
+  document.getElementById("markBossBtn").addEventListener("click", function(){
+    openDrawer("平台 · 标记老板", "把某个账号标记为老板",
+      '<div class="dsec"><div class="dim" style="font-size:12px;line-height:1.7">被标记的账号会获得一家属于他的公司（老板身份），'
+      + '之后可以用「普通账号」登录去管理自己的组织架构与产品。</div>'
+      + '<label class="fl" style="margin-top:11px">账号（邮箱 / 企微 userid）</label><input id="mbEmail" placeholder="someone@example.com" style="margin-bottom:10px" />'
+      + '<label class="fl">公司名称（可留空）</label><input id="mbCompany" placeholder="某某科技（深圳）" /></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="mbCancel">取消</button>'
+      + '<button class="btn sm" id="mbOk">标记为老板</button></div>');
+    document.getElementById("mbCancel").addEventListener("click", closeDrawer);
+    document.getElementById("mbOk").addEventListener("click", function(){
+      var email = document.getElementById("mbEmail").value.trim();
+      if (!email) return toast("请填账号", true);
+      api("/api/manage/directory/lookup?q=" + encodeURIComponent(email)).then(function(r){
+        if (!r.found) throw new Error("没找到这个账号，先让对方在客户端注册");
+        return api("/api/manage/admin/boss", { method:"POST",
+          body:{ user_id: r.user.id, company_name: document.getElementById("mbCompany").value.trim() } });
+      }).then(function(){ closeDrawer(); toast("已标记为老板"); return bootApp(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  });
+
   $("#companySel").addEventListener("change", function(){
     ACTIVE = Number(this.value); refreshAll();
   });
@@ -436,6 +502,9 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     "s-proj": ["项目", "创建目标 → AI 规划 → 人员/要求/时间节点一次排好"],
     "s-org": ["组织架构", "成员 · 岗位（可多选） · 级别 · 备注"],
     "s-prod": ["产品", "可销售的东西与其基本详情；项目里可以直接选"],
+    "s-crm": ["客户", "业务岗：客户增删改 · 跟进记录 · 商机阶段与进度"],
+    "s-deliv": ["交付", "交付岗：已成交客户 → 交付单 → 验收"],
+    "s-ai": ["虚拟员工", "来自原系统已登录设备（槽位），可直接派活并回读执行明细"],
     "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
     "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
   };
@@ -444,7 +513,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-prod","s-cond","s-fin"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-crm","s-deliv","s-ai","s-cond","s-fin"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
       $("#pgTitle").textContent = TITLES[id][0];
@@ -455,7 +524,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   function refreshAll(){
     if (!ACTIVE) return;
     showErr("");
-    loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadCond(); loadFin();
+    loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
   }
 
   /* ================= 简报 ================= */
@@ -490,8 +559,21 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         + '<span class="dim" style="font-size:12px">每天 09:00 / 17:00 自动分析，给结论与优化建议</span><span class="grow"></span>'
         + '<span id="ckTimes"></span>'
         + '<button class="btn sm ghost" id="ckRun">立即体检</button></div>'
-        + '<div id="ckList" class="g4"></div></div>';
+        + '<div id="ckList" class="g4"></div></div>'
+        + '<div class="glass card" id="wlPanel" style="margin-top:12px"></div>';
       renderCheckupList();
+      var wl = document.getElementById("wlPanel");
+      if (wl) {
+        wl.innerHTML = '<div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+          + '<span class="dot" style="color:var(--ok)"></span><b style="font-size:13.5px">工作记录</b>'
+          + '<span class="dim" style="font-size:12px">每个人在这里提交今天做了什么</span></div>'
+          + '<div class="row" style="gap:9px;margin-bottom:10px">'
+          + '<input id="wlText" placeholder="例如：跟进 3 个客户，其中 1 个进入报价" style="flex:1" />'
+          + '<input id="wlMin" placeholder="分钟" style="width:80px" />'
+          + '<button class="btn sm" id="wlAdd">提交</button></div><div id="wlList"></div>';
+        document.getElementById("wlAdd").addEventListener("click", submitWorklog);
+        loadWorklogs();
+      }
       $("#ckRun").addEventListener("click", function(){
         var b = this; b.disabled = true; b.textContent = "分析中…";
         api("/api/manage/checkups/run", { method:"POST", body:{ company_id: ACTIVE, slot: CHECKUP.slot } })
@@ -922,21 +1004,49 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
               ? '<div id="mm" class="mmwrap"></div>'
               : '<div class="arrbar" style="margin-bottom:11px">' + filters + '</div><div id="arrBody">' + renderBody() + '</div>')
           + '</div>';
+        var ask = p.plan_source
+          ? '<div class="dsec"><h4>补充要求（改完点「重新规划」）</h4>'
+            + '<textarea id="extraReq" rows="2" placeholder="例如：首周必须完成 3 场直播；财务只参与结算"></textarea>'
+            + '<div class="row" style="justify-content:flex-end;gap:9px;margin-top:10px">'
+            + '<button class="btn sm ghost" id="verBtn">版本记录</button>'
+            + '<button class="btn sm" id="replan">重新规划</button></div></div>'
+          : '';
         var actions = '<div class="row" style="gap:9px;flex-wrap:wrap;justify-content:flex-end">'
           + '<button class="btn sm ghost" id="planTpl">用模板生成</button>'
           + '<button class="btn sm" id="planAi">AI 生成规划</button>'
+          + '<button class="btn sm ghost" id="restoreDraft">恢复草稿</button>'
           + '<button class="btn sm ghost" id="saveDraft">存草稿</button>'
           + '<button class="btn sm" id="confirmArr">确认安排</button></div>';
-        openDrawer("项目 · 工作安排", p.name, head + bar + actions);
+        openDrawer("项目 · 工作安排", p.name, head + bar + ask + actions);
         bind();
         $$("#dBody [data-view]").forEach(function(b){
           b.addEventListener("click", function(){ view = b.dataset.view; draw(); });
         });
         if (view === "mind"){ mountMindmap(); }
         $("#saveDraft").addEventListener("click", function(){
-          api("/api/manage/projects/"+pid+"/draft", { method:"POST", body:{ payload:{ saved_at:new Date().toISOString() } } })
-            .then(function(){ toast("草稿已保存"); loadProjects(); })
+          var patch = {};
+          nodes.forEach(function(n){ patch[n.id] = { owner_name: n.owner_name, requirement: n.requirement,
+            start_at: n.start_at, end_at: n.end_at, status: n.status }; });
+          api("/api/manage/projects/"+pid+"/draft", { method:"POST",
+            body:{ payload:{ saved_at:new Date().toISOString(), nodes: patch } } })
+            .then(function(){ toast("草稿已保存（" + Object.keys(patch).length + " 个节点）"); loadProjects(); })
             .catch(function(e){ toast(e.message, true); });
+        });
+        $("#restoreDraft").addEventListener("click", function(){
+          var d = (PROJ_CTX.project && PROJ_CTX.project.id === pid) ? null : null;
+          api("/api/manage/projects/" + pid).then(function(dd){
+            var saved = (dd.draft || {}).nodes || {};
+            var keys = Object.keys(saved);
+            if (!keys.length) return toast("没有可恢复的草稿", true);
+            var chain = Promise.resolve(0);
+            keys.forEach(function(id){
+              chain = chain.then(function(n){
+                return api("/api/manage/nodes/" + id, { method:"PATCH", body: saved[id] }).then(function(){ return n + 1; });
+              });
+            });
+            chain.then(function(n){ toast("已恢复 " + n + " 个节点"); openProject(pid); loadProjects(); })
+                 .catch(function(e){ toast(e.message, true); });
+          }).catch(function(e){ toast(e.message, true); });
         });
         $("#confirmArr").addEventListener("click", function(){
           api("/api/manage/projects/"+pid+"/confirm", { method:"POST" })
@@ -952,6 +1062,18 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         }
         $("#planAi").addEventListener("click", function(){ runPlan("ai", this); });
         $("#planTpl").addEventListener("click", function(){ runPlan("template", this); });
+        var vb = document.getElementById("verBtn");
+        if (vb) vb.addEventListener("click", function(){ openVersions(pid); });
+        var rp = document.getElementById("replan");
+        if (rp) rp.addEventListener("click", function(){
+          var extra = (document.getElementById("extraReq") || {}).value || "";
+          if (!extra.trim()) return toast("先写补充要求", true);
+          var b = this; b.disabled = true; b.textContent = "重规划中…";
+          api("/api/manage/projects/"+pid+"/plan", { method:"POST",
+            body:{ mode:"ai", extra_requirements: extra.trim() } })
+            .then(function(r){ toast("已重新规划（v" + r.version + "）"); openProject(pid); loadProjects(); })
+            .catch(function(e){ toast(e.message, true); b.disabled = false; b.textContent = "重新规划"; });
+        });
       }
       draw();
     }).catch(function(e){ toast(e.message, true); });
@@ -973,10 +1095,13 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       + '<div class="dsec"><h4>时间节点</h4><div style="display:flex;gap:10px">'
       + '<div style="flex:1"><label class="fl">开始</label><input id="edStart" value="'+(n.start_at||"")+'" placeholder="2026-09-15" /></div>'
       + '<div style="flex:1"><label class="fl">结束</label><input id="edEnd" value="'+(n.end_at||"")+'" placeholder="2026-10-05" /></div></div></div>'
-      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="edBack">返回</button>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px">'
+      + '<button class="btn sm ghost" id="edDispatch">派给虚拟员工</button>'
+      + '<button class="btn sm ghost" id="edBack">返回</button>'
       + '<button class="btn sm" id="edSave">保存</button></div>';
     openDrawer("工作安排 · 编辑节点", n.title, html);
     $("#edBack").addEventListener("click", function(){ openProject(pid); });
+    $("#edDispatch").addEventListener("click", function(){ openDispatch(nid, nodes, pid); });
     $("#edSave").addEventListener("click", function(){
       api("/api/manage/nodes/" + nid, { method:"PATCH", body:{
         owner_name: $("#edOwner").value.trim(),
@@ -1314,6 +1439,438 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         });
       });
     }).catch(function(e){ showErr(e.message); });
+  }
+
+﻿﻿  /* ================= 规划版本 / 重规划 / 派活 ================= */
+  function openVersions(pid){
+    api("/api/manage/projects/" + pid + "/versions").then(function(d){
+      var vs = d.versions || [];
+      var html = '<div class="dsec"><h4>规划版本（每次生成都会留档）</h4>'
+        + (vs.length ? vs.map(function(v){
+            return '<div class="mline"><span class="nm" style="flex:1">'
+              + '<b class="num">v' + v.version + '</b> · ' + (v.source === "ai" ? "AI 生成" : "模板生成")
+              + '<span class="dim" style="margin-left:8px">' + v.nodes + ' 节点 / ' + v.tasks + ' 任务 / 已排齐 ' + v.complete + '</span>'
+              + (v.requirement ? '<div class="dim" style="font-size:11.5px;margin-top:4px">补充要求：' + v.requirement + '</div>' : '')
+              + '</span>'
+              + '<span class="dim num" style="font-size:11px">' + String(v.created_at).slice(5,16).replace("T"," ") + '</span>'
+              + '<button class="btn sm ghost" data-vroll="' + v.id + '">回滚</button></div>';
+          }).join("") : '<div class="dim" style="font-size:12.5px">还没有版本记录</div>')
+        + '</div>';
+      openDrawer("项目 · 规划版本", "历史版本与回滚", html);
+      $$("#dBody [data-vroll]").forEach(function(b){
+        b.addEventListener("click", function(){
+          api("/api/manage/projects/" + pid + "/rollback/" + b.dataset.vroll, { method:"POST" })
+            .then(function(r){ closeDrawer(); toast("已回滚到 v" + r.restored_version); loadProjects(); openProject(pid); })
+            .catch(function(e){ toast(e.message, true); });
+        });
+      });
+    }).catch(function(e){ toast(e.message, true); });
+  }
+
+  function openDispatch(nodeId, nodes, pid){
+    if (!AI_CACHE.length){
+      toast("还没发现虚拟员工：先到「虚拟员工」页看设备", true);
+      return;
+    }
+    var opts = AI_CACHE.map(function(a){
+      return '<option value="' + a.id + '">' + a.name + (a.online ? "（在线）" : "（离线）") + '</option>'; }).join("");
+    var html = '<div class="dsec"><h4>派给虚拟员工</h4>'
+      + '<div class="dim" style="font-size:12px;line-height:1.7">会把该节点的要求转成一条定时任务，经主站下发给选中设备上的在线客户端执行；'
+      + '离线设备会在上线后自动领取。</div>'
+      + '<div class="edit-row" style="margin-top:11px"><label>设备</label><div class="grow-i"><select id="dpAi">' + opts + '</select></div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="dpCancel">取消</button>'
+      + '<button class="btn sm" id="dpOk">下发任务</button></div></div>'
+      + '<div class="dsec"><h4>执行情况</h4><div id="dpExec" class="dim" style="font-size:12.5px">加载中…</div></div>';
+    openDrawer("工作安排 · 派活", "交给虚拟员工执行", html);
+    document.getElementById("dpCancel").addEventListener("click", function(){ openNodeEditor(nodeId, nodes, pid); });
+    document.getElementById("dpOk").addEventListener("click", function(){
+      var b = this; b.disabled = true; b.textContent = "下发中…";
+      api("/api/manage/nodes/" + nodeId + "/dispatch", { method:"POST",
+        body: { ai_employee_id: Number(document.getElementById("dpAi").value) } })
+        .then(function(r){ toast("已下发给 " + r.ai_employee); openDispatch(nodeId, nodes, pid); loadAi(); })
+        .catch(function(e){ toast(e.message, true); b.disabled = false; b.textContent = "下发任务"; });
+    });
+    (function loadExec(){
+      api("/api/manage/nodes/" + nodeId + "/execution").then(function(r){
+        var box = document.getElementById("dpExec");
+        if (!box) return;
+        if (!r.dispatched){ box.innerHTML = "这个节点还没有派过活。"; return; }
+        var run = r.run || {};
+        var detail = (run.targets_detail || []).slice(0, 8).map(function(x){
+          return '<div class="mline"><span class="nm" style="flex:1">' + (x.target || "") + ' · ' + (x.action_label || x.action || "")
+            + '</span><span class="dim">' + (x.state || "") + (x.reason ? (" · " + x.reason) : "") + '</span></div>';
+        }).join("");
+        box.innerHTML = '<div class="mline"><span class="nm">任务</span><span class="mut num">' + (r.task_id || "—") + '</span></div>'
+          + '<div class="mline"><span class="nm">状态</span><span class="mut">' + (r.status || "—") + (r.error ? (" · " + r.error) : "") + '</span></div>'
+          + (run.result_text ? '<div class="mut" style="font-size:12px;margin-top:6px">' + run.result_text + '</div>' : '')
+          + detail;
+      }).catch(function(e){
+        var box = document.getElementById("dpExec");
+        if (box) box.textContent = "读取失败：" + e.message;
+      });
+    })();
+  }
+
+  /* ================= 客户（业务岗） ================= */
+  var CRM_Q = "", CRM_STAGE = "", CRM_CACHE = [], CRM_COUNTS = {}, CRM_STAGES = {};
+
+  function stageChip(k){
+    return '<button class="btn sm ' + (CRM_STAGE === k ? "" : "ghost") + '" data-stage="' + k + '">'
+      + (CRM_STAGES[k] || k) + ' <b class="num">' + (CRM_COUNTS[k] || 0) + '</b></button>';
+  }
+  function crmCard(c){
+    var won = c.stage === "won";
+    return '<div class="glass card" style="padding:14px">'
+      + '<div class="row" style="align-items:center;gap:9px">'
+      + '<b style="font-size:13.5px">' + c.name + '</b>'
+      + '<span class="tag ' + (won ? "ok" : (c.stage === "lost" ? "bd" : "cy")) + '">' + (c.stage_label || c.stage) + '</span>'
+      + '<span class="grow"></span><span class="num" style="color:#7fe6f7">¥' + Number(c.amount || 0).toLocaleString("zh-CN") + '</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:6px">'
+      + (c.company_name || "—") + (c.phone ? (" · " + c.phone) : "") + '</div>'
+      + (c.next_action ? '<div class="mut" style="font-size:12px;margin-top:8px">下一步：' + c.next_action + (c.next_follow_at ? ('（' + c.next_follow_at + '）') : '') + '</div>' : '')
+      + '<div class="dim" style="font-size:11.5px;margin-top:6px">负责人 ' + (c.owner_name || "未指派")
+      + (c.last_follow_at ? (" · 最近跟进 " + c.last_follow_at) : " · 还没跟进过") + '</div>'
+      + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
+      + '<button class="btn sm ghost" data-clog="' + c.id + '">跟进</button>'
+      + '<button class="btn sm ghost" data-cedit="' + c.id + '">编辑</button>'
+      + '<button class="btn sm ghost" data-cdel="' + c.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button>'
+      + '</div></div>';
+  }
+  function loadCrm(){
+    var qs = "/api/manage/customers?company_id=" + ACTIVE
+      + (CRM_STAGE ? ("&stage=" + CRM_STAGE) : "")
+      + (CRM_Q ? ("&q=" + encodeURIComponent(CRM_Q)) : "");
+    api(qs).then(function(d){
+      CRM_CACHE = d.customers || []; CRM_COUNTS = d.counts || {}; CRM_STAGES = d.stages || {};
+      var total = Object.keys(CRM_COUNTS).reduce(function(a, k){ return a + (CRM_COUNTS[k] || 0); }, 0);
+      $("#s-crm").innerHTML = '<div class="glass card">'
+        + '<div class="row" style="align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap">'
+        + '<b style="font-size:13.5px">客户</b><span class="dim" style="font-size:12px">业务岗：跟进、阶段推进、成交</span>'
+        + '<span class="grow"></span>'
+        + '<input id="crmQ" placeholder="搜索姓名/公司/电话" value="' + String(CRM_Q).replace(/"/g, '&quot;') + '" style="width:200px;height:34px" />'
+        + '<button class="btn sm" id="addCust">＋ 新增客户</button></div>'
+        + '<div class="arrbar" style="margin-bottom:12px">'
+        + '<button class="btn sm ' + (CRM_STAGE === "" ? "" : "ghost") + '" data-stage="">全部 <b class="num">' + total + '</b></button>'
+        + Object.keys(CRM_STAGES).map(stageChip).join("")
+        + '</div>'
+        + (CRM_CACHE.length ? '<div class="g3">' + CRM_CACHE.map(crmCard).join("") + '</div>'
+                            : '<div class="dim">还没有匹配的客户。点右上「新增客户」开始，或让虚拟员工自动采集线索。</div>')
+        + '</div>';
+      var qi = document.getElementById("crmQ");
+      qi.addEventListener("input", function(){
+        clearTimeout(qi._t); var v = qi.value;
+        qi._t = setTimeout(function(){ CRM_Q = v.trim(); loadCrm(); }, 320);
+      });
+      $$("#s-crm [data-stage]").forEach(function(b){
+        b.addEventListener("click", function(){ CRM_STAGE = b.dataset.stage; loadCrm(); });
+      });
+      document.getElementById("addCust").addEventListener("click", function(){ openCustomer(null); });
+      $$("#s-crm [data-cedit]").forEach(function(b){ b.addEventListener("click", function(){ openCustomer(Number(b.dataset.cedit)); }); });
+      $$("#s-crm [data-cdel]").forEach(function(b){ b.addEventListener("click", function(){ deleteCustomer(Number(b.dataset.cdel)); }); });
+      $$("#s-crm [data-clog]").forEach(function(b){ b.addEventListener("click", function(){ openFollowUp(Number(b.dataset.clog)); }); });
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  function openCustomer(id){
+    var c = id ? CRM_CACHE.filter(function(x){ return x.id === id; })[0] : null;
+    var stageOpts = Object.keys(CRM_STAGES).map(function(k){
+      return '<option value="' + k + '"' + (c && c.stage === k ? " selected" : "") + '>' + CRM_STAGES[k] + '</option>';
+    }).join("");
+    var html = '<div class="dsec"><h4>客户信息</h4>'
+      + '<label class="fl">姓名</label><input id="cuName" value="' + (c ? c.name : "") + '" style="margin-bottom:10px" />'
+      + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+      + '<div style="flex:1"><label class="fl">公司</label><input id="cuCompany" value="' + (c ? (c.company_name || "") : "") + '" /></div>'
+      + '<div style="flex:1"><label class="fl">电话</label><input id="cuPhone" value="' + (c ? (c.phone || "") : "") + '" /></div></div>'
+      + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+      + '<div style="flex:1"><label class="fl">微信</label><input id="cuWechat" value="' + (c ? (c.wechat || "") : "") + '" /></div>'
+      + '<div style="flex:1"><label class="fl">来源</label><input id="cuSource" value="' + (c ? (c.source || "") : "") + '" placeholder="抖音 / 转介绍" /></div></div>'
+      + '<div style="display:flex;gap:10px">'
+      + '<div style="flex:1"><label class="fl">阶段</label><select id="cuStage">' + stageOpts + '</select></div>'
+      + '<div style="flex:1"><label class="fl">预计金额</label><input id="cuAmount" value="' + (c ? c.amount : "") + '" /></div></div></div>'
+      + '<div class="dsec"><h4>下一步</h4>'
+      + '<label class="fl">要做什么</label><input id="cuNext" value="' + (c ? (c.next_action || "") : "") + '" style="margin-bottom:10px" />'
+      + '<label class="fl">什么时候之前</label><input id="cuNextAt" value="' + (c ? (c.next_follow_at || "") : "") + '" placeholder="2026-09-20" /></div>'
+      + '<div class="dsec"><h4>备注</h4><textarea id="cuNotes" rows="3">' + (c ? (c.notes || "") : "") + '</textarea></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="cuCancel">取消</button>'
+      + '<button class="btn sm" id="cuOk">' + (c ? "保存" : "创建") + '</button></div>';
+    openDrawer(c ? "客户 · 编辑" : "客户 · 新增", c ? c.name : "新增客户", html);
+    document.getElementById("cuCancel").addEventListener("click", closeDrawer);
+    document.getElementById("cuOk").addEventListener("click", function(){
+      var name = document.getElementById("cuName").value.trim();
+      if (!name) return toast("请填客户姓名", true);
+      var body = {
+        name: name, company_name: document.getElementById("cuCompany").value.trim(),
+        phone: document.getElementById("cuPhone").value.trim(),
+        wechat: document.getElementById("cuWechat").value.trim(),
+        source: document.getElementById("cuSource").value.trim(),
+        stage: document.getElementById("cuStage").value,
+        amount: Number(document.getElementById("cuAmount").value || 0),
+        next_action: document.getElementById("cuNext").value.trim(),
+        next_follow_at: document.getElementById("cuNextAt").value.trim(),
+        notes: document.getElementById("cuNotes").value.trim()
+      };
+      var req = c ? api("/api/manage/customers/" + c.id, { method: "PATCH", body: body })
+                  : api("/api/manage/customers", { method: "POST", body: Object.assign({ company_id: ACTIVE }, body) });
+      req.then(function(){ closeDrawer(); toast(c ? "已保存" : "已创建"); loadCrm(); loadDeliv(); })
+         .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  function deleteCustomer(id){
+    var c = CRM_CACHE.filter(function(x){ return x.id === id; })[0];
+    if (!c) return;
+    openDrawer("客户 · 删除", c.name,
+      '<div class="dsec"><h4>确认删除</h4><div style="font-size:13px;line-height:1.7">将删除客户 <b>' + c.name + '</b> 及其全部跟进记录。</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="cdNo">取消</button>'
+      + '<button class="btn sm" id="cdYes" style="background:linear-gradient(100deg,#fda4af,#fb7185);color:#210a10">确认删除</button></div>');
+    document.getElementById("cdNo").addEventListener("click", closeDrawer);
+    document.getElementById("cdYes").addEventListener("click", function(){
+      api("/api/manage/customers/" + id, { method: "DELETE" })
+        .then(function(){ closeDrawer(); toast("已删除"); loadCrm(); loadDeliv(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  function openFollowUp(id){
+    api("/api/manage/customers/" + id).then(function(d){
+      var c = d.customer || {};
+      var logs = c.logs || [];
+      var stageOpts = Object.keys(CRM_STAGES).map(function(k){
+        return '<option value="' + k + '"' + (c.stage === k ? " selected" : "") + '>' + CRM_STAGES[k] + '</option>';
+      }).join("");
+      var timeline = logs.length ? logs.map(function(x){
+        return '<div class="mline"><span class="nm" style="flex:1">' + (x.content || "（无正文）")
+          + (x.to_stage ? '<span class="dim" style="margin-left:6px">→ ' + (CRM_STAGES[x.to_stage] || x.to_stage) + '</span>' : '')
+          + '</span><span class="dim num">' + (x.happened_at || "") + '</span></div>';
+      }).join("") : '<div class="dim" style="font-size:12.5px">还没有跟进记录</div>';
+      openDrawer("客户 · 跟进", c.name,
+        '<div class="dsec"><h4>当前</h4>'
+        + '<div class="mline"><span class="nm">阶段</span><span class="mut">' + (c.stage_label || c.stage) + '</span></div>'
+        + '<div class="mline"><span class="nm">金额</span><span class="mut num">¥' + Number(c.amount || 0).toLocaleString("zh-CN") + '</span></div>'
+        + '<div class="mline"><span class="nm">最近跟进</span><span class="mut">' + (c.last_follow_at || "—") + '</span></div></div>'
+        + '<div class="dsec"><h4>加一条跟进</h4>'
+        + '<textarea id="fuText" rows="3" placeholder="沟通了什么、对方反馈、下一步"></textarea>'
+        + '<div style="display:flex;gap:10px;margin-top:10px">'
+        + '<div style="flex:1"><label class="fl">方式</label><select id="fuKind">'
+        + [["call","电话"],["wechat","微信"],["visit","上门"],["note","备注"]].map(function(x){
+            return '<option value="' + x[0] + '">' + x[1] + '</option>'; }).join("")
+        + '</select></div>'
+        + '<div style="flex:1"><label class="fl">推进到阶段</label><select id="fuStage"><option value="">不变</option>' + stageOpts + '</select></div></div>'
+        + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" id="fuOk">提交跟进</button></div></div>'
+        + '<div class="dsec"><h4>跟进时间线</h4>' + timeline + '</div>');
+      document.getElementById("fuOk").addEventListener("click", function(){
+        var text = document.getElementById("fuText").value.trim();
+        if (!text) return toast("写点内容", true);
+        api("/api/manage/customers/" + id + "/log", { method: "POST", body: {
+          kind: document.getElementById("fuKind").value, content: text,
+          to_stage: document.getElementById("fuStage").value } })
+          .then(function(){ toast("已记录"); loadCrm(); openFollowUp(id); loadDeliv(); })
+          .catch(function(e){ toast(e.message, true); });
+      });
+    }).catch(function(e){ toast(e.message, true); });
+  }
+
+  /* ================= 交付 ================= */
+  var DELIV_STATUS = "", DELIV_CACHE = [], DELIV_LABELS = {}, DELIV_COUNTS = {};
+
+  function delivCard(x){
+    var c = x.status === "accepted" ? "#6ee7b7" : (x.status === "review" ? "#fcd34d" : (x.status === "doing" ? "#7fe6f7" : "#8b98ae"));
+    var nxt = { pending: ["doing", "开始交付"], doing: ["review", "提交验收"], review: ["accepted", "确认验收"] }[x.status] || [];
+    return '<div class="glass card" style="padding:14px">'
+      + '<div class="row" style="align-items:center;gap:9px">'
+      + '<b style="font-size:13.5px">' + x.name + '</b>'
+      + '<span class="tag" style="color:' + c + ';border-color:' + c + '66">' + (x.status_label || x.status) + '</span>'
+      + '<span class="grow"></span><span class="dim" style="font-size:11.5px">' + (x.owner_name || "未指派") + '</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:6px">客户 ' + (x.customer_name || "—")
+      + (x.promised_at ? (" · 承诺 " + x.promised_at) : "") + (x.delivered_at ? (" · 已交付 " + x.delivered_at) : "") + '</div>'
+      + (x.note ? '<div class="mut" style="font-size:12px;margin-top:8px">' + x.note + '</div>' : '')
+      + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
+      + (nxt.length ? '<button class="btn sm" data-dnext="' + x.id + '" data-to="' + nxt[0] + '">' + nxt[1] + '</button>' : '')
+      + '<button class="btn sm ghost" data-dedit="' + x.id + '">编辑</button>'
+      + '<button class="btn sm ghost" data-ddel="' + x.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button>'
+      + '</div></div>';
+  }
+  function loadDeliv(){
+    api("/api/manage/deliveries?company_id=" + ACTIVE + (DELIV_STATUS ? ("&status=" + DELIV_STATUS) : ""))
+      .then(function(d){
+        DELIV_CACHE = d.deliveries || []; DELIV_LABELS = d.labels || {}; DELIV_COUNTS = d.counts || {};
+        var pend = d.won_without_delivery || [];
+        $("#s-deliv").innerHTML = '<div class="glass card">'
+          + '<div class="row" style="align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap">'
+          + '<b style="font-size:13.5px">交付</b><span class="dim" style="font-size:12px">已成交客户 → 交付单 → 验收</span>'
+          + '<span class="grow"></span><button class="btn sm" id="addDeliv">＋ 新建交付单</button></div>'
+          + '<div class="arrbar" style="margin-bottom:12px">'
+          + '<button class="btn sm ' + (DELIV_STATUS === "" ? "" : "ghost") + '" data-dstatus="">全部</button>'
+          + Object.keys(DELIV_LABELS).map(function(k){
+              return '<button class="btn sm ' + (DELIV_STATUS === k ? "" : "ghost") + '" data-dstatus="' + k + '">'
+                + DELIV_LABELS[k] + ' <b class="num">' + (DELIV_COUNTS[k] || 0) + '</b></button>'; }).join("")
+          + '</div>'
+          + (pend.length ? '<div class="dsec" style="border-color:rgba(251,191,36,.4);margin-bottom:12px">'
+              + '<h4>已成交但还没建交付单（' + pend.length + '）</h4>'
+              + pend.map(function(c){
+                  return '<div class="mline"><span class="nm">' + c.name + '<span class="dim num" style="margin-left:8px">¥'
+                    + Number(c.amount || 0).toLocaleString("zh-CN") + '</span></span>'
+                    + '<button class="btn sm" data-dfrom="' + c.id + '" data-name="' + c.name + '">建交付单</button></div>'; }).join("")
+              + '</div>' : '')
+          + (DELIV_CACHE.length ? '<div class="g3">' + DELIV_CACHE.map(delivCard).join("") + '</div>'
+                                : '<div class="dim">还没有交付单。客户成交后这里会自动提醒建单。</div>')
+          + '</div>';
+        $$("#s-deliv [data-dstatus]").forEach(function(b){
+          b.addEventListener("click", function(){ DELIV_STATUS = b.dataset.dstatus; loadDeliv(); });
+        });
+        document.getElementById("addDeliv").addEventListener("click", function(){ openDelivery(null); });
+        $$("#s-deliv [data-dedit]").forEach(function(b){ b.addEventListener("click", function(){ openDelivery(Number(b.dataset.dedit)); }); });
+        $$("#s-deliv [data-ddel]").forEach(function(b){
+          b.addEventListener("click", function(){
+            api("/api/manage/deliveries/" + b.dataset.ddel, { method: "DELETE" })
+              .then(function(){ toast("已删除"); loadDeliv(); }).catch(function(e){ toast(e.message, true); });
+          });
+        });
+        $$("#s-deliv [data-dnext]").forEach(function(b){
+          b.addEventListener("click", function(){
+            api("/api/manage/deliveries/" + b.dataset.dnext, { method: "PATCH", body: { status: b.dataset.to } })
+              .then(function(){ toast("已推进"); loadDeliv(); }).catch(function(e){ toast(e.message, true); });
+          });
+        });
+        $$("#s-deliv [data-dfrom]").forEach(function(b){
+          b.addEventListener("click", function(){
+            api("/api/manage/deliveries", { method: "POST", body: { company_id: ACTIVE,
+              name: b.dataset.name + " 交付", customer_id: Number(b.dataset.dfrom) } })
+              .then(function(){ toast("已建交付单"); loadDeliv(); }).catch(function(e){ toast(e.message, true); });
+          });
+        });
+      }).catch(function(e){ showErr(e.message); });
+  }
+
+  function openDelivery(id){
+    var x = id ? DELIV_CACHE.filter(function(y){ return y.id === id; })[0] : null;
+    var html = '<div class="dsec"><h4>交付单</h4>'
+      + '<label class="fl">名称</label><input id="dvName" value="' + (x ? x.name : "") + '" style="margin-bottom:10px" placeholder="例如：华创科技 抖音代运营交付" />'
+      + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+      + '<div style="flex:1"><label class="fl">承诺交付时间</label><input id="dvPromised" value="' + (x ? (x.promised_at || "") : "") + '" placeholder="2026-10-01" /></div>'
+      + (x ? '<div style="flex:1"><label class="fl">状态</label><select id="dvStatus">'
+            + Object.keys(DELIV_LABELS).map(function(k){
+                return '<option value="' + k + '"' + (x.status === k ? " selected" : "") + '>' + DELIV_LABELS[k] + '</option>'; }).join("")
+            + '</select></div>' : '')
+      + '</div><label class="fl">备注</label><textarea id="dvNote" rows="3">' + (x ? (x.note || "") : "") + '</textarea></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="dvCancel">取消</button>'
+      + '<button class="btn sm" id="dvOk">' + (x ? "保存" : "创建") + '</button></div>';
+    openDrawer(x ? "交付 · 编辑" : "交付 · 新建", x ? x.name : "新建交付单", html);
+    document.getElementById("dvCancel").addEventListener("click", closeDrawer);
+    document.getElementById("dvOk").addEventListener("click", function(){
+      var name = document.getElementById("dvName").value.trim();
+      if (!name) return toast("请填名称", true);
+      var body = { name: name, promised_at: document.getElementById("dvPromised").value.trim(),
+                   note: document.getElementById("dvNote").value.trim() };
+      var req = x ? api("/api/manage/deliveries/" + x.id, { method: "PATCH",
+                      body: Object.assign(body, { status: document.getElementById("dvStatus").value }) })
+                  : api("/api/manage/deliveries", { method: "POST", body: Object.assign({ company_id: ACTIVE }, body) });
+      req.then(function(){ closeDrawer(); toast(x ? "已保存" : "已创建"); loadDeliv(); })
+         .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  /* ================= 虚拟员工 ================= */
+  var AI_CACHE = [];
+  var CAP_LIST = ["抖音发布","私信承接","线索采集","批量剪辑","字幕生成","朋友圈","社群群发","消息承接","视频号发布","数据报表"];
+
+  function aiCard(a){
+    return '<div class="glass card" style="padding:14px">'
+      + '<div class="row" style="align-items:center;gap:11px">'
+      + '<div style="width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font:600 12px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee)">AI</div>'
+      + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + a.name + '</b>'
+      + '<div class="dim" style="font-size:11px;margin-top:3px;word-break:break-all">' + a.installation_id + '</div></div>'
+      + '<span class="tag ' + (a.online ? "ok" : "") + '" style="' + (a.online ? "" : "color:#5a6577") + '"><span class="' + (a.online ? "dot" : "off-dot") + '"></span>' + (a.online ? "在线" : "离线") + '</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:9px">归属 ' + (a.owner_name || "—") + ' · 已派 ' + (a.dispatched || 0) + ' 次</div>'
+      + '<div style="margin-top:9px">' + ((a.capabilities || []).length
+          ? (a.capabilities || []).map(function(c){ return '<span class="tag cy" style="margin:0 5px 5px 0">' + c + '</span>'; }).join("")
+          : '<span class="dim" style="font-size:11.5px">能力未配置（可在「配置」里勾选）</span>') + '</div>'
+      + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
+      + '<button class="btn sm ghost" data-aedit="' + a.id + '">配置</button>'
+      + '<button class="btn sm ghost" data-adel="' + a.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">移除</button>'
+      + '</div></div>';
+  }
+  function loadAi(){
+    api("/api/manage/ai-employees?company_id=" + ACTIVE).then(function(d){
+      AI_CACHE = d.ai_employees || [];
+      $("#s-ai").innerHTML = '<div class="glass card" style="margin-bottom:12px">'
+        + '<div class="row" style="align-items:center;gap:10px">'
+        + '<b style="font-size:13.5px">虚拟员工</b>'
+        + '<span class="dim" style="font-size:12px">来自公司成员在原系统登录过的设备（槽位），自动发现，不用手工录入</span>'
+        + '<span class="grow"></span>'
+        + '<span class="tag ' + (d.online_count ? "ok" : "") + '"><span class="dot"></span>' + (d.online_count || 0) + ' 在线 / ' + AI_CACHE.length + ' 台</span>'
+        + (d.discovered ? '<span class="tag cy">本次新发现 ' + d.discovered + ' 台</span>' : '')
+        + '</div><div class="dim" style="font-size:12px;margin-top:8px">在线判定：5 分钟内有心跳。派活会经主站定时任务链路下发到该设备，执行结果可回读。</div></div>'
+        + (AI_CACHE.length ? '<div class="g3">' + AI_CACHE.map(aiCard).join("") + '</div>'
+                           : '<div class="glass card"><div class="dim">还没发现设备：先到「组织」添加已登录过客户端的账号，或让对方登录一次在线版。</div></div>');
+      $$("#s-ai [data-aedit]").forEach(function(b){ b.addEventListener("click", function(){ openAiEditor(Number(b.dataset.aedit)); }); });
+      $$("#s-ai [data-adel]").forEach(function(b){
+        b.addEventListener("click", function(){
+          api("/api/manage/ai-employees/" + b.dataset.adel, { method: "DELETE" })
+            .then(function(){ toast("已移除"); loadAi(); }).catch(function(e){ toast(e.message, true); });
+        });
+      });
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  function openAiEditor(id){
+    var a = AI_CACHE.filter(function(x){ return x.id === id; })[0];
+    if (!a) return;
+    var picked = {};
+    (a.capabilities || []).forEach(function(c){ picked[c] = true; });
+    var chips = CAP_LIST.map(function(c){
+      return '<button class="btn sm ' + (picked[c] ? "" : "ghost") + '" data-cap="' + c + '" style="margin:0 6px 6px 0">' + c + '</button>';
+    }).join("");
+    openDrawer("虚拟员工 · 配置", a.name,
+      '<div class="dsec"><h4>名称</h4><input id="aiName" value="' + a.name + '" /></div>'
+      + '<div class="dsec"><h4>能力（勾选后派活会带上）</h4>' + chips + '</div>'
+      + '<div class="dsec"><h4>设备</h4>'
+      + '<div class="mline"><span class="nm">槽位</span><span class="mut" style="word-break:break-all">' + a.installation_id + '</span></div>'
+      + '<div class="mline"><span class="nm">归属</span><span class="mut">' + (a.owner_name || "—") + '</span></div>'
+      + '<div class="mline"><span class="nm">状态</span><span class="mut">' + (a.online ? "在线" : "离线（上线后自动领取任务）") + '</span></div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="aiCancel">取消</button>'
+      + '<button class="btn sm" id="aiOk">保存</button></div>');
+    $$("#dBody [data-cap]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var c = b.dataset.cap;
+        if (picked[c]) { delete picked[c]; b.className = "btn sm ghost"; }
+        else { picked[c] = true; b.className = "btn sm"; }
+      });
+    });
+    document.getElementById("aiCancel").addEventListener("click", closeDrawer);
+    document.getElementById("aiOk").addEventListener("click", function(){
+      api("/api/manage/ai-employees/" + a.id, { method: "PATCH", body: {
+        name: document.getElementById("aiName").value.trim(),
+        capabilities: Object.keys(picked) } })
+        .then(function(){ closeDrawer(); toast("已保存"); loadAi(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  /* ================= 工作记录 ================= */
+  function loadWorklogs(){
+    api("/api/manage/worklogs?company_id=" + ACTIVE + "&limit=12").then(function(d){
+      var rows = d.worklogs || [];
+      var box = document.getElementById("wlList");
+      if (!box) return;
+      box.innerHTML = rows.length ? rows.map(function(r){
+        return '<div class="mline"><span class="nm" style="flex:1">'
+          + '<b style="font-size:12.5px">' + r.author + '</b>'
+          + '<span class="mut" style="margin-left:8px">' + r.content + '</span></span>'
+          + (r.minutes ? '<span class="dim num">' + r.minutes + '′</span>' : '')
+          + '<span class="dim num">' + r.worked_on + '</span></div>';
+      }).join("") : '<div class="dim" style="font-size:12.5px">还没有工作记录</div>';
+    }).catch(function(){});
+  }
+  function submitWorklog(){
+    var el = document.getElementById("wlText");
+    var text = ((el && el.value) || "").trim();
+    if (!text) return toast("写点内容再提交", true);
+    var minEl = document.getElementById("wlMin");
+    api("/api/manage/worklogs", { method: "POST", body: {
+      company_id: ACTIVE, content: text, minutes: Number((minEl && minEl.value) || 0) } })
+      .then(function(){ el.value = ""; toast("已提交"); loadWorklogs(); })
+      .catch(function(e){ toast(e.message, true); });
   }
 
   /* ---------- 初始化 ---------- */
