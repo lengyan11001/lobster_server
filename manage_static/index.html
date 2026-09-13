@@ -147,12 +147,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 <div id="landing">
   <nav class="top glass">
     <span class="logo">M</span><span class="nm">MANAGE</span>
-    <span class="links">
-      <a href="#" data-scroll="s-brief">简报</a>
-      <a href="#" data-scroll="s-proj">项目</a>
-      <a href="#" data-scroll="s-cond">达成条件</a>
-      <a href="#" data-scroll="s-fin">财务</a>
-    </span>
+    <span class="dim" style="font-size:12px;margin-left:6px">内部系统 · 登录后使用</span>
     <span class="grow"></span>
     <button class="btn sm ghost" id="toLogin">登录</button>
   </nav>
@@ -327,9 +322,15 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   }
   $("#doLogin").addEventListener("click", doLogin);
   $("#pwd").addEventListener("keydown", function(e){ if (e.key === "Enter") doLogin(); });
-  $("#toLogin").addEventListener("click", function(){ $("#acc").focus(); $("#loginBox").scrollIntoView({behavior:"smooth"}); });
-  $("#ctaLogin").addEventListener("click", function(){ $("#acc").focus(); $("#loginBox").scrollIntoView({behavior:"smooth"}); });
-  $("#ctaDemo").addEventListener("click", function(){ toast("登录后可点「生成规划」看 AI 现场出计划"); });
+  function goLogin(hint){
+    var box = $("#loginBox");
+    box.scrollIntoView({ behavior:"smooth", block:"center" });
+    setTimeout(function(){ $("#acc").focus(); }, 420);
+    if (hint) toast(hint);
+  }
+  $("#toLogin").addEventListener("click", function(){ goLogin(); });
+  $("#ctaLogin").addEventListener("click", function(){ goLogin(); });
+  $("#ctaDemo").addEventListener("click", function(){ goLogin("登录后：项目里点「AI 生成规划」，能看到它现场排出人员/要求/时间节点"); });
   $("#logout").addEventListener("click", function(){
     TOKEN = ""; localStorage.removeItem("manage_token");
     $("#app").classList.add("hide"); $("#landing").classList.remove("hide");
