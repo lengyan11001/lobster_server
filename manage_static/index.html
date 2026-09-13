@@ -117,7 +117,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 .miss{color:#fcd34d}
 #mask{position:fixed;inset:0;z-index:50;background:rgba(3,6,12,.55);backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .35s}
 #mask.on{opacity:1;pointer-events:auto}
-#drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,96vw);z-index:51;transform:translateX(102%);transition:transform .52s var(--ease);display:flex;flex-direction:column;border-radius:0;border-right:0;overflow:hidden}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(780px,97vw);z-index:51;transform:translateX(102%);transition:transform .52s var(--ease);display:flex;flex-direction:column;border-radius:0;border-right:0;overflow:hidden}
 #drawer.on{transform:none}
 .dhead{padding:16px 18px 12px;display:flex;gap:12px;align-items:flex-start}
 .dbody{flex:1;overflow:auto;padding:0 18px 20px;display:flex;flex-direction:column;gap:12px}
@@ -577,60 +577,156 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     });
   }
 
+  var NODE_STATUS = { not_started:["未开始",""], in_progress:["进行中","wn"], completed:["完成","ok"], blocked:["受阻","bd"] };
+
   function openProject(pid){
     api("/api/manage/projects/" + pid).then(function(d){
       var p = d.project, nodes = d.nodes || [];
-      var tasks = nodes.filter(function(n){ return n.node_type === "task"; });
       var phases = nodes.filter(function(n){ return n.node_type === "phase"; });
-      var missing = nodes.filter(function(n){
-        return (n.node_type === "phase" || n.node_type === "task") && !n.complete; }).length;
-      var stTag = p.arrangement_status === "confirmed" ? '<span class="tag ok">已确认</span>'
-                : (p.arrangement_status === "changed" ? '<span class="tag wn">有待确认变更</span>' : '<span class="tag">草稿</span>');
-      var rows = nodes.filter(function(n){ return n.node_type === "phase" || n.node_type === "task"; }).map(function(n){
-        return '<tr><td class="'+(n.complete?"":"miss")+'">'+(n.node_type === "phase" ? "◈ " : "· ")+n.title+'</td>'
-          + '<td class="'+(n.owner_name?"":"miss")+'">'+(n.owner_name || "待指派")+'</td>'
-          + '<td class="'+(n.requirement?"":"miss")+'" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(n.requirement || "待填写要求")+'</td>'
-          + '<td class="num '+(n.start_at&&n.end_at?"":"miss")+'">'+(n.start_at&&n.end_at ? (n.start_at+" ~ "+n.end_at) : "待定")+'</td>'
-          + '<td class="right"><button class="btn sm ghost" data-node="'+n.id+'">编辑</button></td></tr>';
-      }).join("");
-      var html = '<div class="dsec"><h4>项目</h4>'
-        + '<div style="font-size:13.5px;line-height:1.7">'+(p.goal||"—")+'</div>'
-        + '<div class="dim" style="font-size:11.5px;margin-top:7px">'+(p.start_at||"")+' → '+(p.end_at||"")+' · 来源 '+(p.plan_source||"未规划")+'</div>'
-        + '<div style="margin-top:9px">'+stTag+' <span class="tag">'+(phases.length)+' 阶段 / '+tasks.length+' 任务</span>'
-        + (missing ? '<span class="tag wn" style="margin-left:6px">'+missing+' 项待补</span>' : '<span class="tag ok" style="margin-left:6px">已排齐</span>')
-        + '</div></div>'
-        + '<div class="dsec"><h4>工作安排（人员 · 要求 · 时间节点）</h4>'
-        + (rows ? '<table class="tb"><thead><tr><th>节点</th><th>人员</th><th>要求</th><th>时间节点</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'
-                : '<div class="dim">还没有规划。点下面「AI 生成规划」开始。</div>')
-        + '</div>'
-        + '<div class="row" style="gap:9px;flex-wrap:wrap;justify-content:flex-end">'
-        + '<button class="btn sm ghost" id="planTpl">用模板生成</button>'
-        + '<button class="btn sm" id="planAi">AI 生成规划</button>'
-        + '<button class="btn sm ghost" id="saveDraft">存草稿</button>'
-        + '<button class="btn sm" id="confirmArr">确认安排</button></div>';
-      openDrawer("项目 · 工作安排", p.name, html);
-      $$("#dBody [data-node]").forEach(function(b){
-        b.addEventListener("click", function(){ openNodeEditor(Number(b.dataset.node), nodes, pid); });
-      });
-      $("#saveDraft").addEventListener("click", function(){
-        api("/api/manage/projects/"+pid+"/draft", { method:"POST", body:{ payload:{ saved_at:new Date().toISOString() } } })
-          .then(function(){ toast("草稿已保存"); loadProjects(); })
-          .catch(function(e){ toast(e.message, true); });
-      });
-      $("#confirmArr").addEventListener("click", function(){
-        api("/api/manage/projects/"+pid+"/confirm", { method:"POST" })
-          .then(function(){ toast("安排已确认"); closeDrawer(); loadProjects(); loadBrief(); })
-          .catch(function(e){ toast(e.message, true); });
-      });
-      function runPlan(mode, btn){
-        btn.disabled = true; var old = btn.textContent; btn.textContent = "生成中…";
-        api("/api/manage/projects/"+pid+"/plan", { method:"POST", body:{ mode: mode } })
-          .then(function(res){ toast("已生成（来源 " + res.source + "）"); openProject(pid); loadBrief(); loadProjects(); })
-          .catch(function(e){ toast(e.message, true); })
-          .then(function(){ btn.disabled = false; btn.textContent = old; });
+      var tasks = nodes.filter(function(n){ return n.node_type === "task"; });
+      var milestones = nodes.filter(function(n){ return n.node_type === "milestone"; });
+      var arr = phases.concat(tasks);
+      var doneN = arr.filter(function(n){ return n.complete; }).length;
+      var pendingN = arr.length - doneN;
+      var filter = "all";
+      var folded = {};
+
+      function tagOf(n){
+        var st = NODE_STATUS[n.status] || ["未开始",""];
+        return '<span class="tag ' + st[1] + '" style="flex:0 0 auto">' + st[0] + '</span>';
       }
-      $("#planAi").addEventListener("click", function(){ runPlan("ai", this); });
-      $("#planTpl").addEventListener("click", function(){ runPlan("template", this); });
+      function taskCard(n){
+        var miss = !n.complete;
+        var owner = n.owner_name
+          ? '<span class="mchip"><b>' + n.owner_name + '</b></span>'
+          : '<span class="mchip warn">待指派</span>';
+        var req = n.requirement
+          ? '<span class="mchip req" title="' + String(n.requirement).replace(/"/g,"&quot;") + '">要求：' + n.requirement + '</span>'
+          : '<span class="mchip warn">待填写要求</span>';
+        var tm = (n.start_at && n.end_at)
+          ? '<span class="mchip tm">' + n.start_at + ' ~ ' + n.end_at + '</span>'
+          : '<span class="mchip warn">时间待定</span>';
+        return '<div class="atask' + (miss ? " miss" : "") + '" data-node="' + n.id + '">'
+          + '<div class="l1"><span class="ttl">' + n.title + '</span>' + tagOf(n)
+          + '<span class="act"><button class="btn sm ghost" data-edit="' + n.id + '">编辑</button></span></div>'
+          + '<div class="l2">' + owner + req + tm + '</div></div>';
+      }
+      function phaseBlock(ph, idx){
+        var kids = tasks.filter(function(t){ return t.parent_id === ph.id; });
+        var kidDone = kids.filter(function(t){ return t.complete; }).length;
+        var isFold = !!folded[ph.id];
+        var body = kids.length
+          ? kids.map(taskCard).join("")
+          : '<div class="dim" style="font-size:12px;padding:4px 2px">该阶段还没有任务</div>';
+        return '<div class="aphase' + (isFold ? " fold" : "") + '" data-phase="' + ph.id + '">'
+          + '<div class="ph" data-fold="' + ph.id + '"><span class="mk">◈</span>'
+          + '<span class="ttl">' + ph.title + '</span>'
+          + '<span class="rg">' + (ph.start_at || "?") + ' ~ ' + (ph.end_at || "?") + '</span>'
+          + '<span class="grow"></span>'
+          + '<span class="cnt">' + kidDone + '/' + kids.length + ' 任务</span>'
+          + '<span class="cv">▼</span></div>'
+          + '<div class="ptasks">' + body + '</div></div>';
+      }
+      function orphanBlock(){
+        var kids = tasks.filter(function(t){
+          return !t.parent_id || !phases.some(function(x){ return x.id === t.parent_id; }); });
+        if (!kids.length) return "";
+        return '<div class="aphase"><div class="ph"><span class="mk">◈</span>'
+          + '<span class="ttl">未归入阶段的任务</span><span class="grow"></span>'
+          + '<span class="cnt">' + kids.length + ' 任务</span><span class="cv">▼</span></div>'
+          + '<div class="ptasks">' + kids.map(taskCard).join("") + '</div></div>';
+      }
+      function msBlock(){
+        if (!milestones.length) return "";
+        return '<div class="aphase"><div class="ph"><span class="mk">◆</span>'
+          + '<span class="ttl">里程碑</span><span class="grow"></span>'
+          + '<span class="cnt">' + milestones.length + '</span><span class="cv">▼</span></div>'
+          + '<div class="ptasks">' + milestones.map(function(m){
+              return '<div class="msline"><span style="flex:1">' + m.title + '</span>'
+                + '<span class="mchip tm">' + (m.start_at || "待定") + '</span></div>'; }).join("") + '</div></div>';
+      }
+      function match(n){
+        if (filter === "pending") return !n.complete;
+        if (filter === "unassigned") return !n.owner_name;
+        if (filter === "ready") return n.complete;
+        return true;
+      }
+      function renderBody(){
+        if (!arr.length){
+          return '<div class="dim" style="font-size:12.5px;padding:10px 2px">还没有规划。点下面「AI 生成规划」开始。</div>';
+        }
+        if (filter === "all"){
+          return phases.map(phaseBlock).join("") + orphanBlock() + msBlock();
+        }
+        var picked = tasks.filter(match);
+        if (!picked.length) return '<div class="dim" style="font-size:12.5px;padding:10px 2px">没有符合条件的任务。</div>';
+        return '<div class="ptasks">' + picked.map(taskCard).join("") + '</div>';
+      }
+      function bind(){
+        $$("#dBody [data-edit]").forEach(function(b){
+          b.addEventListener("click", function(e){ e.stopPropagation(); openNodeEditor(Number(b.dataset.edit), nodes, pid); });
+        });
+        $$("#dBody [data-fold]").forEach(function(h){
+          h.addEventListener("click", function(){
+            var id = Number(h.dataset.fold);
+            folded[id] = !folded[id];
+            h.parentNode.classList.toggle("fold", !!folded[id]);
+          });
+        });
+        $$("#dBody [data-filter]").forEach(function(b){
+          b.addEventListener("click", function(){ filter = b.dataset.filter; draw(); });
+        });
+      }
+      function draw(){
+        var stTag = p.arrangement_status === "confirmed" ? '<span class="tag ok">已确认</span>'
+                  : (p.arrangement_status === "changed" ? '<span class="tag wn">有待确认变更</span>' : '<span class="tag">草稿</span>');
+        var head = '<div class="dsec"><h4>项目</h4>'
+          + '<div style="font-size:13.5px;line-height:1.7">' + (p.goal || "—") + '</div>'
+          + '<div class="dim" style="font-size:11.5px;margin-top:7px">' + (p.start_at||"") + ' → ' + (p.end_at||"")
+          + ' · 来源 ' + (p.plan_source || "未规划") + ' · ' + phases.length + ' 阶段 / ' + tasks.length + ' 任务</div>'
+          + '<div style="margin-top:9px">' + stTag
+          + (pendingN ? '<span class="tag wn" style="margin-left:6px">' + pendingN + ' 项待补</span>'
+                      : '<span class="tag ok" style="margin-left:6px">已排齐</span>') + '</div></div>';
+        var bar = '<div class="dsec"><h4>工作安排（人员 · 要求 · 时间节点）</h4>'
+          + '<div class="arrsum" style="margin-bottom:10px">'
+          + '<span>已排齐 <b style="color:var(--ink)">' + doneN + '/' + arr.length + '</b></span>'
+          + '<span class="pbar"><i style="width:' + (arr.length ? Math.round(doneN/arr.length*100) : 0) + '%"></i></span>'
+          + '<span class="dim">' + (arr.length ? Math.round(doneN/arr.length*100) + '%' : "—") + '</span></div>'
+          + '<div class="arrbar" style="margin-bottom:11px">'
+          + ['all:全部', 'pending:待补', 'unassigned:仅未指派', 'ready:已排齐'].map(function(x){
+              var kv = x.split(":");
+              return '<button class="btn sm ' + (filter === kv[0] ? "" : "ghost") + '" data-filter="' + kv[0] + '">' + kv[1] + '</button>';
+            }).join("")
+          + '<span class="grow"></span><span class="dim" style="font-size:11.5px">点阶段标题可折叠</span></div>'
+          + '<div id="arrBody">' + renderBody() + '</div></div>';
+        var actions = '<div class="row" style="gap:9px;flex-wrap:wrap;justify-content:flex-end">'
+          + '<button class="btn sm ghost" id="planTpl">用模板生成</button>'
+          + '<button class="btn sm" id="planAi">AI 生成规划</button>'
+          + '<button class="btn sm ghost" id="saveDraft">存草稿</button>'
+          + '<button class="btn sm" id="confirmArr">确认安排</button></div>';
+        openDrawer("项目 · 工作安排", p.name, head + bar + actions);
+        bind();
+        $("#saveDraft").addEventListener("click", function(){
+          api("/api/manage/projects/"+pid+"/draft", { method:"POST", body:{ payload:{ saved_at:new Date().toISOString() } } })
+            .then(function(){ toast("草稿已保存"); loadProjects(); })
+            .catch(function(e){ toast(e.message, true); });
+        });
+        $("#confirmArr").addEventListener("click", function(){
+          api("/api/manage/projects/"+pid+"/confirm", { method:"POST" })
+            .then(function(){ toast("安排已确认"); closeDrawer(); loadProjects(); loadBrief(); })
+            .catch(function(e){ toast(e.message, true); });
+        });
+        function runPlan(mode, btn){
+          btn.disabled = true; var old = btn.textContent; btn.textContent = "生成中…";
+          api("/api/manage/projects/"+pid+"/plan", { method:"POST", body:{ mode: mode } })
+            .then(function(res){ toast("已生成（来源 " + res.source + "）"); openProject(pid); loadBrief(); loadProjects(); })
+            .catch(function(e){ toast(e.message, true); })
+            .then(function(){ btn.disabled = false; btn.textContent = old; });
+        }
+        $("#planAi").addEventListener("click", function(){ runPlan("ai", this); });
+        $("#planTpl").addEventListener("click", function(){ runPlan("template", this); });
+      }
+      draw();
     }).catch(function(e){ toast(e.message, true); });
   }
 
