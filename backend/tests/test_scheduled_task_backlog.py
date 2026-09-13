@@ -1049,3 +1049,87 @@ def test_due_recurring_douyin_duplicates_enqueue_once(db_session, test_user):
     assert enqueued == 1
     assert len(runs) == 1
     assert runs[0].task_id == 101
+
+
+TAKEOVER_DEADLINE_TEXT = (
+    "个微私信接管正常收工：节点时间已到，后续节点继续执行。\n\n"
+    "接管实况\n- 已巡检：4 轮，耗时 6 分 12 秒"
+)
+
+
+def test_workflow_node_deadline_keeps_the_clients_takeover_report(db_session, test_user):
+    run = _run(
+        run_id="takeover-deadline-report",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=datetime.utcnow(),
+    )
+    run.payload = {"action": "native_wechat_poll", "params": {"account_id": "wechat-account-a"}}
+    db_session.add(run)
+    db_session.commit()
+
+    result = scheduled_tasks.submit_scheduled_task_event(
+        run.id,
+        scheduled_tasks.ScheduledTaskEventIn(
+            type="cancelled",
+            payload={
+                "reason": "workflow_node_deadline_expired",
+                "deadline_at": "2026-09-13T09:30:00+00:00",
+                "phase": "while_running",
+                "text": TAKEOVER_DEADLINE_TEXT,
+                "takeover": {
+                    "completed_rounds": 4,
+                    "replied": 3,
+                    "skipped": 2,
+                    "failed": 0,
+                    "friend_requests_checked": 5,
+                    "friend_requests_accepted": 2,
+                    "friend_requests_failed": 1,
+                    "group_invite_candidates": 1,
+                },
+                "local_stop": {"action": "native_wechat_poll", "stop_requested": True},
+            },
+        ),
+        _request(),
+        test_user,
+        db_session,
+    )
+
+    db_session.expire_all()
+    row = db_session.get(ScheduledTaskRun, run.id)
+    assert result["cancelled"] is True
+    assert row.status == "cancelled"
+    assert row.result_text == TAKEOVER_DEADLINE_TEXT
+    assert row.result_payload["skipped"] is True
+    assert row.result_payload["skip_reason"] == "workflow_node_deadline_expired"
+    assert row.result_payload["takeover"]["replied"] == 3
+    assert row.result_payload["takeover"]["group_invite_candidates"] == 1
+    assert row.result_payload["local_stop"]["stop_requested"] is True
+    assert row.result_payload["phase"] == "while_running"
+
+
+def test_workflow_node_deadline_fallback_reports_takeover_activity():
+    text = scheduled_tasks._workflow_deadline_fallback_text(
+        {
+            "takeover": {
+                "completed_rounds": 3,
+                "replied": 2,
+                "skipped": 1,
+                "failed": 0,
+                "friend_requests_checked": 4,
+                "friend_requests_accepted": 2,
+                "friend_requests_failed": 1,
+                "group_invite_candidates": 1,
+                "duration_label": "5 分 0 秒",
+            }
+        }
+    )
+
+    assert text.startswith("个微私信接管正常收工")
+    assert "已巡检 3 轮，耗时 5 分 0 秒" in text
+    assert "自动回复 2 个会话" in text
+    assert "疑似加群线索 1 个会话" in text
+    assert "本次任务已自动停止" not in text
+    assert scheduled_tasks._workflow_deadline_fallback_text({}) == "节点时间已结束，本次任务已自动停止，后续节点继续执行。"

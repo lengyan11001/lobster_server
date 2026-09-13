@@ -5697,6 +5697,39 @@ def pending_scheduled_publish_requests(
     return {"ok": True, "items": [_serialize_run(r) for r in picked]}
 
 
+def _workflow_deadline_fallback_text(event_payload: Dict[str, Any]) -> str:
+    """Node-end text for a client build that does not send its own wording.
+
+    The private-WeChat takeover node is time-bounded on purpose, so its normal end
+    should read as a finished takeover report instead of a bare stop notice.
+    """
+    takeover = event_payload.get("takeover") if isinstance(event_payload.get("takeover"), dict) else {}
+    if not takeover:
+        return "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
+
+    def _count(key: str) -> int:
+        try:
+            return int(takeover.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    rounds = _count("completed_rounds")
+    headline = "个微私信接管正常收工：节点时间已到，后续节点继续执行。"
+    if rounds <= 0:
+        body = "接管已启动，但本节点时间内未完成一轮巡检"
+    else:
+        duration = str(takeover.get("duration_label") or "").strip() or "未记录"
+        body = (
+            f"已巡检 {rounds} 轮，耗时 {duration}；"
+            f"自动回复 {_count('replied')} 个会话；跳过 {_count('skipped')} 个；失败 {_count('failed')} 个；"
+            f"新好友申请：检查 {_count('friend_requests_checked')} 个、"
+            f"已同意 {_count('friend_requests_accepted')} 个、失败 {_count('friend_requests_failed')} 个"
+        )
+        if _count("group_invite_candidates"):
+            body += f"；疑似加群线索 {_count('group_invite_candidates')} 个会话"
+    return f"{headline}\n\n接管实况\n- {body}"
+
+
 def _run_for_user(db: Session, run_id: str, user_id: int) -> ScheduledTaskRun:
     row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id, ScheduledTaskRun.user_id == user_id).first()
     if row is None:
@@ -5754,16 +5787,18 @@ def submit_scheduled_task_event(
         and deadline_reason == "workflow_node_deadline_expired"
         and str(row.status or "").strip().lower() not in _FINAL_STATUSES
     ):
-        message = str(
-            event_payload.get("text")
-            or "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
-        ).strip()
+        message = str(event_payload.get("text") or "").strip() or _workflow_deadline_fallback_text(event_payload)
         row.status = "cancelled"
         row.error = None
         row.result_text = message
         existing_result = row.result_payload if isinstance(row.result_payload, dict) else {}
         row.result_payload = {
             **existing_result,
+            **{
+                key: value
+                for key, value in event_payload.items()
+                if key not in {"text", "reason"}
+            },
             "skipped": True,
             "skip_reason": "workflow_node_deadline_expired",
             "skip_message": message,
