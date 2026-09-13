@@ -266,6 +266,38 @@ select.tin:focus{border-color:rgba(34,211,238,.6);box-shadow:0 0 0 3px rgba(34,2
 select.tin option{background:#0b1220;color:#e9effb}
 input.tin{padding:0 11px;height:38px}
 
+/* ---------- 组织架构 ---------- */
+.kpi.sm .v{font-size:22px;margin:7px 0 3px}
+.grp{margin-bottom:6px}
+.grp-h{display:flex;align-items:center;gap:9px;margin:4px 0 10px}
+.grp-h .bar2{width:3px;height:14px;border-radius:3px}
+.grp-h .nm{font-size:12.5px;color:var(--muted);letter-spacing:.04em}
+.mem{position:relative;padding:14px;overflow:hidden;transition:transform .3s var(--ease),border-color .3s}
+.mem:hover{transform:translateY(-3px);border-color:var(--stroke2)}
+.mem .top{display:flex;align-items:center;gap:11px;margin-bottom:11px}
+.mem .av{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;font:600 15px var(--mono);color:#06121c;position:relative}
+.mem .av::after{content:"";position:absolute;inset:-2px;border-radius:16px;border:1px solid rgba(255,255,255,.18)}
+.mem .nm{font-size:14px;font-weight:600}
+.mem .sub{font-size:11.5px;color:var(--dim);margin-top:3px}
+.mem .roles{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.rchip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;font-size:11.5px;
+  border:1px solid var(--stroke);background:rgba(255,255,255,.035);color:var(--txt)}
+.rchip b{font-family:var(--mono);font-size:10.5px;color:#a5f3fc;font-weight:600}
+.mem .note{font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:9px}
+.mem .dev{margin-top:11px;padding-top:10px;border-top:1px dashed rgba(255,255,255,.08);display:flex;align-items:center;gap:8px;font-size:11.5px}
+.on-dot{width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:pl 2.4s infinite;flex:0 0 auto}
+.off-dot{width:7px;height:7px;border-radius:50%;background:#5a6577;flex:0 0 auto}
+.aie{position:relative;padding:14px;overflow:hidden}
+.aie .hex{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font:600 13px var(--mono);color:#06121c;
+  background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee);box-shadow:0 0 24px rgba(99,102,241,.4)}
+.cap{display:inline-flex;align-items:center;height:21px;padding:0 8px;border-radius:7px;font-size:11px;
+  border:1px solid rgba(34,211,238,.28);background:rgba(34,211,238,.07);color:#8fe3f5;margin:0 5px 5px 0}
+.imp-row{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid var(--stroke);border-radius:12px;
+  background:rgba(255,255,255,.028);margin-bottom:8px;cursor:pointer;transition:all .22s var(--ease)}
+.imp-row:hover{border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.06)}
+.imp-row.on{border-color:rgba(34,211,238,.6);background:rgba(34,211,238,.1)}
+.imp-row .ck{width:18px;height:18px;border-radius:6px;border:1px solid var(--stroke2);display:grid;place-items:center;font-size:11px;color:#06121c}
+.imp-row.on .ck{background:linear-gradient(140deg,#7dd3fc,#a5b4fc);border-color:transparent}
 /* ---------- 财务 ---------- */
 .wf{display:flex;align-items:flex-end;gap:9px;height:auto;min-height:168px;flex:1;padding-top:10px}
 .wf .col2{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px}
@@ -314,6 +346,7 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
     <button class="nav on" data-go="s-dash"><span class="ic">◈</span><span class="tx">简报</span></button>
     <button class="nav" data-go="s-plan"><span class="ic">✧</span><span class="tx">AI规划</span></button>
     <button class="nav" data-go="s-org"><span class="ic">◍</span><span class="tx">组织</span></button>
+    <button class="nav" data-go="s-hr"><span class="ic">✦</span><span class="tx">条件</span></button>
     <button class="nav" data-go="s-prod"><span class="ic">▦</span><span class="tx">产品</span></button>
     <button class="nav" data-go="s-fin"><span class="ic">◎</span><span class="tx">财务</span></button>
     <button class="nav" data-go="s-ai"><span class="ic">⬡</span><span class="tx">虚拟员工</span></button>
@@ -451,14 +484,82 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
       <!-- ---------- 组织 ---------- -->
       <section class="screen" id="s-org">
         <div class="card glass" style="margin-bottom:14px">
-          <div class="row" style="align-items:center">
-            <div><div style="font-size:15px;font-weight:600">组织架构 · 必火科技（深圳）</div>
-            <div class="dim" style="font-size:12px;margin-top:4px">岗位可多选，每个岗位单独设级别；备注用于补充基本情况</div></div>
-            <div class="grow"></div>
-            <button class="mini-btn pri">＋ 邀请成员</button>
+          <div class="row" style="align-items:center;gap:14px">
+            <div style="width:46px;height:46px;border-radius:15px;display:grid;place-items:center;font:700 16px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee);box-shadow:0 0 26px rgba(99,102,241,.45)">必</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:15.5px;font-weight:600">必火科技（深圳）</div>
+              <div class="dim" style="font-size:12px;margin-top:4px">老板：老 板 · 7 名成员 · 2 台在线设备已接入为虚拟员工</div>
+            </div>
+            <button class="mini-btn" id="inviteBtn">邀请成员</button>
+            <button class="mini-btn pri" id="importBtn">＋ 添加成员（原系统账号）</button>
           </div>
         </div>
-        <div class="g3" id="orgGrid"></div>
+
+        <div class="g4" style="margin-bottom:14px">
+          <div class="card glass kpi sm"><div class="t">在册成员</div><div class="v num" data-count="7">0</div><div class="d"><span class="dim">覆盖 6 类岗位</span></div></div>
+          <div class="card glass kpi sm"><div class="t">在线虚拟员工</div><div class="v num" data-count="2">0</div><div class="d"><span class="up">● 实时在线</span></div></div>
+          <div class="card glass kpi sm"><div class="t">平均负载</div><div class="v num" data-count="67" data-suffix="%">0%</div><div class="d"><span class="wn" style="color:#fcd34d">2 人偏高</span></div></div>
+          <div class="card glass kpi sm"><div class="t">本月新增</div><div class="v num" data-count="2">0</div><div class="d"><span class="dim">来自原系统绑定 / 招聘入职</span></div></div>
+        </div>
+
+        <div class="card glass" style="margin-bottom:14px">
+          <div class="row" style="align-items:center;margin-bottom:14px">
+            <span style="font-size:13.5px;font-weight:600">组织结构</span>
+            <span class="dim" style="font-size:12px">岗位可多选，每个岗位单独设级别</span>
+            <div class="grow"></div>
+            <span class="tag cy">7 人在册</span>
+          </div>
+          <div id="orgTree"></div>
+        </div>
+
+        <div class="card glass">
+          <div class="row" style="align-items:center;margin-bottom:13px">
+            <span style="font-size:13.5px;font-weight:600">虚拟员工 · 来自在线设备</span>
+            <span class="dim" style="font-size:12px">成员在原系统登录过的设备，自动成为可派活的虚拟员工</span>
+            <div class="grow"></div>
+            <span class="tag ok"><span class="dot"></span>2 在线 / 1 离线</span>
+          </div>
+          <div class="g3" id="aiGridOrg"></div>
+        </div>
+      </section>
+
+      <!-- ---------- 人力与资源 ---------- -->
+      <section class="screen" id="s-hr">
+        <div class="card glass" style="margin-bottom:14px">
+          <div class="row" style="align-items:center;gap:12px">
+            <span class="dot" style="color:#a855f7"></span>
+            <span style="font-size:13.5px;font-weight:600">AI 达成条件分析</span>
+            <span class="dim" style="font-size:12px">以「把这个项目做成」为目标反推所需条件 —— 不局限于现有资源</span>
+            <div class="grow"></div>
+            <span class="tag wn" id="condSummary">—</span>
+            <button class="mini-btn" id="recondBtn">↻ 重新分析</button>
+          </div>
+          <div class="dim" style="font-size:12px;margin-top:9px">
+            招聘只是其中一种补位动作。AI 会同时考虑：人、钱、设备与虚拟员工、素材工具、渠道关系、资质、时间。
+          </div>
+        </div>
+
+        <div class="g3" id="condList" style="margin-bottom:14px"></div>
+
+        <div class="row" style="align-items:flex-start">
+          <div class="card glass" style="flex:1.2">
+            <div class="row" style="align-items:center;margin-bottom:12px">
+              <span style="font-size:13.5px;font-weight:600">补位动作 · 招聘需求</span>
+              <span class="dim" style="font-size:12px">AI 建议采纳后才成立</span>
+              <div class="grow"></div>
+              <button class="mini-btn" id="addHireBtn">＋ 手动新增</button>
+            </div>
+            <div id="hireTable"></div>
+          </div>
+          <div class="card glass" style="flex:1">
+            <div class="row" style="align-items:center;margin-bottom:12px">
+              <span style="font-size:13.5px;font-weight:600">补位动作 · 虚拟员工配置</span>
+              <div class="grow"></div>
+              <button class="mini-btn pri" id="addSlotBtn">＋ 新增槽位</button>
+            </div>
+            <div id="slotTable"></div>
+          </div>
+        </div>
       </section>
 
       <!-- ---------- 产品 ---------- -->
@@ -595,6 +696,7 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
   var TITLES = { "s-dash":["经营简报","2026-09-13 · 周日 · AI 已生成 6 条简报"],
                  "s-plan":["AI 规划","创建任务 → 分析 → 生成可执行计划"],
                  "s-org":["组织架构","成员 · 岗位（多选） · 级别 · 备注"],
+                 "s-hr":["达成条件","AI 以「把项目做成」为目标，反推需要的条件与补位动作"],
                  "s-prod":["产品","可销售的东西与其基本详情"],
                  "s-fin":["财务","收入 · 开销 · 应收 · 现金流"],
                  "s-ai":["虚拟员工","Online 客户端槽位接入，直接派活"] };
@@ -754,61 +856,352 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
   }).join("");
 
   /* ================= 组织 / 产品 / 虚拟员工 ================= */
-  var ORG = [
-    ["老 板","老板 · p4 负责人","必火科技（深圳）","#22d3ee",["全盘经营","项目决策","组织管理"]],
-    ["林 珂","业务 p3 · 商务 p2","华南大区","#34d399",["客户开发","成交","渠道"]],
-    ["小 柯","业务 p1","华南大区","#34d399",["客户开发"]],
-    ["陈 默","交付 p4 · 客服 p2","交付中心","#818cf8",["项目交付","验收","售后"]],
-    ["周 研","内容 p2 · 运营 p2","内容中心","#fbbf24",["短视频","图文","活动"]],
-    ["秦 岚","财务 p3","后台","#fb7185",["开票","回款","对账"]]
-  ];
-  $("#orgGrid").innerHTML = ORG.map(function(m,i){
-    return '<div class="card glass" style="animation:viewIn .55s var(--ease) both '+(i*.06)+'s">'
-      + '<div class="row" style="align-items:center;gap:12px">'
-      + '<div class="avatar" style="background:linear-gradient(140deg,'+m[3]+'55,#818cf866);color:#eaf6ff">'+m[0].slice(0,1)+'</div>'
-      + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+m[0]+'</div>'
-      + '<div class="mut" style="font-size:12px;margin-top:3px">'+m[1]+'</div></div>'
-      + '<span class="tag">'+m[2]+'</span></div>'
-      + '<div class="hair" style="margin:12px 0 10px"></div>'
-      + '<div class="row" style="gap:7px;flex-wrap:wrap">'+m[4].map(function(t){ return '<span class="chip">'+t+'</span>'; }).join("")+'</div>'
-      + '<div class="dim" style="font-size:11.5px;margin-top:10px">备注：'+(m[3]==="#22d3ee"?"可管理多家公司，登录后切换":"")+'</div></div>';
-  }).join("");
+  var ROLE_LABEL = { boss:"老板", gm:"总经理", bd:"商务", sales:"业务", delivery:"交付", support:"客服",
+                     finance:"财务", operation:"运营", content:"内容", market:"市场", hr:"人事", supply:"采购" };
+  var DEPT_COLOR = { "经营管理":"#22d3ee", "业务中心":"#34d399", "交付中心":"#818cf8", "内容中心":"#fbbf24", "市场":"#a855f7", "职能":"#fb7185" };
 
-  var PRODS = [
-    ["抖音获客代运营","¥39,800 / 季","内容 + 投流 + 私信承接，交付 30 条短视频、4 场直播陪跑"],
-    ["私域复购陪跑","¥28,000 / 季","社群 SOP + 朋友圈 + 复购活动，按月出复盘报告"],
-    ["品牌视觉焕新","¥68,000 / 项目","LOGO / VI / 门店物料，交付 15 个工作日内"],
-    ["AI 员工工作台","¥12,800 / 年","按岗位配置 AI 员工，含客户端 + 技能包"],
-    ["季度经营顾问","¥15,000 / 月","老板陪跑：月度诊断 + 目标拆解 + 复盘"],
-    ["短视频批量剪辑","¥4,800 / 100 条","素材二创 + 字幕 + 封面，7 天交付"]
+  var MEMBERS = [
+    { name:"老 板", dept:"经营管理", roles:[["boss","p4"],["gm","p3"]], load:58, note:"可管理 2 家公司，登录后切换", devices:[] },
+    { name:"林 珂", dept:"业务中心", roles:[["sales","p3"],["bd","p2"]], load:92, note:"华南大区 · 成交 3 单/月", devices:[{ n:"深圳机 1", on:true }] },
+    { name:"小 柯", dept:"业务中心", roles:[["sales","p1"]], load:38, note:"新人 · 首月即出 2 单", devices:[] },
+    { name:"陈 默", dept:"交付中心", roles:[["delivery","p4"],["support","p2"]], load:74, note:"交付负责人 · 验收单流程 owner", devices:[{ n:"广州机 2", on:false }] },
+    { name:"周 研", dept:"内容中心", roles:[["content","p2"],["operation","p2"]], load:96, note:"产能瓶颈，建议把剪辑转派虚拟员工", devices:[] },
+    { name:"曾 乐", dept:"市场", roles:[["market","p2"]], load:52, note:"投放与素材测试", devices:[] },
+    { name:"秦 岚", dept:"职能", roles:[["finance","p3"]], load:44, note:"开票 · 回款 · 对账", devices:[] }
   ];
-  $("#prodGrid").innerHTML = PRODS.map(function(p,i){
-    return '<div class="card glass" style="animation:viewIn .55s var(--ease) both '+(i*.05)+'s">'
-      + '<div class="row" style="align-items:baseline"><span style="font-size:14px;font-weight:600">'+p[0]+'</span>'
-      + '<div class="grow"></div><span class="num" style="color:#7fe6f7">'+p[1]+'</span></div>'
-      + '<div class="mut" style="font-size:12.5px;margin-top:9px;line-height:1.6">'+p[2]+'</div>'
-      + '<div class="hair" style="margin:12px 0 10px"></div>'
-      + '<div class="row" style="gap:7px"><span class="tag ok">上架中</span><span class="tag">可加入项目</span></div></div>';
-  }).join("");
+  var AIE_ORG = [
+    { name:"虚拟员工 · 抖音A", dev:"深圳机 1", owner:"林 珂", on:true,  caps:["抖音发布","私信承接","线索采集"], load:64 },
+    { name:"虚拟员工 · 微信A", dev:"深圳机 1", owner:"林 珂", on:true,  caps:["朋友圈","群发","消息承接"], load:38 },
+    { name:"虚拟员工 · 剪辑B", dev:"广州机 2", owner:"陈 默", on:false, caps:["批量剪辑","字幕"], load:12 }
+  ];
 
-  var AIE = [
-    ["虚拟员工 · 抖音A","槽位 · 深圳机 1","抖音发布 / 私信 / 采集","在线", "#34d399", 64],
-    ["虚拟员工 · 微信A","槽位 · 深圳机 1","朋友圈 / 群发 / 承接","在线", "#34d399", 38],
-    ["虚拟员工 · 剪辑B","槽位 · 广州机 2","批量剪辑 / 字幕","离线", "#5a6577", 12]
+  function avatarBg(dept){ var c = DEPT_COLOR[dept] || "#22d3ee"; return "linear-gradient(140deg," + c + "cc," + c + "55)"; }
+
+  function renderOrg(){
+    MEMBERS = MEMBERS.filter(function(m){ return !!m && !!m.name; });
+    var groups = {};
+    MEMBERS.forEach(function(m){ (groups[m.dept] = groups[m.dept] || []).push(m); });
+    var html = Object.keys(groups).map(function(dept, gi){
+      var c = DEPT_COLOR[dept] || "#22d3ee";
+      return '<div class="grp">'
+        + '<div class="grp-h"><span class="bar2" style="background:'+c+';box-shadow:0 0 10px '+c+'"></span>'
+        + '<span class="nm">'+dept+'</span><span class="dim" style="font-size:11.5px">'+groups[dept].length+' 人</span></div>'
+        + '<div class="g3">' + groups[dept].map(function(m, i){
+            var dev = (m.devices || [])[0];
+            var devHtml = m.devices && m.devices.length
+              ? '<div class="dev"><span class="'+(dev.on?"on-dot":"off-dot")+'"></span>'
+                + '<span style="color:'+(dev.on?"#6ee7b7":"var(--dim)")+'">'+(dev.on?"在线设备":"离线设备")+' · '+dev.n+'</span>'
+                + '<div class="grow"></div><span class="dim">已接入为虚拟员工</span></div>'
+              : '';
+            var lc = m.load > 88 ? "#fb7185" : (m.load > 60 ? "#fbbf24" : "#34d399");
+            return '<div class="mem card glass" style="animation:viewIn .5s var(--ease) both '+((gi*0.05)+(i*0.05))+'s">'
+              + '<div class="top"><div class="av" style="background:'+avatarBg(m.dept)+'">'+String(m.name||'?').slice(0,1).trim()+'</div>'
+              + '<div style="flex:1;min-width:0"><div class="nm">'+m.name+'</div>'
+              + '<div class="sub">'+ (m.roles.map(function(r){ return ROLE_LABEL[r[0]] + " " + r[1]; }).join(" · ")) +'</div></div>'
+              + '<span class="num" style="font-size:12px;color:'+lc+'">'+m.load+'%</span></div>'
+              + '<div class="roles">'+ m.roles.map(function(r){
+                  return '<span class="rchip">'+ROLE_LABEL[r[0]]+' <b>'+r[1]+'</b></span>'; }).join("") + '</div>'
+              + '<div class="mline" style="padding:0"><span class="bar"><i style="width:'+m.load+'%;background:linear-gradient(90deg,'+lc+',#818cf8)"></i></span></div>'
+              + '<div class="note">'+(m.note || "—")+'</div>' + devHtml
+              + '</div>';
+          }).join("") + '</div></div>';
+    }).join("");
+    $("#orgTree").innerHTML = html;
+
+    $("#aiGridOrg").innerHTML = AIE_ORG.map(function(a, i){
+      return '<div class="aie card glass" style="animation:viewIn .5s var(--ease) both '+(i*0.07)+'s">'
+        + '<div class="row" style="align-items:center;gap:12px;margin-bottom:11px">'
+        + '<div class="hex">AI</div>'
+        + '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600">'+a.name+'</div>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:3px">'+a.dev+' · 归属 '+a.owner+'</div></div>'
+        + '<span class="tag '+(a.on?"ok":"")+'" style="'+(a.on?"":"color:#5a6577")+'"><span class="'+(a.on?"dot":"off-dot")+'"></span>'+(a.on?"在线":"离线")+'</span></div>'
+        + '<div style="margin-bottom:9px">'+ a.caps.map(function(c){ return '<span class="cap">'+c+'</span>'; }).join("") + '</div>'
+        + '<div class="mline" style="padding:0 0 8px"><span class="nm dim" style="font-size:11.5px">当前负载</span>'
+        + '<span class="bar"><i style="width:'+a.load+'%;animation-delay:'+(i*0.08)+'s"></i></span>'
+        + '<span class="num" style="width:38px;text-align:right;font-size:12px">'+a.load+'%</span></div>'
+        + '<div class="row" style="gap:8px"><button class="mini-btn pri">派任务</button>'
+        + '<button class="mini-btn">执行明细</button>'
+        + '<span class="dim" style="font-size:11px;align-self:center">'+(a.on?"立即可下发":"上线后自动领取")+'</span></div></div>';
+    }).join("");
+  }
+
+  /* ---------- 从原系统导入人员 ---------- */
+  // 不默认列出原系统的人：只有老板按手机号 / 邮箱 / 微信号搜出来，才会展示与添加。
+  var DIRECTORY = {
+    "13800002211": { name:"王 敏", phone:"138****2211", email:"wangmin@bihuo.cn",  wechat:"wangmin_88", brand:"必火", hasDev:true,  devOn:true },
+    "13900008890": { name:"李 强", phone:"139****8890", email:"liqiang@bihuo.cn",  wechat:"lq_2026",   brand:"必火", hasDev:true,  devOn:false },
+    "13700004432": { name:"赵 雪", phone:"137****4432", email:"zhaoxue@dahai.cn",  wechat:"zhaoxue_x", brand:"大海", hasDev:false, devOn:false },
+    "13500007788": { name:"孙 浩", phone:"135****7788", email:"sunhao@bihuo.cn",  wechat:"sunhao_h",  brand:"必火", hasDev:true,  devOn:true }
+  };
+  function lookupAccount(q){
+    var k = String(q || "").trim();
+    if (!k) return null;
+    if (DIRECTORY[k]) return DIRECTORY[k];
+    var hit = null;
+    Object.keys(DIRECTORY).forEach(function(key){
+      var v = DIRECTORY[key];
+      if (hit) return;
+      if (v.phone.replace(/\*/g,"").indexOf(k.replace(/\*/g,"")) >= 0 && k.length >= 4) hit = v;
+      else if (v.email.toLowerCase() === k.toLowerCase() || v.wechat === k) hit = v;
+      else if (v.name.replace(/\s/g,"") === k.replace(/\s/g,"")) hit = v;
+    });
+    return hit;
+  }
+
+  var picked = {};
+  function openImport(){
+    openDrawer("组织架构 · 添加成员", "直接绑定原系统账号（同一套用户数据，不做导入）",
+      '<div class="dsec"><h4>查找原系统账号</h4>'
+      + '<div class="edit-row"><label>账号</label><div class="grow-i">'
+      + '<input class="tin" id="impQ" placeholder="手机号 / 邮箱 / 微信号" /></div>'
+      + '<button class="mini-btn pri" id="impSearch" style="height:38px">查找</button></div>'
+      + '<div class="dim" style="font-size:11.5px">直接引用原系统的用户数据：绑定后即可用同一套账号登录。只有被添加的人才会出现在组织架构里；其名下的在线设备自动成为可派活的虚拟员工。</div>'
+      + '<div class="dim" style="font-size:11px;margin-top:6px">演示账号：13800002211 / 13900008890 / 13500007788</div></div>'
+      + '<div id="impResult"></div>'
+      + '<div class="dsec"><h4>加入后分配</h4>'
+      + '<div class="edit-row"><label>岗位</label><div class="grow-i"><select class="tin" id="impRole">'
+      + Object.keys(ROLE_LABEL).map(function(k){ return '<option value="'+k+'"'+(k==="sales"?" selected":"")+'>'+ROLE_LABEL[k]+'</option>'; }).join("")
+      + '</select></div><label style="width:auto;flex:0 0 auto">级别</label><div class="grow-i"><select class="tin" id="impLevel">'
+      + ["intern","p1","p2","p3","p4","lead"].map(function(k){ return '<option'+(k==="p2"?" selected":"")+'>'+k+'</option>'; }).join("")
+      + '</select></div></div>'
+      + '<div class="edit-row"><label>所属</label><div class="grow-i"><select class="tin" id="impDept">'
+      + Object.keys(DEPT_COLOR).map(function(k){ return '<option'+(k==="业务中心"?" selected":"")+'>'+k+'</option>'; }).join("")
+      + '</select></div></div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="mini-btn" id="impCancel">关闭</button>'
+      + '<button class="mini-btn pri" id="impOk" disabled>添加该成员</button></div>');
+    var found = null;
+    function renderResult(){
+      var box = $("#impResult");
+      if (!found){ box.innerHTML = '<div class="dsec"><h4>查找结果</h4><div class="dim" style="font-size:12.5px">输入账号后点「查找」。</div></div>'; $("#impOk").disabled = true; return; }
+      var u = found;
+      box.innerHTML = '<div class="dsec"><h4>查到的账号</h4>'
+        + '<div class="imp-row on"><span class="ck">✓</span>'
+        + '<div style="flex:1;min-width:0"><div style="font-size:13.5px">'+u.name
+        + '<span class="dim" style="font-size:11.5px;margin-left:8px">'+u.phone+' · '+u.brand+'</span></div>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:4px">'+u.email+' · 微信 '+u.wechat+'</div>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:4px">'
+        + (u.hasDev ? (u.devOn ? '<span style="color:#6ee7b7">● 有在线设备，将自动成为虚拟员工</span>' : '○ 有离线设备，上线后可派活') : '无设备')
+        + '</div></div></div></div>';
+      $("#impOk").disabled = false;
+    }
+    renderResult();
+    $("#impSearch").addEventListener("click", function(){
+      found = lookupAccount($("#impQ").value);
+      renderResult();
+      if (!found){ $("#impResult").innerHTML = '<div class="dsec"><h4>查找结果</h4><div class="miss" style="font-size:12.5px">没找到这个账号。确认手机号/邮箱/微信是否正确，或让对方先在客户端注册。</div></div>'; }
+    });
+    $("#impQ").addEventListener("keydown", function(e){ if (e.key === "Enter") $("#impSearch").click(); });
+    $("#impCancel").addEventListener("click", closeDrawer);
+    $("#impOk").addEventListener("click", function(){
+      if (!found) return;
+      var role = $("#impRole").value, level = $("#impLevel").value, dept = $("#impDept").value, u = found;
+      MEMBERS.push({ name:u.name, dept:dept, roles:[[role, level]], load:18,
+                     note:"绑定原系统账号 · " + u.phone, devices: u.hasDev ? [{ n:u.name+" 的设备", on:u.devOn }] : [] });
+      if (u.hasDev){
+        AIE_ORG.push({ name:"虚拟员工 · "+u.name, dev:u.name+" 的设备", owner:u.name, on:u.devOn, caps:["待配置能力"], load:4 });
+      }
+      closeDrawer(); renderOrg(); renderAiPage(); renderConditions();
+      var b = $("#importBtn"), old = b.textContent;
+      b.textContent = "已绑定 " + u.name + " ✓";
+      setTimeout(function(){ b.textContent = old; }, 1800);
+    });
+  }
+  $("#importBtn").addEventListener("click", openImport);
+  $("#inviteBtn").addEventListener("click", function(){
+    openDrawer("组织架构 · 邀请成员", "生成邀请链接",
+      '<div class="dsec"><h4>邀请链接（7 天有效）</h4>'
+      + '<div style="font-family:var(--mono);font-size:12px;color:#8fe3f5;word-break:break-all">https://manage.bhzn.top/join?c=demo&amp;t=9f3a21c7</div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:10px">对方用现有账号登录即自动加入本公司；也可直接「从原系统导入」已有账号。</div></div>');
+  });
+
+  /* ================= 人力与资源：缺口建议 / 招聘 / 虚拟员工配置 ================= */
+  var CAP_POOL = ["抖音发布","私信承接","线索采集","批量剪辑","字幕生成","朋友圈","社群群发","消息承接","视频号发布","数据报表"];
+  var CONDITIONS = [
+    { key:"people", title:"人", need:"内容剪辑 ≥15 条/天", now:"内容组 1 人（p2，负载 96%）", gap:"缺 1 人",
+      impact:"阶段二延期约 11 天 → 成交目标后移", level:"high",
+      actions:[{t:"招聘 1 名内容剪辑 p2", d:"约 2 周内到岗（¥9–12k/月）", k:"hire"},
+               {t:"增配 1 个虚拟员工槽位（批量剪辑）", d:"当天可用，不占编制", k:"slot"}] },
+    { key:"money", title:"钱", need:"投放预算 ≥ ¥60k/季", now:"已批 ¥18k/月", gap:"偏紧",
+      impact:"ROI 低于 1.5 时需追加 ¥15k，否则投放断档", level:"mid",
+      actions:[{t:"预批 ¥15k 机动预算", d:"按 ROI 触发，不用即退回", k:"note"}] },
+    { key:"device", title:"设备 / 虚拟员工", need:"≥2 个稳定在线槽位（发布 + 承接）", now:"2 在线 / 1 离线", gap:"夜间在线不稳",
+      impact:"私信首响超 5 分钟会掉线索，直接影响成交", level:"high",
+      actions:[{t:"增配 1 个夜间槽位 + 错峰排班", d:"覆盖 20:00–23:00", k:"slot"}] },
+    { key:"asset", title:"素材 / 工具", need:"周更 ≥8 条可投放素材", now:"库内 32 条，老化明显", gap:"CTR 降 22%",
+      impact:"投放成本上升，挤压毛利", level:"mid",
+      actions:[{t:"素材翻新（转派虚拟员工批量产出）", d:"每周固定动作", k:"slot"}] },
+    { key:"channel", title:"渠道 / 关系", need:"企业号 + 私信承接资质与话术", now:"已认证，话术未过审", gap:"缺 ≥20 条话术",
+      impact:"私信转化率低于 8%", level:"mid",
+      actions:[{t:"补齐话术库（业务主导）", d:"可直接复用成交话术库", k:"note"}] },
+    { key:"time", title:"时间", need:"90 天完整周期", now:"剩 90 天", gap:"缺口吞掉 11 天",
+      impact:"压缩阶段三的验证时间", level:"low",
+      actions:[{t:"阶段三验证前移 1 周", d:"与阶段二并行", k:"note"}] }
   ];
-  $("#aiGrid").innerHTML = AIE.map(function(a,i){
-    return '<div class="card glass" style="animation:viewIn .55s var(--ease) both '+(i*.06)+'s">'
-      + '<div class="row" style="align-items:center;gap:12px">'
-      + '<div class="avatar" style="background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee);color:#06121c">AI</div>'
-      + '<div style="flex:1"><div style="font-size:14px;font-weight:600">'+a[0]+'</div>'
-      + '<div class="dim" style="font-size:11.5px;margin-top:3px">'+a[1]+'</div></div>'
-      + '<span class="tag" style="color:'+a[4]+';border-color:'+a[4]+'66"><span class="dot"></span>'+a[3]+'</span></div>'
-      + '<div class="mut" style="font-size:12.5px;margin:11px 0 10px">'+a[2]+'</div>'
-      + '<div class="mline"><span class="nm">当前负载</span><span class="bar"><i style="width:'+a[5]+'%;animation-delay:'+(i*.08)+'s"></i></span>'
-      + '<span class="num" style="width:40px;text-align:right">'+a[5]+'%</span></div>'
-      + '<div class="row" style="gap:8px;margin-top:11px"><button class="mini-btn pri">派任务</button>'
-      + '<button class="mini-btn">查看执行明细</button></div></div>';
-  }).join("");
+  var HIRES = [
+    { role:"content", level:"p2", n:1, why:"短视频剪辑产能缺口：需要 ≥15 条/天", eta:"09-25", st:"招聘中", src:"AI 建议" },
+    { role:"sales", level:"p1", n:1, why:"阶段三成交转化需要更多跟单人力", eta:"10-15", st:"待启动", src:"AI 建议" }
+  ];
+  var SLOTS = [
+    { name:"虚拟员工 · 抖音A", dev:"深圳机 1", on:true,  caps:["抖音发布","私信承接","线索采集"], load:64 },
+    { name:"虚拟员工 · 微信A", dev:"深圳机 1", on:true,  caps:["朋友圈","社群群发","消息承接"], load:38 },
+    { name:"虚拟员工 · 剪辑B", dev:"广州机 2", on:false, caps:["批量剪辑","字幕生成"], load:12 }
+  ];
+
+  document.getElementById("recondBtn").addEventListener("click", function(){
+    var b = this, old = b.textContent;
+    b.textContent = "分析中…";
+    CONDITIONS.forEach(function(c){ c.decided = ""; });
+    renderConditions();
+    setTimeout(function(){ b.textContent = old; }, 900);
+  });
+
+  function renderConditions(){
+    var box = document.getElementById("condList"); if (!box) return;
+    var pending = CONDITIONS.filter(function(c){ return !c.decided; }).length;
+    var sum = document.getElementById("condSummary");
+    if (sum) sum.textContent = pending ? (pending + " 项需要补位") : "全部条件已具备";
+    box.innerHTML = CONDITIONS.map(function(c, i){
+      var lc = c.level === "high" ? "#fb7185" : (c.level === "mid" ? "#fbbf24" : "#34d399");
+      var lv = c.level === "high" ? "影响达成" : (c.level === "mid" ? "需关注" : "可缓冲");
+      return '<div class="card glass" style="padding:14px;animation:viewIn .5s var(--ease) both '+(i*0.05)+'s'+(c.decided?';border-color:rgba(52,211,153,.35)':'')+'">'
+        + '<div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+        + '<span style="width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-size:12px;background:rgba(255,255,255,.06);color:'+lc+'">'+String(c.title).slice(0,1)+'</span>'
+        + '<span style="font-size:13px;font-weight:600">'+c.title+'</span><div class="grow"></div>'
+        + (c.decided ? '<span class="tag ok">已处理</span>' : '<span class="tag" style="color:'+lc+';border-color:'+lc+'66">'+lv+'</span>')
+        + '</div>'
+        + (c.decided
+            ? '<div style="font-size:12.5px;color:#6ee7b7;line-height:1.7">'+c.decided+'</div>'
+            : '<div style="font-size:12px;line-height:1.8">'
+              + '<div><span class="dim">需要</span> '+c.need+'</div>'
+              + '<div><span class="dim">现状</span> '+c.now+'</div>'
+              + '<div><span class="dim">缺口</span> <span style="color:'+lc+'">'+c.gap+'</span></div>'
+              + '<div style="margin-top:6px;color:var(--muted)">'+c.impact+'</div></div>'
+              + '<div class="hair" style="margin:11px 0"></div>'
+              + c.actions.map(function(a, ai){ return '<div class="row" style="align-items:center;gap:9px;margin-bottom:7px">'
+                  + '<span style="flex:1;min-width:0;font-size:12.5px">'+a.t+'<span class="dim" style="margin-left:7px;font-size:11.5px">'+a.d+'</span></span>'
+                  + '<button class="mini-btn '+(ai===0?"pri":"")+'" data-cond="'+i+'" data-act="'+a.k+'">采纳</button></div>'; }).join(""))
+        + '</div>';
+    }).join("");
+    $$("#condList [data-cond]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var c = CONDITIONS[Number(b.dataset.cond)], k = b.dataset.act;
+        if (k === "hire"){
+          HIRES.unshift({ role:"content", level:"p2", n:1, why:"达成条件补位：" + c.need, eta:"09-25", st:"招聘中", src:"AI 建议" });
+          c.decided = "已创建招聘需求：内容剪辑 p2 ×1（约 2 周内到岗）";
+        } else if (k === "slot"){
+          SLOTS.push({ name:"虚拟员工 · 新建", dev:"待绑定设备", on:false, caps:c.key==="asset"?["批量剪辑","字幕生成"]:["抖音发布","私信承接"], load:0 });
+          c.decided = "已新增虚拟员工槽位（" + c.title + "），客户端上线后自动领取任务";
+        } else {
+          c.decided = "已记入待办并指派责任人，进入项目跟踪";
+        }
+        renderConditions(); renderHire(); renderSlot();
+      });
+    });
+  }
+
+  function renderHire(){
+    var box = document.getElementById("hireTable"); if (!box) return;
+    if (!HIRES.length){ box.innerHTML = '<div class="dim" style="font-size:12.5px;padding:6px 2px">暂无招聘需求。</div>'; return; }
+    box.innerHTML = '<table class="arr-tb"><thead><tr><th style="min-width:130px">岗位 / 级别</th><th style="min-width:48px">人数</th>'
+      + '<th>为什么需要</th><th style="min-width:78px">建议到岗</th><th style="min-width:72px">状态</th><th></th></tr></thead><tbody>'
+      + HIRES.map(function(h, i){
+          var stc = h.st === "招聘中" ? "#fcd34d" : (h.st === "已入职" ? "#6ee7b7" : "#8b98ae");
+          return '<tr style="animation-delay:'+(i*0.05)+'s">'
+            + '<td class="nm">'+ROLE_LABEL[h.role]+' <span class="dim" style="font-size:11px">'+h.level+'</span>'
+            + (h.src ? ' <span class="tag" style="height:19px;font-size:10.5px">AI 建议</span>' : '') + '</td>'
+            + '<td class="num">'+h.n+'</td>'
+            + '<td class="req" title="'+h.why+'">'+h.why+'</td>'
+            + '<td class="tm">'+h.eta+'</td>'
+            + '<td style="color:'+stc+'">'+h.st+'</td>'
+            + '<td style="text-align:right"><button class="arr-edit" data-hire="'+i+'">'+(h.st==="已入职"?"查看":"转为成员")+'</button></td></tr>';
+        }).join("") + '</tbody></table>';
+    $$("#hireTable [data-hire]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var h = HIRES[Number(b.dataset.hire)];
+        if (h.st !== "已入职"){
+          h.st = "已入职";
+          MEMBERS.push({ name:ROLE_LABEL[h.role]+" · 新同事", dept:"业务中心", roles:[[h.role,h.level]], load:12, note:"招聘入职 · 来自需求「"+h.why.slice(0,16)+"…」", devices:[] });
+          renderOrg();
+        }
+        renderHire();
+      });
+    });
+  }
+
+  function renderSlot(){
+    var box = document.getElementById("slotTable"); if (!box) return;
+    box.innerHTML = '<table class="arr-tb"><thead><tr><th style="min-width:132px">槽位</th><th>能力包</th>'
+      + '<th style="min-width:62px">负载</th><th style="min-width:58px">状态</th></tr></thead><tbody>'
+      + SLOTS.map(function(a, i){
+          return '<tr style="animation-delay:'+(i*0.05)+'s">'
+            + '<td class="nm">'+a.name+'<div class="dim" style="font-size:11px;margin-top:3px">'+a.dev+'</div></td>'
+            + '<td>'+ a.caps.map(function(c){ return '<span class="cap">'+c+'</span>'; }).join("") + '</td>'
+            + '<td class="num" style="color:'+(a.load>88?"#fda4af":(a.load>60?"#fcd34d":"#8b98ae"))+'">'+a.load+'%</td>'
+            + '<td><span class="tag '+(a.on?"ok":"")+'" style="'+(a.on?"":"color:#5a6577")+'"><span class="'+(a.on?"dot":"off-dot")+'"></span>'+(a.on?"在线":"离线")+'</span></td></tr>';
+        }).join("") + '</tbody></table>';
+  }
+
+  document.getElementById("addSlotBtn").addEventListener("click", function(){
+    var picked = {};
+    openDrawer("虚拟员工 · 新增槽位", "选择能力包（可多选）",
+      '<div class="dsec"><h4>需要它干什么</h4><div style="margin-top:2px">'
+      + CAP_POOL.map(function(c,i){ return '<span class="cap" data-cap="'+c+'" style="cursor:pointer;padding:5px 10px;height:26px">'+c+'</span>'; }).join("")
+      + '</div></div>'
+      + '<div class="dsec"><h4>绑定设备</h4>'
+      + '<div class="edit-row"><label>设备</label><div class="grow-i"><select class="tin" id="slotDev">'
+      + ['待绑定设备（上线后自动领取）','深圳机 1','广州机 2'].map(function(d){ return '<option>'+d+'</option>'; }).join("")
+      + '</select></div></div>'
+      + '<div class="edit-row"><label>数量</label><div class="grow-i"><select class="tin" id="slotN"><option>1</option><option>2</option><option>3</option></select></div></div>'
+      + '<div class="dim" style="font-size:11.5px">没有可用设备时也可以先建槽位：客户端上线后自动领取任务，不占用编制。</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="mini-btn" id="slotCancel">取消</button>'
+      + '<button class="mini-btn pri" id="slotOk">创建槽位</button></div>');
+    $$("#dBody [data-cap]").forEach(function(chip){
+      chip.addEventListener("click", function(){
+        var c = chip.dataset.cap; picked[c] = !picked[c];
+        chip.style.background = picked[c] ? "rgba(34,211,238,.22)" : "rgba(34,211,238,.07)";
+        chip.style.borderColor = picked[c] ? "rgba(34,211,238,.7)" : "rgba(34,211,238,.28)";
+      });
+    });
+    $("#slotCancel").addEventListener("click", closeDrawer);
+    $("#slotOk").addEventListener("click", function(){
+      var caps = Object.keys(picked).filter(function(k){ return picked[k]; });
+      var dev = $("#slotDev").value, n = Number($("#slotN").value);
+      for (var i=0;i<n;i++){
+        SLOTS.push({ name:"虚拟员工 · 新建"+(n>1?String.fromCharCode(65+i):""), dev:dev,
+                     on: dev.indexOf("待绑定") < 0, caps: caps.length ? caps : ["待配置能力"], load:0 });
+      }
+      closeDrawer(); renderSlot(); renderHire();
+    });
+  });
+  document.getElementById("addHireBtn").addEventListener("click", function(){
+    HIRES.push({ role:"sales", level:"p1", n:1, why:"手动新增：待补充原因", eta:"待定", st:"待启动", src:"" });
+    renderHire();
+  });
+
+  renderConditions(); renderHire(); renderSlot();
+
+  renderOrg();
+
+  /* ---------- 虚拟员工页（独立入口，同一份数据） ---------- */
+  function renderAiPage(){
+    var el = document.getElementById("aiGrid"); if (!el) return;
+    el.innerHTML = AIE_ORG.map(function(a, i){
+      var caps = a.caps.concat(["槽位 " + a.dev]).join(" / ");
+      return '<div class="card glass" style="animation:viewIn .5s var(--ease) both '+(i*0.06)+'s">'
+        + '<div class="row" style="align-items:center;gap:12px">'
+        + '<div class="hex" style="width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font:600 13px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee);box-shadow:0 0 24px rgba(99,102,241,.4)">AI</div>'
+        + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+a.name+'</div>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:3px">'+a.dev+' · 归属 '+a.owner+'</div></div>'
+        + '<span class="tag '+(a.on?"ok":"")+'" style="'+(a.on?"":"color:#5a6577")+'"><span class="'+(a.on?"dot":"off-dot")+'"></span>'+(a.on?"在线":"离线")+'</span></div>'
+        + '<div class="mut" style="font-size:12.5px;margin:11px 0 10px">'+caps+'</div>'
+        + '<div class="mline" style="padding:0 0 10px"><span class="nm dim" style="font-size:11.5px">当前负载</span>'
+        + '<span class="bar"><i style="width:'+a.load+'%;animation-delay:'+(i*0.08)+'s"></i></span>'
+        + '<span class="num" style="width:38px;text-align:right;font-size:12px">'+a.load+'%</span></div>'
+        + '<div class="row" style="gap:8px"><button class="mini-btn pri">派任务</button>'
+        + '<button class="mini-btn">查看执行明细</button></div></div>';
+    }).join("");
+  }
+  renderAiPage();
 
   /* ================= 财务 ================= */
   (function finance(){
@@ -841,8 +1234,8 @@ table.tb tbody tr{animation:rowIn .5s var(--ease) both}
   })();
 
   /* ================= AI 规划引擎 ================= */
-  var MEMBERS = [["陈默","交付 p4"],["林珂","业务 p3"],["小柯","业务 p1"],["周研","内容 p2"],["虚拟员工·抖音A","槽位"]];
-  $("#memberChips").innerHTML = MEMBERS.map(function(m,i){
+  var PLAN_MEMBERS = [["陈默","交付 p4"],["林珂","业务 p3"],["小柯","业务 p1"],["周研","内容 p2"],["虚拟员工·抖音A","槽位"]];
+  $("#memberChips").innerHTML = PLAN_MEMBERS.map(function(m,i){
     return '<span class="chip'+(i<5?" on":"")+'">'+m[0]+'<span class="dim">·'+m[1]+'</span></span>';
   }).join("");
 
