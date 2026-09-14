@@ -733,6 +733,13 @@ def _is_oral_task(task: str) -> bool:
     return (task or "").strip().lower() in {"task1_industry", "task1_ip", "industry_hot_oral", "professional_ip_oral"}
 
 
+# The studio is split into two entries (IP 口播文案 / 朋友圈图文). Each entry must
+# only ever list its own drafts, so the list endpoint filters by this mode group
+# instead of returning every task the user ever generated.
+_ORAL_DRAFT_TASKS: tuple[str, ...] = ("industry_hot_oral", "professional_ip_oral", "task1_industry", "task1_ip")
+_MOMENTS_DRAFT_TASKS: tuple[str, ...] = ("moments_candidate", "task2_moments")
+
+
 def _is_wechat_channels_finder_username(value: str) -> bool:
     text = (value or "").strip()
     return bool(text) and (text.startswith("v2_") or "@finder" in text)
@@ -6892,6 +6899,7 @@ async def sync_keyword(
 @router.get("/api/ip-content/draft-records", summary="List IP content AI draft records")
 def list_draft_records(
     task: str = "",
+    mode: str = "",
     limit: int = Query(80, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -6900,6 +6908,10 @@ def list_draft_records(
     query = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id)
     if task.strip():
         query = query.filter(IPContentDraftRecord.task == task.strip())
+    elif mode.strip().lower() == "oral":
+        query = query.filter(IPContentDraftRecord.task.in_(_ORAL_DRAFT_TASKS))
+    elif mode.strip().lower() == "moments":
+        query = query.filter(IPContentDraftRecord.task.in_(_MOMENTS_DRAFT_TASKS))
     total = query.with_entities(func.count(IPContentDraftRecord.id)).scalar() or 0
     rows = query.order_by(IPContentDraftRecord.created_at.desc(), IPContentDraftRecord.id.desc()).offset(offset).limit(limit).all()
     return {
