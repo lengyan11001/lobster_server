@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from ..db import get_db
 from ..models import (
@@ -5596,6 +5596,7 @@ def pending_scheduled_task_runs(
     stale_cutoff = now - timedelta(minutes=20)
     stale_rows = (
         db.query(ScheduledTaskRun)
+        .options(defer(ScheduledTaskRun.progress), defer(ScheduledTaskRun.result_payload))
         .filter(
             ScheduledTaskRun.user_id == current_user_id,
             ScheduledTaskRun.status == "processing",
@@ -5635,6 +5636,10 @@ def pending_scheduled_task_runs(
 
     candidates = (
         db.query(ScheduledTaskRun)
+        # Claim scanning only needs the identity/workflow columns: loading the
+        # progress and result_payload JSON of every candidate made each poll worth
+        # tens of MB of RSS (2026-09-14 hang). They stay lazy for the claimed row.
+        .options(defer(ScheduledTaskRun.progress), defer(ScheduledTaskRun.result_payload))
         .with_for_update(skip_locked=True)
         .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "pending")
         .filter(ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)))
@@ -5840,10 +5845,13 @@ def pending_scheduled_publish_requests(
     now = datetime.utcnow()
     rows = (
         db.query(ScheduledTaskRun)
+        # The publish scan reads result_payload for its draft marker, but the big
+        # task payload is not needed here at all.
+        .options(defer(ScheduledTaskRun.payload), defer(ScheduledTaskRun.progress))
         .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "completed")
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.finished_at.asc(), ScheduledTaskRun.created_at.asc())
-        .limit(200)
+        .limit(60)
         .all()
     )
     picked: List[ScheduledTaskRun] = []
