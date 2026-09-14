@@ -54,6 +54,28 @@ FULL_ACCESS = {"boss", "gm"}
 ADMIN_TOKEN_PREFIX = "lobster-admin-"
 
 
+MANAGE_BRAND = "bihuo"
+
+
+def _user_by_phone(db: Session, phone: str) -> Optional[User]:
+    """按手机号找原系统用户（只取 brand=bihuo）。短信注册账号的邮箱形如 188xxxx@sms.lobster.local。"""
+    import re as _re
+
+    raw = str(phone or "").strip()
+    digits = _re.sub(r"\D", "", raw)
+    candidates = []
+    if len(digits) == 11 and digits.startswith("1"):
+        candidates.append(digits + "@sms.lobster.local")
+    if raw:
+        candidates.append(raw)
+    for email in candidates:
+        row = (db.query(User)
+               .filter(User.email == email, User.brand_mark == MANAGE_BRAND).first())
+        if row:
+            return row
+    return None
+
+
 def _roles_for(db: Session, company_id: int, user_id: int) -> List[MMembershipRole]:
     return (
         db.query(MMembershipRole)
@@ -97,6 +119,7 @@ class CompanyIn(BaseModel):
 class MemberIn(BaseModel):
     company_id: int
     display_name: str = ""
+    phone: str = ""
     user_id: Optional[int] = None
     dept: str = ""
     remark: str = ""
@@ -165,7 +188,8 @@ class AcceptIn(BaseModel):
 
 
 class BossIn(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
+    phone: str = ""
     company_name: str = ""
 
 
@@ -293,17 +317,19 @@ def bootstrap(user: Any = Depends(current_actor), db: Session = Depends(get_db))
 @router.get("/directory/lookup")
 def directory_lookup(q: str = Query("", max_length=120), user: Any = Depends(current_actor),
                      db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """按手机号（或邮箱）找原系统用户；只认 brand=bihuo。"""
     key = (q or "").strip()
     if not key:
         return {"found": False}
-    row = (
-        db.query(User)
-        .filter((User.email == key) | (User.wecom_userid == key) | (User.wechat_openid == key))
-        .first()
-    )
+    row = _user_by_phone(db, key)
+    if not row:
+        row = (db.query(User)
+               .filter(User.email == key, User.brand_mark == MANAGE_BRAND).first())
     if not row:
         return {"found": False}
-    return {"found": True, "user": {"id": row.id, "email": row.email, "brand_mark": row.brand_mark}}
+    return {"found": True,
+            "user": {"id": row.id, "email": row.email, "brand_mark": row.brand_mark,
+                     "phone": (row.email.split("@")[0] if "@sms.lobster.local" in (row.email or "") else "")}}
 
 
 @router.post("/companies")
@@ -348,6 +374,10 @@ def list_members(company_id: int, q: str = Query("", max_length=80),
 def add_member(body: MemberIn, user: Any = Depends(current_actor),
                db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, body.company_id, user)
+    if not body.user_id and body.phone.strip():
+        matched = _user_by_phone(db, body.phone)
+        if matched:
+            body.user_id = matched.id
     if body.user_id:
         dup = (db.query(MMembership)
                .filter(MMembership.company_id == company.id, MMembership.user_id == body.user_id).first())
@@ -1185,9 +1215,15 @@ def mark_boss(body: BossIn, user: Any = Depends(current_actor),
               db: Session = Depends(get_db)) -> Dict[str, Any]:
     if str(user.role or "").lower() != "admin":
         raise HTTPException(status_code=403, detail="只有平台管理员可以标记老板")
-    target = db.query(User).filter(User.id == body.user_id).first()
+    target = None
+    if body.user_id:
+        target = db.query(User).filter(User.id == body.user_id).first()
+    if target is None and body.phone.strip():
+        target = _user_by_phone(db, body.phone)
     if not target:
-        raise HTTPException(status_code=404, detail="账号不存在")
+        raise HTTPException(status_code=404, detail="没找到这个手机号对应的 bihuo 账号（请让对方先用客户端注册/登录）")
+    if str(target.brand_mark or "").strip().lower() != MANAGE_BRAND:
+        raise HTTPException(status_code=400, detail="该账号不是 bihuo 品牌，不能标记为老板")
     existing = db.query(MCompany).filter(MCompany.owner_user_id == target.id).first()
     if existing:
         return {"ok": True, "company_id": existing.id, "created": False}
@@ -1573,7 +1609,8 @@ def _slot_online(db: Session, user_id: int, installation_id: str) -> tuple:
 
 
 @router.get("/ai-employees")
-def list_ai_employees(company_id: int, user: Any = Depends(current_actor),
+def list_ai_employees(company_id: int, online_only: bool = Query(True),
+                      user: Any = Depends(current_actor),
                       db: Session = Depends(get_db)) -> Dict[str, Any]:
     company = _require_company(db, company_id, user)
     members = (db.query(MMembership)
@@ -1639,8 +1676,11 @@ def list_ai_employees(company_id: int, user: Any = Depends(current_actor),
                     "owner_name": m.display_name if m else "", "online": online,
                     "last_seen": seen, "capabilities": r.capabilities or [],
                     "status": r.status, "dispatched": len(dispatched)})
-    return {"ai_employees": out, "discovered": discovered,
-            "online_count": sum(1 for x in out if x["online"])}
+    online_count = sum(1 for x in out if x["online"])
+    if online_only:
+        out = [x for x in out if x["online"]]
+    return {"ai_employees": out, "discovered": discovered, "online_count": online_count,
+            "total": len(out)}
 
 
 class AiEmployeePatchIn(BaseModel):

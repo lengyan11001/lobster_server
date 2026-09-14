@@ -474,20 +474,33 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   document.getElementById("markBossBtn").addEventListener("click", function(){
     openDrawer("平台 · 标记老板", "把某个账号标记为老板",
       '<div class="dsec"><div class="dim" style="font-size:12px;line-height:1.7">被标记的账号会获得一家属于他的公司（老板身份），'
-      + '之后可以用「普通账号」登录去管理自己的组织架构与产品。</div>'
-      + '<label class="fl" style="margin-top:11px">账号（邮箱 / 企微 userid）</label><input id="mbEmail" placeholder="someone@example.com" style="margin-bottom:10px" />'
+      + '之后可以用「普通账号」登录去管理自己的组织架构与产品。仅支持 brand=bihuo 的账号。</div>'
+      + '<label class="fl" style="margin-top:11px">手机号</label>'
+      + '<div class="row" style="gap:8px;margin-bottom:10px">'
+      + '<input id="mbPhone" placeholder="11 位手机号" style="flex:1" />'
+      + '<button class="btn sm" id="mbLookup" style="height:38px">查找</button></div>'
+      + '<div id="mbFound" class="dim" style="font-size:11.5px;margin-bottom:10px">填手机号点「查找」确认账号</div>'
       + '<label class="fl">公司名称（可留空）</label><input id="mbCompany" placeholder="某某科技（深圳）" /></div>'
       + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="mbCancel">取消</button>'
       + '<button class="btn sm" id="mbOk">标记为老板</button></div>');
+    var mbTarget = null;
     document.getElementById("mbCancel").addEventListener("click", closeDrawer);
+    document.getElementById("mbLookup").addEventListener("click", function(){
+      var q = document.getElementById("mbPhone").value.trim();
+      if (!q) return toast("先填手机号", true);
+      api("/api/manage/directory/lookup?q=" + encodeURIComponent(q)).then(function(r){
+        mbTarget = r.found ? r.user : null;
+        document.getElementById("mbFound").innerHTML = mbTarget
+          ? '<span style="color:#6ee7b7">已找到：' + mbTarget.email + '</span>'
+          : '<span class="miss">没找到该手机号的 bihuo 账号</span>';
+      }).catch(function(e){ toast(e.message, true); });
+    });
     document.getElementById("mbOk").addEventListener("click", function(){
-      var email = document.getElementById("mbEmail").value.trim();
-      if (!email) return toast("请填账号", true);
-      api("/api/manage/directory/lookup?q=" + encodeURIComponent(email)).then(function(r){
-        if (!r.found) throw new Error("没找到这个账号，先让对方在客户端注册");
-        return api("/api/manage/admin/boss", { method:"POST",
-          body:{ user_id: r.user.id, company_name: document.getElementById("mbCompany").value.trim() } });
-      }).then(function(){ closeDrawer(); toast("已标记为老板"); return bootApp(); })
+      var phone = document.getElementById("mbPhone").value.trim();
+      if (!phone) return toast("请填手机号", true);
+      api("/api/manage/admin/boss", { method:"POST",
+        body:{ phone: phone, company_name: document.getElementById("mbCompany").value.trim() } })
+        .then(function(){ closeDrawer(); toast("已标记为老板"); return bootApp(); })
         .catch(function(e){ toast(e.message, true); });
     });
   });
@@ -540,6 +553,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       api("/api/manage/checkups?company_id=" + ACTIVE + "&slot=" + CHECKUP.slot).catch(function(){ return { items:[] }; }),
     ]).then(function(res){
       var fin = res[0].summary || {}, projects = res[1].projects || [];
+      var projectsOk = res[1] && res[1].projects !== undefined;
+      var drafting = projects.length - running;
       var conds = res[2].conditions || [];
       CHECKUP.items = res[3].items || [];
       var pending = conds.filter(function(c){ return !c.decided; }).length;
@@ -551,7 +566,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--ok)"></span>收入</div><div class="v num">'+mm(fin.income)+'</div><div class="dim" style="font-size:11.5px">已入账合计</div></div>'
         + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--bad)"></span>开销</div><div class="v num">'+mm(fin.expense)+'</div><div class="dim" style="font-size:11.5px">含人力 / 投放 / 云服务</div></div>'
         + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--accent)"></span>净额</div><div class="v num">'+mm(fin.net)+'</div><div class="dim" style="font-size:11.5px">收入 - 开销</div></div>'
-        + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--warn)"></span>项目</div><div class="v num">'+projects.length+'</div><div class="dim" style="font-size:11.5px">'+running+' 个已确认安排</div></div>'
+        + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--warn)"></span>项目</div><div class="v num">'+(projectsOk ? projects.length : '—')+'</div><div class="dim" style="font-size:11.5px">'+(projectsOk ? ('已确认安排 '+running+' · 草稿 '+drafting) : '读取失败')+'</div></div>'
         + '</div>'
         + '<div class="glass card" style="margin-top:12px">'
         + '<div class="row" style="align-items:center;gap:10px;margin-bottom:10px">'
@@ -1171,45 +1186,94 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 
   function openMemberEditor(id){
     var m = id ? ORG_CACHE.filter(function(x){ return x.id === id; })[0] : null;
-    var picked = {};
-    (m ? (m.roles || []) : []).forEach(function(r){ picked[r.code] = r.level; });
-    var roleRows = Object.keys(ROLES).map(function(code){
-      var on = !!picked[code];
-      return '<div class="row" style="align-items:center;gap:8px;margin-bottom:7px">'
-        + '<button class="btn sm ' + (on ? "" : "ghost") + '" data-role="' + code + '" style="flex:1;justify-content:flex-start">' + ROLES[code] + '</button>'
-        + '<select data-rlevel="' + code + '" style="width:106px;height:30px"' + (on ? "" : " disabled") + '>'
-        + LEVELS.map(function(l){ return '<option' + (picked[code] === l ? " selected" : "") + '>' + l + '</option>'; }).join("")
-        + '</select></div>';
-    }).join("");
+    var rows = (m ? (m.roles || []) : []).map(function(r){ return { code: r.code, level: r.level }; });
+    if (!rows.length) rows = [{ code: "sales", level: "p2" }];
+    var found = null;
+    var phone = m && m.email && m.email.indexOf("@sms.lobster.local") > 0 ? m.email.split("@")[0] : "";
+    var roleOptions = function(sel){
+      return Object.keys(ROLES).map(function(k){
+        return '<option value="' + k + '"' + (k === sel ? " selected" : "") + '>' + ROLES[k] + '</option>'; }).join("");
+    };
+    var levelOptions = function(sel){
+      return LEVELS.map(function(l){ return '<option' + (l === sel ? " selected" : "") + '>' + l + '</option>'; }).join("");
+    };
+    function roleRowsHtml(){
+      return rows.map(function(r, i){
+        return '<div class="row" style="align-items:center;gap:8px;margin-bottom:8px" data-row="' + i + '">'
+          + '<div style="flex:1"><select data-role="' + i + '">' + roleOptions(r.code) + '</select></div>'
+          + '<div style="flex:0 0 104px"><select data-level="' + i + '">' + levelOptions(r.level) + '</select></div>'
+          + '<button class="btn sm ghost" data-delrow="' + i + '" style="flex:0 0 auto">×</button></div>';
+      }).join("");
+    }
+    function bindRows(){
+      $$("#dBody [data-role]").forEach(function(el){
+        el.addEventListener("change", function(){ rows[Number(el.dataset.role)].code = el.value; });
+      });
+      $$("#dBody [data-level]").forEach(function(el){
+        el.addEventListener("change", function(){ rows[Number(el.dataset.level)].level = el.value; });
+      });
+      $$("#dBody [data-delrow]").forEach(function(el){
+        el.addEventListener("click", function(){
+          if (rows.length <= 1) return toast("至少保留一个岗位", true);
+          rows.splice(Number(el.dataset.delrow), 1);
+          refreshRows();
+        });
+      });
+    }
+    function refreshRows(){
+      var box = document.getElementById("roleRows");
+      if (!box) return;
+      box.innerHTML = roleRowsHtml();
+      bindRows();
+    }
     var html = '<div class="dsec"><h4>基本信息</h4>'
+      + (m ? '' : '<label class="fl">手机号（用于关联原系统账号）</label>'
+          + '<div class="row" style="gap:8px;margin-bottom:10px">'
+          + '<input id="ePhone" placeholder="11 位手机号" style="flex:1" />'
+          + '<button class="btn sm" id="eLookup" style="height:38px">查找</button></div>'
+          + '<div id="eFound" class="dim" style="font-size:11.5px;margin-bottom:10px">'
+          + '填手机号点「查找」，会自动关联原系统里 brand=bihuo 的账号（同一套账号可登录）。</div>')
+      + (m ? '<div class="dim" style="font-size:11.5px;margin-bottom:10px">'
+          + (phone ? ('已关联手机号 ' + phone) : (m.user_id ? "已绑定账号" : "未绑定账号（仅记录）")) + '</div>' : '')
       + '<label class="fl">姓名</label><input id="eName" value="' + (m ? m.name : "") + '" style="margin-bottom:10px" />'
       + '<div style="display:flex;gap:10px;margin-bottom:10px">'
-      + '<div style="flex:1"><label class="fl">部门</label><input id="eDept" value="' + (m ? (m.dept||"") : "") + '" /></div>'
+      + '<div style="flex:1"><label class="fl">部门</label><input id="eDept" value="' + (m ? (m.dept || "") : "") + '" /></div>'
       + '<div style="flex:0 0 110px"><label class="fl">负载 %</label><input id="eLoad" value="' + (m ? m.load : 0) + '" /></div></div>'
-      + '<label class="fl">备注</label><input id="eRemark" value="' + (m ? (m.remark||"") : "") + '" placeholder="基本情况描述" /></div>'
-      + '<div class="dsec"><h4>岗位（可多选 · 每个岗位单独设级别）</h4>' + roleRows + '</div>'
+      + '<label class="fl">备注（基本情况描述，可多行）</label>'
+      + '<textarea id="eRemark" rows="4" placeholder="擅长什么 / 负责范围 / 入职时间 / 其他要说明的">' + (m ? (m.remark || "") : "") + '</textarea></div>'
+      + '<div class="dsec"><h4>岗位（可加多行，每行岗位 + 级别）</h4>'
+      + '<div id="roleRows">' + roleRowsHtml() + '</div>'
+      + '<button class="btn sm ghost" id="addRow" style="margin-top:2px">＋ 添加岗位</button></div>'
       + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="eCancel">取消</button>'
       + '<button class="btn sm" id="eSave">' + (m ? "保存" : "添加") + '</button></div>';
     openDrawer(m ? "组织架构 · 编辑成员" : "组织架构 · 添加成员", m ? m.name : "新增成员", html);
-    $$("#dBody [data-role]").forEach(function(b){
-      b.addEventListener("click", function(){
-        var code = b.dataset.role;
-        if (picked[code]) { delete picked[code]; b.className = "btn sm ghost"; }
-        else { picked[code] = "p2"; b.className = "btn sm"; }
-        b.style.flex = "1"; b.style.justifyContent = "flex-start";
-        var sel = document.querySelector('#dBody [data-rlevel="' + code + '"]');
-        if (sel) { sel.disabled = !picked[code]; }
-      });
+    bindRows();
+    document.getElementById("addRow").addEventListener("click", function(){
+      rows.push({ code: "content", level: "p2" });
+      refreshRows();
+    });
+    var look = document.getElementById("eLookup");
+    if (look) look.addEventListener("click", function(){
+      var q = document.getElementById("ePhone").value.trim();
+      if (!q) return toast("先填手机号", true);
+      api("/api/manage/directory/lookup?q=" + encodeURIComponent(q)).then(function(r){
+        found = r.found ? r.user : null;
+        var box = document.getElementById("eFound");
+        if (found){
+          box.innerHTML = '<span style="color:#6ee7b7">已找到原系统账号：' + found.email + '（brand ' + found.brand_mark + '）</span>';
+          var nm = document.getElementById("eName");
+          if (nm && !nm.value) nm.value = (found.phone || found.email.split("@")[0]);
+        } else {
+          box.innerHTML = '<span class="miss">没找到该手机号对应的 bihuo 账号；可先只登记姓名（不参与登录）</span>';
+        }
+      }).catch(function(e){ toast(e.message, true); });
     });
     document.getElementById("eCancel").addEventListener("click", closeDrawer);
     document.getElementById("eSave").addEventListener("click", function(){
       var name = document.getElementById("eName").value.trim();
       if (!name) return toast("请填姓名", true);
-      var roles = Object.keys(picked).map(function(code){
-        var sel = document.querySelector('#dBody [data-rlevel="' + code + '"]');
-        return { code: code, level: sel ? sel.value : picked[code] };
-      });
-      if (!roles.length) return toast("至少选一个岗位", true);
+      var roles = rows.filter(function(r){ return r.code; });
+      if (!roles.length) return toast("至少一个岗位", true);
       var dept = document.getElementById("eDept").value.trim();
       var load = Number(document.getElementById("eLoad").value || 0);
       var remark = document.getElementById("eRemark").value.trim();
@@ -1219,8 +1283,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
           .then(function(){ closeDrawer(); toast("已保存"); loadOrg(); loadBrief(); })
           .catch(function(e){ toast(e.message, true); });
       } else {
+        var ph = (document.getElementById("ePhone") || {}).value || "";
         api("/api/manage/members", { method:"POST", body:{
           company_id: ACTIVE, display_name: name, dept: dept, load_pct: load, remark: remark,
+          phone: ph.trim(), user_id: found ? found.id : null,
           role_code: roles[0].code, level: roles[0].level } })
           .then(function(res){
             var mid = res && res.member && res.member.id;
@@ -1796,13 +1862,13 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       $("#s-ai").innerHTML = '<div class="glass card" style="margin-bottom:12px">'
         + '<div class="row" style="align-items:center;gap:10px">'
         + '<b style="font-size:13.5px">虚拟员工</b>'
-        + '<span class="dim" style="font-size:12px">来自公司成员在原系统登录过的设备（槽位），自动发现，不用手工录入</span>'
+        + '<span class="dim" style="font-size:12px">只显示当前在线的设备（5 分钟内有心跳）；离线设备不列出</span>'
         + '<span class="grow"></span>'
-        + '<span class="tag ' + (d.online_count ? "ok" : "") + '"><span class="dot"></span>' + (d.online_count || 0) + ' 在线 / ' + AI_CACHE.length + ' 台</span>'
-        + (d.discovered ? '<span class="tag cy">本次新发现 ' + d.discovered + ' 台</span>' : '')
-        + '</div><div class="dim" style="font-size:12px;margin-top:8px">在线判定：5 分钟内有心跳。派活会经主站定时任务链路下发到该设备，执行结果可回读。</div></div>'
+        + '<span class="tag ' + (d.online_count ? "ok" : "") + '"><span class="dot"></span>' + (d.online_count || 0) + ' 台在线</span>'
+        + (d.discovered ? '<span class="tag cy">新发现 ' + d.discovered + ' 台</span>' : '')
+        + '</div><div class="dim" style="font-size:12px;margin-top:8px">派活会经主站定时任务链路下发到该设备，执行结果可回读。设备离线时不会出现在这里。</div></div>'
         + (AI_CACHE.length ? '<div class="g3">' + AI_CACHE.map(aiCard).join("") + '</div>'
-                           : '<div class="glass card"><div class="dim">还没发现设备：先到「组织」添加已登录过客户端的账号，或让对方登录一次在线版。</div></div>');
+                           : '<div class="glass card"><div class="dim">当前没有在线设备。让对方打开客户端（保持在线）后点「刷新」；离线设备不列出。</div></div>');
       $$("#s-ai [data-aedit]").forEach(function(b){ b.addEventListener("click", function(){ openAiEditor(Number(b.dataset.aedit)); }); });
       $$("#s-ai [data-adel]").forEach(function(b){
         b.addEventListener("click", function(){
