@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -107,10 +108,24 @@ def _worker_rss_kb() -> int:
 
 try:
     _MEMORY_SAMPLE_THRESHOLD_KB = max(
-        0, int(float(os.environ.get("LOBSTER_REQUEST_MEMORY_SAMPLE_MB", "24")) * 1024)
+        0, int(float(os.environ.get("LOBSTER_REQUEST_MEMORY_SAMPLE_MB", "8")) * 1024)
     )
 except (TypeError, ValueError):
-    _MEMORY_SAMPLE_THRESHOLD_KB = 24 * 1024
+    _MEMORY_SAMPLE_THRESHOLD_KB = 8 * 1024
+
+try:
+    _MEMORY_SAMPLE_SUMMARY_SECONDS = max(
+        0.0, float(os.environ.get("LOBSTER_WORKER_MEMORY_LOG_SEC", "300"))
+    )
+except (TypeError, ValueError):
+    _MEMORY_SAMPLE_SUMMARY_SECONDS = 300.0
+
+# Per-worker request tally used by the periodic memory summary. It is a small
+# dict of path -> count; the summary shows which endpoints a growing worker is
+# actually serving, which the 2026-09-14 hang could not be attributed to.
+_worker_request_counts: dict[str, int] = {}
+_worker_request_total = 0
+_worker_memory_last_summary = 0.0
 _STARTUP_DB_LOCK_KEY = 510051001
 
 
@@ -1531,20 +1546,42 @@ def create_app() -> FastAPI:
         (2026-09-14 hang). The per-request delta keeps that visible without a
         profiler: set LOBSTER_REQUEST_MEMORY_SAMPLE_MB=0 to disable.
         """
-        if _MEMORY_SAMPLE_THRESHOLD_KB <= 0:
+        global _worker_request_total, _worker_memory_last_summary
+        sampling = _MEMORY_SAMPLE_THRESHOLD_KB > 0 or _MEMORY_SAMPLE_SUMMARY_SECONDS > 0
+        if not sampling:
             return await call_next(request)
+        path = request.url.path
         before_kb = _worker_rss_kb()
         response = await call_next(request)
-        delta_kb = _worker_rss_kb() - before_kb
-        if delta_kb >= _MEMORY_SAMPLE_THRESHOLD_KB:
+        after_kb = _worker_rss_kb()
+        _worker_request_counts[path] = _worker_request_counts.get(path, 0) + 1
+        _worker_request_total += 1
+        delta_kb = after_kb - before_kb
+        if _MEMORY_SAMPLE_THRESHOLD_KB > 0 and delta_kb >= _MEMORY_SAMPLE_THRESHOLD_KB:
             logger.warning(
                 "[mem-sample] pid=%s +%.1fMB rss=%.0fMB %s %s",
                 os.getpid(),
                 delta_kb / 1024.0,
-                _worker_rss_kb() / 1024.0,
+                after_kb / 1024.0,
                 request.method,
-                request.url.path,
+                path,
             )
+        if _MEMORY_SAMPLE_SUMMARY_SECONDS > 0:
+            now = time.monotonic()
+            if _worker_memory_last_summary == 0.0:
+                _worker_memory_last_summary = now
+            elif (now - _worker_memory_last_summary) >= _MEMORY_SAMPLE_SUMMARY_SECONDS:
+                top = sorted(_worker_request_counts.items(), key=lambda item: item[1], reverse=True)[:6]
+                logger.warning(
+                    "[mem-sample] pid=%s rss=%.0fMB requests=%s top=%s",
+                    os.getpid(),
+                    after_kb / 1024.0,
+                    _worker_request_total,
+                    ", ".join(f"{name}:{count}" for name, count in top),
+                )
+                _worker_request_counts.clear()
+                _worker_request_total = 0
+                _worker_memory_last_summary = now
         return response
 
     @app.exception_handler(Exception)
