@@ -93,6 +93,24 @@ from .services.workload_guard import install_workload_guard
 from .services.retire_openclaw_tasks import migrate_openclaw_task_kinds
 
 logger = logging.getLogger(__name__)
+
+
+def _worker_rss_kb() -> int:
+    """Resident set size of this worker in KB (0 when /proc is unavailable)."""
+    try:
+        with open("/proc/self/statm", "r", encoding="ascii") as handle:
+            pages = int(handle.read().split()[1])
+        return pages * (os.sysconf("SC_PAGE_SIZE") // 1024)
+    except Exception:
+        return 0
+
+
+try:
+    _MEMORY_SAMPLE_THRESHOLD_KB = max(
+        0, int(float(os.environ.get("LOBSTER_REQUEST_MEMORY_SAMPLE_MB", "24")) * 1024)
+    )
+except (TypeError, ValueError):
+    _MEMORY_SAMPLE_THRESHOLD_KB = 24 * 1024
 _STARTUP_DB_LOCK_KEY = 510051001
 
 
@@ -1503,6 +1521,31 @@ def create_app() -> FastAPI:
             return await call_next(request)
         finally:
             reset_db_request_context(token)
+
+    @app.middleware("http")
+    async def request_memory_sampler(request: Request, call_next):
+        """Log requests that grow this worker's RSS noticeably.
+
+        The fleet polls a handful of endpoints thousands of times an hour; when one
+        of them retains hundreds of MB the worker balloons and the whole box dies
+        (2026-09-14 hang). The per-request delta keeps that visible without a
+        profiler: set LOBSTER_REQUEST_MEMORY_SAMPLE_MB=0 to disable.
+        """
+        if _MEMORY_SAMPLE_THRESHOLD_KB <= 0:
+            return await call_next(request)
+        before_kb = _worker_rss_kb()
+        response = await call_next(request)
+        delta_kb = _worker_rss_kb() - before_kb
+        if delta_kb >= _MEMORY_SAMPLE_THRESHOLD_KB:
+            logger.warning(
+                "[mem-sample] pid=%s +%.1fMB rss=%.0fMB %s %s",
+                os.getpid(),
+                delta_kb / 1024.0,
+                _worker_rss_kb() / 1024.0,
+                request.method,
+                request.url.path,
+            )
+        return response
 
     @app.exception_handler(Exception)
     async def catch_all(request: Request, exc: Exception):

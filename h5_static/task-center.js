@@ -274,7 +274,8 @@
       state.timer = null;
       if (!state.authenticated || !token()) return;
       await refresh();
-      schedulePoll(state.rows.some(isActive) ? 4000 : 10000);
+    // Keep the fleet-side polling light: 20s while a task runs, 60s when idle.
+    schedulePoll(state.rows.some(isActive) ? 20000 : 60000);
     }, Math.max(0, Number(delay) || 0));
   }
 
