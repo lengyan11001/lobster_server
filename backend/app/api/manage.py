@@ -335,6 +335,15 @@ def directory_lookup(q: str = Query("", max_length=120), user: Any = Depends(cur
 @router.post("/companies")
 def create_company(body: CompanyIn, user: Any = Depends(current_actor),
                    db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """新建公司：创建者成为该公司的老板。
+
+    平台管理员（令牌不是用户 JWT，id=0）不能凭空建公司——公司必须有归属账号，
+    这类情况走「标记老板」把公司建在具体账号名下。
+    """
+    if getattr(user, "id", 0) <= 0:
+        raise HTTPException(status_code=400, detail="平台管理员请用「标记老板」把公司建在具体账号名下")
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="请填公司名称")
     company = MCompany(name=body.name.strip(), short_name=body.short_name.strip(),
                        industry=body.industry.strip(), owner_user_id=user.id)
     db.add(company)
@@ -347,7 +356,7 @@ def create_company(body: CompanyIn, user: Any = Depends(current_actor),
     db.add(MMembershipRole(company_id=company.id, membership_id=membership.id, role_code="boss", level="p4"))
     _audit(db, company.id, user.id, "company.create", "company", company.id, {"name": company.name})
     db.commit()
-    return {"ok": True, "company_id": company.id}
+    return {"ok": True, "company_id": company.id, "name": company.name}
 
 
 @router.get("/members")

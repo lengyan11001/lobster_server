@@ -419,8 +419,9 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     return api("/api/manage/bootstrap").then(function(data){
       ME = data.user; COMPANIES = data.companies || []; ROLES = data.roles || {};
       $("#userChip").textContent = ME.email + (data.is_platform_admin ? " · 平台管理员" : "");
+      // 任何人都可以新建公司（老板自己建、自己命名）；「标记老板」仅平台管理员
+      document.getElementById("newCompanyBtn").classList.remove("hide");
       if (data.is_platform_admin){
-        document.getElementById("newCompanyBtn").classList.remove("hide");
         document.getElementById("markBossBtn").classList.remove("hide");
       }
       if (!COMPANIES.length){
@@ -451,7 +452,17 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       var name = $("#newCoName").value.trim();
       if (!name) return toast("请填公司名称", true);
       api("/api/manage/companies", { method:"POST", body:{ name:name } })
-        .then(function(){ toast("已创建"); return bootApp(); })
+        .then(function(res){
+          toast("已创建「" + name + "」");
+          return bootApp().then(function(){
+            if (res && res.company_id){
+              ACTIVE = res.company_id;
+              var sel = document.getElementById("companySel");
+              if (sel) sel.value = String(ACTIVE);
+              refreshAll();
+            }
+          });
+        })
         .catch(function(e){ toast(e.message, true); });
     });
   }
@@ -467,7 +478,18 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       var name = document.getElementById("ncName").value.trim();
       if (!name) return toast("请填公司名称", true);
       api("/api/manage/companies", { method:"POST", body:{ name: name, industry: document.getElementById("ncInd").value.trim() } })
-        .then(function(){ closeDrawer(); toast("已创建"); return bootApp(); })
+        .then(function(res){
+          closeDrawer();
+          toast("已创建「" + name + "」");
+          return bootApp().then(function(){
+            if (res && res.company_id){
+              ACTIVE = res.company_id;
+              var sel = document.getElementById("companySel");
+              if (sel) sel.value = String(ACTIVE);
+              refreshAll();
+            }
+          });
+        })
         .catch(function(e){ toast(e.message, true); });
     });
   });
