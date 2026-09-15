@@ -3014,7 +3014,6 @@ def _activate_nodes_for_device(
             for _task in (
                 db.query(ScheduledTask)
                 .filter(
-                    ScheduledTask.created_by_role == "workflow",
                     ScheduledTask.user_id == int(owner.id),
                     ScheduledTask.status == "active",
                 )
@@ -3022,7 +3021,12 @@ def _activate_nodes_for_device(
             ):
                 if int(_task.id) in _keep_ids:
                     continue
-                if installation_id not in [str(value) for value in (_task.target_installation_ids or [])]:
+                # 槽位在库里可能带前缀（例如 u54-9cfefed5…），必须用"包含"匹配；
+                # 精确相等会漏判（09-15 排查 9cfefed5 槽位时踩到过）。
+                if not any(
+                    str(installation_id) in str(value)
+                    for value in (_task.target_installation_ids or [])
+                ):
                     continue
                 _task.status = "paused"
                 _paused_ids.append(int(_task.id))
