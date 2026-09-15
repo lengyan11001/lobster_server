@@ -982,6 +982,23 @@ _MULTIMODAL_FALLBACK_MODEL = "apiz/seed-2.0-mini"
 _PRIMARY_DEEPSEEK_MODEL = "deepseek-flash"
 _TEXT_FALLBACK_MODEL = "deepseek-chat"
 
+# DeepSeek 官方直连覆盖的 model id。这些 id 只走 direct:deepseek：
+# xskill 的 deepseek 通道（deepseek/deepseek-v3.2 @xskill-v3、deepseek-chat @xskill）
+# 已下线，不再作为候补——线上它们持续返回 "No available fal accounts"(503)，
+# 只会让整条候选链白耗一跳。
+_DEEPSEEK_DIRECT_MODEL_IDS = frozenset({
+    "deepseek-flash",
+    "deepseek-chat",
+    "deepseek-reasoner",
+})
+
+
+def _is_deepseek_model_id(model: str) -> bool:
+    mid = (model or "").strip().lower()
+    if not mid:
+        return False
+    return mid in _DEEPSEEK_DIRECT_MODEL_IDS or mid.startswith("deepseek/")
+
 
 def _request_has_multimodal_images(body: Any) -> bool:
     """Return whether an OpenAI chat body contains an image content part."""
@@ -1249,11 +1266,15 @@ def _sutui_chat_attempts_for_models(
                 # Do not duplicate the YYAPI model through xskill.  The next
                 # model candidate is the actual fallback route.
                 continue
-            if dr.get("provider") == "deepseek" and mid == _PRIMARY_DEEPSEEK_MODEL:
-                # deepseek-flash is an official-only id; do not retry this id
-                # against xskill after the direct route fails. Continue with
-                # the actual fallback candidate instead.
+            if dr.get("provider") == "deepseek":
+                # 官方直连覆盖的 id：直连失败后直接进入下一个候选，不叠加 xskill 的
+                # deepseek 通道（xskill 侧依赖 fal 账号池，只会多耗一跳并报
+                # "No available fal accounts"）。
                 continue
+        if _is_deepseek_model_id(mid):
+            # DeepSeek 的 id 只认官方直连（上面的 direct:deepseek）。没有直连 key 的
+            # 环境直接跳过这个候选，不再退到 xskill 的 deepseek 通道。
+            continue
         v3 = _get_v3_route(mid, token)
         if v3 and token:
             attempts.append({

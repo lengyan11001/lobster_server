@@ -6,7 +6,8 @@ from backend.app.api.sutui_chat_proxy import (
 import backend.app.api.sutui_chat_proxy as sutui_chat_proxy
 
 
-def test_model_override_still_keeps_deepseek_fallback_route(monkeypatch):
+def test_deepseek_candidates_are_direct_only(monkeypatch):
+    """DeepSeek 的 id 只走官方直连；没有直连 key 时不再退到 xskill 的 deepseek 通道。"""
     monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", None, raising=False)
     monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     attempts = _sutui_chat_attempts_for_models(
@@ -15,13 +16,16 @@ def test_model_override_still_keeps_deepseek_fallback_route(monkeypatch):
         forced_model_override=False,
     )
 
-    assert attempts[0]["model"] == "deepseek/deepseek-v3.2"
-    assert attempts[0]["provider"] == "xskill-v3"
-    assert attempts[0]["is_direct"] is False
-    assert any(a["model"] == "deepseek-chat" for a in attempts)
+    pairs = [(a["model"], a["provider"]) for a in attempts]
+    assert ("deepseek/deepseek-v3.2", "xskill-v3") not in pairs
+    assert ("deepseek-chat", "xskill") not in pairs
+    assert pairs == [
+        ("apiz/seed-2.0-mini", "xskill"),
+        ("openai/gpt-4.1", "xskill"),
+    ]
 
 
-def test_default_deepseek_chat_keeps_existing_fallback_routes(monkeypatch):
+def test_default_deepseek_chat_drops_the_xskill_hops(monkeypatch):
     monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     candidates = _sutui_chat_model_candidates("deepseek-chat")
     attempts = _sutui_chat_attempts_for_models(
@@ -31,9 +35,7 @@ def test_default_deepseek_chat_keeps_existing_fallback_routes(monkeypatch):
     )
 
     assert candidates == ["deepseek-chat", "apiz/seed-2.0-mini"]
-    assert [(a["model"], a["provider"]) for a in attempts[:3]] == [
-        ("deepseek/deepseek-v3.2", "xskill-v3"),
-        ("deepseek-chat", "xskill"),
+    assert [(a["model"], a["provider"]) for a in attempts] == [
         ("apiz/seed-2.0-mini", "xskill"),
     ]
 
@@ -54,8 +56,8 @@ def test_default_chain_uses_provider_qualified_gpt_5_6_as_final_fallback(monkeyp
 
     assert candidates == ["deepseek-chat", "apiz/seed-2.0-mini"]
     assert (attempts[0]["model"], attempts[0]["provider"]) == (
-        "deepseek/deepseek-v3.2",
-        "xskill-v3",
+        "apiz/seed-2.0-mini",
+        "xskill",
     )
 
 
