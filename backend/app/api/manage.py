@@ -359,6 +359,48 @@ def create_company(body: CompanyIn, user: Any = Depends(current_actor),
     return {"ok": True, "company_id": company.id, "name": company.name}
 
 
+def _purge_company(db: Session, company_id: int) -> Dict[str, int]:
+    """删除一家公司及其全部业务数据（成员/项目/客户/财务/日检/条件/槽位/审计…）。"""
+    removed: Dict[str, int] = {}
+    mids = [m.id for m in db.query(MMembership).filter(MMembership.company_id == company_id).all()]
+    if mids:
+        removed["membership_role"] = (db.query(MMembershipRole)
+                                      .filter(MMembershipRole.membership_id.in_(mids))
+                                      .delete(synchronize_session=False))
+    for name, model in (("plan_node", MPlanNode), ("plan_version", MPlanVersion),
+                        ("dispatch", MDispatch), ("customer_log", MCustomerLog),
+                        ("customer", MCustomer), ("delivery", MDelivery),
+                        ("work_log", MWorkLog), ("checkup", MCheckup),
+                        ("condition", MCondition), ("finance_entry", MFinanceEntry),
+                        ("product", MProduct), ("project", MProject),
+                        ("ai_employee", MAiEmployee), ("audit_log", MAuditLog)):
+        removed[name] = (db.query(model).filter(model.company_id == company_id)
+                         .delete(synchronize_session=False))
+    removed["membership"] = (db.query(MMembership).filter(MMembership.company_id == company_id)
+                             .delete(synchronize_session=False))
+    removed["company"] = (db.query(MCompany).filter(MCompany.id == company_id)
+                          .delete(synchronize_session=False))
+    return {k: int(v or 0) for k, v in removed.items()}
+
+
+@router.delete("/companies/{company_id}")
+def delete_company(company_id: int, user: Any = Depends(current_actor),
+                   db: Session = Depends(get_db)) -> Dict[str, Any]:
+    company = db.query(MCompany).filter(MCompany.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="公司不存在")
+    actor_id = getattr(user, "id", 0) or 0
+    is_admin = str(getattr(user, "role", "") or "").lower() == "admin" and actor_id == 0
+    roles = {r.role_code for r in _roles_for(db, company_id, actor_id)} if actor_id else set()
+    if not is_admin and company.owner_user_id != actor_id and not (roles & FULL_ACCESS):
+        raise HTTPException(status_code=403, detail="只有该公司老板或平台管理员可以删除公司")
+    name = company.name
+    detail = _purge_company(db, company_id)
+    _audit(db, None, actor_id, "company.delete", "company", company_id, {"name": name, **detail})
+    db.commit()
+    return {"ok": True, "deleted": company_id, "name": name, "detail": detail}
+
+
 @router.get("/members")
 def list_members(company_id: int, q: str = Query("", max_length=80),
                  include_disabled: bool = Query(False),

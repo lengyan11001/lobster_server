@@ -251,6 +251,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       <span class="grow"></span>
       <button class="btn sm ghost hide" id="newCompanyBtn">＋ 新建公司</button>
       <button class="btn sm ghost hide" id="markBossBtn">标记老板</button>
+      <button class="btn sm ghost hide" id="delCompanyBtn" style="color:#fda4af;border-color:rgba(251,113,133,.35)">删除公司</button>
       <select id="companySel" style="width:210px"></select>
       <button class="btn sm ghost" id="reload">↻ 刷新</button>
       <span class="chip" style="position:static" id="userChip">—</span>
@@ -421,6 +422,9 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       $("#userChip").textContent = ME.email + (data.is_platform_admin ? " · 平台管理员" : "");
       // 任何人都可以新建公司（老板自己建、自己命名）；「标记老板」仅平台管理员
       document.getElementById("newCompanyBtn").classList.remove("hide");
+      var cur = (COMPANIES || []).filter(function(c){ return c.id === ACTIVE; })[0];
+      var canDel = (cur && cur.owner) || data.is_platform_admin;
+      document.getElementById("delCompanyBtn").classList.toggle("hide", !canDel);
       if (data.is_platform_admin){
         document.getElementById("markBossBtn").classList.remove("hide");
       }
@@ -493,6 +497,25 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         .catch(function(e){ toast(e.message, true); });
     });
   });
+  document.getElementById("delCompanyBtn").addEventListener("click", function(){
+    var cur = (COMPANIES || []).filter(function(c){ return c.id === ACTIVE; })[0];
+    if (!cur) return;
+    openDrawer("公司 · 删除", cur.name,
+      '<div class="dsec"><h4>将删除</h4>'
+      + '<div class="mline"><span class="nm">公司</span><span class="mut">' + cur.name + '</span></div>'
+      + '<div class="mline"><span class="nm">连同数据</span><span class="mut">成员、岗位、产品、项目与工作安排、'
+      + '计划版本、客户与跟进、交付单、工作记录、日检、达成条件、财务、已登记设备</span></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:9px">删除后不可恢复（账号本身不受影响）。</div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="dcNo">取消</button>'
+      + '<button class="btn sm" id="dcYes" style="background:linear-gradient(100deg,#fda4af,#fb7185);color:#210a10">确认删除</button></div>');
+    document.getElementById("dcNo").addEventListener("click", closeDrawer);
+    document.getElementById("dcYes").addEventListener("click", function(){
+      api("/api/manage/companies/" + cur.id, { method:"DELETE" })
+        .then(function(r){ closeDrawer(); toast("已删除「" + r.name + "」"); ACTIVE = null; return bootApp(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  });
+
   document.getElementById("markBossBtn").addEventListener("click", function(){
     openDrawer("平台 · 标记老板", "把某个账号标记为老板",
       '<div class="dsec"><div class="dim" style="font-size:12px;line-height:1.7">被标记的账号会获得一家属于他的公司（老板身份），'
