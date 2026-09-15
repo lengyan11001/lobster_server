@@ -25,6 +25,27 @@ def _create_manage_tables() -> None:
     logger.info("[MANAGE] tables ready: %s", ", ".join(sorted(t.name for t in tables)))
 
 
+def _migrate_manage_ai_employee_columns() -> None:
+    """m_ai_employee 的「手动添加」标识列（老库用 ALTER 补，不重建表）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("m_ai_employee"):
+            return
+        cols = [c["name"] for c in insp.get_columns("m_ai_employee")]
+        with engine.begin() as conn:
+            if "device_id" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN device_id VARCHAR(128) NOT NULL DEFAULT ''"))
+            if "source" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'slot'"))
+            if "note" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN note VARCHAR(255) NOT NULL DEFAULT ''"))
+        logger.info("[MANAGE] m_ai_employee columns ok")
+    except Exception:
+        logger.exception("[MANAGE] m_ai_employee column migration failed")
+
+
 def _seed_if_needed() -> None:
     """首次部署给一个可用的样例公司（只在指定老板邮箱且其名下没有公司时执行）。"""
     email = (os.environ.get("MANAGE_SEED_OWNER_EMAIL") or "").strip().lower()
@@ -134,6 +155,7 @@ app.add_middleware(
 def _on_startup() -> None:
     try:
         _create_manage_tables()
+        _migrate_manage_ai_employee_columns()
     except Exception:
         logger.exception("[MANAGE] create tables failed")
     try:
