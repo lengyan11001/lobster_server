@@ -420,6 +420,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     setTimeout(function(){ lp.classList.add("hide"); }, 620);
     var app = document.getElementById("app");
     app.classList.remove("hide");
+    // 首屏也要把标题/副标题对齐当前板块，避免 landing 切过来还留着占位符「—」
+    var onBtn = document.querySelector(".rail button.on");
+    var tt = TITLES[(onBtn && onBtn.dataset.go) || "s-brief"];
+    if (tt){ $("#pgTitle").textContent = tt[0]; $("#pgSub").textContent = tt[1]; }
   }
 
   /* ---------- 启动 ---------- */
@@ -605,13 +609,14 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     ]).then(function(res){
       var fin = res[0].summary || {}, projects = res[1].projects || [];
       var projectsOk = res[1] && res[1].projects !== undefined;
-      var drafting = projects.length - running;
+      // 先算 running，再算草稿数；空列表时不能出现 NaN
+      var running = projects.filter(function(p){ return p.arrangement_status === "confirmed"; }).length;
+      var drafting = Math.max(0, projects.length - running);
       var conds = res[2].conditions || [];
       CHECKUP.items = res[3].items || [];
       var pending = conds.filter(function(c){ return !c.decided; }).length;
       document.getElementById("chipCond").textContent = pending + " 项待补位";
       var mm = function(v){ return "¥" + Number(v || 0).toLocaleString("zh-CN"); };
-      var running = projects.filter(function(p){ return p.arrangement_status === "confirmed"; }).length;
       $("#s-brief").innerHTML =
         '<div class="g4">'
         + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--ok)"></span>收入</div><div class="v num">'+mm(fin.income)+'</div><div class="dim" style="font-size:11.5px">已入账合计</div></div>'
