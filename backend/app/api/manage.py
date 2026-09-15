@@ -1949,6 +1949,19 @@ def ai_employee_remote_session(ai_id: int, user: Any = Depends(current_actor),
     if not device_id:
         raise HTTPException(status_code=400,
                             detail="这台设备没绑定远程设备号：用「设备号 + 验证码」重新添加一次即可")
+    devices = _remote_support_call("GET", "/api/remote-admin/devices")
+    bound = None
+    for item in (devices.get("devices") or []):
+        if str(item.get("deviceId") or item.get("id") or "").strip().upper() == device_id:
+            bound = item
+            break
+    if bound is None:
+        raise HTTPException(status_code=409, detail=(
+            "这台设备的远程客户端还没连上中继（设备号 " + device_id
+            + "）：让对方打开远程客户端，或者用「设备号 + 验证码」重新添加一次"))
+    if not bool((bound.get("lastDevice") or {}).get("online")):
+        raise HTTPException(status_code=409, detail=(
+            "远程客户端当前不在线（设备号 " + device_id + "）：画面要等它连上中继才能看"))
     data = _remote_support_call("POST", "/api/remote-admin/controller-session")
     public_url = str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")
     _audit(db, company.id, getattr(user, "id", 0), "ai_employee.remote", "ai_employee", row.id,
