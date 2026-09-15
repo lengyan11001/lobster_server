@@ -293,7 +293,14 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   var $ = function(s){ return document.querySelector(s); };
   var $$ = function(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); };
   var TOKEN = localStorage.getItem("manage_token") || "";
-  var ME = null, COMPANIES = [], ACTIVE = null, ROLES = {};
+  var ME = null, COMPANIES = [], ACTIVE = null, ROLES = {}, IS_ADMIN = false;
+  function updateCompanyActions(){
+    var nb = document.getElementById("newCompanyBtn"), db = document.getElementById("delCompanyBtn");
+    if (!nb || !db) return;
+    var cur = (COMPANIES || []).filter(function(c){ return c.id === ACTIVE; })[0];
+    nb.classList.remove("hide");
+    db.classList.toggle("hide", !IS_ADMIN && !(cur && cur.owner));
+  }
   var CHECKUP = { slot: "1700", items: [] };
 
   /* ---------- 背景视频 ---------- */
@@ -421,10 +428,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       ME = data.user; COMPANIES = data.companies || []; ROLES = data.roles || {};
       $("#userChip").textContent = ME.email + (data.is_platform_admin ? " · 平台管理员" : "");
       // 任何人都可以新建公司（老板自己建、自己命名）；「标记老板」仅平台管理员
-      document.getElementById("newCompanyBtn").classList.remove("hide");
-      var cur = (COMPANIES || []).filter(function(c){ return c.id === ACTIVE; })[0];
-      var canDel = (cur && cur.owner) || data.is_platform_admin;
-      document.getElementById("delCompanyBtn").classList.toggle("hide", !canDel);
+      IS_ADMIN = !!data.is_platform_admin;
+      updateCompanyActions();
       if (data.is_platform_admin){
         document.getElementById("markBossBtn").classList.remove("hide");
       }
@@ -436,6 +441,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         return '<option value="'+c.id+'">'+c.name+(c.owner?"（我的）":"")+'</option>';
       }).join("");
       $("#companySel").value = String(ACTIVE);
+      updateCompanyActions();
       showApp(); refreshAll();
     }).catch(function(e){
       if (String(e.message).indexOf("401") >= 0 || String(e.message).indexOf("Not authenticated") >= 0){
@@ -551,7 +557,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   });
 
   $("#companySel").addEventListener("change", function(){
-    ACTIVE = Number(this.value); refreshAll();
+    ACTIVE = Number(this.value); updateCompanyActions(); refreshAll();
   });
   $("#reload").addEventListener("click", function(){ refreshAll(); toast("已刷新"); });
 
