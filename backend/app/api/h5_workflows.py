@@ -39,6 +39,7 @@ from .scheduled_tasks import (
     _create_task_row,
     _h5_dh_context_params,
     _delete_task_row,
+    _hydrate_workflow_task_payload,
     _local_bestseller_profile_from_persona,
     _serialize_task,
 )
@@ -2861,19 +2862,22 @@ def _workflow_node_should_start_now(
     return start <= current <= end
 
 
-def _activate_nodes_for_device(
+def _prepare_activation_nodes(
     *,
     db: Session,
-    current_user: User,
     owner: User,
     installation_id: str,
-    template_id: int,
-    template_owner_user_id: int,
     template_name: str,
     nodes: list[dict[str, Any]],
-    timezone_offset_minutes: Optional[int],
     snapshot_extra: Optional[dict[str, Any]] = None,
-):
+) -> list[dict[str, Any]]:
+    """启动工作流与节点「演示」共用的节点组装。
+
+    两处必须走同一段逻辑，否则「演示」下发的能力/参数会和真正启用时不一致
+    （09-15 排查：Online 节点「演示」直接照抄节点里残留的旧 plan，数字人节点
+    里留的还是 1.0 的 hifly.video.create_by_tts + 空参数，演示必然秒失败
+    "请选择数字人"）。
+    """
     snapshot_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
     if snapshot_key in _enabled_system_workflow_keys():
         nodes = _sanitize_system_douyin_collection_defaults(nodes)
@@ -2909,6 +2913,102 @@ def _activate_nodes_for_device(
         installation_id=installation_id,
         nodes=nodes,
     )
+    return nodes
+
+
+def _workflow_node_task_spec(
+    node: dict[str, Any],
+    parent_node: Optional[dict[str, Any]],
+    *,
+    installation_id: str,
+    template_id: int,
+    template_name: str,
+    snapshot_extra: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """把组装好的节点转成一条待下发任务（启动与演示共用同一份字段）。"""
+    plan = node.get("plan") or {}
+    task_kind = str(plan.get("task_kind") or "").strip().lower()
+    payload = dict(plan.get("payload") or {})
+    if task_kind == "douyin_leads":
+        # Each H5 workflow trigger is one finite Online action. The
+        # workflow schedule may trigger it again later, but it must
+        # never start a persistent Douyin monitor.
+        payload["h5_task_source"] = "workflow"
+        payload["h5_one_shot"] = True
+        payload["douyin_execution_mode"] = "one_shot"
+    payload["h5_context"] = {
+        **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
+        # The activation belongs to one installation slot; execution
+        # resolves that device's personal default template.
+        "installation_id": installation_id,
+        "workflow_template_id": template_id,
+        "workflow_template_name": template_name,
+        "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
+        "workflow_template_source": (snapshot_extra or {}).get("source") or "",
+        # Template resources are live personal-settings references.
+        # The node context identifies the workflow only; execution
+        # resolves the current template instead of this activation.
+        "template_source": "personal_current",
+        "workflow_node_id": node.get("id"),
+        "workflow_node_time": node.get("time"),
+        "workflow_node_end_time": node.get("end_time") or "",
+        "workflow_node_time_range": node.get("time_range") or (
+            f"{node.get('time')}-{node.get('end_time')}" if node.get("end_time") else node.get("time")
+        ),
+        "ability_key": node.get("ability_key"),
+        "ability_label": node.get("ability_label"),
+        "department_id": node.get("department_id"),
+        "department_name": node.get("department_name"),
+    }
+    if parent_node:
+        payload["h5_context"].update(
+            {
+                "workflow_parent_node_id": parent_node.get("id"),
+                "workflow_parent_node_time": parent_node.get("time"),
+                "workflow_parent_node_end_time": parent_node.get("end_time") or "",
+                "workflow_parent_node_time_range": parent_node.get("time_range") or (
+                    f"{parent_node.get('time')}-{parent_node.get('end_time')}"
+                    if parent_node.get("end_time")
+                    else parent_node.get("time")
+                ),
+                "workflow_parent_ability_key": parent_node.get("ability_key"),
+                "workflow_parent_ability_label": parent_node.get("ability_label"),
+                "workflow_action_type": node.get("action_type") or node.get("type"),
+                "workflow_action_platform": node.get("platform"),
+            }
+        )
+    return {
+        "title": str(plan.get("title") or node.get("ability_label") or template_name),
+        "task_kind": task_kind,
+        "content": str(plan.get("content") or f"H5 工作流：{node.get('ability_label') or template_name}"),
+        "payload": payload,
+        "server_side": task_kind in _SERVER_SIDE_TASK_KINDS,
+        "ability_label": _clean_text(node.get("ability_label"), 160),
+        "node_id": node.get("id"),
+    }
+
+
+def _activate_nodes_for_device(
+    *,
+    db: Session,
+    current_user: User,
+    owner: User,
+    installation_id: str,
+    template_id: int,
+    template_owner_user_id: int,
+    template_name: str,
+    nodes: list[dict[str, Any]],
+    timezone_offset_minutes: Optional[int],
+    snapshot_extra: Optional[dict[str, Any]] = None,
+):
+    nodes = _prepare_activation_nodes(
+        db=db,
+        owner=owner,
+        installation_id=installation_id,
+        template_name=template_name,
+        nodes=nodes,
+        snapshot_extra=snapshot_extra,
+    )
     now = datetime.utcnow()
     stopped_ids = _stop_active_for_device(db, owner.id, installation_id, now)
     db.commit()
@@ -2917,68 +3017,25 @@ def _activate_nodes_for_device(
         for node, parent_node in _workflow_nodes_with_actions(nodes):
             if _is_workflow_placeholder(node):
                 continue
-            plan = node.get("plan") or {}
-            task_kind = str(plan.get("task_kind") or "").strip().lower()
-            payload = dict(plan.get("payload") or {})
-            if task_kind == "douyin_leads":
-                # Each H5 workflow trigger is one finite Online action. The
-                # workflow schedule may trigger it again later, but it must
-                # never start a persistent Douyin monitor.
-                payload["h5_task_source"] = "workflow"
-                payload["h5_one_shot"] = True
-                payload["douyin_execution_mode"] = "one_shot"
-            payload["h5_context"] = {
-                **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
-                # The activation belongs to one installation slot; execution
-                # resolves that device's personal default template.
-                "installation_id": installation_id,
-                "workflow_template_id": template_id,
-                "workflow_template_name": template_name,
-                "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
-                "workflow_template_source": (snapshot_extra or {}).get("source") or "",
-                # Template resources are live personal-settings references.
-                # The node context identifies the workflow only; execution
-                # resolves the current template instead of this activation.
-                "template_source": "personal_current",
-                "workflow_node_id": node.get("id"),
-                "workflow_node_time": node.get("time"),
-                "workflow_node_end_time": node.get("end_time") or "",
-                "workflow_node_time_range": node.get("time_range") or (
-                    f"{node.get('time')}-{node.get('end_time')}" if node.get("end_time") else node.get("time")
-                ),
-                "ability_key": node.get("ability_key"),
-                "ability_label": node.get("ability_label"),
-                "department_id": node.get("department_id"),
-                "department_name": node.get("department_name"),
-            }
-            if parent_node:
-                payload["h5_context"].update(
-                    {
-                        "workflow_parent_node_id": parent_node.get("id"),
-                        "workflow_parent_node_time": parent_node.get("time"),
-                        "workflow_parent_node_end_time": parent_node.get("end_time") or "",
-                        "workflow_parent_node_time_range": parent_node.get("time_range") or (
-                            f"{parent_node.get('time')}-{parent_node.get('end_time')}"
-                            if parent_node.get("end_time")
-                            else parent_node.get("time")
-                        ),
-                        "workflow_parent_ability_key": parent_node.get("ability_key"),
-                        "workflow_parent_ability_label": parent_node.get("ability_label"),
-                        "workflow_action_type": node.get("action_type") or node.get("type"),
-                        "workflow_action_platform": node.get("platform"),
-                    }
-                )
+            spec = _workflow_node_task_spec(
+                node,
+                parent_node,
+                installation_id=installation_id,
+                template_id=template_id,
+                template_name=template_name,
+                snapshot_extra=snapshot_extra,
+            )
             scheduled = _create_task_row(
                 db,
                 ScheduledTaskCreate(
-                    title=str(plan.get("title") or node.get("ability_label") or template_name),
-                    task_kind=task_kind,
-                    content=str(plan.get("content") or f"H5 工作流：{node.get('ability_label') or template_name}"),
-                    payload=payload,
+                    title=spec["title"],
+                    task_kind=spec["task_kind"],
+                    content=spec["content"],
+                    payload=spec["payload"],
                     schedule_type="daily_times",
                     daily_times=[node["time"]],
                     timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
-                    installation_ids=[] if task_kind in _SERVER_SIDE_TASK_KINDS else [installation_id],
+                    installation_ids=[] if spec["server_side"] else [installation_id],
                 ),
                 target_user_id=owner.id,
                 created_by_user_id=current_user.id,
@@ -2986,7 +3043,7 @@ def _activate_nodes_for_device(
             )
             if _workflow_node_should_start_now(
                 node,
-                task_kind=task_kind,
+                task_kind=spec["task_kind"],
                 now_utc=now,
                 timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
             ):
@@ -3061,6 +3118,77 @@ def _activate_nodes_for_device(
     db.refresh(activation)
     tasks = db.query(ScheduledTask).filter(ScheduledTask.id.in_(created_task_ids)).all() if created_task_ids else []
     return activation, stopped_ids, tasks
+
+
+class WorkflowDemoPlanBody(BaseModel):
+    """Online 员工节点「演示」请求体：直接用客户端当前的模板节点配置。"""
+
+    name: str = ""
+    nodes: list[dict[str, Any]] = []
+    meta: dict[str, Any] = {}
+    installation_id: str = ""
+    template_id: int = 0
+
+
+@router.post("/api/h5-workflows/demo-plan", summary="Online 节点演示：按当前节点配置生成与启动一致的任务 plan")
+def workflow_demo_plan(
+    body: WorkflowDemoPlanBody,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """演示任务必须和"启动工作流"用同一段组装逻辑。
+
+    历史实现是客户端直接照抄节点里残留的 plan.payload（数字人节点那份还是 1.0 的
+    `hifly.video.create_by_tts` + 空参数），于是演示必然秒失败"请选择数字人"。
+    这里复用启动路径的 _prepare_activation_nodes() + _workflow_node_task_spec()，
+    拿到与真正启用时逐字段一致的能力、参数和 h5_context（含安装槽位），
+    否则执行端解析不到该槽位的个人模板资源。
+    """
+    owner = online_user_for_mobile_user(db, current_user)
+    iid = _clean_text(body.installation_id or x_installation_id, 128)
+    nodes = _clean_nodes(body.nodes or [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="缺少要演示的节点")
+    template_name = _clean_text(body.name, 160)
+    snapshot_extra = dict(body.meta or {})
+    prepared = _prepare_activation_nodes(
+        db=db,
+        owner=owner,
+        installation_id=iid,
+        template_name=template_name,
+        nodes=nodes,
+        snapshot_extra=snapshot_extra,
+    )
+    plans: list[dict[str, Any]] = []
+    for node, parent_node in _workflow_nodes_with_actions(prepared):
+        if _is_workflow_placeholder(node):
+            continue
+        spec = _workflow_node_task_spec(
+            node,
+            parent_node,
+            installation_id=iid,
+            template_id=int(body.template_id or 0),
+            template_name=template_name,
+            snapshot_extra=snapshot_extra,
+        )
+        # 和 _create_task_row 落库前同一步实时模板覆盖，否则演示拿到的
+        # 关键词/人设/数字人素材会和真正执行时用的不是一套。
+        spec["payload"] = _hydrate_workflow_task_payload(
+            db,
+            task_kind=spec["task_kind"],
+            payload=spec["payload"],
+            target_user_id=owner.id,
+        )
+        plans.append(spec)
+    if not plans:
+        raise HTTPException(status_code=400, detail="该节点暂不支持演示")
+    return {
+        "ok": True,
+        # plan 保留单条形态兼容旧客户端；plans 是完整清单（组合节点会展开子动作）。
+        "plan": plans[0],
+        "plans": plans,
+    }
 
 
 @router.get("/api/h5-workflows/templates", summary="H5 工作流模板列表")

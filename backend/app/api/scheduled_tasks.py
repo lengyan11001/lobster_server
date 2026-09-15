@@ -4948,6 +4948,47 @@ def _delete_run_row(db: Session, row: ScheduledTaskRun) -> None:
     db.delete(row)
 
 
+def _hydrate_workflow_task_payload(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """落库前的 payload 实时覆盖（启动工作流与节点「演示」共用同一份逻辑）。
+
+    工作流 payload 是排程记录，不是配置快照：模板资源（关键词/同行账号/记忆文件/
+    人设/数字人素材）在执行前按当前槽位的个人模板实时覆盖。演示必须走同一步，
+    否则演示看到的参数和真正执行的不是一套。
+    """
+    if task_kind == "capability":
+        payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task_kind,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+            now=now,
+        )
+    if task_kind == "client_workflow":
+        payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task_kind,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+            now=now,
+        )
+        payload = _enrich_local_bestseller_workflow_payload(
+            db, payload=dict(payload), target_user_id=target_user_id, now=now
+        )
+        payload = _enrich_native_wechat_workflow_payload(
+            db,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+        )
+    return payload
+
+
 def _create_task_row(
     db: Session,
     body: ScheduledTaskCreate,
@@ -5032,28 +5073,13 @@ def _create_task_row(
         _normalize_goal_video_task_payload(payload)
     interval_seconds = None
     now = datetime.utcnow()
-    if task_kind == "capability":
-        payload = _refresh_live_personal_template_payload(
-            db,
-            task_kind=task_kind,
-            payload=dict(payload),
-            target_user_id=target_user_id,
-            now=now,
-        )
-    if task_kind == "client_workflow":
-        payload = _refresh_live_personal_template_payload(
-            db,
-            task_kind=task_kind,
-            payload=dict(payload),
-            target_user_id=target_user_id,
-            now=now,
-        )
-        payload = _enrich_local_bestseller_workflow_payload(db, payload=dict(payload), target_user_id=target_user_id, now=now)
-        payload = _enrich_native_wechat_workflow_payload(
-            db,
-            payload=dict(payload),
-            target_user_id=target_user_id,
-        )
+    payload = _hydrate_workflow_task_payload(
+        db,
+        task_kind=task_kind,
+        payload=payload,
+        target_user_id=target_user_id,
+        now=now,
+    )
     tz_offset = int(body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480)
     start_at_utc = None if schedule_type == "daily_times" else _parse_client_datetime(body.start_at, tz_offset)
     schedule_config: Dict[str, Any] = {
