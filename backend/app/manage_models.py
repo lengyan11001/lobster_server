@@ -290,6 +290,9 @@ class MAiEmployee(Base):
     name = Column(String(120), nullable=False)
     installation_id = Column(String(128), nullable=False, index=True)
     owner_membership_id = Column(Integer, nullable=True)
+    device_id = Column(String(128), default="", nullable=False)   # 远程设备号（BHZN-ToDesk）
+    source = Column(String(16), default="slot", nullable=False)   # slot=按槽位号添加 / device=按设备号+验证码添加
+    note = Column(String(255), default="", nullable=False)
     capabilities = Column(JSON, default=list, nullable=True)
     status = Column(String(24), default="enabled", nullable=False)
     created_by = Column(Integer, nullable=True)

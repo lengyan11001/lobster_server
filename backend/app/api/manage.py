@@ -1643,6 +1643,59 @@ def create_worklog(body: WorkLogIn, user: Any = Depends(current_actor),
     db.commit()
     return {"ok": True, "id": row.id, "author": author}
 
+NODE_DONE = {"done", "completed", "finished", "accepted"}
+
+
+@router.get("/team-activity")
+def team_activity(company_id: int, window: str = Query("1d"), user: Any = Depends(current_actor),
+                  db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """首页简报用：每个员工本窗口的工作情况 + 虚拟员工本窗口的产出。
+
+    都按时间窗统计（默认今日），不做「从建档开始」的累计；换窗口＝换输入，不改历史。
+    """
+    company = _require_company(db, company_id, user)
+    label, since = _ai_window(window)
+    since_date = since.date().isoformat() if since else ""
+    member_by_uid: Dict[int, Any] = {}
+    members = db.query(MMembership).filter(MMembership.company_id == company.id).order_by(MMembership.id).all()
+    for m in members:
+        if m.user_id:
+            member_by_uid[int(m.user_id)] = m
+    people = []
+    for m in members:
+        q = db.query(MWorkLog).filter(MWorkLog.company_id == company.id, MWorkLog.membership_id == m.id)
+        if since_date:
+            q = q.filter(MWorkLog.worked_on >= since_date)
+        logs = q.order_by(MWorkLog.id.desc()).limit(200).all()
+        minutes = sum(int(x.minutes or 0) for x in logs)
+        latest = logs[0] if logs else None
+        nodes = (db.query(MPlanNode)
+                 .filter(MPlanNode.company_id == company.id,
+                         MPlanNode.owner_membership_id == m.id).all())
+        done = sum(1 for n in nodes if str(n.status or "").strip().lower() in NODE_DONE)
+        roles = [r.role_code for r in db.query(MMembershipRole)
+                 .filter(MMembershipRole.membership_id == m.id).all()]
+        people.append({"membership_id": m.id, "name": m.display_name, "dept": m.dept or "",
+                       "roles": roles, "load": m.load_pct or 0,
+                       "logs": len(logs), "minutes": minutes,
+                       "last_at": (latest.created_at.isoformat() if latest and latest.created_at else ""),
+                       "last_on": (latest.worked_on if latest else ""),
+                       "last_content": ((latest.content or "")[:140] if latest else ""),
+                       "nodes_total": len(nodes), "nodes_done": done, "nodes_open": len(nodes) - done})
+    ai_rows = [_ai_row_json(db, company, r, since, member_by_uid)
+               for r in db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id)
+               .order_by(MAiEmployee.id).all()]
+    return {"window": window, "window_label": label, "since": since_date,
+            "people": people, "ai": ai_rows,
+            "people_logs": sum(p["logs"] for p in people),
+            "people_minutes": sum(p["minutes"] for p in people),
+            "ai_summary": {"dispatched": sum(a["dispatched"] for a in ai_rows),
+                           "succeeded": sum(a["succeeded"] for a in ai_rows),
+                           "failed": sum(a["failed"] for a in ai_rows),
+                           "running": sum(a["running"] for a in ai_rows)},
+            "ai_online": sum(1 for a in ai_rows if a["online"]), "ai_total": len(ai_rows)}
+
+
 # ───────────────────────── 虚拟员工（原系统槽位） ─────────────────────────
 
 ONLINE_WINDOW = timedelta(minutes=5)
@@ -1659,83 +1712,256 @@ def _slot_online(db: Session, user_id: int, installation_id: str) -> tuple:
     return online, row.last_seen_at.isoformat()
 
 
+MANAGE_AI_WINDOWS = {"1d": ("今日", 1), "7d": ("近 7 天", 7), "30d": ("近 30 天", 30), "all": ("全部", 0)}
+DISPATCH_DONE = {"completed", "success", "succeeded", "done", "finished", "ok"}
+DISPATCH_BAD = {"failed", "error", "timeout", "canceled", "cancelled"}
+
+
+def _ai_window(key: str) -> tuple:
+    """把窗口串转成 (中文标签, 起始时间)；all 返回 None 表示不设下限。"""
+    label, days = MANAGE_AI_WINDOWS.get(str(key or "1d").strip().lower(), MANAGE_AI_WINDOWS["1d"])
+    if not days:
+        return label, None
+    start = datetime.utcnow() - timedelta(days=days - 1)
+    return label, start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _slot_presence(db: Session, installation_id: str) -> tuple:
+    """按槽位号取最近一次心跳（不限归属人）。返回 (presence 行, remote_support 字典, 在线, 最后心跳)。"""
+    if not installation_id:
+        return None, {}, False, ""
+    row = (db.query(H5ChatDevicePresence)
+           .filter(H5ChatDevicePresence.installation_id == installation_id)
+           .order_by(H5ChatDevicePresence.last_seen_at.desc()).first())
+    if not row:
+        return None, {}, False, ""
+    payload = row.account_payload if isinstance(row.account_payload, dict) else {}
+    remote = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
+    online = bool(row.last_seen_at and (datetime.utcnow() - row.last_seen_at) <= ONLINE_WINDOW)
+    return row, remote, online, (row.last_seen_at.isoformat() if row.last_seen_at else "")
+
+
+def _remote_support_call(method: str, path: str, body: Optional[dict] = None) -> dict:
+    """以平台管理员身份调用远程支持中继（BHZN-ToDesk 服务）。"""
+    base = str(getattr(settings, "remote_support_service_url", "http://127.0.0.1:38080") or "").rstrip("/")
+    key = str(getattr(settings, "remote_support_service_key", "") or "").strip()
+    password = str(getattr(settings, "lobster_admin_password", "") or "").strip()
+    if not key or not password:
+        raise HTTPException(status_code=503, detail="远程支持未配置（缺少服务密钥）")
+    headers = {"Authorization": "Bearer " + ADMIN_TOKEN_PREFIX + password,
+               "X-Remote-Service-Key": key, "X-Lobster-Brand": "bihuo"}
+    try:
+        with httpx.Client(timeout=25.0) as client:
+            resp = client.request(method, base + path, headers=headers, json=body)
+        data = resp.json() if resp.content else {}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="远程支持服务不可用: " + str(exc)[:160]) from exc
+    if resp.status_code >= 400:
+        detail = ""
+        if isinstance(data, dict):
+            detail = str(data.get("error") or data.get("detail") or "")
+        raise HTTPException(status_code=resp.status_code if resp.status_code >= 400 else 502,
+                            detail="远程支持： " + (detail or ("HTTP " + str(resp.status_code))))
+    return data if isinstance(data, dict) else {}
+
+
+def _dispatch_agg(db: Session, company_id: int, ai_id: int, since) -> Dict[str, Any]:
+    """一台设备在时间窗内的派活汇总（不从头累计）。"""
+    q = db.query(MDispatch).filter(MDispatch.company_id == company_id,
+                                   MDispatch.ai_employee_id == ai_id)
+    if since is not None:
+        q = q.filter(MDispatch.created_at >= since)
+    rows = q.order_by(MDispatch.id.desc()).limit(200).all()
+    ok = fail = other = 0
+    for r in rows:
+        st = str(r.status or "").strip().lower()
+        if st in DISPATCH_DONE:
+            ok += 1
+        elif st in DISPATCH_BAD:
+            fail += 1
+        else:
+            other += 1
+    latest = rows[0] if rows else None
+    node = db.query(MPlanNode).filter(MPlanNode.id == latest.node_id).first() if latest else None
+    return {"dispatched": len(rows), "succeeded": ok, "failed": fail, "running": other,
+            "last_at": (latest.created_at.isoformat() if latest and latest.created_at else ""),
+            "last_node": (node.title if node else ""), "last_status": (latest.status if latest else ""),
+            "last_error": ((latest.error or "")[:160] if latest else "")}
+
+
+def _ai_row_json(db: Session, company: MCompany, row: MAiEmployee, since,
+                 member_by_uid: Dict[int, Any]) -> Dict[str, Any]:
+    presence, remote, online, last_seen = _slot_presence(db, row.installation_id)
+    member = None
+    if presence is not None and presence.user_id:
+        member = member_by_uid.get(int(presence.user_id))
+    device_id = (row.device_id or "").strip().upper() or str(remote.get("device_id") or "").strip().upper()
+    agg = _dispatch_agg(db, company.id, row.id, since)
+    return {"id": row.id, "name": row.name, "installation_id": row.installation_id,
+            "device_id": device_id, "source": (row.source or "slot"), "note": (row.note or ""),
+            "online": online, "last_seen": last_seen, "status": row.status,
+            "capabilities": row.capabilities or [],
+            "owner_name": (member.display_name if member else ""),
+            "owner_label": ("属于 " + member.display_name) if member else "",
+            "remote_enabled": bool(remote.get("enabled")),
+            "remote_running": bool(remote.get("running")),
+            "remote_bound": bool(device_id),
+            "can_remote": bool(device_id),
+            "dispatched": agg["dispatched"], "succeeded": agg["succeeded"],
+            "failed": agg["failed"], "running": agg["running"],
+            "last_at": agg["last_at"], "last_node": agg["last_node"],
+            "last_status": agg["last_status"], "last_error": agg["last_error"]}
+
+
 @router.get("/ai-employees")
-def list_ai_employees(company_id: int, online_only: bool = Query(True),
+def list_ai_employees(company_id: int, online_only: bool = Query(False), window: str = Query("1d"),
                       user: Any = Depends(current_actor),
                       db: Session = Depends(get_db)) -> Dict[str, Any]:
-    company = _require_company(db, company_id, user)
-    members = (db.query(MMembership)
-               .filter(MMembership.company_id == company.id)).all()
-    # 自愈：老板的成员记录若没绑定 user_id（历史数据/早期 seed），补上，
-    # 否则查不到他名下的设备槽位，虚拟员工页会一直空着。
-    if company.owner_user_id:
-        owner_m = next((m for m in members if m.user_id == company.owner_user_id), None)
-        if owner_m is None:
-            orphan = next((m for m in members if not m.user_id and m.dept == "经营管理"), None)
-            if orphan is not None:
-                orphan.user_id = company.owner_user_id
-                subject = db.query(User).filter(User.id == company.owner_user_id).first()
-                if subject is not None and not orphan.email:
-                    orphan.email = subject.email
-                db.flush()
-                owner_m = orphan
-    by_user = {m.user_id: m for m in members if m.user_id}
-    if company.owner_user_id and company.owner_user_id not in by_user:
-        owner_m = (db.query(MMembership)
-                   .filter(MMembership.company_id == company.id,
-                           MMembership.user_id == company.owner_user_id).first())
-        if owner_m:
-            by_user[company.owner_user_id] = owner_m
-    discovered = 0
-    if by_user:
-        slots = (db.query(UserInstallation)
-                 .filter(UserInstallation.user_id.in_(list(by_user.keys()))).all())
-        known = {r.installation_id for r in
-                 db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id).all()}
-        for slot in slots:
-            if slot.installation_id in known:
-                continue
-            m = by_user.get(slot.user_id)
-            if not m:
-                subject = db.query(User).filter(User.id == slot.user_id).first()
-                fallback = (subject.email.split("@")[0] if subject and subject.email else "")
-            else:
-                fallback = m.display_name
-            db.add(MAiEmployee(company_id=company.id,
-                               name="虚拟员工 · " + (fallback or "设备") + " · " + slot.installation_id[:4],
-                               installation_id=slot.installation_id,
-                               owner_membership_id=m.id if m else None, capabilities=[],
-                               created_by=getattr(user, "id", 0)))
-            discovered += 1
-        if discovered:
-            db.commit()
+    """虚拟员工＝手动添加进来的设备（不再从组织架构成员自动派生）。
 
+    · 添加过的设备一直显示，离线也在（带在线/离线状态与最后心跳）
+    · 槽位号刚好属于某个员工时只打一个「属于 xxx」标签，不再建立归属关系
+    · 执行情况按时间窗汇总，不做「从建档开始」的累计
+    """
+    company = _require_company(db, company_id, user)
+    label, since = _ai_window(window)
+    member_by_uid: Dict[int, Any] = {}
+    for m in db.query(MMembership).filter(MMembership.company_id == company.id).all():
+        if m.user_id:
+            member_by_uid[int(m.user_id)] = m
     rows = (db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id)
             .order_by(MAiEmployee.id).all())
-    out = []
-    for r in rows:
-        m = db.query(MMembership).filter(MMembership.id == r.owner_membership_id).first() if r.owner_membership_id else None
-        owner_uid = getattr(m, "user_id", None) if m else company.owner_user_id
-        online, seen = _slot_online(db, owner_uid or 0, r.installation_id)
-        dispatched = (db.query(MDispatch).filter(MDispatch.node_id.isnot(None),
-                                                 MDispatch.ai_employee_id == r.id)
-                      .order_by(MDispatch.id.desc()).limit(20).all())
-        if r.name.count("·") < 2:
-            r.name = r.name + " · " + r.installation_id[:4]
-            db.flush()
-        out.append({"id": r.id, "name": r.name, "installation_id": r.installation_id,
-                    "owner_name": m.display_name if m else "", "online": online,
-                    "last_seen": seen, "capabilities": r.capabilities or [],
-                    "status": r.status, "dispatched": len(dispatched)})
+    out = [_ai_row_json(db, company, r, since, member_by_uid) for r in rows]
     online_count = sum(1 for x in out if x["online"])
+    totals = {"dispatched": 0, "succeeded": 0, "failed": 0, "running": 0}
+    for x in out:
+        for k in totals:
+            totals[k] += int(x.get(k) or 0)
     if online_only:
         out = [x for x in out if x["online"]]
-    return {"ai_employees": out, "discovered": discovered, "online_count": online_count,
-            "total": len(out)}
+    return {"ai_employees": out, "online_count": online_count, "total": len(out),
+            "window": window, "window_label": label, "since": (since.isoformat() if since else ""),
+            "summary": totals}
+
+
+class AiEmployeeIn(BaseModel):
+    company_id: int
+    installation_id: Optional[str] = None
+    device_id: Optional[str] = None
+    verification_code: Optional[str] = None
+    name: Optional[str] = None
+    note: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+
+
+@router.post("/ai-employees")
+def create_ai_employee(body: AiEmployeeIn, user: Any = Depends(current_actor),
+                       db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """手动添加虚拟员工。两种标识二选一：
+
+    1) 槽位号 installation_id —— 最省事，适合自己人；
+    2) 设备号 + 验证码 —— 远程客户端窗口上当前显示的设备号与验证码，
+       只有真机才知道，用来防止槽位号被别人冒领。
+    """
+    company = _require_company(db, body.company_id, user)
+    _require_plan_admin(db, company, user)
+    slot = (body.installation_id or "").strip()
+    device_id = (body.device_id or "").strip().upper()
+    code = (body.verification_code or "").strip()
+    source = "slot"
+    if device_id:
+        hit = None
+        for cand in (db.query(H5ChatDevicePresence)
+                     .order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(500).all()):
+            payload = cand.account_payload if isinstance(cand.account_payload, dict) else {}
+            remote = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
+            if str(remote.get("device_id") or "").strip().upper() == device_id:
+                hit = (cand, remote)
+                break
+        if hit is None:
+            raise HTTPException(status_code=404,
+                                detail="没找到设备号 " + device_id + "：该设备要先运行远程客户端并上报过心跳")
+        cand, remote = hit
+        if not code or str(remote.get("verification_code") or "").strip() != code:
+            raise HTTPException(status_code=403, detail="验证码不对：请填该设备远程窗口上当前显示的验证码")
+        slot = cand.installation_id
+        source = "device"
+    if not slot:
+        raise HTTPException(status_code=400, detail="请填槽位号，或填设备号 + 验证码")
+    presence, remote, online, last_seen = _slot_presence(db, slot)
+    if presence is None and source == "slot":
+        raise HTTPException(status_code=404, detail="槽位号不存在：该设备要先登录客户端上报过心跳")
+    if not device_id and presence is not None:
+        device_id = str(remote.get("device_id") or "").strip().upper()
+    existing = (db.query(MAiEmployee)
+                .filter(MAiEmployee.company_id == company.id,
+                        MAiEmployee.installation_id == slot).first())
+    default_name = "虚拟员工 · " + ((presence.display_name if presence and presence.display_name else slot[:6]))
+    if existing is None:
+        existing = MAiEmployee(company_id=company.id,
+                               name=(body.name or "").strip() or default_name,
+                               installation_id=slot, owner_membership_id=None,
+                               device_id=device_id, source=source,
+                               note=(body.note or "").strip()[:255],
+                               capabilities=[str(x).strip() for x in (body.capabilities or []) if str(x).strip()],
+                               created_by=getattr(user, "id", 0))
+        db.add(existing)
+        db.flush()
+        action = "ai_employee.create"
+    else:
+        if (body.name or "").strip():
+            existing.name = body.name.strip()
+        if device_id:
+            existing.device_id = device_id
+        existing.source = source
+        if body.note is not None:
+            existing.note = (body.note or "").strip()[:255]
+        if body.capabilities is not None:
+            existing.capabilities = [str(x).strip() for x in body.capabilities if str(x).strip()]
+        action = "ai_employee.update"
+    remote_bound, remote_error = False, ""
+    if device_id and source == "device":
+        try:
+            _remote_support_call("POST", "/api/remote-admin/devices",
+                                 {"deviceId": device_id, "verificationCode": code, "label": existing.name})
+            remote_bound = True
+        except HTTPException as exc:
+            remote_error = str(exc.detail)[:200]
+    _audit(db, company.id, getattr(user, "id", 0), action, "ai_employee", existing.id,
+           {"slot": slot, "device_id": device_id, "source": source, "remote_bound": remote_bound})
+    db.commit()
+    return {"ok": True, "id": existing.id, "installation_id": slot, "device_id": device_id,
+            "source": source, "online": online, "last_seen": last_seen,
+            "remote_bound": remote_bound, "remote_error": remote_error}
+
+
+@router.post("/ai-employees/{ai_id}/remote-session")
+def ai_employee_remote_session(ai_id: int, user: Any = Depends(current_actor),
+                               db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """为这台虚拟员工开一个远程会话：管理端做控制方，弹窗里直接看远程画面。"""
+    row = db.query(MAiEmployee).filter(MAiEmployee.id == ai_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="虚拟员工不存在")
+    company = _require_company(db, row.company_id, user)
+    _require_plan_admin(db, company, user)
+    _, remote, online, last_seen = _slot_presence(db, row.installation_id)
+    device_id = (row.device_id or "").strip().upper() or str(remote.get("device_id") or "").strip().upper()
+    if not device_id:
+        raise HTTPException(status_code=400,
+                            detail="这台设备没绑定远程设备号：用「设备号 + 验证码」重新添加一次即可")
+    data = _remote_support_call("POST", "/api/remote-admin/controller-session")
+    public_url = str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")
+    _audit(db, company.id, getattr(user, "id", 0), "ai_employee.remote", "ai_employee", row.id,
+           {"device_id": device_id, "online": online})
+    db.commit()
+    return {"ok": True, "public_url": public_url, "token": str(data.get("token") or ""),
+            "expires_at": str(data.get("expiresAt") or ""), "device_id": device_id,
+            "online": online, "name": row.name, "last_seen": last_seen}
 
 
 class AiEmployeePatchIn(BaseModel):
     name: Optional[str] = None
+    note: Optional[str] = None
     capabilities: Optional[List[str]] = None
     status: Optional[str] = None
 
@@ -1752,6 +1978,8 @@ def update_ai_employee(ai_id: int, body: AiEmployeePatchIn, user: Any = Depends(
         row.name = body.name.strip() or row.name
     if body.capabilities is not None:
         row.capabilities = [str(x).strip() for x in body.capabilities if str(x).strip()]
+    if body.note is not None:
+        row.note = (body.note or "").strip()[:255]
     if body.status is not None:
         row.status = body.status
     db.commit()

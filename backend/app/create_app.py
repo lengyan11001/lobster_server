@@ -426,6 +426,26 @@ def _migrate_remote_support_device_authorizations():
         logger.warning("Migration remote support device authorizations skipped: %s", e)
 
 
+def _migrate_manage_ai_employee_columns():
+    """Ensure m_ai_employee carries the manual-add identity columns."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("m_ai_employee"):
+            return
+        cols = [c["name"] for c in insp.get_columns("m_ai_employee")]
+        with engine.begin() as conn:
+            if "device_id" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN device_id VARCHAR(128) NOT NULL DEFAULT ''"))
+            if "source" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'slot'"))
+            if "note" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN note VARCHAR(255) NOT NULL DEFAULT ''"))
+    except Exception as e:
+        logger.warning("Migration m_ai_employee identity columns skipped: %s", e)
+
+
 def _migrate_customer_authorizations():
     """Create customer sharing grants used by the admin customer console."""
     try:
@@ -1500,6 +1520,7 @@ def create_app() -> FastAPI:
         _migrate_h5_device_presence_account_payload()
         _migrate_remote_support_device_authorizations()
         _migrate_customer_authorizations()
+        _migrate_manage_ai_employee_columns()
         _migrate_h5_chat_mastra_columns()
         _migrate_h5_home_preference_columns()
         _ensure_default_user()

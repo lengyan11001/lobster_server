@@ -161,6 +161,17 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 #landing.gone{opacity:0;transform:scale(1.02);transition:opacity .55s var(--ease),transform .7s var(--ease);pointer-events:none}
 #app.in{animation:appIn .7s var(--ease) both}
 @keyframes appIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  /* 远程画面弹窗 */
+  #remoteModal{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:22px}
+  #remoteModal.hide{display:none}
+  #remoteModal .rmBack{position:absolute;inset:0;background:rgba(3,6,12,.74);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+  #remoteModal .rmCard{position:relative;width:min(1480px,96vw);height:min(900px,92vh);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.55)}
+  #remoteModal .rmHead{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--w-line)}
+  #remoteModal .rmBody{flex:1;min-height:0;display:flex}
+  #remoteModal .rmSide{width:248px;flex:0 0 auto;border-right:1px solid var(--w-line);padding:12px;overflow:auto}
+  #remoteModal iframe{flex:1;min-width:0;border:0;background:#04060d}
+  #remoteModal .dsec{margin-bottom:12px}
+  #remoteModal .dsec h4{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -284,6 +295,29 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   </div>
   <div class="dbody" id="dBody"></div>
 </aside>
+<div id="remoteModal" class="hide">
+  <div class="rmBack" id="remoteBack"></div>
+  <div class="rmCard glass">
+    <div class="rmHead">
+      <div style="flex:1;min-width:0">
+        <div class="dim" id="remoteMeta" style="font-size:11px">—</div>
+        <div id="remoteTitle" style="font-size:14.5px;font-weight:600;margin-top:4px">远程</div>
+      </div>
+      <button class="btn sm ghost" id="remoteReload">重连</button>
+      <button class="btn sm ghost" id="remoteFull">全屏</button>
+      <button class="btn sm" id="remoteClose">关闭</button>
+    </div>
+    <div class="rmBody">
+      <div class="rmSide">
+        <div class="dsec"><h4>这台设备</h4><div id="remoteSide" class="dim" style="font-size:11.5px;line-height:1.75">—</div></div>
+        <div class="dsec"><h4>画面里的操作</h4>
+          <div class="dim" style="font-size:11.5px;line-height:1.75">远程画面右侧自带工具条：接管键鼠、画质与帧率、发送组合键、文件传输、剪贴板、多屏切换；画面里点一下即可开始控制。</div>
+        </div>
+      </div>
+      <iframe id="remoteFrame" title="远程画面" allow="fullscreen; clipboard-read; clipboard-write"></iframe>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 <div class="sweep" id="sweep"></div>
 
@@ -412,6 +446,17 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   $("#logout").addEventListener("click", function(){
     TOKEN = ""; localStorage.removeItem("manage_token");
     $("#app").classList.add("hide"); $("#landing").classList.remove("hide");
+  });
+
+  document.getElementById("remoteClose").addEventListener("click", closeRemote);
+  document.getElementById("remoteBack").addEventListener("click", closeRemote);
+  document.getElementById("remoteReload").addEventListener("click", function(){
+    var f = document.getElementById("remoteFrame");
+    if (REMOTE_URL) f.src = REMOTE_URL;
+  });
+  document.getElementById("remoteFull").addEventListener("click", function(){
+    var f = document.getElementById("remoteFrame");
+    if (f.requestFullscreen) f.requestFullscreen();
   });
 
   function showApp(){
@@ -624,6 +669,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--accent)"></span>净额</div><div class="v num">'+mm(fin.net)+'</div><div class="dim" style="font-size:11.5px">收入 - 开销</div></div>'
         + '<div class="glass card kpi"><div class="t"><span class="dot" style="color:var(--warn)"></span>项目</div><div class="v num">'+(projectsOk ? projects.length : '—')+'</div><div class="dim" style="font-size:11.5px">'+(projectsOk ? ('已确认安排 '+running+' · 草稿 '+drafting) : '读取失败')+'</div></div>'
         + '</div>'
+        + '<div class="glass card" style="margin-top:12px" id="teamPanel"></div>'
         + '<div class="glass card" style="margin-top:12px">'
         + '<div class="row" style="align-items:center;gap:10px;margin-bottom:10px">'
         + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13.5px">项目日检</b>'
@@ -632,6 +678,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         + '<button class="btn sm ghost" id="ckRun">立即体检</button></div>'
         + '<div id="ckList" class="g4"></div></div>'
         + '<div class="glass card" id="wlPanel" style="margin-top:12px"></div>';
+      renderTeamPanel();
       renderCheckupList();
       var wl = document.getElementById("wlPanel");
       if (wl) {
@@ -1896,35 +1943,74 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   var AI_CACHE = [];
   var CAP_LIST = ["抖音发布","私信承接","线索采集","批量剪辑","字幕生成","朋友圈","社群群发","消息承接","视频号发布","数据报表"];
 
+  var AI_WINDOW = "1d";
+  function aiWinBtn(k, label){
+    return '<button class="btn sm ' + (AI_WINDOW === k ? "" : "ghost") + '" data-aiwin="' + k + '" style="margin-right:6px">' + label + '</button>';
+  }
+  function aiAggLine(a){
+    if (!a.dispatched) return '<span class="dim" style="font-size:11.5px">本窗口还没有派活</span>';
+    return '<span class="dim" style="font-size:11.5px">派活 ' + a.dispatched + ' 次 · 成功 ' + a.succeeded
+      + ' · 失败 ' + a.failed + (a.running ? ' · 进行中 ' + a.running : '') + '</span>';
+  }
   function aiCard(a){
     return '<div class="glass card" style="padding:14px">'
       + '<div class="row" style="align-items:center;gap:11px">'
       + '<div style="width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font:600 12px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee)">AI</div>'
       + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + a.name + '</b>'
-      + '<div class="dim" style="font-size:11px;margin-top:3px;word-break:break-all">' + a.installation_id + '</div></div>'
+      + '<div class="dim" style="font-size:11px;margin-top:3px;word-break:break-all">槽位 ' + a.installation_id + '</div>'
+      + (a.device_id ? '<div class="dim" style="font-size:11px;margin-top:2px">设备号 ' + a.device_id + '</div>' : '')
+      + '</div>'
       + '<span class="tag ' + (a.online ? "ok" : "") + '" style="' + (a.online ? "" : "color:#5a6577") + '"><span class="' + (a.online ? "dot" : "off-dot") + '"></span>' + (a.online ? "在线" : "离线") + '</span></div>'
-      + '<div class="dim" style="font-size:11.5px;margin-top:9px">归属 ' + (a.owner_name || "—") + ' · 已派 ' + (a.dispatched || 0) + ' 次</div>'
+      + '<div class="row" style="gap:6px;margin-top:9px;flex-wrap:wrap">'
+      + '<span class="tag ' + (a.source === "device" ? "cy" : "") + '">' + (a.source === "device" ? "设备号添加" : "槽位号添加") + '</span>'
+      + (a.owner_label ? '<span class="tag">' + a.owner_label + '</span>' : '')
+      + (a.remote_bound ? '<span class="tag ok">可远程</span>' : '<span class="tag">未绑远程</span>')
+      + '</div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:9px">' + (a.last_seen ? ("最后心跳 " + String(a.last_seen).replace("T", " ").slice(0, 16)) : "没有心跳记录")
+      + (a.note ? (" · " + a.note) : "") + '</div>'
+      + '<div style="margin-top:7px">' + aiAggLine(a) + '</div>'
+      + (a.last_node ? '<div class="dim" style="font-size:11.5px;margin-top:4px">最近：' + a.last_node + (a.last_error ? ("（" + a.last_error + "）") : "") + '</div>' : '')
       + '<div style="margin-top:9px">' + ((a.capabilities || []).length
           ? (a.capabilities || []).map(function(c){ return '<span class="tag cy" style="margin:0 5px 5px 0">' + c + '</span>'; }).join("")
           : '<span class="dim" style="font-size:11.5px">能力未配置（可在「配置」里勾选）</span>') + '</div>'
       + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
+      + '<button class="btn sm" data-aremot="' + a.id + '">远程</button>'
       + '<button class="btn sm ghost" data-aedit="' + a.id + '">配置</button>'
       + '<button class="btn sm ghost" data-adel="' + a.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">移除</button>'
       + '</div></div>';
   }
   function loadAi(){
-    api("/api/manage/ai-employees?company_id=" + ACTIVE).then(function(d){
+    api("/api/manage/ai-employees?company_id=" + ACTIVE + "&window=" + AI_WINDOW).then(function(d){
       AI_CACHE = d.ai_employees || [];
+      var s = d.summary || {};
       $("#s-ai").innerHTML = '<div class="glass card" style="margin-bottom:12px">'
-        + '<div class="row" style="align-items:center;gap:10px">'
+        + '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">'
         + '<b style="font-size:13.5px">虚拟员工</b>'
-        + '<span class="dim" style="font-size:12px">只显示当前在线的设备（5 分钟内有心跳）；离线设备不列出</span>'
+        + '<span class="dim" style="font-size:12px">只显示手动添加的设备（离线也一直在这里）· 执行情况按窗口汇总，不做累计</span>'
         + '<span class="grow"></span>'
-        + '<span class="tag ' + (d.online_count ? "ok" : "") + '"><span class="dot"></span>' + (d.online_count || 0) + ' 台在线</span>'
-        + (d.discovered ? '<span class="tag cy">新发现 ' + d.discovered + ' 台</span>' : '')
-        + '</div><div class="dim" style="font-size:12px;margin-top:8px">派活会经主站定时任务链路下发到该设备，执行结果可回读。设备离线时不会出现在这里。</div></div>'
+        + aiWinBtn("1d", "今日") + aiWinBtn("7d", "近 7 天") + aiWinBtn("30d", "近 30 天") + aiWinBtn("all", "全部")
+        + '<button class="btn sm" id="aiAdd" style="margin-left:8px">＋ 添加设备</button>'
+        + '</div>'
+        + '<div class="row" style="gap:12px;margin-top:10px;flex-wrap:wrap">'
+        + '<span class="tag ' + (d.online_count ? "ok" : "") + '"><span class="dot"></span>' + (d.online_count || 0) + ' / ' + (d.total || 0) + ' 在线</span>'
+        + '<span class="tag cy">' + (d.window_label || "") + '派活 ' + (s.dispatched || 0) + '</span>'
+        + '<span class="tag ok">成功 ' + (s.succeeded || 0) + '</span>'
+        + (s.failed ? '<span class="tag" style="color:#fda4af">失败 ' + s.failed + '</span>' : '')
+        + (s.running ? '<span class="tag">进行中 ' + s.running + '</span>' : '')
+        + '</div></div>'
         + (AI_CACHE.length ? '<div class="g3">' + AI_CACHE.map(aiCard).join("") + '</div>'
-                           : '<div class="glass card"><div class="dim">当前没有在线设备。让对方打开客户端（保持在线）后点「刷新」；离线设备不列出。</div></div>');
+                           : '<div class="glass card"><div class="dim">还没有添加设备。点右上「＋ 添加设备」：有槽位号就直接填槽位号；怕槽位号被冒领，就用那台设备远程窗口上的「设备号 + 验证码」添加。</div></div>');
+      $$("#s-ai [data-aiwin]").forEach(function(b){
+        b.addEventListener("click", function(){ AI_WINDOW = b.dataset.aiwin; loadAi(); });
+      });
+      var addBtn = document.getElementById("aiAdd");
+      if (addBtn) addBtn.addEventListener("click", openAiAdd);
+      $$("#s-ai [data-aremot]").forEach(function(b){
+        b.addEventListener("click", function(){
+          var a = AI_CACHE.filter(function(x){ return String(x.id) === b.dataset.aremot; })[0];
+          if (a) openRemote(a);
+        });
+      });
       $$("#s-ai [data-aedit]").forEach(function(b){ b.addEventListener("click", function(){ openAiEditor(Number(b.dataset.aedit)); }); });
       $$("#s-ai [data-adel]").forEach(function(b){
         b.addEventListener("click", function(){
@@ -1935,6 +2021,60 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     }).catch(function(e){ showErr(e.message); });
   }
 
+  function openAiAdd(){
+    openDrawer("虚拟员工 · 添加设备", "槽位号，或 设备号+验证码（二选一）",
+      '<div class="dsec"><h4>方式一 · 槽位号</h4>'
+      + '<div class="dim" style="font-size:11.5px;margin-bottom:6px">设备登录过客户端就会上报槽位号，最省事；但槽位号可能被别人冒领。</div>'
+      + '<input id="aiSlot" placeholder="例如 1f2e3d4c-..." style="width:100%" /></div>'
+      + '<div class="dsec"><h4>方式二 · 设备号 + 验证码（推荐，防冒领）</h4>'
+      + '<div class="dim" style="font-size:11.5px;margin-bottom:6px">填那台设备远程窗口上当前显示的设备号与验证码：只有真机才知道，顺手把远程画面一起绑定。</div>'
+      + '<div class="row" style="gap:8px"><input id="aiDev" placeholder="设备号" style="flex:1" />'
+      + '<input id="aiCode" placeholder="验证码" style="flex:1" /></div></div>'
+      + '<div class="dsec"><h4>名称（选填）</h4><input id="aiNewName" placeholder="例如 剪映专员-01" style="width:100%" /></div>'
+      + '<div class="dsec"><h4>备注（选填）</h4><textarea id="aiNewNote" rows="2" style="width:100%"></textarea></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="aiNewCancel">取消</button>'
+      + '<button class="btn sm" id="aiNewOk">添加</button></div>');
+    document.getElementById("aiNewCancel").addEventListener("click", closeDrawer);
+    document.getElementById("aiNewOk").addEventListener("click", function(){
+      var slot = document.getElementById("aiSlot").value.trim();
+      var dev = document.getElementById("aiDev").value.trim();
+      var code = document.getElementById("aiCode").value.trim();
+      if (!slot && !dev) return toast("填槽位号，或填设备号 + 验证码", true);
+      if (dev && !code) return toast("填了设备号就要填验证码", true);
+      api("/api/manage/ai-employees", { method: "POST", body: {
+        company_id: ACTIVE, installation_id: slot, device_id: dev, verification_code: code,
+        name: document.getElementById("aiNewName").value.trim(),
+        note: document.getElementById("aiNewNote").value.trim() } })
+        .then(function(r){
+          closeDrawer();
+          toast("已添加" + (r.remote_bound ? "，远程已绑定" : (r.remote_error ? "（远程未绑定：" + r.remote_error + "）" : "")));
+          loadAi();
+        })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
+  function openRemote(a){
+    toast("正在建立远程会话…");
+    api("/api/manage/ai-employees/" + a.id + "/remote-session", { method: "POST" }).then(function(r){
+      var url = String(r.public_url || "").replace(/\/$/, "") + "/?admin_session=" + encodeURIComponent(r.token)
+        + "&device=" + encodeURIComponent(r.device_id);
+      document.getElementById("remoteTitle").textContent = "远程 · " + (r.name || a.name) + " · " + r.device_id;
+      document.getElementById("remoteMeta").textContent = (r.online ? "设备在线" : "设备离线（上线后画面才会通）")
+        + " · 会话到期 " + String(r.expires_at || "").slice(0, 16).replace("T", " ");
+      document.getElementById("remoteSide").innerHTML = '名称：' + (r.name || a.name)
+        + '<br />设备号：' + r.device_id + '<br />槽位：' + a.installation_id
+        + '<br />最后心跳：' + (String(a.last_seen || "—").replace("T", " ").slice(0, 19));
+      REMOTE_URL = url;
+      document.getElementById("remoteFrame").src = url;
+      document.getElementById("remoteModal").classList.remove("hide");
+    }).catch(function(e){ toast(e.message, true); });
+  }
+  var REMOTE_URL = "";
+  function closeRemote(){
+    document.getElementById("remoteModal").classList.add("hide");
+    document.getElementById("remoteFrame").src = "about:blank";
+  }
   function openAiEditor(id){
     var a = AI_CACHE.filter(function(x){ return x.id === id; })[0];
     if (!a) return;
@@ -1946,6 +2086,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     openDrawer("虚拟员工 · 配置", a.name,
       '<div class="dsec"><h4>名称</h4><input id="aiName" value="' + a.name + '" /></div>'
       + '<div class="dsec"><h4>能力（勾选后派活会带上）</h4>' + chips + '</div>'
+      + '<div class="dsec"><h4>备注</h4><textarea id="aiNote" rows="2" style="width:100%">' + (a.note || "") + '</textarea></div>'
+      + '<div class="dsec"><h4>远程画面</h4><div class="mline"><span class="nm">设备号</span><span class="mut">' + (a.device_id || "未绑定（用「设备号 + 验证码」添加即可）") + '</span></div></div>'
       + '<div class="dsec"><h4>设备</h4>'
       + '<div class="mline"><span class="nm">槽位</span><span class="mut" style="word-break:break-all">' + a.installation_id + '</span></div>'
       + '<div class="mline"><span class="nm">归属</span><span class="mut">' + (a.owner_name || "—") + '</span></div>'
@@ -1963,12 +2105,76 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     document.getElementById("aiOk").addEventListener("click", function(){
       api("/api/manage/ai-employees/" + a.id, { method: "PATCH", body: {
         name: document.getElementById("aiName").value.trim(),
-        capabilities: Object.keys(picked) } })
+        capabilities: Object.keys(picked),
+        note: ((document.getElementById("aiNote") || {}).value || "").trim() } })
         .then(function(){ closeDrawer(); toast("已保存"); loadAi(); })
         .catch(function(e){ toast(e.message, true); });
     });
   }
 
+  /* ================= 首页简报 · 团队与虚拟员工 ================= */
+  var TEAM_WINDOW = "1d";
+  function teamWinBtn(k, label){
+    return '<button class="btn sm ' + (TEAM_WINDOW === k ? "" : "ghost") + '" data-teamwin="' + k + '" style="margin-right:6px">' + label + '</button>';
+  }
+  function renderTeamPanel(){
+    var box = document.getElementById("teamPanel");
+    if (!box) return;
+    box.innerHTML = '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<span class="dot" style="color:#22d3ee"></span><b style="font-size:13.5px">团队与虚拟员工</b>'
+      + '<span class="dim" style="font-size:12px">按窗口看每个人做了什么、每台虚拟设备产出了什么（不做累计）</span>'
+      + '<span class="grow"></span>'
+      + teamWinBtn("1d", "今日") + teamWinBtn("7d", "近 7 天") + teamWinBtn("30d", "近 30 天")
+      + '</div><div id="teamBoard" style="margin-top:10px"><div class="dim" style="font-size:12.5px">读取中…</div></div>';
+    $$("#teamPanel [data-teamwin]").forEach(function(b){
+      b.addEventListener("click", function(){ TEAM_WINDOW = b.dataset.teamwin; renderTeamPanel(); });
+    });
+    loadTeam();
+  }
+  function loadTeam(){
+    api("/api/manage/team-activity?company_id=" + ACTIVE + "&window=" + TEAM_WINDOW).then(function(d){
+      var board = document.getElementById("teamBoard");
+      if (!board) return;
+      var people = d.people || [], ai = d.ai || [];
+      var peopleHtml = people.length ? people.map(function(p){
+        return '<div class="mline"><span class="nm" style="flex:1">'
+          + '<b style="font-size:12.5px">' + p.name + '</b>'
+          + '<span class="dim" style="margin-left:7px;font-size:11px">' + (p.dept || "")
+          + ((p.roles && p.roles.length) ? (" · " + p.roles.join("/")) : "") + '</span>'
+          + '<span class="mut" style="margin-left:9px">'
+          + (p.last_content ? p.last_content : "本窗口还没有工作记录") + '</span></span>'
+          + '<span class="tag ' + (p.logs ? "cy" : "") + '">' + p.logs + ' 条</span>'
+          + (p.minutes ? '<span class="dim num">' + p.minutes + '′</span>' : '')
+          + '<span class="dim num">在办 ' + p.nodes_open + '/' + p.nodes_total + '</span></div>';
+      }).join("") : '<div class="dim" style="font-size:12.5px">组织架构里还没有成员</div>';
+      var aiHtml = ai.length ? ai.map(function(x){
+        return '<div class="mline"><span class="nm" style="flex:1">'
+          + '<b style="font-size:12.5px">' + x.name + '</b>'
+          + '<span class="tag ' + (x.online ? "ok" : "") + '" style="margin-left:7px">' + (x.online ? "在线" : "离线") + '</span>'
+          + (x.owner_label ? '<span class="tag" style="margin-left:6px">' + x.owner_label + '</span>' : '')
+          + (x.last_node ? '<span class="mut" style="margin-left:9px">' + x.last_node + '</span>' : '')
+          + '</span>'
+          + '<span class="dim num">派活 ' + x.dispatched + ' · 成功 ' + x.succeeded + ' · 失败 ' + x.failed + '</span>'
+          + '<span class="dim num">' + (x.last_at ? String(x.last_at).replace("T", " ").slice(5, 16) : "—") + '</span></div>';
+      }).join("") : '<div class="dim" style="font-size:12.5px">还没有添加虚拟员工（虚拟员工页可添加）</div>';
+      var s = d.ai_summary || {};
+      board.innerHTML = '<div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:9px">'
+        + '<span class="tag ' + (d.people_logs ? "cy" : "") + '">' + (d.window_label || "") + '员工记录 ' + (d.people_logs || 0) + ' 条</span>'
+        + (d.people_minutes ? '<span class="tag">合计 ' + d.people_minutes + ' 分钟</span>' : '')
+        + '<span class="tag ' + (d.ai_online ? "ok" : "") + '">虚拟员工在线 ' + (d.ai_online || 0) + ' / ' + (d.ai_total || 0) + '</span>'
+        + '<span class="tag">' + (d.window_label || "") + '派活 ' + (s.dispatched || 0) + '</span>'
+        + '<span class="tag ok">成功 ' + (s.succeeded || 0) + '</span>'
+        + (s.failed ? '<span class="tag" style="color:#fda4af">失败 ' + s.failed + '</span>' : '')
+        + (s.running ? '<span class="tag">进行中 ' + s.running + '</span>' : '') + '</div>'
+        + '<div class="g2" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
+        + '<div><div class="dim" style="font-size:11.5px;margin-bottom:6px">员工工作情况</div>' + peopleHtml + '</div>'
+        + '<div><div class="dim" style="font-size:11.5px;margin-bottom:6px">虚拟员工产出</div>' + aiHtml + '</div>'
+        + '</div>';
+    }).catch(function(e){
+      var board = document.getElementById("teamBoard");
+      if (board) board.innerHTML = '<div class="dim" style="font-size:12.5px">读取失败：' + e.message + '</div>';
+    });
+  }
   /* ================= 工作记录 ================= */
   function loadWorklogs(){
     api("/api/manage/worklogs?company_id=" + ACTIVE + "&limit=12").then(function(d){
