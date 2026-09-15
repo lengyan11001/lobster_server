@@ -54,6 +54,16 @@ _LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS = (
     _LLM_PROXY_PROVIDER_TIMEOUT_SECONDS + _LLM_PROXY_TIMEOUT_GRACE_SECONDS
 )
 _LLM_DEFAULT_CALL_TIMEOUT_SECONDS = 420.0
+# 单次生成文案的整链总预算（三次重试共享）。单次 420s × 3 会到 21 分钟，再叠加
+# sutui 代理内部的候选降级，调用方（工作流节点 / 工作台）往往先超时，文案白生成。
+# 默认 1500s：足够覆盖"两跳 DeepSeek 官方直连各 420s + 一跳 gpt-5.6-sol"，
+# 到点则返回结构化错误，不把调用方拖死。
+try:
+    _LLM_TOTAL_BUDGET_SECONDS = float(os.environ.get("IP_CONTENT_LLM_TOTAL_BUDGET_SECONDS") or 1500.0)
+except (TypeError, ValueError):
+    _LLM_TOTAL_BUDGET_SECONDS = 1500.0
+if _LLM_TOTAL_BUDGET_SECONDS <= 0:
+    _LLM_TOTAL_BUDGET_SECONDS = 1500.0
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 
 
@@ -4556,9 +4566,35 @@ async def _post_llm_with_retry(
         pool=10.0,
     )
     last_detail = ""
+    deadline = asyncio.get_running_loop().time() + _LLM_TOTAL_BUDGET_SECONDS
     for idx in range(attempts):
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 1.0:
+            logger.warning(
+                "[ip-content] llm total budget exhausted after %s/%s attempts detail=%s",
+                idx,
+                attempts,
+                last_detail[:300],
+            )
+            raise HTTPException(
+                status_code=504,
+                detail=_llm_upstream_failure_payload(
+                    status_code=504,
+                    detail=last_detail or "上游模型排队超时（已达本次生成的总等待上限）",
+                    attempts=attempts,
+                    timeout_seconds=timeout_value,
+                ),
+            )
+        attempt_timeout_value = min(timeout_value, remaining)
+        attempt_timeout = httpx.Timeout(
+            attempt_timeout_value,
+            connect=min(15.0, attempt_timeout_value),
+            read=attempt_timeout_value,
+            write=min(30.0, attempt_timeout_value),
+            pool=10.0,
+        )
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=attempt_timeout, trust_env=False) as client:
                 resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
             try:
                 data = resp.json() if resp.content else {}

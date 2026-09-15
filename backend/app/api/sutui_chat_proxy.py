@@ -116,10 +116,15 @@ async def _post_chat_upstream(
     *,
     body: Dict[str, Any],
     headers: Dict[str, str],
+    timeout: Optional[float] = None,
 ) -> httpx.Response:
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat upstream admitted waited_ms=%s", lease.waited_ms)
+        # 显式带上这一跳的超时：client 对象是按 provider 缓存的，创建之后它会一直沿用
+        # 第一次的 timeout，逐跳参数会被悄悄忽略。
+        if timeout:
+            return await client.post(url, json=body, headers=headers, timeout=httpx.Timeout(timeout))
         return await client.post(url, json=body, headers=headers)
 
 
@@ -130,11 +135,13 @@ async def _stream_chat_upstream(
     *,
     body: Dict[str, Any],
     headers: Dict[str, str],
+    timeout: Optional[float] = None,
 ):
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat stream admitted waited_ms=%s", lease.waited_ms)
-        async with client.stream("POST", url, json=body, headers=headers) as response:
+        stream_timeout = httpx.Timeout(timeout) if timeout else None
+        async with client.stream("POST", url, json=body, headers=headers, timeout=stream_timeout) as response:
             yield response
 
 
@@ -358,6 +365,28 @@ def _positive_float_env(name: str, default: float) -> float:
 _CHAT_IMAGE_MAX_BYTES = _positive_int_env("SUTUI_CHAT_IMAGE_MAX_BYTES", 10 * 1024 * 1024)
 _CHAT_IMAGE_MAX_TOTAL_BYTES = _positive_int_env("SUTUI_CHAT_IMAGE_MAX_TOTAL_BYTES", 32 * 1024 * 1024)
 _CHAT_IMAGE_FETCH_TIMEOUT_SECONDS = _positive_float_env("SUTUI_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS", 45.0)
+
+# ---------------------------------------------------------------------------
+# 每跳/整链预算
+#
+# 以前声明在 attempts 里的 timeout 只是 httpx 的“空闲读超时”，既不是这一跳的墙钟
+# 上限，也会因为 _get_direct_client/_get_xskill_client 按 provider 缓存 client 而失效
+# —— 2026-09-15 02:30/04:30 数字人口播视频节点的前置文案就是这样：第一跳
+# deepseek-flash(官方直连) 被 DeepSeek 排队压住，声明 180s 的它实打实等了 900s
+# （上游自己的排队上限）才 fallback，第二跳 deepseek-chat 又等满 900s。
+#
+# 现在的原则是“结果优先”：单跳给足时间（直连本身允许 420s，上游 900s 排队上限之内
+# 只要它开始处理就能拿到结果），但不允许无限等；整条链有一个总预算，超预算时会带
+# 着已完成的信息返回结构化错误，而不是把调用方拖死。
+_CHAT_DIRECT_ATTEMPT_TIMEOUT_SECONDS = _positive_float_env(
+    "SUTUI_CHAT_DIRECT_ATTEMPT_TIMEOUT_SECONDS", 420.0
+)
+_CHAT_XSKILL_ATTEMPT_TIMEOUT_SECONDS = _positive_float_env(
+    "SUTUI_CHAT_XSKILL_ATTEMPT_TIMEOUT_SECONDS", 240.0
+)
+# 1200s 的来由：两跳官方直连各 420s（840s）+ 一跳 change2pro/yyapi（正常 10~30s，
+# 上限 420s）都能塞进来，保证 DeepSeek 排队时文案仍然能由 gpt-5.6-sol 出出来。
+_CHAT_CHAIN_BUDGET_SECONDS = _positive_float_env("SUTUI_CHAT_CHAIN_BUDGET_SECONDS", 1200.0)
 
 
 _TOOLS_BLACKLIST = frozenset({
@@ -1220,8 +1249,8 @@ def _sutui_chat_attempts_for_models(
     *,
     forced_model_override: bool = False,
 ) -> List[Dict[str, Any]]:
-    direct_timeout = 180.0
-    xskill_timeout = 180.0
+    direct_timeout = _CHAT_DIRECT_ATTEMPT_TIMEOUT_SECONDS
+    xskill_timeout = _CHAT_XSKILL_ATTEMPT_TIMEOUT_SECONDS
     attempts: List[Dict[str, Any]] = []
     if forced_model_override:
         forced_model = (model_candidates[0] if model_candidates else "").strip()
@@ -2301,6 +2330,7 @@ async def sutui_chat_completions(
         last_connect_error: Optional[Exception] = None
         last_timeout_error: Optional[Exception] = None
 
+        _chain_deadline = asyncio.get_running_loop().time() + _CHAT_CHAIN_BUDGET_SECONDS
         for attempt_idx, att in enumerate(attempts):
             mid_try = att["model"]
             _epfx = att.get("endpoint_prefix", "/v1")
@@ -2314,13 +2344,52 @@ async def sutui_chat_completions(
             _saved_model = body.get("model")
             body["model"] = mid_try
 
+            # 这一跳的墙钟上限：httpx 的 timeout 只是“空闲读超时”，上游在排队期间
+            # 保持连接时它永远不会触发（DeepSeek 官方就是这么把请求压到 900s 的）。
+            # 同时整条链还有总预算，避免 5 跳串行把调用方拖死。
+            _loop = asyncio.get_running_loop()
+            _chain_left = _chain_deadline - _loop.time() if _chain_deadline else None
+            if _chain_left is not None and _chain_left <= 1.0:
+                logger.warning(
+                    "[chat_trace] trace_id=%s chain_budget_exhausted after %s attempts (budget=%ss)",
+                    trace_id, attempt_idx, int(_CHAT_CHAIN_BUDGET_SECONDS),
+                )
+                break
+            hop_timeout = float(att["timeout"])
+            if _chain_left is not None:
+                hop_timeout = min(hop_timeout, _chain_left)
+
             if att_is_direct:
                 client = _get_direct_client(att["provider"], timeout=att["timeout"])
             else:
                 client = _get_xskill_client(timeout=att["timeout"])
 
             try:
-                r = await _post_chat_upstream(client, att_url, body=body, headers=att_headers)
+                r = await asyncio.wait_for(
+                    _post_chat_upstream(
+                        client,
+                        att_url,
+                        body=body,
+                        headers=att_headers,
+                        timeout=hop_timeout,
+                    ),
+                    timeout=hop_timeout + 5.0,
+                )
+            except asyncio.TimeoutError as e:
+                # 墙钟到点：这一跳作废，记熔断并进入下一候选（不吞掉整条链）。
+                _record_model_timeout(f"{mid_try}@{att['provider']}")
+                last_timeout_error = e
+                logger.warning(
+                    "[sutui-chat] 上游超时(墙钟) attempt=%s model=%s provider=%s timeout=%.0fs trace_id=%s",
+                    attempt_idx, mid_try, att["provider"], hop_timeout, trace_id,
+                )
+                body["model"] = _saved_model if _saved_model is not None else body.get("model")
+                if attempt_idx < len(attempts) - 1:
+                    continue
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"LLM 上游响应超时（{hop_timeout:.0f}s，模型 {mid_try}）"[:2000],
+                )
             except httpx.ConnectError as e:
                 last_connect_error = e
                 logger.warning(
