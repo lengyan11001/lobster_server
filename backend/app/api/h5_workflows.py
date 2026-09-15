@@ -3003,6 +3003,40 @@ def _activate_nodes_for_device(
                 _delete_task_row(db, task)
         db.commit()
         raise
+    # 同一槽位启动新工作流时，把该槽位上"不在本次工作流里"的旧 workflow 任务停掉。
+    # 背景（09-15 排查）：设备上明明没有配养号节点却在跑养号 —— 09-11 批量创建的那批
+    # workflow 任务一直 active，客户端按 installation_id 领任务时就会照跑。
+    # 开关：H5_WORKFLOW_SLOT_TASK_RECONCILE=0 可一键关掉。
+    if (os.environ.get("H5_WORKFLOW_SLOT_TASK_RECONCILE", "1").strip().lower() not in {"0", "false", "no", "off"}):
+        try:
+            _keep_ids = {int(item) for item in created_task_ids}
+            _paused_ids = []
+            for _task in (
+                db.query(ScheduledTask)
+                .filter(
+                    ScheduledTask.created_by_role == "workflow",
+                    ScheduledTask.user_id == int(owner.id),
+                    ScheduledTask.status == "active",
+                )
+                .all()
+            ):
+                if int(_task.id) in _keep_ids:
+                    continue
+                if installation_id not in [str(value) for value in (_task.target_installation_ids or [])]:
+                    continue
+                _task.status = "paused"
+                _paused_ids.append(int(_task.id))
+            if _paused_ids:
+                db.commit()
+                logger.info(
+                    "[workflow-slot-reconcile] user_id=%s installation_id=%s paused=%s kept=%s",
+                    owner.id,
+                    installation_id,
+                    _paused_ids,
+                    created_task_ids,
+                )
+        except Exception as _reconcile_exc:
+            logger.warning("[workflow-slot-reconcile] failed: %s", _reconcile_exc)
     snapshot = {"name": template_name, "nodes": nodes}
     if snapshot_extra:
         snapshot.update(snapshot_extra)
