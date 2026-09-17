@@ -2145,3 +2145,86 @@ class SutuiReconciliationRun(Base):
     diff: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")
     detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class PublishMetricSample(Base):
+    """发布数据（播放量）：抖音 / 视频号作品的最新计数快照（每个客户端上报键一行）。
+
+    客户端（个人发布中心所在机器）每天 02:00（北京时间）采集本机已发布作品的播放量，
+    以 sample_key = sha256(installation_id|platform|item_id|北京日期)[:48] 为幂等键上报；
+    云端按 (user_id, sample_key) UPSERT 最新值，重复上报不产生重复行。
+    朋友圈（朋友圈视频）本轮不采集，platform 只接受 douyin / wechat_channels。
+    """
+
+    __tablename__ = "publish_metrics"
+    __table_args__ = (
+        UniqueConstraint("user_id", "sample_key", name="uq_publish_metrics_user_sample"),
+        Index("ix_publish_metrics_user_platform_day", "user_id", "platform", "sampled_day"),
+        Index("ix_publish_metrics_user_item", "user_id", "platform", "item_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    """上报客户端标识（X-Installation-Id 或请求体 installation_id），用于区分多台机器。"""
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    item_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    """客户端本地发布账号 ID 与昵称（云端 publish_accounts 是另一套，这里仅做展示与分组）。"""
+    account_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    account_nickname: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    views: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    likes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    shares: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    favorites: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """客户端采样时刻（裸 UTC）与对应北京日期（YYYY-MM-DD，曲线按此自然日聚合）。"""
+    sampled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    sampled_day: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    sample_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="daily_0200", nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    reported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    report_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class PublishMetricEvent(Base):
+    """发布数据（播放量）时间序列：每个作品每个北京自然日一行，供曲线与环比。
+
+    与 PublishMetricSample 的区别：Sample 只保留「最新值」（看板当前数），Event 保留按日轨迹
+    （曲线 / 增长量 / 环比）。同一 (user_id, sample_key) 重复上报只更新当日数值，不追加重复行。
+    """
+
+    __tablename__ = "publish_metric_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "sample_key", name="uq_publish_metric_events_user_sample"),
+        Index("ix_publish_metric_events_user_platform_day", "user_id", "platform", "sampled_day"),
+        Index("ix_publish_metric_events_user_item", "user_id", "platform", "item_id", "sampled_day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    account_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    account_nickname: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    views: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    likes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    shares: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    favorites: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sampled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    sampled_day: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    sample_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )

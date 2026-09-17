@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -14,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
@@ -37,7 +39,13 @@ from ..manage_models import (
     MProduct,
     MProject,
 )
-from ..models import H5ChatDevicePresence, User, UserInstallation
+from ..models import (
+    H5ChatDevicePresence,
+    PublishMetricEvent,
+    PublishMetricSample,
+    User,
+    UserInstallation,
+)
 from .auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -696,13 +704,40 @@ PLAN_SYSTEM = """你是「AI 项目总监」。你的唯一目标：让这个项
    - requirement 必须写清验收标准（数量/频率、质量线、交付物）。
 4. 时间用 YYYY-MM-DD，落在项目周期内；同一人并行任务不超过 3 个。
 5. 如果判断现有资源不足以达成目标，必须在 resource_gap 里说清楚缺什么、建议怎么补。
-6. 输出 schema:
+6. customers 是公司现有客户线索/商机（含阶段、金额、下一步、以及是否已指定负责人）：
+   - owner_name 非空 = **已经人工指派**：与这位客户相关的任务（跟进、报价、签约、交付衔接）
+     必须由这位负责人执行，owner_name 必须照抄此人，不得改派给别人。
+   - owner_name 为空 = 未指派：把该客户的跟进安排写进 tasks（owner_name 从 candidates 里挑最合适的），
+     并且在 assignments_suggestions 里**至少给出建议**：建议谁跟、为什么、优先级。
+   - 不要编造 customers 里没有的客户；也不要在建议里改动客户数据。
+7. 输出 schema:
 {"summary":"","phases":[{"title":"","start_at":"","end_at":"","goal":"","tasks":[
  {"title":"","owner_name":"","requirement":"","start_at":"","end_at":"","kpi":"","deliverable":""}]}],
  "milestones":[{"title":"","at":""}],
+ "assignments_suggestions":[{"customer":"","suggested_owner":"","priority":"high|medium|low","reason":""}],
  "resource_gap":[{"category":"people|money|device|material|channel|compliance|time",
    "title":"","need":"","now":"","gap":"","impact":"","severity":"high|medium|low",
    "actions":[{"type":"hire|slot|budget|outsource|scope","what":"","when":""}]}]}"""
+
+
+def _assigned_customer_in_text(task: Dict[str, Any], customers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """任务文字里是否点了某个「已人工指派」的客户；命中则返回该客户与其指派负责人。"""
+    if not customers:
+        return None
+    text = " ".join(
+        str(task.get(key) or "")
+        for key in ("title", "detail", "requirement", "kpi", "deliverable")
+    )
+    if not text.strip():
+        return None
+    for c in customers:
+        if not c.get("assigned") or not c.get("owner_name"):
+            continue
+        for token in filter(None, (str(c.get("name") or "").strip(),
+                                  str(c.get("company_name") or "").strip())):
+            if len(token) >= 2 and token in text:
+                return c
+    return None
 
 
 def _template_plan(ctx: Dict[str, Any], members: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -837,6 +872,7 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
 
     ctx: Dict[str, Any] = {}
     member_payload: List[Dict[str, Any]] = []
+    customer_payload: List[Dict[str, Any]] = []
     company_id = 0
     read_db = SessionLocal()
     try:
@@ -856,7 +892,30 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
         for m in members:
             roles = read_db.query(MMembershipRole).filter(MMembershipRole.membership_id == m.id).all()
             member_payload.append({"membership_id": m.id, "name": m.display_name,
+                                   "dept": m.dept or "",
                                    "roles": [{"code": r.role_code, "level": r.level} for r in roles]})
+        # 客户（商机）也带给 AI：已人工指派的必须沿用该负责人；未指派的让 AI 至少给指派建议
+        customer_rows = (read_db.query(MCustomer)
+                         .filter(MCustomer.company_id == company_id)
+                         .order_by(MCustomer.id.desc()).limit(80).all())
+        name_by_mid = {m.id: m.display_name for m in members}
+        for c in customer_rows:
+            owner_name = name_by_mid.get(c.owner_membership_id, "") if c.owner_membership_id else ""
+            if c.owner_membership_id and not owner_name:
+                owner_name = _member_name(read_db, c.owner_membership_id)
+            customer_payload.append({
+                "name": c.name,
+                "company_name": c.company_name or "",
+                "stage": STAGE_LABEL.get(c.stage, c.stage),
+                "amount": float(c.amount or 0),
+                "next_action": (c.next_action or "")[:200],
+                "next_follow_at": c.next_follow_at or "",
+                "last_follow_at": c.last_follow_at or "",
+                "notes": (c.notes or "")[:300],
+                "owner_name": owner_name,          # 非空=人工指派，AI 必须沿用
+                "assigned": bool(owner_name),
+                "membership_id": int(c.owner_membership_id) if c.owner_membership_id else None,
+            })
     finally:
         read_db.close()
 
@@ -871,6 +930,13 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
                         "start_at": ctx.get("start_at"), "end_at": ctx.get("end_at")},
             "products": ctx.get("products") or [],
             "members": member_payload,
+            "customers": customer_payload,
+            "assignment_rules": [
+                "customers 里 owner_name 非空的客户已经人工指派：相关任务必须由该负责人做，不得改派。",
+                "owner_name 为空的客户未指派：把跟进安排写进 tasks（owner_name 从 members 里选），"
+                "并在 assignments_suggestions 里至少给出建议负责人与理由。",
+                "assignments_suggestions 只是建议，不要修改客户本身的数据。",
+            ],
             "extra_requirements": body.extra_requirements,
         })
         source = "ai"
@@ -896,6 +962,12 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
                 order += 1
                 owner = str(task.get("owner_name") or "").strip()
                 mid = by_name.get(owner, {}).get("membership_id")
+                # 代码级兜底：任务里点到「已人工指派的客户」时，无论模型写了谁（或没写），
+                # 都落到该客户的指派负责人身上——不让模型的疏忽改掉人工指派关系。
+                hit = _assigned_customer_in_text(task, customer_payload)
+                if hit and owner != hit["owner_name"]:
+                    owner = str(hit["owner_name"])
+                    mid = hit.get("membership_id") or by_name.get(owner, {}).get("membership_id")
                 write_db.add(MPlanNode(
                     company_id=company_id, project_id=project_id, parent_id=ph.id, node_type="task",
                     title=str(task.get("title") or "任务"), detail=str(task.get("detail") or ""),
@@ -929,8 +1001,37 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
                 severity=str(g.get("severity") or "medium"), actions=g.get("actions") or [],
                 source="plan",
             ))
+        # AI 的客户指派建议：落成「条件」记录（category=people），
+        # 未指派客户至少要有建议，这样老板在「条件」页能看到「建议谁跟、为什么」。
+        assignments: List[Dict[str, Any]] = []
+        assigned_customer_names = {str(c.get("name") or "") for c in customer_payload if c.get("assigned")}
+        for item in (plan.get("assignments_suggestions") or [])[:40]:
+            if not isinstance(item, dict):
+                continue
+            customer = str(item.get("customer") or "").strip()
+            suggested = str(item.get("suggested_owner") or "").strip()
+            if not customer:
+                continue
+            priority = str(item.get("priority") or "medium").lower()
+            if priority not in ("high", "medium", "low"):
+                priority = "medium"
+            reason = str(item.get("reason") or "").strip()
+            record = {"customer": customer, "suggested_owner": suggested,
+                      "priority": priority, "reason": reason,
+                      "suggested_membership_id": by_name.get(suggested, {}).get("membership_id")}
+            assignments.append(record)
+            write_db.add(MCondition(
+                company_id=company_id, project_id=project_id, category="people",
+                title="客户指派建议：" + customer,
+                need=suggested or "待定",
+                now_state="已指派" if customer in assigned_customer_names else "未指派",
+                gap=reason or "AI 建议由该成员负责这个客户的跟进",
+                impact="客户若无人跟进，线索会沉掉",
+                severity=priority, actions=[], source="plan",
+            ))
         _audit(write_db, company_id, user.id, "plan.generate", "project", project_id,
-               {"source": source, "nodes": order, "gaps": len(gaps)})
+               {"source": source, "nodes": order, "gaps": len(gaps),
+                "assignments": len(assignments)})
         write_db.flush()
         plan_version = _save_version(write_db, project, source=source,
                                      summary=plan.get("summary") or "",
@@ -943,7 +1044,8 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
     finally:
         write_db.close()
     return {"ok": True, "source": source, "summary": plan.get("summary") or "",
-            "version": plan_version, "nodes": out_nodes, "resource_gap": gaps}
+            "version": plan_version, "nodes": out_nodes, "resource_gap": gaps,
+            "assignments": assignments}
 
 
 @router.patch("/nodes/{node_id}")
@@ -1336,6 +1438,37 @@ class CustomerLogIn(BaseModel):
     happened_at: str = ""
 
 
+def _member_name(db: Session, membership_id: Any) -> str:
+    try:
+        mid = int(membership_id) if membership_id else 0
+    except (TypeError, ValueError):
+        return ""
+    if not mid:
+        return ""
+    row = db.query(MMembership).filter(MMembership.id == mid).first()
+    return str(row.display_name or "") if row else ""
+
+
+def _check_customer_owner(db: Session, company_id: int, membership_id: Any) -> Optional[int]:
+    """客户指派的目标必须是本公司 active 成员，否则 400（防止跨公司/已离职成员）。"""
+    if membership_id in (None, "", 0):
+        return None
+    try:
+        mid = int(membership_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="指派对象无效")
+    row = (
+        db.query(MMembership)
+        .filter(MMembership.id == mid,
+                MMembership.company_id == company_id,
+                MMembership.status == "active")
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=400, detail="指派对象不是本公司的在册成员")
+    return int(row.id)
+
+
 def _customer_json(db: Session, row: MCustomer, logs: bool = False) -> Dict[str, Any]:
     owner = None
     if row.owner_membership_id:
@@ -1387,7 +1520,8 @@ def create_customer(body: CustomerIn, user: Any = Depends(current_actor),
                     phone=body.phone, wechat=body.wechat, source=body.source,
                     stage=body.stage if body.stage in STAGE_LABEL else "lead",
                     amount=Decimal(str(body.amount or 0)),
-                    owner_membership_id=body.owner_membership_id, next_action=body.next_action,
+                    owner_membership_id=_check_customer_owner(db, company.id, body.owner_membership_id),
+                    next_action=body.next_action,
                     next_follow_at=body.next_follow_at, notes=body.notes,
                     created_by=getattr(user, "id", 0))
     db.add(row)
@@ -1413,8 +1547,11 @@ def update_customer(customer_id: int, body: CustomerPatchIn, user: Any = Depends
         row.stage = data["stage"]
     if data.get("amount") is not None:
         row.amount = Decimal(str(data["amount"]))
-    if data.get("owner_membership_id") is not None:
-        row.owner_membership_id = data["owner_membership_id"]
+    if "owner_membership_id" in data:
+        row.owner_membership_id = _check_customer_owner(db, row.company_id, data.get("owner_membership_id"))
+        db.add(MCustomerLog(company_id=company.id, customer_id=row.id,
+                            actor_user_id=getattr(user, "id", 0), kind="note",
+                            content="负责人变更为「" + (_member_name(db, row.owner_membership_id) or "未指派") + "」"))
     if data.get("stage") and data["stage"] != old_stage:
         db.add(MCustomerLog(company_id=company.id, customer_id=row.id,
                             actor_user_id=getattr(user, "id", 0), kind="stage",
@@ -1741,6 +1878,41 @@ def _slot_presence(db: Session, installation_id: str) -> tuple:
     return row, remote, online, (row.last_seen_at.isoformat() if row.last_seen_at else "")
 
 
+# 中继返回的设备在线判定必须「宽进」：中继在设备在线时返回 deviceView（顶层 online=true，
+# 且不带 lastDevice 字段），只有设备离线时才回落到绑定时留下的快照（lastDevice.online=false）。
+# 历史实现只读 lastDevice.online，结果把在线设备一律判成离线（远程弹窗永远提示「不在线」）。
+RELAY_DEVICE_ONLINE_GRACE_SECONDS = 180
+
+
+def _relay_device_online(bound: Optional[Dict[str, Any]]) -> bool:
+    """设备在中继上是否在线：顶层 online → lastDevice.online → lastSeen 时间窗。"""
+    if not isinstance(bound, dict):
+        return False
+    if bound.get("online") is True:
+        return True
+    last = bound.get("lastDevice")
+    if isinstance(last, dict) and last.get("online") is True:
+        return True
+    try:
+        seen_ms = int(float(bound.get("lastSeen") or 0))
+    except (TypeError, ValueError):
+        seen_ms = 0
+    if seen_ms > 0 and (time.time() * 1000 - seen_ms) <= RELAY_DEVICE_ONLINE_GRACE_SECONDS * 1000:
+        return True
+    return False
+
+
+def _relay_last_seen_text(bound: Optional[Dict[str, Any]]) -> str:
+    """把中继的 lastSeen(ms) 转成北京时间文案，便于排障。"""
+    try:
+        seen_ms = int(float((bound or {}).get("lastSeen") or 0))
+    except (TypeError, ValueError):
+        seen_ms = 0
+    if seen_ms <= 0:
+        return "从未在线"
+    return (datetime.utcfromtimestamp(seen_ms / 1000) + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+
+
 def _remote_support_call(method: str, path: str, body: Optional[dict] = None) -> dict:
     """以平台管理员身份调用远程支持中继（BHZN-ToDesk 服务）。"""
     base = str(getattr(settings, "remote_support_service_url", "http://127.0.0.1:38080") or "").rstrip("/")
@@ -1959,9 +2131,11 @@ def ai_employee_remote_session(ai_id: int, user: Any = Depends(current_actor),
         raise HTTPException(status_code=409, detail=(
             "这台设备的远程客户端还没连上中继（设备号 " + device_id
             + "）：让对方打开远程客户端，或者用「设备号 + 验证码」重新添加一次"))
-    if not bool((bound.get("lastDevice") or {}).get("online")):
+    if not _relay_device_online(bound):
         raise HTTPException(status_code=409, detail=(
-            "远程客户端当前不在线（设备号 " + device_id + "）：画面要等它连上中继才能看"))
+            "远程客户端当前不在线（设备号 " + device_id
+            + "，最后一次在线 " + _relay_last_seen_text(bound)
+            + "）：让对方打开远程客户端再试；若对方机器上远程开关是关的，先在客户端系统配置里打开"))
     data = _remote_support_call("POST", "/api/remote-admin/controller-session")
     public_url = str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")
     _audit(db, company.id, getattr(user, "id", 0), "ai_employee.remote", "ai_employee", row.id,
@@ -2247,3 +2421,881 @@ def rollback_version(project_id: int, version_id: int, user: Any = Depends(curre
            {"version": ver.version})
     db.commit()
     return {"ok": True, "restored_version": ver.version, "nodes": len(nodes)}
+
+
+# ── 发布数据（播放量）：online 客户端采集 → 云端汇总 → 管理后台展示 ───────────────
+# 展示端就是 manage.bhzn.top，与 H5 / 手机端无关；朋友圈（moments）本轮不采集。
+
+
+def _require_metrics_admin(actor: Any) -> None:
+    """发布数据是跨客户端的运营数据，只给平台管理员看。"""
+    if _is_admin_actor(actor) or str(getattr(actor, "role", "") or "").lower() == "admin":
+        return
+    raise HTTPException(status_code=403, detail="只有平台管理员可以查看发布数据")
+
+
+def _metrics_window(days: int) -> tuple[str, str, str, str, str]:
+    """返回 (本期起, 本期止, 上期起, 上期止, 取数起点)——全部按北京自然日字符串。"""
+    today = datetime.utcnow() + timedelta(hours=8)
+    end_day = today.strftime("%Y-%m-%d")
+    start_day = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    prev_end = (today - timedelta(days=days)).strftime("%Y-%m-%d")
+    prev_start = (today - timedelta(days=2 * days - 1)).strftime("%Y-%m-%d")
+    fetch_since = (today - timedelta(days=2 * days + 7)).strftime("%Y-%m-%d")
+    return start_day, end_day, prev_start, prev_end, fetch_since
+
+
+def _account_label(email: str) -> str:
+    raw = str(email or "").strip()
+    if raw.startswith("1") and "@" in raw:
+        local = raw.split("@", 1)[0]
+        if local.isdigit() and len(local) == 11:
+            return local
+    return raw or "—"
+
+
+def _event_gain(rows: List[Any], start_day: str, end_day: str) -> int:
+    """窗口内播放量增量 = 末值 − 窗口前最近一次值（没有历史则视为窗口内第一条）。"""
+    inside = [r for r in rows if start_day <= r.sampled_day <= end_day]
+    if not inside:
+        return 0
+    before = [r for r in rows if r.sampled_day < start_day]
+    base = int((before[-1] if before else inside[0]).views or 0)
+    return max(0, int(inside[-1].views or 0) - base)
+
+
+def _growth_pct(current: int, previous: int) -> Optional[float]:
+    if not previous:
+        return None
+    return round((current - previous) / previous * 100, 1)
+
+
+@router.get("/publish-metrics/overview", summary="发布数据总览：按平台 / 客户端 / 账号汇总")
+def publish_metrics_overview(
+    days: int = Query(7, ge=1, le=180),
+    platform: str = Query("", description="douyin / wechat_channels；留空=两者"),
+    user_id: Optional[int] = Query(None),
+    q: str = Query("", description="按手机号 / 邮箱 / 安装 ID 搜索"),
+    stale_hours: int = Query(26, ge=1, le=720, description="多久没上报算掉线"),
+    actor: Any = Depends(current_actor),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    from .publish_metrics import METRIC_PLATFORMS, PLATFORM_LABELS, window_views_gain
+
+    _require_metrics_admin(actor)
+    platforms = [platform.strip()] if platform.strip() in METRIC_PLATFORMS else list(METRIC_PLATFORMS)
+    start_day, end_day, prev_start, prev_end, fetch_since = _metrics_window(days)
+
+    ev_query = db.query(PublishMetricEvent).filter(
+        PublishMetricEvent.platform.in_(platforms),
+        PublishMetricEvent.sampled_day >= fetch_since,
+    )
+    samples_query = db.query(PublishMetricSample).filter(
+        PublishMetricSample.platform.in_(platforms),
+        PublishMetricSample.sampled_day >= fetch_since,
+    )
+    if user_id:
+        ev_query = ev_query.filter(PublishMetricEvent.user_id == int(user_id))
+        samples_query = samples_query.filter(PublishMetricSample.user_id == int(user_id))
+    keyword = (q or "").strip().lower()
+    if keyword:
+        matched = [
+            int(uid)
+            for (uid,) in db.query(User.id)
+            .filter(func.lower(User.email).like(f"%{keyword}%"))
+            .all()
+        ]
+        if matched:
+            ev_query = ev_query.filter(PublishMetricEvent.user_id.in_(matched))
+            samples_query = samples_query.filter(PublishMetricSample.user_id.in_(matched))
+        else:
+            ev_query = ev_query.filter(PublishMetricEvent.installation_id.like(f"%{keyword}%"))
+            samples_query = samples_query.filter(PublishMetricSample.installation_id.like(f"%{keyword}%"))
+
+    events = ev_query.order_by(PublishMetricEvent.sampled_day.asc(), PublishMetricEvent.id.asc()).all()
+    latest_rows = samples_query.all()
+
+    now = datetime.utcnow()
+    series: Dict[Any, List[Any]] = {}
+    for row in events:
+        series.setdefault((row.user_id, row.platform, row.item_id), []).append(row)
+
+    users: Dict[int, Dict[str, Any]] = {}
+    machines: Dict[str, Dict[str, Any]] = {}
+    platform_buckets: Dict[str, Dict[str, Any]] = {
+        p: {
+            "platform": p,
+            "platform_label": PLATFORM_LABELS.get(p, p),
+            "item_count": 0,
+            "views": 0,
+            "views_gain": 0,
+            "previous_views_gain": 0,
+            "user_ids": set(),
+            "account_count": 0,
+        }
+        for p in platforms
+    }
+
+    for (uid, plat, item_id), rows in series.items():
+        inside = [r for r in rows if start_day <= r.sampled_day <= end_day]
+        if not inside:
+            continue
+        last = inside[-1]
+        gain = _event_gain(rows, start_day, end_day)
+        prev_gain = _event_gain(rows, prev_start, prev_end)
+        bucket = platform_buckets.setdefault(
+            plat,
+            {
+                "platform": plat,
+                "platform_label": PLATFORM_LABELS.get(plat, plat),
+                "item_count": 0,
+                "views": 0,
+                "views_gain": 0,
+                "previous_views_gain": 0,
+                "user_ids": set(),
+                "account_count": 0,
+            },
+        )
+        bucket["item_count"] += 1
+        bucket["views"] += int(last.views or 0)
+        bucket["views_gain"] += gain
+        bucket["previous_views_gain"] += prev_gain
+        bucket["user_ids"].add(uid)
+
+        user = users.setdefault(
+            uid,
+            {
+                "user_id": uid,
+                "label": "",
+                "email": "",
+                "brand": "",
+                "item_count": 0,
+                "views": 0,
+                "views_gain": 0,
+                "previous_views_gain": 0,
+                "platforms": {},
+                "machines": set(),
+                "last_reported_at": None,
+                "accounts": {},
+            },
+        )
+        user["item_count"] += 1
+        user["views"] += int(last.views or 0)
+        user["views_gain"] += gain
+        user["previous_views_gain"] += prev_gain
+        plat_row = user["platforms"].setdefault(
+            plat,
+            {
+                "platform": plat,
+                "platform_label": PLATFORM_LABELS.get(plat, plat),
+                "item_count": 0,
+                "views": 0,
+                "views_gain": 0,
+            },
+        )
+        plat_row["item_count"] += 1
+        plat_row["views"] += int(last.views or 0)
+        plat_row["views_gain"] += gain
+        if last.account_nickname:
+            acct = user["accounts"].setdefault(
+                str(last.account_id or last.account_nickname),
+                {
+                    "account_id": last.account_id,
+                    "nickname": last.account_nickname,
+                    "item_count": 0,
+                    "views": 0,
+                    "views_gain": 0,
+                },
+            )
+            acct["item_count"] += 1
+            acct["views"] += int(last.views or 0)
+            acct["views_gain"] += gain
+
+    for row in latest_rows:
+        user = users.get(row.user_id)
+        if user is None:
+            continue
+        if row.installation_id:
+            user["machines"].add(row.installation_id)
+            machine = machines.setdefault(
+                row.installation_id,
+                {
+                    "installation_id": row.installation_id,
+                    "user_id": row.user_id,
+                    "label": "",
+                    "brand": "",
+                    "last_reported_at": None,
+                    "samples": 0,
+                    "platforms": set(),
+                },
+            )
+            machine["samples"] += 1
+            machine["platforms"].add(row.platform)
+            if row.reported_at and (
+                machine["last_reported_at"] is None or row.reported_at > machine["last_reported_at"]
+            ):
+                machine["last_reported_at"] = row.reported_at
+        if row.reported_at and (
+            user["last_reported_at"] is None or row.reported_at > user["last_reported_at"]
+        ):
+            user["last_reported_at"] = row.reported_at
+
+    if users:
+        user_rows = db.query(User).filter(User.id.in_(list(users.keys()))).all()
+        for row in user_rows:
+            user = users.get(row.id)
+            if user is None:
+                continue
+            label = _account_label(row.email or "")
+            user["label"] = label
+            user["email"] = row.email or ""
+            user["brand"] = row.brand_mark or ""
+            for machine in machines.values():
+                if machine["user_id"] == row.id:
+                    machine["label"] = label
+                    machine["brand"] = row.brand_mark or ""
+
+    def _machine_json(item: Dict[str, Any]) -> Dict[str, Any]:
+        last = item["last_reported_at"]
+        hours = round((now - last).total_seconds() / 3600, 1) if last else None
+        return {
+            "installation_id": item["installation_id"],
+            "user_id": item["user_id"],
+            "label": item["label"],
+            "brand": item["brand"],
+            "samples": item["samples"],
+            "platforms": sorted(item["platforms"]),
+            "last_reported_at": (last.isoformat() + "Z") if last else None,
+            "hours_since": hours,
+            "stale": (hours is None) or hours > stale_hours,
+        }
+
+    users_out: List[Dict[str, Any]] = []
+    for user in users.values():
+        last = user["last_reported_at"]
+        hours = round((now - last).total_seconds() / 3600, 1) if last else None
+        users_out.append(
+            {
+                "user_id": user["user_id"],
+                "label": user["label"],
+                "email": user["email"],
+                "brand": user["brand"],
+                "item_count": user["item_count"],
+                "views": user["views"],
+                "views_gain": user["views_gain"],
+                "previous_views_gain": user["previous_views_gain"],
+                "growth_pct": _growth_pct(user["views_gain"], user["previous_views_gain"]),
+                "platforms": sorted(user["platforms"].values(), key=lambda p: -int(p["views"])),
+                "accounts": sorted(
+                    user["accounts"].values(), key=lambda a: (-int(a["views"]), str(a.get("nickname") or ""))
+                ),
+                "machines": [_machine_json(m) for m in machines.values() if m["user_id"] == user["user_id"]],
+                "last_reported_at": (last.isoformat() + "Z") if last else None,
+                "hours_since": hours,
+                "stale": (hours is None) or hours > stale_hours,
+            }
+        )
+    users_out.sort(key=lambda u: (-int(u["views_gain"]), -int(u["views"]), str(u["label"])))
+
+    platform_rows: List[Dict[str, Any]] = []
+    for plat in platforms:
+        bucket = platform_buckets.get(plat)
+        if not bucket:
+            continue
+        platform_rows.append(
+            {
+                "platform": bucket["platform"],
+                "platform_label": bucket["platform_label"],
+                "item_count": bucket["item_count"],
+                "views": bucket["views"],
+                "views_gain": bucket["views_gain"],
+                "previous_views_gain": bucket["previous_views_gain"],
+                "growth_pct": _growth_pct(bucket["views_gain"], bucket["previous_views_gain"]),
+                "user_count": len(bucket["user_ids"]),
+            }
+        )
+    platform_rows.sort(key=lambda p: -int(p["views"]))
+
+    total_gain = sum(int(p["views_gain"]) for p in platform_rows)
+    prev_total_gain = sum(int(p["previous_views_gain"]) for p in platform_rows)
+    machine_rows = sorted(
+        (_machine_json(m) for m in machines.values()),
+        key=lambda m: (not m["stale"], -(m["hours_since"] if m["hours_since"] is not None else 0)),
+    )
+    return {
+        "ok": True,
+        "days": days,
+        "window": {"start_day": start_day, "end_day": end_day,
+                   "previous_start_day": prev_start, "previous_end_day": prev_end},
+        "totals": {
+            "views": sum(int(p["views"]) for p in platform_rows),
+            "views_gain": total_gain,
+            "previous_views_gain": prev_total_gain,
+            "growth_pct": _growth_pct(total_gain, prev_total_gain),
+            "item_count": sum(int(p["item_count"]) for p in platform_rows),
+            "user_count": len(users_out),
+            "machine_count": len(machine_rows),
+            "stale_machine_count": len([m for m in machine_rows if m["stale"]]),
+        },
+        "platforms": platform_rows,
+        "users": users_out,
+        "machines": machine_rows,
+        "schedule": {
+            "window": "02:00-06:00",
+            "timezone": "Asia/Shanghai",
+            "hint": "客户端按 installation_id 在窗口内错峰固定一分钟；未见 02:00-06:00 之外的采集",
+        },
+        "note": (
+            "views_gain = 窗口内新增播放量（末值 − 窗口前基线）；views = 当前累计播放量。"
+            "首次上报的作品本期不计增长，下一期起计入。仅抖音与视频号；朋友圈本轮不采集。"
+            "stale=true 表示该机器超过 "
+            f"{stale_hours} 小时没有上报。"
+        ),
+    }
+
+
+@router.get("/publish-metrics/items", summary="发布数据明细：作品曲线（按北京自然日）")
+def publish_metrics_items(
+    days: int = Query(30, ge=1, le=180),
+    platform: str = Query("", description="douyin / wechat_channels；留空=两者"),
+    user_id: Optional[int] = Query(None),
+    account_id: Optional[int] = Query(None),
+    item_id: str = Query(""),
+    limit: int = Query(80, ge=1, le=500),
+    actor: Any = Depends(current_actor),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    from .publish_metrics import METRIC_PLATFORMS, PLATFORM_LABELS
+
+    _require_metrics_admin(actor)
+    platforms = [platform.strip()] if platform.strip() in METRIC_PLATFORMS else list(METRIC_PLATFORMS)
+    start_day, end_day, _prev_start, _prev_end, fetch_since = _metrics_window(days)
+
+    query = db.query(PublishMetricEvent).filter(
+        PublishMetricEvent.platform.in_(platforms),
+        PublishMetricEvent.sampled_day >= fetch_since,
+    )
+    if user_id:
+        query = query.filter(PublishMetricEvent.user_id == int(user_id))
+    if account_id:
+        query = query.filter(PublishMetricEvent.account_id == int(account_id))
+    wanted_item = (item_id or "").strip()
+    if wanted_item:
+        query = query.filter(PublishMetricEvent.item_id == wanted_item)
+    rows = query.order_by(PublishMetricEvent.sampled_day.asc(), PublishMetricEvent.id.asc()).all()
+
+    series: Dict[Any, List[Any]] = {}
+    for row in rows:
+        series.setdefault((row.user_id, row.platform, row.item_id), []).append(row)
+
+    titles = {
+        (row.user_id, row.platform, row.item_id): row.title
+        for row in db.query(PublishMetricSample)
+        .filter(
+            PublishMetricSample.platform.in_(platforms),
+            PublishMetricSample.sampled_day >= fetch_since,
+        )
+        .all()
+    }
+    items: List[Dict[str, Any]] = []
+    for (uid, plat, iid), points in series.items():
+        gain = _event_gain(points, start_day, end_day)
+        last = points[-1]
+        items.append(
+            {
+                "user_id": uid,
+                "platform": plat,
+                "platform_label": PLATFORM_LABELS.get(plat, plat),
+                "item_id": iid,
+                "title": titles.get((uid, plat, iid)),
+                "account_id": last.account_id,
+                "account_nickname": last.account_nickname,
+                "views": int(last.views or 0),
+                "views_gain": gain,
+                "first_day": points[0].sampled_day,
+                "last_day": points[-1].sampled_day,
+                "points": [
+                    {
+                        "day": r.sampled_day,
+                        "views": int(r.views or 0),
+                        "likes": int(r.likes or 0),
+                        "comments": int(r.comments or 0),
+                        "shares": int(r.shares or 0),
+                        "favorites": int(r.favorites or 0),
+                    }
+                    for r in points
+                ],
+            }
+        )
+    items.sort(key=lambda e: (-int(e["views_gain"]), -int(e["views"])))
+    return {
+        "ok": True,
+        "days": days,
+        "window": {"start_day": start_day, "end_day": end_day},
+        "item_total": len(items),
+        "items": items[:limit],
+    }
+
+
+# ── 任务时间线 / 我的任务 / AI 辅助 ──────────────────────────────────────────────
+# 时间线：项目列表二级界面用。上面是日期刻度，下面每个任务一根横条，
+#         跨多天合成一根（不是一天一个格子），颜色区分状态：
+#         绿=完成、黄=预警（3 天内到期）、红=超期、青=进行中、灰=未开始、紫=受阻。
+
+TIMELINE_STATE_LABELS = {
+    "done": "完成",
+    "overdue": "超期",
+    "warn": "预警",
+    "active": "进行中",
+    "blocked": "受阻",
+    "pending": "未开始",
+}
+
+TIMELINE_TZ_OFFSET_HOURS = 8
+TIMELINE_WARN_DAYS = 3
+
+
+def _today_beijing() -> date:
+    return (datetime.utcnow() + timedelta(hours=TIMELINE_TZ_OFFSET_HOURS)).date()
+
+
+def _parse_day(value: Any) -> Optional[date]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw[:10]).date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _node_day_range(node: MPlanNode) -> tuple[Optional[date], Optional[date]]:
+    """任务起止（只认日期部分）；缺一头就用另一头补齐，方便画条。"""
+    start = _parse_day(node.start_at)
+    end = _parse_day(node.end_at)
+    if start and not end:
+        end = start
+    if end and not start:
+        start = end
+    if start and end and end < start:
+        start, end = end, start
+    return start, end
+
+
+def _timeline_state(node: MPlanNode, today: date) -> str:
+    """时间线状态：done / overdue / warn / active / blocked / pending。"""
+    status = str(node.status or "").strip().lower()
+    if status in ("completed", "done"):
+        return "done"
+    if status == "blocked":
+        return "blocked"
+    _start, end = _node_day_range(node)
+    if end is not None:
+        if end < today:
+            return "overdue"
+        if (end - today).days <= TIMELINE_WARN_DAYS:
+            return "warn"
+    if status == "in_progress":
+        return "active"
+    return "pending"
+
+
+def _timeline_task_json(
+    node: MPlanNode,
+    *,
+    project_name: str = "",
+    company_name: str = "",
+    today: date,
+    window_start: date,
+) -> Optional[Dict[str, Any]]:
+    start, end = _node_day_range(node)
+    if start is None or end is None:
+        return None
+    state = _timeline_state(node, today)
+    return {
+        "id": node.id,
+        "project_id": node.project_id,
+        "project_name": project_name,
+        "company_name": company_name,
+        "node_type": node.node_type,
+        "title": node.title,
+        "detail": node.detail or "",
+        "owner_name": node.owner_name or "",
+        "owner_membership_id": node.owner_membership_id,
+        "requirement": node.requirement or "",
+        "kpi": node.kpi or "",
+        "deliverable": node.deliverable or "",
+        "start_at": node.start_at or "",
+        "end_at": node.end_at or "",
+        "start_day": start.isoformat(),
+        "end_day": end.isoformat(),
+        "offset_days": (start - window_start).days,
+        "span_days": (end - start).days + 1,
+        "days_left": (end - today).days,
+        "status": node.status,
+        "progress": int(node.progress or 0),
+        "state": state,
+        "state_label": TIMELINE_STATE_LABELS.get(state, state),
+    }
+
+
+def _company_scope(db: Session, actor: Any, company_id: Optional[int]) -> List[MCompany]:
+    """当前主体能看的公司：管理员=全部（或指定），真实员工=自己 active 成员关系所在公司。"""
+    if _is_admin_actor(actor):
+        if company_id:
+            row = db.query(MCompany).filter(MCompany.id == int(company_id)).first()
+            return [row] if row else []
+        return db.query(MCompany).order_by(MCompany.id.asc()).all()
+    rows = (
+        db.query(MCompany)
+        .join(MMembership, MMembership.company_id == MCompany.id)
+        .filter(MMembership.user_id == int(getattr(actor, "id", 0) or 0),
+                MMembership.status == "active")
+        .order_by(MCompany.id.asc())
+        .all()
+    )
+    owned = db.query(MCompany).filter(MCompany.owner_user_id == int(getattr(actor, "id", 0) or 0)).all()
+    seen = {c.id for c in rows}
+    for company in owned:
+        if company.id not in seen:
+            rows.append(company)
+            seen.add(company.id)
+    if company_id:
+        return [c for c in rows if c.id == int(company_id)]
+    return rows
+
+
+def _my_membership_ids(db: Session, actor: Any) -> List[int]:
+    return [
+        int(row.id)
+        for row in db.query(MMembership)
+        .filter(MMembership.user_id == int(getattr(actor, "id", 0) or 0),
+                MMembership.status == "active")
+        .all()
+    ]
+
+
+def _task_query(db: Session, company_ids: List[int], project_id: Optional[int]) -> List[MPlanNode]:
+    if not company_ids:
+        return []
+    query = db.query(MPlanNode).filter(MPlanNode.company_id.in_(company_ids))
+    if project_id:
+        query = query.filter(MPlanNode.project_id == int(project_id))
+    return query.order_by(MPlanNode.start_at.asc(), MPlanNode.order_index.asc(), MPlanNode.id.asc()).all()
+
+
+@router.get("/tasks/timeline", summary="任务时间线：日期刻度 + 任务横条（跨天合并，颜色=状态）")
+def tasks_timeline(
+    company_id: Optional[int] = Query(None),
+    project_id: Optional[int] = Query(None),
+    from_day: str = Query("", description="窗口开始日 YYYY-MM-DD，默认今天-7"),
+    to_day: str = Query("", description="窗口结束日 YYYY-MM-DD，默认今天+30"),
+    actor: Any = Depends(current_actor),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    companies = _company_scope(db, actor, company_id)
+    if not companies:
+        raise HTTPException(status_code=404, detail="没有可查看的公司")
+    company_ids = [int(c.id) for c in companies]
+    company_names = {int(c.id): c.name for c in companies}
+
+    today = _today_beijing()
+    nodes = _task_query(db, company_ids, project_id)
+    # 未显式给窗口（前端选「全部」）时：有任务就按任务起止自适应，没有就默认今天±
+    explicit_from = _parse_day(from_day)
+    explicit_to = _parse_day(to_day)
+    if explicit_from is None or explicit_to is None:
+        spans = [_node_day_range(n) for n in nodes]
+        spans = [(s, e) for s, e in spans if s and e]
+        if spans:
+            data_start = min(s for s, _ in spans)
+            data_end = max(e for _, e in spans)
+            window_start = explicit_from or (data_start - timedelta(days=3))
+            window_end = explicit_to or (data_end + timedelta(days=3))
+        else:
+            window_start = explicit_from or (today - timedelta(days=7))
+            window_end = explicit_to or (today + timedelta(days=30))
+    else:
+        window_start, window_end = explicit_from, explicit_to
+    if window_end < window_start:
+        window_start, window_end = window_end, window_start
+
+    project_rows = db.query(MProject).filter(MProject.company_id.in_(company_ids)).all()
+    project_names = {int(p.id): p.name for p in project_rows}
+
+    tasks: List[Dict[str, Any]] = []
+    for node in nodes:
+        item = _timeline_task_json(
+            node,
+            project_name=project_names.get(int(node.project_id), ""),
+            company_name=company_names.get(int(node.company_id), ""),
+            today=today,
+            window_start=window_start,
+        )
+        if item is None:
+            continue
+        if _parse_day(item["end_day"]) < window_start or _parse_day(item["start_day"]) > window_end:
+            continue
+        tasks.append(item)
+
+    summary = {key: 0 for key in TIMELINE_STATE_LABELS}
+    for item in tasks:
+        summary[item["state"]] = summary.get(item["state"], 0) + 1
+    tasks.sort(key=lambda x: (x["start_day"], x["project_name"], x["title"]))
+    return {
+        "ok": True,
+        "today": today.isoformat(),
+        "window": {"from_day": window_start.isoformat(), "to_day": window_end.isoformat(),
+                   "days": (window_end - window_start).days + 1},
+        "state_labels": TIMELINE_STATE_LABELS,
+        "summary": summary,
+        "project_count": len({t["project_id"] for t in tasks}),
+        "task_count": len(tasks),
+        "tasks": tasks,
+        "projects": [{"id": int(p.id), "name": p.name} for p in project_rows],
+        "companies": [{"id": int(c.id), "name": c.name} for c in companies],
+        "note": (
+            "每条任务一根横条，跨多天合并显示；颜色=状态："
+            "绿=完成、黄=预警（3 天内到期）、红=超期、青=进行中、灰=未开始、紫=受阻。"
+        ),
+    }
+
+
+@router.get("/tasks/mine", summary="我的任务：真实员工登录后看到派给自己的任务")
+def tasks_mine(
+    company_id: Optional[int] = Query(None),
+    include_done: bool = Query(True),
+    actor: Any = Depends(current_actor),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    companies = _company_scope(db, actor, company_id)
+    if not companies:
+        raise HTTPException(status_code=404, detail="没有可查看的公司")
+    company_ids = [int(c.id) for c in companies]
+    company_names = {int(c.id): c.name for c in companies}
+    today = _today_beijing()
+
+    is_admin = _is_admin_actor(actor) or str(getattr(actor, "role", "") or "").lower() == "admin"
+    memberships = _my_membership_ids(db, actor)
+    my_names = {
+        str(row.display_name or "").strip()
+        for row in db.query(MMembership)
+        .filter(MMembership.user_id == int(getattr(actor, "id", 0) or 0))
+        .all()
+        if str(row.display_name or "").strip()
+    }
+
+    nodes = _task_query(db, company_ids, None)
+    project_rows = db.query(MProject).filter(MProject.company_id.in_(company_ids)).all()
+    project_names = {int(p.id): p.name for p in project_rows}
+
+    tasks: List[Dict[str, Any]] = []
+    for node in nodes:
+        mine = False
+        if is_admin:
+            mine = True
+        elif node.owner_membership_id and int(node.owner_membership_id) in memberships:
+            mine = True
+        elif my_names and str(node.owner_name or "").strip() in my_names:
+            mine = True
+        if not mine:
+            continue
+        start, end = _node_day_range(node)
+        state = _timeline_state(node, today)
+        if not include_done and state == "done":
+            continue
+        tasks.append(
+            {
+                "id": node.id,
+                "project_id": node.project_id,
+                "project_name": project_names.get(int(node.project_id), ""),
+                "company_id": node.company_id,
+                "company_name": company_names.get(int(node.company_id), ""),
+                "title": node.title,
+                "detail": node.detail or "",
+                "owner_name": node.owner_name or "",
+                "requirement": node.requirement or "",
+                "kpi": node.kpi or "",
+                "deliverable": node.deliverable or "",
+                "start_at": node.start_at or "",
+                "end_at": node.end_at or "",
+                "start_day": start.isoformat() if start else "",
+                "end_day": end.isoformat() if end else "",
+                "days_left": (end - today).days if end else None,
+                "status": node.status,
+                "progress": int(node.progress or 0),
+                "state": state,
+                "state_label": TIMELINE_STATE_LABELS.get(state, state),
+            }
+        )
+
+    order = {"overdue": 0, "warn": 1, "active": 2, "blocked": 3, "pending": 4, "done": 5}
+    tasks.sort(key=lambda t: (order.get(t["state"], 9), t["end_day"] or "9999", t["title"]))
+    summary = {key: 0 for key in TIMELINE_STATE_LABELS}
+    for item in tasks:
+        summary[item["state"]] = summary.get(item["state"], 0) + 1
+    return {
+        "ok": True,
+        "today": today.isoformat(),
+        "scope": "all" if is_admin else "mine",
+        "actor": {"id": int(getattr(actor, "id", 0) or 0), "name": str(getattr(actor, "email", "") or "")},
+        "state_labels": TIMELINE_STATE_LABELS,
+        "summary": summary,
+        "task_count": len(tasks),
+        "tasks": tasks,
+        "note": (
+            "真实员工用自己账号登录时，这里只列派给自己的任务；平台管理员/老板看到的是全部任务，"
+            "方便替员工检查。每条任务可用「AI 辅助」生成思路与执行方案。"
+        ),
+    }
+
+
+class _CoachIn(BaseModel):
+    """AI 辅助生成的重点；缺省=思路 + 执行方案都给。"""
+
+    focus: str = ""
+
+
+def _can_coach(db: Session, actor: Any, node: MPlanNode) -> bool:
+    if _is_admin_actor(actor) or str(getattr(actor, "role", "") or "").lower() == "admin":
+        return True
+    company = db.query(MCompany).filter(MCompany.id == node.company_id).first()
+    actor_id = int(getattr(actor, "id", 0) or 0)
+    if company and company.owner_user_id == actor_id:
+        return True
+    roles = {r.role_code for r in _roles_for(db, node.company_id, actor_id)}
+    if roles & FULL_ACCESS:
+        return True
+    if node.owner_membership_id:
+        row = (
+            db.query(MMembership)
+            .filter(MMembership.id == int(node.owner_membership_id))
+            .first()
+        )
+        if row and int(row.user_id or 0) == actor_id:
+            return True
+    if str(node.owner_name or "").strip():
+        mine = (
+            db.query(MMembership)
+            .filter(MMembership.company_id == node.company_id,
+                    MMembership.user_id == actor_id,
+                    MMembership.status == "active")
+            .all()
+        )
+        if str(node.owner_name or "").strip() in {str(m.display_name or "").strip() for m in mine}:
+            return True
+    return False
+
+
+async def _llm_text(token: str, system: str, user_text: str, *, timeout: float = 150.0) -> str:
+    """纯文本 AI 调用（复用主站 /api/sutui-chat/completions，与生成规划同一条通道）。"""
+    body = {
+        "model": "",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_text},
+        ],
+        "stream": False,
+        "temperature": 0.4,
+    }
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            "http://127.0.0.1:8000/api/sutui-chat/completions", json=body, headers=headers
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail="AI 通道返回 " + str(resp.status_code) + ": " + (resp.text or "")[:300],
+        )
+    try:
+        text = str(resp.json()["choices"][0]["message"]["content"] or "").strip()
+    except Exception:
+        raise HTTPException(status_code=502, detail="AI 返回结构异常")
+    if not text:
+        raise HTTPException(status_code=502, detail="AI 返回空内容，请重试")
+    return text
+
+
+COACH_SYSTEM_PROMPT = (
+    "你是企业项目管理助理。用户是这家公司的一线执行员工，需要把派给自己的任务做成可落地的方案。\n"
+    "请用简体中文输出 Markdown，不要寒暄，不要重复任务原文，按下面结构：\n"
+    "## 思路（怎么想）\n"
+    "3-5 条，讲清目标拆解、优先级、关键假设与风险。\n"
+    "## 执行方案（怎么做）\n"
+    "按步骤给到「做什么-产出物-预计耗时-依赖/需要谁配合」，可执行到天。\n"
+    "## 验收标准\n"
+    "对应任务里的 KPI / 交付物给出可检查的标准。\n"
+    "## 可能踩的坑\n"
+    "2-3 条，附规避动作。\n"
+    "要求具体、可执行；涉及数字时给出估算范围；不要编造公司内部数据。"
+)
+
+
+@router.post("/tasks/{node_id}/coach", summary="AI 辅助：为这条任务生成思路与执行方案")
+async def task_ai_coach(
+    node_id: int,
+    body: _CoachIn = _CoachIn(),
+    actor: Any = Depends(current_actor),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    node = db.query(MPlanNode).filter(MPlanNode.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if not _can_coach(db, actor, node):
+        raise HTTPException(status_code=403, detail="只能给自己负责的任务用 AI 辅助")
+    company = db.query(MCompany).filter(MCompany.id == node.company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="公司不存在")
+    project = db.query(MProject).filter(MProject.id == node.project_id).first()
+
+    focus = (body.focus or "").strip()[:200]
+    payload: Dict[str, Any] = {
+        "任务": node.title,
+        "任务说明": (node.detail or "")[:2000],
+        "负责人": node.owner_name or "",
+        "要求": (node.requirement or "")[:1500],
+        "KPI": (node.kpi or "")[:800],
+        "交付物": (node.deliverable or "")[:800],
+        "起止": f"{node.start_at or '待定'} ~ {node.end_at or '待定'}",
+        "当前进度": f"{int(node.progress or 0)}%",
+        "当前状态": str(node.status or ""),
+        "项目": (project.name if project else ""),
+        "项目目标": ((project.goal or "")[:800] if project else ""),
+    }
+    if project and project.success_criteria:
+        payload["项目成功标准"] = str(project.success_criteria)[:800]
+    if focus:
+        payload["本次特别要求"] = focus
+
+    token = _llm_token_for_company(db, company)
+    node_id = int(node.id)
+    company_id = int(node.company_id)
+    task_title = node.title
+    # 关键：AI 调用可能几十秒，期间不能让请求会话一直挂着事务——
+    # PostgreSQL 的 idle_in_transaction_session_timeout 会掐掉连接，导致随后的审计写入 500。
+    # 因此读阶段结束后就收尾，AI 返回后用独立会话只写一行审计（写失败也不影响把结果给用户）。
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    text = await _llm_text(token, COACH_SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False))
+    try:
+        write_db = SessionLocal()
+        try:
+            _audit(write_db, company_id, int(getattr(actor, "id", 0) or 0), "task.ai_coach",
+                   "plan_node", node_id, {"focus": focus})
+            write_db.commit()
+        finally:
+            write_db.close()
+    except Exception as exc:  # 审计失败不能把生成结果丢掉
+        logger.warning("[MANAGE] task.ai_coach 审计写入失败 node=%s err=%s", node_id, exc)
+    return {
+        "ok": True,
+        "node_id": node_id,
+        "task_title": task_title,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "focus": focus,
+        "text": text,
+        "note": "AI 生成内容仅供执行参考，落地前请和负责人确认口径。",
+    }

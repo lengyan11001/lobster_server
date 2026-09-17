@@ -170,8 +170,51 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   #remoteModal .rmBody{flex:1;min-height:0;display:flex}
   #remoteModal .rmSide{width:248px;flex:0 0 auto;border-right:1px solid var(--w-line);padding:12px;overflow:auto}
   #remoteModal iframe{flex:1;min-width:0;border:0;background:#04060d}
-  #remoteModal .dsec{margin-bottom:12px}
-  #remoteModal .dsec h4{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted)}
+#remoteModal .dsec{margin-bottom:12px}
+#remoteModal .dsec h4{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted)}
+/* 时间线二级界面（项目列表 → 时间线） */
+#tlModal{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:22px}
+#tlModal.hide{display:none}
+#tlModal .rmBack{position:absolute;inset:0;background:rgba(3,6,12,.74);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+#tlModal .rmCard{position:relative;width:min(1600px,97vw);height:min(900px,93vh);border-radius:16px;display:flex;flex-direction:column;overflow:hidden}
+#tlModal .rmHead{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--w-line)}
+#tlModal .rmBody{flex:1;min-height:0;display:flex;flex-direction:column}
+.tl-wrap{display:flex;min-height:0;flex:1}
+.tl-left{width:260px;flex:0 0 auto;border-right:1px solid var(--w-line);background:rgba(6,10,18,.55)}
+.tl-left .tl-head{height:48px;display:flex;align-items:center;padding:0 12px;font-size:11.5px;color:var(--dim);border-bottom:1px solid var(--w-line)}
+.tl-left .tl-row{height:38px;display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px dashed rgba(255,255,255,.06);cursor:pointer}
+.tl-left .tl-row:hover{background:rgba(255,255,255,.03)}
+.tl-left .tl-row b{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-left .tl-row .dim{font-size:11px;flex:0 0 auto}
+.tl-right{flex:1;min-width:0;overflow:auto}
+.tl-axis{height:48px;position:sticky;top:0;z-index:3;background:rgba(6,10,18,.92);border-bottom:1px solid var(--w-line)}
+.tl-axis .tl-day{position:absolute;top:0;bottom:0;border-left:1px solid rgba(255,255,255,.06);font-size:10px;color:var(--dim);padding:3px 0 0 4px}
+.tl-axis .tl-day.today{background:rgba(34,211,238,.10);color:var(--accent)}
+.tl-axis .tl-month{position:absolute;top:22px;font-size:10.5px;color:var(--muted);padding-left:4px}
+.tl-canvas{position:relative}
+.tl-line{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.05)}
+.tl-line.weekend{background:rgba(255,255,255,.10)}
+.tl-today{position:absolute;top:0;bottom:0;width:2px;background:rgba(34,211,238,.75);z-index:2}
+.tl-grid-row{position:relative;height:38px;border-bottom:1px dashed rgba(255,255,255,.06)}
+.tl-bar{position:absolute;top:7px;height:24px;border-radius:7px;display:flex;align-items:center;padding:0 9px;font-size:11.5px;color:#06121c;font-weight:600;overflow:hidden;white-space:nowrap;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.tl-bar.done{background:#34d399}
+.tl-bar.warn{background:#fbbf24}
+.tl-bar.overdue{background:#fb7185;color:#2a0710}
+.tl-bar.active{background:#22d3ee}
+.tl-bar.blocked{background:#a78bfa;color:#150a2b}
+.tl-bar.pending{background:rgba(255,255,255,.30);color:#0b1220}
+.tl-legend{display:flex;gap:14px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--w-line);font-size:12px}
+.tl-legend span{display:inline-flex;align-items:center;gap:6px}
+.tl-legend i{width:12px;height:12px;border-radius:4px;display:inline-block}
+.tl-kpi{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:12px 14px;border-bottom:1px solid var(--w-line)}
+.tl-kpi .k{border:1px solid var(--w-line);border-radius:12px;padding:9px 11px;background:rgba(255,255,255,.02)}
+.tl-kpi .k b{display:block;font-size:19px;font-family:var(--mono)}
+.tl-kpi .k span{font-size:11px;color:var(--dim)}
+.coach-out{white-space:pre-wrap;font-size:12.5px;line-height:1.85;border:1px solid var(--w-line);border-radius:12px;padding:12px 14px;background:rgba(255,255,255,.02)}
+/* 时间线/远程这类全屏二级界面打开时，右侧抽屉必须盖在它们上面
+   （否则点条打开详情会被 modal 的遮罩挡住，按钮点不到）。 */
+body.overlay-open #mask{z-index:500}
+body.overlay-open #drawer{z-index:501}
 </style>
 </head>
 <body>
@@ -252,6 +295,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     <button data-go="s-ai"><span class="ic">⬡</span>虚拟员工</button>
     <button data-go="s-cond"><span class="ic">✦</span>条件</button>
     <button data-go="s-fin"><span class="ic">◎</span>财务</button>
+    <button data-go="s-metrics" class="hide"><span class="ic">▶</span>发布数据</button>
+    <button data-go="s-my" class="hide"><span class="ic">✓</span>我的任务</button>
   </aside>
   <div class="main">
     <div class="topbar glass">
@@ -280,6 +325,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       <section id="s-ai" class="view hide"></section>
       <section id="s-cond" class="view hide"></section>
       <section id="s-fin" class="view hide"></section>
+      <section id="s-metrics" class="view hide"></section>
+      <section id="s-my" class="view hide"></section>
     </div>
   </div>
 </div>
@@ -295,6 +342,36 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   </div>
   <div class="dbody" id="dBody"></div>
 </aside>
+<div id="tlModal" class="hide">
+  <div class="rmBack" id="tlBack"></div>
+  <div class="rmCard glass">
+    <div class="rmHead">
+      <div style="flex:1;min-width:0">
+        <div class="dim" id="tlMeta" style="font-size:11px">—</div>
+        <div id="tlTitle" style="font-size:14.5px;font-weight:600;margin-top:4px">任务时间线</div>
+      </div>
+      <select id="tlProject" style="width:210px"></select>
+      <select id="tlRange" style="width:140px">
+        <option value="prev7">前 7 天 → 后 30 天</option>
+        <option value="prev14">前 14 天 → 后 45 天</option>
+        <option value="month">本月 ±1 个月</option>
+        <option value="all">全部（按任务起止）</option>
+      </select>
+      <button class="btn sm ghost" id="tlReload">↻ 刷新</button>
+      <button class="btn sm" id="tlClose">关闭</button>
+    </div>
+    <div class="rmBody">
+      <div class="tl-kpi" id="tlKpi"></div>
+      <div class="tl-legend" id="tlLegend"></div>
+      <div class="tl-wrap" id="tlWrap">
+        <div class="tl-left" id="tlLeft"></div>
+        <div class="tl-right" id="tlRight"></div>
+      </div>
+      <div id="tlEmpty" class="hide" style="padding:16px"></div>
+    </div>
+  </div>
+</div>
+
 <div id="remoteModal" class="hide">
   <div class="rmBack" id="remoteBack"></div>
   <div class="rmCard glass">
@@ -479,6 +556,15 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       // 任何人都可以新建公司（老板自己建、自己命名）；「标记老板」仅平台管理员
       IS_ADMIN = !!data.is_platform_admin;
       updateCompanyActions();
+      var metBtn = document.querySelector('[data-go="s-metrics"]');
+      if (metBtn) metBtn.classList.toggle("hide", !IS_ADMIN);  // 发布数据是跨客户端的运营数据，只给平台管理员
+      // 我的任务：真实员工登录后默认落到这里（管理员也能看，方便替员工检查）
+      var myBtn = document.querySelector('[data-go="s-my"]');
+      if (myBtn) myBtn.classList.remove("hide");
+      if (!IS_ADMIN){
+        var mb = document.querySelector('[data-go="s-my"]');
+        if (mb) mb.click();
+      }
       if (data.is_platform_admin){
         document.getElementById("markBossBtn").classList.remove("hide");
       }
@@ -620,15 +706,19 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     "s-ai": ["虚拟员工", "手动添加的设备（槽位号 / 设备号+验证码）· 离线常驻 · 派活按窗口汇总 · 可看远程画面"],
     "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
     "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
+    "s-metrics": ["发布数据", "online 客户端每天凌晨 02:00-06:00 错峰采集抖音 / 视频号播放量，云端汇总（朋友圈不做）"],
+    "s-my": ["我的任务", "派给自己的任务（真实员工登录只看自己的）· 每条可让 AI 出思路与执行方案"],
   };
   $$(".rail button").forEach(function(b){
     b.addEventListener("click", function(){
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-prod","s-crm","s-deliv","s-ai","s-cond","s-fin"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-crm","s-deliv","s-ai","s-cond","s-fin","s-metrics","s-my"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
+      if (id === "s-metrics") loadMetrics();
+      if (id === "s-my") loadMyTasks();
       $("#pgTitle").textContent = TITLES[id][0];
       $("#pgSub").textContent = TITLES[id][1];
     });
@@ -638,6 +728,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     if (!ACTIVE) return;
     showErr("");
     loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
+    loadMyTasks();
   }
 
   /* ================= 简报 ================= */
@@ -775,6 +866,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         + '<span class="dim" style="font-size:12px">点「打开」进入工作安排</span>'
         + '<span class="grow"></span>'
         + '<input id="projQ" placeholder="搜索项目 / 目标" value="' + String(PROJ_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
+        + '<button class="btn sm" id="openTimeline">🕒 时间线</button>'
         + '<button class="btn sm" id="newProj">＋ 新建项目</button></div>'
         + (ps.length
             ? '<table class="tb"><thead><tr><th>项目</th><th>周期</th><th>安排</th><th class="right">操作</th></tr></thead><tbody>'
@@ -796,6 +888,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         qi._t = setTimeout(function(){ PROJ_Q = v.trim(); loadProjects(); }, 320);
       });
       document.getElementById("newProj").addEventListener("click", function(){ openProjectEditor(null); });
+      var tlb = document.getElementById("openTimeline");
+      if (tlb) tlb.addEventListener("click", function(){ openTimeline(); });
       $$("#s-proj [data-proj]").forEach(function(b){
         b.addEventListener("click", function(){ openProject(Number(b.dataset.proj)); });
       });
@@ -1174,7 +1268,25 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         function runPlan(mode, btn){
           btn.disabled = true; var old = btn.textContent; btn.textContent = "生成中…";
           api("/api/manage/projects/"+pid+"/plan", { method:"POST", body:{ mode: mode } })
-            .then(function(res){ toast("已生成（来源 " + res.source + "）"); openProject(pid); loadBrief(); loadProjects(); })
+            .then(function(res){
+              var n = (res.assignments || []).length;
+              toast("已生成（来源 " + res.source + "）" + (n ? ("，含 " + n + " 条客户指派建议") : ""));
+              if (n){
+                var rows = res.assignments.map(function(a){
+                  return '<div class="mline"><span class="nm" style="flex:1"><b>' + a.customer + '</b>'
+                    + '<span class="dim" style="font-size:11.5px;margin-left:8px">建议 ' + (a.suggested_owner || "待定")
+                    + '（' + a.priority + '）</span></span>'
+                    + '<span class="dim num" style="width:150px;font-size:11px">' + (a.now_state || "") + '</span></div>'
+                    + '<div class="dim" style="font-size:11.5px;padding:0 0 8px">' + (a.reason || "") + '</div>';
+                }).join("");
+                openDrawer("AI 规划 · 客户指派建议", "共 " + n + " 条",
+                  '<div class="dsec"><h4>建议内容</h4>' + rows + '</div>'
+                  + '<div class="dsec"><h4>说明</h4><div class="dim" style="font-size:12px">'
+                  + '已经人工指派的客户，相关任务已固定给该负责人；以下是 AI 对未指派客户的安排建议，'
+                  + '同意的话到「客户」页点「指派」即可确认。这些建议也写进了「条件」页。</div></div>');
+              }
+              openProject(pid); loadBrief(); loadProjects();
+            })
             .catch(function(e){ toast(e.message, true); })
             .then(function(){ btn.disabled = false; btn.textContent = old; });
         }
@@ -1698,8 +1810,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       + (c.company_name || "—") + (c.phone ? (" · " + c.phone) : "") + '</div>'
       + (c.next_action ? '<div class="mut" style="font-size:12px;margin-top:8px">下一步：' + c.next_action + (c.next_follow_at ? ('（' + c.next_follow_at + '）') : '') + '</div>' : '')
       + '<div class="dim" style="font-size:11.5px;margin-top:6px">负责人 ' + (c.owner_name || "未指派")
+      + (c.owner_name ? "" : ' <span style="color:#fcd34d">（AI 生成规划时会安排跟进，并至少给出指派建议）</span>')
       + (c.last_follow_at ? (" · 最近跟进 " + c.last_follow_at) : " · 还没跟进过") + '</div>'
       + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
+      + '<button class="btn sm ghost" data-cassign="' + c.id + '">指派</button>'
       + '<button class="btn sm ghost" data-clog="' + c.id + '">跟进</button>'
       + '<button class="btn sm ghost" data-cedit="' + c.id + '">编辑</button>'
       + '<button class="btn sm ghost" data-cdel="' + c.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button>'
@@ -1737,6 +1851,7 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       $$("#s-crm [data-cedit]").forEach(function(b){ b.addEventListener("click", function(){ openCustomer(Number(b.dataset.cedit)); }); });
       $$("#s-crm [data-cdel]").forEach(function(b){ b.addEventListener("click", function(){ deleteCustomer(Number(b.dataset.cdel)); }); });
       $$("#s-crm [data-clog]").forEach(function(b){ b.addEventListener("click", function(){ openFollowUp(Number(b.dataset.clog)); }); });
+      $$("#s-crm [data-cassign]").forEach(function(b){ b.addEventListener("click", function(){ openAssign(Number(b.dataset.cassign)); }); });
     }).catch(function(e){ showErr(e.message); });
   }
 
@@ -1745,6 +1860,26 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
     var stageOpts = Object.keys(CRM_STAGES).map(function(k){
       return '<option value="' + k + '"' + (c && c.stage === k ? " selected" : "") + '>' + CRM_STAGES[k] + '</option>';
     }).join("");
+    // 指派：成员列表来自组织架构；已人工指派的客户，AI 生成规划时会沿用这个负责人
+    api("/api/manage/members?company_id=" + ACTIVE).then(function(md){
+      renderCustomerEditor(c, stageOpts, md.members || []);
+    }).catch(function(){
+      renderCustomerEditor(c, stageOpts, []);
+    });
+  }
+
+  function memberOptions(members, selectedId){
+    var opts = '<option value="">未指派（让 AI 在生成规划时安排）</option>';
+    (members || []).forEach(function(m){
+      var roles = (m.roles || []).map(function(r){ return r.label + r.level; }).join("/");
+      var label = m.name + (m.dept ? (" · " + m.dept) : "") + (roles ? (" · " + roles) : "");
+      opts += '<option value="' + m.id + '"' + (String(selectedId || "") === String(m.id) ? " selected" : "") + '>'
+        + label + (m.load >= 88 ? "（负载偏高）" : "") + '</option>';
+    });
+    return opts;
+  }
+
+  function renderCustomerEditor(c, stageOpts, members){
     var html = '<div class="dsec"><h4>客户信息</h4>'
       + '<label class="fl">姓名</label><input id="cuName" value="' + (c ? c.name : "") + '" style="margin-bottom:10px" />'
       + '<div style="display:flex;gap:10px;margin-bottom:10px">'
@@ -1756,6 +1891,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       + '<div style="display:flex;gap:10px">'
       + '<div style="flex:1"><label class="fl">阶段</label><select id="cuStage">' + stageOpts + '</select></div>'
       + '<div style="flex:1"><label class="fl">预计金额</label><input id="cuAmount" value="' + (c ? c.amount : "") + '" /></div></div></div>'
+      + '<div class="dsec"><h4>指派负责人</h4>'
+      + '<select id="cuOwner">' + memberOptions(members, c ? c.owner_membership_id : "") + '</select>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:8px">人工指派后：AI 生成项目规划时，这个客户的跟进/成交类任务只会排给该负责人；'
+      + '不指派则由 AI 安排并至少给出指派建议（落到「条件」页）。</div></div>'
       + '<div class="dsec"><h4>下一步</h4>'
       + '<label class="fl">要做什么</label><input id="cuNext" value="' + (c ? (c.next_action || "") : "") + '" style="margin-bottom:10px" />'
       + '<label class="fl">什么时候之前</label><input id="cuNextAt" value="' + (c ? (c.next_follow_at || "") : "") + '" placeholder="2026-09-20" /></div>'
@@ -1774,6 +1913,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
         source: document.getElementById("cuSource").value.trim(),
         stage: document.getElementById("cuStage").value,
         amount: Number(document.getElementById("cuAmount").value || 0),
+        owner_membership_id: (function(){
+          var v = document.getElementById("cuOwner").value;
+          return v ? Number(v) : null;
+        })(),
         next_action: document.getElementById("cuNext").value.trim(),
         next_follow_at: document.getElementById("cuNextAt").value.trim(),
         notes: document.getElementById("cuNotes").value.trim()
@@ -1783,6 +1926,32 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       req.then(function(){ closeDrawer(); toast(c ? "已保存" : "已创建"); loadCrm(); loadDeliv(); })
          .catch(function(e){ toast(e.message, true); });
     });
+  }
+
+  /* 客户列表上的快捷指派：选人 → PATCH owner_membership_id */
+  function openAssign(id){
+    var c = CRM_CACHE.filter(function(x){ return x.id === id; })[0];
+    if (!c) return;
+    api("/api/manage/members?company_id=" + ACTIVE).then(function(md){
+      var members = md.members || [];
+      openDrawer("客户 · 指派负责人", c.name,
+        '<div class="dsec"><h4>当前</h4><div class="dim" style="font-size:12.5px">'
+        + '负责人：' + (c.owner_name || "未指派") + ' · 阶段 ' + (c.stage_label || c.stage)
+        + (c.next_action ? (' · 下一步：' + c.next_action) : '') + '</div></div>'
+        + '<div class="dsec"><h4>指派给</h4><select id="asOwner">' + memberOptions(members, c.owner_membership_id) + '</select>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:8px">指派后：'
+        + '① 客户卡片会显示负责人；② AI 生成/重规划项目时，这个客户的跟进与成交任务只会排给该负责人。</div>'
+        + '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">'
+        + '<button class="btn sm ghost" id="asCancel">取消</button>'
+        + '<button class="btn sm" id="asOk">保存指派</button></div></div>');
+      document.getElementById("asCancel").addEventListener("click", closeDrawer);
+      document.getElementById("asOk").addEventListener("click", function(){
+        var v = document.getElementById("asOwner").value;
+        api("/api/manage/customers/" + c.id, { method: "PATCH", body: { owner_membership_id: v ? Number(v) : null } })
+          .then(function(){ closeDrawer(); toast("已指派"); loadCrm(); })
+          .catch(function(e){ toast(e.message, true); });
+      });
+    }).catch(function(e){ toast(e.message, true); });
   }
 
   function deleteCustomer(id){
@@ -2057,8 +2226,10 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   function openRemote(a){
     toast("正在建立远程会话…");
     api("/api/manage/ai-employees/" + a.id + "/remote-session", { method: "POST" }).then(function(r){
+      // viewer=1：只嵌「远程窗口」本身。设备列表 / 添加设备 / 页签都在本后台里另做了，
+      // 不再把 BHZN 远程控制台的完整界面（设备架、舞台页签、页头）一起嵌进来。
       var url = String(r.public_url || "").replace(/\/$/, "") + "/?admin_session=" + encodeURIComponent(r.token)
-        + "&device=" + encodeURIComponent(r.device_id);
+        + "&device=" + encodeURIComponent(r.device_id) + "&viewer=1";
       document.getElementById("remoteTitle").textContent = "远程 · " + (r.name || a.name) + " · " + r.device_id;
       document.getElementById("remoteMeta").textContent = (r.online ? "设备在线" : "设备离线（上线后画面才会通）")
         + " · 会话到期 " + String(r.expires_at || "").slice(0, 16).replace("T", " ");
@@ -2068,12 +2239,14 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       REMOTE_URL = url;
       document.getElementById("remoteFrame").src = url;
       document.getElementById("remoteModal").classList.remove("hide");
+      if (typeof syncOverlayLayer === "function") syncOverlayLayer();
     }).catch(function(e){ toast(e.message, true); });
   }
   var REMOTE_URL = "";
   function closeRemote(){
     document.getElementById("remoteModal").classList.add("hide");
     document.getElementById("remoteFrame").src = "about:blank";
+    if (typeof syncOverlayLayer === "function") syncOverlayLayer();
   }
   function openAiEditor(id){
     var a = AI_CACHE.filter(function(x){ return x.id === id; })[0];
@@ -2200,6 +2373,564 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
       .then(function(){ el.value = ""; toast("已提交"); loadWorklogs(); })
       .catch(function(e){ toast(e.message, true); });
   }
+
+  /* ================= 发布数据（播放量：online 采集 → 云端汇总） ================= */
+  var MET = { days: 7, platform: "", q: "", data: null };
+
+  function fmtNum(n){ return (Number(n) || 0).toLocaleString("zh-CN"); }
+  function fmtGrowth(p){
+    if (p === null || p === undefined) return "—";
+    return (p > 0 ? "+" : "") + p + "%";
+  }
+  function growthColor(p){
+    if (p === null || p === undefined) return "var(--dim)";
+    if (p > 0) return "var(--ok)";
+    if (p < 0) return "var(--bad)";
+    return "var(--muted)";
+  }
+  function hoursText(h){
+    if (h === null || h === undefined) return "从未上报";
+    if (h < 1) return Math.round(h * 60) + " 分钟前";
+    if (h < 48) return h.toFixed(1) + " 小时前";
+    return (h / 24).toFixed(1) + " 天前";
+  }
+  function sparkline(points, w, h, color){
+    var vals = (points || []).map(function(p){ return Number(p.views || p) || 0; });
+    if (!vals.length) return '<span class="dim" style="font-size:11.5px">无采样</span>';
+    w = w || 132; h = h || 34;
+    var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
+    var span = (max - min) || 1;
+    var step = vals.length > 1 ? w / (vals.length - 1) : 0;
+    var pts = vals.map(function(v, i){
+      var x = vals.length > 1 ? i * step : w / 2;
+      var y = h - 3 - ((v - min) / span) * (h - 8);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    });
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" style="overflow:visible">'
+      + '<polyline points="' + pts.join(" ") + '" fill="none" stroke="' + (color || "var(--accent)") + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />'
+      + '</svg>';
+  }
+  function chartCard(points){
+    var vals = (points || []).map(function(p){ return Number(p.views) || 0; });
+    if (vals.length < 2) return '<div class="dim" style="font-size:12px">采样不足两点，画不出曲线（等明天再采集一次就有）</div>';
+    var w = 640, h = 180;
+    var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
+    var span = (max - min) || 1;
+    var step = w / (vals.length - 1);
+    var pt = vals.map(function(v, i){ return (i * step).toFixed(1) + "," + (h - 12 - ((v - min) / span) * (h - 30)).toFixed(1); });
+    var area = "0," + (h - 12) + " " + pt.join(" ") + "," + w + "," + (h - 12);
+    var labels = points.map(function(p, i){
+      if (i !== 0 && i !== points.length - 1 && i !== Math.floor(points.length / 2)) return "";
+      var x = i * step;
+      return '<text x="' + x.toFixed(1) + '" y="' + (h - 1) + '" fill="var(--dim)" font-size="9" text-anchor="middle">' + p.day.slice(5) + '</text>';
+    }).join("");
+    return '<svg width="100%" height="' + (h + 4) + '" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">'
+      + '<polygon points="' + area + '" fill="rgba(34,211,238,.12)" />'
+      + '<polyline points="' + pt.join(" ") + '" fill="none" stroke="var(--accent)" stroke-width="2" />'
+      + labels + '</svg>';
+  }
+
+  function loadMetrics(){
+    var box = document.getElementById("s-metrics");
+    if (!box) return;
+    if (!MET.data){
+      box.innerHTML = '<div class="glass card"><div class="dim">加载中…</div></div>';
+    }
+    var qs = "/api/manage/publish-metrics/overview?days=" + MET.days
+      + "&platform=" + encodeURIComponent(MET.platform)
+      + "&q=" + encodeURIComponent(MET.q);
+    api(qs).then(function(d){
+      MET.data = d;
+      renderMetrics();
+    }).catch(function(e){
+      box.innerHTML = '<div class="glass card" style="border-color:rgba(251,113,133,.45);color:#fda4af">'
+        + '读取失败：' + e.message + '（发布数据仅平台管理员可看）</div>';
+    });
+  }
+
+  function renderMetrics(){
+    var d = MET.data, t = d.totals || {};
+    var dayBtns = [7, 14, 30, 90].map(function(n){
+      return '<button class="btn sm ' + (MET.days === n ? "" : "ghost") + '" data-mdays="' + n + '">' + n + ' 天</button>';
+    }).join("");
+    var platBtns = [{ k: "", v: "全部渠道" }, { k: "douyin", v: "抖音" }, { k: "wechat_channels", v: "视频号" }].map(function(p){
+      return '<button class="btn sm ' + (MET.platform === p.k ? "" : "ghost") + '" data-mplat="' + p.k + '">' + p.v + '</button>';
+    }).join("");
+    var kpi = function(label, value, sub, color){
+      return '<div class="dsec"><div class="dim" style="font-size:11.5px">' + label + '</div>'
+        + '<div class="num" style="font-size:23px;margin-top:6px;color:' + (color || "var(--ink)") + '">' + value + '</div>'
+        + '<div class="dim" style="font-size:11px;margin-top:5px">' + (sub || "—") + '</div></div>';
+    };
+
+    var platRows = (d.platforms || []).map(function(p){
+      return '<div class="mline">'
+        + '<span class="nm" style="flex:1"><b style="font-size:13px">' + p.platform_label + '</b>'
+        + '<span class="dim" style="font-size:11.5px;margin-left:8px">' + p.item_count + ' 个作品 · ' + p.user_count + ' 个客户端</span></span>'
+        + '<span class="num right" style="width:120px">' + fmtNum(p.views) + '<div class="dim" style="font-size:10.5px">累计播放</div></span>'
+        + '<span class="num right" style="width:120px;color:var(--ok)">+' + fmtNum(p.views_gain) + '<div class="dim" style="font-size:10.5px">本期新增</div></span>'
+        + '<span class="num right" style="width:96px;color:' + growthColor(p.growth_pct) + '">' + fmtGrowth(p.growth_pct) + '<div class="dim" style="font-size:10.5px">环比</div></span>'
+        + '</div>';
+    }).join("") || '<div class="dim">这个窗口还没有数据（客户端每天凌晨会自动上报）</div>';
+
+    var machineRows = (d.machines || []).slice(0, 30).map(function(m){
+      var tag = m.stale ? '<span class="tag bd">掉线</span>' : '<span class="tag ok">正常</span>';
+      return '<div class="mline">'
+        + '<span class="nm" style="flex:1;min-width:0"><b style="font-size:12.5px">' + (m.label || "—") + '</b>'
+        + '<span class="dim num" style="font-size:11px;margin-left:8px">' + m.installation_id + '</span></span>'
+        + '<span class="dim" style="width:150px;font-size:11.5px">' + (m.platforms || []).map(function(x){ return x === "douyin" ? "抖音" : "视频号"; }).join(" / ") + '</span>'
+        + '<span class="dim num" style="width:110px;font-size:11.5px">' + m.samples + ' 条</span>'
+        + '<span class="dim num" style="width:120px;font-size:11.5px">' + hoursText(m.hours_since) + '</span>'
+        + '<span style="width:56px" class="right">' + tag + '</span></div>';
+    }).join("") || '<div class="dim">还没有客户端上报</div>';
+
+    var userRows = (d.users || []).slice(0, 40).map(function(u){
+      return '<div class="mline clickable" data-muser="' + u.user_id + '">'
+        + '<span class="nm" style="flex:1;min-width:0"><b style="font-size:12.5px">' + (u.label || "—") + '</b>'
+        + '<span class="dim" style="font-size:11px;margin-left:8px">' + (u.brand || "") + ' · ' + u.item_count + ' 个作品 · ' + (u.machines || []).length + ' 台机器</span></span>'
+        + '<span class="num right" style="width:120px">' + fmtNum(u.views) + '</span>'
+        + '<span class="num right" style="width:120px;color:var(--ok)">+' + fmtNum(u.views_gain) + '</span>'
+        + '<span class="num right" style="width:96px;color:' + growthColor(u.growth_pct) + '">' + fmtGrowth(u.growth_pct) + '</span>'
+        + '<span style="width:56px" class="right">' + (u.stale ? '<span class="tag bd">掉线</span>' : '<span class="tag ok">在报</span>') + '</span>'
+        + '</div>';
+    }).join("") || '<div class="dim">还没有客户端上报</div>';
+
+    document.getElementById("s-metrics").innerHTML =
+      '<div class="glass card">'
+      + '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<b style="font-size:13.5px">发布数据（播放量）</b>'
+      + '<span class="dim" style="font-size:12px">窗口 ' + d.window.start_day + ' ~ ' + d.window.end_day
+      + ' · 客户端每天 ' + ((d.schedule || {}).window || "02:00-06:00") + '（北京）错峰采集后上报</span>'
+      + '<span class="grow"></span>' + dayBtns + platBtns
+      + '<input id="metQ" placeholder="手机号 / 邮箱 / 安装ID" value="' + String(MET.q).replace(/"/g, "&quot;") + '" style="width:200px;height:34px" />'
+      + '<button class="btn sm ghost" id="metReload">↻ 刷新</button></div>'
+      + '<div class="g4" style="margin-top:12px">'
+      + kpi("累计播放量", fmtNum(t.views), t.item_count + " 个作品")
+      + kpi("本期新增播放", "+" + fmtNum(t.views_gain), "上期 +" + fmtNum(t.previous_views_gain), "var(--ok)")
+      + kpi("环比", fmtGrowth(t.growth_pct), "本期 vs 等长上期", growthColor(t.growth_pct))
+      + kpi("客户端", t.machine_count + " 台", "掉线 " + t.stale_machine_count + " 台（>" + 26 + "h 未上报）",
+           t.stale_machine_count ? "var(--warn)" : "var(--ok)")
+      + '</div></div>'
+
+      + '<div class="glass card"><div class="row" style="align-items:center;margin-bottom:10px">'
+      + '<b style="font-size:13.5px">按渠道</b><span class="dim" style="font-size:11.5px">播放量只统计抖音与视频号，朋友圈不做</span></div>'
+      + platRows + '</div>'
+
+      + '<div class="glass card"><div class="row" style="align-items:center;margin-bottom:10px">'
+      + '<b style="font-size:13.5px">客户端上报情况</b>'
+      + '<span class="dim" style="font-size:11.5px">掉线 = 超过 26 小时没有上报（正常每 24 小时一次）</span></div>'
+      + machineRows + '</div>'
+
+      + '<div class="glass card"><div class="row" style="align-items:center;margin-bottom:10px">'
+      + '<b style="font-size:13.5px">按客户 / 账号</b><span class="dim" style="font-size:11.5px">点一行看账号与作品曲线</span></div>'
+      + userRows + '</div>'
+      + '<div class="dim" style="font-size:11.5px;padding:0 4px">' + (d.note || "") + '</div>';
+
+    $$("#s-metrics [data-mdays]").forEach(function(b){
+      b.addEventListener("click", function(){ MET.days = Number(b.dataset.mdays); loadMetrics(); });
+    });
+    $$("#s-metrics [data-mplat]").forEach(function(b){
+      b.addEventListener("click", function(){ MET.platform = b.dataset.mplat || ""; loadMetrics(); });
+    });
+    $$("#s-metrics [data-muser]").forEach(function(el){
+      el.addEventListener("click", function(){ openMetricsUser(Number(el.dataset.muser)); });
+    });
+    var mq = document.getElementById("metQ");
+    mq.addEventListener("input", function(){
+      clearTimeout(mq._t);
+      var v = mq.value;
+      mq._t = setTimeout(function(){ MET.q = v.trim(); loadMetrics(); }, 380);
+    });
+    document.getElementById("metReload").addEventListener("click", function(){ loadMetrics(); toast("已刷新"); });
+  }
+
+  function openMetricsUser(uid){
+    var u = (MET.data.users || []).filter(function(x){ return x.user_id === uid; })[0];
+    if (!u) return;
+    var accounts = (u.accounts || []).map(function(a){
+      return '<div class="mline"><span style="flex:1"><b style="font-size:12.5px">' + (a.nickname || "—") + '</b>'
+        + '<span class="dim" style="font-size:11px;margin-left:8px">' + a.item_count + ' 个作品</span></span>'
+        + '<span class="num right" style="width:110px">' + fmtNum(a.views) + '</span>'
+        + '<span class="num right" style="width:110px;color:var(--ok)">+' + fmtNum(a.views_gain) + '</span></div>';
+    }).join("") || '<div class="dim">没有账号记录</div>';
+    var machines = (u.machines || []).map(function(m){
+      return '<div class="mline"><span class="num" style="flex:1;font-size:11.5px">' + m.installation_id + '</span>'
+        + '<span class="dim num" style="width:130px;font-size:11.5px">' + hoursText(m.hours_since) + '</span>'
+        + '<span style="width:56px" class="right">' + (m.stale ? '<span class="tag bd">掉线</span>' : '<span class="tag ok">正常</span>') + '</span></div>';
+    }).join("") || '<div class="dim">没有机器记录</div>';
+    openDrawer("发布数据", (u.label || "—") + " · 近 " + MET.days + " 天",
+      '<div class="dsec"><h4>概况</h4>'
+      + '<div class="row"><div style="flex:1"><div class="dim" style="font-size:11.5px">累计播放</div><div class="num" style="font-size:19px">' + fmtNum(u.views) + '</div></div>'
+      + '<div style="flex:1"><div class="dim" style="font-size:11.5px">本期新增</div><div class="num" style="font-size:19px;color:var(--ok)">+' + fmtNum(u.views_gain) + '</div></div>'
+      + '<div style="flex:1"><div class="dim" style="font-size:11.5px">环比</div><div class="num" style="font-size:19px;color:' + growthColor(u.growth_pct) + '">' + fmtGrowth(u.growth_pct) + '</div></div></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:8px">最近上报：' + hoursText(u.hours_since) + '</div></div>'
+      + '<div class="dsec"><h4>账号</h4>' + accounts + '</div>'
+      + '<div class="dsec"><h4>机器</h4>' + machines + '</div>'
+      + '<div class="dsec"><h4>作品曲线</h4><div id="metUserItems" class="dim">加载中…</div></div>');
+    api("/api/manage/publish-metrics/items?days=" + MET.days + "&user_id=" + uid + "&limit=12")
+      .then(function(d){
+        var box = document.getElementById("metUserItems");
+        if (!box) return;
+        var rows = d.items || [];
+        box.innerHTML = rows.length ? rows.map(function(it){
+          return '<div style="border-bottom:1px dashed rgba(255,255,255,.10);padding:9px 0">'
+            + '<div class="row" style="align-items:center;gap:8px">'
+            + '<span class="tag cy">' + it.platform_label + '</span>'
+            + '<span style="flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (it.title || it.item_id) + '</span>'
+            + '<span class="num" style="font-size:12px">' + fmtNum(it.views) + '</span>'
+            + '<span class="num" style="font-size:12px;color:var(--ok);width:82px" class="right">+' + fmtNum(it.views_gain) + '</span>'
+            + '</div><div style="margin-top:6px">' + chartCard(it.points) + '</div></div>';
+        }).join("") : '<div class="dim">近 ' + MET.days + ' 天没有作品数据</div>';
+      })
+      .catch(function(e){ var b = document.getElementById("metUserItems"); if (b) b.textContent = "读取失败：" + e.message; });
+  }
+
+  /* ================= 我的任务 + 任务时间线 + AI 辅助 ================= */
+  var TASK_STATE = {
+    done:    { label: "完成",   color: "#34d399", tag: "ok" },
+    overdue: { label: "超期",   color: "#fb7185", tag: "bd" },
+    warn:    { label: "预警",   color: "#fbbf24", tag: "wn" },
+    active:  { label: "进行中", color: "#22d3ee", tag: "cy" },
+    blocked: { label: "受阻",   color: "#a78bfa", tag: "" },
+    pending: { label: "未开始", color: "rgba(255,255,255,.32)", tag: "" } };
+  var MYT = { data: null, showDone: true };
+  var TL = { data: null, projectId: "", range: "prev7", dayW: 30 };
+
+  function taskStateTag(state){
+    var s = TASK_STATE[state] || TASK_STATE.pending;
+    return '<span class="tag ' + s.tag + '" style="border-color:' + s.color + '55;color:' + s.color + '">' + s.label + '</span>';
+  }
+  function daysText(t){
+    if (t.state === "done") return "已完成";
+    if (t.days_left === null || t.days_left === undefined) return "未排期";
+    if (t.days_left < 0) return "已超期 " + Math.abs(t.days_left) + " 天";
+    if (t.days_left === 0) return "今天到期";
+    return "还剩 " + t.days_left + " 天";
+  }
+  function esc(v){ return String(v === null || v === undefined ? "" : v).replace(/[&<>"]/g, function(c){
+    return ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]; }); }
+
+  function loadMyTasks(){
+    var box = document.getElementById("s-my");
+    if (!box) return;
+    if (!MYT.data) box.innerHTML = '<div class="glass card"><div class="dim">加载中…</div></div>';
+    api("/api/manage/tasks/mine?company_id=" + ACTIVE + "&include_done=" + (MYT.showDone ? "true" : "false"))
+      .then(function(d){ MYT.data = d; renderMyTasks(); })
+      .catch(function(e){ box.innerHTML = '<div class="glass card" style="border-color:rgba(251,113,133,.45);color:#fda4af">读取失败：' + esc(e.message) + '</div>'; });
+  }
+
+  function renderMyTasks(){
+    var d = MYT.data || { tasks: [], summary: {}, scope: "mine" };
+    var s = d.summary || {};
+    var tasks = d.tasks || [];
+    var kpi = function(label, key, color){
+      return '<div class="k"><b style="color:' + color + '">' + (s[key] || 0) + '</b><span>' + label + '</span></div>';
+    };
+    var rows = tasks.map(function(t){
+      return '<tr><td><b style="font-size:12.5px">' + esc(t.title) + '</b>'
+        + '<div class="dim" style="font-size:11px;margin-top:3px">' + esc(t.project_name || t.company_name || "") + '</div></td>'
+        + '<td class="dim" style="font-size:11.5px">' + esc(t.owner_name || "未指派") + '</td>'
+        + '<td class="dim num" style="font-size:11.5px">' + esc(t.start_day || "-") + ' → ' + esc(t.end_day || "-") + '</td>'
+        + '<td>' + taskStateTag(t.state) + '<span class="dim" style="font-size:11px;margin-left:6px">' + daysText(t) + '</span></td>'
+        + '<td class="num" style="font-size:11.5px">' + (t.progress || 0) + '%</td>'
+        + '<td class="right" style="white-space:nowrap">'
+        + '<button class="btn sm ghost" data-myt="' + t.id + '">详情</button> '
+        + '<button class="btn sm" data-coach="' + t.id + '">AI 辅助</button></td></tr>';
+    }).join("");
+
+    document.getElementById("s-my").innerHTML =
+      '<div class="glass card"><div class="row" style="align-items:center;gap:10px;margin-bottom:12px">'
+      + '<b style="font-size:13.5px">我的任务</b>'
+      + '<span class="dim" style="font-size:12px">' + (d.scope === "all" ? "平台管理员视角：全部任务" : "只显示派给自己的任务")
+      + ' · 今天 ' + esc(d.today || "") + '</span>'
+      + '<span class="grow"></span>'
+      + '<button class="btn sm ' + (MYT.showDone ? "ghost" : "") + '" id="mytDone">' + (MYT.showDone ? "隐藏已完成" : "显示已完成") + '</button>'
+      + '<button class="btn sm ghost" id="mytReload">↻ 刷新</button>'
+      + '<button class="btn sm ghost" id="mytTimeline">🕒 时间线</button></div>'
+      + '<div class="tl-kpi" style="border:0;padding:0 0 12px">'
+      + kpi("超期", "overdue", "#fb7185") + kpi("预警", "warn", "#fbbf24")
+      + kpi("进行中", "active", "#22d3ee") + kpi("未开始", "pending", "var(--ink)")
+      + kpi("完成", "done", "#34d399") + '</div>'
+      + (tasks.length
+          ? '<table class="tb"><thead><tr><th>任务</th><th>负责人</th><th>起止</th><th>状态</th><th>进度</th><th class="right">操作</th></tr></thead><tbody>'
+            + rows + '</tbody></table>'
+          : '<div class="dim">' + (MYT.showDone ? "还没有派给你的任务" : "没有未完成的任务") + '</div>')
+      + '<div class="dim" style="font-size:11.5px;margin-top:10px">' + esc(d.note || "") + '</div></div>';
+
+    document.getElementById("mytReload").addEventListener("click", function(){ MYT.data = null; loadMyTasks(); });
+    document.getElementById("mytDone").addEventListener("click", function(){
+      MYT.showDone = !MYT.showDone; MYT.data = null; loadMyTasks(); });
+    document.getElementById("mytTimeline").addEventListener("click", function(){ openTimeline(); });
+    $$("#s-my [data-myt]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var t = (MYT.data.tasks || []).filter(function(x){ return x.id === Number(b.dataset.myt); })[0];
+        if (t) openTaskDetail(t);
+      });
+    });
+    $$("#s-my [data-coach]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var t = (MYT.data.tasks || []).filter(function(x){ return x.id === Number(b.dataset.coach); })[0];
+        if (t) openCoach(t);
+      });
+    });
+  }
+
+  function taskDetailHtml(t){
+    return '<div class="dsec"><h4>状态</h4><div>' + taskStateTag(t.state)
+      + '<span class="dim" style="margin-left:8px">' + daysText(t) + ' · 进度 ' + (t.progress || 0) + '%</span></div></div>'
+      + '<div class="dsec"><h4>归属</h4><div class="dim" style="font-size:12px">'
+      + esc(t.project_name || "") + ' · ' + esc(t.company_name || "") + ' · 负责人 ' + esc(t.owner_name || "未指派") + '</div></div>'
+      + '<div class="dsec"><h4>时间</h4><div class="dim num" style="font-size:12px">'
+      + esc(t.start_day || "-") + ' → ' + esc(t.end_day || "-") + '</div></div>'
+      + (t.requirement ? '<div class="dsec"><h4>要求</h4><div style="font-size:12.5px">' + esc(t.requirement) + '</div></div>' : '')
+      + (t.kpi ? '<div class="dsec"><h4>KPI</h4><div style="font-size:12.5px">' + esc(t.kpi) + '</div></div>' : '')
+      + (t.deliverable ? '<div class="dsec"><h4>交付物</h4><div style="font-size:12.5px">' + esc(t.deliverable) + '</div></div>' : '')
+      + (t.detail ? '<div class="dsec"><h4>说明</h4><div style="font-size:12.5px">' + esc(t.detail) + '</div></div>' : '');
+  }
+
+  function openTaskDetail(t){
+    openDrawer("我的任务", esc(t.title),
+      taskDetailHtml(t)
+      + '<div class="dsec"><h4>AI 辅助</h4>'
+      + '<div class="dim" style="font-size:11.5px;margin-bottom:8px">让 AI 帮你写思路、执行步骤与验收标准。</div>'
+      + '<button class="btn sm" id="coachFromDrawer">🤖 生成思路 + 执行方案</button>'
+      + '<div id="coachBox" style="margin-top:10px"></div></div>');
+    var btn = document.getElementById("coachFromDrawer");
+    if (btn) btn.addEventListener("click", function(){ runCoach(t, "coachBox"); });
+  }
+
+  function mdLite(text){
+    return esc(text)
+      .replace(/^### (.*)$/gm, '<b style="display:block;margin:10px 0 4px">$1</b>')
+      .replace(/^## (.*)$/gm, '<b style="display:block;margin:12px 0 5px;font-size:13px">$1</b>')
+      .replace(/^# (.*)$/gm, '<b style="display:block;margin:12px 0 5px;font-size:13.5px">$1</b>')
+      .replace(/^\s*[-*] (.*)$/gm, '• $1')
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  }
+
+  function runCoach(task, boxId){
+    var box = document.getElementById(boxId);
+    if (!box) return;
+    box.innerHTML = '<div class="dim" style="font-size:12px">AI 正在生成…（一般 10-40 秒）</div>';
+    api("/api/manage/tasks/" + task.id + "/coach", { method: "POST", body: { focus: "" } })
+      .then(function(r){
+        box.innerHTML = '<div class="row" style="align-items:center;gap:8px;margin-bottom:8px">'
+          + '<span class="dim" style="font-size:11px">生成于 ' + esc(String(r.generated_at || "").replace("T", " ").slice(0, 19)) + '</span>'
+          + '<span class="grow"></span><button class="btn sm ghost" id="coachCopy">复制</button></div>'
+          + '<div class="coach-out">' + mdLite(r.text || "") + '</div>'
+          + '<div class="dim" style="font-size:11px;margin-top:8px">' + esc(r.note || "") + '</div>';
+        var cp = document.getElementById("coachCopy");
+        if (cp) cp.addEventListener("click", function(){
+          navigator.clipboard.writeText(r.text || "").then(function(){ toast("已复制"); },
+            function(){ toast("复制失败，请手动选中", true); });
+        });
+      })
+      .catch(function(e){ box.innerHTML = '<div style="color:#fda4af;font-size:12px">生成失败：' + esc(e.message) + '</div>'; });
+  }
+
+  function openCoach(task){
+    openDrawer("AI 辅助 · 思路与执行方案", esc(task.title),
+      '<div class="dsec"><h4>任务</h4>' + taskDetailHtml(task).replace(/<h4>[^<]*<\/h4>/g, "") + '</div>'
+      + '<div class="dsec"><h4>补充要求（可选）</h4>'
+      + '<textarea id="coachFocus" rows="2" style="width:100%" placeholder="例如：只做第一周；预算有限；要能交给新人执行"></textarea>'
+      + '<div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" id="coachGo">生成</button>'
+      + '<span class="dim" style="font-size:11.5px">AI 会给出「思路 / 执行方案 / 验收标准 / 可能踩的坑」</span></div></div>'
+      + '<div class="dsec"><h4>结果</h4><div id="coachBox2"><div class="dim" style="font-size:12px">点「生成」开始</div></div></div>');
+    document.getElementById("coachGo").addEventListener("click", function(){
+      var focus = (document.getElementById("coachFocus").value || "").trim();
+      var box = document.getElementById("coachBox2");
+      box.innerHTML = '<div class="dim" style="font-size:12px">AI 正在生成…（一般 10-40 秒）</div>';
+      api("/api/manage/tasks/" + task.id + "/coach", { method: "POST", body: { focus: focus } })
+        .then(function(r){
+          box.innerHTML = '<div class="coach-out">' + mdLite(r.text || "") + '</div>'
+            + '<div class="dim" style="font-size:11px;margin-top:8px">' + esc(r.note || "") + '</div>';
+        })
+        .catch(function(e){ box.innerHTML = '<div style="color:#fda4af;font-size:12px">生成失败：' + esc(e.message) + '</div>'; });
+    });
+  }
+
+  function tlRangeDays(){
+    var today = new Date();
+    var iso = function(d){ return d.toISOString().slice(0, 10); };
+    var shift = function(n){ var d = new Date(today.getTime()); d.setDate(d.getDate() + n); return d; };
+    if (TL.range === "prev14") return [iso(shift(-14)), iso(shift(45))];
+    if (TL.range === "month") {
+      var first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      var last = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+      return [iso(first), iso(last)];
+    }
+    if (TL.range === "all") return ["", ""];
+    return [iso(shift(-7)), iso(shift(30))];
+  }
+
+  function openTimeline(){
+    var modal = document.getElementById("tlModal");
+    if (!modal) return;
+    modal.classList.remove("hide");
+    syncOverlayLayer();
+    document.getElementById("tlProject").innerHTML = '<option value="">全部项目</option>'
+      + (PROJ_CACHE || []).map(function(p){
+          return '<option value="' + p.id + '"' + (String(TL.projectId) === String(p.id) ? " selected" : "") + '>' + esc(p.name) + '</option>';
+        }).join("");
+    document.getElementById("tlRange").value = TL.range;
+    loadTimeline();
+  }
+  function closeTimeline(){
+    var modal = document.getElementById("tlModal");
+    if (modal) modal.classList.add("hide");
+    syncOverlayLayer();
+  }
+
+  /* 全屏二级界面开着时，把抽屉提到最上层，避免详情抽屉被遮罩挡住点不到 */
+  function syncOverlayLayer(){
+    var tl = document.getElementById("tlModal");
+    var rm = document.getElementById("remoteModal");
+    var open = (tl && !tl.classList.contains("hide")) || (rm && !rm.classList.contains("hide"));
+    document.body.classList.toggle("overlay-open", !!open);
+  }
+
+  function loadTimeline(){
+    var range = tlRangeDays();
+    var qs = "/api/manage/tasks/timeline?company_id=" + ACTIVE
+      + (TL.projectId ? "&project_id=" + TL.projectId : "")
+      + (range[0] ? "&from_day=" + range[0] + "&to_day=" + range[1] : "");
+    document.getElementById("tlBodyWrap") ;
+    document.getElementById("tlMeta").textContent = "加载中…";
+    api(qs).then(function(d){ TL.data = d; renderTimeline(); })
+      .catch(function(e){ document.getElementById("tlMeta").textContent = "读取失败：" + e.message; });
+  }
+
+  function renderTimeline(){
+    var d = TL.data || { tasks: [], state_labels: {}, summary: {} };
+    var tasks = d.tasks || [];
+    var s = d.summary || {};
+    document.getElementById("tlTitle").textContent = "任务时间线 · " + (TL.projectId ? "单项目" : "全部项目");
+    document.getElementById("tlMeta").textContent = (d.window ? d.window.from_day + " ~ " + d.window.to_day + " · " + d.window.days + " 天" : "")
+      + " · " + (d.task_count || 0) + " 条任务 · 今天 " + (d.today || "");
+
+    document.getElementById("tlKpi").innerHTML = ["overdue", "warn", "active", "pending", "done"].map(function(k){
+      var st = TASK_STATE[k];
+      return '<div class="k"><b style="color:' + st.color + '">' + (s[k] || 0) + '</b><span>' + st.label + '</span></div>';
+    }).join("");
+    document.getElementById("tlLegend").innerHTML =
+      '<span class="dim">颜色=状态：</span>'
+      + Object.keys(TASK_STATE).map(function(k){
+          return '<span><i style="background:' + TASK_STATE[k].color + '"></i>' + TASK_STATE[k].label + '</span>'; }).join("")
+      + '<span class="dim">· 一根横条=一条任务，跨多天合并显示；点横条看详情与 AI 辅助</span>';
+
+    var tlWrap = document.getElementById("tlWrap");
+    var tlEmpty = document.getElementById("tlEmpty");
+    if (!d.window){
+      tlWrap.classList.add("hide");
+      tlEmpty.classList.remove("hide");
+      tlEmpty.innerHTML = '<div class="dim">没有可显示的任务（任务需要先排上起止日期）</div>';
+      return;
+    }
+    if (tasks.length === 0){
+      // 注意：这里不能覆盖 #tlWrap 的内容，否则 #tlLeft / #tlRight 会被销毁，
+      // 下一次有数据时就报 "Cannot set properties of null"。
+      tlWrap.classList.add("hide");
+      tlEmpty.classList.remove("hide");
+      tlEmpty.innerHTML = '<div>'
+        + '<div class="dim" style="font-size:12.5px">当前时间窗（' + esc(d.window.from_day) + ' ~ ' + esc(d.window.to_day)
+        + '）里没有任务。任务可能排在别的日期段。</div>'
+        + '<div class="row" style="gap:8px;margin-top:10px">'
+        + '<button class="btn sm" id="tlUseAll">按任务起止显示全部</button>'
+        + '<button class="btn sm ghost" id="tlPrevMonth">看这个项目/公司在的时间段</button></div></div>';
+      var allBtn = document.getElementById("tlUseAll");
+      if (allBtn) allBtn.addEventListener("click", function(){
+        TL.range = "all";
+        document.getElementById("tlRange").value = "all";
+        loadTimeline();
+      });
+      var pm = document.getElementById("tlPrevMonth");
+      if (pm) pm.addEventListener("click", function(){
+        TL.range = "month";
+        document.getElementById("tlRange").value = "month";
+        loadTimeline();
+      });
+      return;
+    }
+    tlWrap.classList.remove("hide");
+    tlEmpty.classList.add("hide");
+    var from = new Date(d.window.from_day + "T00:00:00");
+    var days = d.window.days || 1;
+    var todayStr = d.today;
+    var dayW = TL.dayW;
+    var width = days * dayW;
+    var dayMs = 86400000;
+
+    var axisCells = "";
+    var gridLines = "";
+    for (var i = 0; i < days; i++){
+      var dt = new Date(from.getTime() + i * dayMs);
+      var isoDay = dt.toISOString().slice(0, 10);
+      var wd = dt.getDay();
+      var cls = "tl-day" + (isoDay === todayStr ? " today" : "");
+      axisCells += '<div class="' + cls + '" style="left:' + (i * dayW) + 'px;width:' + dayW + 'px">' + dt.getDate() + '</div>';
+      if (dt.getDate() === 1 || i === 0){
+        axisCells += '<div class="tl-month" style="left:' + (i * dayW) + 'px">' + (dt.getMonth() + 1) + ' 月</div>';
+      }
+      var lineCls = "tl-line" + (wd === 0 || wd === 6 ? " weekend" : "");
+      gridLines += '<div class="' + lineCls + '" style="left:' + (i * dayW) + 'px"></div>';
+    }
+    var todayIdx = Math.round((new Date(todayStr + "T00:00:00").getTime() - from.getTime()) / dayMs);
+    var todayLine = (todayIdx >= 0 && todayIdx < days)
+      ? '<div class="tl-today" style="left:' + (todayIdx * dayW) + 'px"></div>' : "";
+
+    var leftHtml = '<div class="tl-head">任务 / 负责人 / 状态</div>';
+    var canvasHtml = '<div class="tl-axis" style="width:' + width + 'px;position:relative">' + axisCells + '</div>'
+      + '<div class="tl-canvas" style="width:' + width + 'px;height:' + (tasks.length * 38) + 'px">' + gridLines + todayLine;
+
+    tasks.forEach(function(t){
+      var st = TASK_STATE[t.state] || TASK_STATE.pending;
+      leftHtml += '<div class="tl-row" data-tlrow="' + t.id + '"><b style="flex:1">' + esc(t.title) + '</b>'
+        + '<span class="dim">' + esc(t.owner_name || "未指派") + '</span>'
+        + '<span style="color:' + st.color + ';font-size:11px">' + st.label + '</span></div>';
+      var left = (t.offset_days || 0) * dayW + 2;
+      var w = Math.max(dayW - 4, (t.span_days || 1) * dayW - 4);
+      var label = esc(t.title) + (t.span_days > 1 ? '  (' + t.span_days + ' 天)' : '');
+      canvasHtml += '<div class="tl-grid-row" style="height:38px">'
+        + '<div class="tl-bar ' + t.state + '" style="left:' + left + 'px;width:' + w + 'px" '
+        + 'data-tlbar="' + t.id + '" title="' + esc(t.title + " · " + (t.owner_name || "未指派") + " · " + st.label + " · " + t.start_day + "→" + t.end_day + '') + '">'
+        + label + '</div></div>';
+      void label;
+    });
+    canvasHtml += '</div>';
+
+    document.getElementById("tlLeft").innerHTML = leftHtml;
+    document.getElementById("tlRight").innerHTML = canvasHtml;
+    $$("#tlModal [data-tlbar]").forEach(function(el){
+      el.addEventListener("click", function(){ tlTaskDetail(Number(el.dataset.tlbar)); });
+    });
+    $$("#tlModal [data-tlrow]").forEach(function(el){
+      el.addEventListener("click", function(){ tlTaskDetail(Number(el.dataset.tlrow)); });
+    });
+  }
+
+  function tlTaskDetail(id){
+    var t = ((TL.data || {}).tasks || []).filter(function(x){ return x.id === id; })[0];
+    if (!t) return;
+    openDrawer("任务时间线", esc(t.title),
+      taskDetailHtml(t)
+      + '<div class="dsec"><h4>AI 辅助</h4>'
+      + '<div class="dim" style="font-size:11.5px;margin-bottom:8px">让 AI 写思路、执行步骤与验收标准（只有负责人本人 / 管理者可用）。</div>'
+      + '<button class="btn sm" id="coachFromDrawerTl">🤖 生成思路 + 执行方案</button>'
+      + '<div id="coachBoxTl" style="margin-top:10px"></div></div>');
+    var btn = document.getElementById("coachFromDrawerTl");
+    if (btn) btn.addEventListener("click", function(){ runCoach(t, "coachBoxTl"); });
+  }
+
+  (function bindTimelineModal(){
+    var back = document.getElementById("tlBack"), close = document.getElementById("tlClose");
+    if (back) back.addEventListener("click", closeTimeline);
+    if (close) close.addEventListener("click", closeTimeline);
+    var proj = document.getElementById("tlProject");
+    if (proj) proj.addEventListener("change", function(){ TL.projectId = this.value; loadTimeline(); });
+    var range = document.getElementById("tlRange");
+    if (range) range.addEventListener("change", function(){ TL.range = this.value; loadTimeline(); });
+    var reload = document.getElementById("tlReload");
+    if (reload) reload.addEventListener("click", function(){ loadTimeline(); toast("已刷新"); });
+  })();
 
   /* ---------- 初始化 ---------- */
   if (localStorage.getItem("manage_login_mode") === "admin"){ setLoginMode("admin"); }

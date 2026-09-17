@@ -66,6 +66,7 @@ from .api.generation_records import (
     router as generation_records_router,
 )
 from .api.content_records import router as content_records_router
+from .api.publish_metrics import router as publish_metrics_router
 from .api.customer_management import router as customer_management_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.moments_coach import router as moments_coach_router
@@ -1666,6 +1667,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="")
     app.include_router(generation_records_router, prefix="")
     app.include_router(content_records_router, prefix="")
+    app.include_router(publish_metrics_router, prefix="")
     app.include_router(customer_management_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(moments_coach_router, prefix="")
