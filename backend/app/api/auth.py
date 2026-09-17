@@ -72,7 +72,10 @@ DEFAULT_ONLINE_USER_CREDITS = Decimal("99999.0000")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days（客户端会在到期前静默续签 /auth/refresh）
+"""续签：客户端在剩余有效期不足 20 天时调 POST /auth/refresh 换新 token（jti 保持不变，
+因此槽位占用/会话等按 jti 记录的状态不受影响）。"""
+ACCESS_TOKEN_REFRESH_MIN_REMAINING_SECONDS = 60 * 60 * 24  # 已过期超过 1 天不给续，必须重新登录
 
 
 class UserOut(BaseModel):
@@ -742,6 +745,69 @@ def get_me(
         is_agent=bool(getattr(current_user, "is_agent", False)),
         features=user_feature_flags(db, current_user.id),
     )
+
+
+@router.post("/refresh", summary="静默续签：用当前 token 换一个新 token（jti 不变，有效期 30 天）")
+def refresh_access_token(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> dict:
+    """客户端在剩余有效期不足 20 天时静默换新 token，避免用户被强制重新登录。
+
+    - 正常续签：token 有效或刚过期一点点（宽限 ACCESS_TOKEN_REFRESH_MIN_REMAINING_SECONDS）；
+    - jti 保持不变 → 槽位占用（installation_slot_owners.auth_session_id）、
+      其它按会话 id 记录的状态都不受影响；
+    - 过期太久 / 用户不存在 / 品牌不一致 → 401/403，客户端照旧提示重新登录。
+    """
+    raw = (token or "").strip()
+    bad = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="登录状态已失效，请重新登录",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not raw:
+        raise bad
+    try:
+        payload = jwt.decode(
+            raw,
+            settings.secret_key,
+            algorithms=[ALGORITHM],
+            options={"verify_exp": False},  # 允许「刚过期」的 token 续签，过期时间自己判
+        )
+        exp = payload.get("exp")
+        user_id = int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError):
+        raise bad
+    if exp is not None:
+        try:
+            exp_ts = float(exp)
+        except (TypeError, ValueError):
+            raise bad
+        if datetime.utcnow().timestamp() - exp_ts > ACCESS_TOKEN_REFRESH_MIN_REMAINING_SECONDS:
+            logger.info("[auth/refresh] 过期过久，拒绝续签 user_id=%s", user_id)
+            raise bad
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise bad
+    validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+    claims = {k: v for k, v in payload.items() if k not in ("exp", "iat", "nbf")}
+    new_token = create_access_token(data=claims)
+    expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    logger.info(
+        "[auth/refresh] user_id=%s brand=%s 续签成功 expires_at=%s",
+        user_id,
+        normalize_brand_mark(payload.get("brand_mark"), strict=False),
+        expires_at.isoformat(),
+    )
+    return {
+        "ok": True,
+        "access_token": new_token,
+        "token_type": "bearer",
+        "expires_in": int(ACCESS_TOKEN_EXPIRE_MINUTES) * 60,
+        "expires_at": expires_at.isoformat() + "Z",
+        "user_id": user_id,
+    }
 
 
 @router.post("/language", summary="保存当前用户界面语言")
