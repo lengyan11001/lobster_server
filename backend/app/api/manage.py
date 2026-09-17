@@ -39,11 +39,13 @@ from ..manage_models import (
     MProduct,
     MProject,
 )
+from ..services import device_labels
 from ..models import (
     H5ChatDevicePresence,
     PublishMetricEvent,
     PublishMetricSample,
     User,
+    UserDeviceLabel,
     UserInstallation,
 )
 from .auth import get_current_user
@@ -1969,9 +1971,29 @@ def _ai_row_json(db: Session, company: MCompany, row: MAiEmployee, since,
         member = member_by_uid.get(int(presence.user_id))
     device_id = (row.device_id or "").strip().upper() or str(remote.get("device_id") or "").strip().upper()
     agg = _dispatch_agg(db, company.id, row.id, since)
+    # 设备备注（H5 上给设备起的名字）：按机器身份保存，槽位 ID 变了也还在；
+    # 这台机器没备注时给一条「沿用建议」（同账号下最近改过、且那条槽位已离线）。
+    presence_user_id = int(presence.user_id) if (presence is not None and presence.user_id) else 0
+    device_label, device_label_source = "", "none"
+    suggested_label = None
+    suggested_labels: list = []
+    if presence_user_id and row.installation_id:
+        device_label, device_label_source = device_labels.resolve_device_label(
+            db, presence_user_id, row.installation_id
+        )
+        if not device_label:
+            # 机器身份也换过（不只是槽位变）时连不上，这时把最近改过的备注列出来让老板直接选
+            suggested_labels = device_labels.suggest_device_labels(
+                db, user_id=presence_user_id, installation_id=row.installation_id
+            )
+            suggested_label = suggested_labels[0] if suggested_labels else None
     return {"id": row.id, "name": row.name, "installation_id": row.installation_id,
             "device_id": device_id, "source": (row.source or "slot"), "note": (row.note or ""),
             "online": online, "last_seen": last_seen, "status": row.status,
+            "device_label": device_label,
+            "device_label_source": device_label_source,
+            "suggested_label": suggested_label,
+            "suggested_labels": suggested_labels,
             "capabilities": row.capabilities or [],
             "owner_name": (member.display_name if member else ""),
             "owner_label": ("属于 " + member.display_name) if member else "",
@@ -2151,6 +2173,75 @@ class AiEmployeePatchIn(BaseModel):
     note: Optional[str] = None
     capabilities: Optional[List[str]] = None
     status: Optional[str] = None
+
+
+class DeviceLabelIn(BaseModel):
+    """设备备注名（H5 设备列表里显示的名字）；空字符串表示清除。"""
+
+    display_name: str = Field(default="", max_length=128)
+
+
+@router.post("/ai-employees/{ai_id}/device-label", summary="设置/清除这台设备的备注名（按机器身份保存）")
+def set_ai_employee_device_label(
+    ai_id: int,
+    body: DeviceLabelIn,
+    user: Any = Depends(current_actor),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """给设备起名（备注）。名字存两份：
+
+    · ``user_device_labels``：按 machine_instance_id 保存 —— 客户端换槽位（换账号/换品牌/
+      OTA 后新的签名槽位）后仍自动套用，不会再退回默认名字；
+    · ``h5_chat_device_presence.display_name``：当前槽位那行，H5 设备列表直接用。
+
+    没有心跳/槽位记录的设备（例如只按设备号+验证码添加的远程设备）会提示先让设备上线。
+    """
+    row = db.query(MAiEmployee).filter(MAiEmployee.id == ai_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="虚拟员工不存在")
+    company = _require_company(db, row.company_id, user)
+    _require_plan_admin(db, company, user)
+    presence, _remote, _online, _last_seen = _slot_presence(db, row.installation_id)
+    owner_user_id = int(presence.user_id) if (presence is not None and presence.user_id) else 0
+    if not owner_user_id:
+        raise HTTPException(
+            status_code=409,
+            detail="这台设备还没有心跳记录，先让客户端上线（打开客户端）再改设备名",
+        )
+    name = (body.display_name or "").strip()[:128]
+    if name:
+        device_labels.remember_device_label(
+            db, user_id=owner_user_id, installation_id=row.installation_id,
+            display_name=name, source="manual",
+        )
+        presence.display_name = name
+        db.add(presence)
+        device_labels.apply_label_to_machine_slots(
+            db, user_id=owner_user_id, installation_id=row.installation_id, display_name=name
+        )
+    else:
+        presence.display_name = None
+        db.add(presence)
+        existing = (
+            db.query(UserDeviceLabel)
+            .filter(
+                UserDeviceLabel.user_id == owner_user_id,
+                UserDeviceLabel.last_installation_id == row.installation_id,
+            )
+            .first()
+        )
+        if existing is not None:
+            db.delete(existing)
+    _audit(db, company.id, getattr(user, "id", 0), "ai_employee.device_label", "ai_employee",
+           row.id, {"installation_id": row.installation_id, "display_name": name})
+    db.commit()
+    return {
+        "ok": True,
+        "ai_id": row.id,
+        "installation_id": row.installation_id,
+        "device_label": name,
+        "note": "设备名已按机器身份保存：以后这台机器换槽位（换账号/换品牌/OTA）也会自动沿用",
+    }
 
 
 @router.patch("/ai-employees/{ai_id}")

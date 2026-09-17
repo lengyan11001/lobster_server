@@ -1083,6 +1083,38 @@ class UserMachineIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserDeviceLabel(Base):
+    """设备备注（界面上显示的设备名）按「机器身份」保存，槽位 ID 变了也还在。
+
+    以前设备名只写在 h5_chat_device_presence.display_name 上，键是 installation_id：
+    客户端一旦换槽位（换账号登录、换品牌、OTA 后拿到新的签名槽位、机器身份文件重建），
+    新槽位那行是空的，界面上就退回默认名字（local-online）。
+    这里把备注挂到 machine_instance_id（拿不到机器身份时退化为 slot:<installation_id>），
+    换槽位后自动套回同一台机器，并保留 last_installation_id 便于追溯与「沿用建议」。
+    """
+
+    __tablename__ = "user_device_labels"
+    __table_args__ = (
+        UniqueConstraint("user_id", "label_key", name="uq_user_device_label"),
+        Index("ix_user_device_label_user_slot", "user_id", "last_installation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    """machine_instance_id；拿不到机器身份时是 slot:<installation_id>。"""
+    label_key: Mapped[str] = mapped_column(String(192), nullable=False, index=True)
+    machine_instance_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    """最近一次套用这个备注的槽位，用于「这台机器现在在哪个槽位」与沿用建议。"""
+    last_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    """manual=人工改的；auto=系统从旧槽位/历史沿用过来的。"""
+    source: Mapped[str] = mapped_column(String(16), default="manual", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class InstallationSlotOwner(Base):
     """The account currently allowed to dispatch work from one physical installation."""
 

@@ -427,6 +427,50 @@ def _migrate_remote_support_device_authorizations():
         logger.warning("Migration remote support device authorizations skipped: %s", e)
 
 
+def _migrate_device_labels():
+    """设备备注（设备名）改成按机器身份保存 + 把历史备注搬进新表（幂等）。
+
+    以前设备名只在 h5_chat_device_presence.display_name 上，槽位 ID 一变（换账号/换品牌/
+    OTA 后新的签名槽位）名字就丢失、界面退回默认名。这里建 user_device_labels 并把已存在的
+    自定义设备名按机器身份补录一遍，之后新槽位会自动沿用同一个名字。
+    """
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.UserDeviceLabel.__table__])
+    except Exception as e:
+        logger.warning("Migration device labels table skipped: %s", e)
+        return
+    from .services import device_labels as device_label_service
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(models.H5ChatDevicePresence)
+            .filter(models.H5ChatDevicePresence.display_name.isnot(None))
+            .all()
+        )
+        migrated = 0
+        for row in rows:
+            if not device_label_service.is_custom_label(row.display_name):
+                continue
+            created = device_label_service.remember_device_label(
+                db,
+                user_id=int(row.user_id),
+                installation_id=str(row.installation_id or ""),
+                display_name=str(row.display_name),
+                source="manual",
+            )
+            if created is not None:
+                migrated += 1
+        db.commit()
+        if migrated:
+            logger.info("[MANAGE] device labels backfilled rows=%s", migrated)
+    except Exception as e:
+        db.rollback()
+        logger.warning("Migration device labels backfill skipped: %s", e)
+    finally:
+        db.close()
+
+
 def _migrate_manage_ai_employee_columns():
     """Ensure m_ai_employee carries the manual-add identity columns."""
     from sqlalchemy import inspect, text
@@ -1520,6 +1564,7 @@ def create_app() -> FastAPI:
         _migrate_ip_content_profile_surveys()
         _migrate_h5_device_presence_account_payload()
         _migrate_remote_support_device_authorizations()
+        _migrate_device_labels()
         _migrate_customer_authorizations()
         _migrate_manage_ai_employee_columns()
         _migrate_h5_chat_mastra_columns()

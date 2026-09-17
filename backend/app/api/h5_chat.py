@@ -36,9 +36,11 @@ from ..models import (
     PublishAccount,
     ScheduledTaskRun,
     User,
+    UserDeviceLabel,
     UserInstallation,
 )
 from ..services.brand_context import explicit_request_brand_mark, public_brand_config, request_brand_mark
+from ..services import device_labels
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import attach_system_task_message
 from ..services.installation_slot_ownership import assert_installation_slot_owner
@@ -294,14 +296,31 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
-def _device_payload(row: H5ChatDevicePresence, now: Optional[datetime] = None) -> Dict[str, Any]:
+def _device_payload(
+    row: H5ChatDevicePresence,
+    now: Optional[datetime] = None,
+    *,
+    resolved: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """设备条目。resolved 来自 device_labels.device_names_for()：备注按机器身份保存，
+    所以换过槽位（换账号/换品牌/OTA 后新签名槽位）设备名也不会退回默认。"""
     current = now or datetime.utcnow()
-    return {
+    info = resolved if isinstance(resolved, dict) else {}
+    name = str(info.get("display_name") or "").strip()
+    source = str(info.get("label_source") or "").strip()
+    if not name:
+        name = str(row.display_name or "").strip() or "local-online"
+        source = source or ("presence" if row.display_name else "none")
+    data = {
         "installation_id": row.installation_id,
-        "device_name": row.display_name or row.installation_id,
+        "device_name": name,
+        "label_source": source or "none",
         "last_seen_at": _iso(row.last_seen_at),
         "online": is_device_online(row.last_seen_at, now=current),
     }
+    if info.get("suggested_label"):
+        data["suggested_label"] = info.get("suggested_label")
+    return data
 
 
 def _mounted_default_rows(db: Session, user_id: int) -> Dict[str, H5MountedAccountDefault]:
@@ -441,7 +460,11 @@ def _collect_device_publish_accounts(
         .limit(100)
         .all()
     )
-    device_rows = [_device_payload(row, now) for row in devices]
+    names = device_labels.device_names_for(db, user_id, [str(r.installation_id) for r in devices])
+    device_rows = [
+        _device_payload(row, now, resolved=names.get(str(row.installation_id)))
+        for row in devices
+    ]
     out: list[Dict[str, Any]] = []
     wechat_contacts_by_device: Dict[str, list[Dict[str, str]]] = {}
     seen: set[str] = set()
@@ -1713,8 +1736,25 @@ def h5_device_heartbeat(
             created_at=now,
         )
         db.add(row)
+    # 设备备注按机器身份保存：人工改过的名字，换槽位（换账号/换品牌/OTA 后新签名槽位）后自动沿用
+    if device_labels.is_custom_label(body.display_name):
+        device_labels.remember_device_label(
+            db,
+            user_id=current_user_id,
+            installation_id=xi,
+            display_name=str(body.display_name).strip(),
+            source="manual",
+        )
+    # 新建的存在时这行还没有 flush（会话 autoflush=False），先落库再沿用，否则查不到刚建的行
+    db.flush()
+    adopted = device_labels.adopt_device_label(db, current_user_id, xi)
     db.commit()
-    return {"ok": True, "installation_id": xi, "last_seen_at": _iso(now)}
+    return {
+        "ok": True,
+        "installation_id": xi,
+        "last_seen_at": _iso(now),
+        "device_name": adopted or (row.display_name or ""),
+    }
 
 
 @router.patch("/api/h5-chat/devices/{installation_id}/display-name", summary="H5 设置 online 员工昵称")
@@ -1735,16 +1775,38 @@ def h5_update_device_display_name(
     )
     if not row:
         raise HTTPException(status_code=404, detail="设备不存在")
-    row.display_name = (body.display_name or "").strip()[:128] or None
+    new_name = (body.display_name or "").strip()[:128]
+    row.display_name = new_name or None
     db.add(row)
+    # 备注按机器身份保存 + 同机器的其它槽位一起改名，避免换槽位后又变回默认名字
+    if device_labels.is_custom_label(new_name):
+        device_labels.remember_device_label(
+            db, user_id=owner_user.id, installation_id=iid, display_name=new_name, source="manual"
+        )
+        device_labels.apply_label_to_machine_slots(
+            db, user_id=owner_user.id, installation_id=iid, display_name=new_name
+        )
+    else:
+        existing = (
+            db.query(UserDeviceLabel)
+            .filter(
+                UserDeviceLabel.user_id == owner_user.id,
+                UserDeviceLabel.last_installation_id == iid,
+            )
+            .first()
+        )
+        if existing is not None:
+            db.delete(existing)
     db.commit()
     db.refresh(row)
     now = datetime.utcnow()
+    resolved_name, label_source = device_labels.resolve_device_label(db, owner_user.id, iid)
     return {
         "ok": True,
         "device": {
             "installation_id": row.installation_id,
-            "display_name": row.display_name,
+            "display_name": resolved_name or row.display_name or "local-online",
+            "label_source": label_source,
             "last_seen_at": _iso(row.last_seen_at),
             "online": is_device_online(row.last_seen_at, now=now),
             "publish_account_count": len((row.account_payload or {}).get("accounts") or []) if isinstance(row.account_payload, dict) else 0,
@@ -1766,22 +1828,35 @@ def h5_devices_status(
         .limit(100)
         .all()
     )
+    names = device_labels.device_names_for(db, owner_user.id, [str(r.installation_id) for r in rows])
     devices = []
     for r in rows:
         account_payload = r.account_payload if isinstance(r.account_payload, dict) else {}
         capabilities = account_payload.get("capabilities") if isinstance(account_payload.get("capabilities"), list) else []
         wechat_contacts = account_payload.get("wechat_contacts") if isinstance(account_payload.get("wechat_contacts"), list) else []
         wechat_contacts = [contact for contact in wechat_contacts[:500] if isinstance(contact, dict)]
+        resolved = names.get(str(r.installation_id)) or {}
+        display_name = str(resolved.get("display_name") or "").strip() or str(r.display_name or "").strip() or "local-online"
+        entry = {
+            "installation_id": r.installation_id,
+            "display_name": display_name,
+            "label_source": str(resolved.get("label_source") or ("presence" if r.display_name else "none")),
+            "last_seen_at": _iso(r.last_seen_at),
+            "online": is_device_online(r.last_seen_at, now=now),
+            "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
+            "capabilities": capabilities,
+            "wechat_contacts": wechat_contacts,
+        }
+        if not resolved.get("display_name"):
+            suggestions = device_labels.suggest_device_labels(
+                db, user_id=owner_user.id, installation_id=str(r.installation_id), limit=5
+            )
+            if suggestions:
+                # 机器身份也换过（不只是槽位变）时连不上，这时把最近改过的备注列出来让用户选
+                entry["suggested_label"] = suggestions[0]
+                entry["suggested_labels"] = suggestions
         devices.append(
-            {
-                "installation_id": r.installation_id,
-                "display_name": r.display_name,
-                "last_seen_at": _iso(r.last_seen_at),
-                "online": is_device_online(r.last_seen_at, now=now),
-                "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
-                "capabilities": capabilities,
-                "wechat_contacts": wechat_contacts,
-            }
+            entry
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
 
