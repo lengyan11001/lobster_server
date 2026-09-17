@@ -405,6 +405,29 @@ body.direct-control .toolbar > div:first-child { display: none; }
 body.direct-control .toolbar { justify-content: flex-start; }
 body.direct-control .stage-tabs { order: 0; }
 
+/* 只嵌「远程窗口」（manage.bhzn.top 用）：设备列表 / 添加设备 / 页签 / 页头都不需要，
+   管理后台那边另做了这些入口。这里只保留远程画面本身（画面右侧自带工具条）。 */
+body.viewer-only .sidebar,
+body.viewer-only .toolbar,
+body.viewer-only .device-shelf,
+body.viewer-only .stage-tabs,
+body.viewer-only .account-menu,
+body.viewer-only #openAddDeviceBtn {
+  display: none !important;
+}
+
+body.viewer-only .shell {
+  grid-template-columns: 1fr;
+}
+
+body.viewer-only .stage {
+  grid-template-rows: 1fr;
+}
+
+body.viewer-only .stage-body {
+  grid-template-rows: 1fr;
+}
+
 .toolbar-primary {
   min-height: 34px;
   border: 0;
