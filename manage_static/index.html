@@ -128,8 +128,8 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 .mline:last-child{border-bottom:0}
 .bar{height:7px;border-radius:7px;background:rgba(255,255,255,.07);overflow:hidden;flex:0 0 110px}
 .bar i{display:block;height:100%;border-radius:7px;background:linear-gradient(90deg,#22d3ee,#818cf8)}
-.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:99;padding:11px 18px;border-radius:12px;background:rgba(10,14,26,.92);border:1px solid var(--w-line);font-size:13px;opacity:0;transition:opacity .3s}
-.toast.on{opacity:1}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:99;padding:11px 18px;border-radius:12px;background:rgba(10,14,26,.92);border:1px solid var(--w-line);font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.on{opacity:1;pointer-events:auto;cursor:pointer}
 
 /* ---------- 计划脑图 ---------- */
 .mmwrap{position:relative;width:100%;min-height:340px;border-radius:12px;overflow:hidden;
@@ -425,12 +425,14 @@ body.overlay-open #drawer{z-index:501}
     setTimeout(function(){ if (!v.videoWidth) no(); }, 3000);
   })();
 
-  function toast(msg, bad){
+  function toast(msg, bad, sticky){
     var t = $("#toast");
     t.textContent = msg;
     t.style.borderColor = bad ? "rgba(251,113,133,.6)" : "var(--w-line)";
+    t.title = bad ? "点一下可关闭" : "";
     t.classList.add("on");
-    clearTimeout(t._t); t._t = setTimeout(function(){ t.classList.remove("on"); }, 2600);
+    clearTimeout(t._t);
+    t._t = setTimeout(function(){ t.classList.remove("on"); }, sticky ? 12000 : (bad ? 8000 : 2600));
   }
   function showErr(msg){
     var b = $("#errBox");
@@ -461,8 +463,15 @@ body.overlay-open #drawer{z-index:501}
         try { data = text ? JSON.parse(text) : {}; } catch(e){ data = { detail: text }; }
         if (!r.ok){
           var detail = data && data.detail;
+          if (detail && typeof detail === "object" && !Array.isArray(detail)){
+            var oe = new Error(detail.message || detail.detail || ("HTTP " + r.status));
+            oe.detail = detail; oe.status = r.status;
+            throw oe;
+          }
           if (Array.isArray(detail)) detail = detail.map(function(d){ return d.msg || JSON.stringify(d); }).join("; ");
-          throw new Error(detail || ("HTTP " + r.status));
+          var ne = new Error(detail || ("HTTP " + r.status));
+          ne.status = r.status;
+          throw ne;
         }
         return data;
       });
@@ -525,6 +534,7 @@ body.overlay-open #drawer{z-index:501}
     $("#app").classList.add("hide"); $("#landing").classList.remove("hide");
   });
 
+  $("#toast").addEventListener("click", function(){ this.classList.remove("on"); clearTimeout(this._t); });
   document.getElementById("remoteClose").addEventListener("click", closeRemote);
   document.getElementById("remoteBack").addEventListener("click", closeRemote);
   document.getElementById("remoteReload").addEventListener("click", function(){
@@ -1131,6 +1141,8 @@ body.overlay-open #drawer{z-index:501}
           + '<span class="rg">' + (ph.start_at || "?") + ' ~ ' + (ph.end_at || "?") + '</span>'
           + '<span class="grow"></span>'
           + '<span class="cnt">' + kidDone + '/' + kids.length + ' 任务</span>'
+          + gapTags(ph)
+          + '<button class="btn sm ghost" data-edit="' + ph.id + '" title="给这个阶段填责任人 / 要求 / 时间">编辑</button>'
           + '<span class="cv">▼</span></div>'
           + '<div class="ptasks">' + body + '</div></div>';
       }
@@ -1165,9 +1177,9 @@ body.overlay-open #drawer{z-index:501}
         if (filter === "all"){
           return phases.map(phaseBlock).join("") + orphanBlock() + msBlock();
         }
-        var picked = tasks.filter(match);
+        var picked = arr.filter(match);
         if (!picked.length) return '<div class="dim" style="font-size:12.5px;padding:10px 2px">没有符合条件的任务。</div>';
-        return '<div class="ptasks">' + picked.map(taskCard).join("") + '</div>';
+        return '<div class="ptasks">' + picked.map(function(n){ return n.node_type === "phase" ? phaseCard(n, tasks) : taskCard(n); }).join("") + '</div>';
       }
       function bind(){
         $$("#dBody [data-edit]").forEach(function(b){
@@ -1262,8 +1274,12 @@ body.overlay-open #drawer{z-index:501}
         });
         $("#confirmArr").addEventListener("click", function(){
           api("/api/manage/projects/"+pid+"/confirm", { method:"POST" })
-            .then(function(){ toast("安排已确认"); closeDrawer(); loadProjects(); loadBrief(); })
-            .catch(function(e){ toast(e.message, true); });
+            .then(function(){ toast("安排已确认，项目已启用"); closeDrawer(); loadProjects(); loadBrief(); })
+            .catch(function(e){
+              toast(e.message, true, true);
+              if (e.status === 400) openArrangementCheck(pid, e.detail);
+              else showErr(e.message);
+            });
         });
         function runPlan(mode, btn){
           btn.disabled = true; var old = btn.textContent; btn.textContent = "生成中…";
@@ -1309,6 +1325,73 @@ body.overlay-open #drawer{z-index:501}
     }).catch(function(e){ toast(e.message, true); });
   }
 
+
+  function gapTags(n){
+    var out = [];
+    if (!n.owner_name) out.push('<span class="tag wn">????</span>');
+    if (!n.requirement) out.push('<span class="tag wn">???</span>');
+    if (!(n.start_at && n.end_at)) out.push('<span class="tag wn">???</span>');
+    return out.length ? ('<span style="margin-right:6px">' + out.join("") + '</span>') : '';
+  }
+  function phaseCard(ph, tasks){
+    var kids = (tasks || []).filter(function(t){ return t.parent_id === ph.id; });
+    var kidDone = kids.filter(function(t){ return t.complete; }).length;
+    return '<div class="atask' + (ph.complete ? "" : " miss") + '" data-node="' + ph.id + '">'
+      + '<div class="l1"><span class="ttl">' + ph.title + '</span>'
+      + '<span class="tag cy">??</span>' + gapTags(ph)
+      + '<span class="act"><button class="btn sm ghost" data-edit="' + ph.id + '">??</button></span></div>'
+      + '<div class="l2">'
+      + (ph.owner_name ? ('<span class="mchip"><b>' + ph.owner_name + '</b></span>') : '<span class="mchip warn">???</span>')
+      + (ph.requirement ? ('<span class="mchip req">???' + ph.requirement + '</span>') : '<span class="mchip warn">?????</span>')
+      + ((ph.start_at && ph.end_at) ? ('<span class="mchip tm">' + ph.start_at + ' ~ ' + ph.end_at + '</span>') : '<span class="mchip warn">????</span>')
+      + '<span class="mchip">' + kidDone + '/' + kids.length + ' ??</span></div></div>';
+  }
+
+  function openNodeEditorById(pid, nid){
+    api("/api/manage/projects/" + pid).then(function(d){
+      openNodeEditor(nid, d.nodes || [], pid);
+    }).catch(function(e){ showErr(e.message); });
+  }
+
+  function openArrangementCheck(pid, detail){
+    api("/api/manage/projects/" + pid + "/arrangement-check").then(function(d){
+      var missing = (d.missing || []);
+      var rows = missing.map(function(m){
+        return '<div class="mline" style="align-items:center">'
+          + '<span class="nm" style="flex:1"><b style="font-size:12.5px">' + m.title + '</b>'
+          + '<span class="tag cy" style="margin-left:7px">' + (m.node_type === "phase" ? "??" : "??") + '</span></span>'
+          + (m.missing || []).map(function(x){ return '<span class="tag wn" style="margin-left:5px">?' + x + '</span>'; }).join("")
+          + '<button class="btn sm" data-fix="' + m.id + '" style="margin-left:9px">??</button></div>';
+      }).join("");
+      var why = '<div class="dim" style="font-size:12px;line-height:1.75">'
+        + '??????????<b>??</b>?<b>??</b>??????? / ?? / ?????'
+        + (d.phases_missing ? ('<br /><span style="color:#fcd34d">?????? ' + d.phases_missing + ' ?????</span>??????????????????????????????????????????') : '')
+        + '<br />???' + (d.ready || 0) + ' / ' + (d.total || 0) + ' ????</div>';
+      openDrawer("?? ? ????", (d.project || "") + " ? ?? " + missing.length + " ?",
+        '<div class="dsec"><h4>???????</h4>' + why + '</div>'
+        + '<div class="dsec"><h4>??????</h4>'
+        + (rows || '<div class="dim" style="font-size:12.5px">????????????</div>') + '</div>'
+        + '<div class="row" style="justify-content:flex-end;gap:9px">'
+        + '<button class="btn sm ghost" id="ackBack">??????</button>'
+        + '<button class="btn sm" id="ackRetry">??????????</button></div>');
+      $$("#dBody [data-fix]").forEach(function(b){
+        b.addEventListener("click", function(){ openNodeEditorById(pid, Number(b.dataset.fix)); });
+      });
+      document.getElementById("ackBack").addEventListener("click", function(){ openProject(pid); });
+      document.getElementById("ackRetry").addEventListener("click", function(){
+        api("/api/manage/projects/" + pid + "/confirm", { method:"POST" })
+          .then(function(){ toast("???????????"); closeDrawer(); loadProjects(); loadBrief(); })
+          .catch(function(e){
+            toast(e.message, true, true);
+            if (e.status === 400) openArrangementCheck(pid, e.detail);
+            else showErr(e.message);
+          });
+      });
+    }).catch(function(e){
+      showErr(e.message);
+      toast(e.message, true, true);
+    });
+  }
   function openNodeEditor(nid, nodes, pid){
     var n = nodes.filter(function(x){ return x.id === nid; })[0];
     if (!n) return;

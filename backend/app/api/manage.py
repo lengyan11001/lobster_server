@@ -1090,6 +1090,47 @@ def save_draft(project_id: int, body: DraftIn, user: Any = Depends(current_actor
     return {"ok": True, "saved_at": datetime.utcnow().isoformat()}
 
 
+def _arrangement_gaps(nodes: List[MPlanNode]) -> List[Dict[str, Any]]:
+    """哪些节点还没排齐：逐条给出缺什么，给「排齐检查」和确认失败提示共用。"""
+    gaps: List[Dict[str, Any]] = []
+    for n in nodes:
+        miss: List[str] = []
+        if not n.owner_name:
+            miss.append("责任人")
+        if not n.requirement:
+            miss.append("要求")
+        if not n.start_at:
+            miss.append("开始时间")
+        if not n.end_at:
+            miss.append("结束时间")
+        if miss:
+            gaps.append({"id": n.id, "title": n.title, "node_type": n.node_type,
+                         "owner_kind": n.owner_kind, "missing": miss,
+                         "detail": (n.detail or "")[:100]})
+    return gaps
+
+
+@router.get("/projects/{project_id}/arrangement-check")
+def arrangement_check(project_id: int, user: Any = Depends(current_actor),
+                      db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """确认前的排齐检查：还差哪些节点、每个缺什么、几个是阶段几个是任务。"""
+    project = db.query(MProject).filter(MProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _require_company(db, project.company_id, user)
+    nodes = (db.query(MPlanNode)
+             .filter(MPlanNode.project_id == project_id,
+                     MPlanNode.node_type.in_(("phase", "task")))
+             .order_by(MPlanNode.order_index).all())
+    gaps = _arrangement_gaps(nodes)
+    phase_gaps = [g for g in gaps if g["node_type"] == "phase"]
+    task_gaps = [g for g in gaps if g["node_type"] == "task"]
+    return {"project": project.name, "ok": not gaps, "total": len(nodes),
+            "ready": len(nodes) - len(gaps), "missing": gaps,
+            "phases_missing": len(phase_gaps), "tasks_missing": len(task_gaps),
+            "arrangement_status": project.arrangement_status}
+
+
 @router.post("/projects/{project_id}/confirm")
 def confirm_arrangement(project_id: int, user: Any = Depends(current_actor),
                         db: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -1102,12 +1143,20 @@ def confirm_arrangement(project_id: int, user: Any = Depends(current_actor),
                                        MPlanNode.node_type.in_(("phase", "task"))).all()
     if not nodes:
         raise HTTPException(status_code=400, detail="还没有可确认的节点，先生成规划")
-    missing = [n.title for n in nodes
-               if not (n.owner_name and n.requirement and n.start_at and n.end_at)]
-    if missing:
-        raise HTTPException(status_code=400,
-                            detail="还有 " + str(len(missing)) + " 个节点没排齐（人员/要求/时间节点都要填）："
-                                   + "、".join(missing[:3]))
+    gaps = _arrangement_gaps(nodes)
+    if gaps:
+        phase_gaps = [g for g in gaps if g["node_type"] == "phase"]
+        task_gaps = [g for g in gaps if g["node_type"] == "task"]
+        parts = []
+        if phase_gaps:
+            parts.append(str(len(phase_gaps)) + " 个阶段缺责任人")
+        if task_gaps:
+            parts.append(str(len(task_gaps)) + " 个任务没排齐")
+        raise HTTPException(status_code=400, detail={
+            "message": "还不能确认：" + "、".join(parts) + "（点「排齐检查」逐条补齐）",
+            "missing": gaps,
+            "phases_missing": len(phase_gaps),
+            "tasks_missing": len(task_gaps)})
     project.arrangement_status = "confirmed"
     project.status = "running"
     _audit(db, company.id, user.id, "arrangement.confirm", "project", project.id, {"nodes": len(nodes)})
