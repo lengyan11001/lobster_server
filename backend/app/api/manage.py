@@ -3541,6 +3541,158 @@ COACH_SYSTEM_PROMPT = (
 )
 
 
+FOLLOWUP_COACH_PROMPT = (
+    "你是企业项目管理助理，帮一线同事把「下一次跟进」定下来。\n"
+    "只依据给定资料（跟进线 + 客户/交付资料），不要编造公司内部数据。\n"
+    "请用简体中文输出 Markdown，不要寒暄，按下面结构：\n"
+    "## 现在什么情况\n"
+    "2-4 句概括进展、卡点、对方态度，并点出跟进线里缺什么信息。\n"
+    "## 下一步动作\n"
+    "3-5 条，每条写清：做什么 / 找谁 / 说什么（可给话术要点）/ 期望对方给什么反馈。\n"
+    "## 时间与节奏\n"
+    "给出下次跟进的具体日期（或天数）与频率，并说明为什么。\n"
+    "## 风险与备选\n"
+    "2-3 条可能的变数 + 对应备选动作。\n"
+    "## 一句话建议\n"
+    "一句话给出「下一次先做什么」。\n"
+    "要求具体、可执行；不要重复原文。"
+)
+
+
+async def _followup_coach(db: Session, actor: Any, company: MCompany, *, subject: str,
+                          profile: Dict[str, Any], timeline: List[Dict[str, Any]],
+                          extra: Optional[Dict[str, Any]] = None,
+                          focus: str = "", audit_action: str = "", audit_target: str = "",
+                          audit_id: int = 0) -> Dict[str, Any]:
+    """跟进建议通用部分：组 payload -> 调 AI -> 记审计。
+    关键：AI 可能跑几十秒，请求会话不能一直挂着事务（idle_in_transaction 会掉连接）。
+    """
+    payload: Dict[str, Any] = {"跟进对象": subject}
+    for k, v in profile.items():
+        if v not in (None, "", [], {}):
+            payload[k] = v
+    if timeline:
+        payload["跟进线（新→旧）"] = timeline
+    else:
+        payload["跟进线（新→旧）"] = ["（还没有跟进记录）"]
+    if extra:
+        for k, v in extra.items():
+            if v not in (None, "", [], {}):
+                payload[k] = v
+    focus = (focus or "").strip()[:200]
+    if focus:
+        payload["本次特别要求"] = focus
+    token = _llm_token_for_company(db, company)
+    company_id = int(company.id)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    text = await _llm_text(token, FOLLOWUP_COACH_PROMPT, json.dumps(payload, ensure_ascii=False))
+    try:
+        write_db = SessionLocal()
+        try:
+            _audit(write_db, company_id, int(getattr(actor, "id", 0) or 0), audit_action or "followup.ai_coach",
+                   audit_target, audit_id, {"focus": focus})
+            write_db.commit()
+        finally:
+            write_db.close()
+    except Exception as exc:
+        logger.warning("[MANAGE] followup coach audit failed %s=%s err=%s", audit_target, audit_id, exc)
+    return {"ok": True, "generated_at": datetime.utcnow().isoformat() + "Z", "focus": focus,
+            "text": text, "note": "AI 建议仅供参考，发出前请自己过一遍口径。"}
+
+
+@router.post("/customers/{customer_id}/coach", summary="AI 辅助：根据跟进线 + 客户资料给下一步跟进建议")
+async def customer_followup_coach(customer_id: int, body: _CoachIn = _CoachIn(),
+                                  actor: Any = Depends(current_actor),
+                                  db: Session = Depends(get_db)) -> Dict[str, Any]:
+    row = db.query(MCustomer).filter(MCustomer.id == customer_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    company = _require_company(db, row.company_id, actor)
+    logs = (db.query(MCustomerLog).filter(MCustomerLog.customer_id == row.id)
+            .order_by(MCustomerLog.id.desc()).limit(20).all())
+    timeline = [{"时间": x.happened_at or "", "方式": x.kind or "note",
+                 "内容": (x.content or "")[:400],
+                 "阶段变化": ((STAGE_LABEL.get(x.from_stage, x.from_stage) + " → "
+                                          + STAGE_LABEL.get(x.to_stage, x.to_stage))
+                                         if x.from_stage != x.to_stage else "")}
+                for x in logs]
+    owner = None
+    if row.owner_membership_id:
+        m = db.query(MMembership).filter(MMembership.id == row.owner_membership_id).first()
+        owner = m.display_name if m else None
+    deliv = (db.query(MDelivery).filter(MDelivery.customer_id == row.id)
+             .order_by(MDelivery.id.desc()).limit(5).all())
+    profile = {"客户": row.name, "对方公司": row.company_name or "",
+               "手机": row.phone or "", "微信": row.wechat or "",
+               "来源": row.source or "",
+               "当前阶段": STAGE_LABEL.get(row.stage, row.stage),
+               "商机金额": ("¥" + str(float(row.amount or 0))),
+               "负责人": owner or "未指派",
+               "已填的下一步": row.next_action or "",
+               "已填的下次跟进": row.next_follow_at or "",
+               "最近跟进": row.last_follow_at or "还没跟进过",
+               "备注": (row.notes or "")[:800]}
+    extra = {}
+    if deliv:
+        extra["关联交付单"] = [
+            {"名称": d.name, "状态": DELIVERY_LABEL.get(d.status, d.status),
+             "承诺": d.promised_at or "", "已交付": d.delivered_at or ""} for d in deliv]
+    out = await _followup_coach(db, actor, company, subject=row.name, profile=profile,
+                                timeline=timeline, extra=extra, focus=body.focus,
+                                audit_action="customer.ai_coach", audit_target="customer",
+                                audit_id=int(row.id))
+    out["customer_id"] = int(row.id)
+    out["customer_name"] = row.name
+    return out
+
+
+@router.post("/deliveries/{delivery_id}/coach", summary="AI 辅助：根据跟进线 + 交付资料给下一步跟进建议")
+async def delivery_followup_coach(delivery_id: int, body: _CoachIn = _CoachIn(),
+                                  actor: Any = Depends(current_actor),
+                                  db: Session = Depends(get_db)) -> Dict[str, Any]:
+    row = db.query(MDelivery).filter(MDelivery.id == delivery_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="交付单不存在")
+    company = _require_company(db, row.company_id, actor)
+    logs = (db.query(MDeliveryLog).filter(MDeliveryLog.delivery_id == row.id)
+            .order_by(MDeliveryLog.id.desc()).limit(20).all())
+    timeline = [{"时间": x.happened_at or "", "类型": x.kind or "note",
+                 "内容": (x.content or "")[:400],
+                 "状态变化": ((DELIVERY_LABEL.get(x.from_status, x.from_status) + " → "
+                                          + DELIVERY_LABEL.get(x.to_status, x.to_status))
+                                         if x.from_status != x.to_status else "")}
+                for x in logs]
+    owner = None
+    if row.owner_membership_id:
+        m = db.query(MMembership).filter(MMembership.id == row.owner_membership_id).first()
+        owner = m.display_name if m else None
+    profile = {"交付单": row.name,
+               "当前状态": DELIVERY_LABEL.get(row.status, row.status),
+               "负责人": owner or "未指派",
+               "承诺交付": row.promised_at or "",
+               "已交付": row.delivered_at or "",
+               "已验收": row.accepted_at or "",
+               "最近跟进": row.last_follow_at or "还没跟进过",
+               "备注": (row.note or "")[:800]}
+    extra = {}
+    cust = db.query(MCustomer).filter(MCustomer.id == row.customer_id).first() if row.customer_id else None
+    if cust:
+        extra["客户资料"] = {"客户": cust.name, "对方公司": cust.company_name or "",
+                                            "阶段": STAGE_LABEL.get(cust.stage, cust.stage),
+                                            "商机金额": float(cust.amount or 0),
+                                            "客户备注": (cust.notes or "")[:400]}
+    out = await _followup_coach(db, actor, company, subject=row.name, profile=profile,
+                                timeline=timeline, extra=extra, focus=body.focus,
+                                audit_action="delivery.ai_coach", audit_target="delivery",
+                                audit_id=int(row.id))
+    out["delivery_id"] = int(row.id)
+    out["delivery_name"] = row.name
+    return out
+
+
 @router.post("/tasks/{node_id}/coach", summary="AI 辅助：为这条任务生成思路与执行方案")
 async def task_ai_coach(
     node_id: int,

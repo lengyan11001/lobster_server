@@ -2145,7 +2145,26 @@ body.overlay-open #drawer{z-index:501}
         + '</select></div>'
         + '<div style="flex:1"><label class="fl">推进到阶段</label><select id="fuStage"><option value="">不变</option>' + stageOpts + '</select></div></div>'
         + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" id="fuOk">提交跟进</button></div></div>'
+        + '<div class="dsec"><h4>AI 辅助</h4>'
+        + '<div class="dim" style="font-size:11.5px">AI 会读这条跟进线 + 客户资料，给出下一步跟进建议'
+        + '（现在什么情况 / 下一步动作 / 时间与节奏 / 风险与备选）</div>'
+        + '<textarea id="fuAiFocus" rows="2" style="width:100%;margin-top:8px" placeholder="补充要求（可选）：例如只做微信渠道 / 预算有限 / 想约下周面谈"></textarea>'
+        + '<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn sm" id="fuAiGo">AI 辅助</button></div>'
+        + '<div id="fuAiBox" style="margin-top:10px"></div></div>'
         + '<div class="dsec"><h4>跟进时间线</h4>' + timeline + '</div>');
+      document.getElementById("fuAiGo").addEventListener("click", function(){
+        var box = document.getElementById("fuAiBox"), btn = this;
+        btn.disabled = true;
+        box.innerHTML = '<div class="dim" style="font-size:12px">AI 正在读跟进线…（一般 10-40 秒）</div>';
+        api("/api/manage/customers/" + id + "/coach", { method: "POST", body: {
+          focus: ((document.getElementById("fuAiFocus") || {}).value || "").trim() } })
+          .then(function(r){
+            box.innerHTML = '<div class="coach-out">' + mdLite(r.text || "") + '</div>'
+              + '<div class="dim" style="font-size:11px;margin-top:8px">' + esc(r.note || "") + '</div>';
+          })
+          .catch(function(e){ box.innerHTML = '<div style="color:#fda4af;font-size:12px">生成失败：' + esc(e.message) + '</div>'; })
+          .then(function(){ btn.disabled = false; });
+      });
       document.getElementById("fuOk").addEventListener("click", function(){
         var text = document.getElementById("fuText").value.trim();
         if (!text) return toast("写点内容", true);
@@ -2279,7 +2298,25 @@ body.overlay-open #drawer{z-index:501}
         + '<div style="flex:1"><label class="fl">推进到状态</label><select id="dflStatus"><option value="">不变</option>'
         + statusOpts + '</select></div></div>'
         + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" id="dflOk">提交跟进</button></div></div>'
+        + '<div class="dsec"><h4>AI 辅助</h4>'
+        + '<div class="dim" style="font-size:11.5px">AI 会读这条跟进线 + 交付资料（含客户资料），给出下一步跟进建议</div>'
+        + '<textarea id="dfAiFocus" rows="2" style="width:100%;margin-top:8px" placeholder="补充要求（可选）：例如对方拖着不验收 / 想提前回款"></textarea>'
+        + '<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn sm" id="dfAiGo">AI 辅助</button></div>'
+        + '<div id="dfAiBox" style="margin-top:10px"></div></div>'
         + '<div class="dsec"><h4>跟进时间线</h4>' + timeline + '</div>');
+      document.getElementById("dfAiGo").addEventListener("click", function(){
+        var box = document.getElementById("dfAiBox"), btn = this;
+        btn.disabled = true;
+        box.innerHTML = '<div class="dim" style="font-size:12px">AI 正在读跟进线…（一般 10-40 秒）</div>';
+        api("/api/manage/deliveries/" + id + "/coach", { method: "POST", body: {
+          focus: ((document.getElementById("dfAiFocus") || {}).value || "").trim() } })
+          .then(function(r){
+            box.innerHTML = '<div class="coach-out">' + mdLite(r.text || "") + '</div>'
+              + '<div class="dim" style="font-size:11px;margin-top:8px">' + esc(r.note || "") + '</div>';
+          })
+          .catch(function(e){ box.innerHTML = '<div style="color:#fda4af;font-size:12px">生成失败：' + esc(e.message) + '</div>'; })
+          .then(function(){ btn.disabled = false; });
+      });
       document.getElementById("dflOk").addEventListener("click", function(){
         var text = document.getElementById("dflText").value.trim();
         if (!text) return toast("写点内容", true);
