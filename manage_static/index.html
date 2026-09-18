@@ -434,10 +434,24 @@ body.overlay-open #drawer{z-index:501}
     clearTimeout(t._t);
     t._t = setTimeout(function(){ t.classList.remove("on"); }, sticky ? 12000 : (bad ? 8000 : 2600));
   }
-  function showErr(msg){
+  var ERR_PINNED = false;
+  function showErr(msg, ctx){
     var b = $("#errBox");
-    if (!msg){ b.classList.add("hide"); return; }
-    b.textContent = msg; b.classList.remove("hide");
+    if (!b) return;
+    if (!msg){ if (!ERR_PINNED) b.classList.add("hide"); return; }
+    var where = "";
+    if (ctx && ctx.path){
+      where = "（" + (ctx.method || "GET") + " " + String(ctx.path).slice(0, 90)
+        + (ctx.status ? " \u2192 HTTP " + ctx.status : (ctx.network ? " \u2192 \u7f51\u7edc\u672a\u901a" : "")) + "\uff09";
+    }
+    b.innerHTML = '<div class="row" style="align-items:flex-start;gap:10px">'
+      + '<div style="flex:1;min-width:0"><b style="font-size:12.5px">\u9875\u9762\u52a0\u8f7d\u51fa\u9519</b>'
+      + '<div style="font-size:12px;margin-top:5px;word-break:break-all;color:#fda4af">' + esc(msg) + where + '</div></div>'
+      + '<button class="btn sm ghost" id="errClose">\u5173\u95ed</button></div>';
+    b.classList.remove("hide");
+    ERR_PINNED = true;
+    var btn = document.getElementById("errClose");
+    if (btn) btn.addEventListener("click", function(){ ERR_PINNED = false; b.classList.add("hide"); });
   }
   function openDrawer(kind, title, html){
     $("#dKind").textContent = kind; $("#dTitle").textContent = title;
@@ -465,16 +479,20 @@ body.overlay-open #drawer{z-index:501}
           var detail = data && data.detail;
           if (detail && typeof detail === "object" && !Array.isArray(detail)){
             var oe = new Error(detail.message || detail.detail || ("HTTP " + r.status));
-            oe.detail = detail; oe.status = r.status;
+            oe.detail = detail; oe.status = r.status; oe.path = path; oe.method = opts.method || "GET";
             throw oe;
           }
           if (Array.isArray(detail)) detail = detail.map(function(d){ return d.msg || JSON.stringify(d); }).join("; ");
           var ne = new Error(detail || ("HTTP " + r.status));
-          ne.status = r.status;
+          ne.status = r.status; ne.path = path; ne.method = opts.method || "GET";
           throw ne;
         }
         return data;
       });
+    }).catch(function(err){
+      // 网络层失败（断网 / 连接被掐）没有 status，也把请求标出来，方便红框显示是哪个接口
+      if (err && !err.path){ err.path = path; err.method = opts.method || "GET"; err.network = true; }
+      throw err;
     });
   }
 
@@ -571,10 +589,8 @@ body.overlay-open #drawer{z-index:501}
       // 我的任务：真实员工登录后默认落到这里（管理员也能看，方便替员工检查）
       var myBtn = document.querySelector('[data-go="s-my"]');
       if (myBtn) myBtn.classList.remove("hide");
-      if (!IS_ADMIN){
-        var mb = document.querySelector('[data-go="s-my"]');
-        if (mb) mb.click();
-      }
+      // 注意：这里只把「我的任务」显示出来，切换放到 ACTIVE/刷新之后——
+      // 提前切换会在公司还未确定时发请求，就是刷新时那个一闪而过的红框。
       if (data.is_platform_admin){
         document.getElementById("markBossBtn").classList.remove("hide");
       }
@@ -588,6 +604,10 @@ body.overlay-open #drawer{z-index:501}
       $("#companySel").value = String(ACTIVE);
       updateCompanyActions();
       showApp(); refreshAll();
+      if (!IS_ADMIN){
+        var mb2 = document.querySelector('[data-go="s-my"]');
+        if (mb2) mb2.click();
+      }
     }).catch(function(e){
       if (String(e.message).indexOf("401") >= 0 || String(e.message).indexOf("Not authenticated") >= 0){
         TOKEN = ""; localStorage.removeItem("manage_token");
@@ -909,7 +929,7 @@ body.overlay-open #drawer{z-index:501}
       $$("#s-proj [data-pdel]").forEach(function(b){
         b.addEventListener("click", function(){ deleteProject(Number(b.dataset.pdel)); });
       });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   function openProjectEditor(id, opts){
@@ -1318,7 +1338,7 @@ body.overlay-open #drawer{z-index:501}
             .catch(function(e){
               toast(e.message, true, true);
               if (e.status === 400) openArrangementCheck(pid, e.detail);
-              else showErr(e.message);
+              else showErr(e.message, e);
             });
         });
         function runPlan(mode, btn){
@@ -1403,7 +1423,7 @@ body.overlay-open #drawer{z-index:501}
   function openNodeEditorById(pid, nid){
     api("/api/manage/projects/" + pid).then(function(d){
       openNodeEditor(nid, d.nodes || [], pid);
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   function openArrangementCheck(pid, detail){
@@ -1450,11 +1470,11 @@ body.overlay-open #drawer{z-index:501}
           .catch(function(e){
             toast(e.message, true, true);
             if (e.status === 400) openArrangementCheck(pid, e.detail);
-            else showErr(e.message);
+            else showErr(e.message, e);
           });
       });
     }).catch(function(e){
-      showErr(e.message);
+      showErr(e.message, e);
       toast(e.message, true, true);
     });
   }
@@ -1544,7 +1564,7 @@ body.overlay-open #drawer{z-index:501}
       $$("#s-org [data-mdel]").forEach(function(b){
         b.addEventListener("click", function(){ deleteMember(Number(b.dataset.mdel)); });
       });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   var LEVELS = ["intern","p1","p2","p3","p4","lead"];
@@ -1715,7 +1735,7 @@ body.overlay-open #drawer{z-index:501}
       $$("#s-prod [data-pdel]").forEach(function(b){
         b.addEventListener("click", function(){ deleteProduct(Number(b.dataset.pdel)); });
       });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   function prodCard(x){
@@ -1826,7 +1846,7 @@ body.overlay-open #drawer{z-index:501}
             .catch(function(e){ toast(e.message, true); });
         });
       });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   /* ================= 财务 ================= */
@@ -1869,7 +1889,7 @@ body.overlay-open #drawer{z-index:501}
             .catch(function(e){ toast(e.message, true); });
         });
       });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
 ﻿﻿  /* ================= 规划版本 / 重规划 / 派活 ================= */
@@ -2002,7 +2022,7 @@ body.overlay-open #drawer{z-index:501}
       $$("#s-crm [data-cdel]").forEach(function(b){ b.addEventListener("click", function(){ deleteCustomer(Number(b.dataset.cdel)); }); });
       $$("#s-crm [data-clog]").forEach(function(b){ b.addEventListener("click", function(){ openFollowUp(Number(b.dataset.clog)); }); });
       $$("#s-crm [data-cassign]").forEach(function(b){ b.addEventListener("click", function(){ openAssign(Number(b.dataset.cassign)); }); });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   function openCustomer(id){
@@ -2260,7 +2280,7 @@ body.overlay-open #drawer{z-index:501}
               .then(function(){ toast("已建交付单"); loadDeliv(); }).catch(function(e){ toast(e.message, true); });
           });
         });
-      }).catch(function(e){ showErr(e.message); });
+      }).catch(function(e){ showErr(e.message, e); });
   }
 
   /* 交付跟进：写描述 + 可选推进状态，下面是时间线（与客户跟进一致） */
@@ -2467,7 +2487,7 @@ body.overlay-open #drawer{z-index:501}
             .then(function(){ toast("已移除"); loadAi(); }).catch(function(e){ toast(e.message, true); });
         });
       });
-    }).catch(function(e){ showErr(e.message); });
+    }).catch(function(e){ showErr(e.message, e); });
   }
 
   function openAiAdd(){
@@ -2892,6 +2912,7 @@ body.overlay-open #drawer{z-index:501}
   function loadMyTasks(){
     var box = document.getElementById("s-my");
     if (!box) return;
+    if (!ACTIVE) return;   // 公司还没定下来时不要发请求（会是 company_id=null 的 422）
     if (!MYT.data) box.innerHTML = '<div class="glass card"><div class="dim">加载中…</div></div>';
     api("/api/manage/tasks/mine?company_id=" + ACTIVE + "&include_done=" + (MYT.showDone ? "true" : "false"))
       .then(function(d){ MYT.data = d; renderMyTasks(); })
