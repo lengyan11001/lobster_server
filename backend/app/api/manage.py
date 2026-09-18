@@ -258,7 +258,8 @@ def _node_json(n: MPlanNode) -> Dict[str, Any]:
         "owner_membership_id": n.owner_membership_id, "requirement": n.requirement,
         "start_at": n.start_at, "end_at": n.end_at, "kpi": n.kpi, "deliverable": n.deliverable,
         "status": n.status, "progress": n.progress, "weight": n.weight, "order_index": n.order_index,
-        "complete": bool(n.owner_name and n.requirement and n.start_at and n.end_at),
+        "complete": bool(n.requirement and n.start_at and n.end_at
+                         and (n.owner_name or n.node_type == "phase")),
     }
 
 
@@ -1091,11 +1092,15 @@ def save_draft(project_id: int, body: DraftIn, user: Any = Depends(current_actor
 
 
 def _arrangement_gaps(nodes: List[MPlanNode]) -> List[Dict[str, Any]]:
-    """哪些节点还没排齐：逐条给出缺什么，给「排齐检查」和确认失败提示共用。"""
+    """哪些节点还没排齐：逐条给出缺什么，给「排齐检查」和确认失败提示共用。
+
+    阶段（phase）是分组，负责人可选：只要求填「要求 + 时间」；
+    任务（task）要求责任人 / 要求 / 时间都填。
+    """
     gaps: List[Dict[str, Any]] = []
     for n in nodes:
         miss: List[str] = []
-        if not n.owner_name:
+        if not n.owner_name and n.node_type != "phase":
             miss.append("责任人")
         if not n.requirement:
             miss.append("要求")
@@ -1128,6 +1133,7 @@ def arrangement_check(project_id: int, user: Any = Depends(current_actor),
     return {"project": project.name, "ok": not gaps, "total": len(nodes),
             "ready": len(nodes) - len(gaps), "missing": gaps,
             "phases_missing": len(phase_gaps), "tasks_missing": len(task_gaps),
+            "phase_owner_optional": True,
             "arrangement_status": project.arrangement_status}
 
 
