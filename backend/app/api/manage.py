@@ -894,14 +894,16 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
                "success_criteria": project.success_criteria,
                "start_at": project.start_at, "end_at": project.end_at,
                "products": project.products or []}
-        # 周期为空就兜底：模型拿不到周期会自己编日期（历史事故：编出 2025 年的排期，
-        # 任务一建出来全是「超期」）。兜底周期同时写回项目，后面就不会再编。
-        if not str(ctx.get("start_at") or "").strip() or not str(ctx.get("end_at") or "").strip():
-            period_defaulted = True
-            _today = _today_beijing()
-            ctx["start_at"] = str(ctx.get("start_at") or "").strip() or _today.isoformat()
-            ctx["end_at"] = (str(ctx.get("end_at") or "").strip()
-                             or (_today + timedelta(days=DEFAULT_PLAN_DAYS)).isoformat())
+        # 必要条件先齐：目标/周期缺一个都不生成。
+        # （以前是静默兜底，结果模型拿不到周期就自己编日期，编出过 2025 年的排期。）
+        _need = _project_gaps(project)
+        if _need:
+            raise HTTPException(status_code=400, detail={
+                "message": "先补齐必要条件再生成规划："
+                           + "、".join(g["label"] for g in _need),
+                "needs": [g["key"] for g in _need],
+                "missing": [g["label"] for g in _need],
+                "hint": "周期不知道填多久？可以直接用「今天起 90 天」。"})
         last_ver = (read_db.query(MPlanVersion)
                     .filter(MPlanVersion.project_id == project_id)
                     .order_by(MPlanVersion.id.desc()).first())
@@ -1077,7 +1079,7 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
     return {"ok": True, "source": source, "summary": plan.get("summary") or "",
             "version": plan_version, "nodes": out_nodes, "resource_gap": gaps,
             "assignments": assignments,
-            "period_defaulted": period_defaulted,
+            "period_defaulted": False,   # 现在周期是必填的，不再静默兜底
             "period": {"start_at": str(ctx.get("start_at") or ""),
                        "end_at": str(ctx.get("end_at") or "")}}
 
@@ -1122,6 +1124,18 @@ def save_draft(project_id: int, body: DraftIn, user: Any = Depends(current_actor
     return {"ok": True, "saved_at": datetime.utcnow().isoformat()}
 
 
+def _project_gaps(project: MProject) -> List[Dict[str, Any]]:
+    """项目级必要条件：目标、周期。缺了就不该生成规划（更不该确认）。"""
+    gaps: List[Dict[str, Any]] = []
+    if not str(project.goal or "").strip():
+        gaps.append({"key": "goal", "label": "项目目标", "missing": ["目标"]})
+    if not str(project.start_at or "").strip():
+        gaps.append({"key": "start_at", "label": "开始日期", "missing": ["开始日期"]})
+    if not str(project.end_at or "").strip():
+        gaps.append({"key": "end_at", "label": "结束日期", "missing": ["结束日期"]})
+    return gaps
+
+
 def _arrangement_gaps(nodes: List[MPlanNode]) -> List[Dict[str, Any]]:
     """哪些节点还没排齐：逐条给出缺什么，给「排齐检查」和确认失败提示共用。
 
@@ -1161,7 +1175,9 @@ def arrangement_check(project_id: int, user: Any = Depends(current_actor),
     gaps = _arrangement_gaps(nodes)
     phase_gaps = [g for g in gaps if g["node_type"] == "phase"]
     task_gaps = [g for g in gaps if g["node_type"] == "task"]
-    return {"project": project.name, "ok": not gaps, "total": len(nodes),
+    project_gaps = _project_gaps(project)
+    return {"project": project.name, "ok": (not gaps) and (not project_gaps),
+            "project_gaps": project_gaps, "total": len(nodes),
             "ready": len(nodes) - len(gaps), "missing": gaps,
             "phases_missing": len(phase_gaps), "tasks_missing": len(task_gaps),
             "phase_owner_optional": True,
@@ -1181,10 +1197,13 @@ def confirm_arrangement(project_id: int, user: Any = Depends(current_actor),
     if not nodes:
         raise HTTPException(status_code=400, detail="还没有可确认的节点，先生成规划")
     gaps = _arrangement_gaps(nodes)
-    if gaps:
+    project_gaps = _project_gaps(project)
+    if gaps or project_gaps:
         phase_gaps = [g for g in gaps if g["node_type"] == "phase"]
         task_gaps = [g for g in gaps if g["node_type"] == "task"]
         parts = []
+        if project_gaps:
+            parts.append("项目缺 " + "/".join(g["label"] for g in project_gaps))
         if phase_gaps:
             parts.append(str(len(phase_gaps)) + " 个阶段缺责任人")
         if task_gaps:
@@ -1192,6 +1211,8 @@ def confirm_arrangement(project_id: int, user: Any = Depends(current_actor),
         raise HTTPException(status_code=400, detail={
             "message": "还不能确认：" + "、".join(parts) + "（点「排齐检查」逐条补齐）",
             "missing": gaps,
+            "project_gaps": project_gaps,
+            "needs": [g["key"] for g in project_gaps],
             "phases_missing": len(phase_gaps),
             "tasks_missing": len(task_gaps)})
     project.arrangement_status = "confirmed"
@@ -3152,12 +3173,30 @@ def _my_membership_ids(db: Session, actor: Any) -> List[int]:
     ]
 
 
-def _task_query(db: Session, company_ids: List[int], project_id: Optional[int]) -> List[MPlanNode]:
+CONFIRMED_ARRANGEMENT = ("confirmed", "changed")
+
+
+def _confirmed_project_ids(db: Session, company_ids: List[int]) -> List[int]:
+    """已经确认过安排的项目（含有待确认变更的）。草稿项目不算。"""
+    rows = (db.query(MProject.id)
+            .filter(MProject.company_id.in_(company_ids),
+                    MProject.arrangement_status.in_(CONFIRMED_ARRANGEMENT)).all())
+    return [int(r[0]) for r in rows]
+
+
+def _task_query(db: Session, company_ids: List[int], project_id: Optional[int],
+                only_confirmed_project: bool = False) -> List[MPlanNode]:
     if not company_ids:
         return []
     query = db.query(MPlanNode).filter(MPlanNode.company_id.in_(company_ids))
     if project_id:
+        # 显式指定项目时不过滤：项目里的时间线/详情要能看草稿
         query = query.filter(MPlanNode.project_id == int(project_id))
+    elif only_confirmed_project:
+        ids = _confirmed_project_ids(db, company_ids)
+        if not ids:
+            return []
+        query = query.filter(MPlanNode.project_id.in_(ids))
     return query.order_by(MPlanNode.start_at.asc(), MPlanNode.order_index.asc(), MPlanNode.id.asc()).all()
 
 
@@ -3177,7 +3216,7 @@ def tasks_timeline(
     company_names = {int(c.id): c.name for c in companies}
 
     today = _today_beijing()
-    nodes = _task_query(db, company_ids, project_id)
+    nodes = _task_query(db, company_ids, project_id, only_confirmed_project=True)
     # 未显式给窗口（前端选「全部」）时：有任务就按任务起止自适应，没有就默认今天±
     explicit_from = _parse_day(from_day)
     explicit_to = _parse_day(to_day)
@@ -3262,9 +3301,20 @@ def tasks_mine(
         if str(row.display_name or "").strip()
     }
 
-    nodes = _task_query(db, company_ids, None)
+    nodes = _task_query(db, company_ids, None, only_confirmed_project=True)
     project_rows = db.query(MProject).filter(MProject.company_id.in_(company_ids)).all()
     project_names = {int(p.id): p.name for p in project_rows}
+    # 草稿项目（还没点「确认安排」）：不派活，但要告诉人有多少件在等确认
+    draft_counts: Dict[int, int] = {}
+    for n in db.query(MPlanNode).filter(MPlanNode.company_id.in_(company_ids)).all():
+        if int(n.project_id) not in draft_counts:
+            draft_counts[int(n.project_id)] = 0
+        draft_counts[int(n.project_id)] += 1
+    draft_projects = [{"id": int(p.id), "name": p.name,
+                       "nodes": draft_counts.get(int(p.id), 0),
+                       "status": p.arrangement_status}
+                      for p in project_rows if p.arrangement_status not in CONFIRMED_ARRANGEMENT]
+    draft_projects.sort(key=lambda x: x["id"])
 
     tasks: List[Dict[str, Any]] = []
     for node in nodes:
@@ -3320,9 +3370,11 @@ def tasks_mine(
         "summary": summary,
         "task_count": len(tasks),
         "tasks": tasks,
+        "draft_projects": draft_projects,
         "note": (
             "真实员工用自己账号登录时，这里只列派给自己的任务；平台管理员/老板看到的是全部任务，"
-            "方便替员工检查。每条任务可用「AI 辅助」生成思路与执行方案。"
+            "方便替员工检查。每条任务可用「AI 辅助」生成思路与执行方案；"
+            "只有「确认安排」过的项目才会出现在这里，草稿不算。"
         ),
     }
 

@@ -912,7 +912,12 @@ body.overlay-open #drawer{z-index:501}
     }).catch(function(e){ showErr(e.message); });
   }
 
-  function openProjectEditor(id){
+  function openProjectEditor(id, opts){
+    opts = opts || {};
+    var need = opts.needs || [];
+    var needSet = {};
+    need.forEach(function(k){ needSet[k] = true; });
+    function needStyle(k){ return needSet[k] ? ' style="border-color:#fda4af"' : ''; }
     var p = id ? PROJ_CACHE.filter(function(x){ return x.id === id; })[0] : null;
     api("/api/manage/products?company_id=" + ACTIVE).then(function(pd){
       var prods = pd.products || [];
@@ -930,13 +935,22 @@ body.overlay-open #drawer{z-index:501}
           }).join("") + '</div>'
         : '<div class="dim" style="font-size:12.5px">还没有产品，先去「产品」页添加，再回来选。</div>';
 
-      var html = '<div class="dsec"><h4>项目信息</h4>'
+      var needBanner = need.length
+        ? '<div class="dsec" style="border:1px solid rgba(251,113,141,.5);border-radius:10px;padding:10px 12px">'
+          + '<b style="color:#fda4af;font-size:12.5px">还差必要条件</b>'
+          + '<div class="dim" style="font-size:11.5px;margin-top:5px">'
+          + need.map(function(k){ return ({goal:"项目目标", start_at:"开始日期", end_at:"结束日期"})[k] || k; }).join(" / ")
+          + '：频繁出现的坑是周期留空，AI 拿不到周期会自己编日期。</div>'
+          + '<div class="row" style="gap:8px;margin-top:9px">'
+          + '<button class="btn sm" id="npQuick90">用「今天起 90 天」填周期</button></div></div>'
+        : '';
+      var html = needBanner + '<div class="dsec"><h4>项目信息</h4>'
         + '<label class="fl">项目名称</label><input id="npName" value="' + (p ? p.name : "") + '" style="margin-bottom:10px" placeholder="例如：抖音渠道 0→30 万" />'
-        + '<label class="fl">目标（AI 据此规划）</label><textarea id="npGoal" rows="3" placeholder="3 个月把抖音渠道做到月成交 30 万">' + (p ? (p.goal||"") : "") + '</textarea>'
+        + '<label class="fl">目标（AI 据此规划，必填）</label><textarea id="npGoal" rows="3"' + needStyle("goal") + ' placeholder="3 个月把抖音渠道做到月成交 30 万">' + (p ? (p.goal||"") : "") + '</textarea>'
         + '<label class="fl" style="margin-top:10px">成功标准</label><input id="npCrit" value="' + (p ? (p.success_criteria||"") : "") + '" placeholder="例如：单月成交 ≥30 万且回款率 ≥80%" />'
         + '<div style="display:flex;gap:10px;margin-top:10px">'
-        + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
-        + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
+        + '<div style="flex:1"><label class="fl">开始（必填）</label><input id="npStart"' + needStyle("start_at") + ' value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
+        + '<div style="flex:1"><label class="fl">结束（必填）</label><input id="npEnd"' + needStyle("end_at") + ' value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
         + '<div class="dim" style="font-size:11.5px;margin-top:6px">周期建议填上：留空时生成规划只能按「今天起 90 天」兜底，且不填的历史数据里 AI 自己编过年份（任务一建出来就是「超期」）。</div>'
         + (p ? '<div style="margin-top:10px"><label class="fl">状态</label><select id="npStatus">'
               + [["planning","规划中"],["running","执行中"],["done","已完成"],["archived","已归档"]].map(function(x){
@@ -959,6 +973,15 @@ body.overlay-open #drawer{z-index:501}
         });
       });
       document.getElementById("npCancel").addEventListener("click", closeDrawer);
+      var q90 = document.getElementById("npQuick90");
+      if (q90) q90.addEventListener("click", function(){
+        var d = new Date(), pad = function(n){ return (n < 10 ? "0" : "") + n; };
+        var iso = function(x){ return x.getFullYear() + "-" + pad(x.getMonth() + 1) + "-" + pad(x.getDate()); };
+        var end = new Date(d.getTime() + 90 * 86400000);
+        document.getElementById("npStart").value = iso(d);
+        document.getElementById("npEnd").value = iso(end);
+        toast("已填上 " + iso(d) + " ~ " + iso(end));
+      });
       document.getElementById("npOk").addEventListener("click", function(){
         var name = document.getElementById("npName").value.trim();
         if (!name) return toast("请填项目名称", true);
@@ -973,7 +996,15 @@ body.overlay-open #drawer{z-index:501}
         if (p){
           payload.status = document.getElementById("npStatus").value;
           api("/api/manage/projects/" + p.id, { method:"PATCH", body: payload })
-            .then(function(){ closeDrawer(); toast("已保存"); loadProjects(); loadBrief(); })
+            .then(function(){
+              closeDrawer(); loadProjects(); loadBrief();
+              if (opts.needs && opts.needs.length){
+                toast("已保存：必要条件补齐了，回去点「AI 生成规划」吧");
+                openProject(p.id);
+              } else {
+                toast("已保存");
+              }
+            })
             .catch(function(e){ toast(e.message, true); });
         } else {
           payload.company_id = ACTIVE;
@@ -1319,7 +1350,12 @@ body.overlay-open #drawer{z-index:501}
               }
               openProject(pid); loadBrief(); loadProjects();
             })
-            .catch(function(e){ toast(e.message, true); })
+            .catch(function(e){
+              toast(e.message, true, true);
+              if (e.detail && e.detail.needs && e.detail.needs.length){
+                openProjectEditor(pid, { needs: e.detail.needs });
+              }
+            })
             .then(function(){ PLAN_BUSY[pid] = false; btn.disabled = false; btn.textContent = old; });
         }
         $("#planAi").addEventListener("click", function(){ runPlan("ai", this); });
@@ -1384,8 +1420,18 @@ body.overlay-open #drawer{z-index:501}
         + '「确认安排」要求：<b>任务</b>填齐 责任人 / 要求 / 时间；<b>阶段</b>只要求 要求 + 时间（<b>负责人可选</b>）。'
         + (d.phases_missing ? ('<br /><span style="color:#fcd34d">这次卡住的 ' + d.phases_missing + ' 个是「阶段」</span>：阶段负责人可以留空；想填的话，列表里每个阶段都有「编辑」。') : '')
         + '<br />进度：' + (d.ready || 0) + ' / ' + (d.total || 0) + ' 已排齐。</div>';
-      openDrawer("项目 · 排齐检查", (d.project || "") + " · 还差 " + missing.length + " 项",
+      var pg = d.project_gaps || [];
+      var pgHtml = pg.length
+        ? '<div class="dsec"><h4>项目自身还差</h4>'
+          + pg.map(function(g){
+              return '<div class="mline" style="align-items:center"><span class="nm" style="flex:1"><b style="font-size:12.5px">'
+                + esc(g.label) + '</b></span><span class="tag wn">必填</span>'
+                + '<button class="btn sm" data-pfix="' + g.key + '" style="margin-left:9px">去补</button></div>';
+            }).join("") + '</div>'
+        : '';
+      openDrawer("项目 · 排齐检查", (d.project || "") + " · 还差 " + (missing.length + pg.length) + " 项",
         '<div class="dsec"><h4>为什么不能确认</h4>' + why + '</div>'
+        + pgHtml
         + '<div class="dsec"><h4>需要补的节点</h4>'
         + (rows || '<div class="dim" style="font-size:12.5px">没有缺口，可以直接确认。</div>') + '</div>'
         + '<div class="row" style="justify-content:flex-end;gap:9px">'
@@ -1393,6 +1439,9 @@ body.overlay-open #drawer{z-index:501}
         + '<button class="btn sm" id="ackRetry">都补好了，再确认一次</button></div>');
       $$("#dBody [data-fix]").forEach(function(b){
         b.addEventListener("click", function(){ openNodeEditorById(pid, Number(b.dataset.fix)); });
+      });
+      $$("#dBody [data-pfix]").forEach(function(b){
+        b.addEventListener("click", function(){ openProjectEditor(pid, { needs: [b.dataset.pfix] }); });
       });
       document.getElementById("ackBack").addEventListener("click", function(){ openProject(pid); });
       document.getElementById("ackRetry").addEventListener("click", function(){
@@ -2751,12 +2800,26 @@ body.overlay-open #drawer{z-index:501}
       + kpi("超期", "overdue", "#fb7185") + kpi("预警", "warn", "#fbbf24")
       + kpi("进行中", "active", "#22d3ee") + kpi("未开始", "pending", "var(--ink)")
       + kpi("完成", "done", "#34d399") + '</div>'
+      + ((d.draft_projects || []).length
+          ? '<div class="dsec" style="border:1px solid rgba(251,191,36,.45);border-radius:10px;padding:10px 12px;margin-bottom:12px">'
+            + '<b style="color:#fcd34d;font-size:12.5px">还有 ' + d.draft_projects.length + ' 个项目的安排没确认，所以不在下面的任务里</b>'
+            + '<div class="dim" style="font-size:11.5px;margin-top:6px">'
+            + d.draft_projects.map(function(x){ return esc(x.name) + "（" + x.nodes + " 个节点）"; }).join("、")
+            + '：「确认安排」之后才会派到任务里。</div>'
+            + '<div class="row" style="margin-top:9px"><button class="btn sm" id="mytGoProj">去项目里确认安排</button></div></div>'
+          : '')
       + (tasks.length
           ? '<table class="tb"><thead><tr><th>任务</th><th>负责人</th><th>起止</th><th>状态</th><th>进度</th><th class="right">操作</th></tr></thead><tbody>'
             + rows + '</tbody></table>'
           : '<div class="dim">' + (MYT.showDone ? "还没有派给你的任务" : "没有未完成的任务") + '</div>')
       + '<div class="dim" style="font-size:11.5px;margin-top:10px">' + esc(d.note || "") + '</div></div>';
 
+    var goProj = document.getElementById("mytGoProj");
+    if (goProj) goProj.addEventListener("click", function(){
+      $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
+      var b = document.querySelector('.rail button[data-go="s-proj"]');
+      if (b){ b.classList.add("on"); b.click(); }
+    });
     document.getElementById("mytReload").addEventListener("click", function(){ MYT.data = null; loadMyTasks(); });
     document.getElementById("mytDone").addEventListener("click", function(){
       MYT.showDone = !MYT.showDone; MYT.data = null; loadMyTasks(); });
