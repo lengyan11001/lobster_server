@@ -1834,11 +1834,12 @@ def update_delivery(delivery_id: int, body: DeliveryPatchIn, user: Any = Depends
         raise HTTPException(status_code=404, detail="交付单不存在")
     company = _require_company(db, row.company_id, user)
     data = body.dict(exclude_unset=True)
+    # 先记住原值，再改字段——否则时间线里永远比不出变化
+    old_status = row.status
+    old_owner = row.owner_membership_id
     for field in ("name", "owner_membership_id", "promised_at", "delivered_at", "accepted_at", "note"):
         if data.get(field) is not None:
             setattr(row, field, data[field])
-    old_status = row.status
-    old_owner = row.owner_membership_id
     if data.get("status") and data["status"] in DELIVERY_LABEL:
         if data["status"] != old_status:
             _delivery_touch_status(row, data["status"])
