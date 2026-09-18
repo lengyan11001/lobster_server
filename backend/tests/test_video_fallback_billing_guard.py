@@ -125,17 +125,23 @@ def test_xai_video_body_maps_duration_and_first_image():
     }
 
 
-def test_xai_video_is_first_provider_for_grok_family():
+def test_wan30_is_first_provider_for_grok_family():
+    """分镜台默认（grok 家族）先跑万相3.0（DashScope），失败再退 comfly/xai/openmind。"""
     policy = _video_provider_policy("xai/grok-imagine-video-1.5/image-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
     assert policy["providers"][0] == {
-        "channel": "comfly",
-        "model": "grok-imagine-video-1.5",
+        "channel": "dashscope",
+        "model": "wan3.0-video",
         "base_url": "/api/comfly-proxy",
     }
     assert policy["providers"] == [
+        {
+            "channel": "dashscope",
+            "model": "wan3.0-video",
+            "base_url": "/api/comfly-proxy",
+        },
         {
             "channel": "comfly",
             "model": "grok-imagine-video-1.5",
@@ -143,8 +149,8 @@ def test_xai_video_is_first_provider_for_grok_family():
         },
         {
             "channel": "xai",
-        "model": "grok-imagine-video-1.5",
-        "base_url": "/api/comfly-proxy",
+            "model": "grok-imagine-video-1.5",
+            "base_url": "/api/comfly-proxy",
         },
         {
             "channel": "openmind",
@@ -152,6 +158,25 @@ def test_xai_video_is_first_provider_for_grok_family():
             "base_url": "/api/comfly-proxy",
         },
     ]
+
+
+def test_wan30_position_switch(monkeypatch):
+    """VIDEO_POLICY_WAN30_POSITION 控制万相3.0 在调度列表里的位置（first 默认 / last / off）。"""
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "last")
+    providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
+    assert providers[-1] == {
+        "channel": "dashscope",
+        "model": "wan3.0-video",
+        "base_url": "/api/comfly-proxy",
+    }
+
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "off")
+    providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
+    assert all(item["channel"] != "dashscope" for item in providers)
+
+    monkeypatch.delenv("VIDEO_POLICY_WAN30_POSITION", raising=False)
+    providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
+    assert providers[0]["channel"] == "dashscope"
 
 
 def test_veo_family_falls_back_to_xai_direct_only():

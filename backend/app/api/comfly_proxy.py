@@ -4378,6 +4378,12 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
     low_channel = (channel or "").strip().lower()
     proxy_base = "/api/comfly-proxy"
 
+    # 分镜台/批量创意视频共用的万相3.0（DashScope）：批量视频那条链路一直在用，
+    # 2026-09-18 冒烟确认可用（5s 9:16 出片耗时约 274s，直连 DASHSCOPE_WAN30_API_KEY）。
+    # 位置由 VIDEO_POLICY_WAN30_POSITION 控制：first(默认)/last/off。
+    wan30_provider = {"channel": "dashscope", "model": "wan3.0-video", "base_url": proxy_base}
+    wan30_position = (os.environ.get("VIDEO_POLICY_WAN30_POSITION") or "first").strip().lower()
+
     if _is_dashscope_wan30_model(raw_model):
         return {
             "ok": True,
@@ -4395,17 +4401,22 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
         low_channel = "grok"
 
     if low_channel in {"comfyui", "comfyui_video", "openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/") or low_model.startswith("xai/grok-imagine-video-1.5/"):
+        providers = [
+            # Keep the public channel name compatible with existing clients.
+            # The pricing entry routes this model to the dedicated comfyui_grok
+            # upstream internally.
+            {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+            {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+            {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+        ]
+        if wan30_position in {"first", "1", "primary"}:
+            providers.insert(0, dict(wan30_provider))
+        elif wan30_position in {"last", "2"}:
+            providers.append(dict(wan30_provider))
         return {
             "ok": True,
             "model_family": "grok",
-            "providers": [
-                # Keep the public channel name compatible with existing clients.
-                # The pricing entry routes this model to the dedicated comfyui_grok
-                # upstream internally.
-                {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
-                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
-                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
-            ],
+            "providers": providers,
         }
 
     if low_channel in {"yunwu", "??", "??"} or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"} or low_model.startswith("apiz/veo3.1/text-to-video"):
