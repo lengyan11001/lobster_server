@@ -928,7 +928,59 @@
                 <button class="ghost" type="button" id="installIosWebclipBtn">添加到桌面</button>
               </div>
             </div>
+            <div class="setting-row">
+              <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.2-2.9 7.8-7 9-4.1-1.2-7-4.8-7-9V6l7-3Z"></path><path d="M9.5 12.2l1.8 1.8 3.4-3.6"></path></svg>
+              </span>
+              <div>
+                <strong>账号安全</strong>
+                <div class="hint">修改密码 / 更换手机号</div>
+              </div>
+              <button class="ghost" type="button" id="accountSecurityEntryBtn">管理</button>
+            </div>
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
+          </div>
+          <style>
+            .account-security-panel .as-form { display: grid; gap: .4rem; margin: .6rem 0 .9rem; }
+            .account-security-panel .as-form label { font-size: .82rem; font-weight: 700; color: #334155; }
+            .account-security-panel .as-form input { border: 1px solid #d7dee8; border-radius: 10px; padding: .55rem .65rem; font-size: .95rem; background: #fbfdff; width: 100%; box-sizing: border-box; }
+            .account-security-panel .as-inline { display: flex; gap: .5rem; align-items: center; }
+            .account-security-panel .as-inline input { flex: 1 1 auto; }
+            .account-security-panel .as-msg { margin-top: .4rem; }
+            .account-security-panel .as-msg.ok { color: #0b6f5e; }
+            .account-security-panel .as-msg.err { color: #b32b2b; }
+          </style>
+          <div class="panel settings account-security-panel hidden" id="accountSecurityPanel">
+            <div class="setting-row">
+              <div>
+                <strong>账号安全</strong>
+                <div class="hint" id="accountSecurityCurrent">当前账号：--</div>
+              </div>
+              <button class="ghost" type="button" id="accountSecurityCloseBtn">收起</button>
+            </div>
+            <div class="as-form">
+              <label for="asOldPassword">当前密码</label>
+              <input type="password" id="asOldPassword" autocomplete="current-password" placeholder="请输入当前密码" />
+              <label for="asNewPassword">新密码</label>
+              <input type="password" id="asNewPassword" autocomplete="new-password" placeholder="6～128 位" />
+              <label for="asConfirmPassword">确认新密码</label>
+              <input type="password" id="asConfirmPassword" autocomplete="new-password" placeholder="再次输入新密码" />
+              <button class="primary" type="button" id="asChangePasswordBtn">保存新密码</button>
+            </div>
+            <div class="as-form">
+              <label for="asPhonePassword">当前密码</label>
+              <input type="password" id="asPhonePassword" autocomplete="current-password" placeholder="请输入当前密码" />
+              <label for="asNewPhone">新手机号</label>
+              <input type="tel" id="asNewPhone" inputmode="numeric" maxlength="11" placeholder="11 位手机号" />
+              <label for="asPhoneCode">短信验证码</label>
+              <div class="as-inline">
+                <input type="text" id="asPhoneCode" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+                <button class="ghost" type="button" id="asSendPhoneCodeBtn">获取验证码</button>
+              </div>
+              <button class="primary" type="button" id="asChangePhoneBtn">确认换绑</button>
+              <div class="hint">换绑后新号即登录账号，老号释放；设备槽位/素材/任务/积分按账号 ID 保留；品牌固定代理号不允许自助换绑。</div>
+            </div>
+            <div class="hint as-msg" id="asMsg"></div>
           </div>
           <div class="panel settings profile-business-menu">
             <button class="profile-entry ai-assistant-profile-entry" type="button" data-tab-target="messages">

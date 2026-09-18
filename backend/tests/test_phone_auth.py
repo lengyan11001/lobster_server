@@ -456,3 +456,181 @@ def test_password_login_accepts_non_phone_account(db_session, db_session_factory
     )
     assert res.status_code == 200
     assert res.json()["access_token"]
+
+
+def _auth_client(db_session_factory, monkeypatch, token: str):
+    client = _client(db_session_factory, monkeypatch)
+    client.headers.update({"Authorization": "Bearer " + token})
+    return client
+
+
+def _login_token(user) -> str:
+    from backend.app.api.auth import access_token_claims, create_access_token
+
+    return create_access_token(data=access_token_claims(user))
+
+
+def _make_user(db_session, *, email: str, password: str = "old-password-1", brand: str = "bihuo"):
+    from backend.app.api.auth import get_password_hash
+    from backend.app.models import User
+
+    user = User(
+        email=email,
+        hashed_password=get_password_hash(password),
+        password_initialized=True,
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark=brand,
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+def test_change_password_requires_original_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import verify_password
+    from backend.app.models import User
+
+    user = _make_user(db_session, email=PHONE_EMAIL)
+    client = _auth_client(db_session_factory, monkeypatch, _login_token(user))
+
+    bad = client.post("/auth/password/change", json={"old_password": "wrong-pass", "new_password": "brand-new-1"})
+    assert bad.status_code == 400
+    with db_session_factory() as s:
+        assert verify_password("old-password-1", s.get(User, user.id).hashed_password)
+
+    same = client.post("/auth/password/change", json={"old_password": "old-password-1", "new_password": "old-password-1"})
+    assert same.status_code == 400
+
+    ok = client.post("/auth/password/change", json={"old_password": "old-password-1", "new_password": "brand-new-1"})
+    assert ok.status_code == 200
+    with db_session_factory() as s:
+        assert verify_password("brand-new-1", s.get(User, user.id).hashed_password)
+
+
+def test_change_phone_migrates_bindings_and_signup_claim(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import _create_auth_challenge
+    from backend.app.models import AuthChallenge, InstallationSignupBonusClaim, MobileDeviceBinding, User
+
+    new_phone = "13900139002"
+    user = _make_user(db_session, email=PHONE_EMAIL)
+    db_session.add(MobileDeviceBinding(
+        user_id=user.id,
+        phone=PHONE,
+        device_id="device-abc12345",
+        platform="wechat_miniprogram",
+        created_at=datetime.utcnow(),
+        last_seen_at=datetime.utcnow(),
+    ))
+    db_session.add(InstallationSignupBonusClaim(
+        installation_id=f"phone:bihuo:{PHONE}",
+        user_id=user.id,
+        phone=PHONE,
+        brand_mark="bihuo",
+        created_at=datetime.utcnow(),
+    ))
+    _create_auth_challenge(db_session, kind="sms", target=new_phone, answer="246810", ttl_seconds=600)
+    _create_auth_challenge(db_session, kind="sms", target=PHONE, answer="111111", ttl_seconds=600)
+    db_session.commit()
+
+    client = _auth_client(db_session_factory, monkeypatch, _login_token(user))
+    res = client.post(
+        "/auth/phone/change",
+        json={"password": "old-password-1", "new_phone": new_phone, "code": "246810"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["phone"] == new_phone
+
+    with db_session_factory() as s:
+        stored = s.get(User, user.id)
+        assert stored.email == f"{new_phone}@sms.lobster.local"
+        bindings = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.user_id == user.id).all()
+        assert [row.phone for row in bindings] == [new_phone]
+        claims = {row.installation_id: row.phone for row in s.query(InstallationSignupBonusClaim).all()}
+        assert f"phone:bihuo:{new_phone}" in claims
+        assert f"phone:bihuo:{PHONE}" not in claims
+        assert s.query(AuthChallenge).filter(AuthChallenge.kind == "sms", AuthChallenge.target == PHONE).count() == 0
+
+
+def test_change_phone_rejects_taken_and_fixed_agent_phones(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import _create_auth_challenge
+    from backend.app.services.brand_context import BRAND_FIXED_AGENT_PHONES
+
+    other = _make_user(db_session, email="13800138007@sms.lobster.local")
+    user = _make_user(db_session, email=PHONE_EMAIL)
+    fixed_phone = str(list(BRAND_FIXED_AGENT_PHONES.values())[0])
+    _create_auth_challenge(db_session, kind="sms", target=fixed_phone, answer="333333", ttl_seconds=600)
+    db_session.commit()
+
+    client = _auth_client(db_session_factory, monkeypatch, _login_token(user))
+
+    taken = client.post(
+        "/auth/phone/change",
+        json={"password": "old-password-1", "new_phone": "13800138007", "code": "333333"},
+    )
+    assert taken.status_code == 409
+
+    fixed = client.post(
+        "/auth/phone/change",
+        json={"password": "old-password-1", "new_phone": fixed_phone, "code": "333333"},
+    )
+    assert fixed.status_code == 403
+
+    fixed_self = _make_user(db_session, email=f"{fixed_phone}@sms.lobster.local")
+    fixed_client = _auth_client(db_session_factory, monkeypatch, _login_token(fixed_self))
+    blocked = fixed_client.post(
+        "/auth/phone/change",
+        json={"password": "old-password-1", "new_phone": "13900139003", "code": "333333"},
+    )
+    assert blocked.status_code == 403
+
+
+def test_send_phone_change_code_needs_password_and_skips_free_numbers(db_session, db_session_factory, monkeypatch):
+    from backend.app.api import auth as auth_module
+
+    user = _make_user(db_session, email=PHONE_EMAIL)
+    client = _auth_client(db_session_factory, monkeypatch, _login_token(user))
+    sent = []
+    monkeypatch.setattr(auth_module, "_dispatch_sms_code", lambda db, mobile, brand: sent.append((mobile, brand)))
+
+    wrong = client.post(
+        "/auth/phone/change/send-code",
+        json={"password": "nope", "new_phone": "13900139005"},
+    )
+    assert wrong.status_code == 400
+    assert sent == []
+
+    ok = client.post(
+        "/auth/phone/change/send-code",
+        json={"password": "old-password-1", "new_phone": "13900139005"},
+    )
+    assert ok.status_code == 200
+    assert sent and sent[0][0] == "13900139005"
+
+
+def test_rebound_phone_logs_into_same_account_without_second_bonus(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import _create_auth_challenge
+    from backend.app.models import User
+
+    new_phone = "13900139006"
+    user = _make_user(db_session, email=PHONE_EMAIL)
+    _create_auth_challenge(db_session, kind="sms", target=new_phone, answer="654321", ttl_seconds=600)
+    db_session.commit()
+
+    client = _auth_client(db_session_factory, monkeypatch, _login_token(user))
+    assert client.post(
+        "/auth/phone/change",
+        json={"password": "old-password-1", "new_phone": new_phone, "code": "654321"},
+    ).status_code == 200
+
+    _put_sms_code(db_session, new_phone)
+    again = _client(db_session_factory, monkeypatch).post(
+        "/auth/register-phone",
+        json={"phone": new_phone, "code": "123456"},
+    )
+    assert again.status_code == 200
+    with db_session_factory() as s:
+        assert s.query(User).filter(User.email == f"{new_phone}@sms.lobster.local").count() == 1

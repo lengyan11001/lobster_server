@@ -431,9 +431,11 @@ def test_agent_credit_addition_transfers_from_agent_balance(db_session_factory, 
 def test_agent_can_reset_managed_user_password_only(db_session_factory, db_session):
     from backend.app.api.auth import verify_password
 
+    from backend.app.api.auth import get_password_hash
+
     agent = User(
         email="agent-password@test.local",
-        hashed_password="x",
+        hashed_password=get_password_hash("agent-own-password"),
         credits=Decimal("100.0000"),
         role="user",
         preferred_model="sutui",
@@ -473,9 +475,25 @@ def test_agent_can_reset_managed_user_password_only(db_session_factory, db_sessi
         db_session_factory,
         admin_api.AdminContext(role="agent", user_id=agent.id, brand_mark="daka"),
     )
-    response = client.post(
+    missing_original = client.post(
         "/admin/api/reset-password",
         json={"user_id": child.id, "new_password": "new-password-123"},
+    )
+    assert missing_original.status_code == 400
+
+    wrong_original = client.post(
+        "/admin/api/reset-password",
+        json={"user_id": child.id, "new_password": "new-password-123", "original_password": "nope"},
+    )
+    assert wrong_original.status_code == 403
+
+    response = client.post(
+        "/admin/api/reset-password",
+        json={
+            "user_id": child.id,
+            "new_password": "new-password-123",
+            "original_password": "agent-own-password",
+        },
     )
     assert response.status_code == 200
 
@@ -486,13 +504,21 @@ def test_agent_can_reset_managed_user_password_only(db_session_factory, db_sessi
 
     unrelated_response = client.post(
         "/admin/api/reset-password",
-        json={"user_id": unrelated.id, "new_password": "blocked-password"},
+        json={
+            "user_id": unrelated.id,
+            "new_password": "blocked-password",
+            "original_password": "agent-own-password",
+        },
     )
     assert unrelated_response.status_code == 403
 
     self_response = client.post(
         "/admin/api/reset-password",
-        json={"user_id": agent.id, "new_password": "blocked-password"},
+        json={
+            "user_id": agent.id,
+            "new_password": "blocked-password",
+            "original_password": "agent-own-password",
+        },
     )
     assert self_response.status_code == 403
 

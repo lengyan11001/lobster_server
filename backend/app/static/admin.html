@@ -1767,6 +1767,10 @@ body{background:#edf2f7}
     <h3>重置用户密码</h3>
     <div class="modal-sub" id="resetPwdSub">将为该用户设置一个新的登录密码（6～128 位）。</div>
     <div class="form-group">
+      <label>原密码（你本人的登录密码）</label>
+      <input type="password" id="resetPwdOriginal" autocomplete="current-password" placeholder="管理后台改密需二次确认">
+    </div>
+    <div class="form-group">
       <label>新密码</label>
       <input type="password" id="resetPwdNew" autocomplete="new-password" placeholder="至少 6 位">
     </div>
@@ -4201,11 +4205,12 @@ function openResetPassword() {
   const emailNode = card ? card.querySelector('.stat-item:nth-child(2) .value') : null;
   const tip = emailNode ? emailNode.textContent.trim() : ('用户 #' + currentUserId);
   sub.innerHTML = '将为 <strong>' + tip + '</strong> 设置新的登录密码（6～128 位）。';
+  document.getElementById('resetPwdOriginal').value = '';
   document.getElementById('resetPwdNew').value = '';
   document.getElementById('resetPwdConfirm').value = '';
   document.getElementById('resetPwdError').textContent = '';
   document.getElementById('resetPwdModal').classList.add('show');
-  setTimeout(() => document.getElementById('resetPwdNew').focus(), 50);
+  setTimeout(() => document.getElementById('resetPwdOriginal').focus(), 50);
 }
 
 function closeResetPassword() {
@@ -4214,10 +4219,12 @@ function closeResetPassword() {
 
 async function doResetPassword() {
   if (!currentUserId) return;
+  const op = document.getElementById('resetPwdOriginal').value;
   const np = document.getElementById('resetPwdNew').value;
   const cp = document.getElementById('resetPwdConfirm').value;
   const err = document.getElementById('resetPwdError');
   err.textContent = '';
+  if (!op) { err.textContent = '请输入你本人的原密码'; return; }
   if (!np || np.length < 6) { err.textContent = '密码至少 6 位'; return; }
   if (np.length > 128) { err.textContent = '密码长度不能超过 128 位'; return; }
   if (np !== cp) { err.textContent = '两次输入的密码不一致'; return; }
@@ -4228,7 +4235,7 @@ async function doResetPassword() {
   try {
     const data = await api('/admin/api/reset-password', {
       method: 'POST',
-      body: JSON.stringify({ user_id: currentUserId, new_password: np })
+      body: JSON.stringify({ user_id: currentUserId, new_password: np, original_password: op })
     });
     closeResetPassword();
     toast('密码已重置：' + (data.email || ('#' + data.user_id)));
@@ -4588,6 +4595,7 @@ document.getElementById('loginSmsCode').addEventListener('keydown', e => { if(e.
 document.getElementById('loginUser').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 document.getElementById('loginSmsPhone').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 applyAdminBrand();
+document.getElementById('resetPwdOriginal').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('resetPwdNew').focus(); });
 document.getElementById('resetPwdConfirm').addEventListener('keydown', e => { if(e.key==='Enter') doResetPassword(); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('resetPwdModal').classList.contains('show')) closeResetPassword();

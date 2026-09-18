@@ -17563,6 +17563,7 @@
       if ($("avatarMini")) $("avatarMini").textContent = firstChar(name);
       if ($("profileAvatar")) $("profileAvatar").textContent = firstChar(name);
       if ($("profileCreditBalance")) $("profileCreditBalance").textContent = compactNumber(user.credits, 2);
+      renderAccountSecurity();
       $("openDouyinInformationDeskBtn")?.classList.toggle("hidden", !douyinInformationDeskAllowed());
       syncAgentManageEntry();
     }
@@ -29900,9 +29901,142 @@
       await submitChatMessage(null, { queueMode: "steer", targetMessageId });
     });
 
+    function h5PhoneFromEmail(email) {
+      const value = String(email || "").trim().toLowerCase();
+      const at = value.indexOf("@");
+      if (at < 0) return "";
+      const domain = value.slice(at + 1);
+      if (domain !== "sms.lobster.local") return "";
+      let local = value.slice(0, at);
+      const tag = local.indexOf("+brand-");
+      if (tag >= 0) local = local.slice(0, tag);
+      return /^1[3-9]\d{9}$/.test(local) ? local : "";
+    }
+
+    function h5MaskPhone(phone) {
+      const value = String(phone || "");
+      return value.length === 11 ? `${value.slice(0, 3)}****${value.slice(-4)}` : value;
+    }
+
+    function setAccountSecurityMsg(text, isErr) {
+      const node = $("asMsg");
+      if (!node) return;
+      node.textContent = text || "";
+      node.classList.toggle("ok", Boolean(text) && !isErr);
+      node.classList.toggle("err", Boolean(text) && Boolean(isErr));
+    }
+
+    function renderAccountSecurity() {
+      const user = state.user || {};
+      const node = $("accountSecurityCurrent");
+      if (!node) return;
+      const phone = h5PhoneFromEmail(user.email);
+      node.textContent = phone ? `当前账号：${h5MaskPhone(phone)}` : `当前账号：${String(user.email || "--")}`;
+    }
+
+    async function submitH5PasswordChange() {
+      const oldPassword = ($("asOldPassword") || {}).value || "";
+      const newPassword = ($("asNewPassword") || {}).value || "";
+      const confirmPassword = ($("asConfirmPassword") || {}).value || "";
+      if (!oldPassword) return setAccountSecurityMsg("请输入当前密码", true);
+      if (!newPassword || newPassword.length < 6) return setAccountSecurityMsg("新密码至少 6 位", true);
+      if (newPassword !== confirmPassword) return setAccountSecurityMsg("两次输入的新密码不一致", true);
+      const btn = $("asChangePasswordBtn");
+      if (btn) btn.disabled = true;
+      setAccountSecurityMsg("正在保存新密码…", false);
+      try {
+        await api("/auth/password/change", {
+          method: "POST",
+          json: { old_password: oldPassword, new_password: newPassword },
+          blocking: "正在保存新密码",
+        });
+        ["asOldPassword", "asNewPassword", "asConfirmPassword"].forEach((id) => {
+          const el = $(id);
+          if (el) el.value = "";
+        });
+        setAccountSecurityMsg("密码已更新，下次登录请使用新密码", false);
+      } catch (err) {
+        setAccountSecurityMsg(`修改密码失败：${(err && err.message) || "未知错误"}`, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function submitH5PhoneCodeSend() {
+      const password = ($("asPhonePassword") || {}).value || "";
+      const newPhone = (($("asNewPhone") || {}).value || "").trim();
+      if (!password) return setAccountSecurityMsg("请输入当前密码", true);
+      if (!/^1[3-9]\d{9}$/.test(newPhone)) return setAccountSecurityMsg("请输入正确的 11 位手机号", true);
+      const btn = $("asSendPhoneCodeBtn");
+      if (btn) btn.disabled = true;
+      setAccountSecurityMsg("正在发送验证码…", false);
+      try {
+        await api("/auth/phone/change/send-code", {
+          method: "POST",
+          json: { password: password, new_phone: newPhone },
+          blocking: "正在发送验证码",
+        });
+        setAccountSecurityMsg(`验证码已发送到 ${h5MaskPhone(newPhone)}，请查收`, false);
+      } catch (err) {
+        setAccountSecurityMsg(`发送验证码失败：${(err && err.message) || "未知错误"}`, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function submitH5PhoneChange() {
+      const password = ($("asPhonePassword") || {}).value || "";
+      const newPhone = (($("asNewPhone") || {}).value || "").trim();
+      const code = (($("asPhoneCode") || {}).value || "").trim();
+      if (!password) return setAccountSecurityMsg("请输入当前密码", true);
+      if (!/^1[3-9]\d{9}$/.test(newPhone)) return setAccountSecurityMsg("请输入正确的 11 位手机号", true);
+      if (!code) return setAccountSecurityMsg("请输入短信验证码", true);
+      const btn = $("asChangePhoneBtn");
+      if (btn) btn.disabled = true;
+      setAccountSecurityMsg("正在换绑手机号…", false);
+      try {
+        await api("/auth/phone/change", {
+          method: "POST",
+          json: { password: password, new_phone: newPhone, code: code },
+          blocking: "正在换绑手机号",
+        });
+        ["asPhonePassword", "asNewPhone", "asPhoneCode"].forEach((id) => {
+          const el = $(id);
+          if (el) el.value = "";
+        });
+        setAccountSecurityMsg(`换绑成功，新手机号 ${h5MaskPhone(newPhone)} 已生效`, false);
+        await loadMe();
+      } catch (err) {
+        setAccountSecurityMsg(`换绑失败：${(err && err.message) || "未知错误"}`, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function bindAccountSecurity() {
+      const entry = $("accountSecurityEntryBtn");
+      if (entry) {
+        entry.addEventListener("click", () => {
+          const panel = $("accountSecurityPanel");
+          if (!panel) return;
+          panel.classList.toggle("hidden");
+          renderAccountSecurity();
+        });
+      }
+      const close = $("accountSecurityCloseBtn");
+      if (close) close.addEventListener("click", () => $("accountSecurityPanel")?.classList.add("hidden"));
+      const pwdBtn = $("asChangePasswordBtn");
+      if (pwdBtn) pwdBtn.addEventListener("click", submitH5PasswordChange);
+      const sendBtn = $("asSendPhoneCodeBtn");
+      if (sendBtn) sendBtn.addEventListener("click", submitH5PhoneCodeSend);
+      const phoneBtn = $("asChangePhoneBtn");
+      if (phoneBtn) phoneBtn.addEventListener("click", submitH5PhoneChange);
+    }
+
     (async function init() {
       loadH5Branding().catch(() => {});
       setAuthTab("sms");
+      bindAccountSecurity();
       setTaskAbility("comfly.seedance.tvc.pipeline");
       const ok = await loadMe();
       if (!ok) {

@@ -170,6 +170,24 @@ class SetPasswordBody(BaseModel):
     password: str
 
 
+class ChangePasswordBody(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class PhoneChangeSendBody(BaseModel):
+    password: str
+    new_phone: str
+    brand_mark: Optional[str] = None
+
+
+class PhoneChangeBody(BaseModel):
+    password: str
+    new_phone: str
+    code: str
+    brand_mark: Optional[str] = None
+
+
 def _normalize_cn_mobile(raw: str) -> str:
     d = re.sub(r"\D", "", (raw or "").strip())
     if not _CN_MOBILE_RE.match(d):
@@ -579,6 +597,191 @@ def set_password(
     return {"ok": True}
 
 
+def _dispatch_sms_code(db: Session, mobile: str, brand_mark: str) -> None:
+    """生成并发送短信验证码（含限流与通道选择）；调用方负责其余校验。"""
+    from ..core.config import settings
+
+    aliyun = resolve_aliyun_sms_channel(brand_mark, settings)
+    ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
+    ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
+    use_aliyun = aliyun.ready
+    use_ihuyi = bool(ihuyi_acc and ihuyi_pwd) and not aliyun.brand_specific
+    if not use_aliyun and not use_ihuyi:
+        raise HTTPException(status_code=503, detail="未配置短信通道")
+    _check_and_update_sms_send_limit(db, mobile)
+    code = f"{secrets.randbelow(1000000):06d}"
+    _create_auth_challenge(
+        db,
+        kind="sms",
+        target=_sms_challenge_target(mobile, brand_mark),
+        answer=code,
+        ttl_seconds=SMS_CODE_TTL_SEC,
+    )
+    try:
+        if use_aliyun:
+            _aliyun_send(
+                access_key_id=aliyun.access_key_id,
+                access_key_secret=aliyun.access_key_secret,
+                sign_name=aliyun.sign_name,
+                template_code=aliyun.template_code,
+                mobile=mobile,
+                code=code,
+            )
+        else:
+            _ihuyi_send(account=ihuyi_acc, api_key=ihuyi_pwd, mobile=mobile, code=code)
+    except RuntimeError as e:
+        _clear_sms_code(db, mobile, brand_mark)
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+def _assert_current_password(user: User, password: str) -> None:
+    """自助改密 / 换绑前必须校验本人原密码。"""
+    value = str(password or "")
+    if not value.strip():
+        raise HTTPException(status_code=400, detail="请输入原密码")
+    if not user or not user.hashed_password or not verify_password(value, user.hashed_password):
+        raise HTTPException(status_code=400, detail="原密码不正确")
+
+
+def _fixed_agent_phone_set() -> set:
+    from ..services.brand_context import BRAND_FIXED_AGENT_PHONES
+
+    return {str(v or "").strip() for v in (BRAND_FIXED_AGENT_PHONES or {}).values() if str(v or "").strip()}
+
+
+def _assert_phone_change_allowed(db: Session, user: User, mobile: str, brand_mark: str) -> None:
+    """固定代理号禁止换绑；目标号不能已被同品牌其它账号占用。"""
+    fixed = _fixed_agent_phone_set()
+    current = phone_from_account_email(getattr(user, "email", "") or "")
+    if current and current in fixed:
+        raise HTTPException(status_code=403, detail="当前手机号是品牌固定代理号，不允许自助换绑，请联系运营")
+    if mobile in fixed:
+        raise HTTPException(status_code=403, detail="该手机号是品牌固定代理号，不允许绑定")
+    existing = user_for_account(db, _phone_account_email(mobile), brand_mark)
+    if existing is not None and int(existing.id) != int(user.id):
+        raise HTTPException(status_code=409, detail="该手机号已绑定其他账号")
+
+
+def _migrate_phone_references(db: Session, user: User, old_mobile: str, new_mobile: str, brand_mark: str) -> None:
+    """换绑后把仍按手机号关联的存量数据迁走。
+
+    注意：新增关联一律用表内 ID（user_id / device_id 等），这里只处理历史遗留的两处手机号字段。
+    """
+    from ..models import InstallationSignupBonusClaim, MobileDeviceBinding
+
+    mark = normalize_brand_mark(brand_mark, strict=False)
+    now = _utcnow()
+    if old_mobile and old_mobile != new_mobile:
+        db.query(MobileDeviceBinding).filter(
+            MobileDeviceBinding.user_id == user.id,
+            MobileDeviceBinding.phone == old_mobile,
+        ).update({"phone": new_mobile}, synchronize_session=False)
+    new_key = f"phone:{mark}:{new_mobile}"
+    old_key = f"phone:{mark}:{old_mobile}" if old_mobile else ""
+    old_rows = []
+    if old_key:
+        old_rows = db.query(InstallationSignupBonusClaim).filter(
+            InstallationSignupBonusClaim.installation_id == old_key
+        ).all()
+    existing_new = db.query(InstallationSignupBonusClaim).filter(
+        InstallationSignupBonusClaim.installation_id == new_key
+    ).first()
+    if existing_new is None:
+        if old_rows:
+            for row in old_rows:
+                row.installation_id = new_key
+                row.phone = new_mobile
+                row.brand_mark = mark
+                db.add(row)
+        else:
+            # 没有历史赠送记录时补一条，保证「一个手机号只赠送一次」
+            db.add(InstallationSignupBonusClaim(
+                installation_id=new_key,
+                user_id=user.id,
+                phone=new_mobile,
+                brand_mark=mark,
+                created_at=now,
+            ))
+    else:
+        for row in old_rows:
+            db.delete(row)
+    db.commit()
+
+
+@router.post("/password/change", summary="修改密码（需原密码）")
+def change_password(
+    body: ChangePasswordBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _assert_current_password(current_user, body.old_password)
+    new_password = _normalize_new_password(body.new_password)
+    if str(body.old_password or "") == new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+    current_user.hashed_password = get_password_hash(new_password)
+    current_user.password_initialized = True
+    db.add(current_user)
+    db.commit()
+    logger.info("[auth/password/change] user_id=%s ok=1", current_user.id)
+    return {"ok": True}
+
+
+@router.post("/phone/change/send-code", summary="换绑手机号：向新号码发送验证码（需原密码）")
+def send_phone_change_code(
+    body: PhoneChangeSendBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
+    if brand_mark != user_brand_mark(current_user):
+        raise HTTPException(status_code=403, detail="登录品牌不一致")
+    _assert_current_password(current_user, body.password)
+    mobile = _normalize_cn_mobile(body.new_phone)
+    _assert_phone_change_allowed(db, current_user, mobile, brand_mark)
+    _dispatch_sms_code(db, mobile, brand_mark)
+    logger.info("[auth/phone/change/send-code] user_id=%s new_tail=%s ok=1", current_user.id, mobile[-4:])
+    return {"ok": True, "phone": mobile}
+
+
+@router.post("/phone/change", summary="换绑手机号（原密码 + 新号码验证码）")
+def change_phone(
+    body: PhoneChangeBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
+    if brand_mark != user_brand_mark(current_user):
+        raise HTTPException(status_code=403, detail="登录品牌不一致")
+    _assert_current_password(current_user, body.password)
+    mobile = _normalize_cn_mobile(body.new_phone)
+    code_in = str(body.code or "").strip()
+    if not code_in or len(code_in) > 8:
+        raise HTTPException(status_code=400, detail="短信验证码无效")
+    _assert_phone_change_allowed(db, current_user, mobile, brand_mark)
+    if not _verify_sms_challenge(db, mobile, code_in, brand_mark):
+        raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
+    old_mobile = phone_from_account_email(getattr(current_user, "email", "") or "")
+    if old_mobile == mobile:
+        return {"ok": True, "phone": mobile, "email": current_user.email, "unchanged": True}
+    current_user.email = scoped_account_email(_phone_account_email(mobile), brand_mark)
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    _migrate_phone_references(db, current_user, old_mobile, mobile, brand_mark)
+    if old_mobile:
+        _clear_sms_code(db, old_mobile, brand_mark)
+    logger.info(
+        "[auth/phone/change] user_id=%s old_tail=%s new_tail=%s brand=%s ok=1",
+        current_user.id,
+        (old_mobile or "")[-4:],
+        mobile[-4:],
+        brand_mark,
+    )
+    return {"ok": True, "phone": mobile, "email": current_user.email}
+
+
 @router.post("/register", response_model=Token, summary="（已关闭）原字母账号注册，请用 /auth/register-phone")
 def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)):
     from ..core.config import settings
@@ -598,42 +801,10 @@ def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持")
     brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
-    aliyun = resolve_aliyun_sms_channel(brand_mark, settings)
-    aliyun_ak = aliyun.access_key_id
-    aliyun_sk = aliyun.access_key_secret
-    ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
-    ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
-    use_aliyun = aliyun.ready
-    use_ihuyi = bool(ihuyi_acc and ihuyi_pwd) and not aliyun.brand_specific
-    if not use_aliyun and not use_ihuyi:
-        raise HTTPException(status_code=503, detail="未配置短信通道")
     if not _verify_auth_challenge(db, kind="captcha", subject=body.captcha_id or "", answer=body.captcha_answer or ""):
         raise HTTPException(status_code=400, detail="图形验证码错误或已过期，请刷新后重试")
     mobile = _normalize_cn_mobile(body.phone)
-    _check_and_update_sms_send_limit(db, mobile)
-    code = f"{secrets.randbelow(1000000):06d}"
-    _create_auth_challenge(
-        db,
-        kind="sms",
-        target=_sms_challenge_target(mobile, brand_mark),
-        answer=code,
-        ttl_seconds=SMS_CODE_TTL_SEC,
-    )
-    try:
-        if use_aliyun:
-            _aliyun_send(
-                access_key_id=aliyun_ak,
-                access_key_secret=aliyun_sk,
-                sign_name=aliyun.sign_name,
-                template_code=aliyun.template_code,
-                mobile=mobile,
-                code=code,
-            )
-        else:
-            _ihuyi_send(account=ihuyi_acc, api_key=ihuyi_pwd, mobile=mobile, code=code)
-    except RuntimeError as e:
-        _clear_sms_code(db, mobile, brand_mark)
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    _dispatch_sms_code(db, mobile, brand_mark)
     logger.info("[auth/sms/send] mobile=%s ok=1", mobile[:3] + "****" + mobile[-4:])
     return {"ok": True}
 

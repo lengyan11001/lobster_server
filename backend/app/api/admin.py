@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import uuid
 
 import asyncio
@@ -912,6 +913,9 @@ def admin_add_credits(
 class ResetPasswordBody(BaseModel):
     user_id: int
     new_password: str
+    # 管理后台改密前的二次确认：操作者本人的原密码
+    # （后台超级管理员填后台密码，代理商管理员填自己账号的密码）
+    original_password: str = ""
 
 
 class SetUserLlmModelBody(BaseModel):
@@ -924,6 +928,23 @@ class SetUserAdminRemarkBody(BaseModel):
     remark: str = Field(default="", max_length=500)
 
 
+def _assert_operator_password(db: Session, ctx: AdminContext, raw: str) -> None:
+    """管理后台改密必须输入操作者本人的原密码（二次确认）。"""
+    value = str(raw or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="请输入原密码")
+    if ctx.role == "admin" and ctx.user_id is None:
+        expected = (getattr(settings, "lobster_admin_password", "") or "").strip()
+        if not expected or not hmac.compare_digest(value, expected):
+            raise HTTPException(status_code=403, detail="原密码不正确")
+        return
+    from .auth import verify_password
+
+    operator = db.query(User).filter(User.id == int(ctx.user_id or 0)).first()
+    if operator is None or not verify_password(value, operator.hashed_password or ""):
+        raise HTTPException(status_code=403, detail="原密码不正确")
+
+
 @router.post("/admin/api/reset-password")
 def admin_reset_password(
     body: ResetPasswordBody,
@@ -932,6 +953,7 @@ def admin_reset_password(
 ):
     """管理员或代理商重置其有权管理用户的登录密码。"""
     _assert_can_manage_user(db, ctx, body.user_id)
+    _assert_operator_password(db, ctx, body.original_password)
     pwd = (body.new_password or "").strip()
     if len(pwd) < 6:
         raise HTTPException(status_code=400, detail="密码至少 6 位")
