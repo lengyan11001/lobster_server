@@ -278,7 +278,6 @@ def test_video_fallback_policy_depends_on_input_mode():
     assert image_candidates == [
         {"channel": "comfly", "model": "grok-imagine-video-1.5"},
         {"channel": "openmind", "model": "grok-video-3"},
-        {"channel": "comfly", "model": "grok-video-3"},
     ]
 
 

@@ -4405,7 +4405,6 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
                 {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
-                {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
             ],
         }
 

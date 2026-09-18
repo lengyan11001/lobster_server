@@ -151,11 +151,6 @@ def test_xai_video_is_first_provider_for_grok_family():
             "model": "grok-video-3",
             "base_url": "/api/comfly-proxy",
         },
-        {
-            "channel": "comfly",
-            "model": "grok-video-3",
-            "base_url": "/api/comfly-proxy",
-        },
     ]
 
 
