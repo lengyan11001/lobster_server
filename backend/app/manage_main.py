@@ -46,6 +46,23 @@ def _migrate_manage_ai_employee_columns() -> None:
         logger.exception("[MANAGE] m_ai_employee column migration failed")
 
 
+def _migrate_manage_delivery_columns() -> None:
+    """m_delivery 新增的跟进字段（m_delivery_log 新表由 create_all 建）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("m_delivery"):
+            return
+        cols = [c["name"] for c in insp.get_columns("m_delivery")]
+        with engine.begin() as conn:
+            if "last_follow_at" not in cols:
+                conn.execute(text("ALTER TABLE m_delivery ADD COLUMN last_follow_at VARCHAR(16) NOT NULL DEFAULT ''"))
+        logger.info("[MANAGE] m_delivery columns ok")
+    except Exception:
+        logger.exception("[MANAGE] m_delivery column migration failed")
+
+
 def _seed_if_needed() -> None:
     """首次部署给一个可用的样例公司（只在指定老板邮箱且其名下没有公司时执行）。"""
     email = (os.environ.get("MANAGE_SEED_OWNER_EMAIL") or "").strip().lower()
@@ -156,6 +173,7 @@ def _on_startup() -> None:
     try:
         _create_manage_tables()
         _migrate_manage_ai_employee_columns()
+        _migrate_manage_delivery_columns()
     except Exception:
         logger.exception("[MANAGE] create tables failed")
     try:

@@ -2168,12 +2168,20 @@ body.overlay-open #drawer{z-index:501}
       + '<div class="row" style="align-items:center;gap:9px">'
       + '<b style="font-size:13.5px">' + x.name + '</b>'
       + '<span class="tag" style="color:' + c + ';border-color:' + c + '66">' + (x.status_label || x.status) + '</span>'
-      + '<span class="grow"></span><span class="dim" style="font-size:11.5px">' + (x.owner_name || "未指派") + '</span></div>'
+      + '<span class="grow"></span>'
+      + (x.owner_name
+          ? '<span class="tag cy">' + x.owner_name + '</span>'
+          : '<span class="tag wn">待指派</span>') + '</div>'
       + '<div class="dim" style="font-size:11.5px;margin-top:6px">客户 ' + (x.customer_name || "—")
       + (x.promised_at ? (" · 承诺 " + x.promised_at) : "") + (x.delivered_at ? (" · 已交付 " + x.delivered_at) : "") + '</div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:4px">'
+      + (x.last_follow_at ? ("最近跟进 " + x.last_follow_at) : "还没跟进过")
+      + (x.log_count ? (" · " + x.log_count + " 条记录") : "") + '</div>'
       + (x.note ? '<div class="mut" style="font-size:12px;margin-top:8px">' + x.note + '</div>' : '')
       + '<div class="row" style="gap:7px;justify-content:flex-end;margin-top:11px">'
       + (nxt.length ? '<button class="btn sm" data-dnext="' + x.id + '" data-to="' + nxt[0] + '">' + nxt[1] + '</button>' : '')
+      + '<button class="btn sm" data-dlog="' + x.id + '">跟进</button>'
+      + '<button class="btn sm ghost" data-dassign="' + x.id + '">指派</button>'
       + '<button class="btn sm ghost" data-dedit="' + x.id + '">编辑</button>'
       + '<button class="btn sm ghost" data-ddel="' + x.id + '" style="color:#fda4af;border-color:rgba(251,113,133,.4)">删除</button>'
       + '</div></div>';
@@ -2214,6 +2222,12 @@ body.overlay-open #drawer{z-index:501}
               .then(function(){ toast("已删除"); loadDeliv(); }).catch(function(e){ toast(e.message, true); });
           });
         });
+        $$("#s-deliv [data-dlog]").forEach(function(b){
+          b.addEventListener("click", function(){ openDeliveryFollowUp(Number(b.dataset.dlog)); });
+        });
+        $$("#s-deliv [data-dassign]").forEach(function(b){
+          b.addEventListener("click", function(){ openDelivAssign(Number(b.dataset.dassign)); });
+        });
         $$("#s-deliv [data-dnext]").forEach(function(b){
           b.addEventListener("click", function(){
             api("/api/manage/deliveries/" + b.dataset.dnext, { method: "PATCH", body: { status: b.dataset.to } })
@@ -2228,6 +2242,85 @@ body.overlay-open #drawer{z-index:501}
           });
         });
       }).catch(function(e){ showErr(e.message); });
+  }
+
+  /* 交付跟进：写描述 + 可选推进状态，下面是时间线（与客户跟进一致） */
+  function openDeliveryFollowUp(id){
+    api("/api/manage/deliveries/" + id).then(function(d){
+      var x = d.delivery || {};
+      var logs = x.logs || [];
+      var statusOpts = Object.keys(DELIV_LABELS).map(function(k){
+        return '<option value="' + k + '"' + (x.status === k ? " selected" : "") + '>' + DELIV_LABELS[k] + '</option>';
+      }).join("");
+      var kindLabel = { note:"备注", call:"电话", wechat:"微信", visit:"上门", status:"状态", assign:"指派" };
+      var timeline = logs.length ? logs.map(function(g){
+        return '<div class="mline"><span class="nm" style="flex:1">'
+          + '<span class="tag" style="margin-right:6px">' + (kindLabel[g.kind] || g.kind) + '</span>'
+          + (g.content || "（无正文）")
+          + (g.to_status && g.from_status && g.from_status !== g.to_status
+              ? '<span class="dim" style="margin-left:6px">→ ' + (DELIV_LABELS[g.to_status] || g.to_status) + '</span>' : '')
+          + '</span><span class="dim num">' + (g.happened_at || "") + '</span></div>';
+      }).join("") : '<div class="dim" style="font-size:12.5px">还没有跟进记录</div>';
+      openDrawer("交付 · 跟进", x.name,
+        '<div class="dsec"><h4>当前</h4>'
+        + '<div class="mline"><span class="nm">状态</span><span class="mut">' + (x.status_label || x.status) + '</span></div>'
+        + '<div class="mline"><span class="nm">负责人</span><span class="mut">' + (x.owner_name || "未指派")
+        + '</span></div>'
+        + '<div class="mline"><span class="nm">客户</span><span class="mut">' + (x.customer_name || "—") + '</span></div>'
+        + '<div class="mline"><span class="nm">承诺交付</span><span class="mut">' + (x.promised_at || "—") + '</span></div>'
+        + '<div class="mline"><span class="nm">最近跟进</span><span class="mut">' + (x.last_follow_at || "—") + '</span></div></div>'
+        + '<div class="dsec"><h4>加一条跟进</h4>'
+        + '<textarea id="dflText" rows="3" placeholder="交付到哪一步了、对方反馈、下一步安排"></textarea>'
+        + '<div style="display:flex;gap:10px;margin-top:10px">'
+        + '<div style="flex:1"><label class="fl">方式</label><select id="dflKind">'
+        + [["note","备注"],["call","电话"],["wechat","微信"],["visit","上门"]].map(function(kv){
+            return '<option value="' + kv[0] + '">' + kv[1] + '</option>'; }).join("")
+        + '</select></div>'
+        + '<div style="flex:1"><label class="fl">推进到状态</label><select id="dflStatus"><option value="">不变</option>'
+        + statusOpts + '</select></div></div>'
+        + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" id="dflOk">提交跟进</button></div></div>'
+        + '<div class="dsec"><h4>跟进时间线</h4>' + timeline + '</div>');
+      document.getElementById("dflOk").addEventListener("click", function(){
+        var text = document.getElementById("dflText").value.trim();
+        if (!text) return toast("写点内容", true);
+        api("/api/manage/deliveries/" + id + "/log", { method: "POST", body: {
+          kind: document.getElementById("dflKind").value, content: text,
+          to_status: document.getElementById("dflStatus").value } })
+          .then(function(){ toast("已记录"); loadDeliv(); openDeliveryFollowUp(id); })
+          .catch(function(e){ toast(e.message, true); });
+      });
+    }).catch(function(e){ toast(e.message, true); });
+  }
+
+  /* 交付指派：选人 → PATCH owner_membership_id（与客户指派一致） */
+  function openDelivAssign(id){
+    var x = DELIV_CACHE.filter(function(y){ return y.id === id; })[0];
+    if (!x) return;
+    api("/api/manage/members?company_id=" + ACTIVE).then(function(md){
+      var members = md.members || [];
+      openDrawer("交付 · 指派负责人", x.name,
+        '<div class="dsec"><h4>当前</h4><div class="dim" style="font-size:12.5px">'
+        + '状态：' + (x.status_label || x.status) + ' · 负责人：' + (x.owner_name || "未指派")
+        + (x.customer_name ? (' · 客户：' + x.customer_name) : '') + '</div></div>'
+        + '<div class="dsec"><h4>指派给</h4><select id="dasOwner">'
+        + '<option value="">未指派</option>'
+        + members.map(function(m){
+            return '<option value="' + m.id + '"' + (String(x.owner_membership_id) === String(m.id) ? " selected" : "") + '>'
+              + m.name + (m.dept ? (' · ' + m.dept) : '') + '</option>'; }).join("")
+        + '</select>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:8px">指派会记一条时间线（跟进里能看到“指派给 谁”）；'
+        + '交付岗在「我的任务」里也能看到自己负责的交付单。</div>'
+        + '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">'
+        + '<button class="btn sm ghost" id="dasCancel">取消</button>'
+        + '<button class="btn sm" id="dasOk">保存指派</button></div></div>');
+      document.getElementById("dasCancel").addEventListener("click", closeDrawer);
+      document.getElementById("dasOk").addEventListener("click", function(){
+        var v = document.getElementById("dasOwner").value;
+        api("/api/manage/deliveries/" + id, { method: "PATCH", body: { owner_membership_id: v ? Number(v) : null } })
+          .then(function(){ closeDrawer(); toast("已指派"); loadDeliv(); })
+          .catch(function(e){ toast(e.message, true); });
+      });
+    }).catch(function(e){ toast(e.message, true); });
   }
 
   function openDelivery(id){

@@ -22,6 +22,7 @@ from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..manage_models import (
     MAiEmployee,
+    MDeliveryLog,
     MAuditLog,
     MCustomer,
     MCustomerLog,
@@ -1747,18 +1748,45 @@ class DeliveryPatchIn(BaseModel):
     note: Optional[str] = None
 
 
-def _delivery_json(db: Session, row: MDelivery) -> Dict[str, Any]:
+def _delivery_json(db: Session, row: MDelivery, logs: bool = False) -> Dict[str, Any]:
     owner = None
     if row.owner_membership_id:
         m = db.query(MMembership).filter(MMembership.id == row.owner_membership_id).first()
         owner = m.display_name if m else None
     cust = db.query(MCustomer).filter(MCustomer.id == row.customer_id).first() if row.customer_id else None
-    return {"id": row.id, "name": row.name, "customer_id": row.customer_id,
+    data = {"id": row.id, "name": row.name, "customer_id": row.customer_id,
             "customer_name": cust.name if cust else "", "project_id": row.project_id,
             "status": row.status, "status_label": DELIVERY_LABEL.get(row.status, row.status),
             "owner_membership_id": row.owner_membership_id, "owner_name": owner or "",
             "promised_at": row.promised_at, "delivered_at": row.delivered_at,
-            "accepted_at": row.accepted_at, "note": row.note}
+            "accepted_at": row.accepted_at, "note": row.note,
+            "last_follow_at": (row.last_follow_at or ""),
+            "log_count": db.query(MDeliveryLog).filter(MDeliveryLog.delivery_id == row.id).count()}
+    if logs:
+        rows = (db.query(MDeliveryLog).filter(MDeliveryLog.delivery_id == row.id)
+                .order_by(MDeliveryLog.id.desc()).limit(50).all())
+        data["logs"] = [{"id": x.id, "kind": x.kind, "content": x.content,
+                         "from_status": x.from_status, "to_status": x.to_status,
+                         "happened_at": x.happened_at} for x in rows]
+    return data
+
+
+def _delivery_touch_status(row: MDelivery, new_status: str) -> None:
+    """推进状态时顺手补齐实际时间（与 PATCH 保持一致）。"""
+    row.status = new_status
+    today = date.today().isoformat()
+    if new_status in ("review", "accepted") and not row.delivered_at:
+        row.delivered_at = today
+    if new_status == "accepted" and not row.accepted_at:
+        row.accepted_at = today
+
+
+def _delivery_log(db: Session, company: MCompany, row: MDelivery, user: Any, *, kind: str,
+                  content: str, from_status: str, happened_at: str = "") -> None:
+    db.add(MDeliveryLog(company_id=company.id, delivery_id=row.id, actor_user_id=getattr(user, "id", 0),
+                        kind=kind or "note", content=content or "",
+                        from_status=from_status or "", to_status=row.status or "",
+                        happened_at=happened_at or date.today().isoformat()))
 
 
 @router.get("/deliveries")
@@ -1809,18 +1837,68 @@ def update_delivery(delivery_id: int, body: DeliveryPatchIn, user: Any = Depends
     for field in ("name", "owner_membership_id", "promised_at", "delivered_at", "accepted_at", "note"):
         if data.get(field) is not None:
             setattr(row, field, data[field])
+    old_status = row.status
+    old_owner = row.owner_membership_id
     if data.get("status") and data["status"] in DELIVERY_LABEL:
-        row.status = data["status"]
-        today = date.today().isoformat()
-        if row.status == "doing" and not row.delivered_at:
-            row.delivered_at = ""
-        if row.status in ("review", "accepted") and not row.delivered_at:
-            row.delivered_at = today
-        if row.status == "accepted" and not row.accepted_at:
-            row.accepted_at = today
+        if data["status"] != old_status:
+            _delivery_touch_status(row, data["status"])
+    if row.status != old_status:
+        _delivery_log(db, company, row, user, kind="status",
+                      content="状态：" + DELIVERY_LABEL.get(old_status, old_status)
+                              + " → " + DELIVERY_LABEL.get(row.status, row.status),
+                      from_status=old_status)
+    if row.owner_membership_id != old_owner:
+        who = "未指派"
+        if row.owner_membership_id:
+            m = db.query(MMembership).filter(MMembership.id == row.owner_membership_id).first()
+            who = (m.display_name if m else "未指定成员")
+        _delivery_log(db, company, row, user, kind="assign",
+                      content="指派给 " + who, from_status=row.status)
     _audit(db, company.id, getattr(user, "id", 0), "delivery.update", "delivery", row.id)
     db.commit()
     return {"ok": True, "delivery": _delivery_json(db, row)}
+
+
+@router.get("/deliveries/{delivery_id}")
+def delivery_detail(delivery_id: int, user: Any = Depends(current_actor),
+                    db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """交付单详情（含跟进时间线）。"""
+    row = db.query(MDelivery).filter(MDelivery.id == delivery_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="交付单不存在")
+    _require_company(db, row.company_id, user)
+    return {"delivery": _delivery_json(db, row, logs=True)}
+
+
+class DeliveryLogIn(BaseModel):
+    kind: str = "note"          # note|call|wechat|visit
+    content: str = ""
+    to_status: str = ""         # 可选：推进到哪个状态
+    happened_at: str = ""
+
+
+@router.post("/deliveries/{delivery_id}/log")
+def add_delivery_log(delivery_id: int, body: DeliveryLogIn, user: Any = Depends(current_actor),
+                     db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """交付跟进：写一条描述（可选同时推进状态），跟客户跟进一个路子。"""
+    row = db.query(MDelivery).filter(MDelivery.id == delivery_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="交付单不存在")
+    company = _require_company(db, row.company_id, user)
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="写点内容再提交")
+    old_status = row.status
+    if body.to_status and body.to_status in DELIVERY_LABEL and body.to_status != old_status:
+        _delivery_touch_status(row, body.to_status)
+    happened = (body.happened_at or "").strip() or date.today().isoformat()
+    row.last_follow_at = happened
+    db.add(MDeliveryLog(company_id=company.id, delivery_id=row.id, actor_user_id=getattr(user, "id", 0),
+                        kind=body.kind or "note", content=content,
+                        from_status=old_status, to_status=row.status, happened_at=happened))
+    _audit(db, company.id, getattr(user, "id", 0), "delivery.log", "delivery", row.id)
+    db.commit()
+    return {"ok": True, "delivery": _delivery_json(db, row, logs=True)}
 
 
 @router.delete("/deliveries/{delivery_id}")
@@ -1830,6 +1908,7 @@ def delete_delivery(delivery_id: int, user: Any = Depends(current_actor),
     if not row:
         raise HTTPException(status_code=404, detail="交付单不存在")
     company = _require_company(db, row.company_id, user)
+    db.query(MDeliveryLog).filter(MDeliveryLog.delivery_id == delivery_id).delete()
     db.delete(row)
     _audit(db, company.id, getattr(user, "id", 0), "delivery.delete", "delivery", delivery_id)
     db.commit()

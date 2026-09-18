@@ -255,8 +255,27 @@ class MDelivery(Base):
     delivered_at = Column(String(16), default="", nullable=False)
     accepted_at = Column(String(16), default="", nullable=False)
     note = Column(Text, default="", nullable=False)
+    last_follow_at = Column(String(16), default="", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MDeliveryLog(Base):
+    """交付跟进记录（时间线）。"""
+
+    __tablename__ = "m_delivery_log"
+    __table_args__ = (Index("ix_m_delivery_log_delivery_created", "delivery_id", "created_at"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    delivery_id = Column(Integer, nullable=False, index=True)
+    actor_user_id = Column(Integer, nullable=True)
+    kind = Column(String(24), default="note", nullable=False)   # note|call|wechat|visit|status|assign
+    content = Column(Text, default="", nullable=False)
+    from_status = Column(String(24), default="", nullable=False)
+    to_status = Column(String(24), default="", nullable=False)
+    happened_at = Column(String(16), default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class MWorkLog(Base):
