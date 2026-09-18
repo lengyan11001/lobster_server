@@ -1,0 +1,35 @@
+.scalar-docs-page {
+  min-height: calc(100svh - 3rem);
+  background: var(--background);
+}
+
+.scalar-docs-page .scalar-app {
+  min-height: calc(100svh - 3rem);
+}
+
+.scalar-docs-page [aria-label='Ask AI'],
+.scalar-docs-page [title='Ask AI'],
+.scalar-docs-page [data-testid*='developer'],
+.scalar-docs-page [data-testid*='share'],
+.scalar-docs-page [data-testid*='deploy'],
+.scalar-docs-page [aria-label*='VS Code'],
+.scalar-docs-page [aria-label*='Cursor'],
+.scalar-docs-page [aria-label*='MCP'],
+.scalar-docs-page [title*='VS Code'],
+.scalar-docs-page [title*='Cursor'],
+.scalar-docs-page [title*='MCP'],
+.scalar-docs-page a[href*='vscode'],
+.scalar-docs-page a[href*='cursor'],
+.scalar-docs-page a[href*='mcp'],
+.scalar-docs-page a[href*='scalar.com'],
+.scalar-docs-page .scalar-mcp-layer,
+.scalar-docs-page .scalar-sidebar-footer,
+.scalar-docs-page [class*='sidebar-footer'],
+.scalar-docs-page [class*='SidebarFooter'] {
+  display: none !important;
+}
+
+.scalar-docs-page button,
+.scalar-docs-page a {
+  border-radius: var(--radius);
+}

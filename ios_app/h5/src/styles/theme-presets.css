@@ -1,0 +1,223 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+/*
+ * Theme presets — curated color palettes for different use cases.
+ *
+ * Usage: applied via data attributes on <body>:
+ *   <body data-theme-preset="rose-garden" data-theme-radius="lg" data-theme-scale="sm" />
+ *
+ * Streamlined to 4 essential presets:
+ * - Rose Garden: Warm & creative (pink/rose tones)
+ * - Lake View: Fresh & analytical (cyan/aqua tones)
+ * - Sunset Glow: Energetic & vibrant (orange/amber tones)
+ * - Ocean Breeze: Professional & calm (blue/purple tones)
+ */
+
+/* ── Rose Garden ──────────────────────────────────────────────────────── */
+/* Best for: Creative work, design projects, warm atmosphere */
+[data-theme-preset='rose-garden'] {
+  --primary: oklch(0.5827 0.2418 12.23);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.8131 0.1129 5.67);
+  --secondary-foreground: oklch(0.2686 0.0032 34.85);
+  --ring: oklch(0.5827 0.2418 12.23);
+  --chart-1: oklch(0.5827 0.2418 12.23);
+  --chart-2: oklch(0.8938 0.0563 3.77);
+  --chart-3: oklch(0.7135 0.1879 7.69);
+  --chart-4: oklch(0.8131 0.1129 5.67);
+  --chart-5: oklch(0.9429 0.0283 5.52);
+  --sidebar-primary: oklch(0.5827 0.2418 12.23);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.5827 0.2418 12.23);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-ring: oklch(0.5827 0.2418 12.23);
+  --radius: 1rem;
+}
+.dark [data-theme-preset='rose-garden'] {
+  --primary: oklch(0.6476 0.2348 10.36);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.8131 0.1129 5.67);
+  --secondary-foreground: oklch(0.9227 0.0029 34.49);
+  --ring: oklch(0.6476 0.2348 10.36);
+  --chart-1: oklch(0.6476 0.2348 10.36);
+  --chart-2: oklch(0.8938 0.0563 3.77);
+  --chart-3: oklch(0.7135 0.1879 7.69);
+  --chart-4: oklch(0.8131 0.1129 5.67);
+  --chart-5: oklch(0.9429 0.0283 5.52);
+  --sidebar-primary: oklch(0.6476 0.2348 10.36);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.6476 0.2348 10.36);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-ring: oklch(0.6476 0.2348 10.36);
+}
+
+/* ── Lake View ────────────────────────────────────────────────────────── */
+/* Best for: Data analysis, dashboards, fresh & clean look */
+[data-theme-preset='lake-view'] {
+  --primary: oklch(0.765 0.177 163.22);
+  --primary-foreground: oklch(0 0 0);
+  --secondary: oklch(0.551 0.0899 200.52);
+  --secondary-foreground: oklch(1 0 0);
+  --ring: oklch(0.765 0.177 163.22);
+  --chart-1: oklch(0.765 0.177 163.22);
+  --chart-2: oklch(0.551 0.0899 200.52);
+  --chart-3: oklch(0.845 0.143 164.98);
+  --chart-4: oklch(0.8576 0.1202 192.38);
+  --chart-5: oklch(0.95 0.052 163.05);
+  --sidebar-primary: oklch(0.765 0.177 163.22);
+  --sidebar-primary-foreground: oklch(0 0 0);
+  --sidebar-accent: oklch(0.765 0.177 163.22);
+  --sidebar-accent-foreground: oklch(0.2742 0.0208 165.96);
+  --sidebar-ring: oklch(0.765 0.177 163.22);
+  --radius: 0.75rem;
+}
+.dark [data-theme-preset='lake-view'] {
+  --primary: oklch(0.765 0.177 163.22);
+  --primary-foreground: oklch(0 0 0);
+  --secondary: oklch(0.551 0.0899 200.52);
+  --secondary-foreground: oklch(1 0 0);
+  --ring: oklch(0.765 0.177 163.22);
+  --chart-1: oklch(0.765 0.177 163.22);
+  --chart-2: oklch(0.551 0.0899 200.52);
+  --chart-3: oklch(0.845 0.143 164.98);
+  --chart-4: oklch(0.8576 0.1202 192.38);
+  --chart-5: oklch(0.95 0.052 163.05);
+  --sidebar-primary: oklch(0.765 0.177 163.22);
+  --sidebar-primary-foreground: oklch(0 0 0);
+  --sidebar-accent: oklch(0.765 0.177 163.22);
+  --sidebar-accent-foreground: oklch(0 0 0);
+  --sidebar-ring: oklch(0.765 0.177 163.22);
+}
+
+/* ── Sunset Glow ──────────────────────────────────────────────────────── */
+/* Best for: Marketing, presentations, energetic atmosphere */
+[data-theme-preset='sunset-glow'] {
+  --primary: oklch(0.5591 0.1882 25.33);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.7938 0.1248 42.42);
+  --secondary-foreground: oklch(0 0 0);
+  --ring: oklch(0.5591 0.1882 25.33);
+  --chart-1: oklch(0.5591 0.1882 25.33);
+  --chart-2: oklch(0.7938 0.1248 42.42);
+  --chart-3: oklch(0.809 0.0875 17.95);
+  --chart-4: oklch(0.8964 0.0724 43.73);
+  --chart-5: oklch(0.9381 0.0241 16.66);
+  --sidebar-primary: oklch(0.5591 0.1882 25.33);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.5591 0.1882 25.33);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-ring: oklch(0.5591 0.1882 25.33);
+  --radius: 1rem;
+}
+.dark [data-theme-preset='sunset-glow'] {
+  --primary: oklch(0.6387 0.1822 23.51);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.7938 0.1248 42.42);
+  --secondary-foreground: oklch(0 0 0);
+  --ring: oklch(0.6387 0.1822 23.51);
+  --chart-1: oklch(0.6387 0.1822 23.51);
+  --chart-2: oklch(0.7938 0.1248 42.42);
+  --chart-3: oklch(0.809 0.0875 17.95);
+  --chart-4: oklch(0.8964 0.0724 43.73);
+  --chart-5: oklch(0.9381 0.0241 16.66);
+  --sidebar-primary: oklch(0.6387 0.1822 23.51);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.6387 0.1822 23.51);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-ring: oklch(0.6387 0.1822 23.51);
+}
+
+/* ── Ocean Breeze ─────────────────────────────────────────────────────── */
+/* Best for: Professional work, focus, calm & trustworthy atmosphere */
+[data-theme-preset='ocean-breeze'] {
+  --primary: oklch(0.5461 0.2152 262.88);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.5854 0.2041 277.12);
+  --secondary-foreground: oklch(1 0 0);
+  --ring: oklch(0.5461 0.2152 262.88);
+  --chart-1: oklch(0.5461 0.2152 262.88);
+  --chart-2: oklch(0.5854 0.2041 277.12);
+  --chart-3: oklch(0.809 0.0922 251.81);
+  --chart-4: oklch(0.785 0.1007 274.72);
+  --chart-5: oklch(0.932 0.0281 255.58);
+  --sidebar-primary: oklch(0.5461 0.2152 262.88);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.5461 0.2152 262.88);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-ring: oklch(0.5461 0.2152 262.88);
+  --radius: 0.5rem;
+}
+.dark [data-theme-preset='ocean-breeze'] {
+  --primary: oklch(0.623 0.188 259.81);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.5854 0.2041 277.12);
+  --secondary-foreground: oklch(0 0 0);
+  --ring: oklch(0.623 0.188 259.81);
+  --chart-1: oklch(0.623 0.188 259.81);
+  --chart-2: oklch(0.5854 0.2041 277.12);
+  --chart-3: oklch(0.809 0.0922 251.81);
+  --chart-4: oklch(0.785 0.1007 274.72);
+  --chart-5: oklch(0.932 0.0281 255.58);
+  --sidebar-primary: oklch(0.623 0.188 259.81);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.623 0.188 259.81);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-ring: oklch(0.623 0.188 259.81);
+}
+
+/* ── Border Radius Control ────────────────────────────────────────────── */
+/* Overrides preset defaults when explicitly set */
+[data-theme-radius='none'] {
+  --radius: 0rem;
+}
+[data-theme-radius='sm'] {
+  --radius: 0.25rem;
+}
+[data-theme-radius='md'] {
+  --radius: 0.5rem;
+}
+[data-theme-radius='lg'] {
+  --radius: 0.75rem;
+}
+[data-theme-radius='xl'] {
+  --radius: 1rem;
+}
+
+/* ── Density Scaling ──────────────────────────────────────────────────── */
+/* Compact mode for information-dense interfaces */
+[data-theme-scale='sm'] {
+  --text-xs: 0.7rem;
+  --text-sm: 0.8rem;
+  --text-base: 0.85rem;
+  --text-lg: 0.95rem;
+  --text-xl: 1.1rem;
+  --text-2xl: 1.3rem;
+  --text-3xl: 1.7rem;
+}
+
+/* Comfortable mode for better readability */
+[data-theme-scale='lg'] {
+  --text-xs: 0.84rem;
+  --text-sm: 0.92rem;
+  --text-base: 1rem;
+  --text-lg: 1.15rem;
+  --text-xl: 1.35rem;
+  --text-2xl: 1.65rem;
+  --text-3xl: 2rem;
+}

@@ -1,0 +1,27 @@
+{
+  "name": "openmind-ios-shell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Capacitor iOS shell for the OpenMind H5 application",
+  "scripts": {
+    "h5:dev": "npm --prefix h5 run dev",
+    "h5:build": "npm --prefix h5 run build",
+    "h5:typecheck": "npm --prefix h5 run typecheck",
+    "h5:install": "npm --prefix h5 install",
+    "prepare:ios": "npm run h5:build && npm run cap:sync",
+    "cap:sync": "cap sync ios",
+    "ios:add": "cap add ios",
+    "ios:open": "cap open ios",
+    "ios:run": "cap run ios",
+    "ios:build": "cap build ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@types/node": "^24.3.1",
+    "typescript": "^5.9.3"
+  }
+}
