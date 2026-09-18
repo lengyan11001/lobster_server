@@ -32,6 +32,7 @@ import tempfile
 import time
 import uuid
 from collections import OrderedDict
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -44,10 +45,15 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import Asset, User
+from ..models import Asset, CreditLedger, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.brand_context import explicit_request_brand_mark
-from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
+from ..services.credits_amount import (
+    credits_json_float,
+    quantize_credits,
+    quantize_credits_signed,
+    user_balance_decimal,
+)
 from ..services.model_usage_monitor import log_model_usage_event
 from ..services.runtime_cache import cache_delete, cache_get, cache_set, cache_set_if_absent
 from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
@@ -481,6 +487,8 @@ def _do_pre_deduct_by_user_id(
     model: str,
     endpoint: str,
     extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy",
+    ref_id: Optional[str] = None,
 ) -> Decimal:
     db = SessionLocal()
     try:
@@ -495,6 +503,8 @@ def _do_pre_deduct_by_user_id(
             model=model,
             endpoint=endpoint,
             extra_meta=extra_meta,
+            ref_type=ref_type,
+            ref_id=ref_id,
         )
     finally:
         db.close()
@@ -508,6 +518,9 @@ def _do_full_refund_by_user_id(
     model: str,
     endpoint: str,
     error: str = "",
+    ref_type: str = "comfly_proxy",
+    ref_id: Optional[str] = None,
+    description: str = "",
 ) -> None:
     db = SessionLocal()
     try:
@@ -522,6 +535,9 @@ def _do_full_refund_by_user_id(
             model=model,
             endpoint=endpoint,
             error=error,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            description=description,
         )
     finally:
         db.close()
@@ -536,6 +552,9 @@ def _do_settle_by_user_id(
     model: str,
     endpoint: str,
     extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy",
+    ref_id: Optional[str] = None,
+    description: str = "",
 ) -> None:
     db = SessionLocal()
     try:
@@ -551,7 +570,344 @@ def _do_settle_by_user_id(
             model=model,
             endpoint=endpoint,
             extra_meta=extra_meta,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            description=description,
         )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# 视频计费：预扣可追溯到任务 → 按上游回执结算（任务失败全退 / 按秒结算差额）
+# ---------------------------------------------------------------------------
+
+_VIDEO_CHARGE_REF_TYPE = "comfly_proxy_video"
+_VIDEO_SETTLE_REF_TYPE = "comfly_proxy_video_settle"
+_VIDEO_SEGMENT_HEADER = "x-lobster-video-segment"
+
+_VIDEO_STATUS_KEYS = ("task_status", "status", "state", "task_state", "video_status", "videoStatus")
+_VIDEO_SECONDS_KEYS = (
+    "output_video_duration",
+    "video_duration",
+    "output_duration",
+    "duration",
+    "seconds",
+)
+_VIDEO_FAILED_STATUSES = {
+    "failed", "failure", "error", "canceled", "cancelled", "cancel", "rejected", "timeout", "expired",
+}
+_VIDEO_DONE_STATUSES = {"succeeded", "success", "completed", "complete", "done", "finished"}
+
+
+def _video_charge_hold_key() -> str:
+    """预扣时先挂一个 hold key，拿到上游 task id 后再改写，便于按回执结算。"""
+    return "vc-" + uuid.uuid4().hex[:24]
+
+
+def _video_segment_key_from_request(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    raw = request.headers.get(_VIDEO_SEGMENT_HEADER) or request.headers.get("X-Lobster-Video-Segment") or ""
+    return str(raw).strip()[:128]
+
+
+def _video_duration_from_body(body: Dict[str, Any]) -> Optional[float]:
+    for key in ("duration", "seconds"):
+        raw = (body or {}).get(key)
+        if raw is None or isinstance(raw, bool):
+            continue
+        if isinstance(raw, str) and raw.strip().lower().endswith("s"):
+            raw = raw.strip()[:-1]
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _video_receipt_lookup(payload: Any, keys: tuple) -> Any:
+    """在回执里递归找第一个命中的键（各家渠道字段位置不一致）。"""
+    if isinstance(payload, dict):
+        for key in keys:
+            if key in payload and payload[key] not in (None, "", [], {}):
+                return payload[key]
+        for value in payload.values():
+            found = _video_receipt_lookup(value, keys)
+            if found not in (None, "", [], {}):
+                return found
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            found = _video_receipt_lookup(item, keys)
+            if found not in (None, "", [], {}):
+                return found
+    return None
+
+
+def _video_receipt_status(payload: Any) -> str:
+    raw = _video_receipt_lookup(payload, _VIDEO_STATUS_KEYS)
+    value = str(raw or "").strip().lower()
+    return value
+
+
+def _video_receipt_seconds(payload: Any) -> Optional[float]:
+    raw = _video_receipt_lookup(payload, _VIDEO_SECONDS_KEYS)
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, str) and raw.strip().lower().endswith("s"):
+        raw = raw.strip()[:-1]
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _video_charge_extra_meta(
+    body: Dict[str, Any], *, segment_key: str = "", hold_key: str = "",
+) -> Dict[str, Any]:
+    duration = _video_duration_from_body(body)
+    extra: Dict[str, Any] = {}
+    if duration is not None:
+        extra["duration_seconds"] = duration
+        extra["charged_duration_seconds"] = duration
+    if hold_key:
+        extra["video_charge_hold"] = hold_key
+    if segment_key:
+        extra["video_segment_key"] = segment_key
+    return extra
+
+
+def _bind_video_charge_to_task(*, user_id: int, hold_key: str, task_id: str) -> None:
+    """把预扣行从 hold key 改挂到上游 task id（跨进程/跨轮询都能查到）。"""
+    hold = str(hold_key or "").strip()
+    tid = str(task_id or "").strip()
+    if not hold or not tid:
+        return
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(user_id),
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.ref_id == hold,
+            )
+            .order_by(CreditLedger.id.desc())
+            .first()
+        )
+        if row is None:
+            return
+        row.ref_id = tid
+        meta = dict(row.meta or {})
+        meta["generation_task_id"] = tid
+        meta.pop("video_charge_hold", None)
+        row.meta = meta
+        db.add(row)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("[comfly_proxy] 绑定视频任务号失败 hold=%s task=%s: %s", hold, tid, exc)
+    finally:
+        db.close()
+
+
+def _supersede_previous_video_charge(*, user_id: int, segment_key: str, reason: str = "") -> Optional[Decimal]:
+    """同一段分镜换渠道重试时，把上一笔还没结算的预扣退掉（同段只扣一次）。"""
+    key = str(segment_key or "").strip()
+    if not key:
+        return None
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(user_id),
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.entry_type == "pre_deduct",
+            )
+            .order_by(CreditLedger.id.desc())
+            .limit(40)
+            .all()
+        )
+        target = None
+        for row in rows:
+            meta = dict(row.meta or {})
+            if str(meta.get("video_segment_key") or "") != key:
+                continue
+            if meta.get("video_settled_at"):
+                continue
+            target = row
+            break
+        if target is None:
+            return None
+        meta = dict(target.meta or {})
+        user = db.query(User).filter(User.id == int(target.user_id)).first()
+        if user is None:
+            return None
+        # 预扣行 delta 是负数（quantize_credits 会把负数钳成 0，必须用 signed 版本）
+        amount = quantize_credits(abs(quantize_credits_signed(target.delta)))
+        if amount > 0:
+            _do_full_refund(
+                db,
+                user,
+                pre=amount,
+                capability_id=_CAPABILITY_FOR_BILLING,
+                model=str(meta.get("model") or ""),
+                endpoint=str(meta.get("endpoint") or "video_submit"),
+                error=reason or "同段分镜换渠道重试",
+                ref_type=_VIDEO_SETTLE_REF_TYPE,
+                ref_id=f"{key}#superseded",
+                description=f"同段分镜重试，退回上一笔预扣 ({key})",
+            )
+        meta["video_settled_at"] = datetime.utcnow().isoformat()
+        meta["video_settle_action"] = "superseded"
+        target.meta = meta
+        db.add(target)
+        db.commit()
+        return amount
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("[comfly_proxy] 同段重试退款失败 segment=%s: %s", key, exc)
+        return None
+    finally:
+        db.close()
+
+
+def _settle_video_charge_by_task(
+    *, user_id: int, task_id: str, payload: Any, model_hint: str = "",
+) -> Optional[Dict[str, Any]]:
+    """按上游回执结算视频预扣（幂等，异常只记日志，绝不影响轮询）：
+
+    · 任务失败/取消 → 全额退款
+    · 任务成功且模型按秒计费 → 按实际时长结算差额（多退少补）
+    · 任务成功但一次性计费 / 拿不到时长 → 按预扣定案
+    """
+    tid = str(task_id or "").strip()
+    if not tid:
+        return None
+    status = _video_receipt_status(payload)
+    if not status:
+        return None
+    failed = status in _VIDEO_FAILED_STATUSES
+    done = status in _VIDEO_DONE_STATUSES
+    if not failed and not done:
+        return None
+    db = SessionLocal()
+    try:
+        charge = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.ref_id == tid,
+                CreditLedger.entry_type == "pre_deduct",
+            )
+            .order_by(CreditLedger.id.desc())
+            .first()
+        )
+        if charge is None:
+            return None
+        meta = dict(charge.meta or {})
+        if meta.get("video_settled_at"):
+            return None
+        user = db.query(User).filter(User.id == int(charge.user_id)).first()
+        if user is None:
+            return None
+        model = str(meta.get("model") or model_hint or "")
+        endpoint = str(meta.get("endpoint") or "video_submit")
+        # 预扣行 delta 是负数（quantize_credits 会把负数钳成 0，必须用 signed 版本）
+        pre_amount = quantize_credits(abs(quantize_credits_signed(charge.delta)))
+        charged_seconds = meta.get("charged_duration_seconds") or meta.get("duration_seconds")
+        summary: Dict[str, Any]
+        if failed:
+            if pre_amount > 0:
+                _do_full_refund(
+                    db,
+                    user,
+                    pre=pre_amount,
+                    capability_id=_CAPABILITY_FOR_BILLING,
+                    model=model,
+                    endpoint=endpoint,
+                    error=f"upstream task {status}",
+                    ref_type=_VIDEO_SETTLE_REF_TYPE,
+                    ref_id=tid,
+                    description=f"视频任务失败自动退款 ({endpoint}) status={status}",
+                )
+            summary = {
+                "action": "refund",
+                "amount": credits_json_float(pre_amount),
+                "status": status,
+            }
+        else:
+            actual_seconds = _video_receipt_seconds(payload)
+            entry = lookup_comfly_model(model) or {}
+            per_second = str(entry.get("price_type") or "").strip() == "per_second"
+            if not per_second or not actual_seconds:
+                summary = {
+                    "action": "settled_as_charged",
+                    "amount": credits_json_float(pre_amount),
+                    "status": status,
+                    "actual_seconds": actual_seconds,
+                }
+            else:
+                actual_charge = estimate_comfly_credits(model, {"duration": actual_seconds}, for_user=True) or 0
+                _do_settle(
+                    db,
+                    user,
+                    pre=pre_amount,
+                    actual=int(actual_charge),
+                    capability_id=_CAPABILITY_FOR_BILLING,
+                    model=model,
+                    endpoint=endpoint,
+                    extra_meta={
+                        "status": status,
+                        "duration_seconds": actual_seconds,
+                        "charged_duration_seconds": charged_seconds,
+                    },
+                    ref_type=_VIDEO_SETTLE_REF_TYPE,
+                    ref_id=tid,
+                    description=(
+                        f"视频按实际时长结算 ({endpoint}) 实际 {actual_seconds}s / 预扣 "
+                        f"{charged_seconds if charged_seconds is not None else '-'}s"
+                    ),
+                )
+                summary = {
+                    "action": "settle",
+                    "amount": credits_json_float(actual_charge),
+                    "status": status,
+                    "actual_seconds": actual_seconds,
+                    "charged_duration_seconds": charged_seconds,
+                }
+        meta["video_settled_at"] = datetime.utcnow().isoformat()
+        meta["video_settle_action"] = str(summary.get("action") or "")
+        charge.meta = meta
+        db.add(charge)
+        db.commit()
+        _audit(
+            "video_task_settled",
+            user_id=int(charge.user_id),
+            model=model,
+            endpoint=endpoint,
+            task_id=tid,
+            **{k: v for k, v in summary.items() if k != "action"},
+            settle_action=summary.get("action"),
+        )
+        return summary
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("[comfly_proxy] 视频按回执结算失败 task=%s: %s", tid, exc)
+        return None
     finally:
         db.close()
 
@@ -854,6 +1210,7 @@ def _is_trusted_internal_video_fallback(request: Request) -> bool:
 def _do_pre_deduct(
     db: Session, user: User, credits: int, *,
     capability_id: str, model: str, endpoint: str, extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy", ref_id: Optional[str] = None,
 ) -> Decimal:
     """直接扣账（与 capabilities.py force_credits 路径一致）。返回实际扣的 Decimal。"""
     if not _should_deduct_credits() or credits <= 0:
@@ -870,7 +1227,8 @@ def _do_pre_deduct(
     append_credit_ledger(
         db, user.id, -fc, "pre_deduct", bal,
         description=f"Comfly proxy 预扣 ({endpoint})",
-        ref_type="comfly_proxy",
+        ref_type=ref_type,
+        ref_id=ref_id,
         meta={
             "capability_id": capability_id, "model": model, "endpoint": endpoint,
             "pre_estimated": credits_json_float(fc), "upstream": "comfly",
@@ -884,6 +1242,7 @@ def _do_pre_deduct(
 def _do_settle(
     db: Session, user: User, *, pre: Decimal, actual: int,
     capability_id: str, model: str, endpoint: str, extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy", ref_id: Optional[str] = None, description: str = "",
 ) -> None:
     """实际 vs 预扣的差额结算。actual<pre 退差额，actual>pre 再扣差额。"""
     if not _should_deduct_credits():
@@ -901,8 +1260,9 @@ def _do_settle(
         bal = quantize_credits(user.credits)
         append_credit_ledger(
             db, user.id, -deduct_now, "settle", bal,
-            description=f"Comfly proxy 结算补扣 ({endpoint}) actual={actual} pre={float(pre)}",
-            ref_type="comfly_proxy",
+            description=description or f"Comfly proxy 结算补扣 ({endpoint}) actual={actual} pre={float(pre)}",
+            ref_type=ref_type,
+            ref_id=ref_id,
             meta={
                 "capability_id": capability_id, "model": model, "endpoint": endpoint,
                 "pre_estimated": credits_json_float(pre), "actual": credits_json_float(actual_dec),
@@ -922,8 +1282,9 @@ def _do_settle(
         bal = quantize_credits(user.credits)
         append_credit_ledger(
             db, user.id, refund_amt, "refund", bal,
-            description=f"Comfly proxy 结算退款 ({endpoint}) actual={actual} pre={float(pre)}",
-            ref_type="comfly_proxy",
+            description=description or f"Comfly proxy 结算退款 ({endpoint}) actual={actual} pre={float(pre)}",
+            ref_type=ref_type,
+            ref_id=ref_id,
             meta={
                 "capability_id": capability_id, "model": model, "endpoint": endpoint,
                 "pre_estimated": credits_json_float(pre), "actual": credits_json_float(actual_dec),
@@ -937,6 +1298,7 @@ def _do_settle(
 def _do_full_refund(
     db: Session, user: User, *, pre: Decimal,
     capability_id: str, model: str, endpoint: str, error: str = "",
+    ref_type: str = "comfly_proxy", ref_id: Optional[str] = None, description: str = "",
 ) -> None:
     if not _should_deduct_credits() or pre <= 0:
         return
@@ -945,8 +1307,9 @@ def _do_full_refund(
     bal = quantize_credits(user.credits)
     append_credit_ledger(
         db, user.id, pre, "refund", bal,
-        description=f"Comfly proxy 调用失败全额退款 ({endpoint})",
-        ref_type="comfly_proxy",
+        description=description or f"Comfly proxy 调用失败全额退款 ({endpoint})",
+        ref_type=ref_type,
+        ref_id=ref_id,
         meta={
             "capability_id": capability_id, "model": model, "endpoint": endpoint,
             "refunded": credits_json_float(pre), "upstream": "comfly",
@@ -4248,12 +4611,22 @@ async def proxy_videos_generations_submit(
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if not internal_fallback and segment_key:
+        # 同一段分镜换渠道重试：先把上一笔还没结算的预扣退掉（同段只扣一次）
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="video_submit",
+        extra_meta=_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     _audit(
         "video_submit_pre_deduct",
@@ -4316,6 +4689,11 @@ async def proxy_videos_generations_submit(
         )
     )
     _remember_proxy_video_task(task_id, api_kind, model)
+    if pre > 0 and task_id:
+        # 预扣挂到上游任务号上，后续轮询就能按回执结算（失败全退 / 按秒结算差额）
+        _bind_video_charge_to_task(
+            user_id=billing_user_id, hold_key=hold_key, task_id=str(task_id).strip()
+        )
     _audit("video_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
            task_id=task_id,
            api_kind=api_kind,
@@ -4366,6 +4744,13 @@ async def proxy_videos_generations_poll(
         resp = await _poll_comfly_video_task(task_id, effective_model, effective_kind)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
+    # 按上游回执结算：任务失败全额退；按秒计费的（wan3.0）按实际时长退差额；幂等
+    _settle_video_charge_by_task(
+        user_id=int(current_user.id),
+        task_id=task_id,
+        payload=resp,
+        model_hint=effective_model,
+    )
     return JSONResponse(resp)
 
 
@@ -4496,13 +4881,25 @@ async def proxy_openmind_video_submit(
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if not internal_fallback and segment_key:
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="openmind_video_submit",
-        extra_meta={"upstream": "openmind", "openmind_model": upstream_body.get("model")},
+        extra_meta={
+            "upstream": "openmind",
+            "openmind_model": upstream_body.get("model"),
+            **_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        },
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     _audit(
         "openmind_video_submit_pre_deduct",
@@ -4557,6 +4954,12 @@ async def proxy_openmind_video_submit(
         task_id=_task_id_from_response(resp),
         pre=credits_json_float(pre),
     )
+    if pre > 0 and _task_id_from_response(resp):
+        _bind_video_charge_to_task(
+            user_id=billing_user_id,
+            hold_key=hold_key,
+            task_id=str(_task_id_from_response(resp)).strip(),
+        )
     _remember_video_image_retry_context(
         _task_id_from_response(resp),
         provider="openmind",
@@ -4624,6 +5027,14 @@ async def proxy_openmind_video_poll(
             )
     except Exception as e:
         raise HTTPException(502, f"OpenMind video poll failed: {e}")
+    for _settle_task_id in {requested_task_id, active_task_id}:
+        if _settle_task_id:
+            _settle_video_charge_by_task(
+                user_id=int(current_user.id),
+                task_id=_settle_task_id,
+                payload=resp,
+                model_hint=str((retry_context or {}).get("model") or ""),
+            )
     return JSONResponse(resp)
 
 
@@ -4730,13 +5141,24 @@ async def proxy_xai_video_submit(request: Request):
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if not internal_fallback and segment_key:
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="xai_video_submit",
-        extra_meta={"upstream": "xai"},
+        extra_meta={
+            "upstream": "xai",
+            **_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        },
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     try:
         response = await _xai_video_submit(body, model)
@@ -4753,6 +5175,10 @@ async def proxy_xai_video_submit(request: Request):
         raise HTTPException(502, f"xAI video submit failed: {exc}")
     task_id = _task_id_from_response(response)
     _remember_proxy_video_task(task_id, "xai", model)
+    if pre > 0 and task_id:
+        _bind_video_charge_to_task(
+            user_id=billing_user_id, hold_key=hold_key, task_id=str(task_id).strip()
+        )
     _remember_video_image_retry_context(
         task_id,
         provider="xai",
@@ -4802,6 +5228,13 @@ async def proxy_xai_video_poll(
             )
     except Exception as exc:
         raise HTTPException(502, f"xAI video poll failed: {exc}")
+    for _settle_task_id in {request_id, active_task_id}:
+        if _settle_task_id:
+            _settle_video_charge_by_task(
+                user_id=int(current_user.id),
+                task_id=_settle_task_id,
+                payload=response,
+            )
     return JSONResponse(response)
 
 
