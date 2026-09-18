@@ -696,6 +696,9 @@ def project_detail(project_id: int, user: Any = Depends(current_actor),
             "draft": project.arrangement_draft or {}}
 
 
+DEFAULT_PLAN_DAYS = 90   # 项目周期空时的兜底长度（天）
+PLAN_MIN_GAP_SECONDS = 6   # 同一个项目两次生成的最短间隔，防连点重复扣费
+
 PLAN_SYSTEM = """你是「AI 项目总监」。你的唯一目标：让这个项目真的做成，而不是把任务排得好看。
 只输出一个 JSON 对象，不要解释、不要 markdown 代码块。
 
@@ -874,6 +877,7 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
     db.close()  # 立刻归还请求级连接，后面不再用它
 
     ctx: Dict[str, Any] = {}
+    period_defaulted = False
     member_payload: List[Dict[str, Any]] = []
     customer_payload: List[Dict[str, Any]] = []
     company_id = 0
@@ -890,6 +894,23 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
                "success_criteria": project.success_criteria,
                "start_at": project.start_at, "end_at": project.end_at,
                "products": project.products or []}
+        # 周期为空就兜底：模型拿不到周期会自己编日期（历史事故：编出 2025 年的排期，
+        # 任务一建出来全是「超期」）。兜底周期同时写回项目，后面就不会再编。
+        if not str(ctx.get("start_at") or "").strip() or not str(ctx.get("end_at") or "").strip():
+            period_defaulted = True
+            _today = _today_beijing()
+            ctx["start_at"] = str(ctx.get("start_at") or "").strip() or _today.isoformat()
+            ctx["end_at"] = (str(ctx.get("end_at") or "").strip()
+                             or (_today + timedelta(days=DEFAULT_PLAN_DAYS)).isoformat())
+        last_ver = (read_db.query(MPlanVersion)
+                    .filter(MPlanVersion.project_id == project_id)
+                    .order_by(MPlanVersion.id.desc()).first())
+        if last_ver is not None and last_ver.created_at is not None:
+            _gap = (datetime.utcnow() - last_ver.created_at).total_seconds()
+            if _gap < PLAN_MIN_GAP_SECONDS:
+                raise HTTPException(
+                    status_code=429,
+                    detail="刚刚已经生成过一次（%.0f 秒前），为避免重复扣费，请等几秒再点" % _gap)
         members = (read_db.query(MMembership)
                    .filter(MMembership.company_id == company_id, MMembership.status == "active").all())
         for m in members:
@@ -934,7 +955,11 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
             "products": ctx.get("products") or [],
             "members": member_payload,
             "customers": customer_payload,
+            "period": {"start_at": ctx.get("start_at"), "end_at": ctx.get("end_at"),
+                       "source": ("default" if period_defaulted else "project")},
             "assignment_rules": [
+                "period.start_at / period.end_at 就是项目周期：所有阶段与任务的 start_at/end_at "
+                "必须落在这两个日期之间（含端点），不要自己发明年份。",
                 "customers 里 owner_name 非空的客户已经人工指派：相关任务必须由该负责人做，不得改派。",
                 "owner_name 为空的客户未指派：把跟进安排写进 tasks（owner_name 从 members 里选），"
                 "并在 assignments_suggestions 里至少给出建议负责人与理由。",
@@ -991,6 +1016,9 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
         project.plan_source = source
         project.arrangement_status = "draft"
         project.status = "planning"
+        if period_defaulted:
+            project.start_at = str(ctx.get("start_at") or "")
+            project.end_at = str(ctx.get("end_at") or "")
 
         gaps = plan.get("resource_gap") or []
         write_db.query(MCondition).filter(MCondition.project_id == project_id,
@@ -1048,7 +1076,10 @@ async def generate_plan(project_id: int, body: PlanIn, request: Request,
         write_db.close()
     return {"ok": True, "source": source, "summary": plan.get("summary") or "",
             "version": plan_version, "nodes": out_nodes, "resource_gap": gaps,
-            "assignments": assignments}
+            "assignments": assignments,
+            "period_defaulted": period_defaulted,
+            "period": {"start_at": str(ctx.get("start_at") or ""),
+                       "end_at": str(ctx.get("end_at") or "")}}
 
 
 @router.patch("/nodes/{node_id}")

@@ -937,6 +937,7 @@ body.overlay-open #drawer{z-index:501}
         + '<div style="display:flex;gap:10px;margin-top:10px">'
         + '<div style="flex:1"><label class="fl">开始</label><input id="npStart" value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
         + '<div style="flex:1"><label class="fl">结束</label><input id="npEnd" value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
+        + '<div class="dim" style="font-size:11.5px;margin-top:6px">周期建议填上：留空时生成规划只能按「今天起 90 天」兜底，且不填的历史数据里 AI 自己编过年份（任务一建出来就是「超期」）。</div>'
         + (p ? '<div style="margin-top:10px"><label class="fl">状态</label><select id="npStatus">'
               + [["planning","规划中"],["running","执行中"],["done","已完成"],["archived","已归档"]].map(function(x){
                   return '<option value="' + x[0] + '"' + (p.status === x[0] ? " selected" : "") + '>' + x[1] + '</option>'; }).join("")
@@ -1095,6 +1096,8 @@ body.overlay-open #drawer{z-index:501}
 
   var NODE_STATUS = { not_started:["未开始",""], in_progress:["进行中","wn"], completed:["完成","ok"], blocked:["受阻","bd"] };
 
+  var PLAN_BUSY = {};   // pid -> true 表示规划生成中，防止连点重复扣费
+
   function openProject(pid){
     api("/api/manage/projects/" + pid).then(function(d){
       var p = d.project, nodes = d.nodes || [];
@@ -1243,6 +1246,12 @@ body.overlay-open #drawer{z-index:501}
           + '<button class="btn sm" id="confirmArr">确认安排</button></div>';
         openDrawer("项目 · 工作安排", p.name, head + bar + ask + actions);
         bind();
+        if (PLAN_BUSY[pid]){
+          ["planAi", "planTpl"].forEach(function(bid){
+            var b = document.getElementById(bid);
+            if (b){ b.disabled = true; b.textContent = "生成中…"; }
+          });
+        }
         $$("#dBody [data-view]").forEach(function(b){
           b.addEventListener("click", function(){ view = b.dataset.view; draw(); });
         });
@@ -1282,11 +1291,18 @@ body.overlay-open #drawer{z-index:501}
             });
         });
         function runPlan(mode, btn){
+          if (PLAN_BUSY[pid]) return toast("上一次生成还在跑，稍等一下", true, true);
+          PLAN_BUSY[pid] = true;
           btn.disabled = true; var old = btn.textContent; btn.textContent = "生成中…";
           api("/api/manage/projects/"+pid+"/plan", { method:"POST", body:{ mode: mode } })
             .then(function(res){
               var n = (res.assignments || []).length;
-              toast("已生成（来源 " + res.source + "）" + (n ? ("，含 " + n + " 条客户指派建议") : ""));
+              var extraP = "";
+              if (res.period_defaulted && res.period){
+                extraP = "；项目周期原本是空的，已按 "
+                  + res.period.start_at + " ~ " + res.period.end_at + " 排期，建议补上周期后重新规划";
+              }
+              toast("已生成（来源 " + res.source + "）" + (n ? ("，含 " + n + " 条客户指派建议") : "") + extraP, !!extraP, !!extraP);
               if (n){
                 var rows = res.assignments.map(function(a){
                   return '<div class="mline"><span class="nm" style="flex:1"><b>' + a.customer + '</b>'
@@ -1304,7 +1320,7 @@ body.overlay-open #drawer{z-index:501}
               openProject(pid); loadBrief(); loadProjects();
             })
             .catch(function(e){ toast(e.message, true); })
-            .then(function(){ btn.disabled = false; btn.textContent = old; });
+            .then(function(){ PLAN_BUSY[pid] = false; btn.disabled = false; btn.textContent = old; });
         }
         $("#planAi").addEventListener("click", function(){ runPlan("ai", this); });
         $("#planTpl").addEventListener("click", function(){ runPlan("template", this); });
