@@ -3670,9 +3670,10 @@ def _personal_default_row_for_slot(
 ) -> Optional[IPContentScheduleTemplate]:
     """Return the personal-default row that belongs to one installation slot.
 
-    Slot rows win. A brand new device (or legacy data written before slots
-    existed) has no row of its own, so the account-level row with an empty
-    ``installation_id`` is returned until that device saves its own default.
+    口径（2026-09-19 明确）：**每个槽位只认自己的配置行**。
+    - 传了 installation_id：只精确匹配该槽位的行；查不到就返回 None（宁可让任务报
+      "请在当前设备的模板里配置人设/形象/声音"，也不借用别的槽位或账号级的配置）。
+    - 没传 installation_id：返回账号级的行（仅供账号级页面使用）。
     """
     slot = _clean_text(installation_id, 128)
 
@@ -3690,17 +3691,10 @@ def _personal_default_row_for_slot(
         ).first()
 
     if slot:
-        row = _query(slot)
-        if row is not None or not fallback_to_account:
-            return row
-    row = _query("")
-    # 历史遗留的账号级行可能是空壳（例如数字人形象/声音从未配置），而用户实际
-    # 在某个槽位里选过。回落到这种空壳会让"界面已选、启动说没选"。
-    if row is not None and not _personal_default_has_digital_human(row):
-        richer = _personal_default_row_with_digital_human(db, int(user_id), exclude_id=int(row.id))
-        if richer is not None:
-            return richer
-    return row
+        # 绝不回落账号级、绝不借用其它槽位的行（否则会出现"诺诺的设备用了阿迪的
+        # 人设/形象/声音"这种串台）。
+        return _query(slot)
+    return _query("")
 
 
 def _personal_default_has_digital_human(row: Optional[IPContentScheduleTemplate]) -> bool:

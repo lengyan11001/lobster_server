@@ -58,7 +58,7 @@ def test_save_and_read_are_scoped_per_installation(db_session, test_user):
     assert payload_b["item"]["requirements"]["common"] == "设备B"
 
 
-def test_new_device_falls_back_to_account_level_row(db_session, test_user):
+def test_new_device_does_not_inherit_account_level_row(db_session, test_user):
     from backend.app.api import ip_content_studio as studio
     from backend.app.models import IPContentScheduleTemplate
 
@@ -73,15 +73,16 @@ def test_new_device_falls_back_to_account_level_row(db_session, test_user):
         db=db_session,
     )
 
-    # A brand new device still sees the shared default ...
+    # 口径（2026-09-19）：新设备不再继承账号级配置——每个槽位只认自己那份，
+    # 没配就是空的（由工作流明确报"请在当前设备模板里配置"），不串台。
     payload = studio.get_personal_default_ip_content_config(
         x_installation_id="slot-new-0003",
         current_user=test_user,
         db=db_session,
     )
-    assert payload["item"]["requirements"]["common"] == "账号默认"
+    assert (payload["item"].get("requirements") or {}).get("common") in (None, "")
 
-    # ... and saving on that device must not rewrite the shared row.
+    # 该设备保存后生成自己的行，且不能改写账号级行。
     studio.save_personal_default_ip_content_config(
         body=studio.ScheduleTemplateBody(
             requirements={"common": "新设备"},
@@ -130,8 +131,9 @@ def test_execution_resolver_prefers_the_slot_row(db_session, test_user):
     db_session.commit()
 
     assert studio._personal_default_row_for_slot(db_session, test_user.id, "slot-x").requirements["profile_name"] == "设备X"
-    # Unknown slots and slot-less callers keep the account-level behaviour.
-    assert studio._personal_default_row_for_slot(db_session, test_user.id, "slot-y").requirements["profile_name"] == "账号"
+    # 口径：槽位只认自己的行——未知槽位不再回落账号级（宁可报错也不串台）。
+    assert studio._personal_default_row_for_slot(db_session, test_user.id, "slot-y") is None
+    # 不传槽位（账号级页面）时才返回账号级行。
     assert studio._personal_default_row_for_slot(db_session, test_user.id, "").requirements["profile_name"] == "账号"
 
 
@@ -176,18 +178,18 @@ def test_empty_account_row_falls_back_to_row_with_digital_human(db_session, test
     )
     db_session.commit()
 
-    # 另一个槽位没存过自己的行 → 回落到账号级空壳 → 再兜到有数字人的那行
+    # 另一个槽位没存过自己的行 → 只返回 None，绝不借用别的槽位的数字人配置
     row = studio._personal_default_row_for_slot(db_session, test_user.id, "slot-unknown")
-    assert studio._personal_default_has_digital_human(row) is True
-    assert row.installation_id == "slot-with-dh"
+    assert row is None
 
-    # 全都没有数字人配置时，行为保持不变（仍返回账号级行）
+    # 就算其它槽位的行被删掉，未知槽位也依然是 None（不存在任何回落）
     db_session.query(IPContentScheduleTemplate).filter(
         IPContentScheduleTemplate.installation_id == "slot-with-dh"
     ).update({IPContentScheduleTemplate.status: "deleted"})
     db_session.commit()
-    row2 = studio._personal_default_row_for_slot(db_session, test_user.id, "slot-unknown")
-    assert row2.installation_id == ""
+    assert studio._personal_default_row_for_slot(db_session, test_user.id, "slot-unknown") is None
+    # 账号级调用仍然拿账号级行
+    assert studio._personal_default_row_for_slot(db_session, test_user.id, "").installation_id == ""
 
 
 def test_slot_row_without_persona_does_not_borrow_the_account_persona(db_session, test_user):
