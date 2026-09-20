@@ -203,6 +203,15 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
 .tl-bar.active{background:#22d3ee}
 .tl-bar.blocked{background:#a78bfa;color:#150a2b}
 .tl-bar.pending{background:rgba(255,255,255,.30);color:#0b1220}
+.tl-bar{min-width:56px;text-overflow:ellipsis}
+/* 原生日期控件：深色底 + 可点的日历图标 */
+input[type="date"]{color-scheme:dark;min-width:132px}
+input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.85);opacity:.75;cursor:pointer}
+input[type="date"]::-webkit-calendar-picker-indicator:hover{opacity:1}
+/* 列表页搜索框 */
+input.search{height:34px;padding:0 11px;border-radius:9px;border:1px solid var(--w-line2);background:rgba(255,255,255,.04);color:var(--ink);font-size:12.5px}
+input.search::placeholder{color:var(--dim)}
+input.search:focus{outline:none;border-color:var(--accent)}
 .tl-legend{display:flex;gap:14px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--w-line);font-size:12px}
 .tl-legend span{display:inline-flex;align-items:center;gap:6px}
 .tl-legend i{width:12px;height:12px;border-radius:4px;display:inline-block}
@@ -348,8 +357,15 @@ body.overlay-open #drawer{z-index:501}
         <div class="dim" id="tlMeta" style="font-size:11px">—</div>
         <div id="tlTitle" style="font-size:14.5px;font-weight:600;margin-top:4px">任务时间线</div>
       </div>
-      <select id="tlProject" style="width:210px"></select>
-      <select id="tlRange" style="width:140px">
+      <select id="tlProject" style="width:180px"></select>
+      <button class="btn sm ghost" id="tlPrevWeek">← 上一周</button>
+      <button class="btn sm" id="tlThisWeek">今天起一周</button>
+      <button class="btn sm ghost" id="tlNextWeek">下一周 →</button>
+      <input id="tlFrom" type="date" style="width:140px" title="开始日期" />
+      <input id="tlTo" type="date" style="width:140px" title="结束日期" />
+      <button class="btn sm ghost" id="tlApply">应用</button>
+      <select id="tlRange" style="width:150px">
+        <option value="week">今天起一周（默认）</option>
         <option value="prev7">前 7 天 → 后 30 天</option>
         <option value="prev14">前 14 天 → 后 45 天</option>
         <option value="month">本月 ±1 个月</option>
@@ -793,6 +809,7 @@ body.overlay-open #drawer{z-index:501}
           + '<span class="dim" style="font-size:12px">每个人在这里提交今天做了什么</span></div>'
           + '<div class="row" style="gap:9px;margin-bottom:10px">'
           + '<input id="wlText" placeholder="例如：跟进 3 个客户，其中 1 个进入报价" style="flex:1" />'
+          + '<input id="wlDate" type="date" value="' + todayIso() + '" style="width:150px" title="哪一天做的" />'
           + '<input id="wlMin" placeholder="分钟" style="width:80px" />'
           + '<button class="btn sm" id="wlAdd">提交</button></div><div id="wlList"></div>';
         document.getElementById("wlAdd").addEventListener("click", submitWorklog);
@@ -954,8 +971,8 @@ body.overlay-open #drawer{z-index:501}
         + '<label class="fl">目标（AI 据此规划，必填）</label><textarea id="npGoal" rows="3"' + needStyle("goal") + ' placeholder="3 个月把抖音渠道做到月成交 30 万">' + (p ? (p.goal||"") : "") + '</textarea>'
         + '<label class="fl" style="margin-top:10px">成功标准</label><input id="npCrit" value="' + (p ? (p.success_criteria||"") : "") + '" placeholder="例如：单月成交 ≥30 万且回款率 ≥80%" />'
         + '<div style="display:flex;gap:10px;margin-top:10px">'
-        + '<div style="flex:1"><label class="fl">开始（必填）</label><input id="npStart"' + needStyle("start_at") + ' value="' + (p ? (p.start_at||"") : "") + '" placeholder="2026-09-15" /></div>'
-        + '<div style="flex:1"><label class="fl">结束（必填）</label><input id="npEnd"' + needStyle("end_at") + ' value="' + (p ? (p.end_at||"") : "") + '" placeholder="2026-12-15" /></div></div>'
+        + '<div style="flex:1"><label class="fl">开始（必填）</label><input id="npStart" type="date"' + needStyle("start_at") + ' value="' + (p ? (p.start_at||"") : "") + '" /></div>'
+        + '<div style="flex:1"><label class="fl">结束（必填）</label><input id="npEnd" type="date"' + needStyle("end_at") + ' value="' + (p ? (p.end_at||"") : "") + '" /></div></div>'
         + '<div class="dim" style="font-size:11.5px;margin-top:6px">周期建议填上：留空时生成规划只能按「今天起 90 天」兜底，且不填的历史数据里 AI 自己编过年份（任务一建出来就是「超期」）。</div>'
         + (p ? '<div style="margin-top:10px"><label class="fl">状态</label><select id="npStatus">'
               + [["planning","规划中"],["running","执行中"],["done","已完成"],["archived","已归档"]].map(function(x){
@@ -1478,8 +1495,8 @@ body.overlay-open #drawer{z-index:501}
       + '</select></div>'
       + '<div class="dsec"><h4>要求 / 交付标准</h4><textarea id="edReq" rows="4" placeholder="做成什么样才算完成">'+(n.requirement||"")+'</textarea></div>'
       + '<div class="dsec"><h4>时间节点</h4><div style="display:flex;gap:10px">'
-      + '<div style="flex:1"><label class="fl">开始</label><input id="edStart" value="'+(n.start_at||"")+'" placeholder="2026-09-15" /></div>'
-      + '<div style="flex:1"><label class="fl">结束</label><input id="edEnd" value="'+(n.end_at||"")+'" placeholder="2026-10-05" /></div></div></div>'
+      + '<div style="flex:1"><label class="fl">开始</label><input id="edStart" type="date" value="'+(n.start_at||"")+'" /></div>'
+      + '<div style="flex:1"><label class="fl">结束</label><input id="edEnd" type="date" value="'+(n.end_at||"")+'" /></div></div></div>'
       + '<div class="row" style="justify-content:flex-end;gap:9px">'
       + '<button class="btn sm ghost" id="edDispatch">派给虚拟员工</button>'
       + '<button class="btn sm ghost" id="edBack">返回</button>'
@@ -1792,15 +1809,27 @@ body.overlay-open #drawer{z-index:501}
   /* ================= 达成条件 ================= */
   var CAT = { people:"人", money:"钱", device:"设备 / 虚拟员工", material:"素材 / 工具",
               channel:"渠道 / 关系", compliance:"资质 / 合规", time:"时间" };
+  var COND_Q = "";
   function loadCond(){
     api("/api/manage/conditions?company_id=" + ACTIVE).then(function(d){
-      var cs = d.conditions || [];
-      var pending = cs.filter(function(c){ return !c.decided; }).length;
+      var csAll = d.conditions || [];
+      var pending = csAll.filter(function(c){ return !c.decided; }).length;
+      var cq = COND_Q.toLowerCase();
+      var cs = csAll.filter(function(c){
+        if (!cq) return true;
+        return String(c.title||"").toLowerCase().indexOf(cq) >= 0
+            || String(c.need||"").toLowerCase().indexOf(cq) >= 0
+            || String(c.gap||"").toLowerCase().indexOf(cq) >= 0
+            || String(c.now_state||"").toLowerCase().indexOf(cq) >= 0;
+      });
       $("#s-cond").innerHTML = '<div class="glass card"><div class="row" style="align-items:center;gap:10px">'
         + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13.5px">AI 达成条件分析</b>'
         + '<span class="dim" style="font-size:12px">以「把这个项目做成」为目标反推所需条件，不局限于现有资源</span>'
-        + '<span class="grow"></span><span class="tag '+(pending?"wn":"ok")+'">'+(pending? pending+" 项需要补位":"全部已处理")+'</span></div>'
+        + '<span class="grow"></span>'
+        + '<input id="condQ" placeholder="搜索条件 / 缺口" value="' + esc(COND_Q) + '" style="width:210px;height:34px" />'
+        + '<span class="tag '+(pending?"wn":"ok")+'">'+(pending? pending+" 项需要补位":"全部已处理")+'</span></div>'
         + '<div class="dim" style="font-size:12px;margin-top:8px">招聘只是其中一种补位动作。AI 会同时考虑：人、钱、设备与虚拟员工、素材工具、渠道关系、资质、时间。</div></div>'
+        + (COND_Q && !cs.length ? '<div class="dim" style="margin-top:10px">没有匹配的条件。</div>' : '')
         + (cs.length ? '<div class="g3" style="margin-top:12px">' + cs.map(function(c, i){
             var lv = c.severity === "high" ? "var(--bad)" : (c.severity === "mid" || c.severity === "medium" ? "var(--warn)" : "var(--ok)");
             var label = c.severity === "high" ? "影响达成" : ((c.severity === "mid" || c.severity === "medium") ? "需关注" : "可缓冲");
@@ -1812,7 +1841,7 @@ body.overlay-open #drawer{z-index:501}
               + (c.decided ? '<div style="font-size:12.5px;color:#6ee7b7">'+c.decided+'</div>'
                   : '<div style="font-size:12px;line-height:1.8">'
                     + '<div><span class="dim">需要</span> '+c.need+'</div>'
-                    + '<div><span class="dim">现状</span> '+c.now+'</div>'
+                    + '<div><span class="dim">现状</span> '+(c.now || c.now_state || "—")+'</div>'
                     + '<div><span class="dim">缺口</span> <span style="color:'+lv+'">'+c.gap+'</span></div>'
                     + '<div style="margin-top:6px;color:var(--muted)">'+c.impact+'</div></div>'
                     + '<div style="height:1px;background:var(--w-line);margin:11px 0"></div>'
@@ -1835,9 +1864,17 @@ body.overlay-open #drawer{z-index:501}
   }
 
   /* ================= 财务 ================= */
+  var FIN_Q = "";
   function loadFin(){
     api("/api/manage/finance?company_id=" + ACTIVE).then(function(d){
-      var s = d.summary || {}, es = d.entries || [];
+      var s = d.summary || {}, esAll = d.entries || [];
+      var fq = FIN_Q.toLowerCase();
+      var es = esAll.filter(function(e){
+        if (!fq) return true;
+        return String(e.summary||"").toLowerCase().indexOf(fq) >= 0
+            || String(e.on||"").toLowerCase().indexOf(fq) >= 0
+            || String(e.type||"").toLowerCase().indexOf(fq) >= 0;
+      });
       var mm = function(v){ return "¥" + Number(v || 0).toLocaleString("zh-CN"); };
       $("#s-fin").innerHTML =
         '<div class="g4">'
@@ -1846,8 +1883,12 @@ body.overlay-open #drawer{z-index:501}
         + '<div class="glass card kpi"><div class="t">净额</div><div class="v num">'+mm(s.net)+'</div></div>'
         + '<div class="glass card kpi"><div class="t">笔数</div><div class="v num">'+es.length+'</div></div></div>'
         + '<div class="glass card" style="margin-top:12px">'
-        + '<div class="row" style="align-items:center;margin-bottom:10px"><b style="font-size:13.5px">流水</b>'
-        + '<span class="grow"></span><button class="btn sm" id="addFin">＋ 记一笔</button></div>'
+        + '<div class="row" style="align-items:center;gap:9px;margin-bottom:10px"><b style="font-size:13.5px">流水</b>'
+        + '<span class="dim" style="font-size:11.5px">共 ' + esAll.length + ' 笔</span>'
+        + '<span class="grow"></span>'
+        + '<input id="finQ" placeholder="搜索摘要 / 日期" value="' + esc(FIN_Q) + '" style="width:200px;height:34px" />'
+        + '<button class="btn sm" id="addFin">＋ 记一笔</button></div>'
+        + (FIN_Q && !es.length ? '<div class="dim">没有匹配的流水。</div>' : '')
         + (es.length ? '<table class="tb"><thead><tr><th>日期</th><th>类型</th><th>摘要</th><th class="right">金额</th></tr></thead><tbody>'
             + es.map(function(e){
                 var c = e.type === "income" ? "#6ee7b7" : "#fda4af";
@@ -1856,12 +1897,17 @@ body.overlay-open #drawer{z-index:501}
                   + '<td class="right num" style="color:'+c+'">'+(e.type==="income"?"+":"-")+Number(e.amount||0).toLocaleString("zh-CN")+'</td></tr>';
               }).join("") + '</tbody></table>' : '<div class="dim">还没有流水。</div>')
         + '</div>';
+      var cqi = document.getElementById("condQ");
+      if (cqi) cqi.addEventListener("input", function(){
+        clearTimeout(cqi._t); var v = cqi.value;
+        cqi._t = setTimeout(function(){ COND_Q = v.trim(); loadCond(); }, 320);
+      });
       $("#addFin").addEventListener("click", function(){
         openDrawer("财务 · 记一笔", "收入 / 开销",
           '<div class="dsec"><label class="fl">类型</label><select id="fType"><option value="income">收入</option><option value="expense">开销</option></select>'
           + '<div style="margin-top:10px"><label class="fl">金额</label><input id="fAmt" placeholder="39800" /></div>'
           + '<div style="margin-top:10px"><label class="fl">摘要</label><input id="fSum" placeholder="客户回款 / 投放充值" /></div>'
-          + '<div style="margin-top:10px"><label class="fl">日期</label><input id="fOn" placeholder="2026-09-14" /></div></div>'
+          + '<div style="margin-top:10px"><label class="fl">日期</label><input id="fOn" type="date" /></div></div>'
           + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="fCancel">取消</button>'
           + '<button class="btn sm" id="fOk">保存</button></div>');
         $("#fCancel").addEventListener("click", closeDrawer);
@@ -2052,7 +2098,7 @@ body.overlay-open #drawer{z-index:501}
       + '不指派则由 AI 安排并至少给出指派建议（落到「条件」页）。</div></div>'
       + '<div class="dsec"><h4>下一步</h4>'
       + '<label class="fl">要做什么</label><input id="cuNext" value="' + (c ? (c.next_action || "") : "") + '" style="margin-bottom:10px" />'
-      + '<label class="fl">什么时候之前</label><input id="cuNextAt" value="' + (c ? (c.next_follow_at || "") : "") + '" placeholder="2026-09-20" /></div>'
+      + '<label class="fl">什么时候之前</label><input id="cuNextAt" type="date" value="' + (c ? (c.next_follow_at || "") : "") + '" /></div>'
       + '<div class="dsec"><h4>备注</h4><textarea id="cuNotes" rows="3">' + (c ? (c.notes || "") : "") + '</textarea></div>'
       + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="cuCancel">取消</button>'
       + '<button class="btn sm" id="cuOk">' + (c ? "保存" : "创建") + '</button></div>';
@@ -2149,6 +2195,7 @@ body.overlay-open #drawer{z-index:501}
             return '<option value="' + x[0] + '">' + x[1] + '</option>'; }).join("")
         + '</select></div>'
         + '<div style="flex:1"><label class="fl">推进到阶段</label><select id="fuStage"><option value="">不变</option>' + stageOpts + '</select></div></div>'
+        + '<div style="margin-top:10px"><label class="fl">跟进日期</label><input id="fuDate" type="date" value="' + todayIso() + '" /></div>'
         + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" id="fuOk">提交跟进</button></div></div>'
         + '<div class="dsec"><h4>AI 辅助</h4>'
         + '<div class="dim" style="font-size:11.5px">AI 会读这条跟进线 + 客户资料，给出下一步跟进建议'
@@ -2175,7 +2222,8 @@ body.overlay-open #drawer{z-index:501}
         if (!text) return toast("写点内容", true);
         api("/api/manage/customers/" + id + "/log", { method: "POST", body: {
           kind: document.getElementById("fuKind").value, content: text,
-          to_stage: document.getElementById("fuStage").value } })
+          to_stage: document.getElementById("fuStage").value,
+          happened_at: ((document.getElementById("fuDate") || {}).value || "") } })
           .then(function(){ toast("已记录"); loadCrm(); openFollowUp(id); loadDeliv(); })
           .catch(function(e){ toast(e.message, true); });
       });
@@ -2183,7 +2231,7 @@ body.overlay-open #drawer{z-index:501}
   }
 
   /* ================= 交付 ================= */
-  var DELIV_STATUS = "", DELIV_CACHE = [], DELIV_LABELS = {}, DELIV_COUNTS = {};
+  var DELIV_STATUS = "", DELIV_CACHE = [], DELIV_LABELS = {}, DELIV_COUNTS = {}, DELIV_Q = "";
 
   function delivCard(x){
     var c = x.status === "accepted" ? "#6ee7b7" : (x.status === "review" ? "#fcd34d" : (x.status === "doing" ? "#7fe6f7" : "#8b98ae"));
@@ -2215,10 +2263,20 @@ body.overlay-open #drawer{z-index:501}
       .then(function(d){
         DELIV_CACHE = d.deliveries || []; DELIV_LABELS = d.labels || {}; DELIV_COUNTS = d.counts || {};
         var pend = d.won_without_delivery || [];
+        var dq = DELIV_Q.toLowerCase();
+        var dvList = DELIV_CACHE.filter(function(x){
+          if (!dq) return true;
+          return String(x.name||"").toLowerCase().indexOf(dq) >= 0
+              || String(x.customer_name||"").toLowerCase().indexOf(dq) >= 0
+              || String(x.owner_name||"").toLowerCase().indexOf(dq) >= 0
+              || String(x.note||"").toLowerCase().indexOf(dq) >= 0;
+        });
         $("#s-deliv").innerHTML = '<div class="glass card">'
           + '<div class="row" style="align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap">'
           + '<b style="font-size:13.5px">交付</b><span class="dim" style="font-size:12px">已成交客户 → 交付单 → 验收</span>'
-          + '<span class="grow"></span><button class="btn sm" id="addDeliv">＋ 新建交付单</button></div>'
+          + '<span class="grow"></span>'
+          + '<input id="delivQ" placeholder="搜索交付单 / 客户 / 负责人" value="' + esc(DELIV_Q) + '" style="width:230px;height:34px" />'
+          + '<button class="btn sm" id="addDeliv">＋ 新建交付单</button></div>'
           + '<div class="arrbar" style="margin-bottom:12px">'
           + '<button class="btn sm ' + (DELIV_STATUS === "" ? "" : "ghost") + '" data-dstatus="">全部</button>'
           + Object.keys(DELIV_LABELS).map(function(k){
@@ -2232,9 +2290,14 @@ body.overlay-open #drawer{z-index:501}
                     + Number(c.amount || 0).toLocaleString("zh-CN") + '</span></span>'
                     + '<button class="btn sm" data-dfrom="' + c.id + '" data-name="' + c.name + '">建交付单</button></div>'; }).join("")
               + '</div>' : '')
-          + (DELIV_CACHE.length ? '<div class="g3">' + DELIV_CACHE.map(delivCard).join("") + '</div>'
-                                : '<div class="dim">还没有交付单。客户成交后这里会自动提醒建单。</div>')
+          + (dvList.length ? '<div class="g3">' + dvList.map(delivCard).join("") + '</div>'
+                                : '<div class="dim">' + (DELIV_Q ? "没有匹配的交付单。" : "还没有交付单。客户成交后这里会自动提醒建单。") + '</div>')
           + '</div>';
+        var dqi = document.getElementById("delivQ");
+        if (dqi) dqi.addEventListener("input", function(){
+          clearTimeout(dqi._t); var v = dqi.value;
+          dqi._t = setTimeout(function(){ DELIV_Q = v.trim(); loadDeliv(); }, 320);
+        });
         $$("#s-deliv [data-dstatus]").forEach(function(b){
           b.addEventListener("click", function(){ DELIV_STATUS = b.dataset.dstatus; loadDeliv(); });
         });
@@ -2302,6 +2365,7 @@ body.overlay-open #drawer{z-index:501}
         + '</select></div>'
         + '<div style="flex:1"><label class="fl">推进到状态</label><select id="dflStatus"><option value="">不变</option>'
         + statusOpts + '</select></div></div>'
+        + '<div style="margin-top:10px"><label class="fl">跟进日期</label><input id="dflDate" type="date" value="' + todayIso() + '" /></div>'
         + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sm" id="dflOk">提交跟进</button></div></div>'
         + '<div class="dsec"><h4>AI 辅助</h4>'
         + '<div class="dim" style="font-size:11.5px">AI 会读这条跟进线 + 交付资料（含客户资料），给出下一步跟进建议</div>'
@@ -2327,7 +2391,8 @@ body.overlay-open #drawer{z-index:501}
         if (!text) return toast("写点内容", true);
         api("/api/manage/deliveries/" + id + "/log", { method: "POST", body: {
           kind: document.getElementById("dflKind").value, content: text,
-          to_status: document.getElementById("dflStatus").value } })
+          to_status: document.getElementById("dflStatus").value,
+          happened_at: ((document.getElementById("dflDate") || {}).value || "") } })
           .then(function(){ toast("已记录"); loadDeliv(); openDeliveryFollowUp(id); })
           .catch(function(e){ toast(e.message, true); });
       });
@@ -2370,7 +2435,7 @@ body.overlay-open #drawer{z-index:501}
     var html = '<div class="dsec"><h4>交付单</h4>'
       + '<label class="fl">名称</label><input id="dvName" value="' + (x ? x.name : "") + '" style="margin-bottom:10px" placeholder="例如：华创科技 抖音代运营交付" />'
       + '<div style="display:flex;gap:10px;margin-bottom:10px">'
-      + '<div style="flex:1"><label class="fl">承诺交付时间</label><input id="dvPromised" value="' + (x ? (x.promised_at || "") : "") + '" placeholder="2026-10-01" /></div>'
+      + '<div style="flex:1"><label class="fl">承诺交付时间</label><input id="dvPromised" type="date" value="' + (x ? (x.promised_at || "") : "") + '" /></div>'
       + (x ? '<div style="flex:1"><label class="fl">状态</label><select id="dvStatus">'
             + Object.keys(DELIV_LABELS).map(function(k){
                 return '<option value="' + k + '"' + (x.status === k ? " selected" : "") + '>' + DELIV_LABELS[k] + '</option>'; }).join("")
@@ -2540,7 +2605,7 @@ body.overlay-open #drawer{z-index:501}
   }
 
   /* ================= 虚拟员工 ================= */
-  var AI_CACHE = [];
+  var AI_CACHE = [], AI_Q = "";
   var CAP_LIST = ["抖音发布","私信承接","线索采集","批量剪辑","字幕生成","朋友圈","社群群发","消息承接","视频号发布","数据报表"];
 
   var AI_WINDOW = "1d";
@@ -2583,12 +2648,21 @@ body.overlay-open #drawer{z-index:501}
     api("/api/manage/ai-employees?company_id=" + ACTIVE + "&window=" + AI_WINDOW).then(function(d){
       AI_CACHE = d.ai_employees || [];
       var s = d.summary || {};
+      var aq = AI_Q.toLowerCase();
+      var aiList = AI_CACHE.filter(function(x){
+        if (!aq) return true;
+        return String(x.name||"").toLowerCase().indexOf(aq) >= 0
+            || String(x.installation_id||"").toLowerCase().indexOf(aq) >= 0
+            || String(x.device_id||"").toLowerCase().indexOf(aq) >= 0
+            || String(x.owner_name||"").toLowerCase().indexOf(aq) >= 0;
+      });
       $("#s-ai").innerHTML = '<div class="glass card" style="margin-bottom:12px">'
         + '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">'
         + '<b style="font-size:13.5px">虚拟员工</b>'
         + '<span class="dim" style="font-size:12px">只显示手动添加的设备（离线也一直在这里）· 执行情况按窗口汇总，不做累计</span>'
         + '<span class="grow"></span>'
         + aiWinBtn("1d", "今日") + aiWinBtn("7d", "近 7 天") + aiWinBtn("30d", "近 30 天") + aiWinBtn("all", "全部")
+        + '<input id="aiQ" placeholder="搜索设备 / 槽位 / 归属" value="' + esc(AI_Q) + '" style="width:210px;height:34px" />'
         + '<button class="btn sm" id="aiAdd" style="margin-left:8px">＋ 添加设备</button>'
         + '</div>'
         + '<div class="row" style="gap:12px;margin-top:10px;flex-wrap:wrap">'
@@ -2598,10 +2672,15 @@ body.overlay-open #drawer{z-index:501}
         + (s.failed ? '<span class="tag" style="color:#fda4af">失败 ' + s.failed + '</span>' : '')
         + (s.running ? '<span class="tag">进行中 ' + s.running + '</span>' : '')
         + '</div></div>'
-        + (AI_CACHE.length ? '<div class="g3">' + AI_CACHE.map(aiCard).join("") + '</div>'
+        + (aiList.length ? '<div class="g3">' + aiList.map(aiCard).join("") + '</div>'
                            : '<div class="glass card"><div class="dim">还没有添加设备。点右上「＋ 添加设备」：有槽位号就直接填槽位号；怕槽位号被冒领，就用那台设备远程窗口上的「设备号 + 验证码」添加。</div></div>');
       $$("#s-ai [data-aiwin]").forEach(function(b){
         b.addEventListener("click", function(){ AI_WINDOW = b.dataset.aiwin; loadAi(); });
+      });
+      var aqi = document.getElementById("aiQ");
+      if (aqi) aqi.addEventListener("input", function(){
+        clearTimeout(aqi._t); var v = aqi.value;
+        aqi._t = setTimeout(function(){ AI_Q = v.trim(); loadAi(); }, 320);
       });
       var addBtn = document.getElementById("aiAdd");
       if (addBtn) addBtn.addEventListener("click", openAiAdd);
@@ -2799,8 +2878,10 @@ body.overlay-open #drawer{z-index:501}
     var text = ((el && el.value) || "").trim();
     if (!text) return toast("写点内容再提交", true);
     var minEl = document.getElementById("wlMin");
+    var dateEl = document.getElementById("wlDate");
     api("/api/manage/worklogs", { method: "POST", body: {
-      company_id: ACTIVE, content: text, minutes: Number((minEl && minEl.value) || 0) } })
+      company_id: ACTIVE, content: text, minutes: Number((minEl && minEl.value) || 0),
+      worked_on: ((dateEl && dateEl.value) || "") } })
       .then(function(){ el.value = ""; toast("已提交"); loadWorklogs(); })
       .catch(function(e){ toast(e.message, true); });
   }
@@ -3023,8 +3104,8 @@ body.overlay-open #drawer{z-index:501}
     active:  { label: "进行中", color: "#22d3ee", tag: "cy" },
     blocked: { label: "受阻",   color: "#a78bfa", tag: "" },
     pending: { label: "未开始", color: "rgba(255,255,255,.32)", tag: "" } };
-  var MYT = { data: null, showDone: true };
-  var TL = { data: null, projectId: "", range: "prev7", dayW: 30 };
+  var MYT = { data: null, showDone: true, q: "" };
+  var TL = { data: null, projectId: "", range: "week", dayW: 84, from: "", to: "" };
 
   function taskStateTag(state){
     var s = TASK_STATE[state] || TASK_STATE.pending;
@@ -3037,6 +3118,35 @@ body.overlay-open #drawer{z-index:501}
     if (t.days_left === 0) return "今天到期";
     return "还剩 " + t.days_left + " 天";
   }
+  function todayIso(){ var d = new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  /* ---------- 列表页搜索（客户端过滤已加载的缓存） ---------- */
+  var LIST_Q = {};
+  var RERENDER = {};
+  function qMatch(key, fields){
+    var q = (LIST_Q[key] || "").trim().toLowerCase();
+    if (!q) return true;
+    for (var i = 0; i < fields.length; i++){
+      var v = fields[i];
+      if (v !== null && v !== undefined && String(v).toLowerCase().indexOf(q) >= 0) return true;
+    }
+    return false;
+  }
+  function searchBox(key, placeholder, width){
+    return '<input class="search" data-q="' + key + '" value="' + esc(LIST_Q[key] || "") + '" placeholder="'
+      + esc(placeholder || "搜索…") + '" style="width:' + (width || 190) + 'px" />';
+  }
+  function bindSearch(rootId){
+    $$("#" + rootId + " [data-q]").forEach(function(el){
+      var key = el.dataset.q;
+      el.addEventListener("input", function(){
+        LIST_Q[key] = el.value;
+        if (RERENDER[key]) RERENDER[key]();
+        var again = document.querySelector("#" + rootId + " [data-q='" + key + "']");
+        if (again){ again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) {} }
+      });
+    });
+  }
+
   function esc(v){ return String(v === null || v === undefined ? "" : v).replace(/[&<>"]/g, function(c){
     return ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]; }); }
 
@@ -3053,7 +3163,14 @@ body.overlay-open #drawer{z-index:501}
   function renderMyTasks(){
     var d = MYT.data || { tasks: [], summary: {}, scope: "mine" };
     var s = d.summary || {};
-    var tasks = d.tasks || [];
+    var _mq = (MYT.q || "").toLowerCase();
+    var tasks = (d.tasks || []).filter(function(x){
+      if (!_mq) return true;
+      return String(x.title||"").toLowerCase().indexOf(_mq) >= 0
+          || String(x.owner_name||"").toLowerCase().indexOf(_mq) >= 0
+          || String(x.project_name||"").toLowerCase().indexOf(_mq) >= 0
+          || String(x.requirement||"").toLowerCase().indexOf(_mq) >= 0;
+    });
     var kpi = function(label, key, color){
       return '<div class="k"><b style="color:' + color + '">' + (s[key] || 0) + '</b><span>' + label + '</span></div>';
     };
@@ -3075,6 +3192,7 @@ body.overlay-open #drawer{z-index:501}
       + '<span class="dim" style="font-size:12px">' + (d.scope === "all" ? "平台管理员视角：全部任务" : "只显示派给自己的任务")
       + ' · 今天 ' + esc(d.today || "") + '</span>'
       + '<span class="grow"></span>'
+      + '<input id="mytQ" placeholder="搜索任务 / 负责人 / 项目" value="' + esc(MYT.q || "") + '" style="width:220px;height:34px" />'
       + '<button class="btn sm ' + (MYT.showDone ? "ghost" : "") + '" id="mytDone">' + (MYT.showDone ? "隐藏已完成" : "显示已完成") + '</button>'
       + '<button class="btn sm ghost" id="mytReload">↻ 刷新</button>'
       + '<button class="btn sm ghost" id="mytTimeline">🕒 时间线</button></div>'
@@ -3101,6 +3219,15 @@ body.overlay-open #drawer{z-index:501}
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       var b = document.querySelector('.rail button[data-go="s-proj"]');
       if (b){ b.classList.add("on"); b.click(); }
+    });
+    var mqi = document.getElementById("mytQ");
+    if (mqi) mqi.addEventListener("input", function(){
+      clearTimeout(mqi._t); var v = mqi.value;
+      mqi._t = setTimeout(function(){
+        MYT.q = v.trim(); renderMyTasks();
+        var again = document.getElementById("mytQ");
+        if (again){ again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) {} }
+      }, 300);
     });
     document.getElementById("mytReload").addEventListener("click", function(){ MYT.data = null; loadMyTasks(); });
     document.getElementById("mytDone").addEventListener("click", function(){
@@ -3194,18 +3321,21 @@ body.overlay-open #drawer{z-index:501}
     });
   }
 
+  function tlIso(d){ return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function tlShift(base, n){ var d = new Date(base.getTime()); d.setDate(d.getDate() + n); return d; }
+  // 默认：今天 → 今天+6（一周）；custom 时用工具栏上选的两个日期
   function tlRangeDays(){
-    var today = new Date();
-    var iso = function(d){ return d.toISOString().slice(0, 10); };
-    var shift = function(n){ var d = new Date(today.getTime()); d.setDate(d.getDate() + n); return d; };
-    if (TL.range === "prev14") return [iso(shift(-14)), iso(shift(45))];
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    if (TL.range === "custom" && TL.from && TL.to) return [TL.from, TL.to];
+    if (TL.range === "prev7")  return [tlIso(tlShift(today, -7)), tlIso(tlShift(today, 30))];
+    if (TL.range === "prev14") return [tlIso(tlShift(today, -14)), tlIso(tlShift(today, 45))];
     if (TL.range === "month") {
       var first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       var last = new Date(today.getFullYear(), today.getMonth() + 2, 0);
-      return [iso(first), iso(last)];
+      return [tlIso(first), tlIso(last)];
     }
     if (TL.range === "all") return ["", ""];
-    return [iso(shift(-7)), iso(shift(30))];
+    return [tlIso(today), tlIso(tlShift(today, 6))];   // week（默认）
   }
 
   function openTimeline(){
@@ -3218,9 +3348,62 @@ body.overlay-open #drawer{z-index:501}
           return '<option value="' + p.id + '"' + (String(TL.projectId) === String(p.id) ? " selected" : "") + '>' + esc(p.name) + '</option>';
         }).join("");
     document.getElementById("tlRange").value = TL.range;
+    var _r = tlRangeDays();
+    document.getElementById("tlFrom").value = _r[0] || "";
+    document.getElementById("tlTo").value = _r[1] || "";
+    bindTimelineToolbar();
     loadTimeline();
   }
-  function closeTimeline(){
+    function tlSetWindow(deltaWeeks){
+    var base = new Date();
+    if (TL.from && TL.to){
+      base = new Date(TL.from + "T00:00:00");
+      base = new Date(base.getTime() + deltaWeeks * 7 * 86400000);
+    } else if (deltaWeeks) {
+      base = tlShift(new Date(), deltaWeeks * 7);
+    }
+    TL.range = "custom";
+    TL.from = tlIso(base);
+    TL.to = tlIso(tlShift(base, 6));
+    document.getElementById("tlRange").value = "custom";
+    document.getElementById("tlFrom").value = TL.from;
+    document.getElementById("tlTo").value = TL.to;
+    loadTimeline();
+  }
+  function tlApplyRange(){
+    var f = document.getElementById("tlFrom").value, to = document.getElementById("tlTo").value;
+    if (!f || !to) { toast("请选开始和结束日期", true); return; }
+    if (to < f) { toast("结束日期不能早于开始日期", true); return; }
+    TL.range = "custom"; TL.from = f; TL.to = to;
+    loadTimeline();
+  }
+  function bindTimelineToolbar(){
+    var pw = document.getElementById("tlPrevWeek");
+    var tw = document.getElementById("tlThisWeek");
+    var nw = document.getElementById("tlNextWeek");
+    var ap = document.getElementById("tlApply");
+    if (pw) pw.addEventListener("click", function(){ tlSetWindow(-1); });
+    if (tw) tw.addEventListener("click", function(){
+      var today = new Date(); today.setHours(0, 0, 0, 0);
+      TL.range = "week"; TL.from = ""; TL.to = "";
+      document.getElementById("tlRange").value = "week";
+      document.getElementById("tlFrom").value = tlIso(today);
+      document.getElementById("tlTo").value = tlIso(tlShift(today, 6));
+      loadTimeline();
+    });
+    if (nw) nw.addEventListener("click", function(){ tlSetWindow(1); });
+    if (ap) ap.addEventListener("click", tlApplyRange);
+    var sel = document.getElementById("tlRange");
+    if (sel) sel.addEventListener("change", function(){
+      TL.range = sel.value; TL.from = ""; TL.to = "";
+      var r = tlRangeDays();
+      document.getElementById("tlFrom").value = r[0] || "";
+      document.getElementById("tlTo").value = r[1] || "";
+      loadTimeline();
+    });
+  }
+
+function closeTimeline(){
     var modal = document.getElementById("tlModal");
     if (modal) modal.classList.add("hide");
     syncOverlayLayer();
@@ -3333,7 +3516,8 @@ body.overlay-open #drawer{z-index:501}
         + '<span class="dim">' + esc(t.owner_name || "未指派") + '</span>'
         + '<span style="color:' + st.color + ';font-size:11px">' + st.label + '</span></div>';
       var left = (t.offset_days || 0) * dayW + 2;
-      var w = Math.max(dayW - 4, (t.span_days || 1) * dayW - 4);
+      // 条要能看清：至少留出文字宽度（一周窗口下 1 天任务也有 ~110px），跨多天按天数铺开
+      var w = Math.max(110, (t.span_days || 1) * dayW - 4);
       var label = esc(t.title) + (t.span_days > 1 ? '  (' + t.span_days + ' 天)' : '');
       canvasHtml += '<div class="tl-grid-row" style="height:38px">'
         + '<div class="tl-bar ' + t.state + '" style="left:' + left + 'px;width:' + w + 'px" '
@@ -3345,6 +3529,13 @@ body.overlay-open #drawer{z-index:501}
 
     document.getElementById("tlLeft").innerHTML = leftHtml;
     document.getElementById("tlRight").innerHTML = canvasHtml;
+    // 打开/切换窗口后自动把「今天」滚到可视区左边一点，后面几天可以继续往右滑
+    try {
+      var wrap = document.getElementById("tlRight");
+      var idx = Math.max(0, (d.window.today_index !== undefined && d.window.today_index !== null)
+                            ? d.window.today_index : 0);
+      wrap.scrollLeft = Math.max(0, idx * dayW - 40);
+    } catch (err) {}
     $$("#tlModal [data-tlbar]").forEach(function(el){
       el.addEventListener("click", function(){ tlTaskDetail(Number(el.dataset.tlbar)); });
     });
