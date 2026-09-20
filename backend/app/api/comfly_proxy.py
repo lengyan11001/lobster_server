@@ -912,6 +912,100 @@ def _settle_video_charge_by_task(
         db.close()
 
 
+_UPSTREAM_VIDEO_PROMPT_MAX_CHARS = 3900
+
+
+def _limit_upstream_video_prompt(text: Any, max_chars: int = _UPSTREAM_VIDEO_PROMPT_MAX_CHARS) -> str:
+    """把视频提示词截进上游上限（xAI / comfly grok / OpenMind 都是 4096），保留头尾。
+
+    2026-09-20 排查：老客户端没有客户端侧 3800 字符截断，长提示词让三个兜底通道
+    全部回 "Prompt length exceeds the maximum allowed length of 4096"，整单失败。
+    """
+    value = str(text or "").strip()
+    limit = max(1, int(max_chars or _UPSTREAM_VIDEO_PROMPT_MAX_CHARS))
+    if len(value) <= limit:
+        return value
+    marker = "……（内容过长已截断）……"
+    budget = max(1, limit - len(marker))
+    head = (budget * 2) // 3
+    tail = budget - head
+    trimmed = f"{value[:head].rstrip()}{marker}{value[-tail:].lstrip() if tail else ''}"
+    return trimmed[:limit]
+
+
+def _wan30_body_from_seedance_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+    """把「seedance 直连风格」的 body 转成 wan3.0（DashScope）需要的字段。
+
+    老客户端（OTA 落后于 2026-09-12）不认识 dashscope 通道，会把 wan3.0 打到
+    /seedance/v3/contents/generations/tasks，body 形如：
+      {"model": "wan3.0-video",
+       "content": [{"type": "text", "text": "..."},
+                   {"type": "image_url", "image_url": {"url": "https://..."}}],
+       "ratio": "9:16", "duration": 10}
+    这里把 prompt/首帧/时长/比例抽出来，交给 DashScope 通道，避免 Comfly 404。
+    """
+    prompt_parts: List[str] = []
+    images: List[str] = []
+    content = (body or {}).get("content")
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type == "text":
+                text = str(item.get("text") or "").strip()
+                if text:
+                    prompt_parts.append(text)
+            elif item_type in {"image_url", "image", "input_image", "first_frame"}:
+                ref = item.get("image_url")
+                if isinstance(ref, dict):
+                    ref = ref.get("url")
+                ref = str(ref or item.get("url") or "").strip()
+                if ref:
+                    images.append(ref)
+    prompt = str((body or {}).get("prompt") or "").strip() or "\n".join(prompt_parts)
+    for key in ("images", "image_urls", "image_url", "image", "filePaths", "media_files"):
+        value = (body or {}).get(key)
+        if isinstance(value, str) and value.strip():
+            images.append(value.strip())
+        elif isinstance(value, list):
+            for item in value:
+                ref = item.get("url") if isinstance(item, dict) else item
+                if str(ref or "").strip():
+                    images.append(str(ref).strip())
+    out: Dict[str, Any] = {"model": _canonical_video_model(str((body or {}).get("model") or "wan3.0-video"))}
+    if prompt:
+        out["prompt"] = prompt
+    if images:
+        out["images"] = images[:1]
+        out["image_url"] = images[0]
+    ratio = (body or {}).get("ratio") or (body or {}).get("aspect_ratio")
+    if ratio:
+        out["ratio"] = ratio
+    duration = (body or {}).get("duration") or (body or {}).get("seconds")
+    if duration:
+        out["duration"] = duration
+    resolution = (body or {}).get("resolution")
+    if resolution:
+        out["resolution"] = resolution
+    return out
+
+
+async def _submit_wan30_via_seedance_route(body: Dict[str, Any], model: str) -> Dict[str, Any]:
+    """在 seedance 直连路由上收到 wan3.0 时，改走 DashScope（老客户端兼容）。"""
+    wan_body = _wan30_body_from_seedance_payload(body)
+    resp = await call_comfly_video_generate(model, wan_body)
+    if isinstance(resp, dict) and resp.get("error"):
+        error = resp.get("error")
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        raise RuntimeError(message or "DashScope Wan3.0 提交失败")
+    task_id = _task_id_from_response(resp)
+    if isinstance(resp, dict) and task_id:
+        # 客户端在 seedance 分支里只认顶层 id/task_id，这里补上；其余字段原样带回供轮询使用
+        resp = {**resp, "id": task_id, "task_id": task_id}
+    return resp
+
+
 async def _save_generated_images_best_effort_by_user_id(
     user_id: int,
     *,
@@ -2366,6 +2460,8 @@ def _openmind_video_model(model: str) -> str:
 def _openmind_video_body(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     forwarded = dict(body or {})
     forwarded["model"] = _openmind_video_model(model)
+    if forwarded.get("prompt"):
+        forwarded["prompt"] = _limit_upstream_video_prompt(forwarded.get("prompt"))
     duration_value = None
     for key in ("duration", "seconds"):
         if key in forwarded and forwarded.get(key) is not None:
@@ -2755,7 +2851,7 @@ def _xai_video_api_key() -> str:
 
 def _xai_video_body(body: Dict[str, Any], model: str) -> Dict[str, Any]:
     source = dict(body or {})
-    prompt = str(source.get("prompt") or "").strip()
+    prompt = _limit_upstream_video_prompt(source.get("prompt"))
     if not prompt:
         raise HTTPException(400, "missing prompt")
     try:
@@ -3295,7 +3391,7 @@ async def _build_comfly_grok15_multipart(
     entry: Dict[str, Any],
 ) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]], str, List[Any], List[Path]]:
     forwarded = dict(body or {})
-    prompt = str(forwarded.get("prompt") or "").strip()
+    prompt = _limit_upstream_video_prompt(forwarded.get("prompt"))
     duration = forwarded.get("duration") or forwarded.get("seconds") or 6
     # The dedicated ComfyUI video relay accepts the canonical model id. The
     # legacy Comfly Grok route still uses duration-specific model aliases.
@@ -5357,26 +5453,41 @@ async def proxy_seedance_tasks_submit(
         raise HTTPException(400, "缺少 model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
+    seedance_api_format = str(entry.get("api_format") or "").strip().lower()
+    seedance_is_wan30 = seedance_api_format == "dashscope_wan30"
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if seedance_is_wan30 and segment_key:
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="seedance_submit",
+        extra_meta=_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     _audit("seedance_submit_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
 
     try:
-        resp = await _comfly_request(
-            "POST",
-            _comfly_url("/seedance/v3/contents/generations/tasks", model),
-            upstream_body,
-            _comfly_headers(model),
-            _TIMEOUT_VIDEO_SUBMIT,
-        )
+        if seedance_is_wan30:
+            # 老客户端把 wan3.0 提交到 seedance 直连路由：Comfly 会 404，这里改走 DashScope
+            resp = await _submit_wan30_via_seedance_route(body, model)
+        else:
+            resp = await _comfly_request(
+                "POST",
+                _comfly_url("/seedance/v3/contents/generations/tasks", model),
+                upstream_body,
+                _comfly_headers(model),
+                _TIMEOUT_VIDEO_SUBMIT,
+            )
     except Exception as e:
         _do_full_refund_by_user_id(billing_user_id, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit", error=str(e))
@@ -5384,8 +5495,11 @@ async def proxy_seedance_tasks_submit(
         raise HTTPException(502, f"Comfly Seedance submit 调用失败：{e}")
 
     data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+    seedance_task_id = str(resp.get("id") or resp.get("task_id") or data.get("task_id") or data.get("id") or "").strip()
+    if pre > 0 and seedance_task_id:
+        _bind_video_charge_to_task(user_id=billing_user_id, hold_key=hold_key, task_id=seedance_task_id)
     _audit("seedance_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
-           task_id=resp.get("id") or resp.get("task_id") or data.get("task_id") or data.get("id"),
+           task_id=seedance_task_id,
            pre=credits_json_float(pre))
     return JSONResponse(resp)
 
@@ -5406,5 +5520,19 @@ async def proxy_seedance_tasks_poll(
             _TIMEOUT_VIDEO_POLL,
         )
     except Exception as e:
-        raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}")
+        # 老客户端把 wan3.0 打到 seedance 路由，Comfly 查不到这个任务（404/400）→ 改问 DashScope
+        message = str(e).lower()
+        if "http 404" not in message and "http 400" not in message:
+            raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}")
+        try:
+            resp = await _poll_comfly_video_task(task_id, model="wan3.0-video", api_kind="dashscope_wan30")
+        except Exception as wan_exc:  # noqa: BLE001
+            raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}") from wan_exc
+    # 按上游回执结算（失败全退 / 按秒结算差额），老客户端这条路径也能享受
+    _settle_video_charge_by_task(
+        user_id=int(current_user.id),
+        task_id=task_id,
+        payload=resp,
+        model_hint="wan3.0-video",
+    )
     return JSONResponse(resp)
