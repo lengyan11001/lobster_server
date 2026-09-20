@@ -2021,6 +2021,52 @@ ROBOT_ACTION_GROUPS = [
     ("content", "\u5185\u5bb9 / \u6587\u6848", ["ip_content_daily"]),
 ]
 ROBOT_DONE = {"completed", "success", "succeeded", "done", "succeed"}
+ROBOT_FAIL = {"failed", "error", "timeout", "canceled", "cancelled"}
+# \u4e2d\u65ad / \u8df3\u8fc7\uff1a\u4e0d\u662f\u771f\u5931\u8d25\uff08\u5ba2\u6237\u7aef\u91cd\u542f\u3001\u8282\u70b9\u65f6\u95f4\u5230\u3001\u5de5\u4f5c\u6d41\u505c\u7528\u3001\u6b63\u5e38\u6536\u5de5\uff09
+ROBOT_INTERRUPTED_HINTS = (
+    "\u5df2\u4e2d\u65ad", "\u5df2\u91cd\u542f", "\u5f02\u5e38\u9000\u51fa", "\u957f\u65f6\u95f4\u672a\u4e0a\u62a5\u8fdb\u5ea6",
+    "\u5df2\u505c\u7528", "\u5df2\u505c\u6b62", "\u8282\u70b9\u65f6\u95f4\u5df2\u7ed3\u675f", "\u8282\u70b9\u65f6\u95f4\u5df2\u5230",
+    "\u5df2\u8fc7\u671f", "\u8d85\u8fc7\u6709\u6548\u6267\u884c\u65f6\u95f4", "\u6b63\u5e38\u6536\u5de5", "\u5df2\u81ea\u52a8\u505c\u6b62",
+    "\u672c\u8f6e\u4efb\u52a1\u5df2\u7ed3\u675f", "\u8df3\u8fc7\uff1a", "skipped",
+)
+# \u5931\u8d25\u539f\u56e0\u5f52\u7c7b\uff08\u987a\u5e8f\u6709\u610f\u4e49\uff1a\u5148\u5339\u914d\u66f4\u5177\u4f53\u7684\uff09
+ROBOT_FAIL_RULES = [
+    ("unsupported", "\u5ba2\u6237\u7aef\u672a\u5b9e\u73b0\u8be5\u52a8\u4f5c", ("\u6682\u4e0d\u652f\u6301",)),
+    ("server_5xx", "\u670d\u52a1\u7aef 5xx / \u7f51\u5173\u9519\u8bef", ("502", "503", "504", "Bad Gateway", "Service Unavailable")),
+    ("client_bug", "\u5ba2\u6237\u7aef\u4ee3\u7801\u9519\u8bef\uff08\u65e7\u7248\uff09", ("has no attribute", "AttributeError", "Traceback", "TypeError")),
+    ("login", "\u672a\u767b\u5f55 / \u9700\u626b\u7801", ("\u672a\u767b\u5f55", "\u626b\u7801", "\u8bf7\u5148\u767b\u5f55", "login")),
+    ("window", "\u5ba2\u6237\u7aef\u4e3b\u7a97\u53e3 / \u5fae\u4fe1\u7a97\u53e3\u672a\u5c31\u7eea", ("\u672a\u627e\u5230\u5df2\u767b\u5f55", "\u8bfb\u53d6\u5fae\u4fe1\u4f1a\u8bdd\u5931\u8d25", "\u4e3b\u7a97\u53e3", "connect_over_cdp", "\u9a71\u52a8\u672a\u6210\u529f")),
+    ("balance", "\u4f59\u989d / \u79ef\u5206\u4e0d\u8db3", ("\u4f59\u989d\u4e0d\u8db3", "\u79ef\u5206\u4e0d\u8db3", "\u6b20\u8d39")),
+    ("profile", "\u8d44\u6599\u672a\u586b\u9f50", ("\u7f3a\u5c11", "\u8bf7\u5148\u8865\u5168", "\u672a\u586b\u5199", "\u9700\u8981\u5148\u914d\u7f6e")),
+    ("publish_flag", "\u53d1\u5e03\u540e\u672a\u8bc6\u522b\u5230\u6210\u529f\u6807\u5fd7", ("\u672a\u68c0\u6d4b\u5230\u6210\u529f\u6807\u5fd7", "\u8bf7\u624b\u52a8\u786e\u8ba4")),
+    ("timeout", "\u8d85\u65f6", ("Timeout", "timeout", "\u8d85\u65f6")),
+    ("client_workflow_failed", "\u5ba2\u6237\u7aef\u5de5\u4f5c\u6d41\u5931\u8d25\uff08\u65e0\u7ec6\u8282\uff09", ("client workflow failed",)),
+]
+
+
+def _robot_fail_kind(text: str) -> str:
+    """\u628a\u62a5\u9519\u5f52\u6210\u4e00\u7c7b\uff0c\u65b9\u4fbf\u9762\u677f\u544a\u8bc9\u4f60\u8be5\u4fee\u4ec0\u4e48\u3002"""
+    blob = str(text or "")
+    if not blob.strip():
+        return "unknown"
+    for key, _label, hints in ROBOT_FAIL_RULES:
+        for h in hints:
+            if h in blob:
+                return key
+    return "other"
+
+
+def _robot_fail_label(kind: str) -> str:
+    for key, label, _h in ROBOT_FAIL_RULES:
+        if key == kind:
+            return label
+    return {"interrupted": "\u88ab\u4e2d\u65ad / \u8df3\u8fc7\uff08\u4e0d\u7b97\u5931\u8d25\uff09", "unknown": "\u65e0\u62a5\u9519\u4fe1\u606f",
+            "other": "\u5176\u4ed6"}.get(kind, kind)
+
+
+def _robot_is_interrupted(text: str) -> bool:
+    blob = str(text or "")
+    return any(h in blob for h in ROBOT_INTERRUPTED_HINTS)
 ROBOT_ACTION_LABEL = {
     "shanjian_digital_human_video": "\u6570\u5b57\u4eba\u53e3\u64ad\u89c6\u9891",
     "local_bestseller_daily_video": "\u7206\u6b3e\u590d\u523b\u89c6\u9891",
@@ -2129,18 +2175,36 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
 
     # ---- \u6267\u884c\u8bb0\u5f55\uff08\u6309\u80fd\u529b / \u6309\u69fd\u4f4d / \u6309\u5929\uff09----
     by_action: Dict[str, Dict[str, int]] = {}
-    for act, status, cnt in rows(
-            "select coalesce(result_payload->>'action', payload->>'action', task_kind) act, status, count(*) "
-            "from scheduled_task_runs where " + runs_scope + since_sql + " group by 1, 2"):
+    reasons: Dict[Any, int] = {}
+    reason_sample: Dict[Any, str] = {}
+    reason_action_sample: Dict[Any, str] = {}
+    for act, status, blob, cnt in rows(
+            "select coalesce(result_payload->>'action', payload->>'action', task_kind) act, status, "
+            "       coalesce(nullif(error, ''), left(coalesce(result_text, ''), 200), '') blob, count(*) "
+            "from scheduled_task_runs where " + runs_scope + since_sql + " group by 1, 2, 3"):
         key = str(act or "other")
-        item = by_action.setdefault(key, {"runs": 0, "ok": 0, "fail": 0})
+        item = by_action.setdefault(key, {"runs": 0, "ok": 0, "fail": 0, "interrupted": 0, "other": 0})
         n = int(cnt or 0)
         item["runs"] += n
         st = str(status or "").lower()
+        text = str(blob or "")
         if st in ROBOT_DONE:
             item["ok"] += n
-        elif st in ("failed", "error", "timeout", "canceled", "cancelled"):
-            item["fail"] += n
+        elif st in ROBOT_FAIL:
+            if _robot_is_interrupted(text):
+                # \u5ba2\u6237\u7aef\u91cd\u542f / \u8282\u70b9\u65f6\u95f4\u5230 / \u5de5\u4f5c\u6d41\u505c\u7528 / \u6b63\u5e38\u6536\u5de5 -> \u4e0d\u7b97\u771f\u5931\u8d25
+                item["interrupted"] += n
+                kind = "interrupted"
+            else:
+                item["fail"] += n
+                kind = _robot_fail_kind(text)
+            rk = (key, kind)
+            reasons[rk] = reasons.get(rk, 0) + n
+            if rk not in reason_sample:
+                reason_sample[rk] = text.replace("\n", " ")[:160] or "\uff08\u65e0\u62a5\u9519\u4fe1\u606f\uff09"
+                reason_action_sample[rk] = key
+        else:
+            item["other"] += n
 
     by_slot: Dict[str, Dict[str, Any]] = {}
     for inst, status, cnt in rows(
@@ -2287,7 +2351,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     groups: List[Dict[str, Any]] = []
     grouped_actions: set = set()
     for key, glabel, actions in ROBOT_ACTION_GROUPS:
-        agg = {"key": key, "label": glabel, "runs": 0, "ok": 0, "fail": 0, "actions": []}
+        agg = {"key": key, "label": glabel, "runs": 0, "ok": 0, "fail": 0, "interrupted": 0, "actions": []}
         for a in actions:
             grouped_actions.add(a)
             item = by_action.get(a)
@@ -2296,8 +2360,10 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
             agg["runs"] += item["runs"]
             agg["ok"] += item["ok"]
             agg["fail"] += item["fail"]
+            agg["interrupted"] += item.get("interrupted", 0)
             agg["actions"].append({"action": a, "label": ROBOT_ACTION_LABEL.get(a, a), **item})
-        agg["rate"] = round(agg["ok"] * 100.0 / agg["runs"], 1) if agg["runs"] else 0.0
+        _eff = agg["ok"] + agg["fail"]
+        agg["rate"] = round(agg["ok"] * 100.0 / _eff, 1) if _eff else 0.0
         groups.append(agg)
     other_runs = sum(v["runs"] for k, v in by_action.items() if k not in grouped_actions)
     other_ok = sum(v["ok"] for k, v in by_action.items() if k not in grouped_actions)
@@ -2310,6 +2376,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     total_runs = sum(v["runs"] for v in by_action.values())
     total_ok = sum(v["ok"] for v in by_action.values())
     total_fail = sum(v["fail"] for v in by_action.values())
+    total_interrupted = sum(v.get("interrupted", 0) for v in by_action.values())
 
     # ---- \u8fd1 14 \u5929\u8d8b\u52bf\uff08\u6267\u884c / \u53d1\u5e03 / \u7ebf\u7d22 / \u4e2a\u5fae\u56de\u590d\uff09----
     trend: List[Dict[str, Any]] = []
@@ -2332,9 +2399,17 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
             "wechat": wx, "dm_total": dm_total, "dm_replied": dm_replied,
             "dm_reply_rate": round(dm_replied * 100.0 / dm_total, 1) if dm_total else 0.0,
             "runs": total_runs, "runs_ok": total_ok, "runs_fail": total_fail,
-            "success_rate": round(total_ok * 100.0 / total_runs, 1) if total_runs else 0.0,
+            "runs_interrupted": total_interrupted,
+            "success_rate": round(total_ok * 100.0 / (total_ok + total_fail), 1) if (total_ok + total_fail) else 0.0,
+            "fail_rate": round(total_fail * 100.0 / (total_ok + total_fail), 1) if (total_ok + total_fail) else 0.0,
+            "interrupt_rate": round(total_interrupted * 100.0 / total_runs, 1) if total_runs else 0.0,
         },
         "groups": groups,
+        "fail_reasons": [
+            {"action": k[0], "action_label": ROBOT_ACTION_LABEL.get(k[0], k[0]), "kind": k[1],
+             "label": _robot_fail_label(k[1]), "count": v, "sample": reason_sample.get(k, "")}
+            for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])[:12]
+        ],
         "top_videos": top_videos,
         "slot_plays": slot_plays,
         "slots": _robot_slots(db, slot_map, by_slot, slot_plays),

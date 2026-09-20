@@ -2490,6 +2490,7 @@ body.overlay-open #drawer{z-index:501}
             : "")
         + '</td><td class="num">' + g.runs + '</td><td class="num" style="color:#6ee7b7">' + g.ok + '</td>'
         + '<td class="num" style="color:' + (g.fail ? "#fda4af" : "var(--dim)") + '">' + g.fail + '</td>'
+        + '<td class="num" style="color:' + (g.interrupted ? "#fcd34d" : "var(--dim)") + '">' + (g.interrupted || 0) + '</td>'
         + '<td class="num">' + g.rate + '%</td></tr>';
     }).join("");
     var slotRows = slots.map(function(x){
@@ -2537,7 +2538,8 @@ body.overlay-open #drawer{z-index:501}
       + '<div class="g4" style="margin-top:12px">'
       + statKpi("私信回复", (s.dm_replied || 0), "回复率 " + (s.dm_reply_rate || 0) + "% · 收到 " + (s.dm_total || 0) + " 条", "#60a5fa")
       + statKpi("执行次数", (s.runs || 0), "成功 " + (s.runs_ok || 0) + " · 失败 " + (s.runs_fail || 0), "#22d3ee")
-      + statKpi("成功率", (s.success_rate || 0) + "%", "按执行记录统计 · 个微联系人 " + (wx.contacts || 0) + " 人", "#34d399")
+      + statKpi("成功率", (s.success_rate || 0) + "%", "成功 " + (s.runs_ok || 0) + " / 真失败 " + (s.runs_fail || 0)
+          + " · 中断跳过 " + (s.runs_interrupted || 0) + "（" + (s.interrupt_rate || 0) + "%）", "#34d399")
       + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
@@ -2548,8 +2550,21 @@ body.overlay-open #drawer{z-index:501}
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13px">按能力看</b>'
       + '<span class="dim" style="font-size:11.5px">就是虚拟员工在干什么（action）</span></div>'
-      + (groupRows ? '<table class="tb"><thead><tr><th>能力</th><th>执行</th><th>成功</th><th>失败</th><th>成功率</th></tr></thead><tbody>' + groupRows + '</tbody></table>'
+      + (groupRows ? '<table class="tb"><thead><tr><th>能力</th><th>执行</th><th>成功</th><th>失败</th><th>中断/跳过</th><th>成功率</th></tr></thead><tbody>' + groupRows + '</tbody></table>'
                    : '<div class="dim">这个窗口还没有执行记录</div>') + '</div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<span class="dot" style="color:#fb7185"></span><b style="font-size:13px">失败原因 Top</b>'
+      + '<span class="dim" style="font-size:11.5px">按「能力 + 原因」归类，括号里是次数；被中断/跳过的单列，不算失败</span></div>'
+      + ((d.fail_reasons || []).length
+          ? '<table class="tb"><thead><tr><th>能力</th><th>原因</th><th>次数</th><th>样例报错</th></tr></thead><tbody>'
+            + (d.fail_reasons || []).map(function(r){
+                return '<tr><td><b style="font-size:12.5px">' + esc(r.action_label || r.action) + '</b></td>'
+                  + '<td>' + (r.kind === "interrupted" ? '<span class="tag wn">' + esc(r.label) + '</span>' : '<span class="tag" style="color:#fda4af">' + esc(r.label) + '</span>') + '</td>'
+                  + '<td class="num">' + (r.count || 0) + '</td>'
+                  + '<td class="dim" style="font-size:11.5px;max-width:520px;word-break:break-all">' + esc(r.sample || "") + '</td></tr>';
+              }).join("") + '</tbody></table>'
+          : '<div class="dim">这个窗口里没有被中断/失败的执行。</div>') + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#34d399"></span><b style="font-size:13px">按虚拟员工看</b></div>'
