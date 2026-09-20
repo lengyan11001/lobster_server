@@ -10486,3 +10486,17 @@
 }
 .composer-send-btn:active { transform: translateY(1px); box-shadow: 0 3px 10px rgba(95, 125, 255, .28); }
 .composer-send-btn:disabled { background: #c8ccd6; box-shadow: none; opacity: .6; }
+
+/* 后台任务进度卡（2026-09-20）：确认执行后的长任务进度，挂原消息下面 */
+.chat-task-card { margin-top: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(64,128,255,.28); background: linear-gradient(180deg, rgba(238,244,255,.95), rgba(247,250,255,.95)); }
+.chat-task-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #1f2b3d; }
+.chat-task-card-head strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-task-card-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: 999px; font-size: 11px; background: rgba(64,128,255,.14); color: #2b6cff; }
+.chat-task-card-badge[data-status="queued"] { background: rgba(255,170,0,.16); color: #c07a00; }
+.chat-task-card-badge[data-status="running"] { background: rgba(64,128,255,.16); color: #2b6cff; }
+.chat-task-card-badge[data-status="done"] { background: rgba(24,180,120,.16); color: #12996a; }
+.chat-task-card-badge[data-status="failed"] { background: rgba(240,80,80,.16); color: #d13b3b; }
+.chat-task-card-text { margin-top: 6px; font-size: 12.5px; line-height: 1.6; color: #46536a; white-space: pre-wrap; }
+.chat-task-card-artifacts { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-task-card-artifacts a { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(64,128,255,.35); color: #2b6cff; background: #fff; text-decoration: none; }
+.chat-task-card-time { margin-top: 6px; font-size: 11px; color: #90a0b8; }

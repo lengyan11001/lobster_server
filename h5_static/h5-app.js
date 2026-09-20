@@ -3400,6 +3400,7 @@
       if (ev.type === "publish_result") return "发布完成";
       if (ev.type === "final") return "处理完成";
       if (ev.type === "error") return p.error || p.detail || "处理失败";
+      if (ev.type === "task_card") return p.text || "后台任务进行中";
       return "";
     }
 
@@ -26107,6 +26108,63 @@
       if (count && total) count.textContent = `${total} 步`;
     }
 
+    // 后台任务进度卡：确认执行后挂在原消息上，离开页面再回来也能看到最新状态（2026-09-20）
+    function renderTaskCard(bubble, payload) {
+      if (!bubble || !payload || typeof payload !== "object") return;
+      let box = bubble._taskCardEl;
+      if (!box || !box.isConnected) {
+        box = document.createElement("div");
+        box.className = "chat-task-card";
+        bubble.appendChild(box);
+        bubble._taskCardEl = box;
+      }
+      const status = String(payload.status || "running").toLowerCase();
+      const label = String(payload.status_label || "").trim()
+        || ({ queued: "排队中", running: "执行中", done: "已完成", failed: "失败", cancelled: "已取消" }[status] || "进行中");
+      const title = String(payload.title || "后台任务").trim();
+      const text = String(payload.text || "").trim();
+      const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts.filter(Boolean) : [];
+      const stamp = String(payload.updated_at || "").replace("T", " ").slice(5, 16);
+      box.dataset.status = status;
+      box.innerHTML = "";
+      const head = document.createElement("div");
+      head.className = "chat-task-card-head";
+      const name = document.createElement("strong");
+      name.textContent = title;
+      const badge = document.createElement("span");
+      badge.className = "chat-task-card-badge";
+      badge.dataset.status = status;
+      badge.textContent = label;
+      head.appendChild(name);
+      head.appendChild(badge);
+      box.appendChild(head);
+      if (text) {
+        const body = document.createElement("div");
+        body.className = "chat-task-card-text";
+        body.textContent = text;
+        box.appendChild(body);
+      }
+      if (artifacts.length) {
+        const list = document.createElement("div");
+        list.className = "chat-task-card-artifacts";
+        artifacts.forEach((url) => {
+          const link = document.createElement("a");
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = filenameFromUrl(url, "查看产物");
+          list.appendChild(link);
+        });
+        box.appendChild(list);
+      }
+      if (stamp) {
+        const foot = document.createElement("div");
+        foot.className = "chat-task-card-time";
+        foot.textContent = `更新于 ${stamp}`;
+        box.appendChild(foot);
+      }
+    }
+
     function setBubbleText(bubble, text) {
       if (!bubble) return;
       bubble._rawText = text || "";
@@ -26334,6 +26392,9 @@
       if (ev.type === "progress" && ev.payload && ev.payload.reply_text) {
         bubble._placeholder = false;
         setBubbleText(bubble, ev.payload.reply_text);
+      }
+      if (ev.type === "task_card" && ev.payload) {
+        renderTaskCard(bubble, ev.payload);
       }
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       renderPublishDraftActions(bubble, ev.payload || {});

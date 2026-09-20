@@ -1570,6 +1570,19 @@ def decide_task_approval(
             parent.claimed_at = None
             parent.claimed_by_installation_id = None
             _add_event(db, parent, "queued", {"text": "已确认执行，正在开始任务", "approval_id": approval.id})
+        # 后台任务进度卡：确认即出现，之后由看护循环按真实状态更新（可以离开页面）
+        from ..services.mastra_task_card import upsert_task_card
+
+        upsert_task_card(
+            db,
+            message_id=parent.id,
+            user_id=owner.id,
+            status="queued",
+            title=str(approval.task or "后台任务"),
+            text="已确认，任务已转入后台执行，可以离开页面；完成后我会在这里更新并通知你。",
+            source="approval",
+            force=True,
+        )
     elif decision in {"reject", "rejected", "cancel"}:
         approval.status = "rejected"
         parent.status = "completed"

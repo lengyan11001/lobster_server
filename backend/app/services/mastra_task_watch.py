@@ -23,6 +23,7 @@ from ..api.auth import access_token_claims, create_access_token
 from ..db import SessionLocal
 from ..models import H5ChatEvent, H5ChatMessage, ScheduledTaskRun, User
 from .h5_chat_sessions import attach_system_task_message
+from .mastra_task_card import upsert_task_card
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +177,8 @@ def _push_notice(
     logger.info("[task-watch] notified user=%s key=%s message=%s", user_id, key, message.id)
 
 
-def _online_child_notice(db: Session, child: H5ChatMessage) -> Optional[Tuple[str, str, str]]:
-    """返回 (key, text, root_message_id)；不需要通知时返回 None。"""
+def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[str, Any]]:
+    """把一条 Online 子任务整理成「通知 + 进度卡」都需要的信息。"""
     if child.parent_message_id is None:
         return None
     run = (
@@ -202,7 +203,24 @@ def _online_child_notice(db: Session, child: H5ChatMessage) -> Optional[Tuple[st
             lines.append("产物：" + "、".join(urls))
         lines.append("需要我继续发布、二次剪辑或做数据分析，直接说就行。")
         text = "\n".join(lines)
-    return key, text, child.parent_message_id
+    return {
+        "key": key,
+        "title": title,
+        "failed": failed,
+        "running": str(child.status or "").strip().lower() in {"pending", "processing"},
+        "urls": urls,
+        "notice_text": text,
+        "root_id": child.parent_message_id,
+        "user_id": int(child.user_id),
+    }
+
+
+def _online_child_notice(db: Session, child: H5ChatMessage) -> Optional[Tuple[str, str, str]]:
+    """返回 (key, text, root_message_id)；不需要通知时返回 None。"""
+    summary = _online_child_summary(db, child)
+    if summary is None:
+        return None
+    return summary["key"], summary["notice_text"], summary["root_id"]
 
 
 def _media_tasks_from_events(db: Session, now: datetime) -> List[Dict[str, Any]]:
@@ -376,19 +394,43 @@ async def _watch_media_tasks(now: datetime) -> int:
                     f"生成任务失败（{item['capability_id']}）："
                     f"{_truncate(_task_error_text(task) or status)}。可以让我重试或换参数。"
                 )
+                card_status = "failed"
             elif terminal:
                 lines = [f"生成完成（{item['capability_id']}）。"]
                 if urls:
                     lines.append("产物：" + "、".join(urls))
                 lines.append("需要我继续发布、改写或做二次处理，直接说就行。")
                 text = "\n".join(lines)
+                card_status = "done"
             elif age_minutes >= _MEDIA_TIMEOUT_MINUTES:
                 text = (
                     f"生成任务还在处理（{item['capability_id']}，已等待 {int(age_minutes)} 分钟）。"
                     "我会继续等，出结果就通知你；你也可以让我先做别的。"
                 )
+                card_status = "running"
             else:
+                # 还在生成：先更新进度卡（让用户离开页面也能看到在跑）
+                upsert_task_card(
+                    db,
+                    message_id=item["message_id"],
+                    user_id=user_id,
+                    status="running",
+                    title=str(item["capability_id"]),
+                    text=f"「{item['capability_id']}」生成中，已等待 {int(age_minutes)} 分钟。",
+                    source="media",
+                )
+                db.commit()
                 continue
+            upsert_task_card(
+                db,
+                message_id=item["message_id"],
+                user_id=user_id,
+                status=card_status,
+                title=str(item["capability_id"]),
+                text=text,
+                artifacts=urls,
+                source="media",
+            )
             _push_notice(
                 db,
                 user_id=user_id,
@@ -409,6 +451,33 @@ def _watch_online_children(now: datetime, *, window_minutes: Optional[float] = N
             cutoff = now - timedelta(hours=_ONLINE_TTL_HOURS)
         else:
             cutoff = now - timedelta(minutes=max(1.0, float(window_minutes)))
+        # 1) 还在跑的：只更新进度卡（"执行中"），不发通知
+        active_children = (
+            db.query(H5ChatMessage)
+            .filter(
+                H5ChatMessage.parent_message_id.isnot(None),
+                H5ChatMessage.status.in_(("pending", "processing")),
+                H5ChatMessage.updated_at >= cutoff,
+            )
+            .order_by(H5ChatMessage.updated_at.desc())
+            .limit(200)
+            .all()
+        )
+        for child in active_children:
+            summary = _online_child_summary(db, child)
+            if not summary:
+                continue
+            upsert_task_card(
+                db,
+                message_id=summary["root_id"],
+                user_id=summary["user_id"],
+                status="running",
+                title=summary["title"],
+                text=f"「{summary['title']}」正在执行（后台任务，可以离开页面）。",
+                source="online",
+            )
+        db.commit()
+
         children = (
             db.query(H5ChatMessage)
             .filter(
@@ -423,17 +492,30 @@ def _watch_online_children(now: datetime, *, window_minutes: Optional[float] = N
         notified = 0
         for child in children:
             try:
-                notice = _online_child_notice(db, child)
-                if not notice:
+                summary = _online_child_summary(db, child)
+                if not summary:
                     continue
-                key, text, root_message_id = notice
+                key = summary["key"]
+                root_message_id = summary["root_id"]
+                # 进度卡终态（含产物），和下面的通知互为补充
+                upsert_task_card(
+                    db,
+                    message_id=root_message_id,
+                    user_id=summary["user_id"],
+                    status="failed" if summary["failed"] else "done",
+                    title=summary["title"],
+                    text=summary["notice_text"],
+                    artifacts=summary["urls"],
+                    source="online",
+                )
                 if _notice_already_sent(db, root_message_id, key):
+                    db.commit()
                     continue
                 _push_notice(
                     db,
                     user_id=int(child.user_id),
                     installation_id=str(child.installation_id or ""),
-                    text=text,
+                    text=summary["notice_text"],
                     root_message_id=root_message_id,
                     key=key,
                 )
