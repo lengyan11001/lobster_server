@@ -111,6 +111,45 @@ def _get_direct_client(provider: str, timeout: float = 30.0) -> httpx.AsyncClien
     return c
 
 
+def _normalize_deepseek_messages(url: str, body: Dict[str, Any]) -> int:
+    """DeepSeek /chat/completions 对 messages 结构校验很严：
+    每条消息都必须有 ``content`` 字段，且只能是字符串或数组。
+
+    编排会话（带工具）里，tool 结果有时是对象或干脆缺字段 —— 整跳直接 422
+    （实测 "messages[8]: missing field `content`"），于是候选链从 DeepSeek 直连掉到
+    change2pro / yyapi / xskill，每一步白等 2~3 分钟。这里在发往官方直连前补齐。
+    """
+    if "api.deepseek.com" not in str(url or ""):
+        return 0
+    messages = body.get("messages") if isinstance(body, dict) else None
+    if not isinstance(messages, list):
+        return 0
+    fixed = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+        content = message.get("content")
+        if isinstance(content, dict):
+            message["content"] = json.dumps(content, ensure_ascii=False)
+            fixed += 1
+            continue
+        if content is None:
+            if "content" not in message:
+                message["content"] = None
+                fixed += 1
+            if role in {"tool", "user", "system", "developer"}:
+                message["content"] = message.get("content") or ""
+                fixed += 1
+            continue
+        if not isinstance(content, (str, list)):
+            message["content"] = str(content)
+            fixed += 1
+    if fixed:
+        logger.info("[deepseek-normalize] 补齐 messages.content 字段 %d 处", fixed)
+    return fixed
+
+
 async def _post_chat_upstream(
     client: httpx.AsyncClient,
     url: str,
@@ -119,6 +158,7 @@ async def _post_chat_upstream(
     headers: Dict[str, str],
     timeout: Optional[float] = None,
 ) -> httpx.Response:
+    _normalize_deepseek_messages(url, body)
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat upstream admitted waited_ms=%s", lease.waited_ms)
@@ -138,6 +178,7 @@ async def _stream_chat_upstream(
     headers: Dict[str, str],
     timeout: Optional[float] = None,
 ):
+    _normalize_deepseek_messages(url, body)
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat stream admitted waited_ms=%s", lease.waited_ms)
