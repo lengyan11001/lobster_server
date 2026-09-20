@@ -391,3 +391,36 @@ def test_normalize_workflow_nodes_for_save_covers_nested_nodes():
     assert cleaned[1]["actions"][0]["plan"]["task_kind"] == "douyin_leads"
     # 真正的客户端工作流动作不动
     assert cleaned[1]["children"][0]["plan"]["task_kind"] == "client_workflow"
+
+
+# —— 6. 启用快照（h5_workflow_activations.template_snapshot）——
+
+def test_activation_payload_normalizes_snapshot_nodes(db_session):
+    """H5「我已启用的工作流」读的是启用快照：老快照里的坏组合必须归一后再吐给客户端。"""
+    from backend.app.models import H5WorkflowActivation
+
+    row = H5WorkflowActivation(
+        user_id=309,
+        installation_id="u309-activation",
+        template_id=317,
+        template_owner_user_id=309,
+        status="active",
+        scheduled_task_ids=[],
+        template_snapshot={"name": "抖音获客员工阿飞学长", "source": "own", "nodes": [_douyin_node("抖音私信接管")]},
+        started_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    # 落库形态仍是坏的（老数据），但读出来的 payload 必须是对的
+    assert row.template_snapshot["nodes"][0]["plan"]["task_kind"] == "client_workflow"
+
+    payload = h5_workflows._activation_payload(row)
+    node = payload["template_nodes"][0]
+    assert node["plan"]["task_kind"] == "douyin_leads"
+    assert node["plan"]["payload"]["action"] == "stranger_message"
+    # 读路径不该把行改掉
+    db_session.refresh(row)
+    assert row.template_snapshot["nodes"][0]["plan"]["task_kind"] == "client_workflow"

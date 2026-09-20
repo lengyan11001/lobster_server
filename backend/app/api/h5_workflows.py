@@ -2653,11 +2653,25 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
         return _store_workflow_template_payloads(key, payloads)
 
 
+def _normalized_activation_nodes(nodes: Any) -> list[dict[str, Any]]:
+    """启用快照里的节点展示/下发前归一（抖音节点被写成 client_workflow 的历史脏数据）。
+
+    返回新的列表（深拷贝），不改动调用方/ORM 里的原始 JSON。
+    """
+    copied = copy.deepcopy(nodes) if isinstance(nodes, list) else []
+    fixed_nodes, _fixed = normalize_workflow_nodes_for_save(copied)
+    return fixed_nodes
+
+
 def _activation_payload(row: H5WorkflowActivation, template: Optional[H5WorkflowTemplate] = None) -> dict[str, Any]:
     snapshot = row.template_snapshot if isinstance(row.template_snapshot, dict) else {}
     template_nodes = snapshot.get("nodes") if isinstance(snapshot.get("nodes"), list) else None
     if template_nodes is None and template is not None:
         template_nodes = template.nodes or []
+    # 09-20 之前存的启用快照可能带着坏组合（client_workflow + action=douyin_leads）：
+    # H5 的「我已启用的工作流」直接渲染这份快照，且客户端「同步/重新启用」会把它发回来，
+    # 所以读出来就归一（深拷贝，不回写行，避免污染当前 session 的 JSON）。
+    template_nodes = _normalized_activation_nodes(template_nodes)
     template_nodes = _canonical_workflow_nodes(template_nodes)
     if (
         _clean_text(snapshot.get("source"), 32).lower() in {"system", "granted"}
