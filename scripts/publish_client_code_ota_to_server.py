@@ -155,7 +155,23 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
             if runtime_dir not in paths:
                 paths.append(runtime_dir)
         paths.append(version_path)
-    return paths
+    # 安全修正（2026-09-20）：永远不要把「整个 skills 根」写进 manifest。
+    # 客户端 update 会按 manifest.paths 对账：列了 skills 根就会把包里没有的 skill
+    # 从用户机器上删掉（例如刻意排除的 skills/ppt_master ≈58MB、已退役的 media_edit 等）。
+    # 一律展开成包内实际存在的 skill 目录，逐个列出。
+    expanded: list[str] = []
+    for path in paths:
+        if path.replace("\\", "/").rstrip("/") == "skills":
+            for root in skill_roots:
+                if root not in expanded:
+                    expanded.append(root)
+            continue
+        if path not in expanded:
+            expanded.append(path)
+    version_paths = {"CLIENT_CODE_VERSION.json", "static/client_version.json"}
+    head = [p for p in expanded if p not in version_paths]
+    tail = [p for p in expanded if p in version_paths]
+    return head + tail
 
 
 def is_encrypted_ota_zip(zip_path: Path) -> bool:
