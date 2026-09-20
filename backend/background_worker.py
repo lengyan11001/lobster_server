@@ -60,6 +60,10 @@ from backend.app.services.sutui_reconcile import is_sutui_reconcile_enabled, sut
 from backend.app.services.douyin_platform_information_desk import (
     douyin_platform_information_desk_background_loop,
 )
+from backend.app.services.mastra_task_watch import (
+    is_mastra_task_watch_enabled,
+    mastra_task_watch_loop_forever,
+)
 
 logger = logging.getLogger("backend.background_worker")
 
@@ -118,6 +122,11 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
     if _enabled_from_env("LOBSTER_MASTRA_CHAT_ENABLED", True):
         factories.append(("mastra_chat", mastra_chat_background_loop))
         factories.append(("h5_chat_retention", h5_chat_retention_background_loop))
+        # 长任务看护：Online 子任务 / 服务器生成任务做完后主动推回会话（2026-09-20）
+        if is_mastra_task_watch_enabled():
+            factories.append(("mastra_task_watch", mastra_task_watch_loop_forever))
+        else:
+            logger.info("[background] 长任务看护未启用")
     else:
         logger.info("[background] AI 调度会话未启用")
 
