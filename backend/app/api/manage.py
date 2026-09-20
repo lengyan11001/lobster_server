@@ -2187,21 +2187,22 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         n = int(cnt or 0)
         item["runs"] += n
         st = str(status or "").lower()
-        text = str(blob or "")
+        # 注意：这里别用 text 当变量名——会遮蔽 sqlalchemy.text（rows() 闭包要用）
+        err_text = str(blob or "")
         if st in ROBOT_DONE:
             item["ok"] += n
         elif st in ROBOT_FAIL:
-            if _robot_is_interrupted(text):
+            if _robot_is_interrupted(err_text):
                 # \u5ba2\u6237\u7aef\u91cd\u542f / \u8282\u70b9\u65f6\u95f4\u5230 / \u5de5\u4f5c\u6d41\u505c\u7528 / \u6b63\u5e38\u6536\u5de5 -> \u4e0d\u7b97\u771f\u5931\u8d25
                 item["interrupted"] += n
                 kind = "interrupted"
             else:
                 item["fail"] += n
-                kind = _robot_fail_kind(text)
+                kind = _robot_fail_kind(err_text)
             rk = (key, kind)
             reasons[rk] = reasons.get(rk, 0) + n
             if rk not in reason_sample:
-                reason_sample[rk] = text.replace("\n", " ")[:160] or "\uff08\u65e0\u62a5\u9519\u4fe1\u606f\uff09"
+                reason_sample[rk] = err_text.replace("\n", " ")[:160] or "\uff08\u65e0\u62a5\u9519\u4fe1\u606f\uff09"
                 reason_action_sample[rk] = key
         else:
             item["other"] += n
