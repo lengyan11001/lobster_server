@@ -294,7 +294,8 @@ body.overlay-open #drawer{z-index:501}
     <button data-go="s-deliv"><span class="ic">▣</span>交付</button>
     <button data-go="s-ai"><span class="ic">⬡</span>虚拟员工</button>
     <button data-go="s-cond"><span class="ic">✦</span>条件</button>
-    <button data-go="s-fin"><span class="ic">◎</span>财务</button>
+      <button data-go="s-fin"><span class="ic">◎</span>财务</button>
+      <button data-go="s-stats"><span class="ic">▤</span>数据</button>
     <button data-go="s-metrics" class="hide"><span class="ic">▶</span>发布数据</button>
     <button data-go="s-my" class="hide"><span class="ic">✓</span>我的任务</button>
   </aside>
@@ -325,6 +326,7 @@ body.overlay-open #drawer{z-index:501}
       <section id="s-ai" class="view hide"></section>
       <section id="s-cond" class="view hide"></section>
       <section id="s-fin" class="view hide"></section>
+    <section id="s-stats" class="view hide"></section>
       <section id="s-metrics" class="view hide"></section>
       <section id="s-my" class="view hide"></section>
     </div>
@@ -736,6 +738,7 @@ body.overlay-open #drawer{z-index:501}
     "s-ai": ["虚拟员工", "手动添加的设备（槽位号 / 设备号+验证码）· 离线常驻 · 派活按窗口汇总 · 可看远程画面"],
     "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
     "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
+    "s-stats": ["数据面板", "虚拟员工产出：视频 · 发布 · 精准客户 · 个微回复"],
     "s-metrics": ["发布数据", "online 客户端每天凌晨 02:00-06:00 错峰采集抖音 / 视频号播放量，云端汇总（朋友圈不做）"],
     "s-my": ["我的任务", "派给自己的任务（真实员工登录只看自己的）· 每条可让 AI 出思路与执行方案"],
   };
@@ -749,6 +752,7 @@ body.overlay-open #drawer{z-index:501}
       });
       if (id === "s-metrics") loadMetrics();
       if (id === "s-my") loadMyTasks();
+      if (id === "s-stats") loadStats();
       $("#pgTitle").textContent = TITLES[id][0];
       $("#pgSub").textContent = TITLES[id][1];
     });
@@ -759,6 +763,7 @@ body.overlay-open #drawer{z-index:501}
     showErr("");
     loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
     loadMyTasks();
+    loadStats();
   }
 
   /* ================= 简报 ================= */
@@ -2406,6 +2411,134 @@ body.overlay-open #drawer{z-index:501}
       req.then(function(){ closeDrawer(); toast(x ? "已保存" : "已创建"); loadDeliv(); })
          .catch(function(e){ toast(e.message, true); });
     });
+  }
+
+  /* ================= 数据面板（虚拟员工产出） ================= */
+  var STATS_WINDOW = "7d", STATS_DATA = null;
+
+  function statWinBtn(k, label){
+    return '<button class="btn sm ' + (STATS_WINDOW === k ? "" : "ghost") + '" data-statwin="' + k + '" style="margin-right:6px">' + label + '</button>';
+  }
+  function statKpi(label, value, sub, color){
+    return '<div class="glass card kpi"><div class="t"><span class="dot" style="color:' + (color || "var(--accent)") + '"></span>'
+      + label + '</div><div class="v num">' + value + '</div>'
+      + '<div class="dim" style="font-size:11.5px">' + (sub || "") + '</div></div>';
+  }
+  function loadStats(){
+    var box = document.getElementById("s-stats");
+    if (!box) return;
+    if (!ACTIVE) return;
+    if (!STATS_DATA) box.innerHTML = '<div class="glass card"><div class="dim">读取中…</div></div>';
+    api("/api/manage/robot-stats?company_id=" + ACTIVE + "&window=" + STATS_WINDOW)
+      .then(function(d){ STATS_DATA = d; renderStats(); })
+      .catch(function(e){
+        box.innerHTML = '<div class="glass card" style="border-color:rgba(251,113,133,.45)">'
+          + '<div style="color:#fda4af;font-size:12.5px">数据面板读取失败：' + esc(e.message) + '</div></div>';
+      });
+  }
+  function renderStats(){
+    var d = STATS_DATA || {};
+    var s = d.summary || {};
+    var v = s.videos || {};
+    var wx = s.wechat || {};
+    var groups = d.groups || [];
+    var slots = d.slots || [];
+    var trend = d.trend || [];
+    var maxTrend = trend.reduce(function(m, x){ return Math.max(m, x.runs || 0); }, 1);
+    var bars = trend.map(function(x){
+      var h = Math.max(3, Math.round((x.runs || 0) * 100 / maxTrend));
+      var hOk = Math.max(2, Math.round(((x.runs ? (x.runs) : 0) ? (x.runs * 0 + (x.runs - 0)) : 0) * 0));
+      return '<div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px" title="' + x.day + ' 执行 ' + x.runs + ' · 发布 ' + x.published + ' · 线索 ' + x.leads + ' · 个微 ' + x.wechat + '">'
+        + '<div style="width:100%;height:74px;display:flex;align-items:flex-end"><div style="width:100%;height:' + h + '%;border-radius:4px 4px 0 0;background:linear-gradient(180deg,#22d3ee,#6366f1)"></div></div>'
+        + '<div class="dim" style="font-size:9.5px;white-space:nowrap">' + (x.day || "").slice(5) + '</div></div>';
+    }).join("");
+    var groupRows = groups.map(function(g){
+      return '<tr><td><b style="font-size:12.5px">' + esc(g.label) + '</b>'
+        + (g.actions && g.actions.length
+            ? '<div class="dim" style="font-size:11px;margin-top:3px">'
+              + g.actions.map(function(a){ return esc(a.label) + " " + a.ok + "/" + a.runs; }).join(" · ") + '</div>'
+            : "")
+        + '</td><td class="num">' + g.runs + '</td><td class="num" style="color:#6ee7b7">' + g.ok + '</td>'
+        + '<td class="num" style="color:' + (g.fail ? "#fda4af" : "var(--dim)") + '">' + g.fail + '</td>'
+        + '<td class="num">' + g.rate + '%</td></tr>';
+    }).join("");
+    var slotRows = slots.map(function(x){
+      var tag = x.online === true ? '<span class="tag ok">在线</span>'
+              : (x.online === false ? '<span class="tag">离线</span>' : '<span class="tag">未注册</span>');
+      return '<tr><td><b style="font-size:12.5px">' + esc(x.name) + '</b>'
+        + '<div class="dim" style="font-size:10.5px;margin-top:2px;word-break:break-all">' + esc(String(x.installation_id).slice(0, 26)) + '</div></td>'
+        + '<td>' + tag + '</td><td class="num">' + x.runs + '</td><td class="num" style="color:#6ee7b7">' + x.ok + '</td>'
+        + '<td class="num" style="color:' + (x.fail ? "#fda4af" : "var(--dim)") + '">' + x.fail + '</td>'
+        + '<td class="num">' + x.rate + '%</td>'
+        + '<td class="dim num" style="font-size:11px">' + esc(x.last_seen || "—") + '</td></tr>';
+    }).join("");
+    var outcomeRows = (d.recent_outcomes || []).map(function(o){
+      var ok = o.event === "reply_sent";
+      return '<div class="mline" style="align-items:flex-start">'
+        + '<span class="nm" style="flex:1;min-width:0"><b style="font-size:12.5px">' + esc(o.contact || "—") + '</b>'
+        + '<span class="tag ' + (ok ? "ok" : "wn") + '" style="margin-left:6px">' + esc(o.event || "") + '</span>'
+        + '<div class="mut" style="font-size:11.5px;margin-top:3px">来：' + esc(o.inbound || "（无）") + '</div>'
+        + (o.reply ? '<div class="dim" style="font-size:11.5px;margin-top:2px">回：' + esc(o.reply) + '</div>' : '')
+        + '</span><span class="dim num" style="font-size:11px">' + esc(o.at || "") + '</span></div>';
+    }).join("");
+
+    document.getElementById("s-stats").innerHTML =
+      '<div class="glass card">'
+      + '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<b style="font-size:13.5px">数据面板</b>'
+      + '<span class="dim" style="font-size:12px">虚拟员工产出汇总 · ' + esc(d.company || "") + '</span>'
+      + '<span class="grow"></span>'
+      + statWinBtn("1d", "今日") + statWinBtn("7d", "近 7 天") + statWinBtn("30d", "近 30 天") + statWinBtn("all", "全部")
+      + '<button class="btn sm ghost" id="statReload" style="margin-left:8px">↻ 刷新</button></div>'
+      + '<div class="dim" style="font-size:11.5px;margin-top:8px">'
+      + '范围：本公司 ' + (d.scope && d.scope.members || 0) + ' 个账号 · '
+      + (d.scope && d.scope.slots || 0) + ' 个已添加的虚拟员工槽位 · 窗口 ' + esc(d.window_label || "") + '</div>'
+      + '</div>'
+
+      + '<div class="g4" style="margin-top:12px">'
+      + statKpi("视频产出", (v.total || 0), "数字人 " + (v.shanjian || 0) + " · 爆款复刻 " + (v.hifly || 0) + " · 其他 " + (v.wan || 0), "#22d3ee")
+      + statKpi("发布", (s.published || 0), Object.keys(s.published_by_platform || {}).map(function(k){ return k + " " + s.published_by_platform[k]; }).join(" · ") || "暂无记录", "#a855f7")
+      + statKpi("精准客户", (s.leads || 0), Object.keys(s.leads_by_platform || {}).slice(0, 3).map(function(k){ return k + " " + s.leads_by_platform[k]; }).join(" · ") || "暂无记录", "#34d399")
+      + statKpi("个微回复", (wx.reply_sent || 0), "回复率 " + (wx.reply_rate || 0) + "% · 未回 " + (wx.skipped || 0) + " · 失败 " + (wx.failed || 0), "#fbbf24")
+      + '</div>'
+      + '<div class="g4" style="margin-top:12px">'
+      + statKpi("私信回复", (s.dm_replied || 0), "回复率 " + (s.dm_reply_rate || 0) + "% · 收到 " + (s.dm_total || 0) + " 条", "#60a5fa")
+      + statKpi("执行次数", (s.runs || 0), "成功 " + (s.runs_ok || 0) + " · 失败 " + (s.runs_fail || 0), "#22d3ee")
+      + statKpi("成功率", (s.success_rate || 0) + "%", "按执行记录统计", "#34d399")
+      + statKpi("个微联系人", (wx.contacts || 0), "有记忆的个微联系人总数", "#a855f7")
+      + '</div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<span class="dot" style="color:#22d3ee"></span><b style="font-size:13px">近 14 天执行量</b>'
+      + '<span class="dim" style="font-size:11.5px">鼠标悬停看当天的执行 / 发布 / 线索 / 个微回复</span></div>'
+      + '<div class="row" style="align-items:flex-end;gap:4px">' + (bars || '<div class="dim">全部窗口下不画趋势</div>') + '</div></div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13px">按能力看</b>'
+      + '<span class="dim" style="font-size:11.5px">就是虚拟员工在干什么（action）</span></div>'
+      + (groupRows ? '<table class="tb"><thead><tr><th>能力</th><th>执行</th><th>成功</th><th>失败</th><th>成功率</th></tr></thead><tbody>' + groupRows + '</tbody></table>'
+                   : '<div class="dim">这个窗口还没有执行记录</div>') + '</div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<span class="dot" style="color:#34d399"></span><b style="font-size:13px">按虚拟员工看</b></div>'
+      + (slotRows ? '<table class="tb"><thead><tr><th>槽位</th><th>状态</th><th>执行</th><th>成功</th><th>失败</th><th>成功率</th><th>最后心跳</th></tr></thead><tbody>' + slotRows + '</tbody></table>'
+                  : '<div class="dim">还没有添加虚拟员工（去「虚拟员工」页添加）</div>') + '</div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<span class="dot" style="color:#fbbf24"></span><b style="font-size:13px">个微回复明细</b>'
+      + '<span class="dim" style="font-size:11.5px">最近 20 条</span></div>'
+      + (outcomeRows || '<div class="dim">这个窗口还没有个微回复记录</div>') + '</div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="dim" style="font-size:11.5px;line-height:1.8">'
+      + '<b style="color:var(--muted)">口径与数据来源</b><br />'
+      + (d.sources || []).map(function(x){ return esc(x); }).join("<br />")
+      + '<br />' + esc(d.note || "") + '</div></div>';
+
+    $$("#s-stats [data-statwin]").forEach(function(b){
+      b.addEventListener("click", function(){ STATS_WINDOW = b.dataset.statwin; STATS_DATA = null; loadStats(); });
+    });
+    var rl = document.getElementById("statReload");
+    if (rl) rl.addEventListener("click", function(){ STATS_DATA = null; loadStats(); });
   }
 
   /* ================= 虚拟员工 ================= */

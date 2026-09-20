@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
@@ -1970,6 +1970,290 @@ def create_worklog(body: WorkLogIn, user: Any = Depends(current_actor),
     return {"ok": True, "id": row.id, "author": author}
 
 NODE_DONE = {"done", "completed", "finished", "accepted"}
+
+
+ROBOT_ACTION_GROUPS = [
+    ("video", "\u89c6\u9891\u5236\u4f5c", ["shanjian_digital_human_video", "local_bestseller_daily_video",
+                                            "image_studio_generate", "viral_video_remix_start"]),
+    ("publish", "\u5185\u5bb9\u53d1\u5e03", ["publish_content"]),
+    ("leads", "\u83b7\u5ba2 / \u7ebf\u7d22", ["douyin_leads", "search_collect", "precise_touch"]),
+    ("nurture", "\u517b\u53f7 / \u4e92\u52a8", ["account_nurture", "self_comment_monitor",
+                                                  "native_wechat_moments_engage"]),
+    ("wechat", "\u4e2a\u5fae\u627f\u63a5", ["native_wechat_poll", "native_wechat_add_friend", "stranger_message"]),
+    ("content", "\u5185\u5bb9 / \u6587\u6848", ["ip_content_daily"]),
+]
+ROBOT_DONE = {"completed", "success", "succeeded", "done", "succeed"}
+ROBOT_ACTION_LABEL = {
+    "shanjian_digital_human_video": "\u6570\u5b57\u4eba\u53e3\u64ad\u89c6\u9891",
+    "local_bestseller_daily_video": "\u7206\u6b3e\u590d\u523b\u89c6\u9891",
+    "image_studio_generate": "\u56fe\u6587\u7d20\u6750",
+    "viral_video_remix_start": "\u89c6\u9891\u6df7\u526a",
+    "publish_content": "\u53d1\u5e03\u5185\u5bb9",
+    "douyin_leads": "\u6296\u97f3\u83b7\u5ba2",
+    "search_collect": "\u641c\u7d22\u91c7\u96c6",
+    "precise_touch": "\u7cbe\u51c6\u89e6\u8fbe",
+    "account_nurture": "\u8d26\u53f7\u517b\u53f7",
+    "self_comment_monitor": "\u8bc4\u8bba\u533a\u76d1\u63a7",
+    "native_wechat_moments_engage": "\u670b\u53cb\u5708\u4e92\u52a8",
+    "native_wechat_poll": "\u4e2a\u5fae\u6d88\u606f\u8f6e\u8be2",
+    "native_wechat_add_friend": "\u4e2a\u5fae\u52a0\u597d\u53cb",
+    "stranger_message": "\u964c\u751f\u4eba\u79c1\u4fe1",
+    "ip_content_daily": "IP \u65e5\u66f4\u5185\u5bb9",
+}
+
+
+def _in_ints(ids: List[int]) -> str:
+    vals = [int(x) for x in ids if x is not None]
+    return "(" + (",".join(str(v) for v in vals) if vals else "-1") + ")"
+
+
+def _in_strs(ids: List[str]) -> str:
+    vals = [str(x).replace("'", "") for x in ids if x]
+    return "(" + (",".join("'" + v + "'" for v in vals) if vals else "''") + ")"
+
+
+def _robot_scope(db: Session, company: MCompany) -> Dict[str, Any]:
+    """\u516c\u53f8\u53e3\u5f84\uff1a\u6210\u5458\u8d26\u53f7 + \u624b\u52a8\u6dfb\u52a0\u7684\u865a\u62df\u5458\u5de5\u69fd\u4f4d\u3002"""
+    uids: List[int] = []
+    for m in db.query(MMembership).filter(MMembership.company_id == company.id).all():
+        if m.user_id:
+            uids.append(int(m.user_id))
+    if company.owner_user_id:
+        uids.append(int(company.owner_user_id))
+    if int(getattr(company, "id", 0) or 0) == 1 and not uids:
+        uids.append(0)
+    slot_rows = db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id).all()
+    slots = {r.installation_id: r.name for r in slot_rows}
+    return {"uids": sorted(set(uids)), "slots": slots}
+
+
+def _robot_day(dt: Any) -> str:
+    if not dt:
+        return ""
+    try:
+        return dt.date().isoformat()
+    except Exception:
+        return ""
+
+
+def _robot_slots(db: Session, slot_map: Dict[str, str], by_slot: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """\u865a\u62df\u5458\u5de5\u5217\u8868\uff1a\u5df2\u6dfb\u52a0\u7684\u69fd\u4f4d\u5168\u90e8\u5217\u51fa\uff08\u6ca1\u5e72\u6d3b\u4e5f\u5728\uff09+ \u5728\u7ebf\u72b6\u6001\u3002"""
+    out: List[Dict[str, Any]] = []
+    for inst, name in slot_map.items():
+        stat = by_slot.get(inst, {"runs": 0, "ok": 0, "fail": 0})
+        _, _, online, last_seen = _slot_presence(db, inst)
+        out.append({"installation_id": inst, "name": name or inst[:12], "runs": stat["runs"],
+                    "ok": stat["ok"], "fail": stat["fail"], "online": online,
+                    "last_seen": (last_seen or "")[:19],
+                    "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
+    known = set(slot_map.keys())
+    for inst, stat in by_slot.items():
+        if inst in known or not inst:
+            continue
+        out.append({"installation_id": inst, "name": stat.get("name") or (inst[:12] + "\u2026"),
+                    "runs": stat["runs"], "ok": stat["ok"], "fail": stat["fail"], "online": None,
+                    "last_seen": "", "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
+    out.sort(key=lambda x: -x["runs"])
+    return out[:40]
+
+
+@router.get("/robot-stats", summary="\u865a\u62df\u5458\u5de5\u6570\u636e\u9762\u677f\uff1a\u89c6\u9891/\u53d1\u5e03/\u7ebf\u7d22/\u4e2a\u5fae\u56de\u590d\u7b49\u6c47\u603b")
+def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(current_actor),
+                db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """\u628a\u5404\u6761\u6267\u884c\u94fe\u8def\u7684\u4ea7\u51fa\u6c47\u5230\u4e00\u8d77\uff1a\u4e3b\u6570\u636e\u6765\u81ea\u4e3b\u7ad9\u6267\u884c\u8bb0\u5f55\u4e0e\u5404\u57df\u7ed3\u679c\u8868\uff0c
+    \u53ea\u505a\u7edf\u8ba1\u4e0d\u6539\u6570\u636e\u3002\u7a97\u53e3\u540c\u300c\u6211\u7684\u4efb\u52a1\u300d\uff1a\u4eca\u65e5 / \u8fd1 7 \u5929 / \u8fd1 30 \u5929 / \u5168\u90e8\u3002"""
+    company = _require_company(db, company_id, user)
+    label, since = _ai_window(window)
+    scope = _robot_scope(db, company)
+    uids, slot_map = scope["uids"], scope["slots"]
+    uin = _in_ints(uids)
+    sin = _in_strs(list(slot_map.keys()))
+    since_sql = " and created_at >= :since " if since else ""
+    since_sql_pub = " and coalesce(published_at, first_seen_at, reported_at) >= :since " if since else ""
+    since_sql_hap = " and happened_at >= :since " if since else ""
+    params: Dict[str, Any] = {"since": since} if since else {}
+
+    runs_scope = "(user_id in " + uin + " or installation_id in " + sin + ")"
+
+    def rows(sql: str, **extra) -> List[Any]:
+        return db.execute(text(sql), dict(params, **extra)).fetchall()
+
+    # ---- \u6267\u884c\u8bb0\u5f55\uff08\u6309\u80fd\u529b / \u6309\u69fd\u4f4d / \u6309\u5929\uff09----
+    by_action: Dict[str, Dict[str, int]] = {}
+    for act, status, cnt in rows(
+            "select coalesce(result_payload->>'action', payload->>'action', task_kind) act, status, count(*) "
+            "from scheduled_task_runs where " + runs_scope + since_sql + " group by 1, 2"):
+        key = str(act or "other")
+        item = by_action.setdefault(key, {"runs": 0, "ok": 0, "fail": 0})
+        n = int(cnt or 0)
+        item["runs"] += n
+        st = str(status or "").lower()
+        if st in ROBOT_DONE:
+            item["ok"] += n
+        elif st in ("failed", "error", "timeout", "canceled", "cancelled"):
+            item["fail"] += n
+
+    by_slot: Dict[str, Dict[str, Any]] = {}
+    for inst, status, cnt in rows(
+            "select installation_id, status, count(*) from scheduled_task_runs where " + runs_scope + since_sql
+            + " group by 1, 2"):
+        key = str(inst or "")
+        item = by_slot.setdefault(key, {"installation_id": key, "runs": 0, "ok": 0, "fail": 0,
+                                        "name": slot_map.get(key, "")})
+        n = int(cnt or 0)
+        item["runs"] += n
+        st = str(status or "").lower()
+        if st in ROBOT_DONE:
+            item["ok"] += n
+        elif st in ("failed", "error", "timeout", "canceled", "cancelled"):
+            item["fail"] += n
+
+    day_runs: Dict[str, int] = {}
+    for day, cnt in rows("select date_trunc('day', created_at) d, count(*) from scheduled_task_runs where "
+                         + runs_scope + since_sql + " group by 1"):
+        day_runs[_robot_day(day)] = int(cnt or 0)
+
+    # ---- \u53d1\u5e03 ----
+    pub_rows = rows("select coalesce(platform, ''), count(*) from publish_metrics where "
+                    "(user_id in " + uin + " or installation_id in " + sin + ")" + since_sql_pub + " group by 1")
+    published_by_platform = {str(k or "unknown"): int(v or 0) for k, v in pub_rows}
+    published_total = sum(published_by_platform.values())
+    day_pub: Dict[str, int] = {}
+    if since_sql_pub:
+        for day, cnt in rows("select date_trunc('day', coalesce(published_at, first_seen_at, reported_at)) d, count(*) "
+                             "from publish_metrics where (user_id in " + uin + " or installation_id in " + sin + ")"
+                             + since_sql_pub + " group by 1"):
+            day_pub[_robot_day(day)] = int(cnt or 0)
+
+    # ---- \u7ebf\u7d22 / \u7cbe\u51c6\u5ba2\u6237 ----
+    lead_rows = rows("select coalesce(source_platform, ''), count(*) from global_lead_crm_contacts "
+                     "where user_id in " + uin + since_sql + " group by 1")
+    leads_by_platform = {str(k or "unknown"): int(v or 0) for k, v in lead_rows}
+    leads_total = sum(leads_by_platform.values())
+    day_leads: Dict[str, int] = {}
+    if since:
+        for day, cnt in rows("select date_trunc('day', created_at) d, count(*) from global_lead_crm_contacts "
+                             "where user_id in " + uin + since_sql + " group by 1"):
+            day_leads[_robot_day(day)] = int(cnt or 0)
+
+    # ---- \u4e2a\u5fae\u56de\u590d ----
+    wx = {"reply_sent": 0, "failed": 0, "skipped": 0, "groups": 0, "queued": 0}
+    day_wx: Dict[str, int] = {}
+    for et, st, cnt in rows("select event_type, status, count(*) from wechat_interaction_outcomes where user_id in "
+                            + uin + since_sql_hap + " group by 1, 2"):
+        n = int(cnt or 0)
+        et2, st2 = str(et or ""), str(st or "")
+        if et2 == "reply_sent":
+            wx["reply_sent"] += n
+        elif et2 == "reply_skipped":
+            wx["skipped"] += n
+        elif et2 == "failed" or st2 == "failed":
+            wx["failed"] += n
+        elif et2.startswith("group_"):
+            wx["groups"] += n
+    if since:
+        for day, cnt in rows("select date_trunc('day', happened_at) d, count(*) from wechat_interaction_outcomes "
+                             "where user_id in " + uin + " and event_type = 'reply_sent'" + since_sql_hap + " group by 1"):
+            day_wx[_robot_day(day)] = int(cnt or 0)
+    wx_touched = int(rows("select count(*) from wechat_contact_memories where user_id in " + uin)[0][0] or 0)
+    wx["contacts"] = wx_touched
+    wx_handled = wx["reply_sent"] + wx["skipped"] + wx["failed"]
+    wx["reply_rate"] = round(wx["reply_sent"] * 100.0 / wx_handled, 1) if wx_handled else 0.0
+    recent_outcomes = [
+        {"contact": r[0] or "", "inbound": (r[1] or "")[:120], "reply": (r[2] or "")[:160],
+         "event": r[3] or "", "status": r[4] or "", "at": (r[5].isoformat(sep=" ")[:16] if r[5] else "")}
+        for r in rows("select contact_name, inbound_text, reply_text, event_type, status, happened_at "
+                      "from wechat_interaction_outcomes where user_id in " + uin + since_sql_hap
+                      + " order by id desc limit 20")]
+
+    # ---- H5 \u79c1\u4fe1 ----
+    dm_total, dm_replied = 0, 0
+    try:
+        r0 = rows("select count(*), sum(case when coalesce(reply_text,'') <> '' then 1 else 0 end) "
+                  "from h5_chat_messages where user_id in " + uin + since_sql)[0]
+        dm_total, dm_replied = int(r0[0] or 0), int(r0[1] or 0)
+    except Exception:
+        pass
+
+    # ---- \u89c6\u9891\u6210\u7247\uff08\u4e09\u4e2a\u6e20\u9053\uff09----
+    def _counts(table: str, ok_status: List[str]) -> int:
+        try:
+            ok = ",".join("'" + s + "'" for s in ok_status)
+            sql = ("select count(*) from " + table + " where user_id in " + uin + " and status in (" + ok + ")"
+                   + (" and created_at >= :since" if since else ""))
+            return int(rows(sql)[0][0] or 0)
+        except Exception:
+            return 0
+
+    videos = {
+        "shanjian": _counts("shanjian_digital_human_video_tasks", ["succeed", "success", "completed"]),
+        "hifly": _counts("user_hifly_video_assets", ["success", "succeed", "completed"]),
+        "wan": _counts("user_wan_role_tasks", ["success", "succeed", "completed"]),
+    }
+    videos["total"] = sum(videos.values())
+
+    # ---- \u6309\u80fd\u529b\u5206\u7ec4 ----
+    groups: List[Dict[str, Any]] = []
+    grouped_actions: set = set()
+    for key, glabel, actions in ROBOT_ACTION_GROUPS:
+        agg = {"key": key, "label": glabel, "runs": 0, "ok": 0, "fail": 0, "actions": []}
+        for a in actions:
+            grouped_actions.add(a)
+            item = by_action.get(a)
+            if not item:
+                continue
+            agg["runs"] += item["runs"]
+            agg["ok"] += item["ok"]
+            agg["fail"] += item["fail"]
+            agg["actions"].append({"action": a, "label": ROBOT_ACTION_LABEL.get(a, a), **item})
+        agg["rate"] = round(agg["ok"] * 100.0 / agg["runs"], 1) if agg["runs"] else 0.0
+        groups.append(agg)
+    other_runs = sum(v["runs"] for k, v in by_action.items() if k not in grouped_actions)
+    other_ok = sum(v["ok"] for k, v in by_action.items() if k not in grouped_actions)
+    other_fail = sum(v["fail"] for k, v in by_action.items() if k not in grouped_actions)
+    if other_runs:
+        groups.append({"key": "other", "label": "\u5176\u4ed6", "runs": other_runs, "ok": other_ok, "fail": other_fail,
+                       "rate": round(other_ok * 100.0 / other_runs, 1), "actions": []})
+
+    total_runs = sum(v["runs"] for v in by_action.values())
+    total_ok = sum(v["ok"] for v in by_action.values())
+    total_fail = sum(v["fail"] for v in by_action.values())
+
+    # ---- \u8fd1 14 \u5929\u8d8b\u52bf\uff08\u6267\u884c / \u53d1\u5e03 / \u7ebf\u7d22 / \u4e2a\u5fae\u56de\u590d\uff09----
+    trend: List[Dict[str, Any]] = []
+    if since:
+        for i in range(13, -1, -1):
+            d = (_today_beijing() - timedelta(days=i)).isoformat()
+            trend.append({"day": d, "runs": day_runs.get(d, 0), "published": day_pub.get(d, 0),
+                          "leads": day_leads.get(d, 0), "wechat": day_wx.get(d, 0)})
+
+    return {
+        "ok": True,
+        "window": window, "window_label": label, "since": (since.isoformat() if since else ""),
+        "company": company.name,
+        "scope": {"members": len(uids), "slots": len(slot_map), "uids": len(uids)},
+        "summary": {
+            "videos": videos, "published": published_total, "published_by_platform": published_by_platform,
+            "leads": leads_total, "leads_by_platform": leads_by_platform,
+            "wechat": wx, "dm_total": dm_total, "dm_replied": dm_replied,
+            "dm_reply_rate": round(dm_replied * 100.0 / dm_total, 1) if dm_total else 0.0,
+            "runs": total_runs, "runs_ok": total_ok, "runs_fail": total_fail,
+            "success_rate": round(total_ok * 100.0 / total_runs, 1) if total_runs else 0.0,
+        },
+        "groups": groups,
+        "slots": _robot_slots(db, slot_map, by_slot),
+        "trend": trend,
+        "recent_outcomes": recent_outcomes,
+        "sources": [
+            "\u6267\u884c\uff1ascheduled_task_runs\uff08\u6309\u80fd\u529b action + \u69fd\u4f4d\uff09",
+            "\u53d1\u5e03\uff1apublish_metrics\uff08published_at\uff09",
+            "\u7cbe\u51c6\u5ba2\u6237\uff1aglobal_lead_crm_contacts\uff08created_at\uff09",
+            "\u4e2a\u5fae\u56de\u590d\uff1awechat_interaction_outcomes\uff08reply_sent / failed / skipped\uff09 + wechat_contact_memories",
+            "\u79c1\u4fe1\uff1ah5_chat_messages\uff08content / reply_text\uff09",
+            "\u89c6\u9891\u6210\u7247\uff1ashanjian_digital_human_video_tasks / user_hifly_video_assets / user_wan_role_tasks",
+        ],
+        "note": "\u53ea\u7edf\u8ba1\u672c\u516c\u53f8\u6210\u5458\u4e0e\u5df2\u6dfb\u52a0\u7684\u865a\u62df\u5458\u5de5\u69fd\u4f4d\u4ea7\u751f\u7684\u6570\u636e\uff1b\u7a97\u53e3\u4e0e\u300c\u6211\u7684\u4efb\u52a1\u300d\u4e00\u81f4\u3002",
+    }
 
 
 @router.get("/team-activity")
