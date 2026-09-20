@@ -2493,8 +2493,8 @@ body.overlay-open #drawer{z-index:501}
         + '<td class="num">' + g.rate + '%</td></tr>';
     }).join("");
     var slotRows = slots.map(function(x){
-      var tag = x.online === true ? '<span class="tag ok">在线</span>'
-              : (x.online === false ? '<span class="tag">离线</span>' : '<span class="tag">未注册</span>');
+      var tag = x.status === "online" ? '<span class="tag ok">在线</span>'
+              : (x.status === "never" ? '<span class="tag wn">未上线</span>' : '<span class="tag">离线</span>');
       return '<tr><td><b style="font-size:12.5px">' + esc(x.name) + '</b>'
         + '<div class="dim" style="font-size:10.5px;margin-top:2px;word-break:break-all">' + esc(String(x.installation_id).slice(0, 26)) + '</div></td>'
         + '<td>' + tag + '</td><td class="num">' + x.runs + '</td><td class="num" style="color:#6ee7b7">' + x.ok + '</td>'
@@ -2522,8 +2522,9 @@ body.overlay-open #drawer{z-index:501}
       + statWinBtn("1d", "今日") + statWinBtn("7d", "近 7 天") + statWinBtn("30d", "近 30 天") + statWinBtn("all", "全部")
       + '<button class="btn sm ghost" id="statReload" style="margin-left:8px">↻ 刷新</button></div>'
       + '<div class="dim" style="font-size:11.5px;margin-top:8px">'
-      + '范围：本公司 ' + (d.scope && d.scope.members || 0) + ' 个账号 · '
-      + (d.scope && d.scope.slots || 0) + ' 个已添加的虚拟员工槽位 · 窗口 ' + esc(d.window_label || "") + '</div>'
+      + '范围：「虚拟员工」里已添加的 ' + (d.scope && d.scope.slots || 0) + ' 台设备'
+      + '（在线 ' + (d.scope && d.scope.slots_online || 0) + ' 台）'
+      + '，其他槽位不纳入统计 · 窗口 ' + esc(d.window_label || "") + '</div>'
       + '</div>'
 
       + '<div class="g4" style="margin-top:12px">'
@@ -2553,7 +2554,7 @@ body.overlay-open #drawer{z-index:501}
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#34d399"></span><b style="font-size:13px">按虚拟员工看</b></div>'
       + (slotRows ? '<table class="tb"><thead><tr><th>槽位</th><th>状态</th><th>执行</th><th>成功</th><th>失败</th><th>播放</th><th>成功率</th><th>最后心跳</th></tr></thead><tbody>' + slotRows + '</tbody></table>'
-                  : '<div class="dim">还没有添加虚拟员工（去「虚拟员工」页添加）</div>') + '</div>'
+                  : '<div class="dim">还没有添加设备：去「虚拟员工」页添加后，这里才会统计它的产出。</div>') + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
@@ -2607,7 +2608,7 @@ body.overlay-open #drawer{z-index:501}
       + (a.owner_label ? '<span class="tag">' + a.owner_label + '</span>' : '')
       + (a.remote_bound ? '<span class="tag ok">可远程</span>' : '<span class="tag">未绑远程</span>')
       + '</div>'
-      + '<div class="dim" style="font-size:11.5px;margin-top:9px">' + (a.last_seen ? ("最后心跳 " + String(a.last_seen).replace("T", " ").slice(0, 16)) : "没有心跳记录")
+      + '<div class="dim" style="font-size:11.5px;margin-top:9px">' +  (a.last_seen ? ("最后心跳 " + String(a.last_seen).replace("T", " ").slice(0, 16)) : "未上线（客户端还没上报过心跳）")
       + (a.note ? (" · " + a.note) : "") + '</div>'
       + '<div style="margin-top:7px">' + aiAggLine(a) + '</div>'
       + (a.last_node ? '<div class="dim" style="font-size:11.5px;margin-top:4px">最近：' + a.last_node + (a.last_error ? ("（" + a.last_error + "）") : "") + '</div>' : '')

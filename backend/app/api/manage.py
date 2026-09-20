@@ -2051,7 +2051,21 @@ def _in_strs(ids: List[str]) -> str:
 
 
 def _robot_scope(db: Session, company: MCompany) -> Dict[str, Any]:
-    """\u516c\u53f8\u53e3\u5f84\uff1a\u6210\u5458\u8d26\u53f7 + \u624b\u52a8\u6dfb\u52a0\u7684\u865a\u62df\u5458\u5de5\u69fd\u4f4d\u3002"""
+    """\u53e3\u5f84 = \u53ea\u8ba4\u300c\u865a\u62df\u5458\u5de5\u300d\u9875\u624b\u52a8\u6dfb\u52a0\u8fdb\u6765\u7684\u69fd\u4f4d\u3002
+
+    \u4e0d\u518d\u628a\u300c\u5386\u53f2\u6267\u884c\u8bb0\u5f55\u91cc\u51fa\u73b0\u8fc7\u3001\u4f46\u6ca1\u6dfb\u52a0\u8fdb\u6765\u7684\u69fd\u4f4d\u300d\u7b97\u8fdb\u6765\uff08\u5ba2\u6237\u7aef\u91cd\u88c5/\u6362\u69fd\u4f4d\u540e\u7684\u50f5\u5c38\u69fd\u4f4d\uff09\uff0c
+    \u8d26\u53f7\u4e5f\u53ea\u53d6\u300c\u8fd9\u4e9b\u5df2\u6dfb\u52a0\u69fd\u4f4d\u201d\u80cc\u540e\u7684\u8d26\u53f7\uff08\u6765\u81ea\u5fc3\u8df3\u91cc\u7684\u5f52\u5c5e\uff09\u3002
+    """
+    slot_rows = db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id).all()
+    slots = {r.installation_id: r.name for r in slot_rows}
+    uids: List[int] = []
+    for inst in slots.keys():
+        row = (db.query(H5ChatDevicePresence)
+               .filter(H5ChatDevicePresence.installation_id == inst)
+               .order_by(H5ChatDevicePresence.last_seen_at.desc()).first())
+        if row is not None and row.user_id:
+            uids.append(int(row.user_id))
+    return {"uids": sorted(set(uids)), "slots": slots}
     uids: List[int] = []
     for m in db.query(MMembership).filter(MMembership.company_id == company.id).all():
         if m.user_id:
@@ -2080,20 +2094,14 @@ def _robot_slots(db: Session, slot_map: Dict[str, str], by_slot: Dict[str, Dict[
     out: List[Dict[str, Any]] = []
     for inst, name in slot_map.items():
         stat = by_slot.get(inst, {"runs": 0, "ok": 0, "fail": 0})
-        _, _, online, last_seen = _slot_presence(db, inst)
+        row, _, online, last_seen = _slot_presence(db, inst)
+        # never = \u4ece\u6ca1\u4e0a\u62a5\u8fc7\u5fc3\u8df3\uff08\u5ba2\u6237\u7aef\u6ca1\u8fde\u8fc7 / \u69fd\u4f4d\u53f7\u5df2\u53d8\uff09
+        status = "online" if online else ("never" if row is None else "offline")
         out.append({"installation_id": inst, "name": name or inst[:12], "runs": stat["runs"],
-                    "ok": stat["ok"], "fail": stat["fail"], "online": online,
+                    "ok": stat["ok"], "fail": stat["fail"], "online": online, "status": status,
                     "last_seen": (last_seen or "")[:19], "plays": int(slot_plays.get(inst, 0)),
                     "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
-    known = set(slot_map.keys())
-    for inst, stat in by_slot.items():
-        if inst in known or not inst:
-            continue
-        out.append({"installation_id": inst, "name": stat.get("name") or (inst[:12] + "\u2026"),
-                    "runs": stat["runs"], "ok": stat["ok"], "fail": stat["fail"], "online": None,
-                    "last_seen": "", "plays": int(slot_plays.get(inst, 0)),
-                    "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
-    out.sort(key=lambda x: -x["runs"])
+    out.sort(key=lambda x: (0 if x["online"] else 1, -x["runs"]))
     return out[:40]
 
 
@@ -2113,7 +2121,8 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     since_sql_hap = " and happened_at >= :since " if since else ""
     params: Dict[str, Any] = {"since": since} if since else {}
 
-    runs_scope = "(user_id in " + uin + " or installation_id in " + sin + ")"
+    # \u6267\u884c\u8bb0\u5f55\u53ea\u770b\u5df2\u6dfb\u52a0\u7684\u69fd\u4f4d\uff1a\u69fd\u4f4d\u53f7\u53d8\u4e86\u7684\u65e7\u8bb0\u5f55\u4e0d\u518d\u7b97
+    runs_scope = "installation_id in " + sin
 
     def rows(sql: str, **extra) -> List[Any]:
         return db.execute(text(sql), dict(params, **extra)).fetchall()
@@ -2155,13 +2164,13 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
 
     # ---- \u53d1\u5e03 ----
     pub_rows = rows("select coalesce(platform, ''), count(*) from publish_metrics where "
-                    "(user_id in " + uin + " or installation_id in " + sin + ")" + since_sql_pub + " group by 1")
+                    "installation_id in " + sin + since_sql_pub + " group by 1")
     published_by_platform = {str(k or "unknown"): int(v or 0) for k, v in pub_rows}
     published_total = sum(published_by_platform.values())
     day_pub: Dict[str, int] = {}
     if since_sql_pub:
         for day, cnt in rows("select date_trunc('day', coalesce(published_at, first_seen_at, reported_at)) d, count(*) "
-                             "from publish_metrics where (user_id in " + uin + " or installation_id in " + sin + ")"
+                             "from publish_metrics where installation_id in " + sin
                              + since_sql_pub + " group by 1"):
             day_pub[_robot_day(day)] = int(cnt or 0)
 
@@ -2175,7 +2184,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
             "       coalesce(views,0), coalesce(likes,0), coalesce(comments,0), coalesce(shares,0), "
             "       coalesce(favorites,0), sampled_day "
             "from (select distinct on (coalesce(item_id, cast(id as varchar))) * "
-            "      from publish_metrics where (user_id in " + uin + " or installation_id in " + sin + ") "
+            "      from publish_metrics where installation_id in " + sin + " "
             "      order by coalesce(item_id, cast(id as varchar)), sampled_day desc nulls last, id desc) t")
         view_list = []
         by_platform: Dict[str, int] = {}
@@ -2297,6 +2306,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         groups.append({"key": "other", "label": "\u5176\u4ed6", "runs": other_runs, "ok": other_ok, "fail": other_fail,
                        "rate": round(other_ok * 100.0 / other_runs, 1), "actions": []})
 
+    online_slots = sum(1 for inst in slot_map.keys() if _slot_presence(db, inst)[2])
     total_runs = sum(v["runs"] for v in by_action.values())
     total_ok = sum(v["ok"] for v in by_action.values())
     total_fail = sum(v["fail"] for v in by_action.values())
@@ -2313,7 +2323,8 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         "ok": True,
         "window": window, "window_label": label, "since": (since.isoformat() if since else ""),
         "company": company.name,
-        "scope": {"members": len(uids), "slots": len(slot_map), "uids": len(uids)},
+        "scope": {"members": len(uids), "slots": len(slot_map), "uids": len(uids),
+                  "slots_online": online_slots},
         "summary": {
             "videos": videos, "published": published_total, "published_by_platform": published_by_platform,
             "leads": leads_total, "leads_by_platform": leads_by_platform,
@@ -2330,7 +2341,8 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         "trend": trend,
         "recent_outcomes": recent_outcomes,
         "sources": [
-            "\u6267\u884c\uff1ascheduled_task_runs\uff08\u6309\u80fd\u529b action + \u69fd\u4f4d\uff09",
+            "\u8303\u56f4\uff1a\u53ea\u7edf\u8ba1\u300c\u865a\u62df\u5458\u5de5\u300d\u9875\u5df2\u6dfb\u52a0\u7684\u8bbe\u5907\uff08\u79bb\u7ebf\u4e5f\u7b97\uff09\uff0c\u672a\u6dfb\u52a0\u7684\u69fd\u4f4d\u4e0d\u7eb3\u5165\u7edf\u8ba1",
+            "\u6267\u884c\uff1ascheduled_task_runs\uff08\u6309\u69fd\u4f4d + \u80fd\u529b action\uff09",
             "\u53d1\u5e03 / \u64ad\u653e\uff1apublish_metrics\uff08\u6bcf\u5929\u4e00\u6761\u5feb\u7167\uff0c\u9762\u677f\u53d6\u6bcf\u6761\u89c6\u9891\u6700\u65b0\u4e00\u6b21\u91c7\u6837\u6c42\u548c\uff09",
             "\u7cbe\u51c6\u5ba2\u6237\uff1aglobal_lead_crm_contacts\uff08created_at\uff09",
             "\u4e2a\u5fae\u56de\u590d\uff1awechat_interaction_outcomes\uff08reply_sent / failed / skipped\uff09 + wechat_contact_memories",
