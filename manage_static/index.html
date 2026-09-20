@@ -2482,6 +2482,7 @@ body.overlay-open #drawer{z-index:501}
         + '<div style="width:100%;height:74px;display:flex;align-items:flex-end"><div style="width:100%;height:' + h + '%;border-radius:4px 4px 0 0;background:linear-gradient(180deg,#22d3ee,#6366f1)"></div></div>'
         + '<div class="dim" style="font-size:9.5px;white-space:nowrap">' + (x.day || "").slice(5) + '</div></div>';
     }).join("");
+    var hasSlotPlays = Object.keys(d.slot_plays || {}).some(function(k){ return (d.slot_plays[k] || 0) > 0; });
     var groupRows = groups.map(function(g){
       return '<tr><td><b style="font-size:12.5px">' + esc(g.label) + '</b>'
         + (g.actions && g.actions.length
@@ -2500,7 +2501,7 @@ body.overlay-open #drawer{z-index:501}
         + '<div class="dim" style="font-size:10.5px;margin-top:2px;word-break:break-all">' + esc(String(x.installation_id).slice(0, 26)) + '</div></td>'
         + '<td>' + tag + '</td><td class="num">' + x.runs + '</td><td class="num" style="color:#6ee7b7">' + x.ok + '</td>'
         + '<td class="num" style="color:' + (x.fail ? "#fda4af" : "var(--dim)") + '">' + x.fail + '</td>'
-        + '<td class="num" style="color:' + (x.plays ? "#f9a8d4" : "var(--dim)") + '">' + (x.plays || 0) + '</td>'
+        + (hasSlotPlays ? '<td class="num" style="color:' + (x.plays ? "#f9a8d4" : "var(--dim)") + '">' + (x.plays || 0) + '</td>' : '')
         + '<td class="num">' + x.rate + '%</td>'
         + '<td class="dim num" style="font-size:11px">' + esc(x.last_seen || "—") + '</td></tr>';
     }).join("");
@@ -2570,7 +2571,7 @@ body.overlay-open #drawer{z-index:501}
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#34d399"></span><b style="font-size:13px">按虚拟员工看</b></div>'
-      + (slotRows ? '<table class="tb"><thead><tr><th>槽位</th><th>状态</th><th>执行</th><th>成功</th><th>失败</th><th>播放</th><th>成功率</th><th>最后心跳</th></tr></thead><tbody>' + slotRows + '</tbody></table>'
+      + (slotRows ? '<table class="tb"><thead><tr><th>槽位</th><th>状态</th><th>执行</th><th>成功</th><th>失败</th>' + (hasSlotPlays ? '<th>播放</th>' : '') + '<th>成功率</th><th>最后心跳</th></tr></thead><tbody>' + slotRows + '</tbody></table>'
                   : '<div class="dim">还没有添加设备：去「虚拟员工」页添加后，这里才会统计它的产出。</div>') + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
