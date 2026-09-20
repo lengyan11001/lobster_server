@@ -247,3 +247,68 @@ def test_employee_local_bestseller_still_prefers_current_persona(db_session, tes
 
     assert payload["params"]["profile"]["photo_url"] == "https://assets.example.test/assets/server-photo-1.png"
     assert payload["h5_context"]["persona_source"] == "ip_persona_default"
+
+
+def test_local_bestseller_uses_slot_persona_not_account_level(db_session, test_user):
+    """同城链路必须按槽位取人设：账号级人设不能顶掉槽位人设。
+
+    回归背景（2026-09-19/20）：诺诺老师的设备跑同城爆款，下发的人设却是账号级行
+    （本项目账号级行名为"阿迪老师007"）——因为 _enrich_local_bestseller_workflow_payload
+    组装人设时漏传 installation_id。这个用例把"按槽位取"钉死。
+    """
+    slot = "u260-slot-aaaa"
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
+            status="active",
+            installation_id="",
+            requirements={
+                "profile_name": "阿迪老师",
+                "gender": "male",
+                "current_city": "Shenzhen",
+                "profile_photo_asset_id": "acct-photo",
+            },
+        )
+    )
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
+            status="active",
+            installation_id=slot,
+            requirements={
+                "profile_name": "诺诺老师",
+                "gender": "female",
+                "current_city": "Shenzhen",
+                "profile_photo_asset_id": "slot-photo",
+            },
+        )
+    )
+    for aid in ("acct-photo", "slot-photo"):
+        db_session.add(
+            Asset(
+                asset_id=aid,
+                user_id=test_user.id,
+                filename=f"assets/{aid}.png",
+                media_type="image",
+                source_url=f"https://assets.example.test/assets/{aid}.png",
+            )
+        )
+    db_session.commit()
+
+    payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {},
+            "h5_context": {"installation_id": slot},
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 9, 20, 9, 0),
+    )
+
+    profile = payload["params"]["profile"]
+    assert profile["name"] == "诺诺老师"
+    assert profile["photo_url"] == "https://assets.example.test/assets/slot-photo.png"
+    assert profile["photo_url"] != "https://assets.example.test/assets/acct-photo.png"
