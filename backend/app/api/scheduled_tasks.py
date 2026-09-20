@@ -949,7 +949,11 @@ def _enrich_local_bestseller_workflow_payload(
     out["action"] = "local_bestseller_daily_video"
     params = out.get("params") if isinstance(out.get("params"), dict) else {}
     params = dict(params)
-    persona_profile = _local_bestseller_profile_from_persona(_personal_default_requirements(db, target_user_id))
+    # 人设必须按"当前运行的槽位"取：漏传槽位会落到账号级行（本项目账号级行是"阿迪老师007"），
+    # 于是诺诺的设备长出阿迪的脸。槽位内没有配置就退化为空人设（由客户端校验报错），不再借用账号级。
+    persona_profile = _local_bestseller_profile_from_persona(
+        _personal_default_requirements(db, target_user_id, _slot_from_payload(payload))
+    )
     existing_profile = params.get("profile") if isinstance(params.get("profile"), dict) else {}
     explicit_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
     profile_override = params.get("profile_override") is True
