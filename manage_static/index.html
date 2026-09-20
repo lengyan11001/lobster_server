@@ -747,7 +747,7 @@ body.overlay-open #drawer{z-index:501}
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-prod","s-crm","s-deliv","s-ai","s-cond","s-fin","s-metrics","s-my"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-metrics","s-my"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
       if (id === "s-metrics") loadMetrics();
