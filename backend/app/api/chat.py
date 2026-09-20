@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from .auth import access_token_claims, create_access_token, get_current_user, oauth2_scheme
+from .sutui_chat_proxy import _normalize_deepseek_messages
 # 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
 # from .consumption_accounts import get_effective_sutui_token
 from ..models import CapabilityCallLog, ChatTurnLog, ToolCallLog, User
@@ -1278,6 +1279,9 @@ async def _chat_openai(
             body["tool_choice"] = "auto"
 
         async with httpx.AsyncClient(timeout=120.0) as c:
+            # DeepSeek 官方直连对报文更严：developer 角色、孤立 tool、
+            # assistant.tool_calls 缺结果、content 缺字段都会被拒；发之前先整形。
+            _normalize_deepseek_messages(url, body, stream=False)
             resp = await c.post(url, json=body, headers=hdrs)
         if resp.status_code != 200:
             _raise_api_err(resp, model=f"{cfg.get('provider','')}/{cfg.get('model_name','')}")
@@ -1663,6 +1667,7 @@ async def _chat_openai(
                 "tools": oai_tools, "tool_choice": "required",
             }
             async with httpx.AsyncClient(timeout=120.0) as c:
+                _normalize_deepseek_messages(url, body_retry, stream=False)
                 resp2 = await c.post(url, json=body_retry, headers=hdrs)
             if resp2.status_code == 200:
                 choice2 = (resp2.json().get("choices") or [{}])[0]

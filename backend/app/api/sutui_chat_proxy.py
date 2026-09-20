@@ -111,42 +111,110 @@ def _get_direct_client(provider: str, timeout: float = 30.0) -> httpx.AsyncClien
     return c
 
 
-def _normalize_deepseek_messages(url: str, body: Dict[str, Any]) -> int:
-    """DeepSeek /chat/completions 对 messages 结构校验很严：
-    每条消息都必须有 ``content`` 字段，且只能是字符串或数组。
+_DEEPSEEK_OMITTED_TOOL_RESULT = "（该工具结果已省略，请基于其余已知信息继续。）"
 
-    编排会话（带工具）里，tool 结果有时是对象或干脆缺字段 —— 整跳直接 422
-    （实测 "messages[8]: missing field `content`"），于是候选链从 DeepSeek 直连掉到
-    change2pro / yyapi / xskill，每一步白等 2~3 分钟。这里在发往官方直连前补齐。
+
+def _normalize_deepseek_messages(
+    url: str,
+    body: Dict[str, Any],
+    *,
+    stream: bool = False,
+) -> int:
+    """发往 DeepSeek 官方直连前的报文整形（只修"我们自己发错"的部分）。
+
+    DeepSeek /chat/completions 的校验比 OpenAI 严，2026-09-20 实测会拒的形状：
+      - `messages[N]: missing field content` / `content should be a string or a list`
+      - `role: unknown variant developer`（OpenAI 新风格的 developer 角色）
+      - `stream_options should be set along with stream = true`（非流式带了 stream_options）
+      - `Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`
+      - `An assistant message with 'tool_calls' must be followed by tool messages ...`
+    后两类正是编排上下文被裁剪（ToolCallFilter / 历史压缩）后最容易出现的形态。
+    这些都会让整跳 422，候选链掉到更慢的通道；这里逐条整形并在日志里报数。
     """
     if "api.deepseek.com" not in str(url or ""):
         return 0
-    messages = body.get("messages") if isinstance(body, dict) else None
-    if not isinstance(messages, list):
+    if not isinstance(body, dict):
         return 0
     fixed = 0
+
+    if not stream and "stream_options" in body:
+        body.pop("stream_options", None)
+        fixed += 1
+
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return fixed
+
+    cleaned: List[Dict[str, Any]] = []
+    pending_tool_ids: List[str] = []
+
+    def flush_pending() -> None:
+        """assistant.tool_calls 缺 tool 结果时补一条占位结果，避免整跳被拒。"""
+        nonlocal fixed
+        for call_id in pending_tool_ids:
+            cleaned.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": _DEEPSEEK_OMITTED_TOOL_RESULT,
+                }
+            )
+            fixed += 1
+        pending_tool_ids.clear()
+
     for message in messages:
         if not isinstance(message, dict):
             continue
         role = str(message.get("role") or "").strip().lower()
+
+        # developer 是 OpenAI 新写法，DeepSeek 只认 system/user/assistant/tool
+        if role == "developer":
+            message = {**message, "role": "system"}
+            role = "system"
+            fixed += 1
+
+        if role == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            if not call_id or call_id not in pending_tool_ids:
+                # 孤立 tool 消息（前面的 tool_calls 已被裁剪掉）：丢掉，否则整跳 400
+                fixed += 1
+                continue
+            pending_tool_ids.remove(call_id)
+        elif pending_tool_ids:
+            # DeepSeek 要求 tool 结果紧跟对应的 assistant.tool_calls；
+            # 一旦出现别的角色，就说明这批结果已经缺失，先补占位再继续。
+            flush_pending()
+
+        if role == "assistant":
+            tool_calls = message.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                for call in tool_calls:
+                    if isinstance(call, dict):
+                        call_id = str(call.get("id") or "").strip()
+                        if call_id:
+                            pending_tool_ids.append(call_id)
+
         content = message.get("content")
         if isinstance(content, dict):
-            message["content"] = json.dumps(content, ensure_ascii=False)
+            message = {**message, "content": json.dumps(content, ensure_ascii=False)}
             fixed += 1
-            continue
-        if content is None:
+        elif content is None:
             if "content" not in message:
-                message["content"] = None
+                message = {**message, "content": None}
                 fixed += 1
-            if role in {"tool", "user", "system", "developer"}:
-                message["content"] = message.get("content") or ""
+            if role in {"tool", "user", "system"}:
+                message = {**message, "content": message.get("content") or ""}
                 fixed += 1
-            continue
-        if not isinstance(content, (str, list)):
-            message["content"] = str(content)
+        elif not isinstance(content, (str, list)):
+            message = {**message, "content": str(content)}
             fixed += 1
+
+        cleaned.append(message)
+
+    flush_pending()
+    body["messages"] = cleaned
     if fixed:
-        logger.info("[deepseek-normalize] 补齐 messages.content 字段 %d 处", fixed)
+        logger.info("[deepseek-normalize] 整形 DeepSeek 请求 %d 处（messages=%d）", fixed, len(cleaned))
     return fixed
 
 
@@ -158,7 +226,7 @@ async def _post_chat_upstream(
     headers: Dict[str, str],
     timeout: Optional[float] = None,
 ) -> httpx.Response:
-    _normalize_deepseek_messages(url, body)
+    _normalize_deepseek_messages(url, body, stream=False)
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat upstream admitted waited_ms=%s", lease.waited_ms)
@@ -178,7 +246,7 @@ async def _stream_chat_upstream(
     headers: Dict[str, str],
     timeout: Optional[float] = None,
 ):
-    _normalize_deepseek_messages(url, body)
+    _normalize_deepseek_messages(url, body, stream=True)
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat stream admitted waited_ms=%s", lease.waited_ms)
