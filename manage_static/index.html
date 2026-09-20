@@ -2441,6 +2441,15 @@ body.overlay-open #drawer{z-index:501}
     var s = d.summary || {};
     var v = s.videos || {};
     var wx = s.wechat || {};
+    var plays = s.plays || {};
+    var topVids = d.top_videos || [];
+    var topRows = topVids.map(function(x){
+      return '<tr><td><b style="font-size:12.5px">' + esc(x.title || "（无标题）") + '</b></td>'
+        + '<td class="dim" style="font-size:11.5px">' + esc(x.platform || "") + '</td>'
+        + '<td class="dim num" style="font-size:11.5px">' + esc(x.published_at || "—") + '</td>'
+        + '<td class="num" style="color:#f9a8d4"><b>' + (x.views || 0) + '</b></td>'
+        + '<td class="num">' + (x.likes || 0) + '</td><td class="num">' + (x.comments || 0) + '</td></tr>';
+    }).join("");
     var groups = d.groups || [];
     var slots = d.slots || [];
     var trend = d.trend || [];
@@ -2469,6 +2478,7 @@ body.overlay-open #drawer{z-index:501}
         + '<div class="dim" style="font-size:10.5px;margin-top:2px;word-break:break-all">' + esc(String(x.installation_id).slice(0, 26)) + '</div></td>'
         + '<td>' + tag + '</td><td class="num">' + x.runs + '</td><td class="num" style="color:#6ee7b7">' + x.ok + '</td>'
         + '<td class="num" style="color:' + (x.fail ? "#fda4af" : "var(--dim)") + '">' + x.fail + '</td>'
+        + '<td class="num" style="color:' + (x.plays ? "#f9a8d4" : "var(--dim)") + '">' + (x.plays || 0) + '</td>'
         + '<td class="num">' + x.rate + '%</td>'
         + '<td class="dim num" style="font-size:11px">' + esc(x.last_seen || "—") + '</td></tr>';
     }).join("");
@@ -2498,14 +2508,14 @@ body.overlay-open #drawer{z-index:501}
       + '<div class="g4" style="margin-top:12px">'
       + statKpi("视频产出", (v.total || 0), "数字人 " + (v.shanjian || 0) + " · 爆款复刻 " + (v.hifly || 0) + " · 其他 " + (v.wan || 0), "#22d3ee")
       + statKpi("发布", (s.published || 0), Object.keys(s.published_by_platform || {}).map(function(k){ return k + " " + s.published_by_platform[k]; }).join(" · ") || "暂无记录", "#a855f7")
+      + statKpi("播放量", (plays.views || 0), (plays.items || 0) + " 条视频有数据 · 赞 " + (plays.likes || 0) + " · 评论 " + (plays.comments || 0) + " · 平均 " + (plays.avg_views || 0), "#f472b6")
       + statKpi("精准客户", (s.leads || 0), Object.keys(s.leads_by_platform || {}).slice(0, 3).map(function(k){ return k + " " + s.leads_by_platform[k]; }).join(" · ") || "暂无记录", "#34d399")
       + statKpi("个微回复", (wx.reply_sent || 0), "回复率 " + (wx.reply_rate || 0) + "% · 未回 " + (wx.skipped || 0) + " · 失败 " + (wx.failed || 0), "#fbbf24")
       + '</div>'
       + '<div class="g4" style="margin-top:12px">'
       + statKpi("私信回复", (s.dm_replied || 0), "回复率 " + (s.dm_reply_rate || 0) + "% · 收到 " + (s.dm_total || 0) + " 条", "#60a5fa")
       + statKpi("执行次数", (s.runs || 0), "成功 " + (s.runs_ok || 0) + " · 失败 " + (s.runs_fail || 0), "#22d3ee")
-      + statKpi("成功率", (s.success_rate || 0) + "%", "按执行记录统计", "#34d399")
-      + statKpi("个微联系人", (wx.contacts || 0), "有记忆的个微联系人总数", "#a855f7")
+      + statKpi("成功率", (s.success_rate || 0) + "%", "按执行记录统计 · 个微联系人 " + (wx.contacts || 0) + " 人", "#34d399")
       + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
@@ -2521,8 +2531,16 @@ body.overlay-open #drawer{z-index:501}
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#34d399"></span><b style="font-size:13px">按虚拟员工看</b></div>'
-      + (slotRows ? '<table class="tb"><thead><tr><th>槽位</th><th>状态</th><th>执行</th><th>成功</th><th>失败</th><th>成功率</th><th>最后心跳</th></tr></thead><tbody>' + slotRows + '</tbody></table>'
+      + (slotRows ? '<table class="tb"><thead><tr><th>槽位</th><th>状态</th><th>执行</th><th>成功</th><th>失败</th><th>播放</th><th>成功率</th><th>最后心跳</th></tr></thead><tbody>' + slotRows + '</tbody></table>'
                   : '<div class="dim">还没有添加虚拟员工（去「虚拟员工」页添加）</div>') + '</div>'
+
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
+      + '<span class="dot" style="color:#f472b6"></span><b style="font-size:13px">发出去的视频 · 播放量 Top 10</b>'
+      + '<span class="dim" style="font-size:11.5px">每条视频取最新一次采样（累计播放）'
+      + (plays.sampled_day ? (" · 采样 " + esc(String(plays.sampled_day))) : "") + '</span></div>'
+      + (topRows ? '<table class="tb"><thead><tr><th>视频</th><th>平台</th><th>发布</th><th>播放</th><th>赞</th><th>评论</th></tr></thead><tbody>' + topRows + '</tbody></table>'
+                 : '<div class="dim">还没有发布记录（发布后每天会采样一次播放量）</div>') + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#fbbf24"></span><b style="font-size:13px">个微回复明细</b>'

@@ -2036,7 +2036,8 @@ def _robot_day(dt: Any) -> str:
         return ""
 
 
-def _robot_slots(db: Session, slot_map: Dict[str, str], by_slot: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _robot_slots(db: Session, slot_map: Dict[str, str], by_slot: Dict[str, Dict[str, Any]],
+                 slot_plays: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
     """\u865a\u62df\u5458\u5de5\u5217\u8868\uff1a\u5df2\u6dfb\u52a0\u7684\u69fd\u4f4d\u5168\u90e8\u5217\u51fa\uff08\u6ca1\u5e72\u6d3b\u4e5f\u5728\uff09+ \u5728\u7ebf\u72b6\u6001\u3002"""
     out: List[Dict[str, Any]] = []
     for inst, name in slot_map.items():
@@ -2044,7 +2045,7 @@ def _robot_slots(db: Session, slot_map: Dict[str, str], by_slot: Dict[str, Dict[
         _, _, online, last_seen = _slot_presence(db, inst)
         out.append({"installation_id": inst, "name": name or inst[:12], "runs": stat["runs"],
                     "ok": stat["ok"], "fail": stat["fail"], "online": online,
-                    "last_seen": (last_seen or "")[:19],
+                    "last_seen": (last_seen or "")[:19], "plays": int(slot_plays.get(inst, 0)),
                     "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
     known = set(slot_map.keys())
     for inst, stat in by_slot.items():
@@ -2052,7 +2053,8 @@ def _robot_slots(db: Session, slot_map: Dict[str, str], by_slot: Dict[str, Dict[
             continue
         out.append({"installation_id": inst, "name": stat.get("name") or (inst[:12] + "\u2026"),
                     "runs": stat["runs"], "ok": stat["ok"], "fail": stat["fail"], "online": None,
-                    "last_seen": "", "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
+                    "last_seen": "", "plays": int(slot_plays.get(inst, 0)),
+                    "rate": round(stat["ok"] * 100.0 / stat["runs"], 1) if stat["runs"] else 0.0})
     out.sort(key=lambda x: -x["runs"])
     return out[:40]
 
@@ -2124,6 +2126,48 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
                              "from publish_metrics where (user_id in " + uin + " or installation_id in " + sin + ")"
                              + since_sql_pub + " group by 1"):
             day_pub[_robot_day(day)] = int(cnt or 0)
+
+    # ---- \u64ad\u653e\u91cf\uff08publish_metrics \u6bcf\u5929\u4e00\u6761\u5feb\u7167\uff0c\u5fc5\u987b\u6bcf\u6761\u89c6\u9891\u53d6\u6700\u65b0\u4e00\u6b21\u518d\u6c42\u548c\uff09----
+    plays: Dict[str, Any] = {}
+    top_videos: List[Dict[str, Any]] = []
+    slot_plays: Dict[str, int] = {}
+    try:
+        latest = rows(
+            "select platform, coalesce(title,''), published_at, installation_id, "
+            "       coalesce(views,0), coalesce(likes,0), coalesce(comments,0), coalesce(shares,0), "
+            "       coalesce(favorites,0), sampled_day "
+            "from (select distinct on (coalesce(item_id, cast(id as varchar))) * "
+            "      from publish_metrics where (user_id in " + uin + " or installation_id in " + sin + ") "
+            "      order by coalesce(item_id, cast(id as varchar)), sampled_day desc nulls last, id desc) t")
+        view_list = []
+        by_platform: Dict[str, int] = {}
+        for platform, title, published_at, inst, views, likes, comments, shares, favorites, sampled_day in latest:
+            v = int(views or 0)
+            view_list.append({"title": (title or "")[:40], "platform": platform or "",
+                              "published_at": (published_at.isoformat(sep=" ")[:10] if published_at else ""),
+                              "views": v, "likes": int(likes or 0), "comments": int(comments or 0),
+                              "shares": int(shares or 0), "favorites": int(favorites or 0),
+                              "sampled_day": str(sampled_day or "")})
+            by_platform[str(platform or "unknown")] = by_platform.get(str(platform or "unknown"), 0) + v
+            if inst:
+                slot_plays[str(inst)] = slot_plays.get(str(inst), 0) + v
+        view_list.sort(key=lambda x: -x["views"])
+        plays = {
+            "items": len(view_list),
+            "items_with_views": sum(1 for x in view_list if x["views"] > 0),
+            "views": sum(x["views"] for x in view_list),
+            "likes": sum(x["likes"] for x in view_list),
+            "comments": sum(x["comments"] for x in view_list),
+            "shares": sum(x["shares"] for x in view_list),
+            "favorites": sum(x["favorites"] for x in view_list),
+            "avg_views": (int(sum(x["views"] for x in view_list) / len(view_list)) if view_list else 0),
+            "max_views": (view_list[0]["views"] if view_list else 0),
+            "sampled_day": (latest[0][9] if latest and latest[0][9] else ""),
+            "by_platform": by_platform,
+        }
+        top_videos = view_list[:10]
+    except Exception as exc:
+        logger.warning("[MANAGE] robot-stats plays failed: %s", exc)
 
     # ---- \u7ebf\u7d22 / \u7cbe\u51c6\u5ba2\u6237 ----
     lead_rows = rows("select coalesce(source_platform, ''), count(*) from global_lead_crm_contacts "
@@ -2235,18 +2279,21 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         "summary": {
             "videos": videos, "published": published_total, "published_by_platform": published_by_platform,
             "leads": leads_total, "leads_by_platform": leads_by_platform,
+            "plays": plays,
             "wechat": wx, "dm_total": dm_total, "dm_replied": dm_replied,
             "dm_reply_rate": round(dm_replied * 100.0 / dm_total, 1) if dm_total else 0.0,
             "runs": total_runs, "runs_ok": total_ok, "runs_fail": total_fail,
             "success_rate": round(total_ok * 100.0 / total_runs, 1) if total_runs else 0.0,
         },
         "groups": groups,
-        "slots": _robot_slots(db, slot_map, by_slot),
+        "top_videos": top_videos,
+        "slot_plays": slot_plays,
+        "slots": _robot_slots(db, slot_map, by_slot, slot_plays),
         "trend": trend,
         "recent_outcomes": recent_outcomes,
         "sources": [
             "\u6267\u884c\uff1ascheduled_task_runs\uff08\u6309\u80fd\u529b action + \u69fd\u4f4d\uff09",
-            "\u53d1\u5e03\uff1apublish_metrics\uff08published_at\uff09",
+            "\u53d1\u5e03 / \u64ad\u653e\uff1apublish_metrics\uff08\u6bcf\u5929\u4e00\u6761\u5feb\u7167\uff0c\u9762\u677f\u53d6\u6bcf\u6761\u89c6\u9891\u6700\u65b0\u4e00\u6b21\u91c7\u6837\u6c42\u548c\uff09",
             "\u7cbe\u51c6\u5ba2\u6237\uff1aglobal_lead_crm_contacts\uff08created_at\uff09",
             "\u4e2a\u5fae\u56de\u590d\uff1awechat_interaction_outcomes\uff08reply_sent / failed / skipped\uff09 + wechat_contact_memories",
             "\u79c1\u4fe1\uff1ah5_chat_messages\uff08content / reply_text\uff09",
