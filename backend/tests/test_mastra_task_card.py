@@ -46,3 +46,29 @@ def test_artifacts_are_capped_and_deduped(db_session):
     db_session.commit()
     latest = card.latest_task_card(db_session, "msg-3")
     assert latest["artifacts"] == ["https://a/1.png", "https://a/2.png"]
+
+def test_overall_status_rules():
+    from backend.app.services import mastra_task_card as card
+
+    assert card.overall_status(["done", "running"]) == "running"
+    assert card.overall_status(["done", "failed"]) == "failed"
+    assert card.overall_status(["done", "done"]) == "done"
+    assert card.overall_status(["cancelled", "cancelled"]) == "cancelled"
+
+
+def test_items_are_saved_and_deduped(db_session):
+    from backend.app.services import mastra_task_card as card
+
+    items = [
+        {"key": "media:image.generate:t1", "title": "image.generate", "status": "running", "text": "生成中"},
+        {"key": "online:child-1", "title": "发布抖音视频", "status": "done", "artifacts": ["https://a/b.mp4"]},
+    ]
+    assert card.upsert_task_card(db_session, message_id="msg-items", user_id=3, status="running", items=items) is True
+    db_session.commit()
+    latest = card.latest_task_card(db_session, "msg-items")
+    assert [item["key"] for item in latest["items"]] == ["media:image.generate:t1", "online:child-1"]
+    assert latest["items"][0]["status_label"] == "执行中"
+    assert latest["media_urls"] == ["https://a/b.mp4"]
+    assert latest["cancellable"] is True
+    # 同样的 items 再写一次：不新增事件
+    assert card.upsert_task_card(db_session, message_id="msg-items", user_id=3, status="running", items=items) is False

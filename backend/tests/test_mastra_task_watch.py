@@ -175,7 +175,7 @@ def test_nested_result_shape_is_unwrapped():
     """MCP 可能回 {capability_id, result:{status,...}}，要能识别终态与错误。"""
     parsed = {"capability_id": "task.get_result", "result": {"status": "failed", "error": {"message": "上游 404 任务不存在"}}}
     merged = {**parsed, **parsed["result"]}
-    assert watch._media_status(merged) == "failed"
+    assert watch._media_state(merged) == "failed"
     assert "404" in watch._task_error_text(merged)
 
 

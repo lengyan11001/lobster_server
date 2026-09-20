@@ -26109,7 +26109,7 @@
     }
 
     // 后台任务进度卡：确认执行后挂在原消息上，离开页面再回来也能看到最新状态（2026-09-20）
-    function renderTaskCard(bubble, payload) {
+    function renderTaskCard(bubble, payload, messageId) {
       if (!bubble || !payload || typeof payload !== "object") return;
       let box = bubble._taskCardEl;
       if (!box || !box.isConnected) {
@@ -26124,6 +26124,8 @@
       const title = String(payload.title || "后台任务").trim();
       const text = String(payload.text || "").trim();
       const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts.filter(Boolean) : [];
+      const items = Array.isArray(payload.items) ? payload.items.filter((item) => item && typeof item === "object") : [];
+      const cancellable = !!payload.cancellable && !!messageId && (status === "queued" || status === "running");
       const stamp = String(payload.updated_at || "").replace("T", " ").slice(5, 16);
       box.dataset.status = status;
       box.innerHTML = "";
@@ -26137,12 +26139,57 @@
       badge.textContent = label;
       head.appendChild(name);
       head.appendChild(badge);
+      if (cancellable) {
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "chat-task-card-cancel";
+        cancelBtn.textContent = "取消任务";
+        cancelBtn.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = "正在取消…";
+          try {
+            const data = await api(`/api/mastra-chat/tasks/${encodeURIComponent(messageId)}/cancel`, { method: "POST" });
+            if (data && data.card) renderTaskCard(bubble, data.card, messageId);
+            else cancelBtn.textContent = "已取消";
+          } catch (err) {
+            cancelBtn.disabled = false;
+            cancelBtn.textContent = "取消任务";
+            const tip = document.createElement("div");
+            tip.className = "chat-task-card-time";
+            tip.style.color = "var(--danger)";
+            tip.textContent = `取消失败：${(err && err.message) || err}`;
+            box.appendChild(tip);
+          }
+        });
+        head.appendChild(cancelBtn);
+      }
       box.appendChild(head);
       if (text) {
         const body = document.createElement("div");
         body.className = "chat-task-card-text";
         body.textContent = text;
         box.appendChild(body);
+      }
+      if (items.length > 1) {
+        const list = document.createElement("div");
+        list.className = "chat-task-card-items";
+        items.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "chat-task-card-item";
+          row.dataset.status = String(item.status || "");
+          const itemName = document.createElement("span");
+          itemName.className = "chat-task-card-item-name";
+          itemName.textContent = String(item.title || "任务");
+          const itemBadge = document.createElement("span");
+          itemBadge.className = "chat-task-card-badge";
+          itemBadge.dataset.status = String(item.status || "");
+          itemBadge.textContent = String(item.status_label || "");
+          row.appendChild(itemName);
+          row.appendChild(itemBadge);
+          list.appendChild(row);
+        });
+        box.appendChild(list);
       }
       if (artifacts.length) {
         const list = document.createElement("div");
@@ -26394,7 +26441,7 @@
         setBubbleText(bubble, ev.payload.reply_text);
       }
       if (ev.type === "task_card" && ev.payload) {
-        renderTaskCard(bubble, ev.payload);
+        renderTaskCard(bubble, ev.payload, messageId);
       }
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       renderPublishDraftActions(bubble, ev.payload || {});

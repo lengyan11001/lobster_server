@@ -1,11 +1,10 @@
-"""长任务看护：产物完成/失败后主动推回会话（2026-09-20）。
+"""长任务看护 + 后台任务进度卡（2026-09-20）。
 
-编排会话里"确认后执行"的长任务分两类：
-  1) 下发到 Online 的子任务（H5ChatMessage.parent_message_id 子消息 + ScheduledTaskRun）
-  2) 服务器侧生成能力（image.generate / video.generate / pipeline，进度事件里带 media_task）
-这两类做完时原本不会主动告诉用户：第 1 类只更新子消息自身；第 2 类要等用户再来一轮才会被
-resume 轮询。这里开一个后台看护循环，轮询这两类任务，完成/失败后往用户的「系统任务」会话
-推一条可读通知（幂等：同一个任务只通知一次）。
+职责：
+  1) 把"确认后转入后台"的任务（Online 子任务 / 服务器生成任务）扫出来，轮询真实状态
+  2) 完成后推一条通知到用户「系统任务」会话（离开页面也能收到）
+  3) 同步维护原消息上的进度卡 task_card：聚合多个子任务、整体状态、产物链接
+     （取消后不再复活）
 """
 from __future__ import annotations
 
@@ -23,21 +22,23 @@ from ..api.auth import access_token_claims, create_access_token
 from ..db import SessionLocal
 from ..models import H5ChatEvent, H5ChatMessage, ScheduledTaskRun, User
 from .h5_chat_sessions import attach_system_task_message
-from .mastra_task_card import upsert_task_card
+from .mastra_task_card import (
+    latest_task_card,
+    normalize_artifacts,
+    overall_status,
+    status_label,
+    upsert_task_card,
+)
 
 logger = logging.getLogger(__name__)
 
 MCP_URL = "http://127.0.0.1:8001/mcp"
 TASK_NOTICE_EVENT = "task_notice"
 
-# 通知里最多展示几条产物
 _MAX_ASSETS = 4
-# 只回看这么久之内结束的任务（避免历史数据被重新通知）
 _ONLINE_TTL_HOURS = 6
 _MEDIA_SCAN_HOURS = 6
-# 超过这个时长仍未结束的媒体任务，推一条"仍在生成"的说明后不再跟踪
 _MEDIA_TIMEOUT_MINUTES = 45
-# 进程刚启动的第一轮只补最近的完成通知（避免重启/发版时把几小时前的任务一次性推给用户）
 _COLD_START_WINDOW_MINUTES = 5
 _cold_start_done = False
 
@@ -53,6 +54,7 @@ _SUCCESS_STATUSES = {
     "success", "completed", "done", "succeeded", "finished",
     "已完成", "生成成功", "成功", "完成",
 }
+_CANCELLED_STATUSES = {"cancelled", "canceled", "已取消", "已停止"}
 
 
 def _enabled() -> bool:
@@ -78,10 +80,7 @@ def _notice_already_sent(db: Session, root_message_id: str, key: str) -> bool:
         return False
     rows = (
         db.query(H5ChatEvent.payload)
-        .filter(
-            H5ChatEvent.message_id == root_message_id,
-            H5ChatEvent.event_type == TASK_NOTICE_EVENT,
-        )
+        .filter(H5ChatEvent.message_id == root_message_id, H5ChatEvent.event_type == TASK_NOTICE_EVENT)
         .order_by(H5ChatEvent.id.desc())
         .limit(20)
         .all()
@@ -93,7 +92,6 @@ def _notice_already_sent(db: Session, root_message_id: str, key: str) -> bool:
 
 
 def _collect_urls(value: Any, limit: int = _MAX_ASSETS) -> List[str]:
-    """从任意工具/任务结果里挑出可点击的产物地址。"""
     found: List[str] = []
     seen = set()
 
@@ -142,7 +140,6 @@ def _push_notice(
     root_message_id: str,
     key: str,
 ) -> None:
-    """往用户「系统任务」会话推一条通知，并在原消息上留一个幂等标记事件。"""
     now = datetime.utcnow()
     body = text.strip()
     if not body:
@@ -177,6 +174,9 @@ def _push_notice(
     logger.info("[task-watch] notified user=%s key=%s message=%s", user_id, key, message.id)
 
 
+# ── Online 子任务 ────────────────────────────────────────────────
+
+
 def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[str, Any]]:
     """把一条 Online 子任务整理成「通知 + 进度卡」都需要的信息。"""
     if child.parent_message_id is None:
@@ -188,13 +188,26 @@ def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[st
         .first()
     )
     title = str(getattr(run, "title", "") or child.content or "任务").strip()[:60]
-    failed = str(child.status or "").strip().lower() == "failed" or str(getattr(run, "status", "") or "") == "failed"
+    raw_status = str(child.status or "").strip().lower()
+    run_status = str(getattr(run, "status", "") or "").strip().lower()
+    if raw_status in {"cancelled", "canceled"} or run_status in _CANCELLED_STATUSES:
+        state = "cancelled"
+    elif raw_status in {"pending", "processing"} or run_status in {"pending", "processing"}:
+        state = "running"
+    elif raw_status == "failed" or run_status == "failed":
+        state = "failed"
+    else:
+        state = "done"
     result_text = str(getattr(run, "result_text", "") or child.reply_text or "").strip()
     error_text = str(getattr(run, "error", "") or child.error or "").strip()
     urls = _collect_urls(getattr(run, "result_payload", None) or child.reply_text)
     key = _notice_key("online", child.id)
-    if failed:
+    if state == "cancelled":
+        text = f"「{title}」已取消。"
+    elif state == "failed":
         text = f"「{title}」执行失败：{_truncate(error_text or result_text or '未返回原因')}。可以让我重试或换一种做法。"
+    elif state == "running":
+        text = f"「{title}」正在执行（后台任务，可以离开页面）。"
     else:
         lines = [f"「{title}」已完成。"]
         if result_text:
@@ -206,10 +219,10 @@ def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[st
     return {
         "key": key,
         "title": title,
-        "failed": failed,
-        "running": str(child.status or "").strip().lower() in {"pending", "processing"},
+        "state": state,
         "urls": urls,
         "notice_text": text,
+        "short_text": text.split("\n")[0][:200],
         "root_id": child.parent_message_id,
         "user_id": int(child.user_id),
     }
@@ -223,15 +236,45 @@ def _online_child_notice(db: Session, child: H5ChatMessage) -> Optional[Tuple[st
     return summary["key"], summary["notice_text"], summary["root_id"]
 
 
+def _online_items(db: Session, root_id: str, now: datetime) -> List[Dict[str, Any]]:
+    cutoff = now - timedelta(hours=_ONLINE_TTL_HOURS)
+    children = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.parent_message_id == root_id,
+            H5ChatMessage.updated_at >= cutoff,
+        )
+        .order_by(H5ChatMessage.created_at.desc())
+        .limit(12)
+        .all()
+    )
+    items: List[Dict[str, Any]] = []
+    for child in children:
+        summary = _online_child_summary(db, child)
+        if not summary:
+            continue
+        items.append(
+            {
+                "key": summary["key"],
+                "title": summary["title"],
+                "status": summary["state"],
+                "text": summary["short_text"],
+                "artifacts": summary["urls"],
+            }
+        )
+    return items
+
+
+# ── 媒体/生成任务 ────────────────────────────────────────────────
+
+
+def _message_installation_id(db: Session, message_id: str) -> str:
+    row = db.query(H5ChatMessage.installation_id).filter(H5ChatMessage.id == message_id).first()
+    return str(getattr(row, "installation_id", "") or "") if row else ""
+
+
 def _media_tasks_from_events(db: Session, now: datetime) -> List[Dict[str, Any]]:
     """从最近的事件里挑出"还没结束"的媒体/生成任务。"""
-    installs: Dict[str, str] = {}
-
-    def installation_for(message_id: str) -> str:
-        if message_id not in installs:
-            row = db.query(H5ChatMessage.installation_id).filter(H5ChatMessage.id == message_id).first()
-            installs[message_id] = str(getattr(row, "installation_id", "") or "") if row else ""
-        return installs[message_id]
     cutoff = now - timedelta(hours=_MEDIA_SCAN_HOURS)
     rows = (
         db.query(H5ChatEvent)
@@ -267,7 +310,7 @@ def _media_tasks_from_events(db: Session, now: datetime) -> List[Dict[str, Any]]
                 "task_id": task_id,
                 "capability_id": capability_id,
                 "created_at": row.created_at,
-                "installation_id": installation_for(row.message_id),
+                "installation_id": _message_installation_id(db, row.message_id),
             }
         )
         if len(out) >= 40:
@@ -307,14 +350,9 @@ async def _poll_capability_task(
     try:
         headers = {"Authorization": f"Bearer {token}"}
         if installation_id:
-            # MCP 侧要求 X-Installation-Id：缺了会直接返回"请使用最新客户端"
             headers["X-Installation-Id"] = installation_id
         async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
-            response = await client.post(
-                MCP_URL,
-                json=body,
-                headers=headers,
-            )
+            response = await client.post(MCP_URL, json=body, headers=headers)
         data = response.json()
     except Exception as exc:  # noqa: BLE001
         logger.info("[task-watch] 轮询失败 task=%s: %s", task_id, exc)
@@ -334,7 +372,6 @@ async def _poll_capability_task(
         return {"status": "unknown", "raw": text[:400]}
     if not isinstance(parsed, dict):
         return {"raw": text[:400]}
-    # MCP 的返回有几种包法：{status:...} / {data:{...}} / {capability_id, result:{...}}
     for key in ("data", "result"):
         nested = parsed.get(key)
         if isinstance(nested, dict):
@@ -342,15 +379,7 @@ async def _poll_capability_task(
     return parsed
 
 
-def _media_status(task: Dict[str, Any]) -> str:
-    status = str(task.get("status") or task.get("state") or "").strip().lower()
-    if not status and isinstance(task.get("data"), dict):
-        status = str(task["data"].get("status") or "").strip().lower()
-    return status
-
-
 def _task_error_text(task: Dict[str, Any]) -> str:
-    """错误信息可能是字符串，也可能是 {message}/{detail}/{error:{message}} 这类结构。"""
     error = task.get("error")
     if isinstance(error, dict):
         return str(error.get("message") or error.get("detail") or error.get("error") or error)[:300]
@@ -362,86 +391,92 @@ def _task_error_text(task: Dict[str, Any]) -> str:
     return str(message or "")[:300]
 
 
-async def _watch_media_tasks(now: datetime) -> int:
-    db = SessionLocal()
-    try:
-        pending = _media_tasks_from_events(db, now)
-        tokens: Dict[int, Optional[str]] = {}
-        for item in pending:
-            user_id = int(item["user_id"])
-            if user_id not in tokens:
-                tokens[user_id] = _mint_user_token(db, user_id)
-            token = tokens[user_id]
-            if not token:
-                continue
-            key = _notice_key("media", item["capability_id"], item["task_id"])
-            if _notice_already_sent(db, item["message_id"], key):
-                continue
-            task = await _poll_capability_task(
-                token,
-                item["capability_id"],
-                item["task_id"],
-                item.get("installation_id") or "",
-            )
-            if not task:
-                continue
-            status = _media_status(task)
-            terminal = bool(task.get("terminal")) or status in _SUCCESS_STATUSES or status in _FAILURE_STATUSES
-            age_minutes = (now - item["created_at"]).total_seconds() / 60.0 if item["created_at"] else 0.0
-            urls = _collect_urls(task)
-            if terminal and status in _FAILURE_STATUSES:
-                text = (
-                    f"生成任务失败（{item['capability_id']}）："
-                    f"{_truncate(_task_error_text(task) or status)}。可以让我重试或换参数。"
-                )
-                card_status = "failed"
-            elif terminal:
-                lines = [f"生成完成（{item['capability_id']}）。"]
-                if urls:
-                    lines.append("产物：" + "、".join(urls))
-                lines.append("需要我继续发布、改写或做二次处理，直接说就行。")
-                text = "\n".join(lines)
-                card_status = "done"
-            elif age_minutes >= _MEDIA_TIMEOUT_MINUTES:
-                text = (
-                    f"生成任务还在处理（{item['capability_id']}，已等待 {int(age_minutes)} 分钟）。"
-                    "我会继续等，出结果就通知你；你也可以让我先做别的。"
-                )
-                card_status = "running"
-            else:
-                # 还在生成：先更新进度卡（让用户离开页面也能看到在跑）
-                upsert_task_card(
-                    db,
-                    message_id=item["message_id"],
-                    user_id=user_id,
-                    status="running",
-                    title=str(item["capability_id"]),
-                    text=f"「{item['capability_id']}」生成中，已等待 {int(age_minutes)} 分钟。",
-                    source="media",
-                )
-                db.commit()
-                continue
-            upsert_task_card(
-                db,
-                message_id=item["message_id"],
-                user_id=user_id,
-                status=card_status,
-                title=str(item["capability_id"]),
-                text=text,
-                artifacts=urls,
-                source="media",
-            )
-            _push_notice(
-                db,
-                user_id=user_id,
-                installation_id="",
-                text=text,
-                root_message_id=item["message_id"],
-                key=key,
-            )
-        return len(pending)
-    finally:
-        db.close()
+def _media_state(task: Dict[str, Any]) -> str:
+    status = str(task.get("status") or task.get("state") or "").strip().lower()
+    if status in _CANCELLED_STATUSES:
+        return "cancelled"
+    if status in _FAILURE_STATUSES:
+        return "failed"
+    if status in _SUCCESS_STATUSES:
+        return "done"
+    return ""
+
+
+def _media_item_key(capability_id: str, task_id: str) -> str:
+    return f"media:{capability_id}:{task_id}"
+
+
+# ── 进度卡聚合 ───────────────────────────────────────────────────
+
+
+def _rebuild_root_card(
+    db: Session,
+    *,
+    root_id: str,
+    user_id: int,
+    extra_items: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> bool:
+    """按该请求下所有子任务的真实状态，重写一张聚合进度卡。"""
+    if not root_id:
+        return False
+    previous = latest_task_card(db, root_id) or {}
+    if str(previous.get("status") or "") == "cancelled":
+        return False  # 已取消：不再复活
+    now = datetime.utcnow()
+    items = _online_items(db, root_id, now)
+    by_key = {str(item.get("key") or ""): item for item in items}
+    # 媒体任务：本轮刚轮询到的优先，其余沿用上一张卡里的（避免两次轮询之间状态回退）
+    for key, item in (extra_items or {}).items():
+        by_key[key] = item
+    for raw in previous.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("key") or "")
+        if key.startswith("media:") and key not in by_key:
+            by_key[key] = raw
+    items = list(by_key.values())[:12]
+    if not items:
+        return False
+    status = overall_status([str(item.get("status") or "") for item in items])
+    artifacts = normalize_artifacts([url for item in items for url in (item.get("artifacts") or [])])
+    titles = [str(item.get("title") or "") for item in items if str(item.get("title") or "")]
+    done_count = sum(1 for item in items if str(item.get("status")) == "done")
+    failed_count = sum(1 for item in items if str(item.get("status")) == "failed")
+    if len(items) == 1:
+        title = titles[0] if titles else "后台任务"
+    else:
+        title = f"后台任务（{len(items)} 个）"
+    lines = []
+    for item in items:
+        lines.append(f"- {item.get('title') or '任务'}：{status_label(str(item.get('status') or ''))}")
+    if status == "running":
+        summary = f"{done_count}/{len(items)} 已完成，其余执行中；可以离开页面，完成后我会在这里更新。"
+    elif status == "done":
+        summary = f"{len(items)} 个任务全部完成。" + (f"（{failed_count} 个失败）" if failed_count else "")
+    elif status == "failed":
+        summary = f"有 {failed_count} 个任务失败，其余已完成；失败原因见下。"
+    else:
+        summary = ""
+    text = "\n".join([line for line in [summary] + lines if line]).strip()
+    full_text = text
+    if status == "done":
+        detail = [str(item.get("text") or "") for item in items if str(item.get("status")) == "done" and item.get("text")]
+        if detail:
+            full_text = text + "\n" + "\n".join(detail[:3])
+    return upsert_task_card(
+        db,
+        message_id=root_id,
+        user_id=user_id,
+        status=status,
+        title=title,
+        text=full_text,
+        artifacts=artifacts,
+        items=items,
+        source="watch",
+    )
+
+
+# ── 主循环 ───────────────────────────────────────────────────────
 
 
 def _watch_online_children(now: datetime, *, window_minutes: Optional[float] = None) -> int:
@@ -451,65 +486,41 @@ def _watch_online_children(now: datetime, *, window_minutes: Optional[float] = N
             cutoff = now - timedelta(hours=_ONLINE_TTL_HOURS)
         else:
             cutoff = now - timedelta(minutes=max(1.0, float(window_minutes)))
-        # 1) 还在跑的：只更新进度卡（"执行中"），不发通知
-        active_children = (
+        # 1) 进行中/刚结束的子任务：先把进度卡刷新一遍（聚合多个子任务）
+        touched_roots: Dict[str, int] = {}
+        recent_children = (
             db.query(H5ChatMessage)
             .filter(
                 H5ChatMessage.parent_message_id.isnot(None),
-                H5ChatMessage.status.in_(("pending", "processing")),
                 H5ChatMessage.updated_at >= cutoff,
+                H5ChatMessage.status.in_(("pending", "processing", "completed", "failed", "cancelled")),
             )
             .order_by(H5ChatMessage.updated_at.desc())
             .limit(200)
             .all()
         )
-        for child in active_children:
-            summary = _online_child_summary(db, child)
-            if not summary:
-                continue
-            upsert_task_card(
-                db,
-                message_id=summary["root_id"],
-                user_id=summary["user_id"],
-                status="running",
-                title=summary["title"],
-                text=f"「{summary['title']}」正在执行（后台任务，可以离开页面）。",
-                source="online",
-            )
-        db.commit()
+        for child in recent_children:
+            if child.parent_message_id:
+                touched_roots[child.parent_message_id] = int(child.user_id)
+        for root_id, user_id in touched_roots.items():
+            try:
+                _rebuild_root_card(db, root_id=root_id, user_id=user_id)
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                logger.warning("[task-watch] 刷新进度卡失败 root=%s", root_id, exc_info=True)
 
-        children = (
-            db.query(H5ChatMessage)
-            .filter(
-                H5ChatMessage.parent_message_id.isnot(None),
-                H5ChatMessage.status.in_(("completed", "failed")),
-                H5ChatMessage.updated_at >= cutoff,
-            )
-            .order_by(H5ChatMessage.updated_at.desc())
-            .limit(200)
-            .all()
-        )
+        # 2) 已结束的：推通知（幂等）
         notified = 0
-        for child in children:
+        finished = [child for child in recent_children if str(child.status or "").lower() in {"completed", "failed"}]
+        for child in finished:
             try:
                 summary = _online_child_summary(db, child)
                 if not summary:
                     continue
                 key = summary["key"]
                 root_message_id = summary["root_id"]
-                # 进度卡终态（含产物），和下面的通知互为补充
-                upsert_task_card(
-                    db,
-                    message_id=root_message_id,
-                    user_id=summary["user_id"],
-                    status="failed" if summary["failed"] else "done",
-                    title=summary["title"],
-                    text=summary["notice_text"],
-                    artifacts=summary["urls"],
-                    source="online",
-                )
                 if _notice_already_sent(db, root_message_id, key):
-                    db.commit()
                     continue
                 _push_notice(
                     db,
@@ -528,6 +539,110 @@ def _watch_online_children(now: datetime, *, window_minutes: Optional[float] = N
         db.close()
 
 
+async def _watch_media_tasks(now: datetime) -> int:
+    db = SessionLocal()
+    try:
+        pending = _media_tasks_from_events(db, now)
+        tokens: Dict[int, Optional[str]] = {}
+        media_items: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        updates: List[Dict[str, Any]] = []
+        for item in pending:
+            user_id = int(item["user_id"])
+            if user_id not in tokens:
+                tokens[user_id] = _mint_user_token(db, user_id)
+            token = tokens[user_id]
+            if not token:
+                continue
+            key = _media_item_key(item["capability_id"], item["task_id"])
+            previous = latest_task_card(db, item["message_id"]) or {}
+            if any(str(raw.get("key") or "") == key and str(raw.get("status")) == "cancelled" for raw in (previous.get("items") or []) if isinstance(raw, dict)):
+                continue
+            if _notice_already_sent(db, item["message_id"], _notice_key(key)):
+                continue
+            task = await _poll_capability_task(
+                token,
+                item["capability_id"],
+                item["task_id"],
+                item.get("installation_id") or "",
+            )
+            age_minutes = (now - item["created_at"]).total_seconds() / 60.0 if item["created_at"] else 0.0
+            state = _media_state(task or {})
+            urls = _collect_urls(task or {})
+            if not state and age_minutes < _MEDIA_TIMEOUT_MINUTES:
+                media_items.setdefault(item["message_id"], {})[key] = {
+                    "key": key,
+                    "title": str(item["capability_id"]),
+                    "status": "running",
+                    "text": f"{item['capability_id']} 生成中，已等待 {int(age_minutes)} 分钟。",
+                    "artifacts": urls,
+                }
+                continue
+            if not state:
+                state = "running"
+                text = (
+                    f"生成任务还在处理（{item['capability_id']}，已等待 {int(age_minutes)} 分钟）。"
+                    "我会继续等，出结果就通知你；你也可以让我先做别的。"
+                )
+            elif state == "failed":
+                text = (
+                    f"生成任务失败（{item['capability_id']}）："
+                    f"{_truncate(_task_error_text(task or {}) or '未返回原因')}。可以让我重试或换参数。"
+                )
+            elif state == "cancelled":
+                text = f"生成任务已取消（{item['capability_id']}）。"
+            else:
+                lines = [f"生成完成（{item['capability_id']}）。"]
+                if urls:
+                    lines.append("产物：" + "、".join(urls))
+                lines.append("需要我继续发布、改写或做二次处理，直接说就行。")
+                text = "\n".join(lines)
+            media_items.setdefault(item["message_id"], {})[key] = {
+                "key": key,
+                "title": str(item["capability_id"]),
+                "status": state,
+                "text": _truncate(text, 300),
+                "artifacts": urls,
+            }
+            if state in {"done", "failed", "cancelled"}:
+                updates.append(
+                    {
+                        "message_id": item["message_id"],
+                        "user_id": user_id,
+                        "text": text,
+                        "key": _notice_key(key),
+                    }
+                )
+        for message_id, items in media_items.items():
+            # 取该消息的属主（事件里带 user_id）
+            owner_row = (
+                db.query(H5ChatEvent.user_id)
+                .filter(H5ChatEvent.message_id == message_id)
+                .order_by(H5ChatEvent.id.desc())
+                .first()
+            )
+            user_id = int(owner_row[0]) if owner_row else 0
+            if not user_id:
+                continue
+            try:
+                _rebuild_root_card(db, root_id=message_id, user_id=user_id, extra_items=items)
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                logger.warning("[task-watch] 刷新媒体进度卡失败 message=%s", message_id, exc_info=True)
+        for update in updates:
+            _push_notice(
+                db,
+                user_id=update["user_id"],
+                installation_id="",
+                text=update["text"],
+                root_message_id=update["message_id"],
+                key=update["key"],
+            )
+        return len(pending)
+    finally:
+        db.close()
+
+
 async def watch_once() -> Dict[str, int]:
     global _cold_start_done
     now = datetime.utcnow()
@@ -535,7 +650,6 @@ async def watch_once() -> Dict[str, int]:
     if _cold_start_done:
         online_notified = _watch_online_children(now)
     else:
-        # 第一轮只补最近几分钟的，避免发版/重启后把囤了几小时的任务一次性推给用户
         online_notified = _watch_online_children(now, window_minutes=_COLD_START_WINDOW_MINUTES)
         _cold_start_done = True
     return {"media_scanned": media_scanned, "online_notified": online_notified}

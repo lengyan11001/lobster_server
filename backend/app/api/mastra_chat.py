@@ -1205,6 +1205,124 @@ def cancel_mastra_message(
     }
 
 
+@router.post("/api/mastra-chat/tasks/{message_id}/cancel", summary="取消后台任务（进度卡上的「取消任务」）")
+def cancel_mastra_background_task(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """真停：会话消息 + 待确认单 + 未结束的子任务与运行记录；进度卡标成"已取消"并且不再复活。
+
+    已经提交到上游的生成任务（图片/视频）没有取消接口，只能停止跟踪并在文案里说明。
+    """
+    from ..services.mastra_task_card import latest_task_card, upsert_task_card
+    from ..services.mastra_task_watch import _push_notice
+
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _root_mastra_message(db, owner.id, message_id)
+    now = datetime.utcnow()
+    changed = _cancel_root_message(db, row, reason="已取消后台任务")
+
+    children = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.user_id == owner.id,
+            H5ChatMessage.parent_message_id == row.id,
+            H5ChatMessage.status.in_(("pending", "processing")),
+        )
+        .all()
+    )
+    child_ids = [child.id for child in children]
+    for child in children:
+        child.status = "cancelled"
+        child.reply_text = "已取消"
+        child.finished_at = now
+        child.updated_at = now
+        _add_event(db, child, "cancelled", {"text": "用户已取消后台任务"})
+
+    cancelled_runs: List[str] = []
+    started_runs = 0
+    if child_ids:
+        runs = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.user_id == owner.id,
+                ScheduledTaskRun.h5_message_id.in_(child_ids),
+                ScheduledTaskRun.status.in_(("pending", "processing")),
+            )
+            .all()
+        )
+        for run in runs:
+            if str(run.status) == "processing":
+                started_runs += 1
+            run.status = "cancelled"
+            run.error = "用户已取消"
+            run.finished_at = now
+            run.updated_at = now
+            cancelled_runs.append(str(run.id))
+
+    card = latest_task_card(db, row.id) or {}
+    items = []
+    for raw in card.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        # 已经跑完/失败的子任务保留原状态，只把还在跑/排队的标成已取消
+        if str(raw.get("status") or "") in {"done", "failed"}:
+            items.append(dict(raw))
+        else:
+            items.append({**raw, "status": "cancelled", "status_label": "已取消"})
+    if not items:
+        items = [
+            {
+                "key": "task",
+                "title": str(card.get("title") or row.content or "后台任务")[:80],
+                "status": "cancelled",
+                "status_label": "已取消",
+                "text": "已取消",
+                "artifacts": list(card.get("artifacts") or []),
+            }
+        ]
+    tail = "已经跑完的部分保留在上面的结果里。" if cancelled_runs else ""
+    if started_runs:
+        tail += "已提交给上游的生成任务可能仍在跑完，结果会保留在内容记录里。"
+    upsert_task_card(
+        db,
+        message_id=row.id,
+        user_id=owner.id,
+        status="cancelled",
+        title=str(card.get("title") or "后台任务"),
+        text=("已取消。" + tail).strip(),
+        artifacts=card.get("artifacts") or [],
+        items=items,
+        cancellable=False,
+        cancel_reason="用户取消",
+        source="cancel",
+        force=True,
+    )
+    db.commit()
+    try:
+        _push_notice(
+            db,
+            user_id=owner.id,
+            installation_id=str(row.installation_id or ""),
+            text=f"「{str(card.get('title') or '后台任务')}」已按你的操作取消。",
+            root_message_id=row.id,
+            key=f"cancel:{row.id}",
+        )
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.warning("[mastra_chat] 取消通知写入失败 message=%s", row.id, exc_info=True)
+    db.refresh(row)
+    return {
+        "ok": True,
+        "deduplicated": not changed and not cancelled_runs,
+        "cancelled_runs": cancelled_runs,
+        "side_effects_may_continue": bool(started_runs),
+        "card": latest_task_card(db, row.id),
+        "message": _serialize_message(row),
+    }
+
+
 @router.get("/api/mastra-chat/personal-profile", summary="读取 AI 调度可用的个人 IP 人设")
 def get_mastra_personal_profile(
     current_user: User = Depends(get_current_user),
