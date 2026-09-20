@@ -897,13 +897,13 @@ body.overlay-open #drawer{z-index:501}
         + '<b style="font-size:13.5px">项目</b>'
         + '<span class="dim" style="font-size:12px">点「打开」进入工作安排</span>'
         + '<span class="grow"></span>'
-        + '<input id="projQ" placeholder="搜索项目 / 目标" value="' + String(PROJ_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
+        + '<input id="projQ" data-q="proj" placeholder="搜索项目 / 目标" value="' + String(PROJ_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
         + '<button class="btn sm" id="openTimeline">🕒 时间线</button>'
         + '<button class="btn sm" id="newProj">＋ 新建项目</button></div>'
         + (ps.length
             ? '<table class="tb"><thead><tr><th>项目</th><th>周期</th><th>安排</th><th class="right">操作</th></tr></thead><tbody>'
               + ps.map(function(p){
-                  return '<tr><td><b>' + p.name + '</b><div class="dim" style="font-size:11.5px;margin-top:3px">' + (p.goal||"") + '</div></td>'
+                  return '<tr data-sq="' + sqText(p.name, p.goal, p.status, p.start_at, p.end_at) + '"><td><b>' + p.name + '</b><div class="dim" style="font-size:11.5px;margin-top:3px">' + (p.goal||"") + '</div></td>'
                     + '<td class="dim num">' + (p.start_at||"-") + ' → ' + (p.end_at||"-") + '</td>'
                     + '<td>' + projArrTag(p) + '<span class="dim" style="margin-left:8px;font-size:11.5px">' + (p.plan_source ? ("来源 " + p.plan_source) : "未规划") + '</span></td>'
                     + '<td class="right" style="white-space:nowrap">'
@@ -913,12 +913,7 @@ body.overlay-open #drawer{z-index:501}
                 }).join("") + '</tbody></table>'
             : '<div class="dim">' + (PROJ_Q ? "没有匹配的项目" : "还没有项目，点右上「新建项目」开始") + '</div>')
         + '</div>';
-      var qi = document.getElementById("projQ");
-      qi.addEventListener("input", function(){
-        clearTimeout(qi._t);
-        var v = qi.value;
-        qi._t = setTimeout(function(){ PROJ_Q = v.trim(); loadProjects(); }, 320);
-      });
+      bindListSearch("s-proj");
       document.getElementById("newProj").addEventListener("click", function(){ openProjectEditor(null); });
       var tlb = document.getElementById("openTimeline");
       if (tlb) tlb.addEventListener("click", function(){ openTimeline(); });
@@ -1523,7 +1518,7 @@ body.overlay-open #drawer{z-index:501}
     var c = m.load > 88 ? "var(--bad)" : (m.load > 60 ? "var(--warn)" : "var(--ok)");
     var roles = (m.roles || []).map(function(r){
       return '<span class="tag cy">' + r.label + ' <b class="num">' + r.level + '</b></span>'; }).join("");
-    return '<div class="glass card" style="padding:14px">'
+    return '<div class="glass card" style="padding:14px" data-sq="' + sqText(m.name, m.dept, m.remark, m.email, (m.roles||[]).map(function(r){ return r.label; }).join(' ')) + '">'
       + '<div class="row" style="align-items:center;gap:11px;margin-bottom:9px">'
       + '<div style="width:40px;height:40px;border-radius:13px;display:grid;place-items:center;font:600 14px var(--mono);color:#06121c;background:linear-gradient(140deg,#67e8f9,#a5b4fc)">' + String(m.name || "?").slice(0,1) + '</div>'
       + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + m.name + '</b>'
@@ -1547,18 +1542,13 @@ body.overlay-open #drawer{z-index:501}
         + '<b style="font-size:13.5px">成员</b>'
         + '<span class="dim" style="font-size:12px">岗位可多选，每个岗位单独设级别</span>'
         + '<span class="grow"></span>'
-        + '<input id="orgQ" placeholder="搜索姓名 / 部门 / 备注" value="' + String(ORG_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
+        + '<input id="orgQ" data-q="org" placeholder="搜索姓名 / 部门 / 备注" value="' + String(ORG_Q).replace(/"/g,"&quot;") + '" style="width:220px;height:34px" />'
         + '<button class="btn sm" id="addMem">＋ 添加成员</button></div>'
         + (ORG_CACHE.length
             ? '<div class="g3">' + ORG_CACHE.map(memberCard).join("") + '</div>'
             : '<div class="dim">' + (ORG_Q ? "没有匹配的成员" : "还没有成员，点右上「添加成员」") + '</div>')
         + '</div>';
-      var qi = document.getElementById("orgQ");
-      qi.addEventListener("input", function(){
-        clearTimeout(qi._t);
-        var v = qi.value;
-        qi._t = setTimeout(function(){ ORG_Q = v.trim(); loadOrg(); }, 320);
-      });
+      bindListSearch("s-org");
       document.getElementById("addMem").addEventListener("click", function(){ openMemberEditor(null); });
       $$("#s-org [data-medit]").forEach(function(b){
         b.addEventListener("click", function(){ openMemberEditor(Number(b.dataset.medit)); });
@@ -1720,16 +1710,12 @@ body.overlay-open #drawer{z-index:501}
         + '<b style="font-size:13.5px">产品</b>'
         + '<span class="dim" style="font-size:12px">销售的东西：价格 / 周期 / 交付物 / 说明</span>'
         + '<span class="grow"></span>'
-        + '<input id="prodQ" placeholder="搜索产品" value="' + String(PROD_Q).replace(/"/g,"&quot;") + '" style="width:200px;height:34px" />'
+        + '<input id="prodQ" data-q="prod" placeholder="搜索产品" value="' + String(PROD_Q).replace(/"/g,"&quot;") + '" style="width:200px;height:34px" />'
         + '<button class="btn sm" id="addProd">＋ 新增产品</button></div>'
         + (ps.length ? '<div class="g3">' + ps.map(prodCard).join("") + '</div>'
                      : '<div class="dim">' + (PROD_Q ? "没有匹配的产品" : "还没有产品，点右上「新增产品」") + '</div>')
         + '</div>';
-      var qi = document.getElementById("prodQ");
-      qi.addEventListener("input", function(){
-        clearTimeout(qi._t); var v = qi.value;
-        qi._t = setTimeout(function(){ PROD_Q = v.trim(); loadProducts(); }, 300);
-      });
+      bindListSearch("s-prod");
       document.getElementById("addProd").addEventListener("click", function(){ openProductEditor(null); });
       $$("#s-prod [data-pedit]").forEach(function(b){
         b.addEventListener("click", function(){ openProductEditor(Number(b.dataset.pedit)); });
@@ -1741,7 +1727,7 @@ body.overlay-open #drawer{z-index:501}
   }
 
   function prodCard(x){
-    return '<div class="glass card" style="padding:14px">'
+    return '<div class="glass card" style="padding:14px" data-sq="' + sqText(x.name, x.description, x.unit, x.price) + '">'
       + '<div class="row" style="align-items:baseline;gap:9px">'
       + '<b style="font-size:13.5px">' + x.name + '</b><span class="grow"></span>'
       + '<span class="num" style="color:#7fe6f7">¥' + Number(x.price||0).toLocaleString("zh-CN")
@@ -1826,14 +1812,15 @@ body.overlay-open #drawer{z-index:501}
         + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13.5px">AI 达成条件分析</b>'
         + '<span class="dim" style="font-size:12px">以「把这个项目做成」为目标反推所需条件，不局限于现有资源</span>'
         + '<span class="grow"></span>'
-        + '<input id="condQ" placeholder="搜索条件 / 缺口" value="' + esc(COND_Q) + '" style="width:210px;height:34px" />'
+        + '<input id="condQ" data-q="cond" placeholder="搜索条件 / 缺口" value="' + esc(COND_Q) + '" style="width:210px;height:34px" />'
         + '<span class="tag '+(pending?"wn":"ok")+'">'+(pending? pending+" 项需要补位":"全部已处理")+'</span></div>'
         + '<div class="dim" style="font-size:12px;margin-top:8px">招聘只是其中一种补位动作。AI 会同时考虑：人、钱、设备与虚拟员工、素材工具、渠道关系、资质、时间。</div></div>'
         + (COND_Q && !cs.length ? '<div class="dim" style="margin-top:10px">没有匹配的条件。</div>' : '')
         + (cs.length ? '<div class="g3" style="margin-top:12px">' + cs.map(function(c, i){
             var lv = c.severity === "high" ? "var(--bad)" : (c.severity === "mid" || c.severity === "medium" ? "var(--warn)" : "var(--ok)");
             var label = c.severity === "high" ? "影响达成" : ((c.severity === "mid" || c.severity === "medium") ? "需关注" : "可缓冲");
-            return '<div class="glass card" style="padding:14px'+(c.decided?';border-color:rgba(52,211,153,.35)':'')+'">'
+            return '<div class="glass card" style="padding:14px'+(c.decided?';border-color:rgba(52,211,153,.35)':'')+'" data-sq="'
+              + sqText(c.title, c.need, c.now || c.now_state, c.gap, c.impact, (CAT[c.category]||c.category)) + '">'
               + '<div class="row" style="align-items:center;gap:9px;margin-bottom:9px">'
               + '<b style="font-size:13px">'+(CAT[c.category]||c.category)+' · '+c.title+'</b><span class="grow"></span>'
               + (c.decided ? '<span class="tag ok">已处理</span>' : '<span class="tag" style="color:'+lv+';border-color:'+lv+'66">'+label+'</span>')
@@ -1853,6 +1840,7 @@ body.overlay-open #drawer{z-index:501}
               + '</div>';
           }).join("") + '</div>'
           : '<div class="glass card" style="margin-top:12px"><div class="dim">还没有条件分析：在项目里点「AI 生成规划」，AI 会同时给出达成条件与补位建议。</div></div>');
+      bindListSearch("s-cond");
       $$("#s-cond [data-cond]").forEach(function(b){
         b.addEventListener("click", function(){
           api("/api/manage/conditions/" + b.dataset.cond + "/accept", { method:"POST", body:{ action_index: Number(b.dataset.idx) } })
@@ -1886,22 +1874,18 @@ body.overlay-open #drawer{z-index:501}
         + '<div class="row" style="align-items:center;gap:9px;margin-bottom:10px"><b style="font-size:13.5px">流水</b>'
         + '<span class="dim" style="font-size:11.5px">共 ' + esAll.length + ' 笔</span>'
         + '<span class="grow"></span>'
-        + '<input id="finQ" placeholder="搜索摘要 / 日期" value="' + esc(FIN_Q) + '" style="width:200px;height:34px" />'
+        + '<input id="finQ" data-q="fin" placeholder="搜索摘要 / 日期" value="' + esc(FIN_Q) + '" style="width:200px;height:34px" />'
         + '<button class="btn sm" id="addFin">＋ 记一笔</button></div>'
         + (FIN_Q && !es.length ? '<div class="dim">没有匹配的流水。</div>' : '')
         + (es.length ? '<table class="tb"><thead><tr><th>日期</th><th>类型</th><th>摘要</th><th class="right">金额</th></tr></thead><tbody>'
             + es.map(function(e){
                 var c = e.type === "income" ? "#6ee7b7" : "#fda4af";
-                return '<tr><td class="dim">'+e.on+'</td><td>'+(e.type==="income"?"收入":"开销")+'</td>'
+                return '<tr data-sq="' + sqText(e.on, e.summary, e.type, e.amount) + '"><td class="dim">'+e.on+'</td><td>'+(e.type==="income"?"收入":"开销")+'</td>'
                   + '<td class="mut">'+e.summary+'</td>'
                   + '<td class="right num" style="color:'+c+'">'+(e.type==="income"?"+":"-")+Number(e.amount||0).toLocaleString("zh-CN")+'</td></tr>';
               }).join("") + '</tbody></table>' : '<div class="dim">还没有流水。</div>')
         + '</div>';
-      var cqi = document.getElementById("condQ");
-      if (cqi) cqi.addEventListener("input", function(){
-        clearTimeout(cqi._t); var v = cqi.value;
-        cqi._t = setTimeout(function(){ COND_Q = v.trim(); loadCond(); }, 320);
-      });
+      bindListSearch("s-fin");
       $("#addFin").addEventListener("click", function(){
         openDrawer("财务 · 记一笔", "收入 / 开销",
           '<div class="dsec"><label class="fl">类型</label><select id="fType"><option value="income">收入</option><option value="expense">开销</option></select>'
@@ -2002,7 +1986,7 @@ body.overlay-open #drawer{z-index:501}
   }
   function crmCard(c){
     var won = c.stage === "won";
-    return '<div class="glass card" style="padding:14px">'
+    return '<div class="glass card" style="padding:14px" data-sq="' + sqText(c.name, c.company_name, c.phone, c.wechat, c.owner_name, c.stage_label, c.notes) + '">'
       + '<div class="row" style="align-items:center;gap:9px">'
       + '<b style="font-size:13.5px">' + c.name + '</b>'
       + '<span class="tag ' + (won ? "ok" : (c.stage === "lost" ? "bd" : "cy")) + '">' + (c.stage_label || c.stage) + '</span>'
@@ -2031,7 +2015,7 @@ body.overlay-open #drawer{z-index:501}
         + '<div class="row" style="align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap">'
         + '<b style="font-size:13.5px">客户</b><span class="dim" style="font-size:12px">业务岗：跟进、阶段推进、成交</span>'
         + '<span class="grow"></span>'
-        + '<input id="crmQ" placeholder="搜索姓名/公司/电话" value="' + String(CRM_Q).replace(/"/g, '&quot;') + '" style="width:200px;height:34px" />'
+        + '<input id="crmQ" data-q="crm" placeholder="搜索姓名/公司/电话" value="' + String(CRM_Q).replace(/"/g, '&quot;') + '" style="width:200px;height:34px" />'
         + '<button class="btn sm" id="addCust">＋ 新增客户</button></div>'
         + '<div class="arrbar" style="margin-bottom:12px">'
         + '<button class="btn sm ' + (CRM_STAGE === "" ? "" : "ghost") + '" data-stage="">全部 <b class="num">' + total + '</b></button>'
@@ -2040,11 +2024,7 @@ body.overlay-open #drawer{z-index:501}
         + (CRM_CACHE.length ? '<div class="g3">' + CRM_CACHE.map(crmCard).join("") + '</div>'
                             : '<div class="dim">还没有匹配的客户。点右上「新增客户」开始，或让虚拟员工自动采集线索。</div>')
         + '</div>';
-      var qi = document.getElementById("crmQ");
-      qi.addEventListener("input", function(){
-        clearTimeout(qi._t); var v = qi.value;
-        qi._t = setTimeout(function(){ CRM_Q = v.trim(); loadCrm(); }, 320);
-      });
+      bindListSearch("s-crm");
       $$("#s-crm [data-stage]").forEach(function(b){
         b.addEventListener("click", function(){ CRM_STAGE = b.dataset.stage; loadCrm(); });
       });
@@ -2236,7 +2216,7 @@ body.overlay-open #drawer{z-index:501}
   function delivCard(x){
     var c = x.status === "accepted" ? "#6ee7b7" : (x.status === "review" ? "#fcd34d" : (x.status === "doing" ? "#7fe6f7" : "#8b98ae"));
     var nxt = { pending: ["doing", "开始交付"], doing: ["review", "提交验收"], review: ["accepted", "确认验收"] }[x.status] || [];
-    return '<div class="glass card" style="padding:14px">'
+    return '<div class="glass card" style="padding:14px" data-sq="' + sqText(x.name, x.customer_name, x.owner_name, x.note, x.status_label) + '">'
       + '<div class="row" style="align-items:center;gap:9px">'
       + '<b style="font-size:13.5px">' + x.name + '</b>'
       + '<span class="tag" style="color:' + c + ';border-color:' + c + '66">' + (x.status_label || x.status) + '</span>'
@@ -2275,7 +2255,7 @@ body.overlay-open #drawer{z-index:501}
           + '<div class="row" style="align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap">'
           + '<b style="font-size:13.5px">交付</b><span class="dim" style="font-size:12px">已成交客户 → 交付单 → 验收</span>'
           + '<span class="grow"></span>'
-          + '<input id="delivQ" placeholder="搜索交付单 / 客户 / 负责人" value="' + esc(DELIV_Q) + '" style="width:230px;height:34px" />'
+          + '<input id="delivQ" data-q="deliv" placeholder="搜索交付单 / 客户 / 负责人" value="' + esc(DELIV_Q) + '" style="width:230px;height:34px" />'
           + '<button class="btn sm" id="addDeliv">＋ 新建交付单</button></div>'
           + '<div class="arrbar" style="margin-bottom:12px">'
           + '<button class="btn sm ' + (DELIV_STATUS === "" ? "" : "ghost") + '" data-dstatus="">全部</button>'
@@ -2293,11 +2273,7 @@ body.overlay-open #drawer{z-index:501}
           + (dvList.length ? '<div class="g3">' + dvList.map(delivCard).join("") + '</div>'
                                 : '<div class="dim">' + (DELIV_Q ? "没有匹配的交付单。" : "还没有交付单。客户成交后这里会自动提醒建单。") + '</div>')
           + '</div>';
-        var dqi = document.getElementById("delivQ");
-        if (dqi) dqi.addEventListener("input", function(){
-          clearTimeout(dqi._t); var v = dqi.value;
-          dqi._t = setTimeout(function(){ DELIV_Q = v.trim(); loadDeliv(); }, 320);
-        });
+        bindListSearch("s-deliv");
         $$("#s-deliv [data-dstatus]").forEach(function(b){
           b.addEventListener("click", function(){ DELIV_STATUS = b.dataset.dstatus; loadDeliv(); });
         });
@@ -2618,7 +2594,7 @@ body.overlay-open #drawer{z-index:501}
       + ' · 失败 ' + a.failed + (a.running ? ' · 进行中 ' + a.running : '') + '</span>';
   }
   function aiCard(a){
-    return '<div class="glass card" style="padding:14px">'
+    return '<div class="glass card" style="padding:14px" data-sq="' + sqText(a.name, a.installation_id, a.device_id, a.owner_name, a.note) + '">'
       + '<div class="row" style="align-items:center;gap:11px">'
       + '<div style="width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font:600 12px var(--mono);color:#06121c;background:conic-gradient(from 130deg,#22d3ee,#6366f1,#a855f7,#22d3ee)">AI</div>'
       + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + a.name + '</b>'
@@ -2662,7 +2638,7 @@ body.overlay-open #drawer{z-index:501}
         + '<span class="dim" style="font-size:12px">只显示手动添加的设备（离线也一直在这里）· 执行情况按窗口汇总，不做累计</span>'
         + '<span class="grow"></span>'
         + aiWinBtn("1d", "今日") + aiWinBtn("7d", "近 7 天") + aiWinBtn("30d", "近 30 天") + aiWinBtn("all", "全部")
-        + '<input id="aiQ" placeholder="搜索设备 / 槽位 / 归属" value="' + esc(AI_Q) + '" style="width:210px;height:34px" />'
+        + '<input id="aiQ" data-q="ai" placeholder="搜索设备 / 槽位 / 归属" value="' + esc(AI_Q) + '" style="width:210px;height:34px" />'
         + '<button class="btn sm" id="aiAdd" style="margin-left:8px">＋ 添加设备</button>'
         + '</div>'
         + '<div class="row" style="gap:12px;margin-top:10px;flex-wrap:wrap">'
@@ -2677,11 +2653,7 @@ body.overlay-open #drawer{z-index:501}
       $$("#s-ai [data-aiwin]").forEach(function(b){
         b.addEventListener("click", function(){ AI_WINDOW = b.dataset.aiwin; loadAi(); });
       });
-      var aqi = document.getElementById("aiQ");
-      if (aqi) aqi.addEventListener("input", function(){
-        clearTimeout(aqi._t); var v = aqi.value;
-        aqi._t = setTimeout(function(){ AI_Q = v.trim(); loadAi(); }, 320);
-      });
+      bindListSearch("s-ai");
       var addBtn = document.getElementById("aiAdd");
       if (addBtn) addBtn.addEventListener("click", openAiAdd);
       $$("#s-ai [data-aremot]").forEach(function(b){
@@ -3119,32 +3091,55 @@ body.overlay-open #drawer{z-index:501}
     return "还剩 " + t.days_left + " 天";
   }
   function todayIso(){ var d = new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
-  /* ---------- 列表页搜索（客户端过滤已加载的缓存） ---------- */
-  var LIST_Q = {};
-  var RERENDER = {};
-  function qMatch(key, fields){
-    var q = (LIST_Q[key] || "").trim().toLowerCase();
-    if (!q) return true;
-    for (var i = 0; i < fields.length; i++){
-      var v = fields[i];
-      if (v !== null && v !== undefined && String(v).toLowerCase().indexOf(q) >= 0) return true;
+  /* ---------- 列表页搜索 ----------
+     要点：搜索时**绝不重建 DOM**，只按 data-sq 显隐；输入法组字（拼音）期间一律不处理，
+     否则会把输入法合成过程打断。 */
+  function sqText(){
+    var out = [];
+    for (var i = 0; i < arguments.length; i++){
+      var v = arguments[i];
+      if (v !== null && v !== undefined && v !== "") out.push(String(v));
     }
-    return false;
+    return out.join(" ").toLowerCase();
   }
-  function searchBox(key, placeholder, width){
-    return '<input class="search" data-q="' + key + '" value="' + esc(LIST_Q[key] || "") + '" placeholder="'
-      + esc(placeholder || "搜索…") + '" style="width:' + (width || 190) + 'px" />';
+  function applyListSearch(rootId){
+    var root = document.getElementById(rootId);
+    if (!root) return;
+    var box = root.querySelector("[data-q]");
+    var q = box ? box.value.trim().toLowerCase() : "";
+    var items = root.querySelectorAll("[data-sq]");
+    var shown = 0;
+    for (var i = 0; i < items.length; i++){
+      var hit = !q || (items[i].getAttribute("data-sq") || "").indexOf(q) >= 0;
+      items[i].classList.toggle("hide", !hit);
+      if (hit) shown++;
+    }
+    var hint = root.querySelector("[data-sq-empty]");
+    if (hint) hint.classList.toggle("hide", !(q && shown === 0));
+    var cnt = root.querySelector("[data-sq-count]");
+    if (cnt) cnt.textContent = q ? ("匹配 " + shown + " 条") : "";
   }
-  function bindSearch(rootId){
-    $$("#" + rootId + " [data-q]").forEach(function(el){
-      var key = el.dataset.q;
-      el.addEventListener("input", function(){
-        LIST_Q[key] = el.value;
-        if (RERENDER[key]) RERENDER[key]();
-        var again = document.querySelector("#" + rootId + " [data-q='" + key + "']");
-        if (again){ again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) {} }
-      });
+  function bindListSearch(rootId){
+    var root = document.getElementById(rootId);
+    if (!root) return;
+    var box = root.querySelector("[data-q]");
+    if (!box || box._sqBound) return;
+    box._sqBound = true;
+    var composing = false, timer = 0;
+    function fire(){
+      if (composing || box.isComposing) return;   // 还在选字就先别动
+      applyListSearch(rootId);
+    }
+    box.addEventListener("compositionstart", function(){ composing = true; });
+    box.addEventListener("compositionend", function(){
+      composing = false; clearTimeout(timer); timer = setTimeout(fire, 80);
     });
+    box.addEventListener("input", function(){
+      if (composing || box.isComposing) return;   // 组字中的 input 事件直接忽略
+      clearTimeout(timer); timer = setTimeout(fire, 150);
+    });
+    box.addEventListener("keydown", function(e){ if (e.key === "Escape"){ box.value = ""; fire(); } });
+    applyListSearch(rootId);   // 重新渲染后按当前关键字再过一遍
   }
 
   function esc(v){ return String(v === null || v === undefined ? "" : v).replace(/[&<>"]/g, function(c){
@@ -3175,7 +3170,7 @@ body.overlay-open #drawer{z-index:501}
       return '<div class="k"><b style="color:' + color + '">' + (s[key] || 0) + '</b><span>' + label + '</span></div>';
     };
     var rows = tasks.map(function(t){
-      return '<tr><td><b style="font-size:12.5px">' + esc(t.title) + '</b>'
+      return '<tr data-sq="' + sqText(t.title, t.owner_name, t.project_name, t.company_name, t.requirement) + '"><td><b style="font-size:12.5px">' + esc(t.title) + '</b>'
         + '<div class="dim" style="font-size:11px;margin-top:3px">' + esc(t.project_name || t.company_name || "") + '</div></td>'
         + '<td class="dim" style="font-size:11.5px">' + esc(t.owner_name || "未指派") + '</td>'
         + '<td class="dim num" style="font-size:11.5px">' + esc(t.start_day || "-") + ' → ' + esc(t.end_day || "-") + '</td>'
@@ -3192,7 +3187,7 @@ body.overlay-open #drawer{z-index:501}
       + '<span class="dim" style="font-size:12px">' + (d.scope === "all" ? "平台管理员视角：全部任务" : "只显示派给自己的任务")
       + ' · 今天 ' + esc(d.today || "") + '</span>'
       + '<span class="grow"></span>'
-      + '<input id="mytQ" placeholder="搜索任务 / 负责人 / 项目" value="' + esc(MYT.q || "") + '" style="width:220px;height:34px" />'
+      + '<input id="mytQ" data-q="myt" placeholder="搜索任务 / 负责人 / 项目" value="' + esc(MYT.q || "") + '" style="width:220px;height:34px" />'
       + '<button class="btn sm ' + (MYT.showDone ? "ghost" : "") + '" id="mytDone">' + (MYT.showDone ? "隐藏已完成" : "显示已完成") + '</button>'
       + '<button class="btn sm ghost" id="mytReload">↻ 刷新</button>'
       + '<button class="btn sm ghost" id="mytTimeline">🕒 时间线</button></div>'
@@ -3220,15 +3215,7 @@ body.overlay-open #drawer{z-index:501}
       var b = document.querySelector('.rail button[data-go="s-proj"]');
       if (b){ b.classList.add("on"); b.click(); }
     });
-    var mqi = document.getElementById("mytQ");
-    if (mqi) mqi.addEventListener("input", function(){
-      clearTimeout(mqi._t); var v = mqi.value;
-      mqi._t = setTimeout(function(){
-        MYT.q = v.trim(); renderMyTasks();
-        var again = document.getElementById("mytQ");
-        if (again){ again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) {} }
-      }, 300);
-    });
+    bindListSearch("s-my");
     document.getElementById("mytReload").addEventListener("click", function(){ MYT.data = null; loadMyTasks(); });
     document.getElementById("mytDone").addEventListener("click", function(){
       MYT.showDone = !MYT.showDone; MYT.data = null; loadMyTasks(); });
