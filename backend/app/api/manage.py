@@ -2233,7 +2233,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
             item["fail"] += n
 
     day_runs: Dict[str, int] = {}
-    for day, cnt in rows("select date_trunc('day', created_at) d, count(*) from scheduled_task_runs where "
+    for day, cnt in rows("select date_trunc('day', created_at + interval '8 hours') d, count(*) from scheduled_task_runs where "
                          + runs_scope + since_sql + " group by 1"):
         day_runs[_robot_day(day)] = int(cnt or 0)
 
@@ -2245,7 +2245,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     published_total = sum(published_by_platform.values())
     day_pub: Dict[str, int] = {}
     if since_sql_pub:
-        for day, cnt in rows("select date_trunc('day', coalesce(published_at, first_seen_at, reported_at)) d, count(*) "
+        for day, cnt in rows("select date_trunc('day', coalesce(published_at, first_seen_at, reported_at) + interval '8 hours') d, count(*) "
                              "from publish_metrics where (user_id in " + m_uin + " or installation_id in " + sin + ")"
                              + since_sql_pub + " group by 1"):
             day_pub[_robot_day(day)] = int(cnt or 0)
@@ -2299,7 +2299,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     leads_total = sum(leads_by_platform.values())
     day_leads: Dict[str, int] = {}
     if since:
-        for day, cnt in rows("select date_trunc('day', created_at) d, count(*) from global_lead_crm_contacts "
+        for day, cnt in rows("select date_trunc('day', created_at + interval '8 hours') d, count(*) from global_lead_crm_contacts "
                              "where user_id in " + m_uin + since_sql + " group by 1"):
             day_leads[_robot_day(day)] = int(cnt or 0)
 
@@ -2319,7 +2319,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         elif et2.startswith("group_"):
             wx["groups"] += n
     if since:
-        for day, cnt in rows("select date_trunc('day', happened_at) d, count(*) from wechat_interaction_outcomes "
+        for day, cnt in rows("select date_trunc('day', happened_at + interval '8 hours') d, count(*) from wechat_interaction_outcomes "
                              "where user_id in " + m_uin + " and event_type = 'reply_sent'" + since_sql_hap + " group by 1"):
             day_wx[_robot_day(day)] = int(cnt or 0)
     wx_touched = int(rows("select count(*) from wechat_contact_memories where user_id in " + m_uin)[0][0] or 0)
@@ -2392,11 +2392,12 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
 
     # ---- \u8fd1 14 \u5929\u8d8b\u52bf\uff08\u6267\u884c / \u53d1\u5e03 / \u7ebf\u7d22 / \u4e2a\u5fae\u56de\u590d\uff09----
     trend: List[Dict[str, Any]] = []
-    if since:
-        for i in range(13, -1, -1):
-            d = (_today_beijing() - timedelta(days=i)).isoformat()
-            trend.append({"day": d, "runs": day_runs.get(d, 0), "published": day_pub.get(d, 0),
-                          "leads": day_leads.get(d, 0), "wechat": day_wx.get(d, 0)})
+    trend_days = _robot_window_days(window)
+    for i in range(trend_days - 1, -1, -1):
+        d = (_today_beijing() - timedelta(days=i)).isoformat()
+        trend.append({"day": d, "runs": day_runs.get(d, 0), "published": day_pub.get(d, 0),
+                      "leads": day_leads.get(d, 0), "wechat": day_wx.get(d, 0)})
+    trend_total = sum(x["runs"] for x in trend)
 
     return {
         "ok": True,
@@ -2425,7 +2426,8 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         "top_videos": top_videos,
         "slot_plays": slot_plays,
         "slots": _robot_slots(db, slot_map, by_slot, slot_plays),
-        "trend": trend,
+        "trend": trend, "trend_days": trend_days, "trend_total_runs": trend_total,
+        "tz_label": "\u5317\u4eac\u65f6\u95f4",
         "recent_outcomes": recent_outcomes,
         "sources": [
             "\u8bbe\u5907\u4ea7\u51fa\uff08\u6267\u884c\uff09\uff1a\u53ea\u7b97\u300c\u865a\u62df\u5458\u5de5\u300d\u91cc\u5df2\u6dfb\u52a0\u7684\u8bbe\u5907",
@@ -2513,12 +2515,22 @@ DISPATCH_BAD = {"failed", "error", "timeout", "canceled", "cancelled"}
 
 
 def _ai_window(key: str) -> tuple:
-    """把窗口串转成 (中文标签, 起始时间)；all 返回 None 表示不设下限。"""
+    """把窗口串转成 (中文标签, 起始时间)；all 返回 None 表示不设下限。
+
+    起点按「北京时间当天 00:00」算，再换算成列里存的 UTC 时间（否则早上 8 点前的记录会算到前一天）。
+    """
     label, days = MANAGE_AI_WINDOWS.get(str(key or "1d").strip().lower(), MANAGE_AI_WINDOWS["1d"])
     if not days:
         return label, None
-    start = datetime.utcnow() - timedelta(days=days - 1)
-    return label, start.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_bj = _today_beijing() - timedelta(days=days - 1)
+    start_utc = datetime(start_bj.year, start_bj.month, start_bj.day) - timedelta(hours=TIMELINE_TZ_OFFSET_HOURS)
+    return label, start_utc
+
+
+def _robot_window_days(key: str) -> int:
+    """趋势图画多少根柱：跟窗口一致；all 最多 30 天。"""
+    _label, days = MANAGE_AI_WINDOWS.get(str(key or "1d").strip().lower(), MANAGE_AI_WINDOWS["1d"])
+    return 1 if days == 1 else (days if days else 30)
 
 
 def _slot_presence(db: Session, installation_id: str) -> tuple:

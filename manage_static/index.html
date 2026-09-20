@@ -2493,7 +2493,7 @@ body.overlay-open #drawer{z-index:501}
         + '</td><td class="num">' + g.runs + '</td><td class="num" style="color:#6ee7b7">' + g.ok + '</td>'
         + '<td class="num" style="color:' + (g.fail ? "#fda4af" : "var(--dim)") + '">' + g.fail + '</td>'
         + '<td class="num" style="color:' + (g.interrupted ? "#fcd34d" : "var(--dim)") + '">' + (g.interrupted || 0) + '</td>'
-        + '<td class="num">' + g.rate + '%</td></tr>';
+        + '<td class="num">' + (g.runs ? (g.rate + '%') : '—') + '</td></tr>';
     }).join("");
     var slotRows = slots.map(function(x){
       var tag = x.status === "online" ? '<span class="tag ok">在线</span>'
@@ -2547,9 +2547,14 @@ body.overlay-open #drawer{z-index:501}
       + '</div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
-      + '<span class="dot" style="color:#22d3ee"></span><b style="font-size:13px">近 14 天执行量</b>'
-      + '<span class="dim" style="font-size:11.5px">鼠标悬停看当天的执行 / 发布 / 线索 / 个微回复</span></div>'
-      + '<div class="row" style="align-items:flex-end;gap:4px">' + (bars || '<div class="dim">全部窗口下不画趋势</div>') + '</div></div>'
+      + '<span class="dot" style="color:#22d3ee"></span><b style="font-size:13px">本窗口每日执行量</b>'
+      + '<span class="dim" style="font-size:11.5px">' + (d.trend_days || 0) + ' 天 · ' + esc(d.tz_label || "") + ' 切天'
+      + (d.window === "all" ? "（全部窗口只画最近 30 天）" : "")
+      + '；鼠标悬停看当天的执行 / 发布 / 线索 / 个微回复</span>'
+      + '<span class="grow"></span>'
+      + '<span class="tag' + (d.trend_total_runs === s.runs ? " ok" : " wn") + '">柱子合计 ' + (d.trend_total_runs || 0)
+      + ' / 顶部执行 ' + (s.runs || 0) + '</span></div>'
+      + '<div class="row" style="align-items:flex-end;gap:4px">' + (bars || '<div class="dim">这个窗口没有可画的数据</div>') + '</div></div>'
 
       + '<div class="glass card" style="margin-top:12px"><div class="row" style="align-items:center;gap:9px;margin-bottom:10px">'
       + '<span class="dot" style="color:#a855f7"></span><b style="font-size:13px">按能力看</b>'
