@@ -15,6 +15,54 @@ def _load_publish_module():
     return module
 
 
+def test_website_ota_with_skills_stays_granular_and_keeps_brand_assets(tmp_path):
+    """2026-09-20 build 341 事故回归：常规网站 OTA 带 skills 后不能再写整根 static，
+    且 static 根目录的 OEM 品牌资源图必须进 manifest（否则客户端升级时被删）。
+    """
+    module = _load_publish_module()
+    zip_path = tmp_path / "website-with-skills.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("backend/app.pyc", b"compiled")
+        archive.writestr("skills/__init__.pyc", b"compiled")
+        archive.writestr("skills/comfly_seedance_tvc_video/driver.pyc", b"compiled")
+        archive.writestr("static/js/app.js", "code")
+        archive.writestr("static/daka_32.png", b"\x89PNG")
+        archive.writestr("static/daka_header_partner.jpg", b"\xff\xd8")
+        archive.writestr("static/client_version.json", "{}")
+        archive.writestr("CLIENT_CODE_VERSION.json", "{}")
+
+    paths = module.manifest_paths_for_zip(zip_path)
+
+    assert "static" not in paths
+    assert "desktop" not in paths
+    assert "static/js" in paths
+    assert "static/daka_32.png" in paths
+    assert "static/daka_header_partner.jpg" in paths
+    assert "skills/comfly_seedance_tvc_video" in paths
+    assert "skills/__init__.pyc" in paths
+    assert paths[-2:] == ["static/client_version.json", "CLIENT_CODE_VERSION.json"]
+
+
+def test_full_code_zip_expands_bare_static_root(tmp_path):
+    """即使是完整代码包，manifest 也不能出现整根 static，只能展开成包内真实存在的条目。"""
+    module = _load_publish_module()
+    zip_path = tmp_path / "full-code.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("mcp/server.pyc", b"compiled")
+        archive.writestr("static/css/app.css", "code")
+        archive.writestr("static/index.html", "code")
+        archive.writestr("static/daka_64.png", b"\x89PNG")
+        archive.writestr("CLIENT_CODE_VERSION.json", "{}")
+
+    paths = module.manifest_paths_for_zip(zip_path)
+
+    assert "static" not in paths
+    assert "static/css" in paths
+    assert "static/index.html" in paths
+    assert "static/daka_64.png" in paths
+    assert paths[-1] == "CLIENT_CODE_VERSION.json"
+
+
 def test_manifest_paths_only_include_files_present_in_ota(tmp_path):
     module = _load_publish_module()
     zip_path = tmp_path / "client-ota.zip"

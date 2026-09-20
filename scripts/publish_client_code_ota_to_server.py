@@ -104,6 +104,59 @@ OEM_SWITCHER_OTA_PATHS = frozenset(
     }
 )
 
+_BRAND_ASSET_SUFFIXES = (".png", ".jpg", ".jpeg", ".ico", ".icns", ".webp", ".svg")
+
+
+def _static_root_brand_assets(names: set[str]) -> list[str]:
+    """static 根目录下的品牌/图标资源（OEM 资源包）。
+
+    它们必须出现在 manifest.paths 里：客户端更新器只对「manifest 列出的路径」做对账，
+    列出的目录中"包里没有的文件"会被删掉；反过来，没列出来的文件升级时不会被写回。
+    2026-09-20 build 341 事故就是 manifest 写了整根 static 而包里没有 daka_* 品牌图，
+    客户端升级后左上角 logo / 首页大图 / 页头合作方 logo 全部 404。
+    """
+    assets = [
+        name
+        for name in names
+        if name.startswith("static/")
+        and name.count("/") == 1
+        and name.lower().endswith(_BRAND_ASSET_SUFFIXES)
+    ]
+    return sorted(assets)
+
+
+def _expand_bare_root_paths(paths: list[str], names: set[str]) -> list[str]:
+    """把 "static"/"desktop" 这类整根路径展开成包内真实存在的子路径与根文件。
+
+    manifest 里列一个整根目录 = 让客户端把该目录下"包里没有的文件"全部删除。
+    发布常规网站 OTA 时包里只有 static 的部分子目录，一旦写成整根 static，
+    客户端本地独有的文件（OEM 品牌图、static/generated 等）会被误删。
+    """
+    expanded: list[str] = []
+    for path in paths:
+        normalized = path.replace("\\", "/").rstrip("/")
+        if normalized in {"static", "desktop"}:
+            prefix = normalized + "/"
+            derived: set[str] = set()
+            for name in names:
+                if not name.startswith(prefix):
+                    continue
+                rest = name[len(prefix) :]
+                if not rest:
+                    continue
+                if "/" in rest:
+                    derived.add(prefix + rest.split("/", 1)[0])
+                else:
+                    derived.add(name)
+            for item in sorted(derived):
+                if item not in expanded:
+                    expanded.append(item)
+            continue
+        if path not in expanded:
+            expanded.append(path)
+    return expanded
+
+
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
@@ -114,14 +167,22 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
             if name.startswith("skills/") and len(name.split("/")) >= 3
         }
     )
-    has_full_skills_root = "skills/__init__.py" in names or "skills/__init__.pyc" in names
+    # skills 根目录下的文件（skills/__init__.py、skills/__init__.pyc…）也要下发：
+    # manifest 只列"目录"不会带上它们，而包内确实有此文件（2026-09-20 起常规网站 OTA 带 skills）。
+    skill_root_files = sorted(
+        {name for name in names if name.startswith("skills/") and name.count("/") == 1}
+    )
+    # 注意：2026-09-20 起「常规网站 OTA」也带 skills（见 pack_client_code_ota.WEBSITE_OTA_PATHS），
+    # 包里因此会出现 skills/__init__.py。它不能再作为"这是完整代码包"的判据，否则常规网站 OTA
+    # 会被误判成 full-code 模式、把整根 static 写进 manifest，客户端对账时删掉本地品牌资源图
+    # （build 341 事故）。完整代码包仍然能通过 mcp/publisher/openclaw/desktop 非白名单条目识别。
     has_full_code_roots = any(
         any(name.startswith(root + "/") for name in names)
         for root in ("mcp", "publisher", "openclaw")
     ) or any(
         name.startswith("desktop/") and name not in OEM_SWITCHER_OTA_PATHS
         for name in names
-    ) or has_full_skills_root
+    )
     if has_full_code_roots:
         candidate_paths = DEFAULT_CLIENT_CODE_OTA_PATHS
     elif skill_roots:
@@ -129,7 +190,7 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
         # to those directories so the updater never reconciles the whole skills tree.
         candidate_paths = [
             path for path in WEBSITE_CLIENT_CODE_OTA_PATHS if path != "CLIENT_CODE_VERSION.json"
-        ] + skill_roots + ["CLIENT_CODE_VERSION.json"]
+        ] + skill_roots + skill_root_files + ["CLIENT_CODE_VERSION.json"]
     else:
         candidate_paths = WEBSITE_CLIENT_CODE_OTA_PATHS
     paths = []
@@ -171,7 +232,11 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     version_paths = {"CLIENT_CODE_VERSION.json", "static/client_version.json"}
     head = [p for p in expanded if p not in version_paths]
     tail = [p for p in expanded if p in version_paths]
-    return head + tail
+    result = _expand_bare_root_paths(head, names)
+    for asset in _static_root_brand_assets(names):
+        if asset not in result:
+            result.append(asset)
+    return result + tail
 
 
 def is_encrypted_ota_zip(zip_path: Path) -> bool:
