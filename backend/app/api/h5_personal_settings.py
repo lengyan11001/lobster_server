@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import logging
+
 import asyncio
 import base64
 import hashlib
@@ -58,6 +61,7 @@ from .openclaw_memory_cloud import (
     _short_title,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _PERSONAL_SOURCE_IO_WORKERS = max(1, int(os.environ.get("PERSONAL_SOURCE_IO_WORKERS") or "3"))
@@ -699,6 +703,113 @@ def _file_to_text(filename: str, suffix: str, data: bytes) -> str:
     return _decode_text_payload(data, filename)
 
 
+# 设计稿导出的 PDF 常见形态：整页就是一张内嵌图片（每页一个 /XObject），文字层是空的。
+# 这类文件以前直接 400「文件没有可写入记忆库的文本内容」，用户上传的产品资料就永远进不了记忆。
+_PDF_SUFFIXES = {".pdf"}
+_PDF_VISION_MAX_PAGES = 6
+# 设计稿 PDF 里常见的是 JPEG2000(.jp2) 整页图，视觉接口不认这种格式，而且单页好几 MB；
+# 统一转成最长边 ≤1600 的 JPEG，既通用又能把每页压到几百 KB。
+_PDF_VISION_MAX_EDGE = 1600
+
+
+def _shrink_image_for_vision(data: bytes, max_edge: int = _PDF_VISION_MAX_EDGE, quality: int = 82) -> tuple:
+    """把任意图片转成视觉接口通用的 JPEG（失败则原样返回）。"""
+    try:
+        from PIL import Image
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[pdf-vision] pillow 不可用，保留原始图片: %s", exc)
+        return data, ""
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            converted = image.convert("RGB")
+            width, height = converted.size
+            longest = max(width, height) or 1
+            if longest > max_edge:
+                scale = float(max_edge) / float(longest)
+                converted = converted.resize(
+                    (max(1, int(width * scale)), max(1, int(height * scale))),
+                    Image.LANCZOS,
+                )
+            buffer = io.BytesIO()
+            converted.save(buffer, format="JPEG", quality=quality, optimize=True)
+            return buffer.getvalue(), ".jpg"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[pdf-vision] 图片转码失败，保留原始图片: %s", exc)
+        return data, ""
+
+
+def _pdf_page_images(filename: str, data: bytes, max_pages: int = _PDF_VISION_MAX_PAGES) -> list:
+    """把 PDF 每页取成一张图片，交给已有的图像理解链路（不需要额外渲染器）。"""
+    try:
+        from pypdf import PdfReader
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[pdf-vision] pypdf 不可用: %s", exc)
+        return []
+    try:
+        reader = PdfReader(io.BytesIO(data))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[pdf-vision] 打开 PDF 失败: %s", exc)
+        return []
+    stem = Path(str(filename or "document")).stem or "document"
+    pages: list[tuple[str, bytes]] = []
+    for index, page in enumerate(reader.pages[:max_pages], 1):
+        try:
+            images = list(page.images)
+        except Exception as exc:  # noqa: BLE001  （缺 pillow 时会抛 ImportError）
+            logger.warning("[pdf-vision] 第 %d 页取图失败: %s", index, exc)
+            images = []
+        payload = None
+        suffix = ".png"
+        for image in images:
+            try:
+                payload = image.data
+                name = str(getattr(image, "name", "") or "")
+                if "." in name:
+                    suffix = "." + name.rsplit(".", 1)[-1].lower()
+            except Exception:  # noqa: BLE001
+                payload = None
+            if payload:
+                break
+        if payload:
+            payload, converted_suffix = _shrink_image_for_vision(payload)
+            if converted_suffix:
+                suffix = converted_suffix
+            pages.append((f"{stem}-p{index}{suffix}", payload))
+    return pages
+
+
+async def _document_text_with_pdf_vision(
+    filename: str,
+    suffix: str,
+    data: bytes,
+    visual_blocks: list[dict[str, Any]],
+) -> str:
+    """文档→文字；PDF 没有文字层时退化成「页面转图片 + 图像理解」。"""
+    empty_reason = "文件没有可写入记忆库的文本内容。"
+    try:
+        text = await _run_personal_source_io(_file_to_text, filename, suffix, data)
+        if str(text or "").strip():
+            return text
+    except HTTPException as exc:
+        empty_reason = str(exc.detail or empty_reason)
+    except Exception as exc:  # noqa: BLE001
+        empty_reason = str(exc)[:200] or empty_reason
+    if suffix in _PDF_SUFFIXES:
+        pages = await _run_personal_source_io(_pdf_page_images, filename, data, _PDF_VISION_MAX_PAGES)
+        added = 0
+        for page_name, page_data in pages:
+            if _append_visual_block(visual_blocks, page_name, page_data):
+                added += 1
+        if added:
+            logger.info("[pdf-vision] %s 无文字层，已转 %d 页图片交给图像理解", filename, added)
+            return (
+                f"（这份 PDF 没有可提取的文字层，已把前 {added} 页转成图片，"
+                "以下内容来自图像理解结果。）"
+            )
+        empty_reason = f"{empty_reason}（这份 PDF 没有文字层，也没能转成图片，请提供文字版或截图。）"
+    raise HTTPException(status_code=400, detail=empty_reason)
+
+
 def _data_url(filename: str, data: bytes) -> str:
     content_type = mimetypes.guess_type(filename)[0] or "image/png"
     encoded = base64.b64encode(data).decode("ascii")
@@ -1038,7 +1149,7 @@ async def _collect_sources(
                 })
                 parts.append(f"【音频：{filename}】\n{text}")
             else:
-                text = await _run_personal_source_io(_file_to_text, filename, suffix, data)
+                text = await _document_text_with_pdf_vision(filename, suffix, data, visual_blocks)
                 parts.append(f"【文件：{filename}】\n{text}")
             results.append({"filename": filename, "status": "processed", "error": ""})
         except Exception as exc:

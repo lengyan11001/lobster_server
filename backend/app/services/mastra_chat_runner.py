@@ -53,8 +53,8 @@ _STREAM_EVENT_TYPES = {"thinking", "tool_start", "tool_end", "progress"}
 
 # 整段回复只有工具调用残留时给用户的说明（不再把标签写进对话）
 _EMPTY_REPLY_NOTICE = (
-    "这次模型只返回了工具调用指令，没有可显示的正文，我已经把它拦下来了。"
-    "请再说一次你要执行的任务，我重新调度。"
+    "这轮没能生成一段完整答复（模型只返回了工具调用）。"
+    "已经执行过的动作和结果都留在本条消息里；你可以直接回复「继续」，我会接着往下做。"
 )
 
 
@@ -75,6 +75,31 @@ def _is_placeholder_reply(value: Any) -> bool:
     }
     known.discard("")
     return text_value in known
+
+
+def _usable_streamed_reply(parts: List[str]) -> str:
+    """把已经流式发给用户的正文挑出来（占位句、工具残留不算）。
+
+    2026-09-19 那次事故：第 2 轮明明流式给出了完整答复，但 final 事件里的正文是代理层的
+    占位句，runner 判成"没正文"→ 重试 → 最后用通知把好答案盖掉了。这里把流式正文留住。
+    """
+    text = "".join(str(part or "") for part in parts).strip()
+    if not text:
+        return ""
+    profile = _model_reply_profiles.profile_for("")
+    for known in (
+        getattr(profile, "fake_tool_fallback_text", ""),
+        getattr(_model_reply_profiles, "DEFAULT_FALLBACK_TEXT", ""),
+    ):
+        known_text = str(known or "").strip()
+        if known_text and text == known_text:
+            return ""
+        if known_text and known_text in text:
+            text = text.replace(known_text, "").strip()
+    cleaned = _strip_fake_tool_markup(text)
+    cleaned = cleaned.strip()
+    # 太短的一律不当正文（避免把"好的""收到"当成答复）
+    return cleaned if len(cleaned) >= 30 else ""
 
 
 class _JunkOnlyFinal(RuntimeError):
@@ -1048,6 +1073,8 @@ async def _run_job_request(job: MastraChatJob) -> None:
     delta_buffer = ""
     last_delta_flush = asyncio.get_running_loop().time()
     final_received = False
+    # 已经流式发给用户的正文（用于"final 是占位句但正文已经给过"的情况）
+    streamed_parts: List[str] = []
     observed_media_tasks: Dict[str, Dict[str, Any]] = {
         task["capability_id"]: task
         for task in (_normalized_media_task(item) for item in job.existing_media_tasks)
@@ -1073,6 +1100,10 @@ async def _run_job_request(job: MastraChatJob) -> None:
         # 流式也必须过 guard：不然 <||DSML|| …> 这种信封会一片一片飘进对话框
         cleaned = stream_guard.feed(text)
         if cleaned:
+            # 代理层的"没正文"占位句不要飘进对话框，也别算作已交付正文
+            if _is_placeholder_reply(cleaned.strip()):
+                return
+            streamed_parts.append(cleaned)
             await _append_event(job.message_id, "delta", {"text": cleaned})
 
     attempts = _stream_retry_attempts()
@@ -1154,6 +1185,24 @@ async def _run_job_request(job: MastraChatJob) -> None:
             raise
         except _JunkOnlyFinal:
             await flush_delta()
+            # 主循环已经把正文流式给过用户了：以正文收尾，别用"请再说一次"把它盖掉。
+            usable = _usable_streamed_reply(streamed_parts)
+            if usable:
+                logger.warning(
+                    "[dispatch-clean] junk-only final 但已有可用流式正文 message=%s chars=%d → 用正文收尾",
+                    job.message_id,
+                    len(usable),
+                )
+                await asyncio.to_thread(
+                    _complete_sync,
+                    job.message_id,
+                    usable,
+                    [],
+                    None,
+                    list(observed_media_tasks.values()),
+                    [],
+                )
+                return
             if attempt < attempts:
                 await _append_event(
                     job.message_id,
@@ -1162,6 +1211,11 @@ async def _run_job_request(job: MastraChatJob) -> None:
                 )
                 await asyncio.sleep(min(1.5 * attempt, 4.0))
                 continue
+            logger.warning(
+                "[dispatch-clean] 收尾仍无正文，使用兜底提示 message=%s streamed_chars=%d",
+                job.message_id,
+                len("".join(streamed_parts)),
+            )
             await asyncio.to_thread(
                 _complete_sync,
                 job.message_id,

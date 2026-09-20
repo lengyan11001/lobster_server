@@ -511,6 +511,13 @@ def _tool_definitions(
     )
     invoke_description = (
         "调用能力(图片生成/视频/语音等)。"
+        "【工具名固定】工具名就是 invoke_capability，参数是 capability_id + payload；"
+        "不要把 capability_id 本身当工具名调用（例如不要调用 comfly_chat / image_generate）。"
+        "【写作文本】写文案、脚本、口播、分镜、翻译、总结、结构化整理用 capability_id=\"comfly.chat\"，"
+        "payload={\"model\": 用户指定或先查 sutui.search_models, \"messages\": [{\"role\":\"user\",\"content\":\"...\"}]}。"
+        "【看图文】图片/截图理解、读图里的文字用 capability_id=\"image.understand\"；视频理解用 video.understand。"
+        "【异步任务】图片/视频生成提交后用 capability_id=\"task.get_result\" 轮询取结果。"
+        "【关键词】写脚本 文案 口播 分镜 翻译 总结 理解图片 识别文字 生成图片 生成视频 数字人 语音。"
         f"【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"{_DEFAULT_IMAGE_MODEL}\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
         f"video.generate 用户未指定模型时 payload.model 填 \"{_DEFAULT_VIDEO_MODEL}\"；用户未指定时长时不要强行填 duration，由后端按模型默认值处理。"
         "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
@@ -534,7 +541,16 @@ def _tool_definitions(
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "capability_id": {"type": "string", "enum": capability_list},
+                    # 不再用 enum 卡死：模型偶尔会自己拼一个不存在的 capability_id（例如 document.understand），
+                    # 客户端校验会在到达服务端之前就抛一句难懂的 zod 错误，模型只能瞎重试。
+                    # 改成普通字符串 + 示例，服务端负责给出"能力未找到 + 可用清单"的可恢复提示。
+                    "capability_id": {
+                        "type": "string",
+                        "description": (
+                            "能力 ID，必须逐字取自 list_capabilities / list_system_capabilities 的返回值。"
+                            "常用：" + ", ".join(capability_list[:16])
+                        ),
+                    },
                     "payload": {"type": "object"},
                 },
                 "required": ["capability_id", "payload"],
@@ -4468,7 +4484,30 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                             pub_args[k] = v
                 return await _call_tool("publish_content", pub_args, token, request)
             if not capability_id or capability_id not in catalog:
-                return [{"type": "text", "text": f"能力未找到: {capability_id}"}], True
+                # 给模型一条能自己恢复的路：列出真实可用的 capability_id，让它按清单重试一次
+                if not capability_id:
+                    return [
+                        {
+                            "type": "text",
+                            "text": "缺少 capability_id：请先调用 list_capabilities（或调度侧的 list_system_capabilities）取到能力 ID，再用 invoke_capability 调用。",
+                        }
+                    ], True
+                available_ids = sorted(
+                    cid
+                    for cid in catalog.keys()
+                    if not _capability_id_is_debug_only_in_registry(cid)
+                )
+                listed = "、".join(available_ids[:24])
+                return [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"能力未找到: {capability_id}（这个 ID 不存在，不要自己拼名字）。"
+                            f"本服务当前可用 capability_id：{listed}。"
+                            "请从上面这一串里原样挑一个重试，或调用 list_capabilities 查看每个能力的参数。"
+                        ),
+                    }
+                ], True
 
             if not (token or "").strip():
                 return [

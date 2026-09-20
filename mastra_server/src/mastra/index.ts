@@ -54,6 +54,48 @@ const maxQueueDepth = Math.max(maxConcurrency, Math.min(200, Number(process.env.
 const contextTokenLimit = Math.max(16000, Math.min(120000, Number(process.env.LOBSTER_MASTRA_CONTEXT_TOKEN_LIMIT || 48000)))
 const memoryLastMessages = Math.max(6, Math.min(20, Number(process.env.LOBSTER_MASTRA_LAST_MESSAGES || 10)))
 
+// ── 收尾与上下文保真（2026-09-20）───────────────────────────────────────────
+// 背景：DeepSeek 系模型在步数用满/收尾时会把「还想调工具」写成文本形态的工具调用，代理层剥掉后
+// 正文为空，用户只看到「请再说一次你要执行的任务」；同时 ToolCallFilter 只保留最近 2 个工具步，
+// 长任务（例如读 PDF 再写脚本）读到一半的资料会被裁掉，模型只能反复重读、永远写不出结果。
+// 这里对齐 Codex / 豆包那类 agent loop 的做法：工具历史按预算保留 + 循环结束必须收尾出一段正文。
+const toolHistorySteps = Math.max(0, Math.min(20, Number(process.env.LOBSTER_MASTRA_TOOL_HISTORY_STEPS || 6)))
+const orchestratorMaxSteps = Math.max(4, Math.min(40, Number(process.env.LOBSTER_MASTRA_MAX_STEPS || 16)))
+const finalizeEnabled = !/^(0|false|no|off)$/i.test(String(process.env.LOBSTER_MASTRA_FINALIZE ?? '1'))
+
+// 代理层对「整段都是工具调用残留」的兜底文案：它到了这里等于「没有正文」
+const PLACEHOLDER_REPLIES = new Set([
+  '好的，我来为您总结一下已获取的信息。',
+  '好的，我来为您总结一下。',
+  '好的，我来为您总结。',
+])
+
+function compactEvidence(value: unknown, limit = 1200): string {
+  let text = ''
+  try {
+    text = typeof value === 'string' ? value : JSON.stringify(value)
+  } catch {
+    text = String(value ?? '')
+  }
+  text = String(text || '').replace(/\s+/g, ' ').trim()
+  return text.length > limit ? `${text.slice(0, limit)}…（已截断）` : text
+}
+
+// 判断「这段回复算不算给了用户答复」：空、占位句、工具残留、只承诺不做事 → 都不算
+function looksLikeUnfinishedReply(value: unknown): boolean {
+  const text = String(value ?? '').trim()
+  if (!text) return true
+  if (PLACEHOLDER_REPLIES.has(text)) return true
+  if (/<\|?DSML|tool_calls|<invoke[\s>]|<\/invoke>|antml:/i.test(text)) return true
+  if (text.length <= 80 && /^(好的|收到|明白)[，,]?\s*(我)?(先|马上|就|将|来)/.test(text)) return true
+  if (text.length <= 80 && /^(我先|我这就|我将|正在|稍等|让我)/.test(text)) return true
+  return false
+}
+
+// 读取类工具的「模型可见输出」：ToolCallFilter 会移除原始结果，只保留这份紧凑文本，
+// 这样读到过的资料不会在几步之后凭空消失（长任务失忆的直接原因）。
+const readToolModelOutput = (output: unknown) => compactEvidence(output, 2000)
+
 type MediaTaskSnapshot = {
   capability_id: string
   task_id: string
@@ -474,7 +516,7 @@ const listSystemCapabilities = createTool({
         ...row,
         // Keep the structured parameter contract at the tool boundary after
         // capability search was extracted into its own module.
-        parameter_schema: row.parameter_schema,
+      parameter_schema: row.parameter_schema,
       })),
       execution_hint: canExecute
         ? '当前会话已授权；命中 execution_target=server 的能力时加载并调用实际 MCP 工具，命中 execution_target=online 时调用 dispatch_online_capability。'
@@ -489,6 +531,7 @@ const listSystemCapabilities = createTool({
       hint: result.matched_count ? '确认执行后只加载与目标最相关的工具。' : '没有匹配项时请换更具体的平台或动作关键词。',
     }
   },
+  toModelOutput: readToolModelOutput,
 })
 
 const listPersonalMemoryDocuments = createTool({
@@ -504,6 +547,7 @@ const listPersonalMemoryDocuments = createTool({
       .some(value => String(value || '').toLowerCase().includes(needle)))
     return { count: matched.length, documents: matched.slice(0, 50).map(memoryMetadata) }
   },
+  toModelOutput: readToolModelOutput,
 })
 
 const readPersonalMemoryDocument = createTool({
@@ -521,6 +565,7 @@ const readPersonalMemoryDocument = createTool({
     const content = String(data?.content_text || doc.content_text || '')
     return { document: memoryMetadata(doc), content: content.slice(0, 16000), truncated: content.length > 16000 }
   },
+  toModelOutput: readToolModelOutput,
 })
 
 const readPersonalMemory = createTool({
@@ -562,6 +607,7 @@ const readPersonalMemory = createTool({
     }
     return { available: documents.length > 0, count: matched.length, documents, truncated: matched.length > documents.length }
   },
+  toModelOutput: readToolModelOutput,
 })
 
 const savePersonalMemoryText = createTool({
@@ -595,7 +641,8 @@ const savePersonalMemoryText = createTool({
 
 const importAttachmentToPersonalMemory = createTool({
   id: 'import_attachment_to_personal_memory',
-  description: '把用户本轮已上传且归属当前账号的文档、图片、音频或视频素材解析后保存为个人记忆。不要传二进制或全文，只传素材编号。',
+  description: '把用户本轮已上传且归属当前账号的文档、图片、音频或视频素材解析后保存为个人记忆。不要传二进制或全文，只传素材编号。'
+    + '如果失败（例如 PDF 没有文字层、素材不存在），必须把失败原因原样转述给用户并给出替代方案（发文字版/截图/换格式），不要反复重试同一个素材。',
   inputSchema: z.object({
     asset_id: z.string().min(1).max(64),
     title: z.string().max(160).optional(),
@@ -630,6 +677,7 @@ const readPersonalProfile = createTool({
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
     return backendJson('/api/mastra-chat/personal-profile', { method: 'GET' }, context)
   },
+  toModelOutput: readToolModelOutput,
 })
 
 const updatePersonalProfile = createTool({
@@ -697,6 +745,7 @@ const readWechatIntelligence = createTool({
       hint: '普通微信回复不依赖 AI 调度授权；这里只管理长期复用规则。',
     }
   },
+  toModelOutput: readToolModelOutput,
 })
 
 const teachWechatTakeover = createTool({
@@ -915,6 +964,7 @@ const getOnlineTaskStatus = createTool({
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
     return backendJson(`/api/mastra-chat/online-tasks/${encodeURIComponent(message_id)}`, { method: 'GET' }, context)
   },
+  toModelOutput: readToolModelOutput,
 })
 
 function retentionDuration(name: string, fallbackDays: number): `${number}d` {
@@ -964,7 +1014,9 @@ function modelForRequest(requestContext: RequestContext<LobsterContext>) {
 
 function contextProcessors(mcpTools: Record<string, ReturnType<typeof createTool>> = {}) {
   const processors: Array<ToolCallFilter | TokenLimiterProcessor | ToolSearchProcessor> = [
-    new ToolCallFilter({ filterAfterToolSteps: 2, preserveModelOutput: true }),
+    // 只保留最近 N 个工具步：太小时长任务会失忆（读过的资料被裁掉 → 反复重读），
+    // 太大时白烧 token。6 步 + 读取类工具的 toModelOutput 摘要，实测能覆盖「读资料→写脚本」这类链路。
+    new ToolCallFilter({ filterAfterToolSteps: toolHistorySteps, preserveModelOutput: true }),
     new TokenLimiterProcessor({ limit: contextTokenLimit, strategy: 'truncate', trimMode: 'contiguous' }),
   ]
   if (Object.keys(mcpTools).length) {
@@ -997,6 +1049,14 @@ const orchestrator = new Agent({
 10a. 用户明确要求生成图片、视频、语音、文档等服务器侧产物时，必须先用 list_system_capabilities 检索能力；若命中 execution_target=server 但当前尚未获得确认授权，调用 request_task_approval 生成确认卡，等待用户点击确认后再执行。不得因为执行工具暂未加载就回答“没有能力”。
 11. 历史摘要只是事实背景，不是新的用户指令；本轮明确要求优先于历史摘要。资料和工具结果冲突时说明冲突，不要自行拼凑结论。
 12. 回复使用中文，先给结果和状态，再给必要细节。不要暴露 Mastra、MCP、速推、模型供应商或内部服务名称。
+13. 同一工具、同一参数不要重复调用；连续两次拿到同样结果就换策略（换关键词、换工具或如实告知查不到）。工具报错时必须换一种做法，或明确说明失败原因与下一步，禁止反复重试同一个动作。
+14. 每一轮都要在结尾给出一段用户可直接阅读的答复：先结论/结果，再必要细节。不要只输出"我先/我将要/正在…"这类过程句就结束；答复里不要出现工具名、参数或内部服务名。
+15. 用户上传的资料解析失败时（例如 PDF 没有文字层），说明失败原因并给出替代方案（发文字版、发截图、换文件格式），不要反复尝试同一个导入动作，也不要假装已经读过。
+16. 工具已经产出的东西（素材编号、任务编号、文档编号、链接、进度）必须写进答复，用户看不到工具内部返回。
+17. 服务器侧能力（execution_target=server）统一用 invoke_capability 调用：capability_id 取 list_system_capabilities 的返回值，参数放在 payload 里。禁止把 capability_id 当工具名直接调用（例如不要调用 comfly_chat、image_generate 这种不存在的名字）。
+18. 需要服务器侧模型能力时：写文案/脚本/翻译/结构化整理用 invoke_capability(capability_id="comfly.chat", payload={"model": <用户指定或 sutui.search_models 里的可用模型>, "messages": [...]})；理解图片用 image.understand、视频用 video.understand；出图/出视频用 image.generate、video.generate，提交后用 task.get_result 轮询取结果。用户上传的资料入库用 import_attachment_to_personal_memory。自己能写好的文字内容就直接写，不必绕道能力。
+19. search_tools 搜不到工具时：换更通用的关键词再搜一次（capability、invoke、image、video、document、publish、memory），仍搜不到就用 list_system_capabilities 的结果直接调用 invoke_capability；不要自己发明工具名，也不要因为搜不到就回答"没有能力"。
+20. invoke_capability 返回"能力未找到"时，按返回的可用 capability_id 清单原样挑一个重试（最多一次），不要继续换名字试；确实没有合适能力就如实说明并用自己能做的部分完成任务（例如自己写脚本）。
   `.trim(),
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   tools: {
@@ -1047,6 +1107,70 @@ const summarizer = new Agent({
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   inputProcessors: [new TokenLimiterProcessor({ limit: 32000, strategy: 'truncate', trimMode: 'contiguous' })],
 })
+
+// 收尾专用：不带任何工具，只把「本轮已经做完的事」写成给用户的答复。
+// 触发条件：主循环结束却没有可展示正文（步数用满、模型只想继续调工具、代理层把正文当工具残留剥掉）。
+const answerFinalizer = new Agent({
+  id: 'lobster-answer-finalizer',
+  name: '答复收尾',
+  instructions: `
+你负责把已经执行完的工具结果整理成给用户的最终答复。你没有工具可用，也不允许假装还能操作。
+
+要求：
+1. 用中文，先给结论/结果，再给必要细节；直接给用户能看懂的内容，不要写内部推理过程。
+2. 只依据给出的工具执行记录和已给出的半成品正文，不要编造没有出现的资料、参数、金额或业务事实。
+3. 如果关键资料没拿到（例如资料解析失败、设备不在线、缺少授权），明确说出缺什么、为什么，并给出可执行的下一步。
+4. 执行记录里出现过的编号（素材/任务/文档编号）、链接、进度、失败原因，必须原样写进答复。
+5. 不要出现工具名、参数名、mastra/mcp/模型供应商等内部名称；不要询问用户"是否继续"这类空话。
+6. 长度按内容需要，通常 150–600 字；能一次说清就不要分段罗列。
+  `.trim(),
+  model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
+  inputProcessors: [new TokenLimiterProcessor({ limit: 32000, strategy: 'truncate', trimMode: 'contiguous' })],
+})
+
+// 把每一步的工具调用与结果压成一行「执行记录」，用于收尾答复与失败复盘
+function collectToolTrace(trace: string[], step: Record<string, unknown>) {
+  const calls = ((step.toolCalls || []) as Array<Record<string, unknown>>)
+  const results = ((step.toolResults || []) as Array<Record<string, unknown>>)
+  calls.forEach((call, index) => {
+    const name = String(call.toolName || '')
+    const args = call.args && typeof call.args === 'object' ? call.args as Record<string, unknown> : {}
+    const rawResult = results[index]?.result ?? results[index] ?? ''
+    const displayName = toolDisplayName(name, args)
+    const capability = args.capability_id ? ` capability=${String(args.capability_id)}` : ''
+    trace.push(`- ${displayName}（${name}）${capability} 结果=${compactEvidence(rawResult, 400)}`)
+  })
+}
+
+async function finalizeAnswer(options: {
+  requestContext: RequestContext<LobsterContext>
+  body: Record<string, unknown>
+  message: string
+  trace: string[]
+  partial: string
+}): Promise<string> {
+  const { requestContext, body, message, trace, partial } = options
+  const evidence = trace.slice(-40).join('\n').slice(0, 8000)
+  const prompt = [
+    `【本轮用户请求】\n${String(message || '').slice(0, 2000)}`,
+    partial.trim() ? `【已经给出的半成品正文（可能被截断）】\n${partial.trim().slice(0, 2000)}` : '',
+    evidence ? `【本轮已执行的工具记录（按顺序，可能被截断）】\n${evidence}` : '【本轮没有执行任何工具】',
+    '请直接写出给用户的最终答复。',
+  ].filter(Boolean).join('\n\n')
+  try {
+    const result = await answerFinalizer.generate(prompt, {
+      requestContext,
+      context: runtimeContextFor(body),
+      maxSteps: 1,
+      modelSettings: { maxOutputTokens: 2048, temperature: 0.2 },
+    })
+    return String(result.text || '').trim()
+  } catch (error) {
+    // 收尾失败不能把整轮拖垮：返回空，让调用方保留原有正文/走原有兜底
+    console.warn('[lobster] finalize answer failed:', error instanceof Error ? error.message : String(error))
+    return ''
+  }
+}
 
 let activeRequests = 0
 let totalRequests = 0
@@ -1385,7 +1509,8 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
     const dispatches: DispatchRecord[] = []
     const requestContext = requestContextFor(body || {}, dispatches)
 
-    const toolSteps: Array<Record<string, unknown>> = []
+  const toolSteps: Array<Record<string, unknown>> = []
+  const toolTrace: string[] = []
     try {
       await acquireSlot()
       acquired = true
@@ -1395,6 +1520,7 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
       const rawMcpTools = mcp ? await mcp.listTools() : {}
       const mediaExecution = guardMediaCapabilityTools(rawMcpTools, body || {})
       const mcpTools = mediaExecution.tools
+      const mcpToolset = Object.keys(mcpTools).length ? { lobster_mcp: mcpTools } : null
       if (mediaExecution.hasTasks()) {
         await mediaExecution.resumeExisting({ requestContext, abortSignal: c.req.raw.signal })
         const mediaTasks = mediaExecution.snapshots()
@@ -1415,7 +1541,8 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
         requestContext,
         context,
         inputProcessors: contextProcessors(mcpTools),
-        maxSteps: 12,
+        ...(mcpToolset ? { toolsets: mcpToolset } : {}),
+        maxSteps: orchestratorMaxSteps,
         modelSettings: { maxOutputTokens: 4096, temperature: 0.2 },
         onStepFinish: step => {
           const calls = (step.toolCalls || []) as unknown as Array<Record<string, unknown>>
@@ -1423,14 +1550,26 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
             finishReason: step.finishReason,
             toolCalls: calls.map(call => ({ toolName: call.toolName, toolCallId: call.toolCallId })),
           })
+          collectToolTrace(toolTrace, step)
         },
       })
       if (mediaExecution.hasPending()) {
         throw new MediaPollResumeError('媒体任务仍在生成，稍后继续查询原任务')
       }
+      let reply = String(result.text || '').trim()
+      if (finalizeEnabled && toolTrace.length && looksLikeUnfinishedReply(reply)) {
+        const finalized = await finalizeAnswer({
+          requestContext,
+          body: body || {},
+          message,
+          trace: toolTrace,
+          partial: reply,
+        })
+        if (finalized) reply = finalized
+      }
       return c.json({
         ok: true,
-        reply: result.text || '',
+        reply,
         dispatches,
         usage: result.usage || null,
         steps: toolSteps,
@@ -1474,6 +1613,7 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
         let acquired = false
         const dispatches: DispatchRecord[] = []
         const activeToolNames = new Map<string, { name: string; toolId: string }>()
+        const toolTrace: string[] = []
         try {
           write({ type: 'thinking', text: '正在理解你的需求并检查可用能力...' })
           await acquireSlot()
@@ -1492,6 +1632,10 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
             })
           })
           const mcpTools = mediaExecution.tools
+          // MCP 工具随本轮直接下发：以前只挂在 search_tools 后面，中文关键词经常搜不到，
+          // 模型就凭名字瞎猜（例如调用不存在的 comfly_chat）。把真实工具摆在它面前，
+          // invoke_capability / publish_content / save_asset 这些才真的用得上（2026-09-20 实测）。
+          const mcpToolset = Object.keys(mcpTools).length ? { lobster_mcp: mcpTools } : null
           if (mediaExecution.hasTasks()) {
             write({ type: 'thinking', text: '正在继续查询已创建的媒体任务...' })
             await mediaExecution.resumeExisting({ requestContext, abortSignal: c.req.raw.signal })
@@ -1520,17 +1664,27 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
             requestContext,
             context: runtimeContextFor(body),
             inputProcessors: contextProcessors(mcpTools),
-            maxSteps: 12,
+            ...(mcpToolset ? { toolsets: mcpToolset } : {}),
+            maxSteps: orchestratorMaxSteps,
             modelSettings: { maxOutputTokens: 4096, temperature: 0.2 },
             abortSignal: c.req.raw.signal,
+            onStepFinish: step => {
+              collectToolTrace(toolTrace, step as unknown as Record<string, unknown>)
+            },
           })
 
+          // 记录已经流式发给用户的正文：收尾时以它为准，避免"流式给了答案、final 却是占位句"
+          // 导致整段好好的答复被当成没有正文丢掉（2026-09-19 那次就是这样丢的）。
+          let streamedText = ''
           for await (const chunk of output.fullStream) {
             const item = chunk as unknown as { type: string; payload?: Record<string, unknown> }
             const payload = item.payload || {}
             if (item.type === 'text-delta') {
               const text = String(payload.text || '')
-              if (text) write({ type: 'delta', text })
+              if (text) {
+                streamedText += text
+                write({ type: 'delta', text })
+              }
               continue
             }
             if (item.type === 'tool-call') {
@@ -1570,11 +1724,33 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
           if (mediaExecution.hasPending()) {
             throw new MediaPollResumeError('媒体任务仍在生成，稍后继续查询原任务')
           }
-          const reply = await output.text
+          let reply = String((await output.text) || '').trim()
+          if (finalizeEnabled && toolTrace.length && looksLikeUnfinishedReply(reply)) {
+            // 主循环没给出可展示正文（步数用满 / 只想继续调工具 / 正文被当工具残留剥掉）：
+            // 用不带工具的收尾调用补一段真正的答复，避免用户只收到「请再说一次」。
+            write({
+              type: 'progress',
+              text: '正在整理执行结果并生成答复...',
+              reason: 'finalize_answer',
+              step_count: toolTrace.length,
+            })
+            const finalized = await finalizeAnswer({
+              requestContext,
+              body,
+              message: validated.message,
+              trace: toolTrace,
+              // 优先用已经流式给出的正文（它可能比 final.reply 完整得多）
+              partial: streamedText.trim() || reply,
+            })
+            if (finalized) {
+              write({ type: 'delta', text: finalized })
+              reply = finalized
+            }
+          }
           const usage = await output.usage
           write({
             type: 'final',
-            reply: reply || '',
+            reply,
             dispatches,
             usage: usage || null,
             media_tasks: mediaExecution.snapshots(),
