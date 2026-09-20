@@ -2523,15 +2523,17 @@ body.overlay-open #drawer{z-index:501}
       + statWinBtn("1d", "今日") + statWinBtn("7d", "近 7 天") + statWinBtn("30d", "近 30 天") + statWinBtn("all", "全部")
       + '<button class="btn sm ghost" id="statReload" style="margin-left:8px">↻ 刷新</button></div>'
       + '<div class="dim" style="font-size:11.5px;margin-top:8px">'
-      + '范围：「虚拟员工」里已添加的 ' + (d.scope && d.scope.slots || 0) + ' 台设备'
-      + '（在线 ' + (d.scope && d.scope.slots_online || 0) + ' 台）'
-      + '，其他槽位不纳入统计 · 窗口 ' + esc(d.window_label || "") + '</div>'
+      + '设备产出（执行）：「虚拟员工」里已添加的 ' + (d.scope && d.scope.slots || 0) + ' 台'
+      + '（在线 ' + (d.scope && d.scope.slots_online || 0) + ' 台，未添加的槽位不算）'
+      + ' · 账号产出（发布 / 播放 / 线索 / 个微 / 私信 / 成片）：本公司 ' + (d.scope && d.scope.members || 0) + ' 个账号'
+      + ' · 窗口 ' + esc(d.window_label || "") + '</div>'
       + '</div>'
 
       + '<div class="g4" style="margin-top:12px">'
       + statKpi("视频产出", (v.total || 0), "数字人 " + (v.shanjian || 0) + " · 爆款复刻 " + (v.hifly || 0) + " · 其他 " + (v.wan || 0), "#22d3ee")
-      + statKpi("发布", (s.published || 0), Object.keys(s.published_by_platform || {}).map(function(k){ return k + " " + s.published_by_platform[k]; }).join(" · ") || "暂无记录", "#a855f7")
-      + statKpi("播放量", (plays.views || 0), (plays.items || 0) + " 条视频有数据 · 赞 " + (plays.likes || 0) + " · 评论 " + (plays.comments || 0) + " · 平均 " + (plays.avg_views || 0), "#f472b6")
+      + statKpi("发布", (s.published || 0), "按账号 · " + (Object.keys(s.published_by_platform || {}).map(function(k){ return k + " " + s.published_by_platform[k]; }).join(" · ") || "暂无记录"), "#a855f7")
+      + statKpi("播放量", (plays.views || 0), "按账号统计 · " + (plays.items || 0) + " 条视频有数据 · 赞 " + (plays.likes || 0)
+          + " · 评论 " + (plays.comments || 0) + " · 平均 " + (plays.avg_views || 0), "#f472b6")
       + statKpi("精准客户", (s.leads || 0), Object.keys(s.leads_by_platform || {}).slice(0, 3).map(function(k){ return k + " " + s.leads_by_platform[k]; }).join(" · ") || "暂无记录", "#34d399")
       + statKpi("个微回复", (wx.reply_sent || 0), "回复率 " + (wx.reply_rate || 0) + "% · 未回 " + (wx.skipped || 0) + " · 失败 " + (wx.failed || 0), "#fbbf24")
       + '</div>'

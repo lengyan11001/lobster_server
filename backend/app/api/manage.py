@@ -2104,14 +2104,22 @@ def _robot_scope(db: Session, company: MCompany) -> Dict[str, Any]:
     """
     slot_rows = db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id).all()
     slots = {r.installation_id: r.name for r in slot_rows}
-    uids: List[int] = []
+    # \u69fd\u4f4d\u80cc\u540e\u7684\u8d26\u53f7\uff1a\u7528\u4e8e\u8bbe\u5907\u7ea7\uff08\u6267\u884c\uff09\u7edf\u8ba1
+    slot_uids: List[int] = []
     for inst in slots.keys():
         row = (db.query(H5ChatDevicePresence)
                .filter(H5ChatDevicePresence.installation_id == inst)
                .order_by(H5ChatDevicePresence.last_seen_at.desc()).first())
         if row is not None and row.user_id:
-            uids.append(int(row.user_id))
-    return {"uids": sorted(set(uids)), "slots": slots}
+            slot_uids.append(int(row.user_id))
+    # \u516c\u53f8\u6210\u5458\u8d26\u53f7\uff1a\u8d26\u53f7\u7ea7\u4ea7\u51fa\uff08\u53d1\u5e03/\u64ad\u653e\u3001\u7ebf\u7d22\u3001\u4e2a\u5fae\u3001\u79c1\u4fe1\u3001\u6210\u7247\uff09
+    member_uids: List[int] = []
+    for m in db.query(MMembership).filter(MMembership.company_id == company.id).all():
+        if m.user_id:
+            member_uids.append(int(m.user_id))
+    if company.owner_user_id:
+        member_uids.append(int(company.owner_user_id))
+    return {"uids": sorted(set(slot_uids)), "member_uids": sorted(set(member_uids)), "slots": slots}
     uids: List[int] = []
     for m in db.query(MMembership).filter(MMembership.company_id == company.id).all():
         if m.user_id:
@@ -2160,7 +2168,9 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     label, since = _ai_window(window)
     scope = _robot_scope(db, company)
     uids, slot_map = scope["uids"], scope["slots"]
+    member_uids = scope.get("member_uids") or uids
     uin = _in_ints(uids)
+    m_uin = _in_ints(member_uids)
     sin = _in_strs(list(slot_map.keys()))
     since_sql = " and created_at >= :since " if since else ""
     since_sql_pub = " and coalesce(published_at, first_seen_at, reported_at) >= :since " if since else ""
@@ -2228,14 +2238,15 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         day_runs[_robot_day(day)] = int(cnt or 0)
 
     # ---- \u53d1\u5e03 ----
+    # \u53d1\u5e03/\u64ad\u653e\u662f\u8d26\u53f7\u7ea7\u4ea7\u51fa\uff1a\u6309\u672c\u516c\u53f8\u8d26\u53f7\u7edf\u8ba1\uff08\u8bbe\u5907\u6ca1\u6dfb\u52a0\u8fdb\u865a\u62df\u5458\u5de5\u4e5f\u8981\u7b97\uff09
     pub_rows = rows("select coalesce(platform, ''), count(*) from publish_metrics where "
-                    "installation_id in " + sin + since_sql_pub + " group by 1")
+                    "(user_id in " + m_uin + " or installation_id in " + sin + ")" + since_sql_pub + " group by 1")
     published_by_platform = {str(k or "unknown"): int(v or 0) for k, v in pub_rows}
     published_total = sum(published_by_platform.values())
     day_pub: Dict[str, int] = {}
     if since_sql_pub:
         for day, cnt in rows("select date_trunc('day', coalesce(published_at, first_seen_at, reported_at)) d, count(*) "
-                             "from publish_metrics where installation_id in " + sin
+                             "from publish_metrics where (user_id in " + m_uin + " or installation_id in " + sin + ")"
                              + since_sql_pub + " group by 1"):
             day_pub[_robot_day(day)] = int(cnt or 0)
 
@@ -2249,7 +2260,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
             "       coalesce(views,0), coalesce(likes,0), coalesce(comments,0), coalesce(shares,0), "
             "       coalesce(favorites,0), sampled_day "
             "from (select distinct on (coalesce(item_id, cast(id as varchar))) * "
-            "      from publish_metrics where installation_id in " + sin + " "
+            "      from publish_metrics where (user_id in " + m_uin + " or installation_id in " + sin + ") "
             "      order by coalesce(item_id, cast(id as varchar)), sampled_day desc nulls last, id desc) t")
         view_list = []
         by_platform: Dict[str, int] = {}
@@ -2283,20 +2294,20 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
 
     # ---- \u7ebf\u7d22 / \u7cbe\u51c6\u5ba2\u6237 ----
     lead_rows = rows("select coalesce(source_platform, ''), count(*) from global_lead_crm_contacts "
-                     "where user_id in " + uin + since_sql + " group by 1")
+                     "where user_id in " + m_uin + since_sql + " group by 1")
     leads_by_platform = {str(k or "unknown"): int(v or 0) for k, v in lead_rows}
     leads_total = sum(leads_by_platform.values())
     day_leads: Dict[str, int] = {}
     if since:
         for day, cnt in rows("select date_trunc('day', created_at) d, count(*) from global_lead_crm_contacts "
-                             "where user_id in " + uin + since_sql + " group by 1"):
+                             "where user_id in " + m_uin + since_sql + " group by 1"):
             day_leads[_robot_day(day)] = int(cnt or 0)
 
     # ---- \u4e2a\u5fae\u56de\u590d ----
     wx = {"reply_sent": 0, "failed": 0, "skipped": 0, "groups": 0, "queued": 0}
     day_wx: Dict[str, int] = {}
     for et, st, cnt in rows("select event_type, status, count(*) from wechat_interaction_outcomes where user_id in "
-                            + uin + since_sql_hap + " group by 1, 2"):
+                            + m_uin + since_sql_hap + " group by 1, 2"):
         n = int(cnt or 0)
         et2, st2 = str(et or ""), str(st or "")
         if et2 == "reply_sent":
@@ -2309,9 +2320,9 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
             wx["groups"] += n
     if since:
         for day, cnt in rows("select date_trunc('day', happened_at) d, count(*) from wechat_interaction_outcomes "
-                             "where user_id in " + uin + " and event_type = 'reply_sent'" + since_sql_hap + " group by 1"):
+                             "where user_id in " + m_uin + " and event_type = 'reply_sent'" + since_sql_hap + " group by 1"):
             day_wx[_robot_day(day)] = int(cnt or 0)
-    wx_touched = int(rows("select count(*) from wechat_contact_memories where user_id in " + uin)[0][0] or 0)
+    wx_touched = int(rows("select count(*) from wechat_contact_memories where user_id in " + m_uin)[0][0] or 0)
     wx["contacts"] = wx_touched
     wx_handled = wx["reply_sent"] + wx["skipped"] + wx["failed"]
     wx["reply_rate"] = round(wx["reply_sent"] * 100.0 / wx_handled, 1) if wx_handled else 0.0
@@ -2319,14 +2330,14 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         {"contact": r[0] or "", "inbound": (r[1] or "")[:120], "reply": (r[2] or "")[:160],
          "event": r[3] or "", "status": r[4] or "", "at": (r[5].isoformat(sep=" ")[:16] if r[5] else "")}
         for r in rows("select contact_name, inbound_text, reply_text, event_type, status, happened_at "
-                      "from wechat_interaction_outcomes where user_id in " + uin + since_sql_hap
+                      "from wechat_interaction_outcomes where user_id in " + m_uin + since_sql_hap
                       + " order by id desc limit 20")]
 
     # ---- H5 \u79c1\u4fe1 ----
     dm_total, dm_replied = 0, 0
     try:
         r0 = rows("select count(*), sum(case when coalesce(reply_text,'') <> '' then 1 else 0 end) "
-                  "from h5_chat_messages where user_id in " + uin + since_sql)[0]
+                  "from h5_chat_messages where user_id in " + m_uin + since_sql)[0]
         dm_total, dm_replied = int(r0[0] or 0), int(r0[1] or 0)
     except Exception:
         pass
@@ -2335,7 +2346,7 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
     def _counts(table: str, ok_status: List[str]) -> int:
         try:
             ok = ",".join("'" + s + "'" for s in ok_status)
-            sql = ("select count(*) from " + table + " where user_id in " + uin + " and status in (" + ok + ")"
+            sql = ("select count(*) from " + table + " where user_id in " + m_uin + " and status in (" + ok + ")"
                    + (" and created_at >= :since" if since else ""))
             return int(rows(sql)[0][0] or 0)
         except Exception:
@@ -2391,8 +2402,8 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         "ok": True,
         "window": window, "window_label": label, "since": (since.isoformat() if since else ""),
         "company": company.name,
-        "scope": {"members": len(uids), "slots": len(slot_map), "uids": len(uids),
-                  "slots_online": online_slots},
+        "scope": {"members": len(member_uids), "slots": len(slot_map), "uids": len(member_uids),
+                  "slots_online": online_slots, "slot_uids": len(uids)},
         "summary": {
             "videos": videos, "published": published_total, "published_by_platform": published_by_platform,
             "leads": leads_total, "leads_by_platform": leads_by_platform,
@@ -2417,7 +2428,8 @@ def robot_stats(company_id: int, window: str = Query("7d"), user: Any = Depends(
         "trend": trend,
         "recent_outcomes": recent_outcomes,
         "sources": [
-            "\u8303\u56f4\uff1a\u53ea\u7edf\u8ba1\u300c\u865a\u62df\u5458\u5de5\u300d\u9875\u5df2\u6dfb\u52a0\u7684\u8bbe\u5907\uff08\u79bb\u7ebf\u4e5f\u7b97\uff09\uff0c\u672a\u6dfb\u52a0\u7684\u69fd\u4f4d\u4e0d\u7eb3\u5165\u7edf\u8ba1",
+            "\u8bbe\u5907\u4ea7\u51fa\uff08\u6267\u884c\uff09\uff1a\u53ea\u7b97\u300c\u865a\u62df\u5458\u5de5\u300d\u91cc\u5df2\u6dfb\u52a0\u7684\u8bbe\u5907",
+            "\u8d26\u53f7\u4ea7\u51fa\uff08\u53d1\u5e03 / \u64ad\u653e / \u7ebf\u7d22 / \u4e2a\u5fae\u56de\u590d / \u79c1\u4fe1 / \u6210\u7247\uff09\uff1a\u6309\u672c\u516c\u53f8\u8d26\u53f7\u7edf\u8ba1",
             "\u6267\u884c\uff1ascheduled_task_runs\uff08\u6309\u69fd\u4f4d + \u80fd\u529b action\uff09",
             "\u53d1\u5e03 / \u64ad\u653e\uff1apublish_metrics\uff08\u6bcf\u5929\u4e00\u6761\u5feb\u7167\uff0c\u9762\u677f\u53d6\u6bcf\u6761\u89c6\u9891\u6700\u65b0\u4e00\u6b21\u91c7\u6837\u6c42\u548c\uff09",
             "\u7cbe\u51c6\u5ba2\u6237\uff1aglobal_lead_crm_contacts\uff08created_at\uff09",
