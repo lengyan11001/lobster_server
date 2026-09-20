@@ -42,6 +42,9 @@ from .scheduled_tasks import (
     _hydrate_workflow_task_payload,
     _local_bestseller_profile_from_persona,
     _serialize_task,
+    douyin_node_label,
+    normalize_douyin_task_kind,
+    normalize_workflow_nodes_for_save,
 )
 from .ip_content_studio import (
     _personal_default_resource_overrides,
@@ -192,7 +195,9 @@ def save_system_workflow_template(
     row = _system_catalog_template_row(db, key)
     if row is None:
         raise HTTPException(status_code=404, detail="系统模板不存在")
-    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    # 管理后台编辑器提交的节点可能把抖音节点写成 client_workflow + action=douyin_leads
+    # （admin.html buildNode 的老行为）→ 保存前归一，别再把坏 kind 存进系统模板并同步给镜像。
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
     if not nodes:
         raise HTTPException(status_code=400, detail="系统模板不能为空")
     now = datetime.utcnow()
@@ -654,6 +659,15 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         task_kind = str(plan.get("task_kind") or plan.get("taskKind") or "").strip().lower()
         payload = copy.deepcopy(plan.get("payload")) if isinstance(plan.get("payload"), dict) else {}
         _normalize_douyin_private_switch(raw, plan, payload)
+        # 老编辑器把抖音节点存成 client_workflow + action=douyin_leads，而客户端只认顶层
+        # task_kind=douyin_leads（子动作放 payload.action）→ 保存时归一，别再存坏数据。
+        # 子动作优先按节点标签推断（payload 里没有标签，只有 node.ability_label/plan.title）。
+        task_kind, payload, _douyin_fixed = normalize_douyin_task_kind(
+            task_kind, payload, label=douyin_node_label(raw)
+        )
+        if _douyin_fixed:
+            plan["task_kind"] = task_kind
+            plan["payload"] = payload
         if task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "search_collect":
             collection_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
             collection_params = dict(collection_params)
@@ -2929,6 +2943,11 @@ def _workflow_node_task_spec(
     plan = node.get("plan") or {}
     task_kind = str(plan.get("task_kind") or "").strip().lower()
     payload = dict(plan.get("payload") or {})
+    # 已在库里的老模板仍可能是 client_workflow + action=douyin_leads（2026-09-20 排查）
+    # → 组装任务前再归一一次，「演示」和「启动」都下发客户端认的 douyin_leads。
+    task_kind, payload, _douyin_fixed = normalize_douyin_task_kind(
+        task_kind, payload, label=douyin_node_label(node)
+    )
     if task_kind == "douyin_leads":
         # Each H5 workflow trigger is one finite Online action. The
         # workflow schedule may trigger it again later, but it must

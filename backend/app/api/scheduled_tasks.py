@@ -669,6 +669,171 @@ def _normalize_sales_digital_human_run_payload(
     return source
 
 
+# ── 抖音获客任务类型归一（2026-09-20）──────────────────────────────────────────
+# 背景：H5 编辑器把抖音节点的 plan 存成 task_kind=client_workflow + action=douyin_leads，
+# 而客户端只认顶层 task_kind=douyin_leads（子动作放 payload.action），09-16 起 851 个任务
+# 全部报「暂不支持的客户端工作流：douyin_leads」（涉及 14 个账号）。这里在下发/展示前归一，
+# 历史坏数据不逐条改也能立刻恢复；新数据在保存/组装时也会归一。
+_DOUYIN_LEADS_KIND = "douyin_leads"
+_DOUYIN_SALES_ACTIONS = (
+    "search_collect",
+    "account_nurture",
+    "self_comment_monitor",
+    "precise_touch",
+    "reply_comments",
+    "mention_comment",
+    "follow_comment",
+    "direct_message",
+    "stranger_message",
+)
+def douyin_action_from_text(value: Any) -> str:
+    """节点标签 → 抖音子动作。
+
+    与客户端 `_scheduled_douyin_sales_action_from_text()` 和
+    `h5_workflows._sales_action_from_note()` 保持同一优先级：同样的标签在
+    服务端和客户端必须推断出同一个动作，否则子动作参数（采集/触达）会错配。
+    """
+    text = str(value or "").strip()
+    if "我的评论区" in text or "抖音我的评论区" in text:
+        return "self_comment_monitor"
+    if "精准用户触达" in text or "精准触达" in text:
+        return "precise_touch"
+    if "养号" in text:
+        return "account_nurture"
+    if "发布后采集" in text or "关键词抓取" in text:
+        return "search_collect"
+    if "回复" in text and "评论" in text:
+        return "reply_comments"
+    if "@精准" in text or "评论并@" in text or "自己评论区接管" in text:
+        return "mention_comment"
+    if "关注" in text and "评论" in text:
+        return "follow_comment"
+    if "主动私信" in text or "私信10" in text:
+        return "direct_message"
+    if "私信接管" in text or "私信引流" in text:
+        return "stranger_message"
+    return "search_collect"
+
+
+def douyin_action_from_hints(payload: Any, label: Any = None) -> str:
+    """从 params.sales_action / 节点标签推断抖音子动作。
+
+    `label` 是工作流节点自己的标签（admin.html 的节点只有 node.ability_label /
+    plan.title，不会写进 payload），保存/组装节点时把它传进来。
+    """
+    data = payload if isinstance(payload, dict) else {}
+    params = data.get("params") if isinstance(data.get("params"), dict) else {}
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    for raw in (params.get("sales_action"), params.get("douyin_action"), data.get("action")):
+        value = str(raw or "").strip().lower()
+        if value in _DOUYIN_SALES_ACTIONS:
+            return value
+    candidates = (
+        context.get("ability_label"),
+        context.get("workflow_node_label"),
+        context.get("sales_node_label"),
+        data.get("title"),
+        data.get("content"),
+        params.get("sales_node_label"),
+        params.get("node_label"),
+        params.get("note"),
+        label,
+    )
+    for candidate in candidates:
+        action = douyin_action_from_text(candidate)
+        if action != "search_collect":
+            # 先按标签还原具体动作；都不匹配才落到默认的采集。
+            return action
+    return "search_collect"
+
+
+def is_mislabeled_douyin_task(task_kind: Any, payload: Any) -> bool:
+    """是否属于「抖音动作被写成客户端工作流动作」的历史坏数据。"""
+    kind = str(task_kind or "").strip().lower()
+    if kind != "client_workflow":
+        return False
+    data = payload if isinstance(payload, dict) else {}
+    action = str(data.get("action") or "").strip().lower()
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    ability = str(context.get("ability_key") or "").strip().lower()
+    if action == _DOUYIN_LEADS_KIND:
+        return True
+    return ability == _DOUYIN_LEADS_KIND and action in {_DOUYIN_LEADS_KIND, "douyin_leads_access", ""}
+
+
+def normalize_douyin_task_kind(task_kind: Any, payload: Any, label: Any = None) -> "tuple":
+    """抖音获客任务归一：返回 (task_kind, payload, changed)。
+
+    只动被写坏的那种（client_workflow + action/ability = douyin_leads），正常数据原样返回。
+    `label` 传节点标签时，子动作优先按节点标签推断（编辑器存的 payload 里没有标签）。
+    """
+    data = dict(payload) if isinstance(payload, dict) else {}
+    if not is_mislabeled_douyin_task(task_kind, data):
+        return str(task_kind or "").strip().lower(), data, False
+    params = dict(data.get("params") if isinstance(data.get("params"), dict) else {})
+    action = douyin_action_from_hints(data, label=label)
+    params["sales_action"] = action
+    data["action"] = action
+    data["params"] = params
+    # 与 h5_workflows._workflow_node_task_spec() 对 douyin_leads 的处理保持一致：
+    # H5 工作流触发的抖音动作都是一次性动作，不能变成常驻监控。
+    data.setdefault("h5_task_source", "workflow")
+    data.setdefault("h5_one_shot", True)
+    data.setdefault("douyin_execution_mode", "one_shot")
+    return _DOUYIN_LEADS_KIND, data, True
+
+
+def douyin_node_label(node: Any) -> str:
+    """工作流节点的标签（编辑器只把标签放在 node/plan 上，payload 里没有）。"""
+    if not isinstance(node, dict):
+        return ""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    for candidate in (
+        node.get("ability_label"),
+        node.get("label"),
+        node.get("note"),
+        plan.get("title"),
+        plan.get("content"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def normalize_workflow_nodes_for_save(nodes: Any) -> "tuple":
+    """保存工作流模板前：递归把节点 plan 里写错的抖音 kind 归一。
+
+    返回 (nodes, fixed_count)。管理后台（admin.html/admin.py）、H5、系统模板三条保存路径
+    都走这里，保证「抖音节点存进库的就是 task_kind=douyin_leads」。
+    """
+
+    def _fix(items: Any) -> int:
+        fixed = 0
+        if isinstance(items, dict):
+            items = [items]
+        for node in items or []:
+            if not isinstance(node, dict):
+                continue
+            plan = node.get("plan") if isinstance(node.get("plan"), dict) else None
+            if plan is not None:
+                kind = str(plan.get("task_kind") or "").strip().lower()
+                payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+                new_kind, new_payload, changed = normalize_douyin_task_kind(
+                    kind, payload, label=douyin_node_label(node)
+                )
+                if changed:
+                    plan["task_kind"] = new_kind
+                    plan["payload"] = new_payload
+                    fixed += 1
+            fixed += _fix(node.get("actions"))
+            fixed += _fix(node.get("children"))
+        return fixed
+
+    cleaned = [dict(node) for node in (nodes or []) if isinstance(node, dict)]
+    return cleaned, _fix(cleaned)
+
+
 def _enrich_digital_human_voice_payload(
     db: Session,
     *,
@@ -2065,18 +2230,19 @@ def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
 
 
 def _serialize_task(row: ScheduledTask) -> Dict[str, Any]:
+    task_kind, payload, _douyin_fixed = normalize_douyin_task_kind(row.task_kind, row.payload or {})
     return {
         "id": row.id,
         "user_id": row.user_id,
         "created_by_user_id": row.created_by_user_id,
         "created_by_role": row.created_by_role,
         "title": row.title,
-        "task_kind": row.task_kind,
+        "task_kind": task_kind,
         "content": row.content,
-        "payload": row.payload or {},
+        "payload": payload,
         "schedule_type": row.schedule_type,
         "interval_seconds": row.interval_seconds,
-        "schedule_config": _schedule_config_from_payload(row.payload or {}),
+        "schedule_config": _schedule_config_from_payload(payload),
         "schedule_label": _task_schedule_label(row),
         "installation_ids": row.target_installation_ids or [],
         "status": row.status,
@@ -2334,7 +2500,10 @@ def _run_targets_digest(row: ScheduledTaskRun, *, compact: bool = False) -> Dict
 
 
 def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
-    payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
+    # 抖音获客任务的历史坏 kind（client_workflow + action=douyin_leads）在下发前归一，
+    # 老客户端也能拿到正确的 task_kind=douyin_leads + 子动作。
+    task_kind, normalized_payload, _douyin_fixed = normalize_douyin_task_kind(row.task_kind, row.payload or {})
+    payload = _normalize_sales_digital_human_run_payload(task_kind, normalized_payload)
     return {
         "id": row.id,
         "task_id": row.task_id,
@@ -2344,7 +2513,7 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "installation_id": row.installation_id,
         "claimed_by_installation_id": row.claimed_by_installation_id,
         "title": row.title,
-        "task_kind": row.task_kind,
+        "task_kind": task_kind,
         "content": row.content,
         "payload": payload,
         "status": row.status,

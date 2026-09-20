@@ -2189,7 +2189,11 @@ def admin_create_system_workflow(
     name = str(body.name or "").strip()[:160]
     if not name:
         raise HTTPException(status_code=400, detail="请填写系统模板名称")
-    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    # 管理后台编辑器可能把抖音节点提交成 client_workflow + action=douyin_leads
+    # （2026-09-20 排查）：入库前统一归一到客户端认的 task_kind=douyin_leads。
+    from .scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
     if not nodes:
         raise HTTPException(status_code=400, detail="系统模板不能为空")
     key = f"system_custom_{uuid.uuid4().hex[:8]}"
@@ -2295,7 +2299,10 @@ def admin_draft_system_workflow(
     key = str(key or "").strip()
     if key not in _system_workflow_key_labels(db):
         raise HTTPException(status_code=404, detail="系统模板不存在")
-    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    # 草稿预览和真正保存用同一份归一后的节点，diff 才不会骗人。
+    from .scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
     if not nodes:
         raise HTTPException(status_code=400, detail="系统模板不能为空")
     catalog, mirrors = _system_workflow_rows(db, key)
@@ -2325,7 +2332,11 @@ def admin_publish_system_workflow(
         raise HTTPException(status_code=404, detail="系统模板不存在")
     if not body.confirm:
         raise HTTPException(status_code=400, detail="需要二次确认后才会生效")
-    nodes = [node for node in (body.nodes or []) if isinstance(node, dict)]
+    # 同 admin_create_system_workflow：确认发布前把抖音节点归一，别再把
+    # client_workflow + action=douyin_leads 同步进正文和所有镜像模板。
+    from .scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
     if not nodes:
         raise HTTPException(status_code=400, detail="系统模板不能为空")
     catalog, mirrors = _system_workflow_rows(db, key)

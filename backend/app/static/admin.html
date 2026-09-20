@@ -1094,6 +1094,23 @@ body{background:#edf2f7}
       });
     });
   }
+  // 节点标签 → 抖音获客子动作。必须与客户端 `_scheduled_douyin_sales_action_from_text()`
+  // 及服务端 `h5_workflows._sales_action_from_note()` 保持同一优先级，否则子动作会错配。
+  function salesDouyinAction(label, params) {
+    var explicit = String((params && params.sales_action) || '').toLowerCase();
+    if (explicit) return explicit;
+    var text = String(label || '');
+    if (text.indexOf('我的评论区') >= 0 || text.indexOf('抖音我的评论区') >= 0) return 'self_comment_monitor';
+    if (text.indexOf('精准用户触达') >= 0 || text.indexOf('精准触达') >= 0) return 'precise_touch';
+    if (text.indexOf('养号') >= 0) return 'account_nurture';
+    if (text.indexOf('发布后采集') >= 0 || text.indexOf('关键词抓取') >= 0) return 'search_collect';
+    if (text.indexOf('回复') >= 0 && text.indexOf('评论') >= 0) return 'reply_comments';
+    if (text.indexOf('@精准') >= 0 || text.indexOf('评论并@') >= 0 || text.indexOf('自己评论区接管') >= 0) return 'mention_comment';
+    if (text.indexOf('关注') >= 0 && text.indexOf('评论') >= 0) return 'follow_comment';
+    if (text.indexOf('主动私信') >= 0 || text.indexOf('私信10') >= 0) return 'direct_message';
+    if (text.indexOf('私信接管') >= 0 || text.indexOf('私信引流') >= 0) return 'stranger_message';
+    return 'search_collect';
+  }
   function buildNode(r) {
     var p = presetAt(r && r.preset);
     var key = p ? p.key : String((r && r.key) || '');
@@ -1101,7 +1118,14 @@ body{background:#edf2f7}
     var note = String((r && r.note) || (p && p.note) || label);
     var params = Object.assign({}, (p && p.params) || {}, (r && r.params) || {});
     var kind = 'client_workflow', action = key;
-    if (key === 'publish_content') {
+    if (key === 'douyin_leads') {
+      // 抖音获客节点：客户端只认顶层 task_kind=douyin_leads，子动作放在 payload.action。
+      // 旧版本这里写成 client_workflow + action=douyin_leads，2026-09-16 起 851 个任务
+      // 全部报「暂不支持的客户端工作流：douyin_leads」→ 保存前必须按同一套标签规则定子动作。
+      kind = 'douyin_leads';
+      action = salesDouyinAction(label, params);
+      params.sales_action = action;
+    } else if (key === 'publish_content') {
       params.platform = params.platform || 'douyin';
       params.source_mode = params.source_mode || 'parent_latest_run';
       params.media_type = params.platform === 'wechat_moments' ? 'image_text' : 'video';
