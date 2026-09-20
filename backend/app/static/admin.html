@@ -4758,9 +4758,7 @@ function renderJuheConfigs() {
       + '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();editJuheConfig(' + c.id + ')">编辑</button>'
       + '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();checkJuheConfig(' + c.id + ')">在线检测</button>'
       + '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteJuheConfig(' + c.id + ')">删除</button>'
-      + '</div>'
-      + '<div class="juhe-admin-item-meta juhe-check-result" data-juhe-check="' + c.id + '" style="display:none"></div>'
-      + '</div>';
+      + '</div></div>';
   }).join('');
   el.querySelectorAll('[data-juhe-cid]').forEach(function(node) {
     node.addEventListener('click', function() {
@@ -4830,26 +4828,12 @@ async function deleteJuheConfig(id) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// 在线检测：结果直接写在这一行下面，不再弹顶部 toast
-function setJuheCheckResult(id, text, bad) {
-  const el = document.querySelector('[data-juhe-check="' + id + '"]');
-  if (!el) return;
-  el.style.display = text ? '' : 'none';
-  el.style.color = bad ? 'var(--danger)' : 'var(--text-secondary)';
-  el.textContent = text || '';
-}
-
 async function checkJuheConfig(id) {
-  setJuheCheckResult(id, '正在检测…', false);
   try {
     const data = await api('/admin/api/juhe-wechat/configs/' + id + '/status', { method:'POST', body:'{}' });
+    toast('检测完成：' + juheStatusLabel(data.status));
     await loadJuheConfigs();
-    const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    setJuheCheckResult(id, '在线检测：' + juheStatusLabel(data.status) + '（' + stamp + '）', false);
-  } catch(e) {
-    try { await loadJuheConfigs(); } catch (_) {}
-    setJuheCheckResult(id, '检测失败：' + ((e && e.message) || e), true);
-  }
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 function parseJuheContactText(text) {
