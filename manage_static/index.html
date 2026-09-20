@@ -251,13 +251,9 @@ body.overlay-open #drawer{z-index:501}
 
       <div id="loginBox" class="glass">
         <h3>登录</h3>
-        <div style="display:flex;gap:6px;margin-bottom:14px">
-          <button class="btn sm" id="modeUser" style="flex:1">普通账号</button>
-          <button class="btn sm ghost" id="modeAdmin" style="flex:1">平台管理员</button>
-        </div>
         <div style="margin-bottom:10px">
-          <label class="fl" id="accLabel">账号 / 手机号</label>
-          <input id="acc" placeholder="邮箱 / 手机号" autocomplete="username" />
+          <label class="fl" id="accLabel">账号</label>
+          <input id="acc" placeholder="管理员用户名 / 手机号 / 邮箱" autocomplete="username" />
         </div>
         <div>
           <label class="fl">密码</label>
@@ -267,7 +263,7 @@ body.overlay-open #drawer{z-index:501}
           <button class="btn" id="doLogin" style="flex:1">登录</button>
         </div>
         <div class="err" id="loginErr"></div>
-        <div class="dim" style="font-size:11.5px" id="loginHint">与 AI 员工客户端同一套账号体系</div>
+        <div class="dim" style="font-size:11.5px" id="loginHint">管理员用管理后台账号；其他人用手机号 / 邮箱 + 密码（与 AI 员工客户端同一套账号体系）。登录时会自动识别身份。</div>
       </div>
     </div>
 
@@ -499,21 +495,8 @@ body.overlay-open #drawer{z-index:501}
   }
 
   /* ---------- 登录 ---------- */
-  var LOGIN_MODE = "user";
-  function setLoginMode(mode){
-    LOGIN_MODE = mode;
-    var isA = mode === "admin";
-    $("#modeUser").className = "btn sm" + (isA ? " ghost" : "");
-    $("#modeAdmin").className = "btn sm" + (isA ? "" : " ghost");
-    $("#accLabel").textContent = isA ? "管理员账号" : "账号 / 手机号";
-    $("#acc").placeholder = isA ? "管理后台管理员账号" : "邮箱 / 手机号";
-    $("#loginHint").textContent = isA
-      ? "与原管理后台同一套管理员账号密码（服务器 .env 配置）"
-      : "与 AI 员工客户端同一套账号体系";
-    $("#loginErr").textContent = "";
-  }
-  $("#modeUser").addEventListener("click", function(){ setLoginMode("user"); });
-  $("#modeAdmin").addEventListener("click", function(){ setLoginMode("admin"); });
+  // 登录不再分 tab：由账号自己决定身份（管理员用户名 / 手机号 / 邮箱）
+  function setLoginMode(){ /* 兼容旧调用，保留空实现 */ }
 
   function doLogin(){
     var acc = $("#acc").value.trim(), pwd = $("#pwd").value;
@@ -521,15 +504,12 @@ body.overlay-open #drawer{z-index:501}
     $("#loginErr").textContent = "";
     if (!acc || !pwd){ $("#loginErr").textContent = "请填写账号与密码"; return; }
     btn.disabled = true; btn.textContent = "登录中…";
-    var isA = LOGIN_MODE === "admin";
-    var path = isA ? "/api/manage/admin/login" : "/auth/login-phone-password";
-    var body = isA ? { username: acc, password: pwd } : { account: acc, password: pwd };
-    api(path, { method:"POST", body: body })
+    api("/api/manage/login", { method:"POST", body: { account: acc, password: pwd } })
       .then(function(res){
         var token = res.access_token || res.token || "";
         if (!token) throw new Error("登录返回异常");
         TOKEN = token; localStorage.setItem("manage_token", token);
-        localStorage.setItem("manage_login_mode", LOGIN_MODE);
+        localStorage.setItem("manage_login_mode", (res.kind === "admin") ? "admin" : "user");
         var sw = document.getElementById("sweep");
         sw.classList.remove("go"); void sw.offsetWidth; sw.classList.add("go");
         document.getElementById("landing").classList.add("gone");
@@ -3399,7 +3379,7 @@ body.overlay-open #drawer{z-index:501}
   })();
 
   /* ---------- 初始化 ---------- */
-  if (localStorage.getItem("manage_login_mode") === "admin"){ setLoginMode("admin"); }
+  // 身份由账号决定，这里不再按上次的登录方式切换 UI
   if (TOKEN){
     bootApp().catch(function(){ /* 已在 bootApp 里提示 */ });
   } else {

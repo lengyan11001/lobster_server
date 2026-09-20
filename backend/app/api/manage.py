@@ -294,6 +294,44 @@ def manage_admin_login(body: AdminLoginIn, db: Session = Depends(get_db)) -> Dic
             "display_name": "管理员"}
 
 
+class ManageLoginIn(BaseModel):
+    account: str
+    password: str
+
+
+@router.post("/login", summary="\u7edf\u4e00\u767b\u5f55\uff1a\u8d26\u53f7\u81ea\u5df1\u51b3\u5b9a\u8eab\u4efd\uff08\u4e0d\u5206 tab\uff09")
+def manage_login(body: ManageLoginIn, request: Request, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """\u540c\u4e00\u4e2a\u8f93\u5165\u6846\uff1a
+
+    · \u8d26\u53f7\u7b49\u4e8e\u5e73\u53f0\u7ba1\u7406\u5458\u7528\u6237\u540d\uff08.env \u91cc\u7684 lobster_admin_username\uff09\uff1a\u8d70\u7ba1\u7406\u5458\u4ee4\u724c
+    · \u5176\u4ed6\u4e00\u5f8b\u5f53\u666e\u901a\u8d26\u53f7\uff1a\u590d\u7528\u4e3b\u7ad9\u624b\u673a\u53f7/\u90ae\u7bb1 + \u5bc6\u7801\u767b\u5f55\uff08\u540c\u4e00\u5957 users \u8868\u4e0e JWT\uff09
+    """
+    account = (body.account or "").strip()
+    password = body.password or ""
+    if not account or not password:
+        raise HTTPException(status_code=400, detail="\u8bf7\u8f93\u5165\u8d26\u53f7\u4e0e\u5bc6\u7801")
+
+    admin_u = (getattr(settings, "lobster_admin_username", "") or "").strip()
+    admin_p = (getattr(settings, "lobster_admin_password", "") or "").strip()
+    if admin_u and account.lower() == admin_u.lower():
+        if not admin_p:
+            raise HTTPException(status_code=503, detail="\u670d\u52a1\u5668\u672a\u914d\u7f6e\u5e73\u53f0\u7ba1\u7406\u5458\u5bc6\u7801")
+        if password != admin_p:
+            raise HTTPException(status_code=400, detail="\u7ba1\u7406\u5458\u5bc6\u7801\u9519\u8bef")
+        return {"ok": True, "kind": "admin", "role": "admin", "display_name": "\u7ba1\u7406\u5458",
+                "access_token": ADMIN_TOKEN_PREFIX + admin_p}
+
+    from .auth import PhonePasswordLoginBody, login_phone_password
+
+    token = login_phone_password(PhonePasswordLoginBody(account=account, password=password), request, db)
+    access = getattr(token, "access_token", None)
+    if not access and isinstance(token, dict):
+        access = token.get("access_token")
+    if not access:
+        raise HTTPException(status_code=400, detail="\u8d26\u53f7\u6216\u5bc6\u7801\u9519\u8bef")
+    return {"ok": True, "kind": "user", "role": "user", "access_token": access}
+
+
 @router.get("/bootstrap")
 def bootstrap(user: Any = Depends(current_actor), db: Session = Depends(get_db)) -> Dict[str, Any]:
     if _is_admin_actor(user):
