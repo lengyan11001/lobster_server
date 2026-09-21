@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from io import BytesIO
@@ -78,6 +78,106 @@ def _public_credit_history_description(entry_type: str, delta: Any = None) -> st
     except TypeError:
         pass
     return "积分变动"
+
+
+_CAPABILITY_LABEL_CACHE: Dict[str, str] = {}
+
+
+def _capability_catalog_labels() -> Dict[str, str]:
+    """读取 mcp/capability_catalog.json 的能力短名（首次调用缓存）。"""
+    global _CAPABILITY_LABEL_CACHE
+    if _CAPABILITY_LABEL_CACHE:
+        return _CAPABILITY_LABEL_CACHE
+    labels: Dict[str, str] = {}
+    root = Path(__file__).resolve().parent.parent.parent.parent
+    for name in ("capability_catalog.json", "capability_catalog.local.json"):
+        path = root / "mcp" / name
+        try:
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            description = ""
+            if isinstance(value, dict):
+                description = str(value.get("description") or "")
+            elif isinstance(value, str):
+                description = value
+            short = _short_capability_label(description) or ""
+            if key and short:
+                labels[str(key)] = short
+    _CAPABILITY_LABEL_CACHE = labels
+    return labels
+
+
+def _short_capability_label(description: str) -> str:
+    """把能力目录的描述压成表格里能用的短名（取第一个句读之前）。"""
+    text = str(description or "").strip()
+    if not text:
+        return ""
+    for mark in ("：", ":", "。", "，", ",", "；", ";"):
+        index = text.find(mark)
+        if index > 0:
+            text = text[:index]
+            break
+    text = text.strip().strip("（(").strip()
+    return text[:28]
+
+
+_BILLING_ENDPOINT_LABELS = {
+    "chat": "对话",
+    "image": "图片",
+    "video": "视频",
+    "audio": "语音",
+    "speech": "语音",
+    "tts": "语音",
+}
+
+
+def _public_credit_history_origin(
+    *,
+    entry_type: str,
+    ref_type: Any = None,
+    ref_id: Any = None,
+    meta: Any = None,
+) -> str:
+    """返回「这笔积分消耗在哪个功能上」的业务位置文案。
+
+    只讲业务位置：能力名（来自能力目录）/ 技能包 / 充值订单 / 管理操作。
+    供应商、模型名与价格细节一律不出现在这里。
+    """
+    et = str(entry_type or "").strip().lower()
+    ref_t = str(ref_type or "").strip().lower()
+    ref_i = str(ref_id or "").strip()
+    info = meta if isinstance(meta, dict) else {}
+    capability_id = str(info.get("capability_id") or "").strip()
+    if capability_id:
+        label = _capability_catalog_labels().get(capability_id) or capability_id
+        endpoint = _BILLING_ENDPOINT_LABELS.get(str(info.get("endpoint") or "").strip().lower(), "")
+        return (label + " · " + endpoint) if endpoint else label
+    if ref_t == "recharge_order":
+        tail = ref_i[-8:] if len(ref_i) >= 8 else ref_i
+        return ("充值订单 " + tail) if tail else "充值订单"
+    if ref_t in {"skill_package", "skill"}:
+        return ("技能：" + ref_i) if ref_i else "技能"
+    if ref_t == "wan_role_task":
+        return "数字人视频任务"
+    if ref_t in {"manual", "admin"} or et in {"admin_deduct"}:
+        return "管理员调整"
+    if et == "recharge":
+        return "充值"
+    if et == "sutui_chat":
+        return "速推对话"
+    if et in {"agent_transfer_in", "agent_transfer_out"}:
+        return "代理商划转"
+    if ref_t:
+        return ref_t
+    if et in {"pre_deduct", "settle", "refund", "direct_charge", "unit_charge", "unit_deduct", "chat_turn"}:
+        return "能力调用"
+    return ""
 
 
 def _get_public_base_url() -> str:
@@ -544,6 +644,12 @@ def get_credit_history(
             "entry_type": r.entry_type or "",
             "amount": credits_json_float_signed(delta),
             "description": desc,
+            "origin": _public_credit_history_origin(
+                entry_type=r.entry_type or "",
+                ref_type=r.ref_type,
+                ref_id=r.ref_id,
+                meta=public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
+            ),
             "balance_after": credits_json_float(r.balance_after or 0),
             "out_trade_no": "",
         })
@@ -576,6 +682,12 @@ def get_credit_ledger(
                 "balance_after": credits_json_float(r.balance_after or 0),
                 "entry_type": r.entry_type,
                 "description": _public_credit_history_description(r.entry_type or "", ledger_display_delta(r)),
+                "origin": _public_credit_history_origin(
+                    entry_type=r.entry_type or "",
+                    ref_type=r.ref_type,
+                    ref_id=r.ref_id,
+                    meta=public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
+                ),
                 "ref_type": r.ref_type or "",
                 "ref_id": r.ref_id or "",
                 "meta": public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
