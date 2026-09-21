@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>MANAGE · 项目管理与 AI 赋能</title>
+<title>AIMS · AI 智能管理系统</title>
 <style>
 :root{
   --bg:#05070f; --ink:#f2f6ff; --muted:#b6c1d2; --dim:#8b98ae;
@@ -241,8 +241,8 @@ body.overlay-open #drawer{z-index:501}
 <!-- ================= 落地页 ================= -->
 <div id="landing">
   <nav class="top glass">
-    <span class="logo">M</span><span class="nm">MANAGE</span>
-    <span class="dim" style="font-size:12px;margin-left:6px">内部系统 · 登录后使用</span>
+    <span class="logo">A</span><span class="nm" title="AI Intelligent Management System">AIMS</span>
+    <span class="dim" style="font-size:12px;margin-left:6px">AI 智能管理系统 · 内部系统 · 登录后使用</span>
     <span class="grow"></span>
     <button class="btn sm ghost" id="toLogin">登录</button>
   </nav>
@@ -259,6 +259,7 @@ body.overlay-open #drawer{z-index:501}
       </div>
 
       <div id="loginBox" class="glass">
+        <div style="font-size:11.5px;letter-spacing:.14em;color:var(--muted);margin-bottom:9px">AIMS · AI 智能管理系统</div>
         <h3>登录</h3>
         <div style="margin-bottom:10px">
           <label class="fl" id="accLabel">账号</label>
@@ -279,7 +280,7 @@ body.overlay-open #drawer{z-index:501}
     <div class="winwrap">
       <div class="win">
         <div class="bar"><i></i><i></i><i></i><span class="url">manage.bhzn.top</span></div>
-        <img src="media/shot-dashboard.png" alt="manage 工作台" />
+        <img src="media/shot-dashboard.png" alt="AIMS 工作台" />
       </div>
       <div class="chip c1"><span class="dot" style="color:var(--accent)"></span><span><span class="t">AI 日检</span><br /><span class="v">09:00 · 17:00</span></span></div>
       <div class="chip c2"><span class="dot" style="color:var(--accent)"></span><span><span class="t">达成条件</span><br /><span class="v" id="chipCond">— 项待补位</span></span></div>
@@ -290,7 +291,7 @@ body.overlay-open #drawer{z-index:501}
 <!-- ================= 应用 ================= -->
 <div id="app" class="hide">
   <aside class="rail glass">
-    <div class="logo">M</div>
+    <div class="logo" title="AIMS · AI 智能管理系统">A</div>
     <button data-go="s-brief" class="on"><span class="ic">◈</span>简报</button>
     <button data-go="s-proj"><span class="ic">✧</span>项目</button>
     <button data-go="s-org"><span class="ic">◍</span>组织</button>
