@@ -2380,7 +2380,9 @@ def _find_duplicate_active_recurring_task(
     return None
 
 
-_TARGET_DIGEST_STATES = ("started", "succeeded", "failed", "not_started")
+# skipped = 客户端已处理但目标不可达（例如对方关闭了私信）：不算失败，也不进
+# 「重试未启动的 N 个」。词表与客户端 targets_detail 的 state 保持一致。
+_TARGET_DIGEST_STATES = ("started", "succeeded", "failed", "skipped", "not_started")
 
 
 def _target_detail_rows(result_payload: Any) -> List[Dict[str, Any]]:
@@ -2414,7 +2416,7 @@ def _run_targets_digest(row: ScheduledTaskRun, *, compact: bool = False) -> Dict
 
     for entry in detail:
         state = str(entry.get("state") or "").strip().lower()
-        if state not in {"selected", "started", "succeeded", "failed", "not_started"}:
+        if state not in {"selected", "started", "succeeded", "failed", "skipped", "not_started"}:
             state = "not_started"
         if state == "selected":
             state = "not_started"
@@ -2425,6 +2427,9 @@ def _run_targets_digest(row: ScheduledTaskRun, *, compact: bool = False) -> Dict
             summary["started"] += 1
         elif state == "failed":
             summary["failed"] += 1
+            summary["started"] += 1
+        elif state == "skipped":
+            summary["skipped"] += 1
             summary["started"] += 1
         else:
             summary["not_started"] += 1

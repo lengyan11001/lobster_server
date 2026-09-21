@@ -1965,9 +1965,10 @@ body.overlay-open #drawer{z-index:501}
         if (!box) return;
         if (!r.dispatched){ box.innerHTML = "这个节点还没有派过活。"; return; }
         var run = r.run || {};
+        var targetStateLabel = { succeeded:"成功", failed:"失败", skipped:"跳过", started:"启动中", not_started:"未启动", selected:"已选取" };
         var detail = (run.targets_detail || []).slice(0, 8).map(function(x){
           return '<div class="mline"><span class="nm" style="flex:1">' + (x.target || "") + ' · ' + (x.action_label || x.action || "")
-            + '</span><span class="dim">' + (x.state || "") + (x.reason ? (" · " + x.reason) : "") + '</span></div>';
+            + '</span><span class="dim">' + (targetStateLabel[x.state] || x.state || "") + (x.reason ? (" · " + x.reason) : "") + '</span></div>';
         }).join("");
         box.innerHTML = '<div class="mline"><span class="nm">任务</span><span class="mut num">' + (r.task_id || "—") + '</span></div>'
           + '<div class="mline"><span class="nm">状态</span><span class="mut">' + (r.status || "—") + (r.error ? (" · " + r.error) : "") + '</span></div>'

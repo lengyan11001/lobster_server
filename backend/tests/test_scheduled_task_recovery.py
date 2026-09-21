@@ -243,6 +243,7 @@ def test_targets_digest_counts_states_and_ranks_reasons(db_session, test_user):
         "started": 14,
         "succeeded": 1,
         "failed": 12,
+        "skipped": 0,
         "not_started": 2,
     }
     assert digest["top_reason"] == "抖音账号不在线 ×12"
@@ -251,6 +252,52 @@ def test_targets_digest_counts_states_and_ranks_reasons(db_session, test_user):
     assert digest["reasons"][0]["sample"] == ["离线户0", "离线户1", "离线户2", "离线户3", "离线户4"]
     assert digest["retry_not_started"] == 2
     assert digest["not_started_targets"] == ["关注评论", "私信"]
+
+
+def test_targets_digest_keeps_skipped_out_of_failed_and_retry(db_session, test_user):
+    """对方不可私信这类目标：客户端处理过，但不算失败、也不该进「重试未启动」。"""
+    rows = [
+        {"target": "甲", "action": "direct_message", "state": "succeeded", "reason": ""},
+        {
+            "target": "乙",
+            "action": "direct_message",
+            "action_label": "主动私信精准客户",
+            "state": "skipped",
+            "reason": "该主页没有可用的私信入口：私信按钮已点击但面板未出现",
+        },
+        {
+            "target": "丙",
+            "action": "direct_message",
+            "action_label": "主动私信精准客户",
+            "state": "skipped",
+            "reason": "该主页没有可用的私信入口：私信按钮已点击但面板未出现",
+        },
+        {
+            "target": "丁",
+            "action": "direct_message",
+            "action_label": "主动私信精准客户",
+            "state": "failed",
+            "reason": "未能点击出私信窗口，请确认该主页存在可用的私信按钮",
+        },
+    ]
+    row = _run(run_id="digest-skipped", user_id=test_user.id, task_kind="client_workflow")
+    row.status = "completed"
+    row.result_payload = {"targets_detail": rows}
+    db_session.add(row)
+    db_session.commit()
+
+    digest = scheduled_tasks._run_targets_digest(row)
+
+    assert digest["summary"]["selected"] == 4
+    assert digest["summary"]["succeeded"] == 1
+    assert digest["summary"]["skipped"] == 2
+    assert digest["summary"]["failed"] == 1
+    assert digest["summary"]["not_started"] == 0
+    assert digest["retry_not_started"] == 0
+    assert digest["not_started_targets"] == []
+    # 跳过不计入「主要原因」，只有真失败才进原因榜
+    assert digest["top_reason"] == "未能点击出私信窗口，请确认该主页存在可用的私信按钮 ×1"
+    assert all("私信入口" not in item["text"] for item in digest["reasons"])
 
 
 def test_targets_digest_falls_back_to_run_error(db_session, test_user):
