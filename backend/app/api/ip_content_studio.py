@@ -5537,6 +5537,7 @@ async def run_ip_content_daily_scheduled(
         batch_size: Optional[int] = None,
         reference_image_urls: Optional[list[str]] = None,
     ) -> None:
+        nonlocal workflow_publish_draft
         task_label = {
             "industry_hot_oral": "行业热门口播文案",
         "professional_ip_oral": "专业 IP 口播文案",
@@ -5702,7 +5703,11 @@ async def run_ip_content_daily_scheduled(
         "sync_results": sync_results,
         "groups": generated_groups,
         "records_by_task": records_by_task,
-        "publish_draft": workflow_publish_draft,
+        # 兜底：groups[0] 里已经生成的配图草稿要能顶上来（旧数据也能发布正确的图）
+        "publish_draft": workflow_publish_draft or next(
+            (dict(group.get("publish_draft") or {}) for group in generated_groups if group.get("publish_draft")),
+            {},
+        ),
         "image_generation": {
             "manual": not workflow_node_execution,
             "automatic": workflow_node_execution and "moments_candidate" in selected_tasks,

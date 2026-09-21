@@ -48,3 +48,10 @@ def test_publish_ref_video_detection():
     assert content_records._publish_ref_looks_like_video(
         {"image_url": "https://x.example/a/b/c.jpg", "kind": "image"}
     ) is False
+
+def test_generate_group_declares_nonlocal_publish_draft():
+    """线上事故：generate_group 是嵌套函数，漏了 nonlocal 导致生成的 3 张图
+    只留在 groups[0]，顶层 publish_draft 为空 → 发布时没有配图，退回用原始素材。"""
+    source = Path(ip_content_studio.__file__).read_text(encoding="utf-8")
+    assert "nonlocal workflow_publish_draft" in source
+    assert "# 兜底：groups[0]" in source
