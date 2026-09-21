@@ -4692,29 +4692,19 @@ def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetim
 _WORKFLOW_MATERIAL_ID_KEYS = {
     "video_asset_id",
     "final_video_asset_id",
-    "video_material_id",
     "image_asset_id",
     "image_asset_ids",
-    "cover_asset_id",
     "final_image_asset_id",
-    "image_material_id",
     "asset_id",
     "final_asset_id",
-    "material_asset_id",
-    "saved_asset_id",
 }
 _WORKFLOW_MATERIAL_URL_KEYS = {
     "video_url",
     "video_uri",
-    "video_file_url",
     "image_url",
     "image_urls",
-    "cover_url",
-    "image_file_url",
     "url",
-    "file_url",
     "public_url",
-    "media_url",
 }
 _WORKFLOW_MATERIAL_CONTAINER_KEYS = {
     "assets",
@@ -4728,7 +4718,18 @@ _WORKFLOW_MATERIAL_CONTAINER_KEYS = {
     "local_result",
     "generated",
 }
-_WORKFLOW_MATERIAL_SKIP_KEYS = {"params", "input_refs", "request", "prompt", "requirements", "h5_context"}
+_WORKFLOW_MATERIAL_SKIP_KEYS = {
+    "params",
+    "input_refs",
+    "request",
+    "prompt",
+    "requirements",
+    "h5_context",
+    "template",
+    "digital_human_template",
+    "digital_human_resources",
+    "avatars",
+}
 
 
 def _workflow_result_has_publishable_material(value: Any) -> bool:

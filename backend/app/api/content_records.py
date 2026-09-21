@@ -718,15 +718,8 @@ def request_content_record_publish(
 
     add_parallel_refs(body.image_urls, body.image_asset_ids)
     add_parallel_refs(incoming.get("image_urls"), incoming.get("image_asset_ids"))
-    for raw in _publish_value_list(incoming.get("attachments")):
-        if isinstance(raw, dict):
-            add_image_ref(raw.get("source_url") or raw.get("url"), raw.get("asset_id") or raw.get("image_asset_id"))
-    for raw in _publish_value_list(incoming.get("images")):
-        if isinstance(raw, dict):
-            add_image_ref(raw.get("image_url") or raw.get("url") or raw.get("source_url"), raw.get("image_asset_id") or raw.get("asset_id"))
-    for raw in _publish_value_list(item.get("images")):
-        if isinstance(raw, dict):
-            add_image_ref(raw.get("image_url") or raw.get("url") or raw.get("source_url"), raw.get("image_asset_id") or raw.get("asset_id"))
+    # 只认显式声明的图片引用：attachments / images 这些旧兜底来源已停用
+    # （曾把视频、模板封面当图片发到朋友圈）。
     add_parallel_refs(item.get("image_urls"), item.get("image_asset_ids"))
     # 微信朋友圈图文只发图片：URL/声明里是视频的一律剔除，避免微信「处理失败」
     # （线上事故：9 个素材里 5 个其实是 mov/mp4，被当图片发出去）
