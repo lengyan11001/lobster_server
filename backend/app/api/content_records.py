@@ -761,16 +761,19 @@ def request_content_record_publish(
     for index, ref in enumerate(image_refs):
         url = ref.get("image_url") or ""
         asset_id = ref.get("image_asset_id") or ""
-        attachments.append(
-            {
-                "asset_id": asset_id,
-                "source_url": url,
-                "url": url,
-                "media_type": "image",
-                "kind": "image",
-                "filename": f"moments-{index + 1}.jpg",
-            }
-        )
+        # 素材类型交给下游按真实内容判定：这里不再硬编码 jpg/image。
+        # 线上事故：把视频素材命名成 moments-N.jpg 当图片发，微信直接「处理失败」。
+        declared_kind = str(ref.get("kind") or ref.get("media_type") or "").strip().lower()
+        entry: dict[str, Any] = {
+            "asset_id": asset_id,
+            "source_url": url,
+            "url": url,
+            "filename": str(ref.get("filename") or "").strip(),
+        }
+        if declared_kind in {"image", "video"}:
+            entry["kind"] = declared_kind
+            entry["media_type"] = declared_kind
+        attachments.append(entry)
 
     now = datetime.utcnow()
     draft = {

@@ -5274,6 +5274,24 @@ async def _generate_and_save_ip_content_records(
     }
 
 
+def _moments_image_generation_note(
+    *,
+    workflow_node_execution: bool,
+    auto_moments: bool,
+    image_count: int,
+    image_complete: bool,
+) -> str:
+    """配图情况写实话：没生成出来就不能说「已自动生成 3 张」（线上假成功过）。"""
+    if not auto_moments:
+        return "朋友圈图片请在执行详情或朋友圈图文工作台手动触发。"
+    if image_count > 0 and image_complete:
+        return f"朋友圈首条文案已自动生成 {image_count} 张配图，可由下级节点发布到朋友圈。"
+    if image_count > 0:
+        return f"朋友圈配图已生成 {image_count} 张但尚未完成（image_complete=false），发布前请在朋友圈图文工作台确认。"
+    return "朋友圈配图本次没有生成成功（image_count=0），请重试生成或在朋友圈图文工作台手动触发。"
+
+
+
 async def run_ip_content_daily_scheduled(
     *,
     db: Session,
@@ -5691,10 +5709,11 @@ async def run_ip_content_daily_scheduled(
             "selected_record": workflow_publish_draft.get("source_record_id") if workflow_publish_draft else "",
             "image_count": len(workflow_publish_draft.get("image_urls") or []) if workflow_publish_draft else 0,
             "image_complete": bool(workflow_publish_draft.get("image_complete")) if workflow_publish_draft else False,
-            "note": (
-                "朋友圈首条文案已自动生成 3 张配图，可由下级节点发布到朋友圈。"
-                if workflow_node_execution and "moments_candidate" in selected_tasks
-                else "朋友圈图片请在执行详情或朋友圈图文工作台手动触发。"
+            "note": _moments_image_generation_note(
+                workflow_node_execution=workflow_node_execution,
+                auto_moments=bool(workflow_node_execution and "moments_candidate" in selected_tasks),
+                image_count=len(workflow_publish_draft.get("image_urls") or []) if workflow_publish_draft else 0,
+                image_complete=bool(workflow_publish_draft.get("image_complete")) if workflow_publish_draft else False,
             ),
         },
     }
