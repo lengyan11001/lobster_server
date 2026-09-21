@@ -612,6 +612,19 @@ def _unique_publish_values(values: Any, *, limit: int, max_length: int) -> list[
     return out
 
 
+_VIDEO_URL_SUFFIXES = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".flv", ".wmv")
+
+
+def _publish_ref_looks_like_video(ref: dict) -> bool:
+    """按声明类型或 URL 后缀判断该素材是不是视频（朋友圈图文要把它剔掉）。"""
+    kind = str(ref.get("kind") or ref.get("media_type") or "").strip().lower()
+    if kind == "video":
+        return True
+    if kind == "image":
+        return False
+    url = str(ref.get("image_url") or ref.get("url") or "").split("?", 1)[0].strip().lower()
+    return url.endswith(_VIDEO_URL_SUFFIXES)
+
 def _publish_value_list(value: Any) -> list[Any]:
     if isinstance(value, (list, tuple)):
         return list(value)
@@ -715,6 +728,21 @@ def request_content_record_publish(
         if isinstance(raw, dict):
             add_image_ref(raw.get("image_url") or raw.get("url") or raw.get("source_url"), raw.get("image_asset_id") or raw.get("asset_id"))
     add_parallel_refs(item.get("image_urls"), item.get("image_asset_ids"))
+    # 微信朋友圈图文只发图片：URL/声明里是视频的一律剔除，避免微信「处理失败」
+    # （线上事故：9 个素材里 5 个其实是 mov/mp4，被当图片发出去）
+    video_refs = [ref for ref in image_refs if _publish_ref_looks_like_video(ref)]
+    if video_refs:
+        dropped = [
+            str(ref.get("filename") or ref.get("image_url") or ref.get("image_asset_id") or "")[:80]
+            for ref in video_refs
+        ]
+        image_refs = [ref for ref in image_refs if ref not in video_refs]
+        if not image_refs:
+            raise HTTPException(
+                status_code=400,
+                detail="朋友圈图文只能发图片：本次素材是视频（%s），请改用视频发布"
+                % ("、".join(dropped[:5]) or "视频"),
+            )
     image_refs = image_refs[:9]
     image_urls = [ref["image_url"] for ref in image_refs if ref.get("image_url")]
     image_asset_ids = [ref["image_asset_id"] for ref in image_refs if ref.get("image_asset_id")]

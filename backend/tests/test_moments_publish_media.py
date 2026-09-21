@@ -35,3 +35,16 @@ def test_moments_attachments_do_not_hardcode_image_type():
     assert '"kind": "image"' not in source
     assert "moments-{index + 1}.jpg" not in source
     assert "declared_kind" in source
+
+def test_publish_ref_video_detection():
+    """朋友圈图文兜底：视频素材（按声明或 URL 后缀）必须能被识别出来。"""
+    assert content_records._publish_ref_looks_like_video({"kind": "video"}) is True
+    assert content_records._publish_ref_looks_like_video(
+        {"image_url": "https://x.example/a/b/c.mov"}
+    ) is True
+    assert content_records._publish_ref_looks_like_video(
+        {"image_url": "https://x.example/a/b/c.mp4?sign=1"}
+    ) is True
+    assert content_records._publish_ref_looks_like_video(
+        {"image_url": "https://x.example/a/b/c.jpg", "kind": "image"}
+    ) is False
