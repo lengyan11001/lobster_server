@@ -175,6 +175,22 @@ def _migrate_capability_configs_extra_config():
         logger.warning("Migration capability_configs.extra_config skipped: %s", e)
 
 
+def _migrate_wechat_outcome_channel():
+    """给 wechat_interaction_outcomes 补 channel 列（WhatsApp 接管复用这套回写）。"""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "alter table wechat_interaction_outcomes add column if not exists channel varchar(16) "
+                "not null default 'wechat'"
+            ))
+            conn.execute(text(
+                "create index if not exists ix_wechat_interaction_outcome_channel "
+                "on wechat_interaction_outcomes (channel)"
+            ))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration wechat_interaction_outcomes.channel skipped: %s", e)
+
+
 def _migrate_model_usage_events_table():
     """Ensure model_usage_events table exists for runtime monitoring."""
     from sqlalchemy import inspect
@@ -1555,6 +1571,7 @@ def create_app() -> FastAPI:
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_capability_configs_extra_config()
+        _migrate_wechat_outcome_channel()
         _migrate_model_usage_events_table()
         _migrate_recorder_audio_columns()
         _migrate_h5_workflow_template_installation()

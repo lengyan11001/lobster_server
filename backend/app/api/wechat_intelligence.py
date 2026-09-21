@@ -81,6 +81,7 @@ class WechatLearningCandidateIn(BaseModel):
 
 
 class WechatObservationIn(BaseModel):
+    channel: str = Field(default="wechat", max_length=16)
     account_id: str = Field(..., min_length=1, max_length=160)
     contact_key: str = Field(..., min_length=1, max_length=240)
     contact_name: str = Field(default="", max_length=240)
@@ -505,6 +506,7 @@ def observe_wechat_interaction(
         account_id=body.account_id,
         contact_key=body.contact_key,
         contact_name=_clean(body.contact_name, 240) or None,
+        channel=_clean(body.channel, 16) or "wechat",
         event_type=_clean(body.event_type, 32),
         status=_clean(body.status, 24) or "completed",
         category=_clean(body.category, 32) or None,

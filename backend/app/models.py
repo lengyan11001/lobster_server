@@ -1406,6 +1406,8 @@ class WechatInteractionOutcome(Base):
     account_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
     contact_key: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
     contact_name: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    # 渠道：wechat（个微）/ whatsapp（桌面 WhatsApp）——两边共用同一套回写与学习
+    channel: Mapped[str] = mapped_column(String(16), default="wechat", server_default="wechat", nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(24), default="completed", nullable=False, index=True)
     category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
