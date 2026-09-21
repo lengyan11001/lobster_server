@@ -5,6 +5,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
@@ -113,6 +114,70 @@ def _capability_catalog_labels() -> Dict[str, str]:
     return labels
 
 
+_BRAND_TOKEN_PATTERN = re.compile(
+    "|".join(
+        (
+            # 上游平台/渠道品牌
+            "速推", "必火", "海康", "鲸海", "comfly", "new-?api", "newapi", "apiz", "fal\\.ai",
+            "replicate", "openrouter", "siliconflow", "硅基流动", "together",
+            # 模型/产品品牌（中英）
+            "openai", "chatgpt", "gpt[\\w.\\-]*", "veo[\\w.\\-]*", "seedance", "seedream", "grok",
+            "gemini", "claude", "anthropic", "deepseek", "kling", "可灵", "jimeng", "即梦", "doubao",
+            "豆包", "qwen", "通义", "glm", "智谱", "ernie", "文心", "hunyuan", "混元", "minimax",
+            "hailuo", "海螺", "midjourney", "flux", "sora", "runway", "pika", "luma", "nano-?banana",
+            "wan\\d*", "hifly", "spark", "星火", "阶跃", "kimi", "moonshot",
+        )
+    ),
+    re.IGNORECASE,
+)
+
+
+def _scrub_brand_tokens(text: str) -> str:
+    """去掉品牌/型号名，并收拾残留的分隔符与空括号。"""
+    value = str(text or "")
+    if not value:
+        return ""
+    value = _BRAND_TOKEN_PATTERN.sub(" ", value)
+    previous = None
+    while previous != value:  # 反复剥掉括号里的补充说明（可能嵌套）
+        previous = value
+        value = re.sub(r"[（(][^（()）]*[)）]", " ", value)
+    value = re.sub(r"[)）(（]", " ", value)  # 成对括号已剥掉，剩下的都是残渣
+    value = re.sub(r"\s*[+＋/·、,，]\s*(?=[)）]|$)", " ", value)
+    value = re.sub(r"[+＋/·、,，]{2,}", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    value = value.strip(" -–—·、,，/＋+()（）[]【】")
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def _generic_capability_label(capability_id: str, endpoint: str = "") -> str:
+    """品牌被清掉后的中性兜底名（只讲业务动作，不点名任何厂商）。"""
+    key = str(capability_id or "").strip().lower()
+    ep = str(endpoint or "").strip().lower()
+    pairs = (
+        ("image.generate", "图片生成"),
+        ("video.generate", "视频生成"),
+        ("image.understand", "图片理解"),
+        ("video.understand", "视频理解"),
+        ("task.get_result", "查询任务结果"),
+        ("media.edit", "素材剪辑"),
+        ("speak", "语音合成"),
+        ("publish", "内容发布"),
+        ("chat", "对话"),
+        ("pipeline", "生成流水线"),
+    )
+    for token, label in pairs:
+        if token in key:
+            return label
+    if ep in {"chat", "completion"}:
+        return "对话"
+    if ep == "image":
+        return "图片生成"
+    if ep == "video":
+        return "视频生成"
+    return "能力调用"
+
 def _short_capability_label(description: str) -> str:
     """把能力目录的描述压成表格里能用的短名（取第一个句读之前）。"""
     text = str(description or "").strip()
@@ -124,6 +189,7 @@ def _short_capability_label(description: str) -> str:
             text = text[:index]
             break
     text = text.strip().strip("（(").strip()
+    text = _scrub_brand_tokens(text)
     return text[:28]
 
 
@@ -134,6 +200,33 @@ _BILLING_ENDPOINT_LABELS = {
     "audio": "语音",
     "speech": "语音",
     "tts": "语音",
+}
+
+
+_CAPABILITY_ORIGIN_LABELS = {
+    # 显式业务名：天然不带品牌/型号，新增能力若忘了登记会退回中性兜底
+    "image.generate": "图片生成",
+    "video.generate": "视频生成",
+    "image.understand": "图片理解",
+    "video.understand": "视频理解",
+    "task.get_result": "查询任务结果",
+    "media.edit": "素材剪辑",
+    "comfly.daihuo.pipeline": "爆款TVC 整包成片",
+    "comfly.daihuo": "爆款TVC 分步生成",
+    "comfly.seedance.tvc.pipeline": "一体化 TVC 成片",
+    "comfly.ecommerce.detail_pipeline": "电商详情页生成",
+    "comfly.chat": "对话补全",
+    "hifly.video.create_by_tts": "数字人口播",
+    "hifly.video.create_by_audio": "数字人音频驱动",
+    "create.video.pipeline": "创意成片",
+    "goal.video.pipeline": "目标成片流水线",
+    "ecommerce.publish": "电商商品发布",
+    "sutui.search_models": "模型检索",
+    "sutui.guide": "模型教程",
+    "sutui.account": "账户管理",
+    "sutui.parse_video": "视频链接解析",
+    "sutui.transfer_url": "媒体转存",
+    "sutui.speak": "语音合成",
 }
 
 
@@ -155,9 +248,17 @@ def _public_credit_history_origin(
     info = meta if isinstance(meta, dict) else {}
     capability_id = str(info.get("capability_id") or "").strip()
     if capability_id:
-        label = _capability_catalog_labels().get(capability_id) or capability_id
-        endpoint = _BILLING_ENDPOINT_LABELS.get(str(info.get("endpoint") or "").strip().lower(), "")
-        return (label + " · " + endpoint) if endpoint else label
+        endpoint_raw = str(info.get("endpoint") or "").strip().lower()
+        endpoint = _BILLING_ENDPOINT_LABELS.get(endpoint_raw, "")
+        label = _CAPABILITY_ORIGIN_LABELS.get(capability_id) or _scrub_brand_tokens(
+            _capability_catalog_labels().get(capability_id) or ""
+        )
+        if len(label) < 2:
+            label = _generic_capability_label(capability_id, endpoint_raw)
+        # 名称里已经点明类型时不再重复加后缀（避免“对话 · 对话”）
+        if endpoint and endpoint not in label:
+            label = label + " · " + endpoint
+        return label
     if ref_t == "recharge_order":
         tail = ref_i[-8:] if len(ref_i) >= 8 else ref_i
         return ("充值订单 " + tail) if tail else "充值订单"
@@ -170,7 +271,7 @@ def _public_credit_history_origin(
     if et == "recharge":
         return "充值"
     if et == "sutui_chat":
-        return "速推对话"
+        return "对话"
     if et in {"agent_transfer_in", "agent_transfer_out"}:
         return "代理商划转"
     if ref_t:
