@@ -4294,7 +4294,8 @@
         if (item && item.privateTakeover) {
           return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡") + optionHtml("ai_memory", "AI 记忆接管（按记忆文件回复）")))
             + `<div class="field full hidden" id="workflowParamDouyinMemoryField"><label>记忆文件</label>${videoMemorySelectControl("workflowParamDouyinMemoryDocs")}</div>`
-            + taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
+            // 记忆接管只要选一份记忆文件：自动加好友那块只在固定话术/AI 引导模式下显示。
+            + `<div id="workflowParamDouyinWechatAddFriendField">${taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true))}</div>`;
         }
         if (item && item.selfCommentMonitor) return "";
         if (item && item.preciseTouch) {
@@ -4390,6 +4391,7 @@
     function bindWorkflowDouyinReplyModeControls() {
       const mode = String(workflowParamValue("workflowParamDouyinReplyMode") || "fixed").trim().toLowerCase();
       $("workflowParamDouyinMemoryField")?.classList.toggle("hidden", mode !== "ai_memory");
+      $("workflowParamDouyinWechatAddFriendField")?.classList.toggle("hidden", mode === "ai_memory");
       if (mode === "ai_memory" && $("workflowParamDouyinMemoryDocs")) {
         fillVideoMemorySelects();
         loadVideoMemoryDocsForSelect();
@@ -5507,6 +5509,10 @@
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       const action = String(payload.action || params.sales_action || "").trim();
       if (action === "stranger_message") return true;
+      // 记忆接管节点（新建还没写 action、或参数里就是 ai_memory）也必须走这一套表单，
+      // 否则会掉到下面的搜索采集表单，弹出地区/搜索数量/搜索方式这些无关参数。
+      if (String(params.reply_mode || "").trim().toLowerCase() === "ai_memory") return true;
+      if (workflowBoolParam(params.memory_takeover, false)) return true;
       const text = salesWorkflowRowText(node);
       // 「抖音私信记忆接管」是同一个 action 的记忆接管形态：不带这个判断，
       // 弹窗会掉到下面的搜索采集表单（地区/关键词/搜索数量），用户看到的参数全不对。

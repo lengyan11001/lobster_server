@@ -101,7 +101,7 @@ def test_memory_takeover_node_uses_private_takeover_fields():
     """「抖音私信记忆接管」必须走私信接管表单：否则弹窗显示的是搜索采集的地区/关键词参数。"""
     source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     start = source.index("function isSalesDouyinPrivateNode(node) {")
-    body = source[start : start + 1000]
+    body = source[start : start + 1800]
 
     assert "salesWorkflowIsMemoryTakeoverNote(text)" in body
 
@@ -119,3 +119,20 @@ def test_server_private_takeover_node_detect_accepts_memory_note():
     }
 
     assert wf._is_douyin_private_takeover_node(node) is True
+
+
+def test_h5_node_detect_accepts_ai_memory_params():
+    """新建未保存、或参数里就是 ai_memory 的节点，也必须走私信接管表单（不是采集表单）。"""
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = source.index("function isSalesDouyinPrivateNode(node) {")
+    body = source[start : start + 1400]
+
+    assert 'params.reply_mode || "").trim().toLowerCase() === "ai_memory"' in body
+    assert "workflowBoolParam(params.memory_takeover, false)" in body
+
+
+def test_h5_memory_node_hides_add_friend_field():
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'id="workflowParamDouyinWechatAddFriendField"' in source
+    assert '$("workflowParamDouyinWechatAddFriendField")?.classList.toggle("hidden", mode === "ai_memory")' in source
