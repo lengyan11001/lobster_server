@@ -52,12 +52,8 @@ def test_private_switch_normalize_keeps_ai_memory():
     assert params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
 
 
-def test_memory_helpers_filter_docs_by_selected_ids():
-    docs = [{"doc_id": "a", "content": "A"}, {"doc_id": "b", "content": "B"}]
-
+def test_memory_doc_ids_cleaner():
     assert wf._clean_douyin_memory_doc_ids(["a", {"doc_id": "b"}, "a", ""]) == ["a", "b"]
-    assert wf._douyin_memory_docs_for_ids(docs, ["b"]) == [{"doc_id": "b", "content": "B"}]
-    assert wf._douyin_memory_docs_for_ids(docs, []) == docs
 
 
 def test_h5_app_douyin_node_offers_memory_takeover():

@@ -1784,20 +1784,6 @@ def _clean_douyin_memory_doc_ids(value: Any, limit: int = 3) -> list[str]:
     return ids[: max(1, int(limit or 1))]
 
 
-def _douyin_memory_docs_for_ids(memory_docs: Any, doc_ids: list[str]) -> list[dict[str, Any]]:
-    """按节点选中的 doc_id 过滤模板记忆文件；节点没选就整份沿用。"""
-    rows = [row for row in (memory_docs if isinstance(memory_docs, list) else []) if isinstance(row, dict)]
-    if not doc_ids:
-        return rows
-    wanted = set(doc_ids)
-    picked: list[dict[str, Any]] = []
-    for row in rows:
-        doc_id = _clean_text(row.get("doc_id") or row.get("id"), 128)
-        if doc_id and doc_id in wanted:
-            picked.append(row)
-    return picked
-
-
 def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Reduce a sales Douyin node to the action-only Online contract."""
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
@@ -2357,19 +2343,15 @@ def _prepare_sales_workflow_nodes(
                 _clean_text(douyin_payload.get("action"), 64).lower() == "stranger_message"
                 and _clean_text(douyin_params.get("reply_mode"), 32).lower() == "ai_memory"
             ):
-                # 抖音私信「AI 记忆接管」：节点没单独选记忆文件时，沿用当前 IP 模板里选的那份。
+                # 抖音私信「AI 记忆接管」：记忆文件在 Online 节点里选（memory_doc_ids），
+                # 这里只做"有没有配"的校验，不从 IP 模板注入记忆文件（新功能不做老节点兼容）。
                 douyin_params = dict(douyin_params)
-                selected_memory_ids = _clean_douyin_memory_doc_ids(
-                    douyin_params.get("memory_doc_ids")
-                ) or _clean_douyin_memory_doc_ids(memory_doc_ids)
-                selected_memory_docs = _douyin_memory_docs_for_ids(memory_docs, selected_memory_ids)
+                selected_memory_ids = _clean_douyin_memory_doc_ids(douyin_params.get("memory_doc_ids"))
                 if selected_memory_ids:
                     douyin_params["memory_doc_ids"] = selected_memory_ids
-                if selected_memory_docs:
-                    douyin_params["memory_docs"] = copy.deepcopy(selected_memory_docs)
                 douyin_payload["params"] = douyin_params
                 plan["payload"] = douyin_payload
-                if not (selected_memory_ids or selected_memory_docs):
+                if not selected_memory_ids:
                     takeover_memory_missing = True
 
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
