@@ -2281,7 +2281,7 @@ def _prepare_sales_workflow_nodes(
     has_local_bestseller = False
     has_wechat = False
     has_whatsapp = False
-    takeover_memory_missing = False
+    has_memory_takeover = False
     missing: list[str] = []
 
     for node in prepared:
@@ -2343,16 +2343,9 @@ def _prepare_sales_workflow_nodes(
                 _clean_text(douyin_payload.get("action"), 64).lower() == "stranger_message"
                 and _clean_text(douyin_params.get("reply_mode"), 32).lower() == "ai_memory"
             ):
-                # 抖音私信「AI 记忆接管」：记忆文件在 Online 节点里选（memory_doc_ids），
-                # 这里只做"有没有配"的校验，不从 IP 模板注入记忆文件（新功能不做老节点兼容）。
-                douyin_params = dict(douyin_params)
-                selected_memory_ids = _clean_douyin_memory_doc_ids(douyin_params.get("memory_doc_ids"))
-                if selected_memory_ids:
-                    douyin_params["memory_doc_ids"] = selected_memory_ids
-                douyin_payload["params"] = douyin_params
-                plan["payload"] = douyin_payload
-                if not selected_memory_ids:
-                    takeover_memory_missing = True
+                # 抖音私信「AI 记忆接管」：记忆文件在 Online「抖音获客 → 私信引流」里选，
+                # 下发时客户端读本机那份配置，所以这里不注入、也不拿它当启用条件。
+                has_memory_takeover = True
 
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
             has_local_bestseller = True
@@ -2511,14 +2504,13 @@ def _prepare_sales_workflow_nodes(
                 missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
         elif not any(row.last_fetch_at for row in competitors):
             missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
-        if not (memory_doc_ids or memory_docs):
+        # 只有「记忆接管」节点时不需要 IP 模板记忆文件：那份记忆在 Online 抖音获客-私信引流里选。
+        needs_template_memory = has_ip_daily or has_hifly
+        if not (memory_doc_ids or memory_docs) and not (has_memory_takeover and not needs_template_memory):
             if _has_active_memory_docs(db, owner.id, installation_id):
                 missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
             else:
                 missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
-
-    if takeover_memory_missing:
-        missing.append("抖音私信记忆接管：请在节点或「IP人设定位-模板」里选择 1 份记忆文件")
 
     if has_ip_daily and not personal:
         missing.append("IP日更：缺少当前使用模板")
