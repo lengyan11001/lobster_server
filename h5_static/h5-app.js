@@ -3993,6 +3993,10 @@
       const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
       const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "search_collect";
+      // 私信接管 / 记忆接管节点：这里只给记忆接管形态露一个记忆文件，别再露采集参数。
+      const showDouyinPrivate = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && (salesWorkflowActionForNote(selectedNote) === "stranger_message" || salesWorkflowIsMemoryTakeoverNote(selectedNote));
+      const showDouyinMemoryTakeover = showDouyinPrivate && salesWorkflowIsMemoryTakeoverNote(selectedNote);
       const showDouyinAiKeywords = showDouyinCollection && salesWorkflowIsAiKeywordNote(selectedNote);
       const showDouyinPreciseTouch = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "precise_touch";
@@ -4000,6 +4004,11 @@
       if (field) field.classList.toggle("hidden", !showGroupInvite);
       $("workflowNodeNativeWhatsappField")?.classList.toggle("hidden", !showWhatsapp);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
+      $("workflowNodeDouyinMemoryField")?.classList.toggle("hidden", !showDouyinMemoryTakeover);
+      if (showDouyinMemoryTakeover && $("workflowNodeDouyinMemoryDocs")) {
+        fillVideoMemorySelects();
+        loadVideoMemoryDocsForSelect();
+      }
       // 精准获客AI 的关键词全部由 AI 生成，不需要用户填、也不从 Online 取，
       // 所以这个节点直接隐藏“精准获客参数”输入框。
       $("workflowNodeDouyinKeywordField")?.classList.toggle("hidden", showDouyinAiKeywords);
@@ -5154,6 +5163,31 @@
             h5_one_shot: true,
             douyin_execution_mode: "one_shot",
             params: { customer_scope: "self_comments" },
+          },
+        };
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
+        && (salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "stranger_message"
+          || salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note))
+      ) {
+        const memoryTakeoverNode = salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note);
+        const privateMemoryDocIds = memoryTakeoverNode ? selectedMultiValues("workflowNodeDouyinMemoryDocs") : [];
+        plan = {
+          title: memoryTakeoverNode ? "抖音私信记忆接管" : "抖音私信接管",
+          task_kind: "douyin_leads",
+          content: `H5 工作流：${memoryTakeoverNode ? "抖音私信记忆接管" : "抖音私信接管"}`,
+          payload: {
+            action: "stranger_message",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: {
+              reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",
+              memory_takeover: memoryTakeoverNode,
+              memory_doc_ids: privateMemoryDocIds,
+              wechat_add_friend_enabled: false,
+              wechat_add_friend_targets_source: "douyin_private_message_phone",
+            },
           },
         };
       } else if (

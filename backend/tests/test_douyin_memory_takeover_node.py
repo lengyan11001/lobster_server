@@ -148,3 +148,17 @@ def test_h5_field_render_uses_lookup_and_node_params():
     assert "lookup.optionLabel || lookup.defaultNote" in body
     assert "workflowBoolParam(douyinNodeParams.memory_takeover, false)" in body
     assert 'workflowFieldsHtmlForNode(lookup.node, node, lookup)' in source
+
+
+def test_h5_add_node_form_has_private_takeover_branch_and_memory_field():
+    """H5「添加节点」表单也要有私信接管分支（原来只认采集/触达，节点被当成 search_collect）。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="workflowNodeDouyinMemoryField"' in html
+    assert 'id="workflowNodeDouyinMemoryDocs"' in html
+    assert "const showDouyinMemoryTakeover = showDouyinPrivate && salesWorkflowIsMemoryTakeoverNote(selectedNote);" in script
+    assert '$("workflowNodeDouyinMemoryField")?.classList.toggle("hidden", !showDouyinMemoryTakeover);' in script
+    # 添加节点时私信接管/记忆接管要生成 stranger_message 计划，而不是 search_collect
+    assert 'reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",' in script
+    assert 'const privateMemoryDocIds = memoryTakeoverNode ? selectedMultiValues("workflowNodeDouyinMemoryDocs") : [];' in script
