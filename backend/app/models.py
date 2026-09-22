@@ -1421,6 +1421,40 @@ class WechatInteractionOutcome(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class WechatContactReport(Base):
+    """账号级微信联系方式池：抖音私信接管上报，同账号的任意机器都能领取加好友。
+
+    数据跟着账号（user_id + 品牌）走，不绑设备：A 机器的抖音私信接管识别到客户
+    发来的手机号后上报，B 机器（同账号）跑个微自动加好友时领取并提交本机加好友。
+    """
+
+    __tablename__ = "wechat_contact_reports"
+    __table_args__ = (
+        UniqueConstraint("user_id", "brand_mark", "platform", "value", name="uq_wechat_contact_report_owner"),
+        Index("ix_wechat_contact_report_pickup", "user_id", "brand_mark", "platform", "status", "id"),
+        Index("ix_wechat_contact_report_user_time", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    brand_mark: Mapped[str] = mapped_column(String(32), default="", server_default="", nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), default="douyin", server_default="douyin", nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), default="mobile", server_default="mobile", nullable=False)
+    source_username: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    source_conversation: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    source_account: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    reported_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending", nullable=False, index=True)
+    claimed_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    claim_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    added_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class H5HomePreference(Base):
     """Per-user H5 homepage presentation preferences."""
 

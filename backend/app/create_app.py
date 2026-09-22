@@ -76,6 +76,7 @@ from .api.lead_collection_templates import router as lead_collection_templates_r
 from .api.global_leads import router as global_leads_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .api.wechat_intelligence import router as wechat_intelligence_router
+from .api.wechat_contact_pool import router as wechat_contact_pool_router
 from .api.mobile_client import router as mobile_client_router
 from .api.alibaba_customer_research import router as alibaba_customer_research_router
 try:
@@ -177,12 +178,20 @@ def _migrate_capability_configs_extra_config():
 
 def _migrate_wechat_outcome_channel():
     """给 wechat_interaction_outcomes 补 channel 列（WhatsApp 接管复用这套回写）。"""
+    from sqlalchemy import inspect, text
+
     try:
+        insp = inspect(engine)
+        if not insp.has_table("wechat_interaction_outcomes"):
+            return
+        columns = [c["name"] for c in insp.get_columns("wechat_interaction_outcomes")]
         with engine.begin() as conn:
-            conn.execute(text(
-                "alter table wechat_interaction_outcomes add column if not exists channel varchar(16) "
-                "not null default 'wechat'"
-            ))
+            if "channel" not in columns:
+                # ADD COLUMN IF NOT EXISTS 在部分数据库（老 sqlite）不认，先查列再加
+                conn.execute(text(
+                    "alter table wechat_interaction_outcomes add column channel varchar(16) "
+                    "not null default 'wechat'"
+                ))
             conn.execute(text(
                 "create index if not exists ix_wechat_interaction_outcome_channel "
                 "on wechat_interaction_outcomes (channel)"
@@ -1739,6 +1748,7 @@ def create_app() -> FastAPI:
     app.include_router(global_leads_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
     app.include_router(wechat_intelligence_router, prefix="")
+    app.include_router(wechat_contact_pool_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
     app.include_router(alibaba_customer_research_router, prefix="")
     if wecom_kf_router is not None:
