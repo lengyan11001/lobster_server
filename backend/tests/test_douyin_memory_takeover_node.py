@@ -64,10 +64,10 @@ def test_h5_app_douyin_node_offers_memory_takeover():
     source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
     assert 'optionHtml("ai_memory", "AI 记忆接管（按记忆文件回复）")' in source
-    assert 'id="workflowParamDouyinMemoryField"' in source
-    assert "workflowParamDouyinMemoryDocs" in source
     assert "function bindWorkflowDouyinReplyModeControls()" in source
     assert 'douyinReplyMode === "ai_memory" ? "ai_memory"' in source
+    # 记忆文件不在 H5 节点里选（用 Online 节点上选的那份）
+    assert "workflowParamDouyinMemoryField" not in source
 
 
 def test_node_picker_has_dedicated_memory_takeover_node():
@@ -150,18 +150,23 @@ def test_h5_field_render_uses_lookup_and_node_params():
     assert 'workflowFieldsHtmlForNode(lookup.node, node, lookup)' in source
 
 
-def test_h5_add_node_form_has_private_takeover_branch_and_memory_field():
-    """H5「添加节点」表单也要有私信接管分支（原来只认采集/触达，节点被当成 search_collect）。"""
+def test_h5_add_node_form_has_private_takeover_branch():
+    """H5「添加节点」表单要有私信接管分支（原来只认采集/触达，节点被当成 search_collect）。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    # 添加节点时私信接管/记忆接管要生成 stranger_message 计划，而不是 search_collect
+    assert 'reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",' in script
+    assert 'const memoryTakeoverNode = salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note);' in script
+
+
+def test_h5_workflow_node_has_no_memory_picker():
+    """工作流节点不带记忆文件参数：用 Online 节点上选的那份，且保存时不能覆盖它。"""
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
 
-    assert 'id="workflowNodeDouyinMemoryField"' in html
-    assert 'id="workflowNodeDouyinMemoryDocs"' in html
-    assert "const showDouyinMemoryTakeover = showDouyinPrivate && salesWorkflowIsMemoryTakeoverNote(selectedNote);" in script
-    assert '$("workflowNodeDouyinMemoryField")?.classList.toggle("hidden", !showDouyinMemoryTakeover);' in script
-    # 添加节点时私信接管/记忆接管要生成 stranger_message 计划，而不是 search_collect
-    assert 'reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",' in script
-    assert 'const privateMemoryDocIds = memoryTakeoverNode ? selectedMultiValues("workflowNodeDouyinMemoryDocs") : [];' in script
+    assert "workflowNodeDouyinMemoryField" not in html
+    assert "workflowParamDouyinMemoryDocs" not in script
+    assert "const douyinMemoryDocIds = Array.isArray(douyinExistingParams.memory_doc_ids)" in script
 
 
 def test_h5_add_form_never_shows_collection_params_for_takeover_note():
