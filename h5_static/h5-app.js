@@ -5508,7 +5508,11 @@
       const action = String(payload.action || params.sales_action || "").trim();
       if (action === "stranger_message") return true;
       const text = salesWorkflowRowText(node);
-      return text.includes("抖音私信接管") || text.includes("抖音私信引流");
+      // 「抖音私信记忆接管」是同一个 action 的记忆接管形态：不带这个判断，
+      // 弹窗会掉到下面的搜索采集表单（地区/关键词/搜索数量），用户看到的参数全不对。
+      return text.includes("抖音私信接管")
+        || text.includes("抖音私信引流")
+        || salesWorkflowIsMemoryTakeoverNote(text);
     }
 
     function workflowLookupIsDouyinLeads(nodeInfo) {

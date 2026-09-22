@@ -2058,6 +2058,7 @@ def _is_douyin_private_takeover_node(node: dict[str, Any]) -> bool:
         and (
             _clean_text(payload.get("action"), 64) == "stranger_message"
             or "抖音私信接管" in text
+            or "记忆接管" in text
         )
     )
 

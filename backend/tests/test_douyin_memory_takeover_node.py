@@ -95,3 +95,27 @@ def test_action_payload_keeps_legacy_node_untouched():
     result = wf._sales_douyin_action_payload(node, {"action": "stranger_message", "params": {}})
 
     assert "reply_mode" not in result.get("params", {})
+
+
+def test_memory_takeover_node_uses_private_takeover_fields():
+    """「抖音私信记忆接管」必须走私信接管表单：否则弹窗显示的是搜索采集的地区/关键词参数。"""
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = source.index("function isSalesDouyinPrivateNode(node) {")
+    body = source[start : start + 1000]
+
+    assert "salesWorkflowIsMemoryTakeoverNote(text)" in body
+
+
+def test_server_private_takeover_node_detect_accepts_memory_note():
+    node = {
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音私信记忆接管",
+        "note": "抖音私信记忆接管",
+        "plan": {
+            "task_kind": "douyin_leads",
+            "title": "抖音私信记忆接管",
+            "payload": {"action": "stranger_message", "params": {}},
+        },
+    }
+
+    assert wf._is_douyin_private_takeover_node(node) is True
