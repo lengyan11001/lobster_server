@@ -136,3 +136,15 @@ def test_h5_memory_node_hides_add_friend_field():
 
     assert 'id="workflowParamDouyinWechatAddFriendField"' in source
     assert '$("workflowParamDouyinWechatAddFriendField")?.classList.toggle("hidden", mode === "ai_memory")' in source
+
+
+def test_h5_field_render_uses_lookup_and_node_params():
+    """刚添加、还没写 action 的记忆接管节点，也必须渲染成私信接管表单。"""
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = source.index("function workflowFieldsHtmlForNode(node, workflowNode = null, lookup = null) {")
+    body = source[start : start + 1800]
+
+    assert "memoryTakeoverFields" in body
+    assert "lookup.optionLabel || lookup.defaultNote" in body
+    assert "workflowBoolParam(douyinNodeParams.memory_takeover, false)" in body
+    assert 'workflowFieldsHtmlForNode(lookup.node, node, lookup)' in source

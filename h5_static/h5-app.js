@@ -4352,7 +4352,7 @@
       return workflowCapabilityFieldsHtml(item && (item.capabilityId || item.key));
     }
 
-    function workflowFieldsHtmlForNode(node, workflowNode = null) {
+    function workflowFieldsHtmlForNode(node, workflowNode = null, lookup = null) {
       if (!node) return "";
       if (workflowNodeUsesPersonaDefaults(workflowNode)) return "";
       const platform = socialPlatformFromAbilityKey(node.key);
@@ -4361,8 +4361,20 @@
       if (node.key === "wechat_channels_transcript") return workflowWechatTranscriptFieldsHtml();
        if (node.workQuickKey) {
          const quick = workQuickItemByKey(node.workQuickKey) || node;
+         // 记忆接管节点可能刚添加、还没写 action/note：把节点参数和节点选择器上的
+         // 文案都算进来，否则会掉到最下面的搜索采集表单（地区/搜索数量/搜索方式）。
+         const douyinNodeParams = (workflowNode && workflowNode.plan && workflowNode.plan.payload
+           && workflowNode.plan.payload.params && typeof workflowNode.plan.payload.params === "object")
+           ? workflowNode.plan.payload.params : {};
+         const memoryTakeoverFields = isSalesDouyinPrivateNode(workflowNode)
+           || salesWorkflowIsMemoryTakeoverNote(
+                `${(workflowNode && (workflowNode.ability_label || workflowNode.note)) || ""} `
+                + `${(lookup && (lookup.optionLabel || lookup.defaultNote)) || ""}`
+              )
+           || String(douyinNodeParams.reply_mode || "").trim().toLowerCase() === "ai_memory"
+           || workflowBoolParam(douyinNodeParams.memory_takeover, false);
          return workflowQuickFieldsHtml(
-           isSalesDouyinPrivateNode(workflowNode)
+           memoryTakeoverFields
              ? { ...quick, privateTakeover: true }
              : isSalesDouyinPreciseTouchNode(workflowNode)
                ? { ...quick, preciseTouch: true }
@@ -6445,7 +6457,7 @@
       $("workflowParamTime").value = node.time || "09:00";
       $("workflowParamEndTime").value = node.end_time || "";
       $("workflowParamNote").value = node.note || "";
-      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node, node);
+      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node, node, lookup);
       modal.classList.remove("hidden");
       initWorkflowParamControls(lookup.node);
       refillWorkflowParamFields(node, lookup);
