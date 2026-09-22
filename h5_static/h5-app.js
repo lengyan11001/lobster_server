@@ -3991,12 +3991,15 @@
       const showMoments = workflowLookupIsNativeWechatMoments(lookup);
       const showWhatsapp = workflowLookupIsNativeWhatsapp(lookup);
       const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
-      const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
-        && salesWorkflowActionForNote(selectedNote) === "search_collect";
-      // 私信接管 / 记忆接管节点：这里只给记忆接管形态露一个记忆文件，别再露采集参数。
+      // 私信接管 / 记忆接管节点：这里只给记忆接管形态露一个记忆文件，绝不露采集参数。
+      // 判定按"备注/名字"先算，并且给采集参数加一道硬闸：接管节点永远不显示精准获客参数。
+      const noteIsPrivateTakeover = /私信接管|私信引流|记忆接管/.test(selectedNote);
       const showDouyinPrivate = workflowLookupIsDouyinLeads(lookup && lookup.node)
-        && (salesWorkflowActionForNote(selectedNote) === "stranger_message" || salesWorkflowIsMemoryTakeoverNote(selectedNote));
+        && (noteIsPrivateTakeover || salesWorkflowActionForNote(selectedNote) === "stranger_message");
       const showDouyinMemoryTakeover = showDouyinPrivate && salesWorkflowIsMemoryTakeoverNote(selectedNote);
+      const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && !showDouyinPrivate
+        && salesWorkflowActionForNote(selectedNote) === "search_collect";
       const showDouyinAiKeywords = showDouyinCollection && salesWorkflowIsAiKeywordNote(selectedNote);
       const showDouyinPreciseTouch = workflowLookupIsDouyinLeads(lookup && lookup.node)
         && salesWorkflowActionForNote(selectedNote) === "precise_touch";

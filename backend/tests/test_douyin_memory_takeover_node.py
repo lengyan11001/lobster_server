@@ -162,3 +162,11 @@ def test_h5_add_node_form_has_private_takeover_branch_and_memory_field():
     # 添加节点时私信接管/记忆接管要生成 stranger_message 计划，而不是 search_collect
     assert 'reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",' in script
     assert 'const privateMemoryDocIds = memoryTakeoverNode ? selectedMultiValues("workflowNodeDouyinMemoryDocs") : [];' in script
+
+
+def test_h5_add_form_never_shows_collection_params_for_takeover_note():
+    """硬规则：备注/名字里是私信接管的节点，添加表单永远不显示精准获客参数。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'const noteIsPrivateTakeover = /私信接管|私信引流|记忆接管/.test(selectedNote);' in script
+    assert "&& !showDouyinPrivate" in script
