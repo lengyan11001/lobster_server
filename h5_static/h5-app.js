@@ -1046,7 +1046,7 @@
     ];
     // 不进默认排班表（SALES_WORKFLOW_PRESET），只在节点选择器里多一个可选节点。
     const SALES_WORKFLOW_EXTRA_NODE_OPTIONS = [
-      { key: "douyin_leads", label: "抖音私信记忆接管", note: "抖音私信记忆接管" },
+      { key: "douyin_leads", label: "抖音私信记忆接管", note: "抖音私信记忆接管", sales_action: "stranger_message", reply_mode: "ai_memory" },
     ];
     const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map([
       ...SALES_WORKFLOW_PRESET.filter((row) => !row.comingSoon).map((row) => {
@@ -3691,6 +3691,8 @@
           optionLabel: item.label,
           defaultNote: item.note,
           optionGroup: workflowNodeOptionGroup(item.key),
+          salesAction: String(item.sales_action || "").trim().toLowerCase(),
+          optionReplyMode: String(item.reply_mode || "").trim().toLowerCase(),
         };
       }).filter(Boolean);
     }
@@ -5095,6 +5097,9 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
       const nodeKey = String(lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
+      // 节点选择器上写明的 sales_action 优先；没有才按备注/名字推。
+      const douyinLookupAction = String((lookup && lookup.salesAction) || "").trim().toLowerCase()
+        || salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note);
       let plan;
       if (nodeKey === "native_wechat_poll") {
         plan = nativeWechatWorkflowPlan(nodeKey, note, workflowParamChecked("workflowNodeNativeWechatGroupInviteEnabled") ? {
@@ -5121,7 +5126,7 @@
         }, { requireTargets: true });
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
-        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "precise_touch"
+        && douyinLookupAction === "precise_touch"
       ) {
         const touchActions = normalizeSalesDouyinFollowupActions([
           workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
@@ -5146,7 +5151,7 @@
         };
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
-        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "self_comment_monitor"
+        && douyinLookupAction === "self_comment_monitor"
       ) {
         plan = {
           title: "抖音我的评论区",
@@ -5162,10 +5167,11 @@
         };
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
-        && (salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "stranger_message"
+        && (douyinLookupAction === "stranger_message"
           || salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note))
       ) {
-        const memoryTakeoverNode = salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note);
+        const memoryTakeoverNode = String((lookup && lookup.optionReplyMode) || "").trim().toLowerCase() === "ai_memory"
+          || salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note);
         plan = {
           title: memoryTakeoverNode ? "抖音私信记忆接管" : "抖音私信接管",
           task_kind: "douyin_leads",
@@ -5185,7 +5191,7 @@
         };
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
-        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "search_collect"
+        && douyinLookupAction === "search_collect"
       ) {
         const keyword = workflowParamValue("workflowNodeDouyinKeyword");
         const regions = workSplitList(workflowParamValue("workflowNodeDouyinRegions"));

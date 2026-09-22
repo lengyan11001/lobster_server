@@ -69,7 +69,7 @@ def test_h5_app_douyin_node_offers_memory_takeover():
 def test_node_picker_has_dedicated_memory_takeover_node():
     source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
-    assert '{ key: "douyin_leads", label: "抖音私信记忆接管", note: "抖音私信记忆接管" }' in source
+    assert 'label: "抖音私信记忆接管", note: "抖音私信记忆接管", sales_action: "stranger_message", reply_mode: "ai_memory"' in source
     assert "function salesWorkflowIsMemoryTakeoverNote(" in source
     assert "@@memory_takeover" in source
     assert "douyinDefaultReplyMode" in source
@@ -152,7 +152,7 @@ def test_h5_add_node_form_has_private_takeover_branch():
 
     # 添加节点时私信接管/记忆接管要生成 stranger_message 计划，而不是 search_collect
     assert 'reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",' in script
-    assert 'const memoryTakeoverNode = salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note);' in script
+    assert 'const memoryTakeoverNode = String((lookup && lookup.optionReplyMode) || "").trim().toLowerCase() === "ai_memory"' in script
 
 
 def test_h5_workflow_node_has_no_memory_picker():
@@ -171,3 +171,15 @@ def test_h5_add_form_never_shows_collection_params_for_takeover_note():
 
     assert 'const noteIsPrivateTakeover = /私信接管|私信引流|记忆接管/.test(selectedNote);' in script
     assert "&& !showDouyinPrivate" in script
+
+
+def test_h5_picker_carries_explicit_action_and_reply_mode():
+    """H5：记忆接管节点在节点选择器上就写死 sales_action/reply_mode，添加节点不再靠备注猜。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'sales_action: "stranger_message", reply_mode: "ai_memory"' in script
+    assert "salesAction: String(item.sales_action || \"\").trim().toLowerCase()" in script
+    assert "optionReplyMode: String(item.reply_mode || \"\").trim().toLowerCase()" in script
+    assert 'const douyinLookupAction = String((lookup && lookup.salesAction) || "").trim().toLowerCase()' in script
+    assert 'douyinLookupAction === "stranger_message"' in script
+    assert 'douyinLookupAction === "search_collect"' in script
