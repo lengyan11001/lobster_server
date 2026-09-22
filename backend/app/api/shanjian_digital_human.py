@@ -454,6 +454,10 @@ async def _persist_audio_for_shanjian(
             "source": "shanjian_digital_human_audio_transfer",
             "original_url_hint": _url_hint(raw),
             "content_type": media_type,
+            # 过程件：这段配音只是喂给闪剪生成口播视频的输入，不是交付给用户的成品。
+            # 按口径（2026-09-22）素材库与内容库都不展示，仍可按 asset_id 取用。
+            "asset_origin": "intermediate",
+            "content_visibility": "hidden",
         },
     )
     db.add(asset)
