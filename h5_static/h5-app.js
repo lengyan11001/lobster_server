@@ -1044,10 +1044,17 @@
       { time: "23:00", endTime: "23:30", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "23:30", endTime: "24:00", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
     ];
-    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map(SALES_WORKFLOW_PRESET.filter((row) => !row.comingSoon).map((row) => {
-      const key = `${row.key}@@${row.label || row.note}`;
-      return [key, { key: row.key, label: row.label || row.note, note: row.note || row.label }];
-    })).values());
+    // 不进默认排班表（SALES_WORKFLOW_PRESET），只在节点选择器里多一个可选节点。
+    const SALES_WORKFLOW_EXTRA_NODE_OPTIONS = [
+      { key: "douyin_leads", label: "抖音私信记忆接管", note: "抖音私信记忆接管" },
+    ];
+    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map([
+      ...SALES_WORKFLOW_PRESET.filter((row) => !row.comingSoon).map((row) => {
+        const key = `${row.key}@@${row.label || row.note}`;
+        return [key, { key: row.key, label: row.label || row.note, note: row.note || row.label }];
+      }),
+      ...SALES_WORKFLOW_EXTRA_NODE_OPTIONS.map((row) => [`${row.key}@@${row.label}`, row]),
+    ]).values());
     const SALES_PERSONA_DEFAULT_KEYS = new Set([
       "local_bestseller",
       "hifly.video.create_by_tts",
@@ -1307,6 +1314,13 @@
       const text = String(value || "");
       if (!text) return false;
       return /精准获客\s*AI/i.test(text) || /AI\s*获客/i.test(text) || /AI\s*关键词/i.test(text);
+    }
+
+    // 「抖音私信记忆接管」节点：和「抖音私信接管」同一个 action，但回复策略默认按记忆文件回复。
+    function salesWorkflowIsMemoryTakeoverNote(value) {
+      const text = String(value || "");
+      if (!text) return false;
+      return text.includes("记忆接管") || /memory\s*takeover/i.test(text);
     }
 
     const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["follow_comment", "mention_comment", "direct_message"];
@@ -3720,9 +3734,11 @@
         const key = String(lookup && lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
         if (!key) return false;
         const identity = key === "douyin_leads"
-          ? (salesWorkflowIsAiKeywordNote(lookup.optionLabel || lookup.defaultNote)
-            ? `${key}@@ai_keywords`
-            : `${key}@@${salesWorkflowActionForNote(lookup.optionLabel || lookup.defaultNote || "")}`)
+          ? (salesWorkflowIsMemoryTakeoverNote(lookup.optionLabel || lookup.defaultNote)
+            ? `${key}@@memory_takeover`
+            : salesWorkflowIsAiKeywordNote(lookup.optionLabel || lookup.defaultNote)
+              ? `${key}@@ai_keywords`
+              : `${key}@@${salesWorkflowActionForNote(lookup.optionLabel || lookup.defaultNote || "")}`)
           : key;
         if (seen.has(identity)) return false;
         seen.add(identity);
@@ -6207,7 +6223,9 @@
       }
       const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
       if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
-        const openedReplyMode = String(params.reply_mode || "fixed").trim().toLowerCase();
+        const douyinNodeNoteText = `${node.ability_label || node.label || ""} ${node.note || ""} ${plan.title || ""}`;
+        const douyinDefaultReplyMode = salesWorkflowIsMemoryTakeoverNote(douyinNodeNoteText) ? "ai_memory" : "fixed";
+        const openedReplyMode = String(params.reply_mode || douyinDefaultReplyMode).trim().toLowerCase();
         setFieldValue("workflowParamDouyinReplyMode", ["ai_lead", "ai_memory"].includes(openedReplyMode) ? openedReplyMode : "fixed");
         bindWorkflowDouyinReplyModeControls();
         loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("workflowParamDouyinMemoryDocs", params.memory_doc_ids || [])).catch(() => {});

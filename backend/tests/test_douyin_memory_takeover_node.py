@@ -68,3 +68,30 @@ def test_h5_app_douyin_node_offers_memory_takeover():
     assert "workflowParamDouyinMemoryDocs" in source
     assert "function bindWorkflowDouyinReplyModeControls()" in source
     assert 'douyinReplyMode === "ai_memory" ? "ai_memory"' in source
+
+
+def test_node_picker_has_dedicated_memory_takeover_node():
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert '{ key: "douyin_leads", label: "抖音私信记忆接管", note: "抖音私信记忆接管" }' in source
+    assert "function salesWorkflowIsMemoryTakeoverNote(" in source
+    assert "@@memory_takeover" in source
+    assert "douyinDefaultReplyMode" in source
+
+
+def test_action_payload_defaults_memory_mode_from_node_note():
+    node = {"note": "抖音私信记忆接管", "ability_key": "douyin_leads"}
+
+    result = wf._sales_douyin_action_payload(node, {"action": "stranger_message", "params": {}})
+
+    assert result["action"] == "stranger_message"
+    assert result["params"]["reply_mode"] == "ai_memory"
+    assert result["params"]["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+
+
+def test_action_payload_keeps_legacy_node_untouched():
+    node = {"note": "抖音私信接管", "ability_key": "douyin_leads"}
+
+    result = wf._sales_douyin_action_payload(node, {"action": "stranger_message", "params": {}})
+
+    assert "reply_mode" not in result.get("params", {})

@@ -1848,10 +1848,15 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     # Private-message takeover keeps add-friend behavior on the parent node.
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.
+    # 节点备注写着「记忆接管」时（节点选择器里的「抖音私信记忆接管」），默认按记忆文件回复。
+    memory_takeover_note = "记忆接管" in _clean_text(
+        node.get("note") or node.get("ability_label") or node.get("abilityLabel"), 200
+    )
     if action == "stranger_message" and (
         "wechat_add_friend_enabled" in params
         or "reply_mode" in params
         or _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
+        or memory_takeover_note
     ):
         result["params"] = {
             "wechat_add_friend_enabled": _bool_param(params.get("wechat_add_friend_enabled"), False),
@@ -1863,6 +1868,8 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
             result["params"]["reply_mode"] = (
                 raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead", "ai_memory"} else "fixed"
             )
+        elif memory_takeover_note:
+            result["params"]["reply_mode"] = "ai_memory"
         memory_doc_ids = _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
         if memory_doc_ids:
             result["params"]["memory_doc_ids"] = memory_doc_ids
