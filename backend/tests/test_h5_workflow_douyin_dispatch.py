@@ -204,7 +204,8 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     assert "const preservedParams = {};" in script
     assert 'action === "stranger_message"' in script
     assert 'workflowParamDouyinReplyMode' in script
-    assert 'preservedParams.reply_mode = replyMode === "ai_lead" ? "ai_lead" : "fixed";' in script
+    assert 'preservedParams.reply_mode = ["ai_lead", "ai_memory"].includes(replyMode) ? replyMode : "fixed";' in script
+    assert 'douyinReplyMode === "ai_memory" ? "ai_memory"' in script
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(rowParams.wechat_add_friend_enabled, false);" in script
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);" in script
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script

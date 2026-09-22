@@ -4276,7 +4276,8 @@
       }
       if (key === "douyin_leads") {
         if (item && item.privateTakeover) {
-          return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡")))
+          return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡") + optionHtml("ai_memory", "AI 记忆接管（按记忆文件回复）")))
+            + `<div class="field full hidden" id="workflowParamDouyinMemoryField"><label>记忆文件</label>${videoMemorySelectControl("workflowParamDouyinMemoryDocs")}</div>`
             + taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
         }
         if (item && item.selfCommentMonitor) return "";
@@ -4370,6 +4371,20 @@
       }
     }
 
+    function bindWorkflowDouyinReplyModeControls() {
+      const mode = String(workflowParamValue("workflowParamDouyinReplyMode") || "fixed").trim().toLowerCase();
+      $("workflowParamDouyinMemoryField")?.classList.toggle("hidden", mode !== "ai_memory");
+      if (mode === "ai_memory" && $("workflowParamDouyinMemoryDocs")) {
+        fillVideoMemorySelects();
+        loadVideoMemoryDocsForSelect();
+      }
+      const sel = $("workflowParamDouyinReplyMode");
+      if (sel && !sel.dataset.workflowDouyinReplyModeBound) {
+        sel.dataset.workflowDouyinReplyModeBound = "1";
+        sel.addEventListener("change", bindWorkflowDouyinReplyModeControls);
+      }
+    }
+
     function initWorkflowParamControls(node) {
       const modal = $("workflowParamModal");
       if (!modal) return;
@@ -4378,6 +4393,11 @@
       syncWorkflowDouyinReplyCommentFields("workflowParam", false);
       if ($("workflowParamLocalStyle")) bindLocalBestsellerPersonaControls("workflowParamLocal");
       bindWorkflowGoalVideoModeControls();
+      bindWorkflowDouyinReplyModeControls();
+      if ($("workflowParamDouyinMemoryDocs")) {
+        fillVideoMemorySelects();
+        loadVideoMemoryDocsForSelect();
+      }
       if ($("workflowParamVideoCandidateGroup")) {
         fillCandidateGroupSelect();
         loadCandidateGroups();
@@ -4691,6 +4711,8 @@
       }
       if (key === "douyin_leads") {
         if (workflowNode && isSalesDouyinPrivateNode(workflowNode)) {
+          const douyinReplyMode = String(workflowParamValue("workflowParamDouyinReplyMode") || "fixed").trim().toLowerCase();
+          const douyinMemoryDocIds = douyinReplyMode === "ai_memory" ? selectedMultiValues("workflowParamDouyinMemoryDocs") : [];
           return {
             title: "抖音私信接管",
             task_kind: "douyin_leads",
@@ -4701,7 +4723,8 @@
               h5_one_shot: true,
               douyin_execution_mode: "one_shot",
               params: {
-                reply_mode: workflowParamValue("workflowParamDouyinReplyMode") || "fixed",
+                reply_mode: douyinReplyMode === "ai_memory" ? "ai_memory" : (douyinReplyMode === "ai_lead" ? "ai_lead" : "fixed"),
+                memory_doc_ids: douyinMemoryDocIds,
                 wechat_add_friend_enabled: workflowParamChecked("workflowParamDouyinWechatAddFriend"),
                 wechat_add_friend_targets_source: "douyin_private_message_phone",
               },
@@ -5352,7 +5375,13 @@
           const replyMode = String(
             planParams.reply_mode || rowParams.reply_mode || "fixed"
           ).trim().toLowerCase();
-          preservedParams.reply_mode = replyMode === "ai_lead" ? "ai_lead" : "fixed";
+          preservedParams.reply_mode = ["ai_lead", "ai_memory"].includes(replyMode) ? replyMode : "fixed";
+          const preservedMemoryIds = Array.isArray(planParams.memory_doc_ids) && planParams.memory_doc_ids.length
+            ? planParams.memory_doc_ids
+            : (Array.isArray(rowParams.memory_doc_ids) ? rowParams.memory_doc_ids : []);
+          if (preservedMemoryIds.length) {
+            preservedParams.memory_doc_ids = preservedMemoryIds.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 3);
+          }
           if (Object.prototype.hasOwnProperty.call(planParams, "wechat_add_friend_enabled")) {
             preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);
           }
@@ -6178,7 +6207,10 @@
       }
       const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
       if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
-        setFieldValue("workflowParamDouyinReplyMode", String(params.reply_mode || "fixed").toLowerCase() === "ai_lead" ? "ai_lead" : "fixed");
+        const openedReplyMode = String(params.reply_mode || "fixed").trim().toLowerCase();
+        setFieldValue("workflowParamDouyinReplyMode", ["ai_lead", "ai_memory"].includes(openedReplyMode) ? openedReplyMode : "fixed");
+        bindWorkflowDouyinReplyModeControls();
+        loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("workflowParamDouyinMemoryDocs", params.memory_doc_ids || [])).catch(() => {});
         setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, false));
         return;
       }

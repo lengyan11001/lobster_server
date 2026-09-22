@@ -813,7 +813,11 @@ def _normalize_douyin_private_switch(
     # worker treats an omitted value as fixed mode.
     if "reply_mode" in params:
         raw_reply_mode = _clean_text(params.get("reply_mode"), 32).lower()
-        params["reply_mode"] = raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead"} else "fixed"
+        params["reply_mode"] = (
+            raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead", "ai_memory"} else "fixed"
+        )
+    if _clean_douyin_memory_doc_ids(params.get("memory_doc_ids")):
+        params["memory_doc_ids"] = _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
     params.pop("wechat_add_friend_rules", None)
     payload["params"] = params
 
@@ -1767,6 +1771,33 @@ def _sales_douyin_followup_actions(value: Any) -> list[str]:
     return [action for action in _SALES_DOUYIN_FOLLOWUP_ACTIONS if action in selected]
 
 
+def _clean_douyin_memory_doc_ids(value: Any, limit: int = 3) -> list[str]:
+    rows = value if isinstance(value, list) else []
+    ids: list[str] = []
+    for item in rows:
+        if isinstance(item, dict):
+            doc_id = _clean_text(item.get("doc_id") or item.get("id"), 128)
+        else:
+            doc_id = _clean_text(item, 128)
+        if doc_id and doc_id not in ids:
+            ids.append(doc_id)
+    return ids[: max(1, int(limit or 1))]
+
+
+def _douyin_memory_docs_for_ids(memory_docs: Any, doc_ids: list[str]) -> list[dict[str, Any]]:
+    """按节点选中的 doc_id 过滤模板记忆文件；节点没选就整份沿用。"""
+    rows = [row for row in (memory_docs if isinstance(memory_docs, list) else []) if isinstance(row, dict)]
+    if not doc_ids:
+        return rows
+    wanted = set(doc_ids)
+    picked: list[dict[str, Any]] = []
+    for row in rows:
+        doc_id = _clean_text(row.get("doc_id") or row.get("id"), 128)
+        if doc_id and doc_id in wanted:
+            picked.append(row)
+    return picked
+
+
 def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Reduce a sales Douyin node to the action-only Online contract."""
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
@@ -1818,7 +1849,9 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.
     if action == "stranger_message" and (
-        "wechat_add_friend_enabled" in params or "reply_mode" in params
+        "wechat_add_friend_enabled" in params
+        or "reply_mode" in params
+        or _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
     ):
         result["params"] = {
             "wechat_add_friend_enabled": _bool_param(params.get("wechat_add_friend_enabled"), False),
@@ -1827,7 +1860,12 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
         }
         if "reply_mode" in params:
             raw_reply_mode = _clean_text(params.get("reply_mode"), 32).lower()
-            result["params"]["reply_mode"] = raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead"} else "fixed"
+            result["params"]["reply_mode"] = (
+                raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead", "ai_memory"} else "fixed"
+            )
+        memory_doc_ids = _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
+        if memory_doc_ids:
+            result["params"]["memory_doc_ids"] = memory_doc_ids
     return result
 
 
@@ -2249,6 +2287,7 @@ def _prepare_sales_workflow_nodes(
     has_local_bestseller = False
     has_wechat = False
     has_whatsapp = False
+    takeover_memory_missing = False
     missing: list[str] = []
 
     for node in prepared:
@@ -2302,6 +2341,28 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "douyin_leads":
             # 销售工作流只触发动作；关键词、账号、话术和节奏统一由 Online 本机配置决定。
             plan["payload"] = _sales_douyin_action_payload(node, payload)
+            douyin_payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+            douyin_params = (
+                douyin_payload.get("params") if isinstance(douyin_payload.get("params"), dict) else {}
+            )
+            if (
+                _clean_text(douyin_payload.get("action"), 64).lower() == "stranger_message"
+                and _clean_text(douyin_params.get("reply_mode"), 32).lower() == "ai_memory"
+            ):
+                # 抖音私信「AI 记忆接管」：节点没单独选记忆文件时，沿用当前 IP 模板里选的那份。
+                douyin_params = dict(douyin_params)
+                selected_memory_ids = _clean_douyin_memory_doc_ids(
+                    douyin_params.get("memory_doc_ids")
+                ) or _clean_douyin_memory_doc_ids(memory_doc_ids)
+                selected_memory_docs = _douyin_memory_docs_for_ids(memory_docs, selected_memory_ids)
+                if selected_memory_ids:
+                    douyin_params["memory_doc_ids"] = selected_memory_ids
+                if selected_memory_docs:
+                    douyin_params["memory_docs"] = copy.deepcopy(selected_memory_docs)
+                douyin_payload["params"] = douyin_params
+                plan["payload"] = douyin_payload
+                if not (selected_memory_ids or selected_memory_docs):
+                    takeover_memory_missing = True
 
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
             has_local_bestseller = True
@@ -2465,6 +2526,9 @@ def _prepare_sales_workflow_nodes(
                 missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
             else:
                 missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+
+    if takeover_memory_missing:
+        missing.append("抖音私信记忆接管：请在节点或「IP人设定位-模板」里选择 1 份记忆文件")
 
     if has_ip_daily and not personal:
         missing.append("IP日更：缺少当前使用模板")
