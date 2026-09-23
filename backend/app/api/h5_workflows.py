@@ -41,6 +41,7 @@ from .scheduled_tasks import (
     _delete_task_row,
     _hydrate_workflow_task_payload,
     _local_bestseller_profile_from_persona,
+    _missing_local_bestseller_profile_fields,
     _serialize_task,
     douyin_node_label,
     normalize_douyin_task_kind,
@@ -2191,6 +2192,126 @@ def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> lis
     return prepared
 
 
+def _node_consumes_ip_persona(node: dict[str, Any]) -> bool:
+    """节点执行时会读取当前模板的人设资料，而不是只靠 Online 本机配置。"""
+    if not isinstance(node, dict) or _is_workflow_placeholder(node):
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+    action = _clean_text(
+        payload.get("action") or node.get("ability_key") or node.get("abilityKey"),
+        128,
+    ).lower()
+    capability_id = _clean_text(
+        payload.get("capability_id") or nested.get("capability_id"),
+        128,
+    ).lower()
+    key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+    # 朋友圈图文 / 口播日更：生成时读资料调查、关键词、同行和记忆。
+    if task_kind == "ip_content_daily" or key in {"ip_content_daily", "ip_content_oral", "ip_content_moments"}:
+        return True
+    # 同城爆款：人物照片和城市、身份等人设来自资料调查。
+    if action.startswith("local_bestseller") or key.startswith("local_bestseller"):
+        return True
+    # 数字人口播：文案走行业热门口播，并注入人设、关键词、同行、记忆、形象和声音。
+    if action in {"shanjian_digital_human_video", "hifly.video.create_by_tts"} or key in {
+        "shanjian_digital_human_video",
+        "hifly.video.create_by_tts",
+    }:
+        return True
+    if capability_id == "hifly.video.create_by_tts":
+        return True
+    return False
+
+
+def _workflow_consumes_ip_persona(nodes: list[dict[str, Any]]) -> bool:
+    return any(_node_consumes_ip_persona(node) for node, _parent in _workflow_nodes_with_actions(nodes))
+
+
+
+_IP_ORAL_TASKS = ["industry_hot_oral", "professional_ip_oral"]
+_IP_MOMENTS_TASKS = ["moments_candidate"]
+
+
+def _custom_ip_daily_tasks(node: dict[str, Any], payload: Optional[dict[str, Any]] = None) -> list[str]:
+    """自编节点的 IP 产出。显式 tasks 优先；口播节点不能被扩成三日更。"""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    source = payload if isinstance(payload, dict) else (
+        plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    )
+    key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+    raw_tasks = source.get("tasks") if isinstance(source.get("tasks"), list) else None
+    selected = [task for task in (raw_tasks or []) if task in _IP_DAILY_DEFAULT_TASKS]
+    if selected:
+        return selected
+    if key == "ip_content_oral":
+        return list(_IP_ORAL_TASKS)
+    if key == "ip_content_moments":
+        return list(_IP_MOMENTS_TASKS)
+    return list(_IP_DAILY_DEFAULT_TASKS)
+
+
+def _persona_requirements_have_content(requirements: Any) -> bool:
+    def walk(value: Any) -> bool:
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, dict):
+            return any(walk(item) for item in value.values())
+        if isinstance(value, list):
+            return any(walk(item) for item in value)
+        return False
+
+    return walk(requirements)
+
+
+def _custom_workflow_material_needs(nodes: list[dict[str, Any]]) -> dict[str, bool]:
+    """自编工作流只认证整条流程真正会读的资料，取并集，不套销售整包。"""
+    needs = {
+        "keywords": False,
+        "competitors": False,
+        "survey": False,
+        "memory": False,
+        "local_bestseller": False,
+        "digital_human": False,
+        "wechat": False,
+        "whatsapp": False,
+    }
+    for node, _parent in _workflow_nodes_with_actions(nodes):
+        if not isinstance(node, dict) or _is_workflow_placeholder(node):
+            continue
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+        task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+        key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+        action = _clean_text(payload.get("action") or key, 128).lower()
+        capability_id = _clean_text(payload.get("capability_id") or nested.get("capability_id"), 128).lower()
+        if task_kind == "ip_content_daily" or key in {"ip_content_daily", "ip_content_oral", "ip_content_moments"}:
+            tasks = _custom_ip_daily_tasks(node, payload)
+            if "industry_hot_oral" in tasks or "moments_candidate" in tasks:
+                needs["keywords"] = True
+            if "professional_ip_oral" in tasks or "moments_candidate" in tasks:
+                needs["competitors"] = True
+        if action.startswith("local_bestseller") or key.startswith("local_bestseller"):
+            needs["survey"] = True
+            needs["local_bestseller"] = True
+        if action in {"shanjian_digital_human_video", "hifly.video.create_by_tts"} or key in {
+            "shanjian_digital_human_video",
+            "hifly.video.create_by_tts",
+        } or capability_id == "hifly.video.create_by_tts":
+            needs["survey"] = True
+            needs["keywords"] = True
+            needs["memory"] = True
+            needs["digital_human"] = True
+        if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
+            needs["wechat"] = True
+        if task_kind == "client_workflow" and action == "native_whatsapp_poll":
+            needs["whatsapp"] = True
+    return needs
+
+
 def _prepare_sales_workflow_nodes(
     *,
     db: Session,
@@ -2200,13 +2321,23 @@ def _prepare_sales_workflow_nodes(
     nodes: list[dict[str, Any]],
     snapshot_extra: Optional[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    if not _is_sales_workflow(template_name, nodes, snapshot_extra):
+    sales_workflow = _is_sales_workflow(template_name, nodes, snapshot_extra)
+    template_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
+    # 直接启用的非销售系统目录保持原样。复制出来自己改的模板没有 system key，
+    # 按节点认证：含朋友圈图文、同城爆款或数字人时，必须补齐这些节点真正读取的资料。
+    system_non_sales = (
+        bool(template_key)
+        and template_key in _enabled_system_workflow_keys()
+        and template_key != "system_sales"
+    )
+    if not sales_workflow and (system_non_sales or not _workflow_consumes_ip_persona(nodes)):
         return nodes
 
     prepared = copy.deepcopy(nodes)
-    for node in prepared:
-        _normalize_sales_native_wechat_node(node)
-    prepared = _ensure_sales_douyin_add_friend_children(prepared)
+    if sales_workflow:
+        for node in prepared:
+            _normalize_sales_native_wechat_node(node)
+        prepared = _ensure_sales_douyin_add_friend_children(prepared)
     personal = _personal_default_template(db, owner.id, installation_id)
     current_template = _current_personal_schedule_template(db, owner.id, personal)
     reference_template = current_template or personal
@@ -2284,7 +2415,11 @@ def _prepare_sales_workflow_nodes(
     has_memory_takeover = False
     missing: list[str] = []
 
-    for node in prepared:
+    # 销售整包只处理顶层节点。自编工作流要把动作子节点一并算进资料并集。
+    material_nodes = prepared if sales_workflow else [
+        node for node, _parent in _workflow_nodes_with_actions(prepared)
+    ]
+    for node in material_nodes:
         if _is_workflow_placeholder(node):
             continue
         plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
@@ -2293,7 +2428,11 @@ def _prepare_sales_workflow_nodes(
         capability_id = _clean_text(payload.get("capability_id"), 128)
         action = _clean_text(payload.get("action"), 128)
 
-        if task_kind == "ip_content_daily":
+        ability_key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+        is_ip_content = task_kind == "ip_content_daily" or (
+            not sales_workflow and ability_key in {"ip_content_daily", "ip_content_oral", "ip_content_moments"}
+        )
+        if is_ip_content:
             has_ip_daily = True
             payload = dict(payload)
             if personal:
@@ -2329,11 +2468,15 @@ def _prepare_sales_workflow_nodes(
                     payload.pop(stale_key, None)
             tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
             normalized_tasks = [task for task in tasks if task in _IP_DAILY_DEFAULT_TASKS]
-            payload["tasks"] = normalized_tasks or list(_IP_DAILY_DEFAULT_TASKS)
+            if sales_workflow:
+                payload["tasks"] = normalized_tasks or list(_IP_DAILY_DEFAULT_TASKS)
+            else:
+                payload["tasks"] = _custom_ip_daily_tasks(node, payload)
             plan["payload"] = payload
 
-        if task_kind == "douyin_leads":
+        if sales_workflow and task_kind == "douyin_leads":
             # 销售工作流只触发动作；关键词、账号、话术和节奏统一由 Online 本机配置决定。
+            # 自编工作流不能改写成销售动作。
             plan["payload"] = _sales_douyin_action_payload(node, payload)
             douyin_payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
             douyin_params = (
@@ -2478,65 +2621,128 @@ def _prepare_sales_workflow_nodes(
                 plan["task_kind"] = "client_workflow"
                 plan["payload"] = {"action": "shanjian_digital_human_video", "params": params}
 
-    if not personal:
-        missing.append("IP人设定位：请先完成资料调查并保存")
-    else:
-        profile_missing = _missing_sales_persona_fields(requirements)
-        if template_survey is None:
-            # 当前模板没关联资料调查：不再用个人默认行里的旧人设兜底，直接拦下，
-            # 让用户去模板里选好资料调查再启用。
-            missing.append(
-                "IP人设定位-模板：当前模板还没有关联资料调查（人设），"
-                "请先在模板里选择资料调查后再启用"
-            )
-            profile_missing = []
-        if profile_missing:
-            missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
-        if not keywords:
-            if _has_active_keywords(db, reference_owner_id):
-                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+    if not sales_workflow:
+        needs = _custom_workflow_material_needs(prepared)
+        persona_needed = any(
+            needs[key]
+            for key in ("survey", "keywords", "competitors", "memory", "local_bestseller", "digital_human")
+        )
+        if not personal:
+            if persona_needed:
+                missing.append("IP人设定位：请先完成资料调查并保存")
+        elif persona_needed:
+            if needs["survey"] and template_survey is None:
+                missing.append(
+                    "IP人设定位-模板：当前模板还没有关联资料调查（人设），"
+                    "请先在模板里选择资料调查后再启用"
+                )
             else:
-                missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
-        if not competitors:
-            if _has_active_competitors(db, reference_owner_id):
-                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
-            else:
-                missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
-        elif not any(row.last_fetch_at for row in competitors):
-            missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
-        # 只有「记忆接管」节点时不需要 IP 模板记忆文件：那份记忆在 Online 抖音获客-私信引流里选。
-        needs_template_memory = has_ip_daily or has_hifly
-        if not (memory_doc_ids or memory_docs) and not (has_memory_takeover and not needs_template_memory):
-            if _has_active_memory_docs(db, owner.id, installation_id):
-                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
-            else:
-                missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+                if needs["digital_human"] and needs["survey"] and not _persona_requirements_have_content(requirements):
+                    missing.append("IP人设定位-资料调查：当前资料调查还没有可用内容，请先完善后再启用")
+                if needs["local_bestseller"] and template_survey is not None:
+                    profile = _local_bestseller_profile_from_persona(requirements if isinstance(requirements, dict) else {})
+                    profile_missing = _missing_local_bestseller_profile_fields(profile if isinstance(profile, dict) else {})
+                    if profile_missing:
+                        missing.append("同城爆款视频：" + "、".join(profile_missing))
+            if needs["keywords"]:
+                if not keywords:
+                    if _has_active_keywords(db, reference_owner_id):
+                        missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+                    else:
+                        missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
+            if needs["competitors"]:
+                if not competitors:
+                    if _has_active_competitors(db, reference_owner_id):
+                        missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
+                    else:
+                        missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
+                elif not any(getattr(row, "last_fetch_at", None) for row in competitors):
+                    missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
+            if needs["memory"] and not (memory_doc_ids or memory_docs):
+                if _has_active_memory_docs(db, owner.id, installation_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
+                else:
+                    missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+        if needs["wechat"] and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
+        if needs["whatsapp"] and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
+        if needs["digital_human"]:
+            if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                if not hifly_avatar_rows:
+                    missing.append("素材库：请先创建可用的旧版数字人形象分身")
+            elif not shanjian_virtualmans:
+                missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
+            if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
+                missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
+            if not selected_voices:
+                missing.append("素材库：请先创建可用的声音分身")
+        if missing:
+            detail = "当前工作流无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
+            raise HTTPException(status_code=400, detail=detail)
+        return prepared
 
-    if has_ip_daily and not personal:
-        missing.append("IP日更：缺少当前使用模板")
-    if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
-        missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
-    if has_whatsapp and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
-        missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
-    if has_hifly:
-        if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
-            if not hifly_avatar_rows:
-                missing.append("素材库：请先创建可用的旧版数字人形象分身")
-        elif not shanjian_virtualmans:
-            missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
-        if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
-            missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
-        if not selected_voices:
-            missing.append("素材库：请先创建可用的声音分身")
-    if has_local_bestseller and personal:
-        profile = _local_bestseller_profile_from_persona(requirements)
-        if not (_clean_text(profile.get("photo_asset_id"), 128) or _clean_text(profile.get("photo_url"), 1000)):
-            missing.append("同城爆款视频：缺少人物照片")
+    if sales_workflow:
+        if not personal:
+            missing.append("IP人设定位：请先完成资料调查并保存")
+        else:
+            profile_missing = _missing_sales_persona_fields(requirements)
+            if template_survey is None:
+                # 当前模板没关联资料调查：不再用个人默认行里的旧人设兜底，直接拦下，
+                # 让用户去模板里选好资料调查再启用。
+                missing.append(
+                    "IP人设定位-模板：当前模板还没有关联资料调查（人设），"
+                    "请先在模板里选择资料调查后再启用"
+                )
+                profile_missing = []
+            if profile_missing:
+                missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
+            if not keywords:
+                if _has_active_keywords(db, reference_owner_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+                else:
+                    missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
+            if not competitors:
+                if _has_active_competitors(db, reference_owner_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
+                else:
+                    missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
+            elif not any(row.last_fetch_at for row in competitors):
+                missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
+            # 只有「记忆接管」节点时不需要 IP 模板记忆文件：那份记忆在 Online 抖音获客-私信引流里选。
+            needs_template_memory = has_ip_daily or has_hifly
+            if not (memory_doc_ids or memory_docs) and not (has_memory_takeover and not needs_template_memory):
+                if _has_active_memory_docs(db, owner.id, installation_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
+                else:
+                    missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
 
-    if missing:
-        detail = "销售员工无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
-        raise HTTPException(status_code=400, detail=detail)
-    return prepared
+        if has_ip_daily and not personal:
+            missing.append("IP日更：缺少当前使用模板")
+        if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
+        if has_whatsapp and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
+        if has_hifly:
+            if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                if not hifly_avatar_rows:
+                    missing.append("素材库：请先创建可用的旧版数字人形象分身")
+            elif not shanjian_virtualmans:
+                missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
+            if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
+                missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
+            if not selected_voices:
+                missing.append("素材库：请先创建可用的声音分身")
+        if has_local_bestseller and personal:
+            profile = _local_bestseller_profile_from_persona(requirements)
+            if not (_clean_text(profile.get("photo_asset_id"), 128) or _clean_text(profile.get("photo_url"), 1000)):
+                missing.append("同城爆款视频：缺少人物照片")
+
+        if missing:
+            subject = "销售员工" if sales_workflow else "当前工作流"
+            detail = subject + "无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
+            raise HTTPException(status_code=400, detail=detail)
+        return prepared
 
 
 def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, source: str = "own", grants: Optional[list[int]] = None) -> dict[str, Any]:
