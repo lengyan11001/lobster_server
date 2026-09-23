@@ -10254,7 +10254,7 @@
             ${assetLibraryLabelHtml(asset)}
           </span>
         </button>
-        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${contentActionMenuHtml(actionItem)}</footer>
+        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${asset.asset_origin === "user_upload" && !asset._content_record ? `<button class="ghost" type="button" data-asset-edit-id="${escapeHtml(id)}">编辑</button>` : ""}${contentActionMenuHtml(actionItem)}</footer>
       </article>`;
     }
 
@@ -11725,6 +11725,54 @@
     function closeAssetUploadModal() {
       $("assetUploadModal")?.classList.add("hidden");
       if ($("assetLibraryUploadStatus")) $("assetLibraryUploadStatus").textContent = "";
+    }
+
+    function closeAssetEditModal() {
+      $("assetEditModal")?.classList.add("hidden");
+      state.assetEditId = "";
+    }
+
+    function openAssetEditModal(assetId) {
+      const asset = findAssetInLibrary(assetId);
+      if (!asset) {
+        toast("素材不存在");
+        return;
+      }
+      state.assetEditId = String(asset.asset_id || assetId || "");
+      const group = String(asset.creative_candidate_group || (Array.isArray(asset.creative_candidate_groups) && asset.creative_candidate_groups[0]) || "").trim();
+      const rawTags = String(asset.tags || "").trim();
+      state.assetEditOriginalTags = rawTags;
+      if ($("assetEditGroup")) $("assetEditGroup").value = group;
+      if ($("assetEditTags")) $("assetEditTags").value = rawTags.startsWith("auto,") ? "" : rawTags;
+      loadCandidateGroups();
+      $("assetEditModal")?.classList.remove("hidden");
+    }
+
+    async function saveAssetEdit(evt) {
+      if (evt) evt.preventDefault();
+      const id = String(state.assetEditId || "");
+      if (!id) return;
+      const group = String($("assetEditGroup")?.value || "").trim();
+      let tags = String($("assetEditTags")?.value || "").trim();
+      const original = String(state.assetEditOriginalTags || "");
+      if (!tags && original.startsWith("auto,")) tags = original;
+      const btn = $("assetEditSave");
+      if (btn) btn.disabled = true;
+      try {
+        await api("/api/assets/" + encodeURIComponent(id) + "/labels", {
+          method: "POST",
+          json: { creative_candidate_group: group, tags },
+        });
+        closeAssetEditModal();
+        state.assetLibraryPageCache = {};
+        await loadCandidateGroups();
+        await loadAssetLibrary(state.assetLibraryOrigin, { force: true });
+        toast("已保存");
+      } catch (err) {
+        toast((err && err.message) || "保存失败");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     function closeAssetAvatarModal() {
@@ -19044,9 +19092,10 @@
 
     function fillCandidateGroupSelect() {
       const datalist = $("assetLibraryUploadGroupOptions");
-      if (datalist) {
-        datalist.innerHTML = (state.candidateGroups || []).map((row) => '<option value="' + escapeHtml(row.name || "") + '"></option>').join("");
-      }
+      const editList = $("assetEditGroupOptions");
+      const options = (state.candidateGroups || []).map((row) => '<option value="' + escapeHtml(row.name || "") + '"></option>').join("");
+      if (datalist) datalist.innerHTML = options;
+      if (editList) editList.innerHTML = options;
       const selects = [$("taskCandidateGroup"), $("abilityVideoCandidateGroup"), $("workflowParamVideoCandidateGroup")].filter(Boolean);
       if (!selects.length) return;
       selects.forEach((sel) => {
@@ -28131,6 +28180,12 @@
     $("assetUploadBackdrop")?.addEventListener("click", closeAssetUploadModal);
     $("assetUploadClose")?.addEventListener("click", closeAssetUploadModal);
     $("assetUploadCancel")?.addEventListener("click", closeAssetUploadModal);
+    $("assetEditBackdrop")?.addEventListener("click", closeAssetEditModal);
+    $("assetEditClose")?.addEventListener("click", closeAssetEditModal);
+    $("assetEditCancel")?.addEventListener("click", closeAssetEditModal);
+    $("assetEditForm")?.addEventListener("submit", (evt) => {
+      saveAssetEdit(evt).catch((err) => toast(err.message || "保存失败"));
+    });
     $("assetLibraryUploadInput")?.addEventListener("change", () => syncNativeInputFiles("assetLibraryUploadInput", true));
     $("assetUploadForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
@@ -28551,6 +28606,13 @@
       const hiflyBtn = evt.target.closest("[data-hifly-asset-kind]");
       if (hiflyBtn) {
         openHiflyAssetPreview(hiflyBtn.dataset.hiflyAssetKind || "", hiflyBtn.dataset.hiflyAssetId || "");
+        return;
+      }
+      const editBtn = evt.target.closest("[data-asset-edit-id]");
+      if (editBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openAssetEditModal(editBtn.dataset.assetEditId || "");
         return;
       }
       const btn = evt.target.closest("[data-asset-preview-id]");

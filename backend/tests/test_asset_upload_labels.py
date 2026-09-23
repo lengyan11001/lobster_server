@@ -182,3 +182,53 @@ def test_creative_group_list_counts_images_only(db_session, test_user):
     assert groups["D"]["count"] == 0
     assert "B" not in groups
     assert "C" not in groups
+def test_update_asset_labels_sets_and_clears_non_image_asset(db_session, test_user):
+    from backend.app.api import assets
+
+    row = Asset(
+        asset_id="doc-labels",
+        user_id=test_user.id,
+        filename="notes.pdf",
+        media_type="document",
+        file_size=12,
+        source_url="https://cdn.example.com/notes.pdf",
+        meta={"asset_origin": "generated", "keep_me": "yes"},
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    auto = "auto," + ("y" * 3000)
+    result = assets.update_asset_labels(
+        asset_id=row.asset_id,
+        body=assets.AssetLabelsReq(creative_candidate_group="  spring   hero  ", tags=auto),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    db_session.refresh(row)
+    assert result["creative_candidate_group"] == "spring hero"
+    assert result["creative_candidate_groups"] == ["spring hero"]
+    assert result["tags"] == auto[:2048]
+    assert row.tags == auto[:2048]
+    assert row.meta["creative_candidate_group"] == "spring hero"
+    assert row.meta["creative_candidate_groups"] == ["spring hero"]
+    assert row.meta["asset_origin"] == "generated"
+    assert row.meta["keep_me"] == "yes"
+
+    cleared = assets.update_asset_labels(
+        asset_id=row.asset_id,
+        body=assets.AssetLabelsReq(creative_candidate_group="   ", tags="  "),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    db_session.refresh(row)
+    assert cleared["creative_candidate_group"] == ""
+    assert cleared["creative_candidate_groups"] == []
+    assert cleared["tags"] == ""
+    assert row.tags is None
+    assert "creative_candidate_group" not in row.meta
+    assert "creative_candidate_groups" not in row.meta
+    assert row.meta["asset_origin"] == "generated"
+    assert row.meta["keep_me"] == "yes"

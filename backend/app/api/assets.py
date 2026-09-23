@@ -627,6 +627,11 @@ class CreativeCandidateGroupReq(BaseModel):
     group_name: str
 
 
+class AssetLabelsReq(BaseModel):
+    creative_candidate_group: str = ""
+    tags: str = ""
+
+
 def _autosave_tags_require_tos(tags: Optional[str]) -> bool:
     """MCP 对话生成后自动入库使用 tags=auto,<capability_id>，此类必须走 TOS，source_url 才稳定可预览。"""
     return (tags or "").strip().startswith("auto,")
@@ -1913,6 +1918,48 @@ def add_asset_to_creative_candidate_group(
     db.add(row)
     db.commit()
     return {"ok": True, "asset_id": row.asset_id, "group_name": group_name, "groups": [group_name]}
+
+
+_LABEL_MEDIA_TYPES = {"image", "video", "audio", "document"}
+
+
+def _clear_creative_candidate_group_meta(meta: dict) -> None:
+    meta.pop("creative_candidate_group", None)
+    meta.pop("creative_candidate_groups", None)
+
+
+@router.post("/api/assets/{asset_id}/labels", summary="编辑素材分组和标签")
+def update_asset_labels(
+    asset_id: str,
+    body: AssetLabelsReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    media_type = (row.media_type or "").strip().lower()
+    if media_type not in _LABEL_MEDIA_TYPES:
+        raise HTTPException(400, detail="该素材类型不支持编辑分组和标签")
+    group_name = _clean_creative_group_name_optional(body.creative_candidate_group)
+    tags = _clean_upload_tags(body.tags if isinstance(body.tags, str) else "")
+    meta = dict(row.meta or {})
+    if group_name:
+        _apply_creative_candidate_group_meta(meta, group_name)
+    else:
+        _clear_creative_candidate_group_meta(meta)
+    row.meta = meta
+    row.tags = tags
+    db.add(row)
+    db.commit()
+    return {
+        "ok": True,
+        "asset_id": row.asset_id,
+        "creative_candidate_group": group_name,
+        "creative_candidate_groups": [group_name] if group_name else [],
+        "tags": tags or "",
+    }
 
 
 # ── Get single + serve file ──────────────────────────────────────

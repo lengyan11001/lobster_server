@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260910-survey-record-name-v1" />
   <link rel="stylesheet" href="/h5-static/rich-content.css?v=20260910-rich-content-v1" />
   <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
-  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20260922-douyin-memory-takeover-v9" />
+  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20260923-asset-labels-edit-v1" />
 </head>
 <body>
   <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
@@ -1996,6 +1996,36 @@
     </div>
   </div>
 
+  <div class="employee-modal upload-dialog hidden" id="assetEditModal" role="dialog" aria-modal="true" aria-labelledby="assetEditTitle">
+    <button class="employee-modal-backdrop" type="button" id="assetEditBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover asset-action-popover">
+      <button class="employee-popover-close" type="button" id="assetEditClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">编</div>
+        <div class="employee-popover-title">
+          <strong id="assetEditTitle">编辑素材</strong>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="assetEditForm">
+        <div class="work-dispatch-fields">
+          <div class="field full">
+            <label for="assetEditGroup">分组（可选）</label>
+            <input id="assetEditGroup" type="text" list="assetEditGroupOptions" placeholder="留空表示清空分组" autocomplete="off">
+            <datalist id="assetEditGroupOptions"></datalist>
+          </div>
+          <div class="field full">
+            <label for="assetEditTags">标签（可选）</label>
+            <input id="assetEditTags" type="text" placeholder="多个标签用逗号分隔，留空表示清空" autocomplete="off">
+          </div>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="assetEditCancel">取消</button>
+          <button type="submit" id="assetEditSave">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="employee-modal upload-dialog hidden" id="assetAvatarModal" role="dialog" aria-modal="true" aria-labelledby="assetAvatarTitle">
     <button class="employee-modal-backdrop" type="button" id="assetAvatarBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover asset-action-popover">
@@ -2789,7 +2819,7 @@
 
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
   <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
-  <script src="/h5-static/h5-app.js?v=20260922-douyin-memory-takeover-v9"></script>
+  <script src="/h5-static/h5-app.js?v=20260923-asset-labels-edit-v1"></script>
   <script src="/h5-static/task-center.js?v=20260831-auth-gated-v1"></script>
 </body>
 </html>
