@@ -127,6 +127,8 @@ def test_split_command_carries_labels_but_intermediate_source_does_not(db_sessio
     command = json.loads(message.content.removeprefix("__LOBSTER_H5_CLIENT_COMMAND__"))
     assert command["creative_candidate_group"] == "spring hero"
     assert command["tags"] == "hot,cover"
+    assert command["segment_seconds"] == 3
+    assert "keep_source" not in command
 
 
 def test_video_segment_upload_stores_shared_labels(db_session, test_user, monkeypatch):
@@ -232,3 +234,88 @@ def test_update_asset_labels_sets_and_clears_non_image_asset(db_session, test_us
     assert "creative_candidate_groups" not in row.meta
     assert row.meta["asset_origin"] == "generated"
     assert row.meta["keep_me"] == "yes"
+def test_existing_asset_split_keeps_source_seconds_and_labels(db_session, test_user):
+    from backend.app.api import assets
+
+    device = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="online-label-device",
+        display_name="Online",
+        account_payload={"capabilities": ["asset_video_split_v1"]},
+        last_seen_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(device)
+    db_session.add(
+        Asset(
+            asset_id="library-video",
+            user_id=test_user.id,
+            filename="library.mp4",
+            media_type="video",
+            file_size=10,
+            source_url="https://cdn.example.com/library.mp4",
+            tags="hot,cover",
+            meta={
+                "asset_origin": "user_upload",
+                "creative_candidate_group": "spring hero",
+                "creative_candidate_groups": ["spring hero"],
+            },
+        )
+    )
+    db_session.commit()
+
+    result = assets.split_saved_asset(
+        asset_id="library-video",
+        body=assets.AssetSplitReq(segment_seconds=8),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    message = db_session.query(H5ChatMessage).filter(H5ChatMessage.id == result["message_id"]).one()
+    command = json.loads(message.content.removeprefix("__LOBSTER_H5_CLIENT_COMMAND__"))
+    assert command["action"] == "split_uploaded_video_asset"
+    assert command["segment_seconds"] == 8
+    assert command["creative_candidate_group"] == "spring hero"
+    assert command["tags"] == "hot,cover"
+    assert command["keep_source"] is True
+    source = db_session.query(Asset).filter(Asset.asset_id == "library-video").one()
+    assert source.tags == "hot,cover"
+
+
+def test_existing_video_ai_tags_command_omits_old_tags(db_session, test_user):
+    from backend.app.api import assets
+
+    device = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="online-ai-device",
+        display_name="Online",
+        account_payload={"capabilities": ["asset_video_split_v1"]},
+        last_seen_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(device)
+    db_session.add(
+        Asset(
+            asset_id="library-video-ai",
+            user_id=test_user.id,
+            filename="library-ai.mp4",
+            media_type="video",
+            file_size=10,
+            source_url="https://cdn.example.com/library-ai.mp4",
+            tags="old,tags",
+            meta={"creative_candidate_group": "spring hero"},
+        )
+    )
+    db_session.commit()
+
+    result = assets.fill_saved_asset_ai_tags(
+        asset_id="library-video-ai",
+        current_user=test_user,
+        db=db_session,
+    )
+    message = db_session.query(H5ChatMessage).filter(H5ChatMessage.id == result["message_id"]).one()
+    command = json.loads(message.content.removeprefix("__LOBSTER_H5_CLIENT_COMMAND__"))
+    assert command["action"] == "fill_asset_ai_tags"
+    assert command["creative_candidate_group"] == "spring hero"
+    assert command["media_type"] == "video"
+    assert "tags" not in command

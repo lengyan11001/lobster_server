@@ -483,20 +483,71 @@ def _queue_online_video_split(
     source_filename: str,
     creative_candidate_group: str = "",
     tags: str = "",
+    segment_seconds: Optional[int] = None,
+    keep_source: bool = False,
 ) -> H5ChatMessage:
     now = datetime.utcnow()
+    seconds = _VIDEO_SEGMENT_SECONDS if segment_seconds is None else max(2, min(int(segment_seconds), 60))
     command = {
         "action": "split_uploaded_video_asset",
         "source_asset_id": source_asset.asset_id,
         "source_url": source_asset.source_url or "",
         "source_filename": source_filename,
-        "segment_seconds": _VIDEO_SEGMENT_SECONDS,
+        "segment_seconds": seconds,
         "max_segments": _VIDEO_SEGMENT_MAX_COUNT,
     }
     if creative_candidate_group:
         command["creative_candidate_group"] = creative_candidate_group
     if tags:
         command["tags"] = tags
+    if keep_source:
+        command["keep_source"] = True
+    message = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner_user_id,
+        installation_id=installation_id,
+        mode="client_command",
+        content=_H5_CLIENT_COMMAND_PREFIX + json.dumps(command, ensure_ascii=False, separators=(",", ":")),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    attach_system_task_message(db, message, now=now)
+    db.add(message)
+    db.add(
+        H5ChatEvent(
+            message_id=message.id,
+            user_id=owner_user_id,
+            event_type="queued",
+            payload={
+                "mode": "client_command",
+                "action": command["action"],
+                "source_asset_id": source_asset.asset_id,
+            },
+            created_at=now,
+        )
+    )
+    return message
+
+
+def _queue_fill_asset_ai_tags(
+    db: Session,
+    *,
+    owner_user_id: int,
+    installation_id: str,
+    source_asset: Asset,
+    source_filename: str,
+    creative_candidate_group: str = "",
+) -> H5ChatMessage:
+    now = datetime.utcnow()
+    command = {
+        "action": "fill_asset_ai_tags",
+        "source_asset_id": source_asset.asset_id,
+        "source_url": source_asset.source_url or "",
+        "source_filename": source_filename,
+        "media_type": (source_asset.media_type or "video").strip().lower() or "video",
+        "creative_candidate_group": creative_candidate_group,
+    }
     message = H5ChatMessage(
         id=uuid.uuid4().hex,
         user_id=owner_user_id,
@@ -1926,6 +1977,131 @@ _LABEL_MEDIA_TYPES = {"image", "video", "audio", "document"}
 def _clear_creative_candidate_group_meta(meta: dict) -> None:
     meta.pop("creative_candidate_group", None)
     meta.pop("creative_candidate_groups", None)
+
+
+
+class AssetSplitReq(BaseModel):
+    segment_seconds: int = 3
+
+
+def _saved_asset_group_name(asset: Asset) -> str:
+    meta = asset.meta if isinstance(asset.meta, dict) else {}
+    group_name = str(meta.get("creative_candidate_group") or "").strip()
+    if group_name:
+        return group_name
+    groups = meta.get("creative_candidate_groups")
+    if isinstance(groups, list) and groups:
+        return str(groups[0] or "").strip()
+    return ""
+
+
+def _saved_asset_filename(asset: Asset) -> str:
+    meta = asset.meta if isinstance(asset.meta, dict) else {}
+    return str(meta.get("source_upload_filename") or asset.filename or "video.mp4")
+
+
+def _require_online_split_device(db: Session, owner_user_id: int, offline_detail: str, outdated_detail: str):
+    device, has_online_device = _online_video_split_device(db, owner_user_id)
+    if device is None:
+        if has_online_device:
+            raise HTTPException(status_code=409, detail=outdated_detail)
+        raise HTTPException(status_code=409, detail=offline_detail)
+    return device
+
+
+@router.post("/api/assets/{asset_id}/split", summary="把已入库视频交给 Online 切片")
+def split_saved_asset(
+    asset_id: str,
+    body: AssetSplitReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    owner_user_id = int(owner_user.id)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user_id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    if (row.media_type or "").strip().lower() != "video":
+        raise HTTPException(400, detail="只有视频可以切片")
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if meta.get("online_split_source") or str(meta.get("content_visibility") or "").strip() == "intermediate":
+        raise HTTPException(400, detail="中间素材不能再次切片")
+    source_url = str(row.source_url or "").strip()
+    if not source_url.startswith(("http://", "https://")):
+        raise HTTPException(400, detail="视频还没有公网地址，暂时不能切片")
+    device = _require_online_split_device(
+        db,
+        owner_user_id,
+        "视频切片需要先启动并登录 Online，服务器不再代替本机执行切片",
+        "当前 Online 版本不支持本机视频切片，请升级最新 OTA 后重试",
+    )
+    message = _queue_online_video_split(
+        db,
+        owner_user_id=owner_user_id,
+        installation_id=str(device.installation_id),
+        source_asset=row,
+        source_filename=_saved_asset_filename(row),
+        creative_candidate_group=_saved_asset_group_name(row),
+        tags=row.tags or "",
+        segment_seconds=max(2, min(int(body.segment_seconds or 3), 60)),
+        keep_source=True,
+    )
+    db.commit()
+    from .h5_chat import _clear_pending_empty_for_target
+
+    _clear_pending_empty_for_target(owner_user_id, str(device.installation_id))
+    return {
+        "ok": True,
+        "split_video": True,
+        "processing": "online",
+        "message_id": message.id,
+        "installation_id": str(device.installation_id),
+    }
+
+
+@router.post("/api/assets/{asset_id}/ai-tags", summary="把已入库视频交给 Online 理解并写标签")
+def fill_saved_asset_ai_tags(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    owner_user_id = int(owner_user.id)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user_id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    media_type = (row.media_type or "").strip().lower()
+    if media_type == "image":
+        raise HTTPException(400, detail="图片由浏览器直接理解，服务器不代为请求")
+    if media_type != "video":
+        raise HTTPException(400, detail="只支持视频")
+    source_url = str(row.source_url or "").strip()
+    if not source_url.startswith(("http://", "https://")):
+        raise HTTPException(400, detail="视频还没有公网地址，暂时不能理解")
+    device = _require_online_split_device(
+        db,
+        owner_user_id,
+        "AI理解需要先启动并登录 Online，服务器不再代替本机执行",
+        "当前 Online 版本不支持本机素材理解，请升级最新 OTA 后重试",
+    )
+    message = _queue_fill_asset_ai_tags(
+        db,
+        owner_user_id=owner_user_id,
+        installation_id=str(device.installation_id),
+        source_asset=row,
+        source_filename=_saved_asset_filename(row),
+        creative_candidate_group=_saved_asset_group_name(row),
+    )
+    db.commit()
+    from .h5_chat import _clear_pending_empty_for_target
+
+    _clear_pending_empty_for_target(owner_user_id, str(device.installation_id))
+    return {
+        "ok": True,
+        "processing": "online",
+        "message_id": message.id,
+        "installation_id": str(device.installation_id),
+    }
 
 
 @router.post("/api/assets/{asset_id}/labels", summary="编辑素材分组和标签")

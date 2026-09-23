@@ -10241,6 +10241,11 @@
       const id = String((asset && asset.asset_id) || "");
       const type = String((asset && asset._designer_content_kind) || designerMediaType(asset));
       const actionItem = contentActionItemFromAsset(asset);
+      const libraryMediaType = String((asset && asset.media_type) || "").toLowerCase();
+      const canEditLibraryAsset = asset.asset_origin === "user_upload" && !asset._content_record;
+      const librarySplitBtn = canEditLibraryAsset && libraryMediaType === "video" ? `<button class="ghost" type="button" data-asset-split-id="${escapeHtml(id)}">切片</button>` : "";
+      const libraryAiBtn = canEditLibraryAsset && (libraryMediaType === "image" || libraryMediaType === "video") ? `<button class="ghost" type="button" data-asset-ai-id="${escapeHtml(id)}">AI理解</button>` : "";
+      const libraryEditBtn = canEditLibraryAsset ? `<button class="ghost" type="button" data-asset-edit-id="${escapeHtml(id)}">编辑</button>` : "";
       return `<article class="asset-library-card designer-media-card content-action-card">
         <button class="content-card-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
           <span class="designer-media-thumb">
@@ -10254,7 +10259,7 @@
             ${assetLibraryLabelHtml(asset)}
           </span>
         </button>
-        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${asset.asset_origin === "user_upload" && !asset._content_record ? `<button class="ghost" type="button" data-asset-edit-id="${escapeHtml(id)}">编辑</button>` : ""}${contentActionMenuHtml(actionItem)}</footer>
+        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${librarySplitBtn}${libraryAiBtn}${libraryEditBtn}${contentActionMenuHtml(actionItem)}</footer>
       </article>`;
     }
 
@@ -10380,6 +10385,175 @@
       const id = String(assetId || "");
       const rows = [].concat(state.assetLibraryRows.user_upload || [], state.assetLibraryRows.generated || [], state.contentRecordRows || []);
       return rows.find((row) => String(row && row.asset_id || "") === id) || null;
+    }
+
+
+    function libraryAssetGroup(asset) {
+      if (!asset) return "";
+      if (asset.creative_candidate_group) return String(asset.creative_candidate_group);
+      if (Array.isArray(asset.creative_candidate_groups) && asset.creative_candidate_groups[0]) {
+        return String(asset.creative_candidate_groups[0]);
+      }
+      const meta = asset.meta && typeof asset.meta === "object" ? asset.meta : {};
+      if (meta.creative_candidate_group) return String(meta.creative_candidate_group);
+      if (Array.isArray(meta.creative_candidate_groups) && meta.creative_candidate_groups[0]) {
+        return String(meta.creative_candidate_groups[0]);
+      }
+      return "";
+    }
+
+    function askAssetSegmentSeconds() {
+      return new Promise((resolve) => {
+        const old = document.getElementById("h5-asset-split-seconds-modal");
+        if (old) old.remove();
+        const wrap = document.createElement("div");
+        wrap.id = "h5-asset-split-seconds-modal";
+        wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;";
+        wrap.innerHTML = '<div style="background:#fff;color:#111;padding:16px;border-radius:12px;width:min(360px,92vw);">'
+          + '<div style="font-weight:600;margin-bottom:8px;">切片时长</div>'
+          + '<div style="font-size:13px;margin-bottom:8px;">每段多少秒，范围 2 到 60</div>'
+          + '<input id="h5-asset-split-seconds-input" type="number" min="2" max="60" value="3" style="width:100%;box-sizing:border-box;padding:8px;">'
+          + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+          + '<button type="button" id="h5-asset-split-seconds-cancel">取消</button>'
+          + '<button type="button" id="h5-asset-split-seconds-ok">开始切片</button>'
+          + "</div></div>";
+        document.body.appendChild(wrap);
+        const input = document.getElementById("h5-asset-split-seconds-input");
+        const close = (value) => { wrap.remove(); resolve(value); };
+        document.getElementById("h5-asset-split-seconds-cancel").onclick = () => close(null);
+        wrap.addEventListener("click", (event) => { if (event.target === wrap) close(null); });
+        document.getElementById("h5-asset-split-seconds-ok").onclick = () => {
+          const seconds = parseInt(input.value, 10);
+          if (!seconds || seconds < 2 || seconds > 60) {
+            input.focus();
+            return;
+          }
+          close(seconds);
+        };
+        input.focus();
+        input.select();
+      });
+    }
+
+    function aiTagTextFromCompletion(data) {
+      const choices = data && Array.isArray(data.choices) ? data.choices : [];
+      const message = choices[0] && choices[0].message ? choices[0].message : {};
+      const content = message.content;
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        return content.map((item) => (typeof item === "string" ? item : String((item && item.text) || ""))).join("\n");
+      }
+      return "";
+    }
+
+    function parseAiTagText(text) {
+      let raw = String(text || "").trim();
+      const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenced) raw = fenced[1].trim();
+      let data = null;
+      try { data = JSON.parse(raw); } catch (_) {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
+          try { data = JSON.parse(match[0]); } catch (_) { data = null; }
+        }
+      }
+      let tags = null;
+      if (data && !Array.isArray(data) && typeof data === "object") tags = data.tags;
+      else if (Array.isArray(data)) tags = data;
+      let pieces = [];
+      if (typeof tags === "string") pieces = tags.split(/[,，;；\n]+/);
+      else if (Array.isArray(tags)) pieces = tags.flatMap((item) => String(item).split(/[,，;；]+/));
+      else pieces = raw.split(/[,，;；\n]+/);
+      const seen = [];
+      pieces.forEach((part) => {
+        let tag = String(part || "").replace(/\s+/g, " ").trim().replace(/^["'`]|["'`]$/g, "");
+        if (!tag || tag.toLowerCase() === "tags" || tag.toLowerCase() === "json") return;
+        tag = tag.slice(0, 12);
+        if (!seen.includes(tag) && seen.length < 3) seen.push(tag);
+      });
+      if (seen.length < 2) throw new Error("AI 没有返回足够的标签");
+      return seen.join(",");
+    }
+
+    async function imageBlobToDataUrl(blob) {
+      const bitmap = await createImageBitmap(blob);
+      const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+      let quality = 0.82;
+      let url = canvas.toDataURL("image/jpeg", quality);
+      while (url.length > 1500000 * 1.37 && quality > 0.4) {
+        quality -= 0.1;
+        url = canvas.toDataURL("image/jpeg", quality);
+      }
+      if (typeof bitmap.close === "function") bitmap.close();
+      return url;
+    }
+
+    async function understandLibraryImage(asset) {
+      const id = String((asset && asset.asset_id) || "");
+      if (!id) throw new Error("素材不存在");
+      const response = await fetch(apiUrl(`/api/assets/${encodeURIComponent(id)}/content`), { headers: authHeaders() });
+      if (!response.ok) throw new Error("读取图片失败");
+      const tags = parseAiTagText(aiTagTextFromCompletion(await api("/api/sutui-chat/completions", {
+        method: "POST",
+        timeoutMs: 120000,
+        headers: { "X-Lobster-Image-Understand": "1" },
+        json: {
+          model: "gpt-5.6-sol",
+          stream: false,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: "只返回 JSON，不要解释：{\"tags\":[\"标签1\",\"标签2\",\"标签3\"]}。根据素材内容生成 2 到 3 个短中文标签。" },
+              { type: "image_url", image_url: { url: await imageBlobToDataUrl(await response.blob()) } },
+            ],
+          }],
+        },
+      })));
+      await api(`/api/assets/${encodeURIComponent(id)}/labels`, {
+        method: "POST",
+        json: { creative_candidate_group: libraryAssetGroup(asset), tags },
+      });
+    }
+
+    async function splitLibraryAsset(assetId) {
+      const seconds = await askAssetSegmentSeconds();
+      if (!seconds) return;
+      const data = await api(`/api/assets/${encodeURIComponent(assetId)}/split`, {
+        method: "POST",
+        json: { segment_seconds: seconds },
+        timeoutMs: 30000,
+      });
+      if (!data || !data.message_id) throw new Error("没有拿到切片任务");
+      toast("已交给 Online 切片");
+      await monitorOnlineVideoSplit(data.message_id);
+    }
+
+    async function understandLibraryAsset(assetId) {
+      const asset = findAssetInLibrary(assetId);
+      const mediaType = String((asset && asset.media_type) || "").toLowerCase();
+      if (mediaType === "image") {
+        await understandLibraryImage(asset);
+        state.assetLibraryPage.user_upload = 1;
+        state.assetLibraryPageCache = {};
+        state.userUploadAssetCache = {};
+        await loadAssetLibrary("user_upload", { force: true });
+        toast("AI理解完成，已写入标签");
+        return;
+      }
+      const data = await api(`/api/assets/${encodeURIComponent(assetId)}/ai-tags`, {
+        method: "POST",
+        timeoutMs: 30000,
+      });
+      if (!data || !data.message_id) throw new Error("没有拿到理解任务");
+      toast("已交给 Online 理解");
+      await monitorOnlineVideoSplit(data.message_id, "AI理解完成，已写入标签");
     }
 
     function releaseAssetLibraryMedia() {
@@ -10993,7 +11167,7 @@
       }
     }
 
-    async function monitorOnlineVideoSplit(messageId) {
+    async function monitorOnlineVideoSplit(messageId, successText) {
       if (!messageId) return;
       state.onlineVideoSplitMonitors = state.onlineVideoSplitMonitors || new Set();
       if (state.onlineVideoSplitMonitors.has(messageId)) return;
@@ -11008,7 +11182,7 @@
             state.assetLibraryPageCache = {};
             state.userUploadAssetCache = {};
             await loadAssetLibrary("user_upload", { force: true });
-            toast(message.reply_text || "视频切片完成，素材库已更新");
+            toast(successText || message.reply_text || "视频切片完成，素材库已更新");
             return;
           }
           if (["failed", "cancelled"].includes(message.status)) {
@@ -28606,6 +28780,20 @@
       const hiflyBtn = evt.target.closest("[data-hifly-asset-kind]");
       if (hiflyBtn) {
         openHiflyAssetPreview(hiflyBtn.dataset.hiflyAssetKind || "", hiflyBtn.dataset.hiflyAssetId || "");
+        return;
+      }
+      const splitBtn = evt.target.closest("[data-asset-split-id]");
+      if (splitBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        splitLibraryAsset(splitBtn.dataset.assetSplitId || "").catch((err) => toast(err.message || "切片失败"));
+        return;
+      }
+      const aiBtn = evt.target.closest("[data-asset-ai-id]");
+      if (aiBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        understandLibraryAsset(aiBtn.dataset.assetAiId || "").catch((err) => toast(err.message || "AI理解失败"));
         return;
       }
       const editBtn = evt.target.closest("[data-asset-edit-id]");
