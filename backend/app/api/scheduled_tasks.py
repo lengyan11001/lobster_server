@@ -1732,6 +1732,22 @@ def _workflow_node_window_duration(payload: Any) -> Optional[timedelta]:
     return timedelta(minutes=duration_minutes)
 
 
+def _without_heavy_run_columns(query):
+    """Skip lead dumps and transcripts while matching a workflow node.
+
+    Client polls call this on every scheduled-task list. Loading result_payload
+    for hundreds of unrelated runs makes psycopg decode JSON while holding the GIL.
+    Once that allocation pushes the H5 process over systemd MemoryHigh, the kernel
+    parks the thread in mem_cgroup_handle_over_high and the event loop never runs again.
+    """
+    return query.options(
+        defer(ScheduledTaskRun.result_payload),
+        defer(ScheduledTaskRun.result_text),
+        defer(ScheduledTaskRun.content),
+        defer(ScheduledTaskRun.error),
+    )
+
+
 def _workflow_parent_finished_at(
     db: Session,
     task: ScheduledTask,
@@ -1760,7 +1776,7 @@ def _workflow_parent_finished_at(
 
     # The parent may be a server-side IP content run; workflow context is the
     # authoritative relationship, not the run's task_kind.
-    query = db.query(ScheduledTaskRun).filter(
+    query = _without_heavy_run_columns(db.query(ScheduledTaskRun)).filter(
         ScheduledTaskRun.user_id == task.user_id,
         ScheduledTaskRun.status == "completed",
     )
@@ -4822,7 +4838,7 @@ def _workflow_dependency_state(
     # Server-side IP content nodes (including 朋友圈图文) are valid workflow
     # parents just like client_workflow nodes. Match by workflow context below
     # instead of excluding them by task_kind.
-    query = db.query(ScheduledTaskRun).filter(
+    query = _without_heavy_run_columns(db.query(ScheduledTaskRun)).filter(
         ScheduledTaskRun.user_id == task.user_id,
         ScheduledTaskRun.status.in_(tuple(_RUNNING_STATUSES | _FINAL_STATUSES)),
     )
