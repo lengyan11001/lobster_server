@@ -481,6 +481,8 @@ def _queue_online_video_split(
     installation_id: str,
     source_asset: Asset,
     source_filename: str,
+    creative_candidate_group: str = "",
+    tags: str = "",
 ) -> H5ChatMessage:
     now = datetime.utcnow()
     command = {
@@ -491,6 +493,10 @@ def _queue_online_video_split(
         "segment_seconds": _VIDEO_SEGMENT_SECONDS,
         "max_segments": _VIDEO_SEGMENT_MAX_COUNT,
     }
+    if creative_candidate_group:
+        command["creative_candidate_group"] = creative_candidate_group
+    if tags:
+        command["tags"] = tags
     message = H5ChatMessage(
         id=uuid.uuid4().hex,
         user_id=owner_user_id,
@@ -565,6 +571,9 @@ def _uploaded_asset_payload(
         "cover_url": preview_url if row.media_type == "image" else "",
         "asset_origin": "user_upload",
         "deduplicated": deduplicated,
+        "tags": row.tags or "",
+        "creative_candidate_group": _creative_candidate_group(row.meta),
+        "creative_candidate_groups": _creative_candidate_groups(row.meta),
     }
 
 
@@ -677,6 +686,33 @@ def _safe_remote_filename(raw: Optional[str], url: str, fallback: str) -> str:
 def _clean_creative_group_name_optional(value: Optional[str]) -> str:
     name = " ".join(str(value or "").strip().split())
     return name[:40]
+
+
+def _clean_upload_group_form(value: Any) -> str:
+    """Optional upload group. Non-strings, including omitted Form defaults, stay empty."""
+    if not isinstance(value, str):
+        return ""
+    return _clean_creative_group_name_optional(value)
+
+
+def _clean_upload_tags(value: Any) -> Optional[str]:
+    """Optional user-upload tags. Non-strings and blanks stay unset."""
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.startswith("auto,"):
+        return raw[:2048]
+    seen: list[str] = []
+    for part in re.split(r"[,，;；\s]+", raw):
+        tag = part.strip()[:40]
+        if not tag or tag in seen:
+            continue
+        seen.append(tag)
+        if len(seen) >= 12:
+            break
+    return ",".join(seen) if seen else None
 
 
 def _incoming_creative_candidate_group(body: RegisterAssetUrlReq) -> str:
@@ -1354,6 +1390,8 @@ async def upload_asset(
     video_segment: bool = Form(False),
     segment_index: int = Form(0),
     split_job_id: str = Form(""),
+    creative_candidate_group: str = Form(""),
+    tags: str = Form(""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1392,6 +1430,8 @@ async def upload_asset(
             raise HTTPException(status_code=409, detail="视频切片需要先启动并登录 Online，服务器不再代替本机执行切片")
     clean_split_job_id = str(split_job_id or "")[:64] if isinstance(split_job_id, str) else ""
     clean_segment_index = max(0, int(segment_index or 0)) if isinstance(segment_index, int) else 0
+    upload_group = _clean_upload_group_form(creative_candidate_group)
+    upload_tags = _clean_upload_tags(tags)
     if video_segment is True and clean_split_job_id and clean_segment_index:
         existing_segment = _existing_online_split_segment(
             db,
@@ -1442,6 +1482,8 @@ async def upload_asset(
             installation_id=str(split_device.installation_id),
             source_asset=source_asset,
             source_filename=name,
+            creative_candidate_group=upload_group,
+            tags=upload_tags or "",
         )
         db.commit()
         from .h5_chat import _clear_pending_empty_for_target
@@ -1484,6 +1526,9 @@ async def upload_asset(
             ),
         )
     asset_meta = {"asset_origin": "user_upload"}
+    if upload_group:
+        asset_meta["creative_candidate_group"] = upload_group
+        asset_meta["creative_candidate_groups"] = [upload_group]
     if video_segment is True:
         asset_meta.update(
             {
@@ -1501,6 +1546,7 @@ async def upload_asset(
         media_type=mtype,
         file_size=fsize,
         source_url=tos_public_url,
+        tags=upload_tags,
         meta=asset_meta,
     )
     db.add(asset)
@@ -1825,12 +1871,16 @@ def list_creative_candidate_groups(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    rows = db.query(Asset).filter(Asset.user_id == owner_user.id, Asset.media_type == "image").all()
+    rows = db.query(Asset).filter(Asset.user_id == owner_user.id).all()
     groups: dict[str, dict] = {}
     for row in rows:
+        if _asset_hidden_from_library(row):
+            continue
         name = _creative_candidate_group(row.meta)
-        if name:
-            current = groups.setdefault(name, {"name": name, "count": 0})
+        if not name:
+            continue
+        current = groups.setdefault(name, {"name": name, "count": 0})
+        if str(row.media_type or "").strip().lower() == "image":
             current["count"] += 1
     return {
         "ok": True,

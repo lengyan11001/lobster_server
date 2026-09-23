@@ -10225,6 +10225,17 @@
       }
     }
 
+    function assetLibraryLabelHtml(asset) {
+      const group = String((asset && (asset.creative_candidate_group || (Array.isArray(asset.creative_candidate_groups) && asset.creative_candidate_groups[0]))) || "").trim();
+      const rawTags = String((asset && asset.tags) || "").trim();
+      const tags = rawTags.startsWith("auto,") ? [] : rawTags.split(/[,，;；\s]+/).map((item) => item.trim()).filter(Boolean).slice(0, 12);
+      const bits = [];
+      if (group) bits.push("备选：" + group);
+      bits.push(...tags);
+      if (!bits.length) return "";
+      return '<span class="asset-library-card-labels">' + bits.map((item) => escapeHtml(item)).join(" · ") + "</span>";
+    }
+
     function assetCardHtml(asset, index = 0) {
       const title = assetTitle(asset);
       const id = String((asset && asset.asset_id) || "");
@@ -10240,6 +10251,7 @@
           <span class="asset-library-card-main designer-media-meta">
             <strong>${escapeHtml(title || "素材")}</strong>
             <span>${escapeHtml(designerMediaTypeLabel(type))}</span>
+            ${assetLibraryLabelHtml(asset)}
           </span>
         </button>
         <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${contentActionMenuHtml(actionItem)}</footer>
@@ -11675,9 +11687,13 @@
             && item.capabilities.includes("asset_video_split_v1"));
           if (!capable) throw new Error("当前 Online 版本不支持本机视频切片，请升级最新 OTA 后重试");
         }
+        const uploadGroup = String($("assetLibraryUploadGroup")?.value || "").trim();
+        const uploadTags = String($("assetLibraryUploadTags")?.value || "").trim();
         for (let i = 0; i < files.length; i += 1) {
           const fd = new FormData();
           fd.append("file", files[i], files[i].name || "upload");
+          if (uploadGroup) fd.append("creative_candidate_group", uploadGroup);
+          if (uploadTags) fd.append("tags", uploadTags);
           fd.append("split_video", "true");
           const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
           const data = await resp.json().catch(() => ({}));
@@ -11747,8 +11763,13 @@
         setTimeout(() => $("assetVoiceName")?.focus(), 80);
         return;
       }
+      const keptGroup = String($("assetLibraryUploadGroup")?.value || "");
+      const keptTags = String($("assetLibraryUploadTags")?.value || "");
       if ($("assetUploadForm")) $("assetUploadForm").reset();
+      if ($("assetLibraryUploadGroup")) $("assetLibraryUploadGroup").value = keptGroup;
+      if ($("assetLibraryUploadTags")) $("assetLibraryUploadTags").value = keptTags;
       clearCapturedFilesForInput("assetLibraryUploadInput");
+      loadCandidateGroups();
       $("assetUploadModal")?.classList.remove("hidden");
     }
 
@@ -19022,6 +19043,10 @@
     }
 
     function fillCandidateGroupSelect() {
+      const datalist = $("assetLibraryUploadGroupOptions");
+      if (datalist) {
+        datalist.innerHTML = (state.candidateGroups || []).map((row) => '<option value="' + escapeHtml(row.name || "") + '"></option>').join("");
+      }
       const selects = [$("taskCandidateGroup"), $("abilityVideoCandidateGroup"), $("workflowParamVideoCandidateGroup")].filter(Boolean);
       if (!selects.length) return;
       selects.forEach((sel) => {
