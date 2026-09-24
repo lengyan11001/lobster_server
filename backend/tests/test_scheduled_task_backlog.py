@@ -1133,3 +1133,54 @@ def test_workflow_node_deadline_fallback_reports_takeover_activity():
     assert "疑似加群线索 1 个会话" in text
     assert "本次任务已自动停止" not in text
     assert scheduled_tasks._workflow_deadline_fallback_text({}) == "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
+
+
+def test_demo_moments_task_uses_current_template_marker(db_session, test_user):
+    """自编朋友圈演示的 payload 不带关键词/同行，但带了当前模板标记，不能被空参数拦住。"""
+    task = scheduled_tasks._create_task_row(
+        db_session,
+        scheduled_tasks.ScheduledTaskCreate(
+            title='演示-朋友圈图文',
+            task_kind='ip_content_daily',
+            content='H5 工作流：朋友圈图文',
+            payload={
+                'template_id': 0,
+                'use_personal_default': True,
+                'tasks': ['moments_candidate'],
+                'sync_before': True,
+                'requirements': {},
+                'h5_context': {
+                    'template_source': 'personal_current',
+                    'workflow_node_id': 'moments_1',
+                    'workflow_template_id': 88,
+                    'ability_key': 'ip_content_moments',
+                },
+            },
+            schedule_type='once',
+            installation_ids=[],
+        ),
+        target_user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        created_by_role='user',
+    )
+    assert task.payload['template_source'] == 'personal_current'
+    assert task.payload['tasks'] == ['moments_candidate']
+
+
+def test_manual_ip_daily_without_materials_still_rejected(db_session, test_user):
+    with pytest.raises(HTTPException) as exc:
+        scheduled_tasks._create_task_row(
+            db_session,
+            scheduled_tasks.ScheduledTaskCreate(
+                title='手工日更',
+                task_kind='ip_content_daily',
+                content='手工',
+                payload={'tasks': ['moments_candidate'], 'template_id': 0},
+                schedule_type='once',
+            ),
+            target_user_id=test_user.id,
+            created_by_user_id=test_user.id,
+            created_by_role='user',
+        )
+    assert exc.value.status_code == 400
+    assert '关键词' in exc.value.detail

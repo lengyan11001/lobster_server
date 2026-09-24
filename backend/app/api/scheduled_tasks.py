@@ -5221,9 +5221,20 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail=f"定时任务能力已下线：{disabled_capability}")
     if task_kind == "ip_content_daily":
         payload = dict(payload)
-        if str(created_by_role or "").strip().lower() == "workflow":
-            # A workflow stores the schedule, while template data is resolved
-            # live for each occurrence.
+        context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+        # 启动工作流用 role=workflow，执行时再取当前模板。
+        # 节点演示是普通用户建的一次性任务，demo-plan 只把同样的标记放进 h5_context，
+        # 自编朋友圈节点的 payload 里没有关键词/同行/记忆。不认这个标记就会在套用
+        # 当前模板之前报「需要选择模板、关键词、同行账号或记忆资料」，模板上已经
+        # 关联的同行根本看不见。
+        live_template = (
+            str(created_by_role or "").strip().lower() == "workflow"
+            or str(payload.get("template_source") or "").strip().lower() == "personal_current"
+            or str(context.get("template_source") or "").strip().lower() == "personal_current"
+            or bool(context.get("workflow_template_id"))
+            or bool(str(context.get("workflow_node_id") or "").strip())
+        )
+        if live_template:
             payload["template_source"] = "personal_current"
         if (
             str(payload.get("template_source") or "").strip().lower() != "personal_current"
