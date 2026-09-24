@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import asyncio
 import ipaddress
+import json
 import logging
 import math
+import re
 import os
 import shutil
 import subprocess
@@ -23,7 +25,18 @@ from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, H5AgentTemplateGrant, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
 from ..services.brand_context import brand_short_name, normalize_brand_mark, user_brand_mark
-from .assets import _find_asset_ffmpeg, _gen_asset_id, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
+from .assets import (
+    _asset_hidden_from_library,
+    _clean_creative_group_name_optional,
+    _creative_candidate_group,
+    _find_asset_ffmpeg,
+    _gen_asset_id,
+    _get_tos_config,
+    _save_bytes_or_tos,
+    _stored_asset_content_context,
+    get_asset_public_url,
+    online_user_for_mobile_user,
+)
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
 
@@ -1009,6 +1022,270 @@ def _stored_digital_human_template(meta: Any) -> tuple[bool, Optional[Dict[str, 
     }
 
 
+def _clean_digital_human_asset_groups(meta: Any) -> List[str]:
+    if not isinstance(meta, dict):
+        return []
+    raw = meta.get("digital_human_asset_groups")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    seen: List[str] = []
+    for item in raw:
+        name = _clean_creative_group_name_optional(None if item is None else str(item))
+        if name and name not in seen:
+            seen.append(name)
+        if len(seen) >= 20:
+            break
+    return seen
+
+
+def _template_asset_groups(template_meta: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(template_meta, dict):
+        return []
+    return _clean_digital_human_asset_groups({"digital_human_asset_groups": template_meta.get("asset_groups")})
+
+
+def _with_digital_human_asset_groups(template_meta: Optional[Dict[str, Any]], source_meta: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(template_meta, dict):
+        return template_meta
+    groups = _clean_digital_human_asset_groups(source_meta)
+    if not groups:
+        return template_meta
+    copied = dict(template_meta)
+    copied["asset_groups"] = groups
+    return copied
+
+
+def _asset_tag_list(row: Asset) -> List[str]:
+    context = _stored_asset_content_context(row)
+    text = _clean_text(context.get("tags")) or _clean_text(getattr(row, "tags", None))
+    if not text:
+        return []
+    seen: List[str] = []
+    for part in re.split(r"[,，;；\s]+", text):
+        tag = part.strip()[:40]
+        if tag and tag not in seen:
+            seen.append(tag)
+        if len(seen) >= 12:
+            break
+    return seen
+
+
+def _group_asset_candidates(db: Session, current_user: User, groups: List[str]) -> List[Dict[str, Any]]:
+    wanted = set(groups)
+    if not wanted:
+        return []
+    owner = online_user_for_mobile_user(db, current_user)
+    user_ids = {int(current_user.id)}
+    owner_id = getattr(owner, "id", None)
+    if owner_id:
+        user_ids.add(int(owner_id))
+    rows = (
+        db.query(Asset)
+        .filter(Asset.user_id.in_(user_ids))
+        .order_by(Asset.id.desc())
+        .all()
+    )
+    tagged: List[Dict[str, Any]] = []
+    plain: List[Dict[str, Any]] = []
+    for row in rows:
+        if _asset_hidden_from_library(row):
+            continue
+        kind = str(row.media_type or "").strip().lower()
+        if kind not in {"image", "video"}:
+            continue
+        group = _creative_candidate_group(row.meta)
+        if group not in wanted:
+            continue
+        tags = _asset_tag_list(row)
+        item = {
+            "id": _clean_text(row.asset_id),
+            "user_id": int(row.user_id),
+            "type": kind,
+            "group": group,
+            "tags": tags,
+            "name": _clean_text(row.filename)[:80],
+            "file_url": _clean_text(row.source_url),
+        }
+        if not item["id"]:
+            continue
+        (tagged if tags else plain).append(item)
+    return (tagged + plain)[:40]
+
+
+def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    raw = _clean_text(text)
+    fence = "```"
+    if raw.startswith(fence):
+        raw = raw[len(fence):].strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        if raw.endswith(fence):
+            raw = raw[:-len(fence)].strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(raw[start:end + 1])
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+async def _choose_asset_ids_with_deepseek(
+    *,
+    script: str,
+    groups: List[str],
+    candidates: List[Dict[str, Any]],
+) -> List[str]:
+    api_key = str(getattr(settings, "deepseek_api_key", None) or "").strip()
+    if not api_key:
+        raise RuntimeError("deepseek_api_key not configured")
+    model = str(getattr(settings, "lobster_default_sutui_chat_model", None) or "").strip() or "deepseek-chat"
+    api_base = str(getattr(settings, "deepseek_api_base", None) or "https://api.deepseek.com").strip().rstrip("/")
+    allowed = [str(item.get("id") or "") for item in candidates if item.get("id")]
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "stream": False,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "你是短视频混剪选材助手。根据口播文案，从候选素材里选出适合交给剪辑的图片和视频。"
+                    "只返回 JSON：{\"asset_ids\":[\"id\"]}。asset_ids 必须来自候选 id，最多 8 个，按使用顺序排列。"
+                    "没有合适素材就返回空数组。不要解释。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "script": script,
+                        "groups": groups,
+                        "materials": [
+                            {
+                                "id": item.get("id"),
+                                "type": item.get("type"),
+                                "group": item.get("group"),
+                                "tags": item.get("tags") or [],
+                                "name": item.get("name") or "",
+                            }
+                            for item in candidates
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=60.0, trust_env=True) as client:
+        resp = await client.post(f"{api_base}/chat/completions", json=payload, headers=headers)
+    try:
+        data = resp.json() if resp.content else {}
+    except Exception:
+        data = {}
+    if resp.status_code >= 400 or not isinstance(data, dict):
+        raise RuntimeError(f"deepseek asset selection HTTP {resp.status_code}")
+    content = ""
+    choices = data.get("choices") if isinstance(data.get("choices"), list) else []
+    if choices and isinstance(choices[0], dict):
+        message = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
+        content = message.get("content") or ""
+    parsed = _extract_json_object(str(content or ""))
+    raw_ids = parsed.get("asset_ids") if isinstance(parsed, dict) else None
+    if not isinstance(raw_ids, list):
+        raw_ids = parsed.get("ids") if isinstance(parsed, dict) else []
+    if not isinstance(raw_ids, list):
+        return []
+    allowed_set = set(allowed)
+    chosen: List[str] = []
+    for item in raw_ids:
+        asset_id = _clean_text(item)
+        if asset_id and asset_id in allowed_set and asset_id not in chosen:
+            chosen.append(asset_id)
+        if len(chosen) >= 8:
+            break
+    return chosen
+
+
+def _materials_from_group_candidates(candidates: List[Dict[str, Any]], current_user_id: int) -> List[Dict[str, Any]]:
+    materials: List[Dict[str, Any]] = []
+    for item in candidates[:8]:
+        kind = item.get("type")
+        if kind not in {"image", "video"}:
+            continue
+        file_url = _clean_text(item.get("file_url"))
+        if int(item.get("user_id") or 0) == int(current_user_id) and item.get("id"):
+            material = {"type": kind, "asset_id": item["id"]}
+            if file_url:
+                material["fileUrl"] = file_url
+            materials.append(material)
+            continue
+        if file_url:
+            materials.append({"type": kind, "fileUrl": file_url})
+    return materials
+
+
+async def _apply_asset_group_materials(
+    *,
+    db: Session,
+    current_user: User,
+    row: ShanjianDigitalHumanVideoTask,
+    template_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    groups = _template_asset_groups(template_meta)
+    if not groups:
+        return template_meta
+    candidates = _group_asset_candidates(db, current_user, groups)
+    snapshot = dict(template_meta)
+    selection: Dict[str, Any] = {
+        "groups": groups,
+        "candidate_ids": [item["id"] for item in candidates],
+        "selected_ids": [],
+        "status": "empty",
+    }
+    if not candidates:
+        snapshot["asset_group_selection"] = selection
+        return snapshot
+    _release_db_transaction(db)
+    try:
+        selected_ids = await _choose_asset_ids_with_deepseek(
+            script=_clean_text(getattr(row, "text", None))[:2000],
+            groups=groups,
+            candidates=candidates,
+        )
+    except Exception:
+        logger.warning(
+            "[shanjian-dh] asset group selection failed user_id=%s groups=%s",
+            getattr(current_user, "id", ""),
+            groups,
+            exc_info=True,
+        )
+        selection["status"] = "ai_failed"
+        snapshot["asset_group_selection"] = selection
+        return snapshot
+    by_id = {item["id"]: item for item in candidates}
+    chosen = [by_id[asset_id] for asset_id in selected_ids if asset_id in by_id]
+    selection["selected_ids"] = [item["id"] for item in chosen]
+    materials = _materials_from_group_candidates(chosen, int(current_user.id))
+    if not materials:
+        selection["status"] = "none"
+        snapshot["asset_group_selection"] = selection
+        return snapshot
+    selection["status"] = "selected"
+    snapshot["materials"] = materials
+    snapshot["asset_group_selection"] = selection
+    return snapshot
+
+
 def _default_digital_human_template(
     db: Session,
     user_id: int,
@@ -1056,10 +1333,10 @@ def _default_digital_human_template(
         if current is not None:
             configured, template_meta = _stored_digital_human_template(current.meta)
             if configured:
-                return template_meta
+                return _with_digital_human_asset_groups(template_meta, current.meta)
 
     _configured, template_meta = _stored_digital_human_template(personal_meta)
-    return template_meta
+    return _with_digital_human_asset_groups(template_meta, personal_meta)
 
 
 def _resolve_video_template_meta(
@@ -1233,6 +1510,12 @@ async def _submit_realman_clip_task(
         title=row.title or "数字人口播",
         media_type="video",
         label="基础数字人视频",
+    )
+    template_meta = await _apply_asset_group_materials(
+        db=db,
+        current_user=current_user,
+        row=row,
+        template_meta=template_meta,
     )
     prepared_template = await _prepare_template_media_urls(
         db=db,

@@ -357,6 +357,8 @@
       personalDigitalHumanResourceQuery: "",
       personalDigitalHumanResourcePage: 1,
       personalDigitalHumanResourceDraft: null,
+      personalDigitalHumanAssetGroups: [],
+      personalDigitalHumanAssetGroupsLoaded: false,
       workSelectedDigitalHumanTemplate: null,
       personalDefault: null,
       localBestsellerPersonaPromise: null,
@@ -19264,7 +19266,48 @@
       }[String(platform || "").trim()] || platform || "-";
     }
 
+    function normalizePersonalDigitalHumanAssetGroups(value) {
+      const raw = Array.isArray(value) ? value : (value ? [value] : []);
+      const seen = [];
+      raw.forEach((item) => {
+        if (seen.length >= 20) return;
+        const name = String(item || "").replace(/\s+/g, " ").trim().slice(0, 40);
+        if (name && !seen.includes(name)) seen.push(name);
+      });
+      return seen;
+    }
+
+    function currentPersonalDigitalHumanAssetGroups() {
+      const select = $("personalDigitalHumanAssetGroups");
+      if (state.personalDigitalHumanAssetGroupsLoaded && select) {
+        return normalizePersonalDigitalHumanAssetGroups(Array.from(select.selectedOptions || []).map((opt) => opt.value));
+      }
+      return normalizePersonalDigitalHumanAssetGroups(state.personalDigitalHumanAssetGroups);
+    }
+
+    function renderPersonalDigitalHumanAssetGroups() {
+      const select = $("personalDigitalHumanAssetGroups");
+      if (!select) return;
+      const selected = normalizePersonalDigitalHumanAssetGroups(state.personalDigitalHumanAssetGroups);
+      const names = [];
+      (state.candidateGroups || []).forEach((row) => {
+        const name = String((row && row.name) || "").trim();
+        if (name && !names.includes(name)) names.push(name);
+      });
+      selected.forEach((name) => {
+        if (!names.includes(name)) names.push(name);
+      });
+      select.innerHTML = names.map((name) => `<option value="${escapeHtml(name)}"${selected.includes(name) ? " selected" : ""}>${escapeHtml(name)}</option>`).join("");
+      if (!select.dataset.boundAssetGroups) {
+        select.dataset.boundAssetGroups = "1";
+        select.addEventListener("change", () => {
+          state.personalDigitalHumanAssetGroups = normalizePersonalDigitalHumanAssetGroups(Array.from(select.selectedOptions || []).map((opt) => opt.value));
+        });
+      }
+    }
+
     function fillCandidateGroupSelect() {
+      renderPersonalDigitalHumanAssetGroups();
       const datalist = $("assetLibraryUploadGroupOptions");
       const editList = $("assetEditGroupOptions");
       const options = (state.candidateGroups || []).map((row) => '<option value="' + escapeHtml(row.name || "") + '"></option>').join("");
@@ -19287,6 +19330,7 @@
       try {
         const data = await api("/api/assets/creative-candidate-groups");
         state.candidateGroups = Array.isArray(data.groups) ? data.groups : [];
+        state.personalDigitalHumanAssetGroupsLoaded = true;
       } catch {
         state.candidateGroups = [];
       }
@@ -19890,6 +19934,8 @@
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       state.personalSelectedDigitalHumanTemplate = normalizePersonalDigitalHumanTemplate(meta.digital_human_template);
       state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(meta.digital_human_resources);
+      state.personalDigitalHumanAssetGroups = normalizePersonalDigitalHumanAssetGroups(meta.digital_human_asset_groups);
+      renderPersonalDigitalHumanAssetGroups();
       if (item.survey && item.survey.requirements) fillPersonalSurveyFields(item.survey);
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
       const surveySelect = $("personalTemplateSurvey");
@@ -19928,6 +19974,7 @@
           loadPersonalMemoryDocs().catch(() => []),
           loadPersonalTemplateRows().catch(() => []),
           loadPersonalSurveys().catch(() => []),
+          loadCandidateGroups().catch(() => []),
         ]);
         state.personalKeywords = Array.isArray(keywords.items) ? keywords.items : [];
         state.personalCompetitors = Array.isArray(competitors.items) ? competitors.items : [];
@@ -20320,6 +20367,7 @@
       }
       renderPersonalSettings();
       loadPersonalDigitalHumanResources(true).catch(() => {});
+      loadCandidateGroups().catch(() => {});
       modal.classList.remove("hidden");
       const nameInput = $("personalTemplateName");
       if (nameInput && typeof nameInput.focus === "function") setTimeout(() => nameInput.focus(), 80);
@@ -20346,6 +20394,8 @@
       state.personalSelectedMemories = {};
       state.personalSelectedDigitalHumanTemplate = null;
       state.personalDigitalHumanTemplateDraft = null;
+      state.personalDigitalHumanAssetGroups = [];
+      renderPersonalDigitalHumanAssetGroups();
       state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(
         state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.digital_human_resources
       );
@@ -21013,6 +21063,7 @@
           target_language: ipTemplateLanguageLabel(language),
           digital_human_template: digitalHumanTemplate,
           digital_human_resources: digitalHumanResources,
+          digital_human_asset_groups: currentPersonalDigitalHumanAssetGroups(),
         },
       };
       const currentTemplateId = state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.current_template_id;
