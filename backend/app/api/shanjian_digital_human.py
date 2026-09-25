@@ -1394,6 +1394,253 @@ def _template_meta_from_submit_payload(submit_payload: Optional[dict]) -> Option
     return None
 
 
+# ── 闪剪素材分辨率兜底：能压就压，压不了就丢，绝不整单失败 ─────────────────────
+# 闪剪成片要求素材最长边 <= 2000（上游 InvalidFile.Resolution）。素材库/个人模板
+# 分组的素材可能来自任意设备，客户端预处理不一定命中，所以在云端提交剪辑前逐个
+# 体检：超限的压缩成合规副本再用，压缩失败的直接把该素材丢掉，剩下的照样出片。
+
+_SHANJIAN_MATERIAL_MAX_EDGE = 2000
+
+
+def _shanjian_material_max_edge() -> int:
+    raw = str(os.environ.get("SHANJIAN_MATERIAL_MAX_EDGE") or "").strip()
+    try:
+        value = int(raw) if raw else _SHANJIAN_MATERIAL_MAX_EDGE
+    except Exception:
+        value = _SHANJIAN_MATERIAL_MAX_EDGE
+    return max(320, min(value, 4096))
+
+
+def _shanjian_ffprobe_bin(ffmpeg: str) -> str:
+    if ffmpeg:
+        sibling = Path(ffmpeg).with_name(
+            "ffprobe.exe" if Path(ffmpeg).suffix.lower() == ".exe" else "ffprobe"
+        )
+        if sibling.is_file():
+            return str(sibling)
+    return shutil.which("ffprobe") or shutil.which("ffprobe.exe") or ""
+
+
+def _probe_material_dimensions(media_url: str) -> Optional[tuple[int, int]]:
+    """Probe one remote 闪剪 material. None means unknown, so keep it."""
+    try:
+        ffmpeg = _find_asset_ffmpeg()
+    except Exception:
+        ffmpeg = ""
+    ffprobe = _shanjian_ffprobe_bin(ffmpeg)
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "json",
+                media_url,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=45,
+            check=False,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception:
+        return None
+    stream = ((payload.get("streams") or [{}])[0]) or {}
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _shanjian_target_dimensions(width: int, height: int, max_edge: int) -> tuple[int, int]:
+    width = max(1, int(width or 0))
+    height = max(1, int(height or 0))
+    limit = max(2, int(max_edge))
+    longest = max(width, height)
+    scale = 1.0 if longest <= limit else float(limit) / float(longest)
+    target_w = max(2, int(round(width * scale)))
+    target_h = max(2, int(round(height * scale)))
+    return max(2, target_w - target_w % 2), max(2, target_h - target_h % 2)
+
+
+def _shrink_material_bytes(
+    *,
+    media_type: str,
+    data: bytes,
+    width: int,
+    height: int,
+    max_edge: int,
+) -> bytes:
+    """Downscale one material so the 闪剪 render API accepts it."""
+    target_w, target_h = _shanjian_target_dimensions(width, height, max_edge)
+    kind = str(media_type or "").strip().lower()
+    if kind == "image":
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+
+            with Image.open(BytesIO(data)) as img:
+                if not getattr(img, "is_animated", False):
+                    out = BytesIO()
+                    img.convert("RGB").resize(
+                        (target_w, target_h), Image.Resampling.LANCZOS
+                    ).save(out, "JPEG", quality=90, optimize=True, progressive=True)
+                    optimized = out.getvalue()
+                    if optimized:
+                        return optimized
+        except Exception:
+            logger.warning("[shanjian-dh] PIL material shrink failed, falling back to ffmpeg")
+    ffmpeg = _find_asset_ffmpeg()
+    with tempfile.TemporaryDirectory(prefix="shanjian_material_shrink_") as temp_name:
+        temp_dir = Path(temp_name)
+        suffix = ".jpg" if kind == "image" else ".mp4"
+        source = temp_dir / f"source{suffix}"
+        target = temp_dir / f"target{suffix}"
+        source.write_bytes(data)
+        if kind == "image":
+            command = [
+                ffmpeg, "-y", "-i", str(source),
+                "-vf", f"scale={target_w}:{target_h}",
+                "-q:v", "2",
+                str(target),
+            ]
+        else:
+            command = [
+                ffmpeg, "-y", "-i", str(source),
+                "-map", "0:v:0", "-map", "0:a?",
+                "-vf", f"scale={target_w}:{target_h}",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                "-max_muxing_queue_size", "2048",
+                str(target),
+            ]
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800,
+            check=False,
+        )
+        if proc.returncode != 0 or not target.is_file() or target.stat().st_size <= 0:
+            detail = (proc.stderr or proc.stdout or "ffmpeg failed").strip()[-300:]
+            raise RuntimeError(f"素材压缩失败：{detail}")
+        return target.read_bytes()
+
+
+async def _ensure_material_within_shanjian_limit(
+    material: Dict[str, Any],
+    *,
+    max_edge: int,
+    label: str,
+) -> tuple[Optional[Dict[str, Any]], str]:
+    """Keep, shrink, or drop one material. Never raises."""
+    kind = str(material.get("type") or "").strip().lower()
+    url = _clean_text(material.get("fileUrl") or material.get("file_url"))
+    if kind not in {"image", "video"} or not url:
+        return None, "invalid"
+    dimensions = await asyncio.to_thread(_probe_material_dimensions, url)
+    if dimensions is None:
+        return dict(material), "probe_unknown"
+    width, height = dimensions
+    if max(width, height) <= max_edge:
+        return dict(material), "ok"
+    accept = "video/*,*/*;q=0.8" if kind == "video" else "image/*,*/*;q=0.8"
+    try:
+        data, _content_type = await _download_media_bytes(url, accept=accept)
+        shrunk = await asyncio.to_thread(
+            _shrink_material_bytes,
+            media_type=kind,
+            data=data,
+            width=width,
+            height=height,
+            max_edge=max_edge,
+        )
+        extension = ".jpg" if kind == "image" else ".mp4"
+        content_type = "image/jpeg" if kind == "image" else "video/mp4"
+        _asset_id, _filename, file_size, public_url = await asyncio.to_thread(
+            _save_bytes_or_tos,
+            shrunk,
+            extension,
+            content_type,
+        )
+        if not public_url:
+            return None, "shrink_upload_failed"
+        logger.info(
+            "[shanjian-dh] material shrunk label=%s type=%s %sx%s size=%s url=%s",
+            label,
+            kind,
+            width,
+            height,
+            file_size,
+            _url_hint(public_url),
+        )
+        return {"type": kind, "fileUrl": public_url}, "shrunk"
+    except HTTPException as exc:
+        return None, f"shrink_failed:{str(getattr(exc, 'detail', exc))[:120]}"
+    except Exception as exc:
+        return None, f"shrink_failed:{type(exc).__name__}: {exc}"[:160]
+
+
+async def _filter_materials_within_shanjian_limit(
+    materials: List[Dict[str, Any]],
+    *,
+    label: str,
+    max_edge: Optional[int] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Return (usable materials, report). Oversized ones are shrunk or dropped."""
+    limit = max_edge or _shanjian_material_max_edge()
+    kept: List[Dict[str, Any]] = []
+    report: Dict[str, Any] = {
+        "limit": limit,
+        "checked": 0,
+        "shrunk": 0,
+        "unknown": 0,
+        "dropped": [],
+    }
+    for index, item in enumerate(materials or []):
+        if not isinstance(item, dict):
+            continue
+        report["checked"] += 1
+        usable, action = await _ensure_material_within_shanjian_limit(
+            item,
+            max_edge=limit,
+            label=f"{label}#{index + 1}",
+        )
+        if usable is None:
+            report["dropped"].append(
+                {
+                    "index": index + 1,
+                    "type": str(item.get("type") or ""),
+                    "url": _url_hint(_clean_text(item.get("fileUrl") or item.get("file_url"))),
+                    "reason": action,
+                }
+            )
+            continue
+        if action == "shrunk":
+            report["shrunk"] += 1
+        elif action == "probe_unknown":
+            report["unknown"] += 1
+        kept.append(usable)
+    return kept, report
+
 async def _prepare_template_media_urls(
     *,
     db: Session,
@@ -1444,6 +1691,28 @@ async def _prepare_template_media_urls(
             label=f"????{index + 1}",
         )
         materials.append({"type": kind, "fileUrl": uploaded_url})
+    materials, material_report = await _filter_materials_within_shanjian_limit(
+        materials,
+        label=title,
+    )
+    if material_report["shrunk"] or material_report["dropped"]:
+        prepared["material_report"] = material_report
+        logger.info(
+            "[shanjian-dh] material limit pass user_id=%s checked=%s shrunk=%s dropped=%s unknown=%s limit=%s",
+            getattr(current_user, "id", ""),
+            material_report["checked"],
+            material_report["shrunk"],
+            len(material_report["dropped"]),
+            material_report["unknown"],
+            material_report["limit"],
+        )
+        for item in material_report["dropped"]:
+            logger.warning(
+                "[shanjian-dh] material dropped type=%s url=%s reason=%s",
+                item.get("type"),
+                item.get("url"),
+                item.get("reason"),
+            )
     prepared["materials"] = materials
     return prepared
 
@@ -2071,6 +2340,87 @@ async def create_video(
     return {"ok": True, "task_id": task_id, "record": _video_task_to_dict(row), "raw": upstream}
 
 
+def _is_shanjian_material_rejection(error_message: str, data: Any = None) -> bool:
+    """Detect the upstream material-resolution rejection."""
+    text = str(error_message or "")
+    if isinstance(data, (dict, list)):
+        text += " " + json.dumps(data, ensure_ascii=False)
+    if "InvalidFile.Resolution" in text or "2000x2000" in text:
+        return True
+    return "分辨率" in text and "素材" in text
+
+
+async def _retry_clip_without_materials(
+    *,
+    body: "VideoTaskBody",
+    db: Session,
+    current_user: User,
+    row: ShanjianDigitalHumanVideoTask,
+    submit_payload: Dict[str, Any],
+    error_message: str,
+) -> Optional[Dict[str, Any]]:
+    """Resubmit the clip with no materials so the user still gets a video."""
+    template_meta = _template_meta_from_submit_payload(submit_payload)
+    if not isinstance(template_meta, dict) or not template_meta:
+        return None
+    base_result = submit_payload.get("base_result")
+    if not isinstance(base_result, dict) or not base_result:
+        return None
+    retry_template = dict(template_meta)
+    dropped = retry_template.get("materials") or []
+    retry_template["materials"] = []
+    retry_template.pop("asset_groups", None)
+    retry_template.pop("digital_human_asset_groups", None)
+    retry_template.pop("clip_task_id", None)
+    retry_template.pop("clip_request_id", None)
+    retry_template["material_retry_reason"] = str(error_message or "")[:200]
+    retry_template["material_retry_dropped"] = len(dropped)
+    try:
+        result = await _submit_realman_clip_task(
+            body=body,
+            db=db,
+            current_user=current_user,
+            row=row,
+            template_meta=retry_template,
+            base_result_payload=base_result,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "[shanjian-dh] clip retry without materials failed user_id=%s detail=%s",
+            getattr(current_user, "id", ""),
+            str(getattr(exc, "detail", exc))[:200],
+        )
+        return None
+    state = dict(row.submit_payload or {})
+    state["material_retry_done"] = True
+    state["stage"] = "clip"
+    row.submit_payload = state
+    row.status = "processing"
+    row.error_message = None
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "[shanjian-dh] clip retried without materials user_id=%s dropped=%s clip_task=%s",
+        getattr(current_user, "id", ""),
+        len(dropped),
+        result.get("clip_task_id"),
+    )
+    return {
+        "ok": True,
+        "status": "processing",
+        "status_text": _task_status_text("processing"),
+        "task_id": row.task_id,
+        "clip_task_id": result.get("clip_task_id"),
+        "video_url": "",
+        "cover_url": "",
+        "duration": None,
+        "record": _video_task_to_dict(row),
+        "message": "素材分辨率超限，已跳过这些素材重新出片",
+        "raw": result.get("raw") or {},
+    }
+
 @router.post("/api/shanjian-digital-human/video/task")
 async def query_video_task(
     body: VideoTaskBody,
@@ -2112,6 +2462,21 @@ async def query_video_task(
         row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
         duration_value = _pick_result_value(result, "duration")
         postprocess: Optional[Dict[str, Any]] = None
+        if (
+            status == "failed"
+            and not submit_payload.get("material_retry_done")
+            and _is_shanjian_material_rejection(error_message, data)
+        ):
+            retried = await _retry_clip_without_materials(
+                body=body,
+                db=db,
+                current_user=current_user,
+                row=row,
+                submit_payload=submit_payload,
+                error_message=error_message,
+            )
+            if retried is not None:
+                return retried
         if status == "succeed" and row.video_url:
             try:
                 row.video_url, duration_value, postprocess = await _apply_video_duration_limit(
