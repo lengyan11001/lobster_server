@@ -1439,16 +1439,16 @@
       "wewrite.article.pipeline",
     ]);
     const AI_MARKETING_COVERS = {
-      "goal.video.pipeline": "/h5-static/marketing-cover-creative-video.png",
-      local_bestseller: "/h5-static/marketing-cover-local-bestseller.png",
-      "comfly.daihuo.pipeline": "/h5-static/marketing-cover-tvc.png",
-      "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.png",
-      viral_video_remix: "/h5-static/marketing-cover-remix.png",
-      ip_content_daily: "/h5-static/marketing-cover-ip-daily.png",
-      ip_content_oral: "/h5-static/marketing-cover-ip-daily.png",
-      ip_content_moments: "/h5-static/marketing-cover-ip-daily.png",
-      moments_sales_coach: "/h5-static/marketing-cover-moments-coach.png",
-      "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.png",
+      "goal.video.pipeline": "/h5-static/marketing-cover-creative-video.jpg",
+      local_bestseller: "/h5-static/marketing-cover-local-bestseller.jpg",
+      "comfly.daihuo.pipeline": "/h5-static/marketing-cover-tvc.jpg",
+      "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.jpg",
+      viral_video_remix: "/h5-static/marketing-cover-remix.jpg",
+      ip_content_daily: "/h5-static/marketing-cover-ip-daily.jpg",
+      ip_content_oral: "/h5-static/marketing-cover-ip-daily.jpg",
+      ip_content_moments: "/h5-static/marketing-cover-ip-daily.jpg",
+      moments_sales_coach: "/h5-static/marketing-cover-moments-coach.jpg",
+      "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.jpg",
     };
     const DOUYIN_TASK_ACTIONS = {
       account_nurture: {
@@ -3353,7 +3353,7 @@
     function employeeAsset(device, index, mode) {
       const gender = employeeGender(device, index);
       const status = mode === "working" ? "working" : (mode === "offline" ? "offline" : "idle");
-      return `/h5-static/h5-employee-${gender}-${status}.png`;
+      return `/h5-static/h5-employee-${gender}-${status}.jpg`;
     }
 
     function idleBubbleForDevice(device, index) {
@@ -9124,7 +9124,7 @@
 
     function secretaryRoleCardHtml() {
       return `<button class="department-role-card secretary-role-card" type="button" data-secretary-role="1" aria-label="秘书中枢">
-        <img class="secretary-role-img" src="/h5-static/h5-secretary-role.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
+        <img class="secretary-role-img" src="/h5-static/h5-secretary-role.jpg?v=20260926-img-slim-v1" alt="" loading="lazy">
         <div class="department-role-meta">
           <div class="department-role-name">秘书</div>
           <div class="department-role-count">工作态势</div>
