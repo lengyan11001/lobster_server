@@ -1186,14 +1186,23 @@ def _normalize_tag_text(tag: str) -> str:
     return re.sub(r"[\s\-_/,，、;；|·]+", "", _clean_text(tag)).lower()
 
 
+def _tag_core_text(tag: str) -> str:
+    """去掉过泛词之后的标签正文（"AI数字人营销" → "营销"）。"""
+    text = _normalize_tag_text(tag)
+    for word in sorted(_SHANJIAN_ASSET_KEYWORD_STOPWORDS, key=len, reverse=True):
+        if word and word in text:
+            text = text.replace(word, " ")
+    return re.sub(r"\s+", "", text)
+
+
 def _tag_keywords(
     tag: str,
     *,
     min_len: int = _SHANJIAN_ASSET_KEYWORD_MIN_LEN,
     max_len: int = _SHANJIAN_ASSET_KEYWORD_MAX_LEN,
 ) -> List[str]:
-    """Break one tag into min_len..max_len-char keywords, minus stopwords."""
-    text = _normalize_tag_text(tag)
+    """Break one tag's core text into min_len..max_len-char keywords."""
+    text = _tag_core_text(tag)
     if len(text) < min_len:
         return []
     out: List[str] = []
@@ -1209,26 +1218,20 @@ def _tag_keywords(
 
 
 def _script_keyword_hits(script: str, tags: List[str]) -> List[str]:
-    """Keywords shared by the script text and one material's tags (>=3 chars)."""
+    """整条标签原样出现在文案里，或去掉泛词后仍有 ≥3 字关键词命中。"""
     text = _clean_text(script).lower()
     if not text:
         return []
     hits: List[str] = []
     for tag in tags or []:
         whole = _normalize_tag_text(str(tag))
-        if (
-            len(whole) >= _SHANJIAN_ASSET_KEYWORD_MIN_LEN
-            and whole not in _SHANJIAN_ASSET_KEYWORD_STOPWORDS
-            and whole in text
-            and whole not in hits
-        ):
+        if len(whole) >= _SHANJIAN_ASSET_KEYWORD_MIN_LEN and whole in text and whole not in hits:
             hits.append(whole)
             continue
         for keyword in _tag_keywords(str(tag)):
             if keyword in text and keyword not in hits:
                 hits.append(keyword)
     return hits
-
 
 def _filename_keyword_hits(script: str, filename: str) -> List[str]:
     name = _clean_text(filename)
