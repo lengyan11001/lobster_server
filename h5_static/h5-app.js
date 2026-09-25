@@ -11770,6 +11770,14 @@
           refreshCachedAuthInBackground().catch((err) => {
             recordH5Lifecycle("resume_auth_refresh_failed", err?.message || err);
           });
+          const resumeView = activeViewKey();
+          if (["office", "runList", "workList", "workflow", "department", "secretary"].includes(resumeView)) {
+            loadRuns({
+              reset: true,
+              limit: resumeView === "runList" ? 10 : 20,
+              compact: resumeView !== "runList",
+            }).catch(() => {});
+          }
         } else {
           $("loginPanel")?.classList.remove("hidden");
           $("appPanel")?.classList.add("hidden");
@@ -15946,8 +15954,9 @@
         renderOfficeEmployees();
         return Promise.resolve();
       }
-      state.officeSummaryLoading = loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}).finally(() => {
-        state.officeSummaryLoadedAt = Date.now();
+      state.officeSummaryLoading = loadRuns({ reset: true, limit: 20, compact: true }).then((ok) => {
+        if (ok === true) state.officeSummaryLoadedAt = Date.now();
+      }).catch(() => {}).finally(() => {
         state.officeSummaryLoading = null;
         if (document.querySelector("#officeView.active")) renderOfficeEmployees();
       });
@@ -17943,6 +17952,7 @@
           detail: { authenticated },
         }));
       } catch {}
+      if (authenticated) flushPendingRunListReload();
     }
 
     function isAuthFailure(err) {
@@ -27526,8 +27536,13 @@
       const preserveExisting = !!options.preserveExisting;
       const silent = !!options.silent;
       const box = $("runList");
-      if (!state.token || !window.__lobsterH5AuthReady) return;
+      if (!state.token || !window.__lobsterH5AuthReady) {
+        // 首屏可能在鉴权就绪前就切到首页：记一笔，等就绪后补一次，避免列表空白
+        state.runsPendingReload = true;
+        return false;
+      }
       if (state.runListLoading) return false;
+      state.runsPendingReload = false;
       const installationId = currentInstallationId();
       const requestId = ++state.runListRequestSeq;
       state.runListLoading = true;
@@ -27604,6 +27619,19 @@
           syncWorkListLoadState();
         }
       }
+    }
+
+    function flushPendingRunListReload() {
+      if (!window.__lobsterH5AuthReady || !state.token) return false;
+      if (!state.runsPendingReload) return false;
+      state.runsPendingReload = false;
+      const onRunList = activeViewKey() === "runList";
+      loadRuns({ reset: true, limit: onRunList ? 10 : 20, compact: !onRunList })
+        .then(() => {
+          if (activeViewKey() === "office") renderOfficeEmployees();
+        })
+        .catch(() => {});
+      return true;
     }
 
     async function loadWorkflowRunsForDate(dateKey, options = {}) {
@@ -30586,18 +30614,4 @@
         if (["assetLibrary", "mountedAccounts"].includes(activeViewKey())) return;
         refreshDeviceStatus();
       }, 7000);
-      setInterval(() => {
-        if (!state.token || !window.__lobsterH5AuthReady) return;
-        if (document.visibilityState === "hidden") return;
-        if (!["office", "workflow", "workList", "runList", "runDetail", "department", "secretary"].includes(activeViewKey())) return;
-        const activeStatuses = new Set(["pending", "claimed", "processing", "running"]);
-        if (!(state.runs || []).some((row) => activeStatuses.has(String(row && row.status || "").toLowerCase()))) return;
-        loadRuns({
-          reset: false,
-          limit: 20,
-          compact: true,
-          preserveExisting: true,
-          silent: true,
-        });
-      }, 15000);
     })();
