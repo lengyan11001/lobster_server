@@ -541,7 +541,7 @@ async def test_selected_group_assets_replace_template_materials(db_session, test
             "asset-picked",
             "video",
             "门店",
-            tags="门头 夜景",
+            tags="门店 门头 夜景",
             url="https://cdn.tos-cn.volces.com/picked.mp4",
         ),
         _group_asset(
@@ -566,7 +566,7 @@ async def test_selected_group_assets_replace_template_materials(db_session, test
             "asset-mapped",
             "image",
             "门店",
-            tags="外景",
+            tags="外景 门店",
             url="https://cdn.tos-cn.volces.com/mapped.jpg",
         ),
     ])
@@ -676,7 +676,7 @@ async def test_missing_asset_groups_do_not_call_the_selector(db_session, test_us
 async def test_clip_submit_sends_group_materials_chosen_by_ai(db_session, test_user, monkeypatch):
     db_session.expire_on_commit = False
     db_session.add(
-        _group_asset(test_user.id, "asset-picked", "video", "门店", tags="门头", url="https://cdn.tos-cn.volces.com/picked.mp4")
+        _group_asset(test_user.id, "asset-picked", "video", "门店", tags="门店 门头", url="https://cdn.tos-cn.volces.com/picked.mp4")
     )
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
@@ -727,3 +727,116 @@ async def test_clip_submit_sends_group_materials_chosen_by_ai(db_session, test_u
     assert result["clip_task_id"] == "clip-task"
     assert row.submit_payload["template"]["asset_group_selection"]["status"] == "selected"
     assert row.submit_payload["template"]["materials"] == [{"type": "video", "fileUrl": "https://cdn.tos-cn.volces.com/picked.mp4"}]
+
+def test_script_keyword_hits_ignores_generic_ai_tag():
+    assert digital_human_api._script_keyword_hits("都说AI直播是割韭菜，我不完全同意。", ["AI员工", "获客引流"]) == []
+    hits = digital_human_api._script_keyword_hits("这波获客引流怎么做", ["AI员工", "获客引流"])
+    assert "获客引流" in hits
+
+
+def test_parse_matched_flag_handles_bool_and_text():
+    assert digital_human_api._parse_matched_flag(True) is True
+    assert digital_human_api._parse_matched_flag("false") is False
+    assert digital_human_api._parse_matched_flag("不匹配") is False
+    assert digital_human_api._parse_matched_flag("") is None
+
+
+@pytest.mark.asyncio
+async def test_asset_group_selection_drops_materials_without_keyword_match(db_session, test_user, monkeypatch):
+    """文案讲直播、素材只有泛 AI 标签时，宁可不带素材。"""
+    db_session.add_all([
+        _group_asset(test_user.id, "asset-live", "video", "口播素材", tags="AI员工 获客引流", url="https://cdn.tos-cn.volces.com/live.mp4"),
+        _group_asset(test_user.id, "asset-unrelated", "video", "口播素材", tags="营销自动化 私域管理", url="https://cdn.tos-cn.volces.com/other.mp4"),
+    ])
+    db_session.commit()
+
+    async def fake_choose(*, script, groups, candidates):
+        ids = [item["id"] for item in candidates]
+        return {"asset_ids": ids, "matched": True, "reasons": {}}
+
+    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="直播文案",
+        status="succeed",
+        task_id="live-task",
+        text="都说AI直播是割韭菜，我不完全同意。",
+    )
+
+    result = await digital_human_api._apply_asset_group_materials(
+        db=db_session,
+        current_user=test_user,
+        row=row,
+        template_meta={"style_id": "style-1", "asset_groups": ["口播素材"]},
+    )
+
+    selection = result["asset_group_selection"]
+    assert selection["status"] == "none"
+    assert selection["selected_ids"] == []
+    assert "materials" not in result
+    assert len(selection["dropped_unrelated"]) == 2
+    assert all(item["reason"] == "no_keyword_match" for item in selection["dropped_unrelated"])
+
+
+@pytest.mark.asyncio
+async def test_asset_group_selection_respects_model_matched_false(db_session, test_user, monkeypatch):
+    db_session.add(
+        _group_asset(test_user.id, "asset-any", "video", "口播素材", tags="门店 镜头", url="https://cdn.tos-cn.volces.com/any.mp4")
+    )
+    db_session.commit()
+
+    async def fake_choose(*, script, groups, candidates):
+        return {"asset_ids": [item["id"] for item in candidates], "matched": False, "reasons": {"_": "素材与文案主题不符"}}
+
+    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="直播文案",
+        status="succeed",
+        task_id="mismatch-task",
+        text="门店口播文案",
+    )
+
+    result = await digital_human_api._apply_asset_group_materials(
+        db=db_session,
+        current_user=test_user,
+        row=row,
+        template_meta={"style_id": "style-1", "asset_groups": ["口播素材"]},
+    )
+
+    selection = result["asset_group_selection"]
+    assert selection["status"] == "none"
+    assert selection["ai_matched"] is False
+    assert selection["selected_ids"] == []
+    assert any(item["reason"] == "model_matched_false" for item in selection["dropped_unrelated"])
+
+
+@pytest.mark.asyncio
+async def test_asset_keyword_gate_can_be_disabled(db_session, test_user, monkeypatch):
+    monkeypatch.setenv("SHANJIAN_ASSET_KEYWORD_GATE", "0")
+    db_session.add(
+        _group_asset(test_user.id, "asset-any", "video", "口播素材", tags="AI员工", url="https://cdn.tos-cn.volces.com/any.mp4")
+    )
+    db_session.commit()
+
+    async def fake_choose(*, script, groups, candidates):
+        return {"asset_ids": [item["id"] for item in candidates], "matched": True, "reasons": {}}
+
+    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="直播文案",
+        status="succeed",
+        task_id="gate-off-task",
+        text="都说AI直播是割韭菜",
+    )
+
+    result = await digital_human_api._apply_asset_group_materials(
+        db=db_session,
+        current_user=test_user,
+        row=row,
+        template_meta={"style_id": "style-1", "asset_groups": ["口播素材"]},
+    )
+
+    assert result["asset_group_selection"]["status"] == "selected"
+    assert result["asset_group_selection"]["selected_ids"] == ["asset-any"]
