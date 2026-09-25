@@ -58,7 +58,7 @@ from ..services.model_usage_monitor import log_model_usage_event
 from ..services.runtime_cache import cache_delete, cache_get, cache_set, cache_set_if_absent
 from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
-from .assets import _run_asset_upload_io, _save_bytes_or_tos
+from .assets import _find_asset_by_content_sha256, _run_asset_upload_io, _save_bytes_or_tos
 from .auth import ALGORITHM, get_current_user, validate_token_brand
 from .mobile_identity import online_user_for_mobile_user
 
@@ -2215,6 +2215,32 @@ async def _persist_generated_image_asset(
         raise RuntimeError(
             f"generated image exceeds {int(_MAX_GENERATED_IMAGE_PERSIST_BYTES / (1024 * 1024))}MB"
         )
+    content_sha256 = hashlib.sha256(data).hexdigest()
+    content_size = len(data)
+    existing_asset = _find_asset_by_content_sha256(
+        db,
+        int(user_id),
+        media_type="image",
+        file_size=content_size,
+        content_sha256=content_sha256,
+    )
+    if existing_asset is not None:
+        logger.info(
+            "[素材] 生成图内容去重 命中已有 asset_id=%s sha=%s size=%s",
+            existing_asset.asset_id,
+            content_sha256[:12],
+            content_size,
+        )
+        return {
+            "asset_id": existing_asset.asset_id,
+            "media_type": existing_asset.media_type,
+            "url": existing_asset.source_url,
+            "source_url": existing_asset.source_url,
+            "file_size": existing_asset.file_size,
+            "prompt": prompt,
+            "model": model,
+            "reused": True,
+        }
     aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
         _save_bytes_or_tos,
         data,
@@ -2239,7 +2265,7 @@ async def _persist_generated_image_asset(
         prompt=prompt,
         model=model,
         tags="auto,image_generate,miniprogram",
-        meta={"source": "miniprogram_image_generate", "job_id": job_id, "origin_url": url},
+        meta={"source": "miniprogram_image_generate", "job_id": job_id, "origin_url": url, "content_sha256": content_sha256},
     )
     db.add(asset)
     db.flush()

@@ -712,6 +712,125 @@ def _save_url_dedupe_key(url: str) -> str:
     ).hexdigest()
 
 
+_ASSET_CONTENT_HASH_MAX_BYTES = 64 * 1024 * 1024
+_ASSET_CONTENT_HASH_CANDIDATE_LIMIT = 4
+
+
+def _hash_stream(fileobj) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        chunk = fileobj.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        digest.update(chunk)
+    return total, digest.hexdigest()
+
+
+def _remote_content_info(url: str, *, timeout: float = 60.0) -> tuple[int, str]:
+    """下载远端内容并返回 (字节数, sha256)；超限或失败返回 (0, "")。"""
+    target = str(url or "").strip()
+    if not target.lower().startswith(("http://", "https://")):
+        return 0, ""
+    try:
+        with httpx.stream(
+            "GET",
+            target,
+            headers=_SAVE_URL_DOWNLOADER_HEADERS,
+            timeout=timeout,
+            follow_redirects=True,
+            trust_env=False,
+        ) as resp:
+            resp.raise_for_status()
+            digest = hashlib.sha256()
+            total = 0
+            for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _ASSET_CONTENT_HASH_MAX_BYTES:
+                    return 0, ""
+                digest.update(chunk)
+            return (total, digest.hexdigest()) if total > 0 else (0, "")
+    except Exception:
+        return 0, ""
+
+
+def _asset_content_sha256(asset: "Asset", *, persist: bool = True) -> str:
+    """素材内容 sha256：先读 meta 缓存，没有就按 URL 下载计算并写回缓存。"""
+    meta = asset.meta if isinstance(asset.meta, dict) else {}
+    cached = str(meta.get("content_sha256") or "").strip()
+    if cached:
+        return cached
+    url = str(asset.source_url or "").strip()
+    if not url:
+        return ""
+    _size, digest = _remote_content_info(url)
+    if digest and persist:
+        updated = dict(meta)
+        updated["content_sha256"] = digest
+        asset.meta = updated
+    return digest
+
+
+def _find_asset_by_content_sha256(
+    db: Session,
+    user_id: int,
+    *,
+    media_type: str,
+    file_size: int,
+    content_sha256: str,
+    limit_rows: int = _ASSET_CONTENT_HASH_CANDIDATE_LIMIT,
+) -> Optional[Asset]:
+    """同一用户内按内容去重：同类型 + 同字节数 + sha256 一致 = 同一张图。"""
+    digest = str(content_sha256 or "").strip()
+    size = int(file_size or 0)
+    if not digest or size <= 0:
+        return None
+    try:
+        return _find_asset_by_content_sha256_query(
+            db,
+            user_id,
+            media_type=media_type,
+            file_size=size,
+            content_sha256=digest,
+            limit_rows=limit_rows,
+        )
+    except Exception:
+        # 去重查询失败绝不能影响素材入库本身
+        return None
+
+
+def _find_asset_by_content_sha256_query(
+    db: Session,
+    user_id: int,
+    *,
+    media_type: str,
+    file_size: int,
+    content_sha256: str,
+    limit_rows: int = _ASSET_CONTENT_HASH_CANDIDATE_LIMIT,
+) -> Optional[Asset]:
+    digest = str(content_sha256 or "").strip()
+    size = int(file_size or 0)
+    query = db.query(Asset).filter(Asset.user_id == int(user_id))
+    if media_type:
+        query = query.filter(Asset.media_type == str(media_type))
+    candidates = (
+        query.filter(Asset.file_size == size)
+        .order_by(Asset.id.asc())
+        .limit(max(1, int(limit_rows)))
+        .all()
+    )
+    for row in candidates:
+        try:
+            if _asset_content_sha256(row) == digest:
+                return row
+        except Exception:
+            continue
+    return None
+
+
 def _find_existing_asset_by_save_url_dedupe(db: Session, user_id: int, dedupe_key: str) -> Optional[Asset]:
     rows = (
         db.query(Asset)
@@ -1002,6 +1121,26 @@ def upsert_registered_assets(
             if not source_id or not candidate_source_ids or source_id in candidate_source_ids:
                 row = candidate
         group_name = _incoming_creative_candidate_group(body)
+        content_sha256 = ""
+        content_size = 0
+        if row is None:
+            content_size, content_sha256 = _remote_content_info(source_url)
+            if content_sha256:
+                content_dup = _find_asset_by_content_sha256(
+                    db,
+                    user_id,
+                    media_type="image",
+                    file_size=content_size,
+                    content_sha256=content_sha256,
+                )
+                if content_dup is not None:
+                    logger.info(
+                        "[素材] register 内容去重 命中已有 asset_id=%s sha=%s size=%s",
+                        content_dup.asset_id,
+                        content_sha256[:12],
+                        content_size,
+                    )
+                    row = content_dup
         if row is None:
             aid = _gen_asset_id()
             row = Asset(
@@ -1032,6 +1171,13 @@ def upsert_registered_assets(
                 group_name=group_name,
                 registered_from=registered_from,
             )
+        if content_sha256:
+            merged_meta = dict(row.meta or {})
+            if str(merged_meta.get("content_sha256") or "") != content_sha256:
+                merged_meta["content_sha256"] = content_sha256
+                if content_size:
+                    merged_meta["content_size"] = int(content_size)
+                row.meta = merged_meta
         by_url[(asset_origin, source_url)] = row
         by_dedupe[(asset_origin, dedupe_key)] = row
         if source_id:
@@ -1348,6 +1494,7 @@ async def save_asset_from_url(
                     resp.raise_for_status()
                     response_content_type = resp.headers.get("content-type", "") or ""
                     total = 0
+                    content_digest = hashlib.sha256()
                     async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
                         if not chunk:
                             continue
@@ -1355,6 +1502,7 @@ async def save_asset_from_url(
                         if total > _ASSET_UPLOAD_MAX_BYTES:
                             limit_mb = int(_ASSET_UPLOAD_MAX_BYTES / 1024 / 1024)
                             raise HTTPException(status_code=413, detail=f"远程素材不能超过 {limit_mb}MB")
+                        content_digest.update(chunk)
                         await asyncio.to_thread(temp_file.write, chunk)
                     if total <= 0:
                         raise HTTPException(status_code=400, detail="下载失败: 远程素材为空")
@@ -1410,6 +1558,27 @@ async def save_asset_from_url(
             detail="save-url 已下载素材但火山 TOS 上传失败，无法入库。请检查 TOS 配置与网络后重试。",
         )
     source_url = tos_public_url
+    content_sha256 = content_digest.hexdigest()
+    content_dup = _find_asset_by_content_sha256(
+        db,
+        user_id,
+        media_type=body.media_type,
+        file_size=int(fsize or 0),
+        content_sha256=content_sha256,
+    )
+    if content_dup is not None:
+        logger.info(
+            "[素材] save-url 内容去重 命中已有 asset_id=%s sha=%s",
+            content_dup.asset_id,
+            content_sha256[:12],
+        )
+        return {
+            "asset_id": content_dup.asset_id,
+            "filename": content_dup.filename,
+            "media_type": content_dup.media_type,
+            "file_size": content_dup.file_size or 0,
+            "source_url": content_dup.source_url or "",
+        }
     asset = Asset(
         asset_id=aid,
         user_id=user_id,
@@ -1420,7 +1589,7 @@ async def save_asset_from_url(
         prompt=body.prompt,
         model=body.model,
         tags=body.tags,
-        meta={"save_url_dedupe": dk},
+        meta={"save_url_dedupe": dk, "content_sha256": content_sha256},
     )
     db.add(asset)
     db.commit()
