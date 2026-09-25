@@ -1139,6 +1139,12 @@ def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
 # 选中的素材必须能在文案里找到它的标签/文件名关键词，否则丢掉。全部丢光就不再传素材
 # （闪剪按模板自带素材出片），不会拿不相关素材凑数。
 
+# ── 分组素材选材：B 管准入、A 管排序 ─────────────────────────────────────────
+# B（关键词闸门，本地、硬保证）：候选素材的标签/文件名必须在文案里找到 ≥3 字的关键词
+#   （或整条标签≥3 字完整出现），否则不进候选池；一个都没有就不传素材。
+# A（DeepSeek）：只在通过 B 的池子里排序 + 写理由，决定"先带哪个"；A 不给全局否决权，
+#   也不再把明显不相关的素材选进来（那些已经被 B 拦在池外）。
+
 _SHANJIAN_ASSET_KEYWORD_STOPWORDS = {
     "ai",
     "视频",
@@ -1147,6 +1153,7 @@ _SHANJIAN_ASSET_KEYWORD_STOPWORDS = {
     "内容",
     "口播",
     "数字人",
+    "数字",
     "智能",
     "自动",
     "生成",
@@ -1154,7 +1161,20 @@ _SHANJIAN_ASSET_KEYWORD_STOPWORDS = {
     "口播视频",
     "短视频",
     "自媒体",
+    "私信",
+    "关注",
+    "账号",
+    "工具",
+    "落地",
+    "带货",
+    "企业",
+    "老板",
+    "客户",
+    "产品",
 }
+
+_SHANJIAN_ASSET_KEYWORD_MIN_LEN = 3
+_SHANJIAN_ASSET_KEYWORD_MAX_LEN = 6
 
 
 def _shanjian_asset_keyword_gate_enabled() -> bool:
@@ -1162,27 +1182,23 @@ def _shanjian_asset_keyword_gate_enabled() -> bool:
     return raw not in {"0", "false", "no", "off", "disabled", "disable"}
 
 
-def _parse_matched_flag(value: Any) -> Optional[bool]:
-    if isinstance(value, bool):
-        return value
-    text = _clean_text(value).lower()
-    if not text:
-        return None
-    if text in {"true", "yes", "y", "1", "是", "对", "匹配", "matched", "related"}:
-        return True
-    if text in {"false", "no", "n", "0", "否", "不匹配", "unmatched", "unrelated"}:
-        return False
-    return None
+def _normalize_tag_text(tag: str) -> str:
+    return re.sub(r"[\s\-_/,，、;；|·]+", "", _clean_text(tag)).lower()
 
 
-def _tag_keywords(tag: str, *, max_len: int = 6) -> List[str]:
-    """Break one tag into 2..max_len-char keywords, minus stopwords/digits."""
-    text = re.sub(r"[\s\-_/,，、;；|·]+", "", _clean_text(tag)).lower()
-    if len(text) < 2:
+def _tag_keywords(
+    tag: str,
+    *,
+    min_len: int = _SHANJIAN_ASSET_KEYWORD_MIN_LEN,
+    max_len: int = _SHANJIAN_ASSET_KEYWORD_MAX_LEN,
+) -> List[str]:
+    """Break one tag into min_len..max_len-char keywords, minus stopwords."""
+    text = _normalize_tag_text(tag)
+    if len(text) < min_len:
         return []
     out: List[str] = []
     longest = min(len(text), max(2, int(max_len)))
-    for size in range(longest, 1, -1):
+    for size in range(longest, min_len - 1, -1):
         for start in range(0, len(text) - size + 1):
             piece = text[start:start + size]
             if piece in _SHANJIAN_ASSET_KEYWORD_STOPWORDS or piece.isdigit():
@@ -1193,12 +1209,21 @@ def _tag_keywords(tag: str, *, max_len: int = 6) -> List[str]:
 
 
 def _script_keyword_hits(script: str, tags: List[str]) -> List[str]:
-    """Keywords shared by the script text and one material's tags."""
+    """Keywords shared by the script text and one material's tags (>=3 chars)."""
     text = _clean_text(script).lower()
     if not text:
         return []
     hits: List[str] = []
     for tag in tags or []:
+        whole = _normalize_tag_text(str(tag))
+        if (
+            len(whole) >= _SHANJIAN_ASSET_KEYWORD_MIN_LEN
+            and whole not in _SHANJIAN_ASSET_KEYWORD_STOPWORDS
+            and whole in text
+            and whole not in hits
+        ):
+            hits.append(whole)
+            continue
         for keyword in _tag_keywords(str(tag)):
             if keyword in text and keyword not in hits:
                 hits.append(keyword)
@@ -1215,158 +1240,80 @@ def _filename_keyword_hits(script: str, filename: str) -> List[str]:
         return []
     text = _clean_text(script).lower()
     hits: List[str] = []
-    for size in (4, 3, 2):
+    longest = min(len(compact), _SHANJIAN_ASSET_KEYWORD_MAX_LEN)
+    for size in range(longest, _SHANJIAN_ASSET_KEYWORD_MIN_LEN - 1, -1):
         for start in range(0, max(0, len(compact) - size + 1)):
             piece = compact[start:start + size].lower()
-            if piece in _SHANJIAN_ASSET_KEYWORD_STOPWORDS or not piece.isprintable():
+            if piece in _SHANJIAN_ASSET_KEYWORD_STOPWORDS or piece.isdigit():
                 continue
             if piece in text and piece not in hits:
                 hits.append(piece)
     return hits
 
 
-def _filter_chosen_assets_by_script(
+def _material_keyword_hits(script: str, item: Dict[str, Any]) -> Dict[str, Any]:
+    """{"keywords": [...], "source": "tags"|"filename"}；没命中返回空 keywords。"""
+    tag_hits = _script_keyword_hits(script, list((item or {}).get("tags") or []))
+    if tag_hits:
+        return {"keywords": tag_hits[:6], "source": "tags"}
+    name_hits = _filename_keyword_hits(script, _clean_text((item or {}).get("name")))
+    if name_hits:
+        return {"keywords": name_hits[:6], "source": "filename"}
+    return {"keywords": [], "source": ""}
+
+
+def _approve_candidates_by_script(
     *,
-    chosen_ids: List[str],
-    candidates_by_id: Dict[str, Dict[str, Any]],
+    candidates: List[Dict[str, Any]],
     script: str,
-) -> tuple[List[str], List[Dict[str, Any]], Dict[str, List[str]]]:
-    """Drop chosen materials that have no keyword in common with the script."""
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """选材硬闸门：标签/文件名必须命中文案里的 ≥3 字关键词，否则不进池子。"""
     if not _shanjian_asset_keyword_gate_enabled():
-        return list(chosen_ids), [], {}
-    kept: List[str] = []
+        hits = {
+            str(item.get("id") or ""): {"keywords": [], "source": "gate_off"}
+            for item in candidates
+        }
+        return list(candidates), [], hits
+    approved: List[Dict[str, Any]] = []
     dropped: List[Dict[str, Any]] = []
-    hits: Dict[str, List[str]] = {}
-    for asset_id in chosen_ids:
-        item = candidates_by_id.get(asset_id) or {}
-        tags = list(item.get("tags") or [])
-        matched = _script_keyword_hits(script, tags)
-        if not matched:
-            matched = _filename_keyword_hits(script, _clean_text(item.get("name")))
-        if not matched:
+    hits: Dict[str, Dict[str, Any]] = {}
+    for item in candidates:
+        asset_id = str(item.get("id") or "")
+        if not asset_id:
+            continue
+        matched = _material_keyword_hits(script, item)
+        if not matched.get("keywords"):
             dropped.append(
                 {
                     "id": asset_id,
                     "reason": "no_keyword_match",
                     "type": item.get("type"),
-                    "tags": tags[:6],
+                    "tags": list(item.get("tags") or [])[:6],
                 }
             )
             continue
-        hits[asset_id] = matched[:6]
-        kept.append(asset_id)
-    return kept, dropped, hits
+        hits[asset_id] = matched
+        approved.append(item)
+    return approved, dropped, hits
 
-async def _choose_asset_ids_with_deepseek(
+
+def _rank_approved_materials(
+    approved: List[Dict[str, Any]],
     *,
-    script: str,
-    groups: List[str],
-    candidates: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Ask DeepSeek which materials really match the script.
+    hits: Dict[str, Dict[str, Any]],
+    limit: int = 8,
+) -> List[Dict[str, Any]]:
+    """本地排序：命中词更多、最长命中词更长、标签命中优先于文件名命中。"""
+    def sort_key(indexed: tuple) -> tuple:
+        index, item = indexed
+        matched = hits.get(str(item.get("id") or "")) or {}
+        keywords = list(matched.get("keywords") or [])
+        longest = max((len(word) for word in keywords), default=0)
+        source_rank = 0 if matched.get("source") == "tags" else 1
+        return (-len(keywords), -longest, source_rank, index)
 
-    Returns {"asset_ids": [...], "matched": bool|None, "reasons": {id: reason}}.
-    宁可不带也不能带错：模型必须明确回答素材主题是否对上，没对上就返回空。
-    """
-    api_key = str(getattr(settings, "deepseek_api_key", None) or "").strip()
-    if not api_key:
-        raise RuntimeError("deepseek_api_key not configured")
-    model = str(getattr(settings, "lobster_default_sutui_chat_model", None) or "").strip() or "deepseek-chat"
-    api_base = str(getattr(settings, "deepseek_api_base", None) or "https://api.deepseek.com").strip().rstrip("/")
-    allowed = [str(item.get("id") or "") for item in candidates if item.get("id")]
-    payload = {
-        "model": model,
-        "temperature": 0.2,
-        "stream": False,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "你是短视频素材选材助手。根据口播文案，判断候选素材的标签/文件名与文案主题是否"
-                    "真正对得上，只挑对得上的，最多 8 个。"
-                    "只返回 JSON：{\"matched\": true/false, \"asset_ids\": [\"id\"], \"reasons\": {\"id\": \"一句理由\"}}。"
-                    "规则：文案讲的主题在候选里没有对应素材时，必须 matched=false 且 asset_ids 为空数组——"
-                    "宁可不带素材，也不许拿不相关的素材凑数；asset_ids 必须是候选 id，按优先级顺序排列；"
-                    "不要输出解释性文字。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "script": script,
-                        "groups": groups,
-                        "materials": [
-                            {
-                                "id": item.get("id"),
-                                "type": item.get("type"),
-                                "group": item.get("group"),
-                                "tags": item.get("tags") or [],
-                                "name": item.get("name") or "",
-                            }
-                            for item in candidates
-                        ],
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=60.0, trust_env=True) as client:
-        resp = await client.post(f"{api_base}/chat/completions", json=payload, headers=headers)
-    try:
-        data = resp.json() if resp.content else {}
-    except Exception:
-        data = {}
-    if resp.status_code >= 400 or not isinstance(data, dict):
-        raise RuntimeError(f"deepseek asset selection HTTP {resp.status_code}")
-    content = ""
-    choices = data.get("choices") if isinstance(data.get("choices"), list) else []
-    if choices and isinstance(choices[0], dict):
-        message = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
-        content = message.get("content") or ""
-    parsed = _extract_json_object(str(content or ""))
-    matched = _parse_matched_flag(parsed.get("matched") if isinstance(parsed, dict) else None)
-    raw_ids: Any = None
-    reasons: Dict[str, str] = {}
-    if isinstance(parsed, dict):
-        for key in ("asset_ids", "ids"):
-            value = parsed.get(key)
-            if isinstance(value, list):
-                raw_ids = value
-                break
-        raw_reasons = parsed.get("reasons") if parsed.get("reasons") is not None else parsed.get("reason")
-        if isinstance(raw_reasons, dict):
-            reasons = {str(key)[:64]: str(value)[:160] for key, value in list(raw_reasons.items())[:12]}
-        elif isinstance(raw_reasons, str) and raw_reasons.strip():
-            reasons = {"_": raw_reasons.strip()[:200]}
-    allowed_set = set(allowed)
-    chosen: List[str] = []
-    if isinstance(raw_ids, list):
-        for item in raw_ids:
-            asset_id = _clean_text(item)
-            if asset_id and asset_id in allowed_set and asset_id not in chosen:
-                chosen.append(asset_id)
-            if len(chosen) >= 8:
-                break
-    dropped_by_model: List[Dict[str, Any]] = []
-    if matched is False:
-        dropped_by_model = [
-            {"id": asset_id, "reason": "model_matched_false"} for asset_id in chosen
-        ]
-        chosen = []
-    return {
-        "asset_ids": chosen,
-        "matched": matched,
-        "reasons": reasons,
-        "dropped_by_model": dropped_by_model,
-        "raw": str(content or "")[:500],
-    }
+    ordered = [item for _index, item in sorted(enumerate(approved), key=sort_key)]
+    return ordered[: max(1, int(limit))]
 
 def _materials_from_group_candidates(candidates: List[Dict[str, Any]], current_user_id: int) -> List[Dict[str, Any]]:
     materials: List[Dict[str, Any]] = []
@@ -1393,6 +1340,7 @@ async def _apply_asset_group_materials(
     row: ShanjianDigitalHumanVideoTask,
     template_meta: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """选材只用本地关键词闸门：命中文案的素材才会带给闪剪，没命中就不传。"""
     groups = _template_asset_groups(template_meta)
     if not groups:
         return template_meta
@@ -1404,62 +1352,38 @@ async def _apply_asset_group_materials(
         "candidate_ids": [item["id"] for item in candidates],
         "selected_ids": [],
         "status": "empty",
+        "order_rule": "keyword_score",
     }
     if not candidates:
         snapshot["asset_group_selection"] = selection
         return snapshot
-    _release_db_transaction(db)
-    try:
-        decision = await _choose_asset_ids_with_deepseek(
-            script=script,
-            groups=groups,
-            candidates=candidates,
-        )
-    except Exception:
-        logger.warning(
-            "[shanjian-dh] asset group selection failed user_id=%s groups=%s",
-            getattr(current_user, "id", ""),
-            groups,
-            exc_info=True,
-        )
-        selection["status"] = "ai_failed"
-        snapshot["asset_group_selection"] = selection
-        return snapshot
-    if isinstance(decision, list):  # 兼容旧签名/测试桩
-        decision = {"asset_ids": decision, "matched": None, "reasons": {}}
-    by_id = {item["id"]: item for item in candidates}
-    model_ids = [
-        asset_id for asset_id in (decision.get("asset_ids") or []) if asset_id in by_id
-    ]
-    kept, dropped, keyword_hits = _filter_chosen_assets_by_script(
-        chosen_ids=model_ids,
-        candidates_by_id=by_id,
+
+    approved, dropped, hits = _approve_candidates_by_script(
+        candidates=candidates,
         script=script,
     )
-    for item in decision.get("dropped_by_model") or []:
-        dropped.append(item)
-    if decision.get("matched") is False:
-        kept = []
-        for asset_id in model_ids:
-            if not any(item.get("id") == asset_id for item in dropped):
-                dropped.append({"id": asset_id, "reason": "model_matched_false"})
-    selection["ai_matched"] = decision.get("matched")
-    selection["ai_reasons"] = decision.get("reasons") or {}
-    selection["matched_keywords"] = keyword_hits
+    ranked = _rank_approved_materials(approved, hits=hits)
+    selection["approved_ids"] = [item["id"] for item in approved]
+    selection["matched_keywords"] = {
+        asset_id: list((value or {}).get("keywords") or [])
+        for asset_id, value in hits.items()
+    }
+    selection["matched_source"] = {
+        asset_id: str((value or {}).get("source") or "")
+        for asset_id, value in hits.items()
+    }
     selection["dropped_unrelated"] = dropped
-    selection["selected_ids"] = kept
+    selection["selected_ids"] = [item["id"] for item in ranked]
     logger.info(
-        "[shanjian-dh] asset group selection user_id=%s groups=%s candidates=%s ai_matched=%s kept=%s dropped=%s keywords=%s",
+        "[shanjian-dh] asset group selection user_id=%s groups=%s candidates=%s approved=%s selected=%s dropped=%s",
         getattr(current_user, "id", ""),
         groups,
         len(candidates),
-        decision.get("matched"),
-        len(kept),
+        len(approved),
+        len(ranked),
         len(dropped),
-        list(keyword_hits.values())[:3],
     )
-    chosen = [by_id[asset_id] for asset_id in kept]
-    materials = _materials_from_group_candidates(chosen, int(current_user.id))
+    materials = _materials_from_group_candidates(ranked, int(current_user.id))
     if not materials:
         selection["status"] = "none"
         snapshot["asset_group_selection"] = selection

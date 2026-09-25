@@ -541,7 +541,7 @@ async def test_selected_group_assets_replace_template_materials(db_session, test
             "asset-picked",
             "video",
             "门店",
-            tags="门店 门头 夜景",
+            tags="门店外景 镜头 夜景",
             url="https://cdn.tos-cn.volces.com/picked.mp4",
         ),
         _group_asset(
@@ -566,7 +566,7 @@ async def test_selected_group_assets_replace_template_materials(db_session, test
             "asset-mapped",
             "image",
             "门店",
-            tags="外景 门店",
+            tags="门店外景 外景",
             url="https://cdn.tos-cn.volces.com/mapped.jpg",
         ),
     ])
@@ -577,23 +577,12 @@ async def test_selected_group_assets_replace_template_materials(db_session, test
         lambda db, user: type("Owner", (), {"id": mapped_user_id})(),
     )
 
-    async def fake_choose(*, script, groups, candidates):
-        assert "门店口播" in script
-        assert groups == ["门店"]
-        ids = [item["id"] for item in candidates]
-        assert "asset-hidden" not in ids
-        assert "asset-other" not in ids
-        assert ids == ["asset-picked", "asset-mapped"] or set(ids) == {"asset-picked", "asset-mapped"}
-        assert "门头" in next(item["tags"] for item in candidates if item["id"] == "asset-picked")
-        return ["asset-mapped", "asset-picked", "asset-hidden"]
-
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
         title="group clip",
         status="succeed",
         task_id="group-clip-task",
-        text="门店口播文案",
+        text="门店外景口播文案",
     )
     original = [{"type": "image", "fileUrl": "https://cdn.tos-cn.volces.com/keep.jpg"}]
     result = await digital_human_api._apply_asset_group_materials(
@@ -611,55 +600,75 @@ async def test_selected_group_assets_replace_template_materials(db_session, test
     assert result["asset_group_selection"]["selected_ids"] == ["asset-mapped", "asset-picked"]
     assert "asset-hidden" not in result["asset_group_selection"]["candidate_ids"]
     assert "asset-other" not in result["asset_group_selection"]["candidate_ids"]
-
-
 @pytest.mark.asyncio
-async def test_asset_group_selection_keeps_template_materials_on_failure(db_session, test_user, monkeypatch):
+async def test_asset_group_selection_keeps_template_materials_when_no_keyword_hit(db_session, test_user):
+    """关键词一个都不命中 → 不传素材，模板自带素材照旧出片。"""
     db_session.add(
-        _group_asset(test_user.id, "asset-keep", "image", "门店", tags="门头", url="https://cdn.tos-cn.volces.com/keep-src.jpg")
+        _group_asset(test_user.id, "asset-keep", "image", "口播素材", tags="AI员工 营销创作", url="https://cdn.tos-cn.volces.com/keep-src.jpg")
     )
     db_session.commit()
-
-    async def fail_choose(**kwargs):
-        raise RuntimeError("deepseek down")
-
-    async def empty_choose(**kwargs):
-        return []
-
     original = [{"type": "image", "fileUrl": "https://cdn.tos-cn.volces.com/keep.jpg"}]
-    template_meta = {"style_id": "style-1", "materials": original, "asset_groups": ["门店"]}
-    row = ShanjianDigitalHumanVideoTask(user_id=test_user.id, title="keep", status="succeed", task_id="keep-1", text="文案")
-
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fail_choose)
-    failed = await digital_human_api._apply_asset_group_materials(
-        db=db_session, current_user=test_user, row=row, template_meta=dict(template_meta)
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="keep",
+        status="succeed",
+        task_id="keep-1",
+        text="门店外景口播文案",
     )
-    assert failed["materials"] == original
-    assert failed["asset_group_selection"]["status"] == "ai_failed"
 
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", empty_choose)
-    none = await digital_human_api._apply_asset_group_materials(
-        db=db_session, current_user=test_user, row=row, template_meta=dict(template_meta)
+    result = await digital_human_api._apply_asset_group_materials(
+        db=db_session,
+        current_user=test_user,
+        row=row,
+        template_meta={"style_id": "style-1", "materials": list(original), "asset_groups": ["口播素材"]},
     )
-    assert none["materials"] == original
-    assert none["asset_group_selection"]["status"] == "none"
+    assert result["materials"] == original
+    assert result["asset_group_selection"]["status"] == "none"
+    assert result["asset_group_selection"]["selected_ids"] == []
+    assert result["asset_group_selection"]["dropped_unrelated"][0]["reason"] == "no_keyword_match"
 
     empty = await digital_human_api._apply_asset_group_materials(
         db=db_session,
         current_user=test_user,
         row=row,
-        template_meta={"style_id": "style-1", "materials": original, "asset_groups": ["空组"]},
+        template_meta={"style_id": "style-1", "materials": list(original), "asset_groups": ["不存在的组"]},
     )
     assert empty["materials"] == original
     assert empty["asset_group_selection"]["status"] == "empty"
 
+@pytest.mark.asyncio
+async def test_keyword_gate_requires_three_characters(db_session, test_user, monkeypatch):
+    """2 字词（数字/私信）不算命中：直播文案就该不传素材（1246 现场）。"""
+    db_session.add_all([
+        _group_asset(test_user.id, "asset-a", "video", "口播素材", tags="AI员工 短视频运营", url="https://cdn.tos-cn.volces.com/a.mp4"),
+        _group_asset(test_user.id, "asset-b", "video", "口播素材", tags="AI员工 私信管理", url="https://cdn.tos-cn.volces.com/b.mp4"),
+    ])
+    db_session.commit()
+
+    assert digital_human_api._script_keyword_hits("AI数字人直播是割韭菜吗？关注我，私信帮你判断。", ["AI员工", "短视频运营"]) == []
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="直播文案",
+        status="succeed",
+        task_id="gate-3c",
+        text="AI数字人直播是割韭菜吗？关注我，私信帮你判断。",
+    )
+
+    result = await digital_human_api._apply_asset_group_materials(
+        db=db_session,
+        current_user=test_user,
+        row=row,
+        template_meta={"style_id": "style-1", "asset_groups": ["口播素材"]},
+    )
+
+    selection = result["asset_group_selection"]
+    assert selection["status"] == "none"
+    assert selection["selected_ids"] == []
+    assert "materials" not in result
+    assert len(selection["dropped_unrelated"]) == 2
 
 @pytest.mark.asyncio
 async def test_missing_asset_groups_do_not_call_the_selector(db_session, test_user, monkeypatch):
-    async def forbidden(**kwargs):
-        raise AssertionError("selector should not run")
-
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", forbidden)
     original = [{"type": "image", "fileUrl": "https://cdn.tos-cn.volces.com/keep.jpg"}]
     row = ShanjianDigitalHumanVideoTask(user_id=test_user.id, title="plain", status="succeed", task_id="plain-1", text="文案")
     result = await digital_human_api._apply_asset_group_materials(
@@ -676,7 +685,7 @@ async def test_missing_asset_groups_do_not_call_the_selector(db_session, test_us
 async def test_clip_submit_sends_group_materials_chosen_by_ai(db_session, test_user, monkeypatch):
     db_session.expire_on_commit = False
     db_session.add(
-        _group_asset(test_user.id, "asset-picked", "video", "门店", tags="门店 门头", url="https://cdn.tos-cn.volces.com/picked.mp4")
+        _group_asset(test_user.id, "asset-picked", "video", "门店", tags="门店外景 门店 门头", url="https://cdn.tos-cn.volces.com/picked.mp4")
     )
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
@@ -684,15 +693,11 @@ async def test_clip_submit_sends_group_materials_chosen_by_ai(db_session, test_u
         status="succeed",
         task_id="base-task-group",
         video_url="https://upstream.test/base.mp4",
-        text="门店口播",
+        text="门店外景口播",
         submit_payload={"template": {"style_id": "style-1"}},
     )
     db_session.add(row)
     db_session.commit()
-
-    async def fake_choose(*, script, groups, candidates):
-        assert groups == ["门店"]
-        return ["asset-picked"]
 
     async def fake_download(url, *, accept="*/*"):
         assert url == "https://upstream.test/base.mp4"
@@ -706,7 +711,6 @@ async def test_clip_submit_sends_group_materials_chosen_by_ai(db_session, test_u
         assert payload["materials"] == [{"type": "video", "fileUrl": "https://cdn.tos-cn.volces.com/picked.mp4"}]
         return {"requestId": "clip-request", "data": {"taskId": "clip-task"}}
 
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
     monkeypatch.setattr(digital_human_api, "_download_media_bytes", fake_download)
     monkeypatch.setattr(digital_human_api, "_save_bytes_or_tos", fake_save)
     monkeypatch.setattr(digital_human_api, "_post", fake_post)
@@ -733,14 +737,6 @@ def test_script_keyword_hits_ignores_generic_ai_tag():
     hits = digital_human_api._script_keyword_hits("这波获客引流怎么做", ["AI员工", "获客引流"])
     assert "获客引流" in hits
 
-
-def test_parse_matched_flag_handles_bool_and_text():
-    assert digital_human_api._parse_matched_flag(True) is True
-    assert digital_human_api._parse_matched_flag("false") is False
-    assert digital_human_api._parse_matched_flag("不匹配") is False
-    assert digital_human_api._parse_matched_flag("") is None
-
-
 @pytest.mark.asyncio
 async def test_asset_group_selection_drops_materials_without_keyword_match(db_session, test_user, monkeypatch):
     """文案讲直播、素材只有泛 AI 标签时，宁可不带素材。"""
@@ -750,11 +746,6 @@ async def test_asset_group_selection_drops_materials_without_keyword_match(db_se
     ])
     db_session.commit()
 
-    async def fake_choose(*, script, groups, candidates):
-        ids = [item["id"] for item in candidates]
-        return {"asset_ids": ids, "matched": True, "reasons": {}}
-
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
         title="直播文案",
@@ -777,40 +768,6 @@ async def test_asset_group_selection_drops_materials_without_keyword_match(db_se
     assert len(selection["dropped_unrelated"]) == 2
     assert all(item["reason"] == "no_keyword_match" for item in selection["dropped_unrelated"])
 
-
-@pytest.mark.asyncio
-async def test_asset_group_selection_respects_model_matched_false(db_session, test_user, monkeypatch):
-    db_session.add(
-        _group_asset(test_user.id, "asset-any", "video", "口播素材", tags="门店 镜头", url="https://cdn.tos-cn.volces.com/any.mp4")
-    )
-    db_session.commit()
-
-    async def fake_choose(*, script, groups, candidates):
-        return {"asset_ids": [item["id"] for item in candidates], "matched": False, "reasons": {"_": "素材与文案主题不符"}}
-
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
-    row = ShanjianDigitalHumanVideoTask(
-        user_id=test_user.id,
-        title="直播文案",
-        status="succeed",
-        task_id="mismatch-task",
-        text="门店口播文案",
-    )
-
-    result = await digital_human_api._apply_asset_group_materials(
-        db=db_session,
-        current_user=test_user,
-        row=row,
-        template_meta={"style_id": "style-1", "asset_groups": ["口播素材"]},
-    )
-
-    selection = result["asset_group_selection"]
-    assert selection["status"] == "none"
-    assert selection["ai_matched"] is False
-    assert selection["selected_ids"] == []
-    assert any(item["reason"] == "model_matched_false" for item in selection["dropped_unrelated"])
-
-
 @pytest.mark.asyncio
 async def test_asset_keyword_gate_can_be_disabled(db_session, test_user, monkeypatch):
     monkeypatch.setenv("SHANJIAN_ASSET_KEYWORD_GATE", "0")
@@ -819,10 +776,6 @@ async def test_asset_keyword_gate_can_be_disabled(db_session, test_user, monkeyp
     )
     db_session.commit()
 
-    async def fake_choose(*, script, groups, candidates):
-        return {"asset_ids": [item["id"] for item in candidates], "matched": True, "reasons": {}}
-
-    monkeypatch.setattr(digital_human_api, "_choose_asset_ids_with_deepseek", fake_choose)
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
         title="直播文案",
