@@ -10798,10 +10798,10 @@
       if (mediaUrl) {
         const src = mediaProxyUrl(mediaUrl, "inline", filenameFromUrl(mediaUrl, isVoice ? "voice.mp3" : "avatar"));
         if (isVoice) {
-          preview = `<audio class="asset-preview-audio" src="${escapeHtml(src)}" controls></audio>`;
+          preview = `<audio class="asset-preview-audio" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "voice.mp3"))} controls></audio>`;
         } else if (mediaType === "video") {
           const poster = coverUrl ? ` poster="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "avatar-cover")))}"` : "";
-          preview = `<video class="asset-preview-large" src="${escapeHtml(videoFirstFrameUrl(src))}"${poster} controls playsinline preload="metadata"></video>`;
+          preview = `<video class="asset-preview-large" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "avatar"))}${poster} controls playsinline preload="metadata"></video>`;
         } else {
           preview = `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
         }
@@ -25345,6 +25345,13 @@
         .replace(/\[([^\]\n]{1,120})\]\s*\n\s*\((https?:\/\/[^\s)]+)\)/g, "[$1]($2)");
     }
 
+    // 起播/预览用：公开 https 直链直接用（少一跳代理，起播和拖动都快），
+    // 非 https / 内网地址仍然走同源代理；失败时按 data-library-media-fallback 回退到代理。
+    function libraryMediaSourceHtml(url, filename) {
+      const source = libraryMediaSource(url, filename);
+      return `src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)}`;
+    }
+
     function mediaProxyUrl(url, disposition, filename) {
       const params = new URLSearchParams({
         url,
@@ -25774,7 +25781,8 @@
       const mediaKind = ["image", "video", "audio", "document"].includes(String(mediaKindHint || "").toLowerCase())
         ? String(mediaKindHint).toLowerCase()
         : mediaPreviewKind(url, filename);
-      const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
+      const openSource = libraryMediaSource(url, filename);
+      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaProxyUrl(url, "inline", filename));
       const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
       const safeName = escapeHtml(filename);
       if (IS_WECHAT) {
@@ -25790,7 +25798,8 @@
       const mediaKind = ["image", "video", "audio", "document"].includes(String(mediaKindHint || "").toLowerCase())
         ? String(mediaKindHint).toLowerCase()
         : mediaPreviewKind(url, filename);
-      const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
+      const openSource = libraryMediaSource(url, filename);
+      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaProxyUrl(url, "inline", filename));
       const safeName = escapeHtml(filename);
       const primaryActions = IS_WECHAT
         ? `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button>`
@@ -25822,7 +25831,9 @@
         let fallbackName = "lobster-media";
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
           el = document.createElement("video");
-          el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4"));
+          const videoSource = libraryMediaSource(url, filenameFromUrl(url, "lobster-video.mp4"));
+          el.src = videoSource.src;
+          if (videoSource.fallback && videoSource.fallback !== videoSource.src) el.setAttribute("data-library-media-fallback", videoSource.fallback);
           el.controls = true;
           el.playsInline = true;
           el.preload = "metadata";
@@ -25830,7 +25841,9 @@
           fallbackName = "lobster-video.mp4";
         } else if (/\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/.test(low)) {
           el = document.createElement("audio");
-          el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3"));
+          const audioSource = libraryMediaSource(url, filenameFromUrl(url, "lobster-audio.mp3"));
+          el.src = audioSource.src;
+          if (audioSource.fallback && audioSource.fallback !== audioSource.src) el.setAttribute("data-library-media-fallback", audioSource.fallback);
           el.controls = true;
           downloadLabel = "下载音频";
           fallbackName = "lobster-audio.mp3";
@@ -27494,16 +27507,16 @@
         const low = url.toLowerCase();
         const mediaType = String(entry.media_type || "").trim().toLowerCase();
         if (mediaType.includes("video") || /\.(mp4|webm|mov|m4v)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item content-action-host"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${runMediaToolbarHtml(url, "下载视频", "lobster-video.mp4", actionMenu, "video")}</div>`;
+          return `<div class="run-media-item content-action-host"><video controls playsinline preload="metadata" ${libraryMediaSourceHtml(url, filenameFromUrl(url, "lobster-video.mp4"))}></video>${runMediaToolbarHtml(url, "下载视频", "lobster-video.mp4", actionMenu, "video")}</div>`;
         }
         if (mediaType.includes("image") || /\.(png|jpe?g|webp|gif|bmp|avif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
           const rawPreviewName = filenameFromUrl(url, "lobster-image.png");
           const previewName = escapeHtml(rawPreviewName);
-          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}" data-media-preview-kind="image"><img src="${previewUrl}" alt="预览"></button>${runMediaToolbarHtml(url, "下载图片", "lobster-image.png", actionMenu, "image")}</div>`;
+          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}" data-media-preview-kind="image"><img ${libraryMediaSourceHtml(url, "lobster-image.png")} alt="预览"></button>${runMediaToolbarHtml(url, "下载图片", "lobster-image.png", actionMenu, "image")}</div>`;
         }
         if (mediaType.includes("audio") || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item content-action-host"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${runMediaToolbarHtml(url, "下载音频", "lobster-audio.mp3", actionMenu, "audio")}</div>`;
+          return `<div class="run-media-item content-action-host"><audio controls ${libraryMediaSourceHtml(url, filenameFromUrl(url, "lobster-audio.mp3"))}></audio>${runMediaToolbarHtml(url, "下载音频", "lobster-audio.mp3", actionMenu, "audio")}</div>`;
         }
         const rawPreviewName = filenameFromUrl(url, "lobster-media");
         const previewName = escapeHtml(rawPreviewName);
