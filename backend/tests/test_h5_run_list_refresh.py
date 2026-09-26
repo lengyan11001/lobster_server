@@ -13,7 +13,7 @@ def test_h5_run_list_reloads_once_auth_becomes_ready():
     assert "state.runsPendingReload = true;" in src
     assert "flushPendingRunListReload();" in src
     assert "refreshDeviceStatus().catch(() => {});" in src
-    assert "state.officeSummaryRetried" in src
+    assert "state.officeSummaryRetryCount" in src
     assert "function flushPendingRunListReload()" in src
 
 
