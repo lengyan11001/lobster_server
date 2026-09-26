@@ -1,4 +1,33 @@
     const $ = (id) => document.getElementById(id);
+
+    // ── 重复请求抑制：同一 key 在 TTL 内复用结果；已在飞的请求复用同一个 Promise ──
+    const h5RequestCache = new Map();
+    function h5CachedRequest(key, ttlMs, loader, options = {}) {
+      const force = !!options.force;
+      const now = Date.now();
+      const hit = h5RequestCache.get(key);
+      if (hit && hit.pending) return hit.promise;
+      if (hit && !force && ttlMs > 0 && now - hit.at < ttlMs) return Promise.resolve(hit.value);
+      const entry = { at: now, pending: true, value: null, promise: null };
+      entry.promise = Promise.resolve()
+        .then(loader)
+        .then((value) => {
+          entry.value = value;
+          entry.at = Date.now();
+          return value;
+        })
+        .finally(() => {
+          entry.pending = false;
+        });
+      h5RequestCache.set(key, entry);
+      return entry.promise;
+    }
+    function h5InvalidateCachedRequest(prefix = "") {
+      for (const key of Array.from(h5RequestCache.keys())) {
+        if (!prefix || key.startsWith(prefix)) h5RequestCache.delete(key);
+      }
+    }
+
     const H5_BRAND_MARK = (() => {
       try {
         const host = String(window.location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
@@ -7264,6 +7293,10 @@
     }
 
     async function loadWorkflowTemplates(force = false) {
+        return h5CachedRequest("workflow-templates", force ? 0 : 30000, () => loadWorkflowTemplatesInner(force), { force });
+    }
+
+    async function loadWorkflowTemplatesInner(force = false) {
       const requestKey = String(currentInstallationId() || "");
       if (state.workflowTemplatesRequest && state.workflowTemplatesRequestKey === requestKey) {
         return state.workflowTemplatesRequest;
@@ -7303,7 +7336,11 @@
       return request;
     }
 
-    async function loadWorkflowActive() {
+    async function loadWorkflowActive(force = false) {
+        return h5CachedRequest("workflow-active", force ? 0 : 4000, () => loadWorkflowActiveInner(), { force });
+    }
+
+    async function loadWorkflowActiveInner() {
       const iid = currentInstallationId();
       const requestId = ++state.workflowActiveRequestSeq;
       if (!iid) {
@@ -18401,6 +18438,10 @@
     }
 
     async function loadMountedAccounts(force = false) {
+        return h5CachedRequest("mounted-accounts", force ? 0 : 4000, () => loadMountedAccountsInner(force), { force });
+    }
+
+    async function loadMountedAccountsInner(force = false) {
       if (!state.token) return;
       if (state.mountedAccountsLoading && !force) return;
       if (!force && state.mountedAccountsLoaded) {
@@ -18791,7 +18832,11 @@
       renderChatAvailabilityStatus();
     }
 
-    async function refreshDeviceStatus() {
+    async function refreshDeviceStatus(force = false) {
+        return h5CachedRequest("device-status", force ? 0 : 4000, () => refreshDeviceStatusInner(), { force });
+    }
+
+    async function refreshDeviceStatusInner() {
       if (!state.token) return;
       if (state.deviceStatusPromise) return state.deviceStatusPromise;
       const request = (async () => {
@@ -19581,6 +19626,10 @@
     }
 
     async function loadIpTemplates(force = false) {
+        return h5CachedRequest("ip-templates", force ? 0 : 30000, () => loadIpTemplatesInner(force), { force });
+    }
+
+    async function loadIpTemplatesInner(force = false) {
       if (!force && (state.ipTemplatesLoaded || state.ipTemplatesLoading)) {
         fillIpTemplateSelect();
         return;
@@ -23940,6 +23989,10 @@
     }
 
     async function loadTaskSkills(force = false) {
+        return h5CachedRequest("task-skills", force ? 0 : 30000, () => loadTaskSkillsInner(force), { force });
+    }
+
+    async function loadTaskSkillsInner(force = false) {
       if (!state.token) return;
       if (!force && (state.taskSkillsLoaded || state.taskSkillsLoading)) {
         renderTaskAbilityBoard();
@@ -24953,6 +25006,11 @@
     }
 
     async function loadTasks(options = {}) {
+        const key = `tasks:${options.limit || 40}:${options.reset === false ? 0 : 1}:${currentInstallationId() || "-"}`;
+        return h5CachedRequest(key, options.force ? 0 : 1500, () => loadTasksInner(options), options);
+    }
+
+    async function loadTasksInner(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
       const pageSize = Math.max(1, Math.min(200, parseInt(options.limit || "200", 10) || 200));
@@ -27563,6 +27621,11 @@
     }
 
     async function loadRuns(options = {}) {
+        const key = `runs:${options.limit || 10}:${options.compact ? 1 : 0}:${options.append ? 1 : 0}:${options.reset === false ? 0 : 1}:${currentInstallationId() || "-"}`;
+        return h5CachedRequest(key, options.force ? 0 : 1500, () => loadRunsInner(options), options);
+    }
+
+    async function loadRunsInner(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
       const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
@@ -29567,9 +29630,9 @@
     $("agentSaveGrantBtn")?.addEventListener("click", (evt) => saveAgentGrants(evt.currentTarget).catch((err) => toast(err.message || "授权失败")));
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
-    $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));
+    $("refreshRunsBtn").addEventListener("click", () => { h5InvalidateCachedRequest("runs:"); loadRuns({ reset: true, force: true }); });
     $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
-    $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
+    $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false, force: true }));
     $("officeWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, "office"));
     $("departmentCalendarDays")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-department-date]");
