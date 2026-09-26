@@ -1519,6 +1519,7 @@ INVENTORY_STATUS_LABEL = {"in_stock": "在库", "in_use": "在用", "repair": "�
 
 
 class InventoryIn(BaseModel):
+    model_config = {"protected_namespaces": ()}  # 允许 model_name 字段名
     company_id: int
     name: str = Field(min_length=1, max_length=160)
     product_id: Optional[int] = None
@@ -1536,6 +1537,7 @@ class InventoryIn(BaseModel):
 
 
 class InventoryPatchIn(BaseModel):
+    model_config = {"protected_namespaces": ()}  # 允许 model_name 字段名
     company_id: Optional[int] = None
     name: Optional[str] = None
     product_id: Optional[int] = None

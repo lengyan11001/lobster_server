@@ -83,6 +83,10 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-background\.service'; then
     BG_UNIT="lobster-background"
   fi
+  MANAGE_UNIT=""
+  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-manage\.service'; then
+    MANAGE_UNIT="lobster-manage"
+  fi
   MASTRA_UNIT=""
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-mastra\.service'; then
     MASTRA_UNIT="lobster-mastra"
@@ -172,7 +176,24 @@ LEGACY_PORT_CLEANUP
       exit 1
     fi
   fi
-  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support $MASTRA_UNIT $BG_UNIT $H5_UNIT --no-pager || true
+  if [ -n "$MANAGE_UNIT" ]; then
+    echo "[重启] manage 站（8020）..."
+    sudo systemctl restart "$MANAGE_UNIT"
+    MANAGE_OK=0
+    for i in 1 2 3 4 5; do
+      CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8020/api/manage/bootstrap || true)"
+      if [ -n "$CODE" ] && [ "$CODE" != "000" ]; then
+        MANAGE_OK=1; break
+      fi
+      sleep "$i"
+    done
+    if [ "$MANAGE_OK" = 0 ]; then
+      echo "[ERR] manage 站启动失败"
+      sudo journalctl -u "$MANAGE_UNIT" -n 80 --no-pager || true
+      exit 1
+    fi
+  fi
+  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support $MASTRA_UNIT $BG_UNIT $H5_UNIT $MANAGE_UNIT --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."
