@@ -164,11 +164,11 @@ LEGACY_PORT_CLEANUP
     echo "[重启] H5 服务最后切换 ..."
     sudo systemctl restart "$H5_UNIT"
     H5_OK=0
-    for i in 1 2 3 4 5; do
+    for i in 1 2 3 4 5 6 7 8 9 10; do
       if curl --fail --silent "http://127.0.0.1:8010/api/branding?brand=bihuo" >/dev/null 2>&1; then
         H5_OK=1; break
       fi
-      sleep "$i"
+      sleep 2
     done
     if [ "$H5_OK" = 0 ]; then
       echo "[ERR] H5 启动失败"
@@ -180,12 +180,12 @@ LEGACY_PORT_CLEANUP
     echo "[重启] manage 站（8020）..."
     sudo systemctl restart "$MANAGE_UNIT"
     MANAGE_OK=0
-    for i in 1 2 3 4 5; do
+    for i in 1 2 3 4 5 6 7 8 9 10; do
       CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8020/api/manage/bootstrap || true)"
       if [ -n "$CODE" ] && [ "$CODE" != "000" ]; then
         MANAGE_OK=1; break
       fi
-      sleep "$i"
+      sleep 2
     done
     if [ "$MANAGE_OK" = 0 ]; then
       echo "[ERR] manage 站启动失败"
