@@ -2020,7 +2020,8 @@ body.overlay-open #drawer{z-index:501}
         if (f.date) $("#fOn").value = f.date;
         if (f.summary) $("#fSum").value = f.summary;
         if (f.category) $("#fCat").value = f.category;
-        tip.textContent = "已填入（" + (d.model || "视觉模型") + "）：" + (f.doc_type_label || "票据")
+        var src = d.kind === "pdf-text" ? " · PDF文字" : (d.kind === "pdf-image" ? " · PDF " + (d.pages || 1) + " 页" : "");
+        tip.textContent = "已填入（" + (d.model || "视觉模型") + src + "）：" + (f.doc_type_label || "票据")
           + (f.party ? " · " + f.party : "")
           + (f.invoice_no ? " · 票号 " + f.invoice_no : "")
           + (f.confidence !== null && f.confidence !== undefined ? " · 把握 " + Math.round(Number(f.confidence) * 100) + "%" : "");

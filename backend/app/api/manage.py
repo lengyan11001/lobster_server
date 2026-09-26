@@ -1677,7 +1677,8 @@ async def scan_finance_bill(company_id: int = Query(..., description="公司 ID"
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error") or "票据识别失败")
     return {"ok": True, "fields": result.get("fields") or {}, "model": result.get("model"),
-            "latency_ms": result.get("latency_ms")}
+            "latency_ms": result.get("latency_ms"), "kind": result.get("kind"),
+            "pages": result.get("pages")}
 
 
 @router.post("/admin/boss")
