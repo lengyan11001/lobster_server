@@ -22,6 +22,25 @@
       h5RequestCache.set(key, entry);
       return entry.promise;
     }
+    // 首屏"先显示上次数据、后台再刷新"用的本地缓存
+    function h5CacheWrite(key, value) {
+      try {
+        localStorage.setItem(brandStorageKey("lobster_h5_snap_" + key), JSON.stringify({ at: Date.now(), value }));
+      } catch {}
+    }
+    function h5CacheRead(key, maxAgeMs) {
+      try {
+        const raw = localStorage.getItem(brandStorageKey("lobster_h5_snap_" + key));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        if (maxAgeMs && Date.now() - Number(parsed.at || 0) > maxAgeMs) return null;
+        return parsed.value;
+      } catch {
+        return null;
+      }
+    }
+
     function h5InvalidateCachedRequest(prefix = "") {
       for (const key of Array.from(h5RequestCache.keys())) {
         if (!prefix || key.startsWith(prefix)) h5RequestCache.delete(key);
@@ -478,6 +497,14 @@
       speechLastText: "",
       speechLastAt: 0,
     };
+    // 首屏先用上次的快照渲染（登录后再静默刷新），避免"登录后干等"
+    {
+      const cachedRuns = h5CacheRead("runs", 12 * 3600 * 1000);
+      if (Array.isArray(cachedRuns) && cachedRuns.length) state.runs = cachedRuns;
+      const cachedDevices = h5CacheRead("devices", 6 * 3600 * 1000);
+      if (Array.isArray(cachedDevices) && cachedDevices.length) state.devices = cachedDevices;
+    }
+
     const H5_LIFECYCLE_KEY = brandStorageKey("lobster_h5_lifecycle");
 
     function lifecycleDetail(value) {
@@ -16001,14 +16028,18 @@
         const empty = !(state.runs || []).length;
         // 首屏这次可能因为设备上下文还没就绪 / 网络抖动而空手而归；
         // 补一次（同一次进入只补一次，不做定时轮询）。
-        if ((ok !== true || empty) && !state.officeSummaryRetried) {
-          state.officeSummaryRetried = true;
+        const tries = Number(state.officeSummaryRetryCount || 0);
+        if ((ok !== true || empty) && tries < 3) {
+          state.officeSummaryRetryCount = tries + 1;
           window.setTimeout(() => {
-            state.officeSummaryLoadedAt = 0;
-            refreshOfficeSummary().catch(() => {});
+            loadRuns({ reset: true, limit: 20, compact: true, preserveExisting: true, force: true })
+              .then(() => {
+                if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+              })
+              .catch(() => {});
           }, 1200);
         } else if (ok === true && !empty) {
-          state.officeSummaryRetried = false;
+          state.officeSummaryRetryCount = 0;
         }
       }).catch(() => {}).finally(() => {
         state.officeSummaryLoading = null;
@@ -17994,6 +18025,8 @@
       localStorage.removeItem(H5_USER_CACHE_KEY);
       state.token = "";
       state.user = null;
+      h5CacheWrite("runs", []);
+      h5CacheWrite("devices", []);
       setH5AuthReady(false);
       renderCurrentUser();
     }
@@ -18848,6 +18881,7 @@
           const data = await api("/api/h5-chat/devices/status");
           state.devices = Array.isArray(data.devices) ? data.devices : [];
           state.devicesLoaded = true;
+          h5CacheWrite("devices", state.devices.slice(0, 40));
           const previousInstallationId = String(state.selectedInstallationId || "").trim();
           ensureSelectedInstallationId();
           state.publishAccountsLoaded = false;
@@ -25006,6 +25040,7 @@
     }
 
     async function loadTasks(options = {}) {
+        if (!state.token) return;
         const key = `tasks:${options.limit || 40}:${options.reset === false ? 0 : 1}:${currentInstallationId() || "-"}`;
         return h5CachedRequest(key, options.force ? 0 : 1500, () => loadTasksInner(options), options);
     }
@@ -27621,6 +27656,11 @@
     }
 
     async function loadRuns(options = {}) {
+        if (!state.token || !window.__lobsterH5AuthReady) {
+          // 未就绪时不进缓存，否则补加载会命中这次的空返回
+          state.runsPendingReload = true;
+          return false;
+        }
         const key = `runs:${options.limit || 10}:${options.compact ? 1 : 0}:${options.append ? 1 : 0}:${options.reset === false ? 0 : 1}:${currentInstallationId() || "-"}`;
         return h5CachedRequest(key, options.force ? 0 : 1500, () => loadRunsInner(options), options);
     }
@@ -27669,6 +27709,7 @@
           if (row && row.id) rowsById.set(String(row.id), { ...(rowsById.get(String(row.id)) || {}), ...row });
         });
         state.runs = Array.from(rowsById.values()).sort((a, b) => itemTimeMs(b.updated_at, b.created_at) - itemTimeMs(a.updated_at, a.created_at));
+        h5CacheWrite("runs", state.runs.slice(0, 40));
         captureRunStatusSnapshot(state.runs, { announce: true });
         if (activeViewKey() === "office") renderOfficeEmployees();
         if (activeViewKey() === "workList") renderWorkList();
@@ -27728,16 +27769,23 @@
         limit: onRunList ? 10 : 20,
         compact: !onRunList,
         preserveExisting: true,
+        force: true,
       })
         .then((ok) => {
           if (activeViewKey() === "office") renderOfficeEmployees();
           const empty = !(state.runs || []).length;
-          if ((ok !== true || empty) && !state.officeSummaryRetried) {
-            state.officeSummaryRetried = true;
+          const tries = Number(state.officeSummaryRetryCount || 0);
+          if ((ok !== true || empty) && tries < 3) {
+            state.officeSummaryRetryCount = tries + 1;
             window.setTimeout(() => {
-              state.officeSummaryLoadedAt = 0;
-              refreshOfficeSummary().catch(() => {});
+              loadRuns({ reset: true, limit: 20, compact: true, preserveExisting: true, force: true })
+                .then(() => {
+                  if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+                })
+                .catch(() => {});
             }, 1200);
+          } else if (ok === true && !empty) {
+            state.officeSummaryRetryCount = 0;
           }
         })
         .catch(() => {});
