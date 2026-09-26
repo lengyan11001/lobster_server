@@ -152,3 +152,70 @@ def test_finance_scan_endpoint_wiring(monkeypatch, db_session, test_user):
                                                  user=test_user, db=db_session))
     assert err.value.status_code == 502
     assert "DASHSCOPE_API_KEY" in str(err.value.detail)
+
+def test_prepare_accepts_image_and_pdf(tmp_path):
+    """本次用户报的 400「image format is illegal」：PDF / 非图片要走各自分支，不能把坏字节丢给模型。"""
+    import io
+
+    from PIL import Image
+
+    # 1) 普通图片：转 JPEG + 压到 1600 长边
+    img = tmp_path / "invoice.jpg"
+    Image.new("RGB", (2400, 1200), (255, 255, 255)).save(img, "JPEG")
+    payload, err = document_scan._prepare(img.read_bytes(), "invoice.jpg")
+    assert err == ""
+    assert payload["kind"] == "image" and payload["pages"] == 1
+    assert payload["images"][0][:2] == b"\xff\xd8"
+    assert max(Image.open(io.BytesIO(payload["images"][0])).size) <= 1600
+
+    # 2) 图片型 PDF（扫描件 / 打印成 PDF）：逐页取图
+    scan = tmp_path / "scan.pdf"
+    Image.new("RGB", (1240, 1754), (255, 255, 255)).save(scan, "PDF")
+    payload, err = document_scan._prepare(scan.read_bytes(), "scan.pdf")
+    assert err == ""
+    assert payload["kind"] == "pdf-image" and payload["pages"] >= 1
+    assert payload["images"][0][:2] == b"\xff\xd8"
+
+    # 3) 文字型 PDF（电子发票导出）：抽文本，不用渲染器
+    pytest.importorskip("reportlab")
+    from reportlab.pdfgen import canvas
+
+    text_pdf = tmp_path / "text.pdf"
+    cv = canvas.Canvas(str(text_pdf))
+    cv.drawString(72, 720, "Invoice No 888123 Amount 88.80 Date 2026-09-20")
+    cv.save()
+    payload, err = document_scan._prepare(text_pdf.read_bytes(), "text.pdf")
+    assert err == ""
+    assert payload["kind"] == "pdf-text"
+    assert "88.80" in payload["text"]
+
+    # 4) 认不出来的文件：明确报错，不发请求
+    payload, err = document_scan._prepare(b"not an image at all", "x.jpg")
+    assert payload == {}
+    assert "不是能识别的图片" in err
+
+
+def test_scan_rejects_unreadable_file(monkeypatch):
+    """坏文件要在本地就拦下（返回可读原因），不能等到模型 400。"""
+    called = {"n": 0}
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **kw):
+            called["n"] += 1
+            raise AssertionError("坏文件不应该真的发请求")
+
+    monkeypatch.setattr(document_scan.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(document_scan, "_provider", lambda: ("fake-key", "https://example.test/v1", "stub"))
+    res = asyncio.run(document_scan.scan_finance_document(b"\x00\x01\x02 not a file", "x.heic"))
+    assert res["ok"] is False
+    assert "不是能识别的图片" in res["error"]
+    assert called["n"] == 0

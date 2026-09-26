@@ -1988,10 +1988,11 @@ body.overlay-open #drawer{z-index:501}
   function openFinEntry(){
     openDrawer("财务 · 记一笔", "可先上传发票 / 账单，AI 识图后自动填入",
       '<div class="dsec"><h4>① 上传发票 / 账单（可选）</h4>'
-      + '<input type="file" id="fImg" accept="image/*" style="font-size:12px;width:100%" />'
+      + '<input type="file" id="fImg" accept="image/*,application/pdf" style="font-size:12px;width:100%" />'
+      + '<div class="dim" style="font-size:11px;margin-top:4px">支持 JPG / PNG 截图，也支持 PDF（多页发票按页识别后合并金额）</div>'
       + '<div class="row" style="align-items:center;gap:9px;margin-top:9px">'
       + '<button class="btn sm" id="fScan">AI 识别并填入</button>'
-      + '<span class="dim" id="fScanTip" style="font-size:11.5px">发票 / 收据 / 账单截图都可以；识别结果请核对后再保存</span></div></div>'
+      + '<span class="dim" id="fScanTip" style="font-size:11.5px">图片或 PDF 都行；识别结果请核对后再保存</span></div></div>'
       + '<div class="dsec"><h4>② 核对并保存</h4>'
       + '<label class="fl">类型</label><select id="fType"><option value="income">收入</option><option value="expense">开销</option></select>'
       + '<div style="display:flex;gap:10px;margin-top:10px">'
