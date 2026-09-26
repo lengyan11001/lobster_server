@@ -298,6 +298,7 @@ body.overlay-open #drawer{z-index:501}
     <button data-go="s-proj"><span class="ic">✧</span>项目</button>
     <button data-go="s-org"><span class="ic">◍</span>组织</button>
     <button data-go="s-prod"><span class="ic">▦</span>产品</button>
+    <button data-go="s-inv"><span class="ic">▥</span>库存</button>
     <button data-go="s-crm"><span class="ic">◈</span>客户</button>
     <button data-go="s-deliv"><span class="ic">▣</span>交付</button>
     <button data-go="s-ai"><span class="ic">⬡</span>虚拟员工</button>
@@ -329,6 +330,7 @@ body.overlay-open #drawer{z-index:501}
       <section id="s-proj" class="view hide"></section>
       <section id="s-org" class="view hide"></section>
       <section id="s-prod" class="view hide"></section>
+      <section id="s-inv" class="view hide"></section>
       <section id="s-crm" class="view hide"></section>
       <section id="s-deliv" class="view hide"></section>
       <section id="s-ai" class="view hide"></section>
@@ -484,10 +486,14 @@ body.overlay-open #drawer{z-index:501}
     var headers = { "Accept":"application/json" };
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
     if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+    // opts.form = FormData（传发票/账单图片）时交给浏览器自己带 boundary，别手写 Content-Type
+    var payload;
+    if (opts.form !== undefined) payload = opts.form;
+    else if (opts.body !== undefined) payload = JSON.stringify(opts.body);
     return fetch(path, {
       method: opts.method || "GET",
       headers: headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: payload,
     }).then(function(r){
       return r.text().then(function(text){
         var data = {};
@@ -732,6 +738,7 @@ body.overlay-open #drawer{z-index:501}
     "s-proj": ["项目", "创建目标 → AI 规划 → 人员/要求/时间节点一次排好"],
     "s-org": ["组织架构", "成员 · 岗位（可多选） · 级别 · 备注"],
     "s-prod": ["产品", "可销售的东西与其基本详情；项目里可以直接选"],
+    "s-inv": ["库存", "公司真实持有的实体设备：在库 / 在用 / 维修 / 报废，可按设备号追踪"],
     "s-crm": ["客户", "业务岗：客户增删改 · 跟进记录 · 商机阶段与进度"],
     "s-deliv": ["交付", "交付岗：已成交客户 → 交付单 → 验收"],
     "s-ai": ["虚拟员工", "手动添加的设备（槽位号 / 设备号+验证码）· 离线常驻 · 派活按窗口汇总 · 可看远程画面"],
@@ -746,7 +753,7 @@ body.overlay-open #drawer{z-index:501}
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-prod","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-metrics","s-my"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-inv","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-metrics","s-my"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
       if (id === "s-metrics") loadMetrics();
@@ -760,7 +767,7 @@ body.overlay-open #drawer{z-index:501}
   function refreshAll(){
     if (!ACTIVE) return;
     showErr("");
-    loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
+    loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadInv(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
     loadMyTasks();
     loadStats();
   }
@@ -1854,8 +1861,183 @@ body.overlay-open #drawer{z-index:501}
     }).catch(function(e){ showErr(e.message, e); });
   }
 
+  /* ================= 库存（实体设备） ================= */
+  var INV_Q = "", INV_CACHE = [];
+  var INV_STATUS = { in_stock: ["在库", "wn"], in_use: ["在用", "ok"], repair: ["维修中", "bd"], scrapped: ["报废", ""] };
+
+  function invLabel(s){ return (INV_STATUS[s] || [s || "—"])[0]; }
+  function invTag(s){ var m = INV_STATUS[s] || [s || "—", ""]; return '<span class="tag ' + m[1] + '">' + m[0] + '</span>'; }
+
+  function loadInv(){
+    api("/api/manage/inventory?company_id=" + ACTIVE).then(function(d){
+      INV_CACHE = d.items || [];
+      var s = d.summary || {};
+      var k = INV_Q.toLowerCase();
+      var xs = INV_CACHE.filter(function(x){
+        if (!k) return true;
+        return sqText(x.name, x.model_name, x.sku, x.location, x.keeper, x.note, x.product_name, invLabel(x.status)).indexOf(k) >= 0;
+      });
+      $("#s-inv").innerHTML =
+        '<div class="g4">'
+        + '<div class="glass card kpi"><div class="t">设备总数</div><div class="v num">' + Number(s.quantity || 0) + '</div></div>'
+        + '<div class="glass card kpi"><div class="t">在库 / 在用</div><div class="v num">' + Number(s.in_stock || 0) + ' / ' + Number(s.in_use || 0) + '</div></div>'
+        + '<div class="glass card kpi"><div class="t">维修 / 报废</div><div class="v num">' + Number(s.repair || 0) + ' / ' + Number(s.scrapped || 0) + '</div></div>'
+        + '<div class="glass card kpi"><div class="t">库存成本</div><div class="v num">' + finMoney(s.value) + '</div></div></div>'
+        + '<div class="glass card" style="margin-top:12px">'
+        + '<div class="row" style="align-items:center;gap:9px;margin-bottom:10px"><b style="font-size:13.5px">库存明细</b>'
+        + '<span class="dim" style="font-size:11.5px">产品 = 对外卖的东西；库存 = 手里真实存在的设备（可写设备号）</span>'
+        + '<span class="grow"></span>'
+        + '<input id="invQ" data-q="inv" placeholder="搜索设备 / 设备号 / 保管人" value="' + esc(INV_Q) + '" style="width:220px;height:34px" />'
+        + '<button class="btn sm" id="addInv">＋ 新增设备</button></div>'
+        + (xs.length ? '<table class="tb"><thead><tr><th>设备</th><th>型号</th><th>设备号</th><th class="right">数量</th><th>状态</th><th>存放 / 保管</th><th class="right">成本</th><th></th></tr></thead><tbody>'
+            + xs.map(function(x){
+                return '<tr data-sq="' + sqText(x.name, x.model_name, x.sku, x.location, x.keeper, x.note, x.product_name) + '">'
+                  + '<td>' + esc(x.name) + (x.product_name ? '<span class="dim" style="font-size:11px"> · ' + esc(x.product_name) + '</span>' : '') + '</td>'
+                  + '<td class="mut">' + esc(x.model_name || "—") + '</td>'
+                  + '<td class="dim">' + esc(x.sku || "—") + '</td>'
+                  + '<td class="right num">' + Number(x.quantity || 0) + esc(x.unit || "") + '</td>'
+                  + '<td>' + invTag(x.status) + '</td>'
+                  + '<td class="mut">' + esc(x.location || "—") + (x.keeper ? ' <span class="dim">/ ' + esc(x.keeper) + '</span>' : '') + '</td>'
+                  + '<td class="right num">' + finMoney(x.amount) + '</td>'
+                  + '<td class="right" style="white-space:nowrap"><button class="btn sm ghost" data-iedit="' + x.id + '">编辑</button>'
+                  + '<button class="btn sm ghost" data-idel="' + x.id + '" style="color:#fda4af">删除</button></td></tr>';
+              }).join("") + '</tbody></table>'
+            : '<div class="dim">' + (INV_Q ? "没有匹配的设备" : "还没有登记设备，点右上「新增设备」") + '</div>')
+        + '</div>';
+      bindListSearch("s-inv");
+      $("#addInv").addEventListener("click", function(){ openInvEditor(null); });
+      $$("#s-inv [data-iedit]").forEach(function(b){
+        b.addEventListener("click", function(){ openInvEditor(Number(b.dataset.iedit)); });
+      });
+      $$("#s-inv [data-idel]").forEach(function(b){
+        b.addEventListener("click", function(){ deleteInv(Number(b.dataset.idel)); });
+      });
+    }).catch(function(e){ showErr(e.message, e); });
+  }
+
+  function openInvEditor(id){
+    var x = null;
+    if (id) INV_CACHE.forEach(function(i){ if (i.id === id) x = i; });
+    api("/api/manage/products?company_id=" + ACTIVE).catch(function(){ return { products: [] }; }).then(function(pd){
+      var prodOpts = ['<option value="">（不关联产品）</option>'].concat((pd.products || []).map(function(p){
+        return '<option value="' + p.id + '"' + (x && x.product_id === p.id ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+      })).join("");
+      var stOpts = Object.keys(INV_STATUS).map(function(k){
+        var on = (x ? x.status : "in_stock") === k ? ' selected' : '';
+        return '<option value="' + k + '"' + on + '>' + INV_STATUS[k][0] + '</option>';
+      }).join("");
+      openDrawer(id ? "库存 · 编辑设备" : "库存 · 新增设备", "实体设备：型号 / 设备号 / 存放 / 保管",
+        '<div class="dsec"><h4>基本信息</h4>'
+        + '<label class="fl">设备名称</label><input id="ivName" value="' + esc(x ? x.name : "") + '" placeholder="必火盒子 / 采集手机" style="margin-bottom:10px" />'
+        + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+        + '<div style="flex:1"><label class="fl">型号</label><input id="ivModel" value="' + esc(x ? x.model_name : "") + '" placeholder="X100" /></div>'
+        + '<div style="flex:1"><label class="fl">设备号 / SN</label><input id="ivSku" value="' + esc(x ? x.sku : "") + '" placeholder="SN-0001" /></div></div>'
+        + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+        + '<div style="flex:1"><label class="fl">数量</label><input id="ivQty" value="' + (x ? x.quantity : 1) + '" /></div>'
+        + '<div style="flex:0 0 90px"><label class="fl">单位</label><input id="ivUnit" value="' + esc(x ? x.unit : "台") + '" /></div>'
+        + '<div style="flex:1"><label class="fl">单位成本</label><input id="ivCost" value="' + (x && x.unit_cost ? x.unit_cost : "") + '" placeholder="1200" /></div>'
+        + '<div style="flex:0 0 110px"><label class="fl">状态</label><select id="ivStatus">' + stOpts + '</select></div></div>'
+        + '<label class="fl">关联产品（可空）</label><select id="ivProd" style="margin-bottom:10px">' + prodOpts + '</select>'
+        + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+        + '<div style="flex:1"><label class="fl">存放地点</label><input id="ivLoc" value="' + esc(x ? x.location : "") + '" placeholder="深圳仓 A 架" /></div>'
+        + '<div style="flex:1"><label class="fl">保管人</label><input id="ivKeeper" value="' + esc(x ? x.keeper : "") + '" placeholder="张三" /></div></div>'
+        + '<div style="display:flex;gap:10px;margin-bottom:10px">'
+        + '<div style="flex:1"><label class="fl">购入日期</label><input id="ivBought" type="date" value="' + esc(x ? x.bought_on : "") + '" /></div>'
+        + '<div style="flex:1"><label class="fl">保修至</label><input id="ivWarranty" type="date" value="' + esc(x ? x.warranty_until : "") + '" /></div></div>'
+        + '<label class="fl">备注</label><textarea id="ivNote" rows="2">' + esc(x ? x.note : "") + '</textarea></div>'
+        + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="ivCancel">取消</button>'
+        + '<button class="btn sm" id="ivOk">保存</button></div>');
+      $("#ivCancel").addEventListener("click", closeDrawer);
+      $("#ivOk").addEventListener("click", function(){
+        var payload = {
+          company_id: ACTIVE,
+          name: $("#ivName").value.trim(),
+          model_name: $("#ivModel").value.trim(),
+          sku: $("#ivSku").value.trim(),
+          quantity: Number($("#ivQty").value || 1),
+          unit: $("#ivUnit").value.trim() || "台",
+          unit_cost: Number($("#ivCost").value || 0),
+          status: $("#ivStatus").value,
+          product_id: Number($("#ivProd").value || 0) || null,
+          location: $("#ivLoc").value.trim(),
+          keeper: $("#ivKeeper").value.trim(),
+          bought_on: $("#ivBought").value.trim(),
+          warranty_until: $("#ivWarranty").value.trim(),
+          note: $("#ivNote").value.trim(),
+        };
+        if (!payload.name){ toast("设备名称必填", true); return; }
+        var req = id ? api("/api/manage/inventory/" + id, { method: "PATCH", body: payload })
+                     : api("/api/manage/inventory", { method: "POST", body: payload });
+        req.then(function(){ closeDrawer(); toast("已保存"); loadInv(); })
+           .catch(function(e){ toast(e.message, true); });
+      });
+    });
+  }
+
+  function deleteInv(id){
+    if (!window.confirm("删除这条库存记录？")) return;
+    api("/api/manage/inventory/" + id, { method: "DELETE" })
+      .then(function(){ toast("已删除"); loadInv(); })
+      .catch(function(e){ toast(e.message, true); });
+  }
+
   /* ================= 财务 ================= */
   var FIN_Q = "";
+  function finMoney(v){ return "¥" + Number(v || 0).toLocaleString("zh-CN"); }
+
+  function openFinEntry(){
+    openDrawer("财务 · 记一笔", "可先上传发票 / 账单，AI 识图后自动填入",
+      '<div class="dsec"><h4>① 上传发票 / 账单（可选）</h4>'
+      + '<input type="file" id="fImg" accept="image/*" style="font-size:12px;width:100%" />'
+      + '<div class="row" style="align-items:center;gap:9px;margin-top:9px">'
+      + '<button class="btn sm" id="fScan">AI 识别并填入</button>'
+      + '<span class="dim" id="fScanTip" style="font-size:11.5px">发票 / 收据 / 账单截图都可以；识别结果请核对后再保存</span></div></div>'
+      + '<div class="dsec"><h4>② 核对并保存</h4>'
+      + '<label class="fl">类型</label><select id="fType"><option value="income">收入</option><option value="expense">开销</option></select>'
+      + '<div style="display:flex;gap:10px;margin-top:10px">'
+      + '<div style="flex:1"><label class="fl">金额</label><input id="fAmt" placeholder="39800" /></div>'
+      + '<div style="flex:1"><label class="fl">日期</label><input id="fOn" type="date" /></div></div>'
+      + '<div style="margin-top:10px"><label class="fl">摘要</label><input id="fSum" placeholder="客户回款 / 投放充值" /></div>'
+      + '<div style="margin-top:10px"><label class="fl">分类</label><input id="fCat" placeholder="设备 / 软件服务 / 投放推广 …" /></div></div>'
+      + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="fCancel">取消</button>'
+      + '<button class="btn sm" id="fOk">保存</button></div>');
+    $("#fCancel").addEventListener("click", closeDrawer);
+    $("#fScan").addEventListener("click", function(){
+      var box = document.getElementById("fImg");
+      var pic = box && box.files && box.files[0];
+      if (!pic){ toast("先选一张发票 / 账单图片", true); return; }
+      var tip = document.getElementById("fScanTip");
+      var btn = document.getElementById("fScan");
+      btn.disabled = true;
+      tip.textContent = "识别中…（一般 5-20 秒）";
+      var fd = new FormData();
+      fd.append("file", pic);
+      api("/api/manage/finance/scan?company_id=" + ACTIVE, { method: "POST", form: fd }).then(function(d){
+        var f = d.fields || {};
+        if (f.entry_type) $("#fType").value = f.entry_type === "income" ? "income" : "expense";
+        if (f.amount !== null && f.amount !== undefined && f.amount !== "") $("#fAmt").value = f.amount;
+        if (f.date) $("#fOn").value = f.date;
+        if (f.summary) $("#fSum").value = f.summary;
+        if (f.category) $("#fCat").value = f.category;
+        tip.textContent = "已填入（" + (d.model || "视觉模型") + "）：" + (f.doc_type_label || "票据")
+          + (f.party ? " · " + f.party : "")
+          + (f.invoice_no ? " · 票号 " + f.invoice_no : "")
+          + (f.confidence !== null && f.confidence !== undefined ? " · 把握 " + Math.round(Number(f.confidence) * 100) + "%" : "");
+      }).catch(function(e){
+        tip.textContent = "识别失败：" + e.message;
+        toast("识别失败：" + e.message, true);
+      }).then(function(){ btn.disabled = false; });
+    });
+    $("#fOk").addEventListener("click", function(){
+      api("/api/manage/finance", { method: "POST", body: {
+        company_id: ACTIVE, entry_type: $("#fType").value,
+        amount: Number($("#fAmt").value || 0), summary: $("#fSum").value.trim(),
+        category: $("#fCat").value.trim(), happened_on: $("#fOn").value.trim(),
+      }}).then(function(){ closeDrawer(); toast("已记录"); loadFin(); loadBrief(); })
+        .catch(function(e){ toast(e.message, true); });
+    });
+  }
+
   function loadFin(){
     api("/api/manage/finance?company_id=" + ACTIVE).then(function(d){
       var s = d.summary || {}, esAll = d.entries || [];
@@ -1866,7 +2048,7 @@ body.overlay-open #drawer{z-index:501}
             || String(e.on||"").toLowerCase().indexOf(fq) >= 0
             || String(e.type||"").toLowerCase().indexOf(fq) >= 0;
       });
-      var mm = function(v){ return "¥" + Number(v || 0).toLocaleString("zh-CN"); };
+      var mm = finMoney;
       $("#s-fin").innerHTML =
         '<div class="g4">'
         + '<div class="glass card kpi"><div class="t">收入</div><div class="v num">'+mm(s.income)+'</div></div>'
@@ -1878,6 +2060,7 @@ body.overlay-open #drawer{z-index:501}
         + '<span class="dim" style="font-size:11.5px">共 ' + esAll.length + ' 笔</span>'
         + '<span class="grow"></span>'
         + '<input id="finQ" data-q="fin" placeholder="搜索摘要 / 日期" value="' + esc(FIN_Q) + '" style="width:200px;height:34px" />'
+        + '<button class="btn sm ghost" id="finScan">🧾 上传发票/账单识别</button>'
         + '<button class="btn sm" id="addFin">＋ 记一笔</button></div>'
         + (FIN_Q && !es.length ? '<div class="dim">没有匹配的流水。</div>' : '')
         + (es.length ? '<table class="tb"><thead><tr><th>日期</th><th>类型</th><th>摘要</th><th class="right">金额</th></tr></thead><tbody>'
@@ -1889,28 +2072,11 @@ body.overlay-open #drawer{z-index:501}
               }).join("") + '</tbody></table>' : '<div class="dim">还没有流水。</div>')
         + '</div>';
       bindListSearch("s-fin");
-      $("#addFin").addEventListener("click", function(){
-        openDrawer("财务 · 记一笔", "收入 / 开销",
-          '<div class="dsec"><label class="fl">类型</label><select id="fType"><option value="income">收入</option><option value="expense">开销</option></select>'
-          + '<div style="margin-top:10px"><label class="fl">金额</label><input id="fAmt" placeholder="39800" /></div>'
-          + '<div style="margin-top:10px"><label class="fl">摘要</label><input id="fSum" placeholder="客户回款 / 投放充值" /></div>'
-          + '<div style="margin-top:10px"><label class="fl">日期</label><input id="fOn" type="date" /></div></div>'
-          + '<div class="row" style="justify-content:flex-end;gap:9px"><button class="btn sm ghost" id="fCancel">取消</button>'
-          + '<button class="btn sm" id="fOk">保存</button></div>');
-        $("#fCancel").addEventListener("click", closeDrawer);
-        $("#fOk").addEventListener("click", function(){
-          api("/api/manage/finance", { method:"POST", body:{
-            company_id: ACTIVE, entry_type: $("#fType").value,
-            amount: Number($("#fAmt").value || 0), summary: $("#fSum").value.trim(),
-            happened_on: $("#fOn").value.trim(),
-          }}).then(function(){ closeDrawer(); toast("已记录"); loadFin(); loadBrief(); })
-            .catch(function(e){ toast(e.message, true); });
-        });
-      });
+      $("#addFin").addEventListener("click", openFinEntry);
+      $("#finScan").addEventListener("click", openFinEntry);
     }).catch(function(e){ showErr(e.message, e); });
   }
-
-﻿﻿  /* ================= 规划版本 / 重规划 / 派活 ================= */
+/* ================= 规划版本 / 重规划 / 派活 ================= */
   function openVersions(pid){
     api("/api/manage/projects/" + pid + "/versions").then(function(d){
       var vs = d.versions || [];

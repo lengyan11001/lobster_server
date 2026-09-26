@@ -351,3 +351,30 @@ class MDispatch(Base):
     status = Column(String(24), default="requested", nullable=False)
     error = Column(Text, default="", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class MInventoryItem(Base):
+    """库存：公司手里真实存在的实体设备。
+
+    产品（m_product）= 对外卖的东西；库存 = 实际持有的一台台设备，可按设备号追踪在库/在用/维修/报废。
+    """
+
+    __tablename__ = "m_inventory_item"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(160), nullable=False)
+    product_id = Column(Integer, nullable=True)                        # 关联产品（可空）
+    model_name = Column(String(120), default="", nullable=False)       # 型号
+    sku = Column(String(64), default="", nullable=False)               # 设备号 / SN
+    quantity = Column(Integer, default=1, nullable=False)
+    unit = Column(String(16), default="台", nullable=False)
+    unit_cost = Column(Numeric(14, 2), default=0, nullable=False)
+    location = Column(String(120), default="", nullable=False)         # 存放地点
+    keeper = Column(String(80), default="", nullable=False)            # 保管人
+    status = Column(String(24), default="in_stock", nullable=False)    # in_stock|in_use|repair|scrapped
+    bought_on = Column(String(10), default="", nullable=False)
+    warranty_until = Column(String(10), default="", nullable=False)
+    note = Column(Text, default="", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

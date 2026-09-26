@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -34,13 +34,14 @@ from ..manage_models import (
     MCompany,
     MCondition,
     MFinanceEntry,
+    MInventoryItem,
     MMembership,
     MMembershipRole,
     MPlanNode,
     MProduct,
     MProject,
 )
-from ..services import device_labels
+from ..services import device_labels, document_scan
 from ..models import (
     H5ChatDevicePresence,
     PublishMetricEvent,
@@ -1509,6 +1510,172 @@ def create_finance(body: FinanceIn, user: Any = Depends(current_actor),
     _audit(db, company.id, user.id, "finance.create", "entry", "", {"type": row.entry_type})
     db.commit()
     return {"ok": True, "id": row.id}
+
+
+# ---------------- 库存（实体设备） ----------------
+# 产品（m_product）是「对外卖的东西」；库存是「公司手里真实存在的设备」，一台一行、可按设备号追踪。
+INVENTORY_STATUS = ("in_stock", "in_use", "repair", "scrapped")
+INVENTORY_STATUS_LABEL = {"in_stock": "在库", "in_use": "在用", "repair": "维修中", "scrapped": "报废"}
+
+
+class InventoryIn(BaseModel):
+    company_id: int
+    name: str = Field(min_length=1, max_length=160)
+    product_id: Optional[int] = None
+    model_name: str = ""
+    sku: str = ""
+    quantity: int = 1
+    unit: str = "台"
+    unit_cost: float = 0
+    location: str = ""
+    keeper: str = ""
+    status: str = "in_stock"
+    bought_on: str = ""
+    warranty_until: str = ""
+    note: str = ""
+
+
+class InventoryPatchIn(BaseModel):
+    company_id: Optional[int] = None
+    name: Optional[str] = None
+    product_id: Optional[int] = None
+    model_name: Optional[str] = None
+    sku: Optional[str] = None
+    quantity: Optional[int] = None
+    unit: Optional[str] = None
+    unit_cost: Optional[float] = None
+    location: Optional[str] = None
+    keeper: Optional[str] = None
+    status: Optional[str] = None
+    bought_on: Optional[str] = None
+    warranty_until: Optional[str] = None
+    note: Optional[str] = None
+
+
+def _inv_text(value: Any, limit: int) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _inv_dict(row: MInventoryItem, product_names: Optional[Dict[int, str]] = None) -> Dict[str, Any]:
+    names = product_names or {}
+    unit_cost = float(row.unit_cost or 0)
+    quantity = int(row.quantity or 0)
+    return {
+        "id": row.id, "name": row.name, "product_id": row.product_id,
+        "product_name": names.get(row.product_id or 0, ""),
+        "model_name": row.model_name, "sku": row.sku, "quantity": quantity,
+        "unit": row.unit, "unit_cost": unit_cost, "amount": round(unit_cost * quantity, 2),
+        "location": row.location, "keeper": row.keeper, "status": row.status,
+        "status_label": INVENTORY_STATUS_LABEL.get(row.status, row.status),
+        "bought_on": row.bought_on, "warranty_until": row.warranty_until, "note": row.note,
+    }
+
+
+@router.get("/inventory")
+def list_inventory(company_id: int, user: Any = Depends(current_actor),
+                   db: Session = Depends(get_db)) -> Dict[str, Any]:
+    _require_company(db, company_id, user)
+    rows = (db.query(MInventoryItem).filter(MInventoryItem.company_id == company_id)
+            .order_by(MInventoryItem.status, MInventoryItem.id.desc()).all())
+    names = {p.id: p.name for p in db.query(MProduct).filter(MProduct.company_id == company_id).all()}
+    items = [_inv_dict(r, names) for r in rows]
+    summary: Dict[str, Any] = {
+        "quantity": sum(i["quantity"] for i in items),
+        "value": round(sum(i["amount"] for i in items), 2),
+        "kinds": len(items),
+    }
+    for key in INVENTORY_STATUS:
+        summary[key] = sum(i["quantity"] for i in items if i["status"] == key)
+    return {"items": items, "summary": summary}
+
+
+@router.post("/inventory")
+def create_inventory(body: InventoryIn, user: Any = Depends(current_actor),
+                     db: Session = Depends(get_db)) -> Dict[str, Any]:
+    company = _require_company(db, body.company_id, user, write=True)
+    status = body.status if body.status in INVENTORY_STATUS else "in_stock"
+    row = MInventoryItem(
+        company_id=company.id, name=body.name.strip()[:160],
+        product_id=body.product_id or None, model_name=_inv_text(body.model_name, 120),
+        sku=_inv_text(body.sku, 64), quantity=max(0, int(body.quantity or 0)),
+        unit=_inv_text(body.unit, 16) or "台", unit_cost=Decimal(str(body.unit_cost or 0)),
+        location=_inv_text(body.location, 120), keeper=_inv_text(body.keeper, 80), status=status,
+        bought_on=_inv_text(body.bought_on, 10), warranty_until=_inv_text(body.warranty_until, 10),
+        note=_inv_text(body.note, 2000),
+    )
+    db.add(row)
+    _audit(db, company.id, getattr(user, "id", 0), "inventory.create", "inventory", "",
+           {"name": row.name, "quantity": row.quantity})
+    db.commit()
+    return {"ok": True, "item_id": row.id, "item": _inv_dict(row)}
+
+
+@router.patch("/inventory/{item_id}")
+def update_inventory(item_id: int, body: InventoryPatchIn, user: Any = Depends(current_actor),
+                     db: Session = Depends(get_db)) -> Dict[str, Any]:
+    row = db.query(MInventoryItem).filter(MInventoryItem.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    company = _require_company(db, body.company_id or row.company_id, user, write=True)
+    if company.id != row.company_id:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    if body.name is not None and body.name.strip():
+        row.name = body.name.strip()[:160]
+    if body.product_id is not None:
+        row.product_id = body.product_id or None
+    if body.model_name is not None:
+        row.model_name = _inv_text(body.model_name, 120)
+    if body.sku is not None:
+        row.sku = _inv_text(body.sku, 64)
+    if body.quantity is not None:
+        row.quantity = max(0, int(body.quantity or 0))
+    if body.unit is not None:
+        row.unit = _inv_text(body.unit, 16) or "台"
+    if body.unit_cost is not None:
+        row.unit_cost = Decimal(str(body.unit_cost or 0))
+    if body.location is not None:
+        row.location = _inv_text(body.location, 120)
+    if body.keeper is not None:
+        row.keeper = _inv_text(body.keeper, 80)
+    if body.status is not None and body.status in INVENTORY_STATUS:
+        row.status = body.status
+    if body.bought_on is not None:
+        row.bought_on = _inv_text(body.bought_on, 10)
+    if body.warranty_until is not None:
+        row.warranty_until = _inv_text(body.warranty_until, 10)
+    if body.note is not None:
+        row.note = _inv_text(body.note, 2000)
+    _audit(db, company.id, getattr(user, "id", 0), "inventory.update", "inventory", str(row.id))
+    db.commit()
+    return {"ok": True, "item": _inv_dict(row)}
+
+
+@router.delete("/inventory/{item_id}")
+def delete_inventory(item_id: int, user: Any = Depends(current_actor),
+                     db: Session = Depends(get_db)) -> Dict[str, Any]:
+    row = db.query(MInventoryItem).filter(MInventoryItem.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    company = _require_company(db, row.company_id, user, write=True)
+    db.delete(row)
+    _audit(db, company.id, getattr(user, "id", 0), "inventory.delete", "inventory", str(item_id),
+           {"name": row.name})
+    db.commit()
+    return {"ok": True, "deleted": item_id}
+
+
+@router.post("/finance/scan", summary="上传发票/账单图片，AI 识图后返回可填报的记账字段")
+async def scan_finance_bill(company_id: int = Query(..., description="公司 ID"),
+                            file: UploadFile = File(...),
+                            user: Any = Depends(current_actor),
+                            db: Session = Depends(get_db)) -> Dict[str, Any]:
+    _require_company(db, company_id, user)
+    data = await file.read()
+    result = await document_scan.scan_finance_document(data, file.filename or "")
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error") or "票据识别失败")
+    return {"ok": True, "fields": result.get("fields") or {}, "model": result.get("model"),
+            "latency_ms": result.get("latency_ms")}
 
 
 @router.post("/admin/boss")
