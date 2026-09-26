@@ -15954,8 +15954,25 @@
         renderOfficeEmployees();
         return Promise.resolve();
       }
-      state.officeSummaryLoading = loadRuns({ reset: true, limit: 20, compact: true }).then((ok) => {
+      state.officeSummaryLoading = loadRuns({
+        reset: true,
+        limit: 20,
+        compact: true,
+        preserveExisting: true,
+      }).then((ok) => {
         if (ok === true) state.officeSummaryLoadedAt = Date.now();
+        const empty = !(state.runs || []).length;
+        // 首屏这次可能因为设备上下文还没就绪 / 网络抖动而空手而归；
+        // 补一次（同一次进入只补一次，不做定时轮询）。
+        if ((ok !== true || empty) && !state.officeSummaryRetried) {
+          state.officeSummaryRetried = true;
+          window.setTimeout(() => {
+            state.officeSummaryLoadedAt = 0;
+            refreshOfficeSummary().catch(() => {});
+          }, 1200);
+        } else if (ok === true && !empty) {
+          state.officeSummaryRetried = false;
+        }
       }).catch(() => {}).finally(() => {
         state.officeSummaryLoading = null;
         if (document.querySelector("#officeView.active")) renderOfficeEmployees();
@@ -17952,7 +17969,11 @@
           detail: { authenticated },
         }));
       } catch {}
-      if (authenticated) flushPendingRunListReload();
+      if (authenticated) {
+        flushPendingRunListReload();
+        // 槽位/设备上下文越早确定，首页那次 runs 请求才带得上 installation_id
+        refreshDeviceStatus().catch(() => {});
+      }
     }
 
     function isAuthFailure(err) {
@@ -27639,9 +27660,22 @@
       if (!state.runsPendingReload) return false;
       state.runsPendingReload = false;
       const onRunList = activeViewKey() === "runList";
-      loadRuns({ reset: true, limit: onRunList ? 10 : 20, compact: !onRunList })
-        .then(() => {
+      loadRuns({
+        reset: true,
+        limit: onRunList ? 10 : 20,
+        compact: !onRunList,
+        preserveExisting: true,
+      })
+        .then((ok) => {
           if (activeViewKey() === "office") renderOfficeEmployees();
+          const empty = !(state.runs || []).length;
+          if ((ok !== true || empty) && !state.officeSummaryRetried) {
+            state.officeSummaryRetried = true;
+            window.setTimeout(() => {
+              state.officeSummaryLoadedAt = 0;
+              refreshOfficeSummary().catch(() => {});
+            }, 1200);
+          }
         })
         .catch(() => {});
       return true;
