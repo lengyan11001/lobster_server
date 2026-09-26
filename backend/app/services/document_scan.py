@@ -14,6 +14,7 @@ import io
 import json
 import logging
 import os
+import pathlib
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,6 +30,9 @@ MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_PDF_BYTES = 30 * 1024 * 1024
 MAX_PDF_PAGES = 5
 MAX_PDF_TEXT = 8000
+MIN_IMAGE_SIDE = 100          # 小于这个边长、且很小的图（发票专用章 / 二维码 / 条码）不当页面内容
+MIN_IMAGE_BYTES = 8 * 1024
+LONG_TEXT_CHARS = 80          # 文字层够长（电子发票）就只送文字，别把印章图塞进去干扰模型
 DEFAULT_VISION_MODEL = "qwen3-vl-plus"
 
 DOC_TYPE_LABEL = {"invoice": "发票", "receipt": "收据", "bill": "账单", "other": "票据"}
@@ -47,6 +51,11 @@ JSON 字段：
 - category: 建议记账分类，只能从 设备 / 软件服务 / 投放推广 / 差旅 / 办公 / 人力 / 税费 / 其他 里选一个
 - direction: expense(开销) 或 income(收入)，一般票据是 expense
 - confidence: 0-1 的数字，表示你整体识别的把握
+
+规则：
+- 如果同时收到【PDF 提取出的文字】和图片：以文字为准，图片只用来核对或补全；发票专用章、二维码、条码这类图片忽略。
+- 餐饮 / 购物小票：party 写商户名（如「××餐厅」），title 写「××餐厅餐费 / 小票」，items 写点了什么或买了什么。
+- 金额一律找价税合计 / 合计 / 实付金额；有多个候选时取最大的合计金额。
 
 只输出 JSON。"""
 
@@ -82,8 +91,22 @@ def _to_jpeg(data: bytes, max_edge: int = MAX_EDGE, quality: int = 85) -> Option
         return None
 
 
+def _image_area(data: bytes) -> int:
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as img:
+            return int(img.size[0]) * int(img.size[1])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _pdf_images(data: bytes) -> List[bytes]:
-    """图片型 PDF：取每页内嵌图（pypdf，不需要额外渲染器），统一转 JPEG。"""
+    """图片型 PDF：每页取「最大的一张图」（页面扫描件），过滤印章 / 二维码 / 条码这类小图。
+
+    之前取每页第一张图，电子发票的第一张图往往是发票专用章或二维码，
+    结果整页正文（其实是文字层）根本没送模型 —— 金额 / 日期就识别不出来。
+    """
     try:
         from pypdf import PdfReader
     except Exception as exc:  # noqa: BLE001
@@ -96,22 +119,28 @@ def _pdf_images(data: bytes) -> List[bytes]:
         return []
     out: List[bytes] = []
     for page in reader.pages[:MAX_PDF_PAGES]:
+        best: Optional[bytes] = None
+        best_area = 0
         try:
-            raw = None
             for image in page.images:
                 try:
                     raw = image.data
                 except Exception:  # noqa: BLE001
-                    raw = None
-                if raw:
-                    break
-            if not raw:
-                continue
-            jpeg = _to_jpeg(raw)
-            if jpeg:
-                out.append(jpeg)
+                    continue
+                if not raw:
+                    continue
+                area = _image_area(raw)
+                if len(raw) < MIN_IMAGE_BYTES and area < MIN_IMAGE_SIDE * MIN_IMAGE_SIDE:
+                    continue          # 印章 / 二维码 / 条码
+                if area <= best_area:
+                    continue
+                jpeg = _to_jpeg(raw)
+                if jpeg:
+                    best, best_area = jpeg, area
         except Exception:  # noqa: BLE001
             logger.warning("[manage-vision] PDF 某页取图失败，跳过该页", exc_info=True)
+        if best:
+            out.append(best)
     return out
 
 
@@ -136,14 +165,30 @@ def _looks_like_pdf(data: bytes, filename: str) -> bool:
     return str(filename or "").lower().endswith(".pdf")
 
 
+def _text_usable(text: str) -> bool:
+    """文字层是否可用：有点内容、且带数字（票据一定有数字）。"""
+    body = re.sub(r"\s", "", text or "")
+    return len(body) >= 20 and bool(re.search(r"\d", body))
+
+
 def _prepare(data: bytes, filename: str) -> Tuple[Dict[str, Any], str]:
-    """把上传文件整理成送模型的内容；返回 (payload, 错误原因)。"""
+    """把上传文件整理成送模型的内容；返回 (payload, 错误原因)。
+
+    PDF 顺序：先抽文字层，再取页面图；文字够长就只送文字（电子发票），
+    文字太短（扫描件带页眉）就把文字和页面图一起送。
+    """
     if _looks_like_pdf(data, filename):
+        text = _pdf_text(data)
+        text_ok = _text_usable(text)
+        body_chars = len(re.sub(r"\s", "", text or ""))
+        if text_ok and body_chars >= LONG_TEXT_CHARS:
+            return {"kind": "pdf-text", "images": [], "text": text, "pages": 0}, ""
         images = _pdf_images(data)
+        if images and text_ok:
+            return {"kind": "pdf-mixed", "images": images, "text": text, "pages": len(images)}, ""
         if images:
             return {"kind": "pdf-image", "images": images, "text": "", "pages": len(images)}, ""
-        text = _pdf_text(data)
-        if text:
+        if text_ok:
             return {"kind": "pdf-text", "images": [], "text": text, "pages": 0}, ""
         return {}, ("这份 PDF 既没有可提取的文字，也没有能识别的页面图片（可能是矢量打印件或加密件），"
                     "请截图后再传，或换一份 PDF")
@@ -239,7 +284,7 @@ async def scan_finance_document(data: bytes, filename: str = "") -> Dict[str, An
     if err:
         return {"ok": False, "error": err, "model": model}
     content: List[Dict[str, Any]] = [{"type": "text", "text": PROMPT}]
-    if payload["kind"] == "pdf-text":
+    if payload["text"]:
         content[0]["text"] = PROMPT + "\n\n【PDF 提取出的文字】\n" + payload["text"]
     for image in payload["images"]:
         content.append({"type": "image_url",
@@ -269,6 +314,28 @@ async def scan_finance_document(data: bytes, filename: str = "") -> Dict[str, An
     if raw is None:
         return {"ok": False, "error": "视觉模型没有返回 JSON", "raw_text": _content_text(raw_content)[:400],
                 "model": model, "latency_ms": latency}
-    return {"ok": True, "model": model, "latency_ms": latency, "fields": _norm_fields(raw),
+    fields = _norm_fields(raw)
+    logger.info("[manage-vision] %s kind=%s pages=%s chars=%s -> amount=%s date=%s party=%s conf=%s",
+                filename or "-", payload["kind"], payload["pages"], len(payload["text"]),
+                fields["amount"], fields["date"], fields["party"], fields["confidence"])
+    _dump_debug(payload, fields)
+    return {"ok": True, "model": model, "latency_ms": latency, "fields": fields,
             "kind": payload["kind"], "pages": payload["pages"],
             "raw_text": _content_text(raw_content)[:2000], "file": filename}
+
+
+def _dump_debug(payload: Dict[str, Any], fields: Dict[str, Any]) -> None:
+    """MANAGE_VISION_DEBUG=1 时把「到底送了什么」落盘，方便查识别不准。"""
+    if (os.environ.get("MANAGE_VISION_DEBUG") or "").strip() not in {"1", "true", "yes", "on"}:
+        return
+    try:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        folder = pathlib.Path("/tmp/manage_vision_debug") / stamp
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "text.txt").write_text(payload.get("text") or "", encoding="utf-8")
+        (folder / "result.json").write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
+        for index, image in enumerate(payload.get("images") or [], 1):
+            (folder / f"page{index}.jpg").write_bytes(image)
+        logger.info("[manage-vision] debug dump -> %s", folder)
+    except Exception:  # noqa: BLE001
+        logger.warning("[manage-vision] debug dump 失败", exc_info=True)

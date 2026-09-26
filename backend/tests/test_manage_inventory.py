@@ -219,3 +219,64 @@ def test_scan_rejects_unreadable_file(monkeypatch):
     assert res["ok"] is False
     assert "不是能识别的图片" in res["error"]
     assert called["n"] == 0
+
+def test_pdf_with_text_layer_and_stamp_prefers_text(tmp_path):
+    """用户报的「餐饮 220 识别不出金额」：电子发票 PDF 的文字层才是正文，
+    页内印章 / 二维码小图不能顶替正文，否则模型只能看到一张章 → 金额日期全空。"""
+    pytest.importorskip("reportlab")
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    from PIL import Image
+
+    stamp = tmp_path / "stamp.png"
+    Image.new("RGB", (140, 140), (200, 0, 0)).save(stamp)
+
+    pdf = tmp_path / "einvoice.pdf"
+    cv = canvas.Canvas(str(pdf))
+    cv.setFont("Helvetica", 10)
+    lines = [
+        "DIANZI FAPIAO (electronic invoice)",
+        "Invoice No: 12345678   Date: 2026-09-25",
+        "Seller: HAOCHI CANTING CO., LTD.",
+        "Item: canyin fuwu (dining service) 220.00 CNY",
+        "Total amount incl tax: 220.00 CNY",
+        "Buyer: LOBSTER TECH   Tax amount: 12.45",
+    ]
+    y = 780
+    for line in lines:
+        cv.drawString(60, y, line)
+        y -= 18
+    cv.drawImage(ImageReader(str(stamp)), 60, y - 140, 70, 70)   # 发票专用章（小图）
+    cv.showPage()
+    cv.save()
+
+    payload, err = document_scan._prepare(pdf.read_bytes(), "einvoice.pdf")
+    assert err == ""
+    assert payload["kind"] == "pdf-text"
+    assert payload["images"] == []          # 章 / 二维码不当正文送模型
+    assert "220.00" in payload["text"]
+
+
+def test_pdf_short_text_with_page_scan_becomes_mixed(tmp_path):
+    """扫描件：文字层只有页眉（短），页面大图才是正文 → 文字 + 大图一起送。"""
+    pytest.importorskip("reportlab")
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    from PIL import Image
+
+    page = tmp_path / "page.png"
+    Image.new("RGB", (1240, 1754), (250, 250, 250)).save(page)
+
+    pdf = tmp_path / "scan_mixed.pdf"
+    cv = canvas.Canvas(str(pdf))
+    cv.setFont("Helvetica", 8)
+    cv.drawString(60, 800, "Scanned copy - total 220.00 CNY paid in cash")
+    cv.drawImage(ImageReader(str(page)), 40, 60, 520, 735)
+    cv.showPage()
+    cv.save()
+
+    payload, err = document_scan._prepare(pdf.read_bytes(), "scan_mixed.pdf")
+    assert err == ""
+    assert payload["kind"] == "pdf-mixed"
+    assert payload["images"] and payload["text"].strip()
+    assert "220.00" in payload["text"]
