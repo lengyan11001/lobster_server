@@ -76,7 +76,7 @@ _NON_ITEM_KEYS = {
 # These are platform/public endpoints from https://docs.tikhub.io/llms.txt.
 # Targeted account, video, DOU+, and logged-in creator analytics are kept out
 # of the unattended daily job because they require a target or private data.
-PUBLIC_DAILY_ENDPOINTS: tuple[dict[str, Any], ...] = (
+_ALL_PUBLIC_ENDPOINTS: tuple[dict[str, Any], ...] = (
     {"key": "hot_search", "title": "实时热搜", "category": "热搜", "method": "GET", "path": "/api/v1/douyin/app/v3/fetch_hot_search_list", "params": {"board_type": "0", "board_sub_type": ""}},
     {"key": "hot_search_seeding", "title": "种草热榜", "category": "热搜", "method": "GET", "path": "/api/v1/douyin/app/v3/fetch_hot_search_list", "params": {"board_type": "2", "board_sub_type": "seeding"}},
     {"key": "hot_search_entertainment", "title": "娱乐热榜", "category": "热搜", "method": "GET", "path": "/api/v1/douyin/app/v3/fetch_hot_search_list", "params": {"board_type": "2", "board_sub_type": "2"}},
@@ -118,6 +118,15 @@ PUBLIC_DAILY_ENDPOINTS: tuple[dict[str, Any], ...] = (
     {"key": "xingtu_case_categories", "title": "星图优秀行业", "category": "星图", "method": "GET", "path": "/api/v1/douyin/xingtu_v2/get_excellent_case_category_list", "params": {"platform_source": 1}},
     {"key": "xingtu_ip_industries", "title": "星图 IP 行业", "category": "星图", "method": "GET", "path": "/api/v1/douyin/xingtu_v2/get_ip_activity_industry_list"},
 )
+
+
+# 信息台只保留两个榜：热门榜（热点榜）与内容榜单。
+# 其余分类（热搜 / 音乐 / 话题 / 搜索 / 账号榜 / 创作者中心 / 星图 …）不再请求 TikHub。
+INFORMATION_DESK_CATEGORIES: tuple[str, ...] = ("热点榜", "内容榜")
+PUBLIC_DAILY_ENDPOINTS: tuple[dict[str, Any], ...] = tuple(
+    endpoint for endpoint in _ALL_PUBLIC_ENDPOINTS if endpoint["category"] in INFORMATION_DESK_CATEGORIES
+)
+INFORMATION_DESK_ENDPOINT_KEYS: frozenset[str] = frozenset(item["key"] for item in PUBLIC_DAILY_ENDPOINTS)
 
 
 # Keep the unattended request set aligned with the current OpenAPI contract.
@@ -516,14 +525,28 @@ def _catalog_payload() -> list[dict[str, Any]]:
 def _snapshot_payload(row: DouyinPlatformSnapshot | None) -> dict[str, Any] | None:
     if row is None:
         return None
+    sections = [
+        section for section in (row.sections or [])
+        if str((section or {}).get("category") or "") in INFORMATION_DESK_CATEGORIES
+    ]
+    endpoint_status = [
+        item for item in (row.endpoint_status or [])
+        if str((item or {}).get("key") or "") in INFORMATION_DESK_ENDPOINT_KEYS
+    ]
+    summary = dict(row.summary or {})
+    if "endpoint_count" in summary or "success_count" in summary:
+        summary["endpoint_count"] = len(PUBLIC_DAILY_ENDPOINTS)
+        summary["success_count"] = sum(
+            1 for item in endpoint_status if str((item or {}).get("status") or "") in ("ok", "success")
+        )
     return {
         "id": row.id,
         "snapshot_date": row.snapshot_date,
         "fetched_at": row.fetched_at.isoformat() + "Z" if row.fetched_at else None,
         "status": row.status,
-        "summary": row.summary or {},
-        "sections": row.sections or [],
-        "endpoint_status": row.endpoint_status or [],
+        "summary": summary,
+        "sections": sections,
+        "endpoint_status": endpoint_status,
         "error_message": row.error_message or "",
     }
 

@@ -2786,11 +2786,164 @@
             const link = /^https?:\/\//i.test(String(item.url || ""))
               ? `<a class="douyin-information-desk-item-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">打开观看</a>`
               : "";
-            return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span><span class="douyin-information-desk-item-title">${escapeHtml(title)}</span></div><div class="douyin-information-desk-item-meta">${escapeHtml(meta)}${link}</div></div>`;
+            const cover = /^https?:\/\//i.test(String(item.cover_url || ""))
+              ? `<img class="douyin-information-desk-cover" src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+              : '<span class="douyin-information-desk-cover is-empty"></span>';
+            const sameStyle = `<button class="douyin-information-desk-same-style" type="button" data-douyin-imitation="1" data-douyin-title="${escapeHtml(title)}" data-douyin-keyword="${escapeHtml(item.keyword || item.name || "")}" data-douyin-cover="${escapeHtml(item.cover_url || "")}">做同款</button>`;
+            return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-cover">${cover}</div><div class="douyin-information-desk-item-body"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span><span class="douyin-information-desk-item-title">${escapeHtml(title)}</span></div><div class="douyin-information-desk-item-meta">${escapeHtml(meta)}${link}</div><div class="douyin-information-desk-item-actions">${sameStyle}</div></div></div>`;
           }).join("") : `<div class="douyin-information-desk-empty">该接口暂无可展示条目${section.error ? `：${escapeHtml(section.error)}` : ""}</div>`;
           return `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title"><span>${escapeHtml(section.title || section.key || "数据")}</span><small>${items.length} 条</small></div><div class="douyin-information-desk-items">${itemHtml}</div></section>`;
         }).join("") : '<div class="douyin-information-desk-empty">该分类暂无数据</div>';
+        content.querySelectorAll(".douyin-information-desk-cover").forEach((img) => {
+          img.addEventListener("error", () => { img.style.display = "none"; });
+        });
+        content.querySelectorAll("[data-douyin-imitation]").forEach((btn) => {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openDouyinImitation({
+              title: btn.dataset.douyinTitle || "",
+              keyword: btn.dataset.douyinKeyword || "",
+              cover: btn.dataset.douyinCover || "",
+            });
+          });
+        });
       }
+    }
+
+    const douyinImitationState = { timer: 0, tries: 0, title: "", bound: false };
+
+    function closeDouyinImitation() {
+      if (douyinImitationState.timer) {
+        clearTimeout(douyinImitationState.timer);
+        douyinImitationState.timer = 0;
+      }
+      const modal = $("douyinImitationDialog");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+    }
+
+    function openDouyinImitation(item) {
+      const modal = $("douyinImitationDialog");
+      if (!modal) return;
+      if (!douyinImitationState.bound) {
+        douyinImitationState.bound = true;
+        const closeBtn = $("douyinImitationCloseBtn");
+        if (closeBtn) closeBtn.addEventListener("click", closeDouyinImitation);
+        const backdrop = $("douyinImitationBackdrop");
+        if (backdrop) backdrop.addEventListener("click", closeDouyinImitation);
+        const submitBtn = $("douyinImitationSubmit");
+        if (submitBtn) submitBtn.addEventListener("click", submitDouyinImitation);
+      }
+      douyinImitationState.title = String((item && item.title) || "");
+      const titleEl = $("douyinImitationTitle");
+      if (titleEl) titleEl.textContent = `做同款 · ${douyinImitationState.title || "热门内容"}`;
+      const promptEl = $("douyinImitationPrompt");
+      if (promptEl) {
+        promptEl.value = `参考「${douyinImitationState.title || "热门内容"}」的题材与节奏，做一条同款风格的短视频`;
+      }
+      const statusEl = $("douyinImitationStatus");
+      if (statusEl) statusEl.textContent = "";
+      const fileEl = $("douyinImitationFile");
+      if (fileEl) fileEl.value = "";
+      const resultEl = $("douyinImitationResult");
+      if (resultEl) {
+        resultEl.innerHTML = (item && /^https?:\/\//i.test(String(item.cover || "")))
+          ? `<img src="${escapeHtml(item.cover)}" alt="" style="max-width:140px;border-radius:10px" />`
+          : "";
+      }
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+    }
+
+    async function submitDouyinImitation() {
+      const fileEl = $("douyinImitationFile");
+      const file = fileEl && fileEl.files && fileEl.files[0];
+      const statusEl = $("douyinImitationStatus");
+      const resultEl = $("douyinImitationResult");
+      if (!file) {
+        toast("先选一张参考图");
+        return;
+      }
+      const submitBtn = $("douyinImitationSubmit");
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        if (statusEl) statusEl.textContent = "正在上传参考图…";
+        const form = new FormData();
+        form.append("file", file, file.name || "imitation-image");
+        const uploadResp = await blockingFetch(apiUrl("/api/assets/upload-temp"), {
+          method: "POST",
+          headers: authHeaders(),
+          body: form,
+        });
+        const uploadData = await uploadResp.json().catch(() => ({}));
+        if (!uploadResp.ok) {
+          throw new Error((uploadData && (uploadData.detail || uploadData.message)) || `上传失败 HTTP ${uploadResp.status}`);
+        }
+        const imageUrl = String(uploadData.public_url || "").trim();
+        if (!imageUrl) throw new Error("参考图上传后没有拿到公网地址");
+        if (statusEl) statusEl.textContent = "已提交，正在生成（约 1-3 分钟）…";
+        const promptEl = $("douyinImitationPrompt");
+        const durationEl = $("douyinImitationDuration");
+        const ratioEl = $("douyinImitationRatio");
+        const submitted = await api("/api/douyin/platform-information-desk/imitation", {
+          method: "POST",
+          blocking: "正在提交做同款",
+          json: {
+            image_url: imageUrl,
+            title: douyinImitationState.title || "",
+            prompt: String((promptEl && promptEl.value) || "").trim(),
+            duration: Number((durationEl && durationEl.value) || 5),
+            ratio: String((ratioEl && ratioEl.value) || "9:16"),
+          },
+        });
+        if (resultEl) {
+          resultEl.innerHTML = `<div class="douyin-information-desk-empty">任务 ${escapeHtml(String(submitted.task_id || ""))} 已提交，生成中…</div>`;
+        }
+        douyinImitationState.tries = 0;
+        pollDouyinImitation(String(submitted.task_id || ""));
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `失败：${(err && err.message) || err}`;
+        toast((err && err.message) || "做同款失败", true);
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    function pollDouyinImitation(taskId) {
+      if (!taskId) return;
+      if (douyinImitationState.timer) clearTimeout(douyinImitationState.timer);
+      douyinImitationState.timer = setTimeout(async () => {
+        douyinImitationState.tries += 1;
+        const statusEl = $("douyinImitationStatus");
+        const resultEl = $("douyinImitationResult");
+        try {
+          const data = await api(`/api/douyin/platform-information-desk/imitation/${encodeURIComponent(taskId)}`, { blocking: false });
+          if (data.status === "SUCCESS" && data.video_url) {
+            if (statusEl) statusEl.textContent = "已完成";
+            if (resultEl) {
+              resultEl.innerHTML = `<video controls playsinline preload="metadata" style="width:100%;border-radius:12px" src="${escapeHtml(data.video_url)}"></video>`
+                + `<div style="margin-top:8px"><a href="${escapeHtml(data.video_url)}" target="_blank" rel="noopener noreferrer">打开 / 下载视频</a></div>`;
+            }
+            return;
+          }
+          if (data.done) {
+            const reason = String(data.fail_reason || "生成失败");
+            if (statusEl) statusEl.textContent = `失败：${reason}`;
+            if (resultEl) resultEl.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml(reason)}</div>`;
+            return;
+          }
+          if (statusEl) statusEl.textContent = `生成中 ${data.progress || ""}（第 ${douyinImitationState.tries} 次查询）`;
+          if (douyinImitationState.tries >= 40) {
+            if (statusEl) statusEl.textContent = "还在生成中，任务已提交，稍后重新点做同款可查结果";
+            return;
+          }
+          pollDouyinImitation(taskId);
+        } catch (err) {
+          if (statusEl) statusEl.textContent = `查询失败：${(err && err.message) || err}`;
+        }
+      }, 6000);
     }
 
     async function loadDouyinInformationDesk() {

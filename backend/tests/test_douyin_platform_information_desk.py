@@ -68,12 +68,21 @@ def test_information_desk_returns_compact_snapshot_after_permission_grant(
                     "key": "hot_search",
                     "title": "实时热搜",
                     "category": "热搜",
-                    "items": [{"rank": 1, "title": "平台话题", "metrics": {"hot_value": 10}}],
+                    "items": [{"rank": 1, "title": "应被过滤掉的热搜", "metrics": {"hot_value": 10}}],
                     "error": "",
-                }
+                },
+                {
+                    "key": "hot_total",
+                    "title": "热点总榜",
+                    "category": "热点榜",
+                    "items": [{"rank": 1, "title": "平台话题", "metrics": {"hot_value": 10},
+                               "cover_url": "https://cdn.test/cover.jpg"}],
+                    "error": "",
+                },
             ],
             endpoint_status=[
-                {"key": "hot_search", "status": "success", "http_status": 200}
+                {"key": "hot_search", "status": "success", "http_status": 200},
+                {"key": "hot_total", "status": "success", "http_status": 200},
             ],
             error_message="一个接口失败",
         )
@@ -87,10 +96,15 @@ def test_information_desk_returns_compact_snapshot_after_permission_grant(
     assert response.status_code == 200
     payload = response.json()
     assert payload["snapshot"]["status"] == "partial"
-    assert payload["snapshot"]["sections"][0]["items"][0]["title"] == "平台话题"
+    sections = payload["snapshot"]["sections"]
+    assert [section["category"] for section in sections] == ["热点榜"]
+    assert sections[0]["items"][0]["title"] == "平台话题"
+    assert sections[0]["items"][0]["cover_url"] == "https://cdn.test/cover.jpg"
+    assert [item["key"] for item in payload["snapshot"]["endpoint_status"]] == ["hot_total"]
     assert "raw" not in payload["snapshot"]
     assert "request_body" not in payload["snapshot"]
-    assert any(item["key"] == "publish_trend" and item["daily"] is False and item["requires_parameters"] is True for item in payload["catalog"])
+    assert {item["category"] for item in payload["catalog"]} == {"热点榜", "内容榜"}
+    assert len(payload["catalog"]) == 10
 
 
 def test_information_desk_admin_can_read_without_feature_row(
@@ -303,3 +317,95 @@ def test_hot_search_uses_word_instead_of_numeric_label_and_prefers_main_word_lis
             "metrics": {"hot_value": 123456, "view_count": 789},
         }
     ]
+
+
+def test_information_desk_only_requests_hot_and_content_boards():
+    """2026-09-27 需求：服务器侧只保留热门榜（热点榜）与内容榜单的请求。"""
+    from backend.app.services import douyin_platform_information_desk as service
+
+    categories = {item["category"] for item in service.PUBLIC_DAILY_ENDPOINTS}
+    assert categories == {"热点榜", "内容榜"}
+
+    keys = {item["key"] for item in service.PUBLIC_DAILY_ENDPOINTS}
+    assert {"hot_rise", "hot_city", "hot_challenge", "hot_total"} <= keys
+    assert {"hot_video", "low_fan_video", "high_play_video", "high_like_video", "high_fan_video"} <= keys
+    dropped = {"hot_search", "music_hot_search", "hot_accounts", "hot_topic", "hot_total_topic",
+               "xingtu_catalog", "creator_hot_music", "rising_search_words", "publish_trend"}
+    assert not (dropped & keys)
+    assert all(item["key"] != "publish_trend" for item in service.DAILY_COLLECTION_ENDPOINTS)
+    assert service.INFORMATION_DESK_ENDPOINT_KEYS == frozenset(keys)
+
+
+def test_imitation_prompt_and_parameter_cleanup():
+    from backend.app.services import douyin_imitation_video as imitation
+
+    prompt = imitation.build_prompt("海底捞神仙吃法", "美食探店")
+    assert "海底捞神仙吃法" in prompt and "美食探店" in prompt
+    assert "同款" in prompt
+    assert len(imitation.build_prompt("x" * 200)) <= 800
+
+    assert imitation._clean_duration(99) == 10
+    assert imitation._clean_duration("abc") == 5
+    assert imitation._clean_duration(1) == 2
+    assert imitation._clean_ratio("4:3") == "9:16"
+    assert imitation._clean_ratio("16:9") == "16:9"
+
+
+def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_factory, test_user, monkeypatch):
+    """做同款：没权限 403；有权限时提交任务号、再查进度拿视频。"""
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import UserSkillVisibility
+    from backend.app.services.user_feature_flags import DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID
+
+    client = _client(db_session_factory, test_user.id)
+    denied = client.post(
+        "/api/douyin/platform-information-desk/imitation",
+        json={"image_url": "https://cdn.test/ref.jpg"},
+    )
+    assert denied.status_code == 403
+
+    db_session.add(
+        UserSkillVisibility(
+            user_id=test_user.id,
+            package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
+        )
+    )
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_submit(image_url, prompt, *, duration=None, ratio=None):
+        captured.update(image_url=image_url, prompt=prompt, duration=duration, ratio=ratio)
+        return {"ok": True, "task_id": "task-e2e", "model": "wan2.6-i2v", "prompt": prompt}
+
+    async def fake_query(task_id):
+        return {"ok": True, "task_id": task_id, "status": "SUCCESS", "progress": "100%",
+                "video_url": "https://cdn.test/out.mp4", "fail_reason": "", "done": True}
+
+    monkeypatch.setattr(desk_api, "submit_imitation", fake_submit)
+    monkeypatch.setattr(desk_api, "query_imitation", fake_query)
+
+    created = client.post(
+        "/api/douyin/platform-information-desk/imitation",
+        json={"image_url": "https://cdn.test/ref.jpg", "title": "海底捞神仙吃法", "duration": 99, "ratio": "16:9"},
+    )
+    assert created.status_code == 200
+    assert created.json()["task_id"] == "task-e2e"
+    assert captured["image_url"] == "https://cdn.test/ref.jpg"
+    assert "海底捞神仙吃法" in captured["prompt"]
+    assert captured["duration"] == 99 and captured["ratio"] == "16:9"
+
+    status = client.get("/api/douyin/platform-information-desk/imitation/task-e2e")
+    assert status.status_code == 200
+    assert status.json()["video_url"] == "https://cdn.test/out.mp4"
+
+    async def fake_submit_fail(image_url, prompt, *, duration=None, ratio=None):
+        return {"ok": False, "error": "视频模型返回 HTTP 400：bad image"}
+
+    monkeypatch.setattr(desk_api, "submit_imitation", fake_submit_fail)
+    failed = client.post(
+        "/api/douyin/platform-information-desk/imitation",
+        json={"image_url": "https://cdn.test/ref.jpg"},
+    )
+    assert failed.status_code == 502
+    assert "bad image" in failed.json()["detail"]
