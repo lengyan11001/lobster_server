@@ -2721,18 +2721,14 @@
       <div class="douyin-information-desk-head">
         <div>
           <div class="task-success-kicker">SAME STYLE</div>
-          <h3 id="douyinImitationTitle">做同款</h3>
-          <p id="douyinImitationSub">传一张参考图，用 wan 图生视频做同款风格（约 1-3 分钟）</p>
+          <h3 id="douyinImitationTitle">做同款（换人）</h3>
+          <p id="douyinImitationSub">拿榜单这条原视频，把视频里的人换成你图中的人（约 1-3 分钟）</p>
         </div>
         <button class="ghost douyin-information-desk-close" type="button" id="douyinImitationCloseBtn" aria-label="关闭">关闭</button>
       </div>
       <div class="douyin-imitation-body">
-        <label class="douyin-imitation-field"><span>参考图（必选，建议 240px 以上）</span><input type="file" id="douyinImitationFile" /></label>
-        <label class="douyin-imitation-field"><span>提示词</span><textarea id="douyinImitationPrompt" rows="3"></textarea></label>
-        <div class="douyin-imitation-row">
-          <label class="douyin-imitation-field"><span>时长</span><select id="douyinImitationDuration"><option value="5">5 秒</option><option value="10">10 秒</option></select></label>
-          <label class="douyin-imitation-field"><span>画幅</span><select id="douyinImitationRatio"><option value="9:16">9:16 竖屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方形</option></select></label>
-        </div>
+        <div class="douyin-imitation-field" id="douyinImitationNote">原视频取榜单这条作品，把视频里的人换成你图中的人</div>
+        <label class="douyin-imitation-field"><span>你的照片（必选：单人、五官清晰、无遮挡）</span><input type="file" id="douyinImitationFile" /></label>
         <div class="douyin-imitation-actions">
           <button type="button" id="douyinImitationSubmit">开始生成</button>
           <span id="douyinImitationStatus" class="douyin-imitation-status"></span>

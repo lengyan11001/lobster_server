@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import User
-from ..services.douyin_imitation_video import build_prompt, query_imitation, submit_imitation
+from ..services.douyin_imitation_video import prepare_imitation, query_imitation
 from ..services.douyin_platform_information_desk import information_desk_response
 from ..services.user_feature_flags import (
     DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
@@ -39,14 +39,11 @@ def get_douyin_platform_information_desk(
 
 
 class ImitationIn(BaseModel):
-    """做同款入参：先由前端把参考图传到 /api/assets/upload-temp，再带 public_url 过来。"""
+    """做同款（换人）入参：榜单作品 id + 用户上传的单人参考图公网地址。"""
 
     image_url: str = Field(min_length=8, max_length=2000)
+    item_id: str = Field(min_length=6, max_length=40)
     title: str = ""
-    keyword: str = ""
-    prompt: str = ""
-    duration: int = 5
-    ratio: str = "9:16"
 
 
 @router.post("/api/douyin/platform-information-desk/imitation", summary="抖音信息台做同款：一张参考图生成同款风格视频")
@@ -56,8 +53,7 @@ async def create_information_desk_imitation(
     db: Session = Depends(get_db),
 ):
     _require_information_desk_access(current_user, db)
-    prompt = (body.prompt or "").strip() or build_prompt(body.title, body.keyword)
-    result = await submit_imitation(body.image_url, prompt, duration=body.duration, ratio=body.ratio)
+    result = await prepare_imitation(body.image_url, body.item_id)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
     return result

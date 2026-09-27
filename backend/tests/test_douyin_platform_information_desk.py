@@ -336,19 +336,31 @@ def test_information_desk_only_requests_hot_and_content_boards():
     assert service.INFORMATION_DESK_ENDPOINT_KEYS == frozenset(keys)
 
 
-def test_imitation_prompt_and_parameter_cleanup():
+def test_imitation_picker_and_error_hints(monkeypatch):
+    """换人链路：从作品详情里挑播放地址 + 上游错误翻成人话 + 时长上限。"""
     from backend.app.services import douyin_imitation_video as imitation
 
-    prompt = imitation.build_prompt("海底捞神仙吃法", "美食探店")
-    assert "海底捞神仙吃法" in prompt and "美食探店" in prompt
-    assert "同款" in prompt
-    assert len(imitation.build_prompt("x" * 200)) <= 800
+    detail = {
+        "video": {
+            "duration": 11000,
+            "bit_rate": [{"play_addr": {"url_list": ["https://cdn.test/low.mp4"]}}],
+            "play_addr": {"url_list": ["https://cdn.test/main.mp4", "https://cdn.test/backup.mp4"]},
+        }
+    }
+    assert imitation.pick_play_url(detail) == "https://cdn.test/main.mp4"
+    assert imitation.pick_play_url({"video": {"bit_rate": [{"play_addr": {"url_list": ["https://cdn.test/a.mp4"]}}]}}) == "https://cdn.test/a.mp4"
+    assert imitation.pick_play_url({}) == ""
 
-    assert imitation._clean_duration(99) == 10
-    assert imitation._clean_duration("abc") == 5
-    assert imitation._clean_duration(1) == 2
-    assert imitation._clean_ratio("4:3") == "9:16"
-    assert imitation._clean_ratio("16:9") == "16:9"
+    assert "只有一个人" in imitation.friendly_error("InvalidImage.NoHuman", "The input image has no human body.")
+    assert "TOS" in imitation.friendly_error("InvalidURL.ConnectionRefused", "Download https://x refused, please provide available URL")
+    assert imitation.friendly_error("", "boom") == "boom"
+
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "99")
+    assert imitation._max_seconds() == 30          # 官方上限 30 秒
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "abc")
+    assert imitation._max_seconds() == 15          # 兜底默认
+    monkeypatch.setenv("DOUYIN_IMITATION_MODEL", "wan2.2-animate-mix")
+    assert imitation._model() == "wan2.2-animate-mix"
 
 
 def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_factory, test_user, monkeypatch):
@@ -360,7 +372,7 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
     client = _client(db_session_factory, test_user.id)
     denied = client.post(
         "/api/douyin/platform-information-desk/imitation",
-        json={"image_url": "https://cdn.test/ref.jpg"},
+        json={"image_url": "https://cdn.test/ref.jpg", "item_id": "7689077964000973561"},
     )
     assert denied.status_code == 403
 
@@ -374,38 +386,38 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
 
     captured = {}
 
-    async def fake_submit(image_url, prompt, *, duration=None, ratio=None):
-        captured.update(image_url=image_url, prompt=prompt, duration=duration, ratio=ratio)
-        return {"ok": True, "task_id": "task-e2e", "model": "wan2.6-i2v", "prompt": prompt}
+    async def fake_prepare(image_url, item_id):
+        captured.update(image_url=image_url, item_id=item_id)
+        return {"ok": True, "task_id": "task-e2e", "model": "wan2.2-animate-mix",
+                "video_seconds": 15, "source_desc": "想吃哈哈哈哈"}
 
     async def fake_query(task_id):
         return {"ok": True, "task_id": task_id, "status": "SUCCESS", "progress": "100%",
                 "video_url": "https://cdn.test/out.mp4", "fail_reason": "", "done": True}
 
-    monkeypatch.setattr(desk_api, "submit_imitation", fake_submit)
+    monkeypatch.setattr(desk_api, "prepare_imitation", fake_prepare)
     monkeypatch.setattr(desk_api, "query_imitation", fake_query)
 
     created = client.post(
         "/api/douyin/platform-information-desk/imitation",
-        json={"image_url": "https://cdn.test/ref.jpg", "title": "海底捞神仙吃法", "duration": 99, "ratio": "16:9"},
+        json={"image_url": "https://tos.test/ref.png", "item_id": "7689077964000973561", "title": "想吃哈哈哈哈"},
     )
     assert created.status_code == 200
     assert created.json()["task_id"] == "task-e2e"
-    assert captured["image_url"] == "https://cdn.test/ref.jpg"
-    assert "海底捞神仙吃法" in captured["prompt"]
-    assert captured["duration"] == 99 and captured["ratio"] == "16:9"
+    assert captured["image_url"] == "https://tos.test/ref.png"
+    assert captured["item_id"] == "7689077964000973561"
 
     status = client.get("/api/douyin/platform-information-desk/imitation/task-e2e")
     assert status.status_code == 200
     assert status.json()["video_url"] == "https://cdn.test/out.mp4"
 
-    async def fake_submit_fail(image_url, prompt, *, duration=None, ratio=None):
-        return {"ok": False, "error": "视频模型返回 HTTP 400：bad image"}
+    async def fake_prepare_fail(image_url, item_id):
+        return {"ok": False, "error": "这张图里没有检测到人物，请换一张只有一个人的清晰照片"}
 
-    monkeypatch.setattr(desk_api, "submit_imitation", fake_submit_fail)
+    monkeypatch.setattr(desk_api, "prepare_imitation", fake_prepare_fail)
     failed = client.post(
         "/api/douyin/platform-information-desk/imitation",
-        json={"image_url": "https://cdn.test/ref.jpg"},
+        json={"image_url": "https://tos.test/ref.png", "item_id": "7689077964000973561"},
     )
     assert failed.status_code == 502
-    assert "bad image" in failed.json()["detail"]
+    assert "没有检测到人物" in failed.json()["detail"]
