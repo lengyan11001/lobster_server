@@ -2854,7 +2854,7 @@
         const clearBtn = $("douyinInformationDeskSearchClear");
         if (clearBtn) clearBtn.classList.remove("hidden");
       } catch (err) {
-        if (content) content.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml((err && err.message) || "搜索失败")}</div>`;
+        if (content) content.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml(douyinErrorText(err))}</div>`;
       }
     }
 
@@ -2867,6 +2867,23 @@
     }
 
     const douyinImitationState = { timer: 0, tries: 0, title: "", itemId: "", bound: false };
+
+    // 后端 detail 有时是对象，直接拼字符串会显示 [object Object]
+    function douyinErrorText(err) {
+      if (!err) return "操作失败";
+      const raw = err.message !== undefined && err.message !== null ? err.message : err;
+      if (typeof raw === "string") return raw;
+      if (raw && typeof raw === "object") {
+        const inner = raw.message || raw.detail || raw.error;
+        if (typeof inner === "string" && inner) return inner;
+        try {
+          return JSON.stringify(raw).slice(0, 300);
+        } catch (e) {
+          return "操作失败";
+        }
+      }
+      return String(raw);
+    }
 
     function closeDouyinImitation() {
       if (douyinImitationState.timer) {
@@ -2967,8 +2984,9 @@
         douyinImitationState.tries = 0;
         pollDouyinImitation(String(submitted.task_id || ""));
       } catch (err) {
-        if (statusEl) statusEl.textContent = `失败：${(err && err.message) || err}`;
-        toast((err && err.message) || "做同款失败", true);
+        const reason = douyinErrorText(err);
+        if (statusEl) statusEl.textContent = `失败：${reason}`;
+        toast(reason, true);
       } finally {
         if (submitBtn) submitBtn.disabled = false;
       }
@@ -3004,7 +3022,7 @@
           }
           pollDouyinImitation(taskId);
         } catch (err) {
-          if (statusEl) statusEl.textContent = `查询失败：${(err && err.message) || err}`;
+          if (statusEl) statusEl.textContent = `查询失败：${douyinErrorText(err)}`;
         }
       }, 6000);
     }
