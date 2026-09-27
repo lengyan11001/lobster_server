@@ -2748,7 +2748,11 @@
         if (content) content.innerHTML = '<div class="douyin-information-desk-empty">暂无平台快照</div>';
         return;
       }
-      const snapshotSections = Array.isArray(snapshot.sections) ? snapshot.sections : [];
+      // 信息台只留两个榜（服务端已收敛，这里再兜一层，避免旧快照/缓存带出别的分类）
+      const allowedCategories = ["热点榜", "内容榜"];
+      const snapshotSections = (Array.isArray(snapshot.sections) ? snapshot.sections : []).filter((section) => {
+        return allowedCategories.includes(String((section && section.category) || "").trim());
+      });
       const categories = [];
       snapshotSections.forEach((section) => {
         const category = String(section && section.category || "其他").trim() || "其他";
