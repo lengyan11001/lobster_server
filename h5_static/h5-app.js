@@ -4445,7 +4445,9 @@
 
     function articleFieldsHtml(prefix, titleValue = "公众号文章") {
       return taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue))
-        + taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题"), true)
+        + taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题（复刻模式可留空，用原文标题）"), true)
+        + taskFieldHtml("复刻原文链接（可选）", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'))
+        + taskFieldHtml("复刻补充要求（可选）", taskTextareaHtml(`${prefix}ExtraMaterial`, "填了链接就是复刻：按原文的行文逻辑重写，事实用你的记忆资料（默认全部记忆）；这里可补要求，例如：只用我们的客户案例、结尾加行动建议"))
         + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
         + taskAdvancedFieldsHtml(
           taskFieldHtml("写作风格", taskSelectHtml(`${prefix}Style`, optionHtml("专业、有观点、适合公众号阅读", "专业观点") + optionHtml("简洁大气、商业分析、少废话", "简洁商业") + optionHtml("故事感强、情绪自然、有真实案例", "故事叙事") + optionHtml("通俗易懂、步骤清晰、可直接照做", "实用教程")))
@@ -4462,11 +4464,15 @@
 
     function articlePayloadFromFields(prefix) {
       const idea = workflowParamValue(`${prefix}Idea`);
-      if (!idea) throw new Error("请填写公众号主题");
+      const sourceUrl = String(workflowParamValue(`${prefix}SourceUrl`) || "").trim();
+      if (!idea && !sourceUrl) throw new Error("请填写公众号主题，或粘贴一条公众号文章链接做复刻");
       const selectedValues = assetPickerSelectedValues(`${prefix}SelectedImages`).slice(0, 12);
       return {
         idea,
         topic: idea,
+        source_url: sourceUrl,
+        memory_document_ids: [],
+        extra_material: workflowParamValue(`${prefix}ExtraMaterial`),
         audience: workflowParamValue(`${prefix}Audience`),
         style: workflowParamValue(`${prefix}Style`) || "专业、有观点、适合公众号阅读",
         theme: workflowParamValue(`${prefix}Theme`) || "professional-clean",
