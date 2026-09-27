@@ -4468,7 +4468,7 @@
     function articleRemixFieldsHtml(prefix) {
       // 复刻特有输入：只要链接。资料不用选——AI 自动用你的 IP 人设默认模板（记忆 + 资料调查）结合抓到的正文写。
       return taskFieldHtml("要复刻的公众号文章链接", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'), true)
-        + '<p class="meta" style="margin:-0.4rem 0 0.7rem;">不用选资料：AI 会自动用你的 IP 人设默认模板（记忆 + 资料调查）结合抓到的正文来写。</p>';
+        + '<p class="meta" style="margin:-0.4rem 0 0.7rem;">资料用你 IP 人设模板里选好的（记忆文件 / 资料调查）；模板里没选会提交失败，请先到「个人设置」给模板选好资料。</p>';
     }
 
     function articleFieldsHtml(prefix, titleValue = "公众号文章") {
