@@ -114,7 +114,8 @@ def brand_mark_for_jwt_claim(raw: Optional[str]) -> Optional[str]:
 
 
 def access_token_claims(user: User) -> dict:
-    claims: dict = {"sub": str(user.id)}
+    # pv = 密码版本号：改密码后 +1，旧 token 的 pv 对不上就会被 401（踢出登录）
+    claims: dict = {"sub": str(user.id), "pv": password_version_of(user)}
     bm = brand_mark_for_jwt_claim(getattr(user, "brand_mark", None))
     if bm:
         claims["brand_mark"] = bm
@@ -425,6 +426,27 @@ def backfill_phone_default_passwords(db: Session) -> int:
     return updated
 
 
+def password_version_of(user: Any) -> int:
+    try:
+        return int(getattr(user, "password_version", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def assert_token_password_version(payload: dict, user: Any) -> None:
+    """改密码后旧 token（pv 对不上）直接 401，客户端会被要求重新登录。"""
+    try:
+        token_version = int(payload.get("pv") or 0)
+    except (TypeError, ValueError):
+        token_version = 0
+    if token_version != password_version_of(user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="密码已修改，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -474,6 +496,7 @@ async def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    assert_token_password_version(payload, user)
     validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
     # Do not keep the authentication read transaction checked out while the
     # endpoint waits on an upstream API or streams a response.
@@ -497,6 +520,7 @@ async def get_current_user_id_from_token(
         user = db.query(User).filter(User.id == user_id).first()
         if user is None:
             raise credentials_exception
+        assert_token_password_version(payload, user)
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
         request.state.auth_session_id = str(payload.get("jti") or "").strip()[:128] or hashlib.sha256(
             token.encode("utf-8")
@@ -526,6 +550,7 @@ async def get_messenger_user_id(
         raise credentials_exception
     user = db.query(User).filter(User.id == user_id).first()
     if user is not None:
+        assert_token_password_version(payload, user)
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
         db.commit()
         return user_id
@@ -720,10 +745,12 @@ def change_password(
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
     current_user.hashed_password = get_password_hash(new_password)
     current_user.password_initialized = True
+    # 改密即踢掉所有旧会话：token 里的 pv 对不上就 401（客户端会要求重新登录）
+    current_user.password_version = password_version_of(current_user) + 1
     db.add(current_user)
     db.commit()
-    logger.info("[auth/password/change] user_id=%s ok=1", current_user.id)
-    return {"ok": True}
+    logger.info("[auth/password/change] user_id=%s ok=1 pv=%s", current_user.id, current_user.password_version)
+    return {"ok": True, "relogin_required": True}
 
 
 @router.post("/phone/change/send-code", summary="换绑手机号：向新号码发送验证码（需原密码）")
@@ -961,8 +988,12 @@ def refresh_access_token(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise bad
+    if int(payload.get("pv") or 0) != password_version_of(user):
+        logger.info("[auth/refresh] 密码已修改，拒绝续签 user_id=%s", user_id)
+        raise bad
     validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
     claims = {k: v for k, v in payload.items() if k not in ("exp", "iat", "nbf")}
+    claims["pv"] = password_version_of(user)
     new_token = create_access_token(data=claims)
     expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     logger.info(

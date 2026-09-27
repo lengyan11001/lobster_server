@@ -160,6 +160,23 @@ def _startup_db_lock():
         conn.close()
 
 
+def _migrate_user_password_version():
+    """users.password_version：改密码后旧 token 失效（老库补列）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        with engine.begin() as conn:
+            if "password_version" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0"))
+        logger.info("Migration users.password_version ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration users.password_version skipped: %s", e)
+
+
 def _migrate_douyin_imitation_task_columns():
     """给 douyin_imitation_task 补计费列（表是 2026-09-27 新建的，create_all 不会改老表）。"""
     from sqlalchemy import inspect, text
@@ -1606,6 +1623,7 @@ def create_app() -> FastAPI:
         _migrate_installation_signup_bonus_claims()
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
+        _migrate_user_password_version()
         _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()
         _migrate_wechat_outcome_channel()

@@ -30928,7 +30928,10 @@
           const el = $(id);
           if (el) el.value = "";
         });
-        setAccountSecurityMsg("密码已更新，下次登录请使用新密码", false);
+        // 服务端已失效旧会话：本地也清掉 token，回登录页重新登录
+        setAccountSecurityMsg("密码已修改，请用新密码重新登录…", false);
+        clearStoredAuth();
+        setTimeout(() => window.location.reload(), 1200);
       } catch (err) {
         setAccountSecurityMsg(`修改密码失败：${(err && err.message) || "未知错误"}`, true);
       } finally {

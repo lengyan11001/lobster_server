@@ -17,6 +17,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     password_initialized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    password_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """改密码/被管理员重置密码时 +1；token 里带 pv，校验时不一致即失效（踢掉所有旧会话）。"""
     credits: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("99999.0000"), nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     preferred_model: Mapped[str] = mapped_column(String(128), default="openclaw", nullable=False)

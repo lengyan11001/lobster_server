@@ -943,6 +943,7 @@ def admin_reset_password(
     from .auth import get_password_hash
 
     user.hashed_password = get_password_hash(pwd)
+    user.password_version = int(getattr(user, "password_version", 0) or 0) + 1  # 重置密码也踢掉旧会话
     user.password_initialized = True
     db.add(user)
     db.commit()

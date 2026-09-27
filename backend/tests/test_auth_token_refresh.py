@@ -105,3 +105,65 @@ class _FakeRequest:
         self.query_params = Headers({})
         self.client = _FakeClient()
         self.state = type("_S", (), {})()
+
+# ---------------- 改密码后踢掉已登录会话（2026-09-27） ----------------
+
+def test_change_password_invalidates_existing_tokens(db_session, test_user):
+    """安全页改密码后：老 token 立刻失效、不能续签；新登录签发的 token 正常。"""
+    test_user.hashed_password = auth_api.get_password_hash("old-pass-123")
+    db_session.commit()
+    old_token = auth_api.create_access_token(data=auth_api.access_token_claims(test_user))
+    assert _decode(old_token).get("pv") == 0
+
+    result = auth_api.change_password(
+        body=auth_api.ChangePasswordBody(old_password="old-pass-123", new_password="new-pass-456"),
+        current_user=test_user,
+        db=db_session,
+    )
+    assert result["ok"] is True
+    assert result["relogin_required"] is True, "改密码必须要求重新登录"
+    assert int(test_user.password_version) == 1
+
+    with pytest.raises(HTTPException) as err:
+        auth_api.assert_token_password_version(_decode(old_token), test_user)
+    assert err.value.status_code == 401
+    assert "重新登录" in str(err.value.detail)
+
+    # 老 token 也不能再静默续签
+    with pytest.raises(HTTPException) as err2:
+        auth_api.refresh_access_token(request=_FakeRequest(), token=old_token, db=db_session)
+    assert err2.value.status_code == 401
+
+    # 用新密码登录后签发的 token 正常，续签后仍带新 pv
+    new_token = auth_api.create_access_token(data=auth_api.access_token_claims(test_user))
+    assert _decode(new_token).get("pv") == 1
+    auth_api.assert_token_password_version(_decode(new_token), test_user)
+    refreshed = auth_api.refresh_access_token(request=_FakeRequest(), token=new_token, db=db_session)
+    assert _decode(refreshed["access_token"]).get("pv") == 1
+
+
+def test_get_current_user_rejects_token_issued_before_password_change(db_session, test_user):
+    import asyncio
+
+    old_token = auth_api.create_access_token(data=auth_api.access_token_claims(test_user))
+    test_user.password_version = int(test_user.password_version or 0) + 1     # 模拟改过密码
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(auth_api.get_current_user(request=_FakeRequest(), token=old_token, db=db_session))
+    assert err.value.status_code == 401
+    assert "重新登录" in str(err.value.detail)
+
+    fresh = auth_api.create_access_token(data=auth_api.access_token_claims(test_user))
+    user = asyncio.run(auth_api.get_current_user(request=_FakeRequest(), token=fresh, db=db_session))
+    assert user.id == test_user.id
+
+
+def test_tokens_without_pv_still_work_for_users_who_never_changed_password(db_session, test_user):
+    """上线兼容：没改过密码的用户（pv=0）手上没有 pv 的老 token 不能被误杀。"""
+    legacy = auth_api.create_access_token(data={"sub": str(test_user.id)})   # 老格式：没有 pv
+    assert _decode(legacy).get("pv") is None
+    user = __import__("asyncio").run(
+        auth_api.get_current_user(request=_FakeRequest(), token=legacy, db=db_session)
+    )
+    assert user.id == test_user.id
