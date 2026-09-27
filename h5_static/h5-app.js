@@ -919,6 +919,15 @@
                 capabilityId: "wewrite.article.pipeline",
                 packageId: "wewrite_official_account_skill",
               },
+              {
+                key: "wewrite.article.remix",
+                label: "公众号复刻",
+                mark: "复",
+                description: "贴一条公众号文章链接，按原文逻辑用你模板里选好的资料重写。",
+                capabilityId: "wewrite.article.pipeline",
+                packageId: "wewrite_official_account_skill",
+                articleMode: "remix",
+              },
             ],
           },
           {
@@ -4497,7 +4506,7 @@
 
     const WECHAT_ARTICLE_REMIX_NO_MATERIAL = "IP 人设模板里还没有选资料（记忆文件 / 资料调查）：请先到「个人设置 → 个人记忆 / 资料调查」给模板选好资料，再回来做复刻。";
 
-    const wechatArticleRemixTemplateCache = { at: 0, ready: false, hasMaterial: false, label: "" };
+    const wechatArticleRemixTemplateCache = { at: 0, ready: false, hasMaterial: false, label: "", readFailed: false };
 
     function wechatArticleTemplateRowHasMaterial(row) {
       const rowData = row && typeof row === "object" ? row : {};
@@ -4518,10 +4527,18 @@
       if (!force && wechatArticleRemixTemplateCache.ready && now - wechatArticleRemixTemplateCache.at < 15000) {
         return wechatArticleRemixTemplateCache;
       }
-      const [defaults, templates] = await Promise.all([
-        api("/api/ip-content/personal-default", { cache: "no-store" }).catch(() => ({ item: null })),
-        api("/api/ip-content/schedule-templates", { cache: "no-store" }).catch(() => ({ items: [] })),
+      const results = await Promise.all([
+        api("/api/ip-content/personal-default", { cache: "no-store" })
+          .then((data) => ({ ok: true, data }), (err) => ({ ok: false, err })),
+        api("/api/ip-content/schedule-templates", { cache: "no-store" })
+          .then((data) => ({ ok: true, data }), (err) => ({ ok: false, err })),
       ]);
+      const readFailed = !(results[0].ok && results[1].ok);
+      if (readFailed) {
+        console.warn("[wechat-article] read remix template failed", results[0].err, results[1].err);
+      }
+      const defaults = (results[0].ok && results[0].data) || {};
+      const templates = (results[1].ok && results[1].data) || {};
       const item = defaults && defaults.item && typeof defaults.item === "object" ? defaults.item : {};
       const rows = Array.isArray(templates && templates.items)
         ? templates.items.filter((row) => row && typeof row === "object")
@@ -4541,6 +4558,7 @@
       }
       wechatArticleRemixTemplateCache.at = now;
       wechatArticleRemixTemplateCache.ready = true;
+      wechatArticleRemixTemplateCache.readFailed = readFailed;
       wechatArticleRemixTemplateCache.hasMaterial = wechatArticleTemplateRowHasMaterial(chosen);
       wechatArticleRemixTemplateCache.label = String((chosen && chosen.name) || "").trim() || "默认配置";
       return wechatArticleRemixTemplateCache;
@@ -4554,6 +4572,8 @@
     async function ensureWechatArticleRemixMaterial(payload) {
       if (!wechatArticlePayloadIsRemix(payload)) return true;
       const snapshot = await loadWechatArticleRemixTemplateMaterial();
+      // 读不到模板（接口/网络异常）不等于"没选资料"：不在这里拦，交给设备端判定，避免误报
+      if (snapshot.readFailed) return true;
       if (!snapshot.hasMaterial) throw new Error(WECHAT_ARTICLE_REMIX_NO_MATERIAL);
       return true;
     }
@@ -8686,6 +8706,10 @@
           }
         }
       } else if (node.capabilityId || node.serverTask) {
+        // 「公众号复刻」入口默认停在复刻（贴链接）；普通「公众号文章」入口默认 AI 创作（写主题）
+        if ((node.capabilityId || node.key) === "wewrite.article.pipeline") {
+          ARTICLE_FIELD_TABS["abilityArticle"] = String(node.articleMode || "") === "remix" ? "remix" : "compose";
+        }
         html = abilityCapabilityFieldsHtml(node.capabilityId || node.key);
         if (isIpContentCapability(node.capabilityId || node.key)) {
           setTimeout(() => loadIpTemplates(true), 0);
