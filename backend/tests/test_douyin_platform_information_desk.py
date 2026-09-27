@@ -487,3 +487,73 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
     assert captured["url"].endswith("/api/v1/services/aigc/image2video/video-synthesis")
     assert captured["body"]["input"]["image_url"] == "https://tos.test/a.png"
     assert captured["headers"]["Authorization"] == "Bearer ds-key"
+
+def _seed_snapshot(db, date_text: str = "2026-09-27"):
+    from backend.app.models import DouyinPlatformSnapshot
+
+    db.add(
+        DouyinPlatformSnapshot(
+            snapshot_date=date_text,
+            fetched_at=datetime(2026, 9, 27, 1, 0, 0),
+            status="success",
+            summary={"endpoint_count": 10, "success_count": 10},
+            sections=[
+                {
+                    "key": "hot_total", "title": "热点总榜", "category": "热点榜", "error": "",
+                    "items": [{"rank": 1, "id": "111", "title": "城市夜经济回暖", "metrics": {"hot_value": 8}}],
+                },
+                {
+                    "key": "hot_video", "title": "视频热榜", "category": "内容榜", "error": "",
+                    "items": [
+                        {"rank": 1, "id": "222", "title": "海底捞火锅隐藏吃法", "author": "吃货小王",
+                         "cover_url": "https://cdn.test/a.jpg", "url": "https://www.douyin.com/video/222",
+                         "metrics": {"like_cnt": 1000}},
+                        {"rank": 2, "id": "333", "title": "探店：老巷子小吃", "author": "探店阿飞",
+                         "metrics": {"like_cnt": 500}},
+                    ],
+                },
+            ],
+            endpoint_status=[{"key": "hot_total", "status": "success"}],
+            error_message="",
+        )
+    )
+    db.commit()
+
+
+def test_information_desk_content_board_first(db_session, db_session_factory, test_user):
+    """内容榜要排在热点榜前面。"""
+    from backend.app.models import UserSkillVisibility
+    from backend.app.services.user_feature_flags import DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID
+
+    db_session.add(UserSkillVisibility(user_id=test_user.id, package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID))
+    _seed_snapshot(db_session)
+
+    payload = _client(db_session_factory, test_user.id).get("/api/douyin/platform-information-desk").json()
+    assert [section["category"] for section in payload["snapshot"]["sections"]] == ["内容榜", "热点榜"]
+
+
+def test_search_information_desk_matches_keywords(db_session, test_user):
+    """关键词搜索：命中标题/作者，返回所属榜单，且不打 TikHub。"""
+    from backend.app.services import douyin_platform_information_desk as service
+
+    _seed_snapshot(db_session, "2026-09-28")
+
+    hit = service.search_information_desk(db_session, ["火锅"])
+    assert hit["count"] == 1
+    assert hit["items"][0]["id"] == "222"
+    assert hit["items"][0]["section_title"] == "视频热榜"
+    assert hit["items"][0]["category"] == "内容榜"
+    assert hit["items"][0]["matched"] == ["火锅"]
+
+    multi = service.search_information_desk(db_session, ["探店", "夜经济"])
+    assert multi["count"] == 2
+    assert {item["id"] for item in multi["items"]} == {"111", "333"}
+
+    assert service.search_information_desk(db_session, [])["count"] == 0
+    assert service.search_information_desk(db_session, ["完全不存在的词"])["count"] == 0
+
+
+def test_search_endpoint_requires_permission(db_session, db_session_factory, test_user):
+    _seed_snapshot(db_session, "2026-09-29")
+    client = _client(db_session_factory, test_user.id)
+    assert client.get("/api/douyin/platform-information-desk/search?q=火锅").status_code == 403

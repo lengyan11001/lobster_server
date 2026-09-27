@@ -2738,18 +2738,16 @@
     function renderDouyinInformationDesk(data) {
       const snapshot = data && data.snapshot;
       const fetchedAt = $("douyinInformationDeskFetchedAt");
-      const summary = $("douyinInformationDeskSummary");
       const tabs = $("douyinInformationDeskTabs");
       const content = $("douyinInformationDeskContent");
       if (!snapshot) {
         if (fetchedAt) fetchedAt.textContent = "服务器尚未生成今日快照，将在每天 09:00（北京时间）采集";
-        if (summary) summary.innerHTML = "";
         if (tabs) tabs.innerHTML = "";
         if (content) content.innerHTML = '<div class="douyin-information-desk-empty">暂无平台快照</div>';
         return;
       }
       // 信息台只留两个榜（服务端已收敛，这里再兜一层，避免旧快照/缓存带出别的分类）
-      const allowedCategories = ["热点榜", "内容榜"];
+      const allowedCategories = ["内容榜", "热点榜"];   // 内容榜排前面
       const snapshotSections = (Array.isArray(snapshot.sections) ? snapshot.sections : []).filter((section) => {
         return allowedCategories.includes(String((section && section.category) || "").trim());
       });
@@ -2759,15 +2757,7 @@
         if (!categories.includes(category)) categories.push(category);
       });
       if (!categories.includes(douyinInformationDeskCategory)) douyinInformationDeskCategory = categories[0] || "";
-      const stat = snapshot.summary || {};
-      if (fetchedAt) fetchedAt.textContent = `最近采集：${fmtTime(snapshot.fetched_at)} · 状态：${snapshot.status === "success" ? "完整" : "部分可用"}`;
-      if (summary) {
-        summary.innerHTML = [
-          [stat.item_count || 0, "条平台数据"],
-          [`${stat.success_count || 0}/${stat.endpoint_count || 0}`, "接口成功"],
-          [snapshot.snapshot_date || "-", "快照日期"],
-        ].map(([value, label]) => `<div class="douyin-information-desk-summary-item"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join("");
-      }
+      if (fetchedAt) fetchedAt.textContent = `最近采集：${fmtTime(snapshot.fetched_at)}`;
       if (tabs) {
         tabs.innerHTML = categories.map((category) => `<button class="douyin-information-desk-tab${category === douyinInformationDeskCategory ? " active" : ""}" type="button" data-douyin-information-category="${escapeHtml(category)}">${escapeHtml(category)}</button>`).join("");
       }
@@ -2798,21 +2788,82 @@
           }).join("") : `<div class="douyin-information-desk-empty">该接口暂无可展示条目${section.error ? `：${escapeHtml(section.error)}` : ""}</div>`;
           return `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title"><span>${escapeHtml(section.title || section.key || "数据")}</span><small>${items.length} 条</small></div><div class="douyin-information-desk-items">${itemHtml}</div></section>`;
         }).join("") : '<div class="douyin-information-desk-empty">该分类暂无数据</div>';
-        content.querySelectorAll(".douyin-information-desk-cover").forEach((img) => {
-          img.addEventListener("error", () => { img.style.display = "none"; });
-        });
-        content.querySelectorAll("[data-douyin-imitation]").forEach((btn) => {
-          btn.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openDouyinImitation({
-              itemId: btn.dataset.douyinItemId || "",
-              title: btn.dataset.douyinTitle || "",
-              cover: btn.dataset.douyinCover || "",
-            });
+        bindDouyinDeskItems(content);
+      }
+    }
+
+    function bindDouyinDeskItems(root) {
+      if (!root) return;
+      root.querySelectorAll(".douyin-information-desk-cover").forEach((img) => {
+        img.addEventListener("error", () => { img.style.display = "none"; });
+      });
+      root.querySelectorAll("[data-douyin-imitation]").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openDouyinImitation({
+            itemId: btn.dataset.douyinItemId || "",
+            title: btn.dataset.douyinTitle || "",
+            cover: btn.dataset.douyinCover || "",
           });
         });
+      });
+    }
+
+    function douyinDeskItemHtml(item) {
+      const title = item.title || item.name || "榜单数据";
+      const cover = /^https?:\/\//i.test(String(item.cover_url || ""))
+        ? `<img class="douyin-information-desk-cover" src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+        : '<span class="douyin-information-desk-cover is-empty"></span>';
+      const metaParts = [String(item.category || ""), String(item.section_title || "")].filter(Boolean);
+      if (item.author && item.author !== title) metaParts.push(`作者 ${item.author}`);
+      if (item.value) metaParts.push(String(item.value));
+      const link = /^https?:\/\//i.test(String(item.url || ""))
+        ? `<a class="douyin-information-desk-item-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">打开观看</a>`
+        : "";
+      const sameStyle = item.id
+        ? `<button class="douyin-information-desk-same-style" type="button" data-douyin-imitation="1" data-douyin-item-id="${escapeHtml(item.id)}" data-douyin-title="${escapeHtml(title)}" data-douyin-cover="${escapeHtml(item.cover_url || "")}">做同款（换人）</button>`
+        : "";
+      return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-cover">${cover}</div>`
+        + `<div class="douyin-information-desk-item-body"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span>`
+        + `<span class="douyin-information-desk-item-title">${escapeHtml(title)}</span></div>`
+        + `<div class="douyin-information-desk-item-meta">${escapeHtml(metaParts.join(" · "))}${link}</div>`
+        + `<div class="douyin-information-desk-item-actions">${sameStyle}</div></div></div>`;
+    }
+
+    async function searchDouyinInformationDesk() {
+      const box = $("douyinInformationDeskSearchInput");
+      const content = $("douyinInformationDeskContent");
+      const q = String((box && box.value) || "").trim();
+      if (!q) {
+        toast("先输入关键词，例如：火锅 / 探店 / 城市名");
+        return;
       }
+      if (content) content.innerHTML = `<div class="douyin-information-desk-empty">正在搜索「${escapeHtml(q)}」…</div>`;
+      try {
+        const data = await api(`/api/douyin/platform-information-desk/search?q=${encodeURIComponent(q)}`, { blocking: false });
+        const items = Array.isArray(data && data.items) ? data.items : [];
+        if (content) {
+          content.innerHTML = `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title">`
+            + `<span>搜索「${escapeHtml(q)}」</span><small>${items.length} 条</small></div>`
+            + `<div class="douyin-information-desk-items">${items.length
+                ? items.map(douyinDeskItemHtml).join("")
+                : '<div class="douyin-information-desk-empty">没搜到，换个词试试</div>'}</div></section>`;
+          bindDouyinDeskItems(content);
+        }
+        const clearBtn = $("douyinInformationDeskSearchClear");
+        if (clearBtn) clearBtn.classList.remove("hidden");
+      } catch (err) {
+        if (content) content.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml((err && err.message) || "搜索失败")}</div>`;
+      }
+    }
+
+    function clearDouyinInformationDeskSearch() {
+      const box = $("douyinInformationDeskSearchInput");
+      if (box) box.value = "";
+      const clearBtn = $("douyinInformationDeskSearchClear");
+      if (clearBtn) clearBtn.classList.add("hidden");
+      loadDouyinInformationDesk();
     }
 
     const douyinImitationState = { timer: 0, tries: 0, title: "", itemId: "", bound: false };
@@ -2978,6 +3029,22 @@
       if (!modal) return;
       modal.classList.remove("hidden");
       modal.setAttribute("aria-hidden", "false");
+      const searchBtn = $("douyinInformationDeskSearchBtn");
+      if (searchBtn && !searchBtn._sqBound) {
+        searchBtn._sqBound = true;
+        searchBtn.addEventListener("click", searchDouyinInformationDesk);
+        const clearBtn = $("douyinInformationDeskSearchClear");
+        if (clearBtn) clearBtn.addEventListener("click", clearDouyinInformationDeskSearch);
+        const searchInput = $("douyinInformationDeskSearchInput");
+        if (searchInput) {
+          searchInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              searchDouyinInformationDesk();
+            }
+          });
+        }
+      }
       loadDouyinInformationDesk();
     }
 

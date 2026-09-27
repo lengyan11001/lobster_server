@@ -10526,3 +10526,8 @@
 .douyin-imitation-actions { display: flex; align-items: center; gap: 10px; }
 .douyin-imitation-status { font-size: 12px; opacity: .8; }
 .douyin-imitation-result img { margin-top: 0; }
+
+
+/* 信息台关键词搜索 */
+.douyin-information-desk-search { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; }
+.douyin-information-desk-search input { flex: 1 1 auto; min-width: 0; }

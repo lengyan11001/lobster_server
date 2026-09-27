@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import User
 from ..services.douyin_imitation_video import prepare_imitation, query_imitation
-from ..services.douyin_platform_information_desk import information_desk_response
+from ..services.douyin_platform_information_desk import information_desk_response, search_information_desk
 from ..services.user_feature_flags import (
     DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
     DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
@@ -71,3 +71,16 @@ async def get_information_desk_imitation(
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款查询失败")
     return result
+
+
+@router.get("/api/douyin/platform-information-desk/search", summary="按关键词搜自己关注的榜单数据")
+def search_douyin_platform_information_desk(
+    q: str = Query(..., min_length=1, max_length=120, description="关键词，逗号 / 空格分隔多个"),
+    limit: int = Query(60, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """只检索服务器已入库的最新快照（内容榜 + 热点榜），不再额外请求 TikHub。"""
+    _require_information_desk_access(current_user, db)
+    keywords = [part for part in q.replace(",", " ").replace("，", " ").split(" ") if part.strip()]
+    return search_information_desk(db, keywords, limit)

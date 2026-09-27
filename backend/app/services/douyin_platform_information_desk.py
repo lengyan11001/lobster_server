@@ -122,7 +122,7 @@ _ALL_PUBLIC_ENDPOINTS: tuple[dict[str, Any], ...] = (
 
 # 信息台只保留两个榜：热门榜（热点榜）与内容榜单。
 # 其余分类（热搜 / 音乐 / 话题 / 搜索 / 账号榜 / 创作者中心 / 星图 …）不再请求 TikHub。
-INFORMATION_DESK_CATEGORIES: tuple[str, ...] = ("热点榜", "内容榜")
+INFORMATION_DESK_CATEGORIES: tuple[str, ...] = ("内容榜", "热点榜")   # 内容榜排前面
 PUBLIC_DAILY_ENDPOINTS: tuple[dict[str, Any], ...] = tuple(
     endpoint for endpoint in _ALL_PUBLIC_ENDPOINTS if endpoint["category"] in INFORMATION_DESK_CATEGORIES
 )
@@ -525,10 +525,12 @@ def _catalog_payload() -> list[dict[str, Any]]:
 def _snapshot_payload(row: DouyinPlatformSnapshot | None) -> dict[str, Any] | None:
     if row is None:
         return None
-    sections = [
-        section for section in (row.sections or [])
-        if str((section or {}).get("category") or "") in INFORMATION_DESK_CATEGORIES
-    ]
+    order = {name: index for index, name in enumerate(INFORMATION_DESK_CATEGORIES)}
+    sections = sorted(
+        (section for section in (row.sections or [])
+         if str((section or {}).get("category") or "") in INFORMATION_DESK_CATEGORIES),
+        key=lambda section: order.get(str((section or {}).get("category") or ""), len(order)),
+    )
     endpoint_status = [
         item for item in (row.endpoint_status or [])
         if str((item or {}).get("key") or "") in INFORMATION_DESK_ENDPOINT_KEYS
@@ -548,6 +550,54 @@ def _snapshot_payload(row: DouyinPlatformSnapshot | None) -> dict[str, Any] | No
         "sections": sections,
         "endpoint_status": endpoint_status,
         "error_message": row.error_message or "",
+    }
+
+
+def _match_text(item: dict[str, Any]) -> str:
+    """条目里可搜的文本：标题 / 作者 / 描述 / 指标值。"""
+    parts: list[str] = []
+    for key in ("title", "name", "author", "detail", "value", "keyword"):
+        value = item.get(key)
+        if value:
+            parts.append(str(value))
+    metrics = item.get("metrics")
+    if isinstance(metrics, dict):
+        parts.extend(f"{k} {v}" for k, v in metrics.items())
+    return " ".join(parts).lower()
+
+
+def search_information_desk(db: Any, keywords: list[str], limit: int = 60) -> dict[str, Any]:
+    """在最新快照的两个榜里按关键词搜（本地检索，不再请求 TikHub）。"""
+    words = [str(word or "").strip().lower() for word in (keywords or [])]
+    words = [word for word in dict.fromkeys(words) if word]
+    row = (db.query(DouyinPlatformSnapshot)
+           .order_by(DouyinPlatformSnapshot.snapshot_date.desc(), DouyinPlatformSnapshot.id.desc())
+           .first())
+    snapshot = _snapshot_payload(row)
+    if snapshot is None or not words:
+        return {"keywords": words, "snapshot_date": None, "count": 0, "items": []}
+    hits: list[dict[str, Any]] = []
+    for section in snapshot.get("sections") or []:
+        for item in section.get("items") or []:
+            haystack = _match_text(item)
+            if not haystack:
+                continue
+            matched = [word for word in words if word in haystack]
+            if not matched:
+                continue
+            hits.append({
+                **item,
+                "section_key": section.get("key") or "",
+                "section_title": section.get("title") or "",
+                "category": section.get("category") or "",
+                "matched": matched,
+            })
+    hits.sort(key=lambda row_: (-len(row_.get("matched") or []), str(row_.get("category") or ""), row_.get("rank") or 999))
+    return {
+        "keywords": words,
+        "snapshot_date": snapshot.get("snapshot_date"),
+        "count": len(hits),
+        "items": hits[: max(1, min(200, int(limit or 60)))],
     }
 
 
