@@ -702,17 +702,6 @@
     ]);
     const WORK_QUICK_ITEMS = [
       {
-        key: "wechat_article_remix",
-        label: "公众号复刻",
-        department: "AI营销创作",
-        mark: "复",
-        description: "贴一条公众号文章链接，按原文逻辑用你模板里选好的资料重写。",
-        dispatchKind: "capability",
-        capabilityId: "wewrite.article.pipeline",
-        packageId: "wewrite_official_account_skill",
-        articleMode: "remix",
-      },
-      {
         key: "image_composer_studio",
         label: "创作图片",
         department: "AI营销创作",
@@ -929,15 +918,6 @@
                 description: "根据主题生成公众号文章、配图和发布草稿。",
                 capabilityId: "wewrite.article.pipeline",
                 packageId: "wewrite_official_account_skill",
-              },
-              {
-                key: "wewrite.article.remix",
-                label: "公众号复刻",
-                mark: "复",
-                description: "贴一条公众号文章链接，按原文逻辑用你模板里选好的资料重写。",
-                capabilityId: "wewrite.article.pipeline",
-                packageId: "wewrite_official_account_skill",
-                articleMode: "remix",
               },
             ],
           },
@@ -4513,12 +4493,17 @@
     function articleFieldsHtml(prefix, titleValue = "公众号文章") {
       const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
       const tab = (key, label) => `<button type="button" data-article-tab-prefix="${prefix}" data-article-field-tab="${key}" class="${mode === key ? "active" : ""}">${label}</button>`;
-      return taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue))
+      // 和 online 一样：复刻 tab 里只留一个链接输入，任务名称/目标读者/高级设置都收起来
+      return `<div data-article-title-block="${prefix}" class="${mode === "remix" ? "hidden" : ""}">`
+        + taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue, `data-article-default-title="${titleValue}"`))
+        + `</div>`
         + `<div class="seg" style="margin:0.2rem 0 0.7rem">${tab("compose", "AI 创作")}${tab("remix", "复刻")}</div>`
         + `<div data-article-prefix="${prefix}" data-article-panel="compose" class="${mode === "compose" ? "" : "hidden"}">${articleComposeFieldsHtml(prefix)}</div>`
         + `<div data-article-prefix="${prefix}" data-article-panel="remix" class="${mode === "remix" ? "" : "hidden"}">${articleRemixFieldsHtml(prefix)}</div>`
+        + `<div data-article-compose-only="${prefix}" class="${mode === "compose" ? "" : "hidden"}">`
         + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
-        + articleAdvancedFieldsHtml(prefix);
+        + articleAdvancedFieldsHtml(prefix)
+        + `</div>`;
     }
 
     function setArticleFieldTab(prefix, mode) {
@@ -4532,6 +4517,21 @@
       document.querySelectorAll(`[data-article-prefix="${key}"][data-article-panel]`).forEach((panel) => {
         panel.classList.toggle("hidden", panel.getAttribute("data-article-panel") !== next);
       });
+      document.querySelectorAll(`[data-article-compose-only="${key}"]`).forEach((block) => {
+        block.classList.toggle("hidden", next !== "compose");
+      });
+      document.querySelectorAll(`[data-article-title-block="${key}"]`).forEach((block) => {
+        block.classList.toggle("hidden", next === "remix");
+      });
+      const titleInput = document.getElementById(`${key}Title`);
+      if (titleInput) {
+        const fallback = String(titleInput.getAttribute("data-article-default-title") || "公众号文章");
+        if (next === "remix") {
+          if (!titleInput.value || titleInput.value === fallback) titleInput.value = "公众号复刻";
+        } else if (titleInput.value === "公众号复刻") {
+          titleInput.value = fallback;
+        }
+      }
     }
 
     const WECHAT_ARTICLE_REMIX_NO_MATERIAL = "IP 人设模板里还没有选资料（记忆文件 / 资料调查）：请先到「个人设置 → 个人记忆 / 资料调查」给模板选好资料，再回来做复刻。";
@@ -8736,10 +8736,6 @@
           }
         }
       } else if (node.capabilityId || node.serverTask) {
-        // 「公众号复刻」入口默认停在复刻（贴链接）；普通「公众号文章」入口默认 AI 创作（写主题）
-        if ((node.capabilityId || node.key) === "wewrite.article.pipeline") {
-          ARTICLE_FIELD_TABS["abilityArticle"] = String(node.articleMode || "") === "remix" ? "remix" : "compose";
-        }
         html = abilityCapabilityFieldsHtml(node.capabilityId || node.key);
         if (isIpContentCapability(node.capabilityId || node.key)) {
           setTimeout(() => loadIpTemplates(true), 0);
@@ -23735,9 +23731,6 @@
 
     function workDispatchFieldsHtml(item) {
       const key = String(item && item.key || "");
-      if (key === "wechat_article_remix") {
-        return articleFieldsHtml("workflowParamArticle");
-      }
       if (key === "image_composer_studio") {
         return imageStudioFieldsHtml("workImage");
       }
@@ -23835,12 +23828,6 @@
       if (!modal) return;
       if (item.key === "hifly.video.create_by_tts") state.workSelectedDigitalHumanTemplate = null;
       state.workDispatchKey = String(item.key || item.label || "");
-      // 公众号复刻入口默认停在复刻（贴链接）；普通公众号文章入口默认 AI 创作（写主题）
-      if (item.key === "wechat_article_remix") {
-        ARTICLE_FIELD_TABS["workflowParamArticle"] = "remix";
-      } else if (String(item.capabilityId || "") === "wewrite.article.pipeline") {
-        ARTICLE_FIELD_TABS["workflowParamArticle"] = "compose";
-      }
       $("workDispatchMark").textContent = item.mark || firstChar(item.label);
       $("workDispatchTitle").textContent = item.label || "安排工作";
       $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
@@ -23883,15 +23870,6 @@
 
     function collectWorkDispatchPlan(item) {
       const key = String(item && item.key || "");
-      if (key === "wechat_article_remix") {
-        return buildCapabilityTaskPlan({
-          capabilityId: "wewrite.article.pipeline",
-          title: workflowParamValue("workflowParamArticleTitle") || "公众号复刻",
-          content: "H5 岗位工作：公众号复刻",
-          payload: articlePayloadFromFields("workflowParamArticle"),
-          keyName: "task_kind",
-        });
-      }
       if (key === "image_composer_studio") {
         return {
           title: workValue("workImageTitle") || "创作图片",
