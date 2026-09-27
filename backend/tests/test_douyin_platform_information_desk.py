@@ -382,6 +382,7 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
             package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
         )
     )
+    test_user.credits = Decimal("100000.0000")
     db_session.commit()
 
     captured = {}
@@ -580,6 +581,7 @@ def test_imitation_history_records_and_refreshes(db_session, db_session_factory,
 
     db_session.add(UserSkillVisibility(user_id=test_user.id,
                                        package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID))
+    test_user.credits = Decimal("100000.0000")
     db_session.commit()
 
     async def fake_prepare(image_url, item_id, prompt=""):
@@ -632,3 +634,124 @@ def test_imitation_history_is_per_user(db_session, db_session_factory, test_user
     rows = _client(db_session_factory, test_user.id).get(
         "/api/douyin/platform-information-desk/imitation/history?refresh=0").json()["items"]
     assert rows == []
+
+def _grant_desk(db, user_id: int) -> None:
+    from backend.app.models import UserSkillVisibility
+    from backend.app.services.user_feature_flags import DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID
+
+    db.add(UserSkillVisibility(user_id=user_id, package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID))
+    db.commit()
+
+
+def _balance(db, user_id: int):
+    from backend.app.models import User
+
+    db.expire_all()
+    return float(db.query(User).filter(User.id == user_id).first().credits or 0)
+
+
+def test_imitation_billing_estimate_matches_upstream_pricing():
+    """上游 wan2.7-videoedit：输入+输出都按秒计费，720P 0.6 元/秒；倍率 1.5，100 算力/元。"""
+    from backend.app.services import douyin_desk_billing as billing
+
+    plan = billing.estimate_imitation(15)
+    assert plan["billable_seconds"] == 30          # 输入 15 + 输出 15
+    assert plan["cost_yuan"] == 18.0               # 30 × 0.6
+    assert plan["credits"] == 2700.0               # 18 × 100 × 1.5
+    assert billing.estimate_imitation(5)["credits"] == 900.0
+    assert billing.estimate_imitation(0)["billable_seconds"] == 10   # 兜底按 5 秒
+
+
+def test_search_is_charged_per_call(db_session, db_session_factory, test_user):
+    from backend.app.models import User
+
+    _grant_desk(db_session, test_user.id)
+    db_session.query(User).filter(User.id == test_user.id).first().credits = Decimal("100.0000")
+    db_session.commit()
+    client = _client(db_session_factory, test_user.id)
+
+    resp = client.get("/api/douyin/platform-information-desk/search?q=%E7%BE%8E%E9%A3%9F")
+    assert resp.status_code == 200
+    assert resp.json()["billing"]["credits_charged"] == 1.0
+    assert resp.json()["billing"]["unit_price_credits"] == 1.0
+
+    from backend.app.models import CreditLedger
+
+    db_session.expire_all()
+    entries = (db_session.query(CreditLedger)
+               .filter(CreditLedger.user_id == test_user.id, CreditLedger.entry_type == "deduct")
+               .all())
+    assert [float(e.delta) for e in entries] == [-1.0]
+
+    db_session.query(User).filter(User.id == test_user.id).first().credits = Decimal("0")
+    db_session.commit()
+    assert client.get("/api/douyin/platform-information-desk/search?q=%E7%BE%8E%E9%A3%9F").status_code == 402
+
+
+def test_imitation_billing_refunds_when_submit_fails(db_session, db_session_factory, test_user, monkeypatch):
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import User
+
+    _grant_desk(db_session, test_user.id)
+    db_session.query(User).filter(User.id == test_user.id).first().credits = Decimal("100000.0000")
+    db_session.commit()
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+
+    async def fail(image_url, item_id, prompt=""):
+        return {"ok": False, "error": "这张图里没有检测到人物"}
+
+    monkeypatch.setattr(desk_api, "prepare_imitation", fail)
+    client = _client(db_session_factory, test_user.id)
+    before = _balance(db_session, test_user.id)
+    resp = client.post("/api/douyin/platform-information-desk/imitation",
+                       json={"image_url": "https://tos.test/a.png", "item_id": "7689077964000973561"})
+    assert resp.status_code == 502
+
+    from backend.app.models import CreditLedger
+
+    db_session.expire_all()
+    entries = (db_session.query(CreditLedger)
+               .filter(CreditLedger.user_id == test_user.id,
+                       CreditLedger.entry_type.in_(("deduct", "refund")))
+               .order_by(CreditLedger.id).all())
+    assert [(e.entry_type, float(e.delta)) for e in entries] == [("deduct", -2700.0), ("refund", 2700.0)]
+
+
+def test_imitation_billing_refunds_when_task_fails(db_session, db_session_factory, test_user, monkeypatch):
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import DouyinImitationTask, User
+
+    _grant_desk(db_session, test_user.id)
+    db_session.query(User).filter(User.id == test_user.id).first().credits = Decimal("100000.0000")
+    db_session.commit()
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+
+    async def ok_prepare(image_url, item_id, prompt=""):
+        return {"ok": True, "task_id": "bill-1", "model": "wan2.7-videoedit", "provider": "videoedit",
+                "source_desc": "x", "image_url": "https://tos.test/a.png", "video_url": "https://tos.test/v.mp4"}
+
+    monkeypatch.setattr(desk_api, "prepare_imitation", ok_prepare)
+    client = _client(db_session_factory, test_user.id)
+    before = _balance(db_session, test_user.id)
+    created = client.post("/api/douyin/platform-information-desk/imitation",
+                          json={"image_url": "https://tos.test/a.png", "item_id": "7689077964000973561"})
+    assert created.status_code == 200
+    assert created.json()["billing"]["credits"] == 2700.0
+
+    async def failed_task(task_id):
+        return {"ok": True, "task_id": task_id, "status": "FAILED", "progress": "",
+                "video_url": "", "fail_reason": "生成失败", "done": True}
+
+    monkeypatch.setattr(desk_api, "query_imitation", failed_task)
+    assert client.get("/api/douyin/platform-information-desk/imitation/bill-1").status_code == 200
+
+    from backend.app.models import CreditLedger
+
+    db_session.expire_all()
+    row = db_session.query(DouyinImitationTask).filter(DouyinImitationTask.task_id == "bill-1").first()
+    assert float(row.credits_charged) == 2700.0 and float(row.credits_refunded) == 2700.0
+    entries = (db_session.query(CreditLedger)
+               .filter(CreditLedger.user_id == test_user.id,
+                       CreditLedger.entry_type.in_(("deduct", "refund")))
+               .order_by(CreditLedger.id).all())
+    assert [(e.entry_type, float(e.delta)) for e in entries] == [("deduct", -2700.0), ("refund", 2700.0)]

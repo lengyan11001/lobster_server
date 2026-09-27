@@ -160,6 +160,27 @@ def _startup_db_lock():
         conn.close()
 
 
+def _migrate_douyin_imitation_task_columns():
+    """给 douyin_imitation_task 补计费列（表是 2026-09-27 新建的，create_all 不会改老表）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("douyin_imitation_task"):
+            return
+        cols = [c["name"] for c in insp.get_columns("douyin_imitation_task")]
+        with engine.begin() as conn:
+            if "billable_seconds" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN billable_seconds INTEGER NOT NULL DEFAULT 0"))
+            if "credits_charged" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN credits_charged NUMERIC(20, 4) NOT NULL DEFAULT 0"))
+            if "credits_refunded" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN credits_refunded NUMERIC(20, 4) NOT NULL DEFAULT 0"))
+        logger.info("Migration douyin_imitation_task billing columns ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration douyin_imitation_task billing columns skipped: %s", e)
+
+
 def _migrate_capability_configs_extra_config():
     """Add extra_config JSON column to capability_configs if missing."""
     from sqlalchemy import inspect, text
@@ -1579,6 +1600,7 @@ def create_app() -> FastAPI:
         _migrate_installation_signup_bonus_claims()
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
+        _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()
         _migrate_wechat_outcome_channel()
         _migrate_model_usage_events_table()

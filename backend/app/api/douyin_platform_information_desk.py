@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import DouyinImitationTask, User
-from ..services.douyin_imitation_video import prepare_imitation, query_imitation
+from ..services.credits_amount import credits_json_float
+from ..services import douyin_desk_billing as billing
+from ..services.douyin_imitation_video import _max_seconds, prepare_imitation, query_imitation
 from ..services.douyin_platform_information_desk import information_desk_response, search_information_desk
 from ..services.user_feature_flags import (
     DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
@@ -55,8 +57,13 @@ async def create_information_desk_imitation(
     db: Session = Depends(get_db),
 ):
     _require_information_desk_access(current_user, db)
+    # 上游按「输入视频 + 输出视频」秒数计费，这里先按裁剪后的秒数预扣，失败全额退
+    plan = billing.estimate_imitation(_max_seconds())
+    charged = billing.deduct(db, current_user, billing.Decimal(str(plan["credits"])),
+                             reason=f"douyin_imitation:{body.item_id}")
     result = await prepare_imitation(body.image_url, body.item_id, body.prompt)
     if not result.get("ok"):
+        billing.refund(db, current_user, charged, reason="douyin_imitation_submit_failed")
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
     row = DouyinImitationTask(
         user_id=int(current_user.id), task_id=str(result.get("task_id") or ""),
@@ -66,10 +73,13 @@ async def create_information_desk_imitation(
         prompt=str(result.get("prompt") or ""), status="RUNNING",
         image_url=str(result.get("image_url") or ""),
         source_video_url=str(result.get("video_url") or ""),
+        billable_seconds=int(plan["billable_seconds"]),
+        credits_charged=charged,
     )
     db.add(row)
     db.commit()
     result["history_id"] = row.id
+    result["billing"] = {**plan, "credits_charged": credits_json_float(charged)}
     return result
 
 
@@ -88,6 +98,9 @@ def _task_payload(row: DouyinImitationTask) -> dict:
         "fail_reason": row.fail_reason,
         "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
         "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None,
+        "billable_seconds": int(row.billable_seconds or 0),
+        "credits_charged": credits_json_float(row.credits_charged or 0),
+        "credits_refunded": credits_json_float(row.credits_refunded or 0),
     }
 
 
@@ -150,6 +163,11 @@ async def get_information_desk_imitation(
         row.video_url = str(result.get("video_url") or row.video_url or "")
         row.fail_reason = str(result.get("fail_reason") or "")[:255]
         db.commit()
+        if row.status == "FAILED" and row.credits_charged and not row.credits_refunded:
+            billing.refund(db, current_user, billing.Decimal(str(row.credits_charged)),
+                           reason="douyin_imitation_failed")
+            row.credits_refunded = row.credits_charged
+            db.commit()
     return result
 
 
@@ -163,4 +181,8 @@ def search_douyin_platform_information_desk(
     """只检索服务器已入库的最新快照（内容榜 + 热点榜），不再额外请求 TikHub。"""
     _require_information_desk_access(current_user, db)
     keywords = [part for part in q.replace(",", " ").replace("，", " ").split(" ") if part.strip()]
-    return search_information_desk(db, keywords, limit)
+    charged = billing.deduct(db, current_user, billing.search_credits(), reason="douyin_desk_search")
+    payload = search_information_desk(db, keywords, limit)
+    payload["billing"] = {"credits_charged": credits_json_float(charged),
+                          "unit_price_credits": credits_json_float(billing.search_credits())}
+    return payload

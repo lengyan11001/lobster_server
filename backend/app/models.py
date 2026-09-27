@@ -2326,5 +2326,8 @@ class DouyinImitationTask(Base):
     image_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
     source_video_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
     fail_reason: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    billable_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    credits_charged: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
+    credits_refunded: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
