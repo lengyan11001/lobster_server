@@ -4443,13 +4443,11 @@
       };
     }
 
-    function articleFieldsHtml(prefix, titleValue = "公众号文章") {
-      return taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue))
-        + taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题（复刻模式可留空，用原文标题）"), true)
-        + taskFieldHtml("复刻原文链接（可选）", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'))
-        + taskFieldHtml("复刻补充要求（可选）", taskTextareaHtml(`${prefix}ExtraMaterial`, "填了链接就是复刻：按原文的行文逻辑重写，事实用你的记忆资料（默认全部记忆）；这里可补要求，例如：只用我们的客户案例、结尾加行动建议"))
-        + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
-        + taskAdvancedFieldsHtml(
+    const ARTICLE_FIELD_TABS = {};
+
+    function articleAdvancedFieldsHtml(prefix) {
+      return taskAdvancedFieldsHtml(
+
           taskFieldHtml("写作风格", taskSelectHtml(`${prefix}Style`, optionHtml("专业、有观点、适合公众号阅读", "专业观点") + optionHtml("简洁大气、商业分析、少废话", "简洁商业") + optionHtml("故事感强、情绪自然、有真实案例", "故事叙事") + optionHtml("通俗易懂、步骤清晰、可直接照做", "实用教程")))
           + taskFieldHtml("排版主题", taskSelectHtml(`${prefix}Theme`, optionHtml("professional-clean", "专业清爽") + optionHtml("minimal-gold", "极简金色") + optionHtml("warm-editorial", "暖色杂志")))
           + taskFieldHtml("配图比例", taskSelectHtml(`${prefix}ImageRatio`, optionHtml("3:2", "3:2 横图") + optionHtml("16:9", "16:9 宽横图") + optionHtml("1:1", "1:1 方图") + optionHtml("2:3", "2:3 竖图") + optionHtml("9:16", "9:16 竖图")))
@@ -4462,17 +4460,54 @@
         );
     }
 
+    function articleComposeFieldsHtml(prefix) {
+      // 只有「AI 创作」特有的输入（共用字段在外面只渲染一份，避免重复 id）
+      return taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题"), true);
+    }
+
+    function articleRemixFieldsHtml(prefix) {
+      // 只有「复刻」特有的输入
+      return taskFieldHtml("要复刻的公众号文章链接", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'), true)
+        + taskFieldHtml("额外要求（可空）", taskTextareaHtml(`${prefix}ExtraMaterial`, "例如：只用我们自己客户的案例、结尾加行动建议；不写就按原文逻辑自然写"));
+    }
+
+    function articleFieldsHtml(prefix, titleValue = "公众号文章") {
+      const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
+      const tab = (key, label) => `<button type="button" data-article-tab-prefix="${prefix}" data-article-field-tab="${key}" class="${mode === key ? "active" : ""}">${label}</button>`;
+      return taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue))
+        + `<div class="seg" style="margin:0.2rem 0 0.7rem">${tab("compose", "AI 创作")}${tab("remix", "复刻")}</div>`
+        + `<div data-article-prefix="${prefix}" data-article-panel="compose" class="${mode === "compose" ? "" : "hidden"}">${articleComposeFieldsHtml(prefix)}</div>`
+        + `<div data-article-prefix="${prefix}" data-article-panel="remix" class="${mode === "remix" ? "" : "hidden"}">${articleRemixFieldsHtml(prefix)}</div>`
+        + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
+        + articleAdvancedFieldsHtml(prefix);
+    }
+
+    function setArticleFieldTab(prefix, mode) {
+      const key = String(prefix || "").trim();
+      if (!key) return;
+      const next = String(mode || "").trim() === "remix" ? "remix" : "compose";
+      ARTICLE_FIELD_TABS[key] = next;
+      document.querySelectorAll(`[data-article-tab-prefix="${key}"]`).forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-article-field-tab") === next);
+      });
+      document.querySelectorAll(`[data-article-prefix="${key}"][data-article-panel]`).forEach((panel) => {
+        panel.classList.toggle("hidden", panel.getAttribute("data-article-panel") !== next);
+      });
+    }
+
     function articlePayloadFromFields(prefix) {
-      const idea = workflowParamValue(`${prefix}Idea`);
-      const sourceUrl = String(workflowParamValue(`${prefix}SourceUrl`) || "").trim();
-      if (!idea && !sourceUrl) throw new Error("请填写公众号主题，或粘贴一条公众号文章链接做复刻");
+      const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
+      const idea = mode === "remix" ? "" : workflowParamValue(`${prefix}Idea`);
+      const sourceUrl = mode === "remix" ? String(workflowParamValue(`${prefix}SourceUrl`) || "").trim() : "";
+      if (mode === "remix" && !sourceUrl) throw new Error("请粘贴要复刻的公众号文章链接");
+      if (mode !== "remix" && !idea) throw new Error("请填写公众号主题");
       const selectedValues = assetPickerSelectedValues(`${prefix}SelectedImages`).slice(0, 12);
       return {
         idea,
         topic: idea,
         source_url: sourceUrl,
         memory_document_ids: [],
-        extra_material: workflowParamValue(`${prefix}ExtraMaterial`),
+        extra_material: mode === "remix" ? workflowParamValue(`${prefix}ExtraMaterial`) : "",
         audience: workflowParamValue(`${prefix}Audience`),
         style: workflowParamValue(`${prefix}Style`) || "专业、有观点、适合公众号阅读",
         theme: workflowParamValue(`${prefix}Theme`) || "professional-clean",
@@ -29313,6 +29348,14 @@
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      const btn = target && target.closest ? target.closest("[data-article-field-tab]") : null;
+      if (!btn) return;
+      event.preventDefault();
+      setArticleFieldTab(btn.getAttribute("data-article-tab-prefix") || "",
+                         btn.getAttribute("data-article-field-tab") || "compose");
+    });
     $("personalTemplateHelpBtn")?.addEventListener("click", openPersonalTemplateHelpDialog);
     $("personalTemplateHelpBackdrop")?.addEventListener("click", closePersonalTemplateHelpDialog);
     $("personalTemplateHelpCloseBtn")?.addEventListener("click", closePersonalTemplateHelpDialog);
