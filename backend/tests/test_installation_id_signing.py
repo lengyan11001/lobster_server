@@ -396,9 +396,28 @@ def test_h5_device_status_dispatch_and_online_claim_use_the_same_slot(
     assert {row["installation_id"] for row in devices} >= {slot_a, slot_b}
     assert all(row["online"] for row in devices if row["installation_id"] in {slot_a, slot_b})
     slot_a_status = next(row for row in devices if row["installation_id"] == slot_a)
-    assert len(slot_a_status["wechat_contacts"]) == 1
-    assert slot_a_status["wechat_contacts"][0]["name"] == "测试联系人"
-    assert slot_a_status["wechat_contacts"][0]["wx_no"] == "wxid_contact_alpha"
+    # 状态轮询接口不再回传明文联系方式（按需拉取）
+    assert "wechat_contacts" not in slot_a_status
+    assert "wechat_contacts" not in next(row for row in devices if row["installation_id"] == slot_b)
+
+    on_demand = client.get(
+        "/api/h5-chat/wechat-contacts",
+        headers={**auth, "X-Installation-Id": slot_a},
+        params={"installation_id": slot_a},
+    )
+    assert on_demand.status_code == 200
+    contacts = on_demand.json()["contacts"]
+    assert len(contacts) == 1
+    assert contacts[0]["name"] == "测试联系人"
+    assert contacts[0]["wx_no"] == "wxid_contact_alpha"
+
+    empty = client.get(
+        "/api/h5-chat/wechat-contacts",
+        headers={**auth, "X-Installation-Id": slot_b},
+        params={"installation_id": slot_b},
+    )
+    assert empty.status_code == 200
+    assert empty.json()["contacts"] == []
 
     created = client.post(
         "/api/scheduled-tasks/tasks",

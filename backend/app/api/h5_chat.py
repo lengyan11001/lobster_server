@@ -625,11 +625,6 @@ def _collect_wechat_account(
             device_name=str(selected.get("device_name") or ""),
             last_seen_at=str(selected.get("last_seen_at") or ""),
             defaultable=False,
-            extra={
-                "wechat_contacts": list(
-                    (wechat_contacts_by_device or {}).get(str(selected.get("installation_id") or ""), [])
-                )[:500]
-            },
         )
         for selected in device_rows
     ]
@@ -1833,8 +1828,7 @@ def h5_devices_status(
     for r in rows:
         account_payload = r.account_payload if isinstance(r.account_payload, dict) else {}
         capabilities = account_payload.get("capabilities") if isinstance(account_payload.get("capabilities"), list) else []
-        wechat_contacts = account_payload.get("wechat_contacts") if isinstance(account_payload.get("wechat_contacts"), list) else []
-        wechat_contacts = [contact for contact in wechat_contacts[:500] if isinstance(contact, dict)]
+        # 微信通讯录（明文联系方式）不在状态轮询里回传；需要时走 /api/h5-chat/wechat-contacts 按需拉取
         resolved = names.get(str(r.installation_id)) or {}
         display_name = str(resolved.get("display_name") or "").strip() or str(r.display_name or "").strip() or "local-online"
         entry = {
@@ -1845,7 +1839,6 @@ def h5_devices_status(
             "online": is_device_online(r.last_seen_at, now=now),
             "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
             "capabilities": capabilities,
-            "wechat_contacts": wechat_contacts,
         }
         if not resolved.get("display_name"):
             suggestions = device_labels.suggest_device_labels(
@@ -1859,6 +1852,30 @@ def h5_devices_status(
             entry
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
+
+
+@router.get("/api/h5-chat/wechat-contacts", summary="H5 按需读取 online 微信通讯录（选择联系人时才拉）")
+def h5_wechat_contacts(
+    installation_id: str = Query("", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    target = (installation_id or "").strip()
+    query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == owner_user.id)
+    if target:
+        query = query.filter(H5ChatDevicePresence.installation_id == target)
+    row = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).first()
+    contacts: list[Dict[str, Any]] = []
+    if row is not None:
+        payload = row.account_payload if isinstance(row.account_payload, dict) else {}
+        raw = payload.get("wechat_contacts") if isinstance(payload.get("wechat_contacts"), list) else []
+        contacts = [item for item in raw[:500] if isinstance(item, dict)]
+    return {
+        "ok": True,
+        "installation_id": str(getattr(row, "installation_id", "") or ""),
+        "contacts": contacts,
+    }
 
 
 @router.get("/api/h5-chat/mounted-accounts", summary="H5 已挂载平台账号列表")

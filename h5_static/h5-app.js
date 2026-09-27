@@ -4109,20 +4109,33 @@
       return String(node.key || node.workQuickKey || "").trim() === "native_whatsapp_poll";
     }
 
+    // 微信通讯录只在"选择联系人"时按需拉一次（状态轮询接口不再带明文联系方式）
+    const wechatContactsCache = { at: 0, installationId: "", rows: [] };
+
+    async function loadWechatContacts(force = false) {
+      const installationId = currentInstallationId();
+      const now = Date.now();
+      if (!force && wechatContactsCache.rows.length && wechatContactsCache.installationId === installationId
+          && now - wechatContactsCache.at < 60000) {
+        return wechatContactsCache.rows;
+      }
+      const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+      let rows = [];
+      try {
+        const data = await api(`/api/h5-chat/wechat-contacts${query}`);
+        rows = Array.isArray(data && data.contacts) ? data.contacts : [];
+      } catch (err) {
+        rows = wechatContactsCache.rows || [];
+      }
+      wechatContactsCache.at = now;
+      wechatContactsCache.installationId = installationId;
+      wechatContactsCache.rows = rows;
+      return rows;
+    }
+
     function workflowMomentContacts(scope = "param") {
       const cfg = workflowMomentPickerConfig(scope);
-      const selectedId = String(state.selectedInstallationId || "").trim();
-      const device = selectedId
-        ? (state.devices || []).find((item) => String(item && item.installation_id || "") === selectedId)
-        : selectedDevice();
-      let rows = device && Array.isArray(device.wechat_contacts) ? device.wechat_contacts : [];
-      if (!rows.length) {
-        const mountedRow = (state.mountedAccounts || []).find((item) => {
-          if (!item || item.scope !== "wechat" || !Array.isArray(item.wechat_contacts)) return false;
-          return !selectedId || String(item.installation_id || "") === selectedId;
-        });
-        rows = mountedRow && Array.isArray(mountedRow.wechat_contacts) ? mountedRow.wechat_contacts : [];
-      }
+      const rows = Array.isArray(wechatContactsCache.rows) ? wechatContactsCache.rows : [];
       const seen = new Set();
       const normalized = rows.map((item) => {
         if (!item || typeof item !== "object") return null;
@@ -4223,6 +4236,8 @@
       });
       if ($(cfg.search)) $(cfg.search).value = "";
       renderWorkflowMomentPicker(scope);
+      // 这里才是"添加/编辑节点"的时刻：按需拉一次通讯录，回来再重绘
+      loadWechatContacts().then(() => renderWorkflowMomentPicker(scope)).catch(() => {});
     }
 
     function renderWorkflowMomentPicker(scope) {
@@ -4313,6 +4328,10 @@
       if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
         await loadMountedAccounts(true).catch(() => {});
       }
+      await loadWechatContacts(true).catch(() => {});
+      renderWorkflowMomentPicker("param");
+      renderWorkflowMomentPicker("action");
+      renderWorkflowMomentPicker("node");
     }
 
     function syncWorkflowNodeModalFields(reset = false) {
@@ -18752,8 +18771,8 @@
     }
 
     function mountedWechatContactRows() {
-      const row = mountedWechatAccountRow();
-      return row && Array.isArray(row.wechat_contacts) ? row.wechat_contacts : [];
+      // 通讯录按需拉取（挂载账号接口不再带明文联系方式）
+      return Array.isArray(wechatContactsCache.rows) ? wechatContactsCache.rows : [];
     }
 
     function closeMountedWechatContactPicker() {
@@ -18790,6 +18809,7 @@
       if (search) search.value = "";
       $("mountedWechatContactModal")?.classList.remove("hidden");
       renderMountedWechatContactPicker();
+      loadWechatContacts().then(() => renderMountedWechatContactPicker()).catch(() => {});
       window.setTimeout(() => search?.focus(), 80);
     }
 
