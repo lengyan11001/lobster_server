@@ -1981,6 +1981,11 @@
       state.workListBackTab = target.tab || "profile";
       setWorkListScope(nextScope, options);
       switchTab("workList");
+      // 打开工作历史时强制刷新，避免"下发完点查看，列表里看不到刚创建的任务"（原来是拿旧缓存直接渲染）
+      Promise.all([
+        loadTasks({ reset: true }).catch(() => {}),
+        loadRuns({ reset: true }).catch(() => {}),
+      ]).then(() => renderWorkList()).catch(() => {});
     }
 
     function backTargetFromCurrent(defaultTab = "profile") {

@@ -3559,6 +3559,14 @@ def _fail_previous_client_runs(
     install_id = str(installation_id or "").strip()
     if not process_id or not install_id:
         return 0
+    # 同一台机器既可能以「机器号」上报、也可能以「槽位号」领取任务，
+    # 两个 id 都要覆盖，否则机器号上卡死的 processing 运行永远清不掉（队列被堵死）。
+    slot_id = ""
+    try:
+        slot_id = str(installation_slot_id_for_user(db, user_id, install_id) or "").strip()
+    except Exception:  # noqa: BLE001
+        slot_id = ""
+    id_candidates = {value for value in (install_id, slot_id) if value}
     rows = (
         db.query(ScheduledTaskRun)
         .filter(
@@ -3566,8 +3574,8 @@ def _fail_previous_client_runs(
             ScheduledTaskRun.status == "processing",
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
             or_(
-                ScheduledTaskRun.installation_id == install_id,
-                ScheduledTaskRun.claimed_by_installation_id == install_id,
+                ScheduledTaskRun.installation_id.in_(id_candidates),
+                ScheduledTaskRun.claimed_by_installation_id.in_(id_candidates),
             ),
         )
         .with_for_update(skip_locked=True)
@@ -4942,12 +4950,11 @@ def _enqueue_due_tasks(
 ) -> int:
     now = datetime.utcnow()
     target_installation = str(installation_id or "").strip()
-    if target_installation and user_id is not None and _installation_has_unclaimed_work(
-        db,
-        user_id=user_id,
-        installation_id=target_installation,
-    ):
-        return 0
+    target_busy = bool(
+        target_installation
+        and user_id is not None
+        and _installation_has_unclaimed_work(db, user_id=user_id, installation_id=target_installation)
+    )
     q = db.query(ScheduledTask).filter(
         ScheduledTask.status == "active",
         ScheduledTask.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
@@ -4965,13 +4972,18 @@ def _enqueue_due_tasks(
     skipped_duplicates = 0
     seen_recurring_keys: set[str] = set()
     for candidate in q.all():
+        is_once = str(candidate.schedule_type or "").strip() == "once"
         if target_installation and not _is_server_side_task(candidate):
             targets = _clean_installation_ids(candidate.target_installation_ids or [])
             if targets and target_installation not in targets:
                 continue
+            # once 任务即使设备正忙也先排进队列（设备侧串行领取），
+            # 否则新下发的任务永远不会生成 run，前端看起来就是"创建失败"。
+            if target_busy and not is_once:
+                continue
         if not target_installation and not _is_server_side_task(candidate):
             targets = _clean_installation_ids(candidate.target_installation_ids or [])
-            if any(
+            if not is_once and any(
                 _installation_has_unclaimed_work(db, user_id=candidate.user_id, installation_id=target)
                 for target in targets
             ):
@@ -5360,7 +5372,8 @@ def _create_task_row(
             )
             for target in targets
         )
-        if not busy:
+        # once 任务总是排进队列（设备串行领取）；周期任务仍然忙时跳过，等下一次自然到点
+        if not busy or schedule_type == "once":
             _enqueue_task(db, task, now)
             # The database session deliberately uses autoflush=False. Flush
             # here so subsequent task definitions in the same activation see
@@ -5638,9 +5651,13 @@ def run_scheduled_task_now(
     _assert_user_task_access(task.user_id, current_user, owner_user)
     now = datetime.utcnow()
     targets = _clean_installation_ids(task.target_installation_ids or [])
-    if not _is_server_side_task(task) and any(
-        _installation_has_unclaimed_work(db, user_id=owner_user.id, installation_id=target)
-        for target in targets
+    if (
+        not _is_server_side_task(task)
+        and str(task.schedule_type or "").strip() != "once"
+        and any(
+            _installation_has_unclaimed_work(db, user_id=owner_user.id, installation_id=target)
+            for target in targets
+        )
     ):
         # Keep the definition due for the next idle poll. No run row is
         # created while the installation is occupied.
