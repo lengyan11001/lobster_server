@@ -702,6 +702,17 @@
     ]);
     const WORK_QUICK_ITEMS = [
       {
+        key: "wechat_article_remix",
+        label: "公众号复刻",
+        department: "AI营销创作",
+        mark: "复",
+        description: "贴一条公众号文章链接，按原文逻辑用你模板里选好的资料重写。",
+        dispatchKind: "capability",
+        capabilityId: "wewrite.article.pipeline",
+        packageId: "wewrite_official_account_skill",
+        articleMode: "remix",
+      },
+      {
         key: "image_composer_studio",
         label: "创作图片",
         department: "AI营销创作",
@@ -23704,6 +23715,9 @@
 
     function workDispatchFieldsHtml(item) {
       const key = String(item && item.key || "");
+      if (key === "wechat_article_remix") {
+        return articleFieldsHtml("workflowParamArticle");
+      }
       if (key === "image_composer_studio") {
         return imageStudioFieldsHtml("workImage");
       }
@@ -23801,6 +23815,12 @@
       if (!modal) return;
       if (item.key === "hifly.video.create_by_tts") state.workSelectedDigitalHumanTemplate = null;
       state.workDispatchKey = String(item.key || item.label || "");
+      // 公众号复刻入口默认停在复刻（贴链接）；普通公众号文章入口默认 AI 创作（写主题）
+      if (item.key === "wechat_article_remix") {
+        ARTICLE_FIELD_TABS["workflowParamArticle"] = "remix";
+      } else if (String(item.capabilityId || "") === "wewrite.article.pipeline") {
+        ARTICLE_FIELD_TABS["workflowParamArticle"] = "compose";
+      }
       $("workDispatchMark").textContent = item.mark || firstChar(item.label);
       $("workDispatchTitle").textContent = item.label || "安排工作";
       $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
@@ -23843,6 +23863,15 @@
 
     function collectWorkDispatchPlan(item) {
       const key = String(item && item.key || "");
+      if (key === "wechat_article_remix") {
+        return buildCapabilityTaskPlan({
+          capabilityId: "wewrite.article.pipeline",
+          title: workflowParamValue("workflowParamArticleTitle") || "公众号复刻",
+          content: "H5 岗位工作：公众号复刻",
+          payload: articlePayloadFromFields("workflowParamArticle"),
+          keyName: "task_kind",
+        });
+      }
       if (key === "image_composer_studio") {
         return {
           title: workValue("workImageTitle") || "创作图片",
