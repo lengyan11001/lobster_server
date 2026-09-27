@@ -44,6 +44,7 @@ class ImitationIn(BaseModel):
     image_url: str = Field(min_length=8, max_length=2000)
     item_id: str = Field(min_length=6, max_length=40)
     title: str = ""
+    prompt: str = ""
 
 
 @router.post("/api/douyin/platform-information-desk/imitation", summary="抖音信息台做同款：一张参考图生成同款风格视频")
@@ -53,7 +54,7 @@ async def create_information_desk_imitation(
     db: Session = Depends(get_db),
 ):
     _require_information_desk_access(current_user, db)
-    result = await prepare_imitation(body.image_url, body.item_id)
+    result = await prepare_imitation(body.image_url, body.item_id, body.prompt)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
     return result

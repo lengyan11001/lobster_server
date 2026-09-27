@@ -2844,6 +2844,10 @@
       douyinImitationState.itemId = String((item && item.itemId) || "");
       const titleEl = $("douyinImitationTitle");
       if (titleEl) titleEl.textContent = `做同款（换人）· ${douyinImitationState.title || "热门内容"}`;
+      const promptEl = $("douyinImitationPrompt");
+      if (promptEl && !promptEl.value) {
+        promptEl.value = "将视频中的人物替换为图片中的人物，保持原视频的动作、镜头、场景与节奏不变";
+      }
       const noteEl = $("douyinImitationNote");
       if (noteEl) {
         noteEl.textContent = douyinImitationState.itemId
@@ -2903,6 +2907,7 @@
             image_url: imageUrl,
             item_id: douyinImitationState.itemId,
             title: douyinImitationState.title || "",
+            prompt: String(($("douyinImitationPrompt") && $("douyinImitationPrompt").value) || "").trim(),
           },
         });
         if (resultEl) {

@@ -1,4 +1,17 @@
-"""抖音信息台「做同款（换人）」：榜单原视频 + 用户上传的单人图 → wan animate-mix 换人。
+"""抖音信息台「做同款（换人）」：榜单原视频 + 用户图片 → wan2.7-videoedit 视频编辑。
+
+主链路（2026-09-27 服务器实测出片，用独立 wan key）：
+  POST {DOUYIN_IMITATION_HOST | DASHSCOPE_WAN_MAAS_HOST | 默认 MaaS 工作空间端点}
+       /api/v1/services/aigc/video-generation/video-synthesis
+  {"model":"wan2.7-videoedit",
+   "input":{"prompt":"将视频中的人物替换为图片中的人物","media":[{"type":"video","url":..},{"type":"reference_image","url":..}]},
+   "parameters":{"resolution":"720P","prompt_extend":true,"watermark":false}}
+  查询 GET {host}/api/v1/tasks/{task_id}
+  实测：提交 200 → 约 4 分钟 SUCCEEDED，返回 video_url（dashscope OSS，带 Expires）
+  Key 必须用独立的 wan key（DASHSCOPE_WAN30_API_KEY，116 位）；拿 DASHSCOPE_API_KEY 会被
+  "Endpoint.AccessDenied: Workspace endpoint access denied." 拒掉。
+
+兜底链路：wan2.2-animate-mix（DASHSCOPE_API_KEY + image2video/video-synthesis，需单人图）。
 
 实测契约（2026-09-27，生产服务器、真实 key）：
 - 取原视频：TikHub GET /api/v1/douyin/web/fetch_one_video_v2?aweme_id=<id>
@@ -27,14 +40,25 @@ logger = logging.getLogger(__name__)
 
 DASHSCOPE_BASE = "https://dashscope.aliyuncs.com"
 ANIMATE_ENDPOINT = "/api/v1/services/aigc/image2video/video-synthesis"
-DEFAULT_MODEL = "wan2.2-animate-mix"
+VIDEOEDIT_ENDPOINT = "/api/v1/services/aigc/video-generation/video-synthesis"
+DEFAULT_VIDEOEDIT_HOST = "https://ws-ommi5yczus66lm97.cn-beijing.maas.aliyuncs.com"
+DEFAULT_MODEL = "wan2.7-videoedit"
+DEFAULT_ANIMATE_MODEL = "wan2.2-animate-mix"
+DEFAULT_PROMPT = "将视频中的人物替换为图片中的人物，保持原视频的动作、镜头、场景与节奏不变"
 MAX_VIDEO_SECONDS = 30
 DEFAULT_MAX_SECONDS = 15
 MAX_SOURCE_BYTES = 400 * 1024 * 1024
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# 抖音直链有时为空/过期/403：这几个接口依次兜底，地址也按 candidates 顺序试
+SOURCE_ENDPOINTS = (
+    "/api/v1/douyin/web/fetch_one_video_v2",
+    "/api/v1/douyin/web/fetch_one_video",
+    "/api/v1/douyin/app/v3/fetch_one_video_v3",
+)
 
 FAIL_HINTS = {
+    "Endpoint.AccessDenied": "服务端 wan key 没这个工作空间端点的权限，请联系管理员",
     "InvalidImage.NoHuman": "这张图里没有检测到人物，请换一张只有一个人的清晰照片",
     "InvalidParameter.DataInspection": "素材没通过内容审核，请换一张图片或换一条视频",
 }
@@ -48,6 +72,12 @@ def _dashscope_key() -> str:
     return (os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIYUN_DASHSCOPE_API_KEY") or "").strip()
 
 
+def _wan_key() -> str:
+    """独立的 wan（MaaS 工作空间）key；文档里给的就是它。"""
+    return (os.environ.get("DOUYIN_IMITATION_API_KEY")
+            or os.environ.get("DASHSCOPE_WAN30_API_KEY") or "").strip()
+
+
 def _tikhub_base() -> str:
     base = (os.environ.get("TIKHUB_API_BASE") or "https://api.tikhub.io").strip().rstrip("/")
     if base == "https://api.tikhub.dev":
@@ -59,8 +89,25 @@ def _tikhub_key() -> str:
     return (os.environ.get("TIKHUB_API_KEY") or "").strip()
 
 
+def _provider() -> str:
+    """videoedit（默认，wan2.7）/ animate（兜底，wan2.2 换人）。"""
+    value = (os.environ.get("DOUYIN_IMITATION_PROVIDER") or "videoedit").strip().lower()
+    return value if value in {"videoedit", "animate"} else "videoedit"
+
+
+def _videoedit_host() -> str:
+    host = (os.environ.get("DOUYIN_IMITATION_HOST") or os.environ.get("DASHSCOPE_WAN_MAAS_HOST")
+            or DEFAULT_VIDEOEDIT_HOST).strip().rstrip("/")
+    return host
+
+
 def _model() -> str:
-    return (os.environ.get("DOUYIN_IMITATION_MODEL") or DEFAULT_MODEL).strip()
+    default = DEFAULT_MODEL if _provider() == "videoedit" else DEFAULT_ANIMATE_MODEL
+    return (os.environ.get("DOUYIN_IMITATION_MODEL") or default).strip()
+
+
+def default_prompt() -> str:
+    return (os.environ.get("DOUYIN_IMITATION_PROMPT") or DEFAULT_PROMPT).strip()
 
 
 def _max_seconds() -> int:
@@ -82,18 +129,31 @@ def friendly_error(code: str, message: str) -> str:
     return raw[:200] or "生成失败"
 
 
-def pick_play_url(detail: Dict[str, Any]) -> str:
-    """从抖音作品详情里挑一个可下载的播放地址。"""
+def pick_play_urls(detail: Dict[str, Any]) -> list:
+    """从抖音作品详情里挑出所有可下载的播放地址（按优先级去重）。"""
     video = (detail or {}).get("video") or {}
-    for key in ("play_addr", "play_addr_h264", "play_addr_265"):
-        for url in ((video.get(key) or {}).get("url_list") or []):
-            if isinstance(url, str) and url.startswith("http"):
-                return url
+    out: list = []
+
+    def add(node: Any) -> None:
+        for url in ((node or {}).get("url_list") or []):
+            if isinstance(url, str) and url.startswith("http") and url not in out:
+                out.append(url)
+
+    for key in ("play_addr_h264", "play_addr_265", "play_addr"):
+        add(video.get(key))
     for item in (video.get("bit_rate") or []):
-        for url in ((item.get("play_addr") or {}).get("url_list") or []):
-            if isinstance(url, str) and url.startswith("http"):
-                return url
-    return ""
+        add(item.get("play_addr"))
+    for item in (video.get("misc_download_addrs") or []):
+        if isinstance(item, dict):
+            add(item)
+    add(video.get("download_addr"))
+    return out
+
+
+def pick_play_url(detail: Dict[str, Any]) -> str:
+    """兼容老调用：返回第一个候选地址。"""
+    urls = pick_play_urls(detail)
+    return urls[0] if urls else ""
 
 
 async def resolve_source_video(item_id: str) -> Dict[str, Any]:
@@ -104,43 +164,69 @@ async def resolve_source_video(item_id: str) -> Dict[str, Any]:
     key = _tikhub_key()
     if not key:
         return {"ok": False, "error": "服务端未配置 TIKHUB_API_KEY"}
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0), trust_env=False) as client:
-            resp = await client.get(
-                _tikhub_base() + "/api/v1/douyin/web/fetch_one_video_v2",
-                params={"aweme_id": clean_id},
-                headers={"Authorization": f"Bearer {key}"},
-            )
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"取原视频失败：{exc}"}
-    if resp.status_code != 200:
-        return {"ok": False, "error": f"取原视频失败：HTTP {resp.status_code}"}
-    detail = ((resp.json() or {}).get("data") or {}).get("aweme_detail") or {}
-    url = pick_play_url(detail)
-    if not url:
-        return {"ok": False, "error": "这条作品拿不到可下载的视频地址"}
+    detail: Dict[str, Any] = {}
+    last_error = ""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0), trust_env=False) as client:
+        for endpoint in SOURCE_ENDPOINTS:
+            try:
+                resp = await client.get(_tikhub_base() + endpoint, params={"aweme_id": clean_id},
+                                        headers={"Authorization": f"Bearer {key}"})
+            except Exception as exc:  # noqa: BLE001
+                last_error = f"取原视频失败：{exc}"
+                continue
+            if resp.status_code != 200:
+                last_error = f"取原视频失败：HTTP {resp.status_code}"
+                continue
+            detail = ((resp.json() or {}).get("data") or {}).get("aweme_detail") or {}
+            if pick_play_urls(detail):
+                break
+    urls = pick_play_urls(detail)
+    if not urls:
+        return {"ok": False, "error": last_error or "这条作品拿不到可下载的视频地址"}
+    url = urls[0]
     duration_ms = ((detail.get("video") or {}).get("duration") or 0)
     try:
         duration_ms = int(duration_ms)
     except (TypeError, ValueError):
         duration_ms = 0
-    return {"ok": True, "url": url, "duration_ms": duration_ms,
+    return {"ok": True, "url": url, "urls": urls, "duration_ms": duration_ms,
             "desc": str(detail.get("desc") or "")[:80]}
 
 
 async def _download(url: str, limit: int = MAX_SOURCE_BYTES) -> Tuple[Optional[bytes], str]:
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), trust_env=False,
-                                     follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": BROWSER_UA})
-    except Exception as exc:  # noqa: BLE001
-        return None, f"下载素材失败：{exc}"
-    if resp.status_code != 200:
-        return None, f"下载素材失败：HTTP {resp.status_code}"
-    data = resp.content
-    if len(data) > limit:
-        return None, "素材文件过大"
-    return data, ""
+    """下载素材；抖音直链会被 403，所以带上 Referer 再试一次。"""
+    headers_variants = (
+        {"User-Agent": BROWSER_UA},
+        {"User-Agent": BROWSER_UA, "Referer": "https://www.douyin.com/"},
+    )
+    last = ""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0), trust_env=False,
+                                 follow_redirects=True) as client:
+        for headers in headers_variants:
+            try:
+                resp = await client.get(url, headers=headers)
+            except Exception as exc:  # noqa: BLE001
+                last = f"下载素材失败：{exc}"
+                continue
+            if resp.status_code != 200:
+                last = f"下载素材失败：HTTP {resp.status_code}"
+                continue
+            data = resp.content
+            if len(data) > limit:
+                return None, "素材文件过大"
+            return data, ""
+    return None, last or "下载素材失败"
+
+
+async def _download_first(urls: list, limit: int = MAX_SOURCE_BYTES) -> Tuple[Optional[bytes], str, str]:
+    """按候选地址依次下载，返回 (数据, 用了哪个地址, 错误)。"""
+    last = ""
+    for url in (urls or [])[:5]:
+        data, err = await _download(url, limit=limit)
+        if data:
+            return data, url, ""
+        last = err
+    return None, "", last
 
 
 async def _upload_tos(data: bytes, suffix: str, content_type: str) -> Tuple[str, str]:
@@ -186,30 +272,46 @@ def trim_video(data: bytes, max_seconds: int) -> Tuple[bytes, str]:
         return data, ""
 
 
-async def submit_imitation(image_url: str, source_video_url: str, *, mode: str = "wan-std") -> Dict[str, Any]:
-    """提交换人任务：返回 {ok, task_id, ...} 或 {ok: False, error}。"""
-    key = _dashscope_key()
-    if not key:
-        return {"ok": False, "error": "服务端未配置 DASHSCOPE_API_KEY"}
+async def submit_imitation(image_url: str, source_video_url: str, *, mode: str = "wan-std",
+                           prompt: str = "") -> Dict[str, Any]:
+    """提交做同款任务：返回 {ok, task_id, ...} 或 {ok: False, error}。"""
     image = str(image_url or "").strip()
     video = str(source_video_url or "").strip()
     if not image.startswith(("http://", "https://")) or not video.startswith(("http://", "https://")):
         return {"ok": False, "error": "素材地址无效"}
-    body = {
-        "model": _model(),
-        "input": {"image_url": image, "video_url": video, "watermark": False},
-        "parameters": {"mode": mode if mode in {"wan-std", "wan-pro"} else "wan-std"},
-    }
+    provider = _provider()
+    if provider == "videoedit":
+        key = _wan_key()
+        if not key:
+            return {"ok": False, "error": "服务端未配置独立 wan key（DASHSCOPE_WAN30_API_KEY）"}
+        body = {
+            "model": _model(),
+            "input": {"prompt": str(prompt or "").strip()[:600] or default_prompt(),
+                      "media": [{"type": "video", "url": video},
+                                {"type": "reference_image", "url": image}]},
+            "parameters": {"resolution": "720P", "prompt_extend": True, "watermark": False},
+        }
+        url = _videoedit_host() + VIDEOEDIT_ENDPOINT
+    else:
+        key = _dashscope_key()
+        if not key:
+            return {"ok": False, "error": "服务端未配置 DASHSCOPE_API_KEY"}
+        body = {
+            "model": _model(),
+            "input": {"image_url": image, "video_url": video, "watermark": False},
+            "parameters": {"mode": mode if mode in {"wan-std", "wan-pro"} else "wan-std"},
+        }
+        url = _dashscope_base() + ANIMATE_ENDPOINT
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), trust_env=False) as client:
             resp = await client.post(
-                _dashscope_base() + ANIMATE_ENDPOINT,
+                url,
                 json=body,
                 headers={"Authorization": f"Bearer {key}", "X-DashScope-Async": "enable",
                          "Content-Type": "application/json"},
             )
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"提交换人任务失败：{exc}"}
+        return {"ok": False, "error": f"提交做同款任务失败：{exc}"}
     if resp.status_code != 200:
         try:
             detail = resp.json()
@@ -219,9 +321,14 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
                                                      str(detail.get("message") or resp.text)[:200])}
     task_id = str(((resp.json().get("output") or {}) or {}).get("task_id") or "").strip()
     if not task_id:
-        return {"ok": False, "error": "换人任务没有返回任务号"}
-    logger.info("[douyin-imitation] submit model=%s task=%s", _model(), task_id)
-    return {"ok": True, "task_id": task_id, "model": _model(), "mode": body["parameters"]["mode"]}
+        return {"ok": False, "error": "做同款任务没有返回任务号"}
+    logger.info("[douyin-imitation] submit provider=%s model=%s task=%s", provider, _model(), task_id)
+    result = {"ok": True, "task_id": task_id, "model": _model(), "provider": provider}
+    if provider == "videoedit":
+        result["prompt"] = body["input"]["prompt"]
+    else:
+        result["mode"] = body["parameters"]["mode"]
+    return result
 
 
 async def query_imitation(task_id: str) -> Dict[str, Any]:
@@ -229,12 +336,14 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
     clean_id = str(task_id or "").strip()
     if not clean_id:
         return {"ok": False, "error": "缺少任务号"}
-    key = _dashscope_key()
+    provider = _provider()
+    key = _wan_key() if provider == "videoedit" else _dashscope_key()
     if not key:
-        return {"ok": False, "error": "服务端未配置 DASHSCOPE_API_KEY"}
+        return {"ok": False, "error": "服务端未配置做同款所需的模型 Key"}
+    host = _videoedit_host() if provider == "videoedit" else _dashscope_base()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0), trust_env=False) as client:
-            resp = await client.get(_dashscope_base() + "/api/v1/tasks/" + clean_id,
+            resp = await client.get(host + "/api/v1/tasks/" + clean_id,
                                     headers={"Authorization": f"Bearer {key}"})
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"查询换人任务失败：{exc}"}
@@ -252,13 +361,13 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
         "status": status,
         "progress": "100%" if status == "SUCCEEDED" else "",
         "video_url": video_url if status == "SUCCEEDED" else "",
-        "fail_reason": "" if status == "SUCCEEDED" else friendly_error(str(output.get("code") or ""),
-                                                                      str(output.get("message") or "")),
+        "fail_reason": (friendly_error(str(output.get("code") or ""), str(output.get("message") or ""))
+                        if status in {"FAILED", "CANCELED", "UNKNOWN"} else ""),
         "done": status in {"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"},
     }
 
 
-async def prepare_imitation(image_url: str, item_id: str) -> Dict[str, Any]:
+async def prepare_imitation(image_url: str, item_id: str, prompt: str = "") -> Dict[str, Any]:
     """把素材准备好并提交：用户图 + 榜单原视频都转到 TOS，再提交换人。"""
     image_raw = str(image_url or "").strip()
     if not image_raw.startswith(("http://", "https://")):
@@ -266,7 +375,7 @@ async def prepare_imitation(image_url: str, item_id: str) -> Dict[str, Any]:
     source = await resolve_source_video(item_id)
     if not source.get("ok"):
         return source
-    video_bytes, err = await _download(source["url"])
+    video_bytes, _used_url, err = await _download_first(source.get("urls") or [source["url"]])
     if err:
         return {"ok": False, "error": err}
     max_seconds = _max_seconds()
@@ -281,7 +390,7 @@ async def prepare_imitation(image_url: str, item_id: str) -> Dict[str, Any]:
     image_tos, err = await _upload_tos(image_bytes, suffix, "image/png" if suffix == ".png" else "image/jpeg")
     if err:
         return {"ok": False, "error": err}
-    result = await submit_imitation(image_tos, video_tos)
+    result = await submit_imitation(image_tos, video_tos, prompt=prompt)
     if not result.get("ok"):
         return result
     result.update({"source_desc": source.get("desc") or "", "video_seconds": max_seconds,

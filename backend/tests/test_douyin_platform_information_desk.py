@@ -386,8 +386,8 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
 
     captured = {}
 
-    async def fake_prepare(image_url, item_id):
-        captured.update(image_url=image_url, item_id=item_id)
+    async def fake_prepare(image_url, item_id, prompt=""):
+        captured.update(image_url=image_url, item_id=item_id, prompt=prompt)
         return {"ok": True, "task_id": "task-e2e", "model": "wan2.2-animate-mix",
                 "video_seconds": 15, "source_desc": "想吃哈哈哈哈"}
 
@@ -411,7 +411,7 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
     assert status.status_code == 200
     assert status.json()["video_url"] == "https://cdn.test/out.mp4"
 
-    async def fake_prepare_fail(image_url, item_id):
+    async def fake_prepare_fail(image_url, item_id, prompt=""):
         return {"ok": False, "error": "这张图里没有检测到人物，请换一张只有一个人的清晰照片"}
 
     monkeypatch.setattr(desk_api, "prepare_imitation", fake_prepare_fail)
@@ -421,3 +421,69 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
     )
     assert failed.status_code == 502
     assert "没有检测到人物" in failed.json()["detail"]
+
+def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
+    """主链路必须打到 MaaS 工作空间端点，media=[video, reference_image]，用独立 wan key。"""
+    import asyncio
+
+    from backend.app.services import douyin_imitation_video as imitation
+
+    monkeypatch.delenv("DOUYIN_IMITATION_PROVIDER", raising=False)
+    monkeypatch.delenv("DOUYIN_IMITATION_MODEL", raising=False)
+    monkeypatch.setenv("DOUYIN_IMITATION_API_KEY", "wan-key")
+    monkeypatch.delenv("DOUYIN_IMITATION_HOST", raising=False)
+
+    assert imitation._provider() == "videoedit"
+    assert imitation._model() == "wan2.7-videoedit"
+    assert "替换" in imitation.default_prompt()
+    assert imitation._videoedit_host().startswith("https://ws-")
+    assert "工作空间端点" in imitation.friendly_error(
+        "Endpoint.AccessDenied", "Workspace endpoint access denied.")
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        text = "{}"
+
+        @staticmethod
+        def json():
+            return {"output": {"task_id": "vid-1", "task_status": "PENDING"}}
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None, **kw):
+            captured["url"] = url
+            captured["body"] = json
+            captured["headers"] = headers
+            return _Resp()
+
+    monkeypatch.setattr(imitation.httpx, "AsyncClient", _Client)
+    out = asyncio.run(imitation.submit_imitation("https://tos.test/a.png", "https://tos.test/v.mp4"))
+    assert out["ok"] is True and out["task_id"] == "vid-1" and out["provider"] == "videoedit"
+    assert captured["url"].endswith("/api/v1/services/aigc/video-generation/video-synthesis")
+    assert captured["headers"]["Authorization"] == "Bearer wan-key"
+    assert captured["body"]["model"] == "wan2.7-videoedit"
+    media = captured["body"]["input"]["media"]
+    assert media == [{"type": "video", "url": "https://tos.test/v.mp4"},
+                     {"type": "reference_image", "url": "https://tos.test/a.png"}]
+    assert captured["body"]["parameters"]["resolution"] == "720P"
+
+    # 切回 animate 兜底时走 image2video 端点 + DASHSCOPE_API_KEY
+    monkeypatch.setenv("DOUYIN_IMITATION_PROVIDER", "animate")
+    monkeypatch.setenv("DOUYIN_IMITATION_MODEL", "wan2.2-animate-mix")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "ds-key")
+    captured.clear()
+    out2 = asyncio.run(imitation.submit_imitation("https://tos.test/a.png", "https://tos.test/v.mp4"))
+    assert out2["ok"] is True and out2["provider"] == "animate"
+    assert captured["url"].endswith("/api/v1/services/aigc/image2video/video-synthesis")
+    assert captured["body"]["input"]["image_url"] == "https://tos.test/a.png"
+    assert captured["headers"]["Authorization"] == "Bearer ds-key"
