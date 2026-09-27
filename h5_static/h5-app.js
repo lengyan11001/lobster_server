@@ -4466,9 +4466,9 @@
     }
 
     function articleRemixFieldsHtml(prefix) {
-      // 复刻特有输入：只要链接。资料不用选——AI 自动用你的 IP 人设默认模板（记忆 + 资料调查）结合抓到的正文写。
+      // 复刻特有输入：只要链接。资料用「IP 人设模板」里选好的，模板没选就直接拦住不让提交。
       return taskFieldHtml("要复刻的公众号文章链接", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'), true)
-        + '<p class="meta" style="margin:-0.4rem 0 0.7rem;">资料用你 IP 人设模板里选好的（记忆文件 / 资料调查）；模板里没选会提交失败，请先到「个人设置」给模板选好资料。</p>';
+        + '<p class="meta" style="margin:-0.4rem 0 0.7rem;">资料用你 IP 人设模板里选好的（记忆文件 / 资料调查）；模板里没选会在下发前拦住，请先到「个人设置 → 个人记忆 / 资料调查」给模板选好资料。</p>';
     }
 
     function articleFieldsHtml(prefix, titleValue = "公众号文章") {
@@ -4493,6 +4493,69 @@
       document.querySelectorAll(`[data-article-prefix="${key}"][data-article-panel]`).forEach((panel) => {
         panel.classList.toggle("hidden", panel.getAttribute("data-article-panel") !== next);
       });
+    }
+
+    const WECHAT_ARTICLE_REMIX_NO_MATERIAL = "IP 人设模板里还没有选资料（记忆文件 / 资料调查）：请先到「个人设置 → 个人记忆 / 资料调查」给模板选好资料，再回来做复刻。";
+
+    const wechatArticleRemixTemplateCache = { at: 0, ready: false, hasMaterial: false, label: "" };
+
+    function wechatArticleTemplateRowHasMaterial(row) {
+      const rowData = row && typeof row === "object" ? row : {};
+      const memoryIds = Array.isArray(rowData.memory_doc_ids)
+        ? rowData.memory_doc_ids.filter((item) => String(item || "").trim())
+        : [];
+      const requirements = rowData.requirements;
+      const requirementText = requirements && typeof requirements === "object"
+        ? Object.keys(requirements).length > 0
+        : !!String(requirements || "").trim();
+      return !!(memoryIds.length || String(rowData.survey_id || "").trim() || requirementText);
+    }
+
+    // 复刻的资料来源 = 「IP 人设模板」里选定的资料（当前模板 → 没设当前模板时用默认配置行）。
+    // 与客户端 _resolve_template_material 同一套判定：选了什么带什么，不兜底、不默认全带。
+    async function loadWechatArticleRemixTemplateMaterial(force = false) {
+      const now = Date.now();
+      if (!force && wechatArticleRemixTemplateCache.ready && now - wechatArticleRemixTemplateCache.at < 15000) {
+        return wechatArticleRemixTemplateCache;
+      }
+      const [defaults, templates] = await Promise.all([
+        api("/api/ip-content/personal-default", { cache: "no-store" }).catch(() => ({ item: null })),
+        api("/api/ip-content/schedule-templates", { cache: "no-store" }).catch(() => ({ items: [] })),
+      ]);
+      const item = defaults && defaults.item && typeof defaults.item === "object" ? defaults.item : {};
+      const rows = Array.isArray(templates && templates.items)
+        ? templates.items.filter((row) => row && typeof row === "object")
+        : [];
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+      const currentId = String(meta.current_template_id || "").trim();
+      let chosen = item;
+      if (currentId) {
+        const hit = rows.find((row) => String(row.id || "") === currentId);
+        if (hit) chosen = hit;
+      } else {
+        const hit = rows.find((row) => {
+          const rowMeta = row.meta && typeof row.meta === "object" ? row.meta : {};
+          return String(rowMeta.source || "") === "online_personal_profile" || String(row.name || "").includes("默认");
+        });
+        if (hit) chosen = hit;
+      }
+      wechatArticleRemixTemplateCache.at = now;
+      wechatArticleRemixTemplateCache.ready = true;
+      wechatArticleRemixTemplateCache.hasMaterial = wechatArticleTemplateRowHasMaterial(chosen);
+      wechatArticleRemixTemplateCache.label = String((chosen && chosen.name) || "").trim() || "默认配置";
+      return wechatArticleRemixTemplateCache;
+    }
+
+    function wechatArticlePayloadIsRemix(payload) {
+      return !!(payload && String(payload.source_url || "").trim());
+    }
+
+    // 复刻下发前的硬拦：模板里没选资料就不让提交（去掉兜底，不默认全带）
+    async function ensureWechatArticleRemixMaterial(payload) {
+      if (!wechatArticlePayloadIsRemix(payload)) return true;
+      const snapshot = await loadWechatArticleRemixTemplateMaterial();
+      if (!snapshot.hasMaterial) throw new Error(WECHAT_ARTICLE_REMIX_NO_MATERIAL);
+      return true;
     }
 
     function articlePayloadFromFields(prefix) {
@@ -6877,6 +6940,7 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = workflowParamValue("workflowParamNote");
       const plan = withWorkflowSchedule(workflowPlanFromParamFields(lookup, note, current), time, endTime);
+      await ensureWechatArticleRemixMaterial(plan && plan.payload);
       state.workflowNodesDraft[idx] = {
         ...current,
         time,
@@ -21446,6 +21510,9 @@
     }
 
     async function savePersonalDefault(options = {}) {
+      // 模板资料（记忆 / 资料调查 / 当前模板）改了，复刻的检查缓存立即失效
+      wechatArticleRemixTemplateCache.ready = false;
+      wechatArticleRemixTemplateCache.at = 0;
       const name = (($("personalTemplateName") && $("personalTemplateName").value) || "").trim();
       if (!name) throw new Error("请填写模板名称");
       const memoryIds = personalCleanStringIds(state.personalSelectedMemories);
@@ -24262,11 +24329,13 @@
       const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);
       const installationId = serverSide ? "" : targetInstallationIdFromPlan(plan, currentInstallationId());
       if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 客户端保持登录");
+      const payload = attachH5ContextToPayload(plan.payload || {}, plan.h5Context);
+      await ensureWechatArticleRemixMaterial(payload);
       const body = {
         title: plan.title || "安排工作",
         task_kind: taskKind,
         content: plan.content || "H5 安排工作",
-        payload: attachH5ContextToPayload(plan.payload || {}, plan.h5Context),
+        payload,
         schedule_type: scheduleType,
         interval_seconds: scheduleOptions.interval_seconds || 60,
         start_at: scheduleType === "daily_times" ? "" : (scheduleOptions.start_at || ""),
@@ -25308,6 +25377,7 @@
       const optimisticRunId = shouldOptimisticRun ? addOptimisticRun(body, title, serverSide) : "";
       btn.disabled = true;
       try {
+        await ensureWechatArticleRemixMaterial(taskPayload);
         const data = await api("/api/scheduled-tasks/tasks", {
           method: "POST",
           json: body,
