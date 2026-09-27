@@ -4466,9 +4466,9 @@
     }
 
     function articleRemixFieldsHtml(prefix) {
-      // 只有「复刻」特有的输入
+      // 复刻特有输入：只要链接。资料不用选——AI 自动用你的 IP 人设默认模板（记忆 + 资料调查）结合抓到的正文写。
       return taskFieldHtml("要复刻的公众号文章链接", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'), true)
-        + taskFieldHtml("额外要求（可空）", taskTextareaHtml(`${prefix}ExtraMaterial`, "例如：只用我们自己客户的案例、结尾加行动建议；不写就按原文逻辑自然写"));
+        + '<p class="meta" style="margin:-0.4rem 0 0.7rem;">不用选资料：AI 会自动用你的 IP 人设默认模板（记忆 + 资料调查）结合抓到的正文来写。</p>';
     }
 
     function articleFieldsHtml(prefix, titleValue = "公众号文章") {
@@ -4501,13 +4501,16 @@
       const sourceUrl = mode === "remix" ? String(workflowParamValue(`${prefix}SourceUrl`) || "").trim() : "";
       if (mode === "remix" && !sourceUrl) throw new Error("请粘贴要复刻的公众号文章链接");
       if (mode !== "remix" && !idea) throw new Error("请填写公众号主题");
+      // 复刻不选资料：留空 -> 设备端用全部记忆 + 全部资料调查（IP 人设默认模板）
       const selectedValues = assetPickerSelectedValues(`${prefix}SelectedImages`).slice(0, 12);
       return {
         idea,
         topic: idea,
         source_url: sourceUrl,
         memory_document_ids: [],
-        extra_material: mode === "remix" ? workflowParamValue(`${prefix}ExtraMaterial`) : "",
+        memory_document_titles: [],
+        survey_ids: [],
+        survey_names: [],
         audience: workflowParamValue(`${prefix}Audience`),
         style: workflowParamValue(`${prefix}Style`) || "专业、有观点、适合公众号阅读",
         theme: workflowParamValue(`${prefix}Theme`) || "professional-clean",

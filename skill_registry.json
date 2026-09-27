@@ -1538,7 +1538,7 @@
       },
       "capabilities": {
         "wewrite.article.pipeline": {
-          "description": "公众号文章整包流水线：用户只输入主题/想法，一次完成 AI 写文章、生成横屏配图、公众号排版，并推送到微信公众号草稿箱。 也支持「复刻」：给一条公众号文章链接，抓正文后按原文逻辑、用记忆资料重写一篇新文章。",
+          "description": "公众号文章整包流水线：用户只输入主题/想法，一次完成 AI 写文章、生成横屏配图、公众号排版，并推送到微信公众号草稿箱。 也支持「复刻」：给一条公众号文章链接，抓正文后按原文逻辑、用记忆资料重写一篇新文章。 复刻模式不用选资料：不给 memory_document_ids/survey_ids 时自动用全部记忆 + 全部资料调查。",
           "upstream": "local",
           "upstream_tool": "invoke",
           "enabled": true,
@@ -1597,6 +1597,20 @@
               "extra_material": {
                 "type": "string",
                 "description": "复刻模式：额外补充要点/要求"
+              },
+              "survey_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "复刻模式：资料调查（IP 内容调研问卷）id；留空=全部资料调查"
+              },
+              "memory_document_titles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "复刻模式：记忆资料标题（id 对不上时按标题匹配）"
               }
             },
             "required": [
