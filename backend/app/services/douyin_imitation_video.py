@@ -244,6 +244,38 @@ async def _download_first(urls: list, limit: int = MAX_SOURCE_BYTES) -> Tuple[Op
     return None, "", last
 
 
+async def store_generated_video(video_url: str, *, title: str = "") -> Dict[str, Any]:
+    """把上游成片转存到我们自己的 TOS（阿里云出的 OSS 链接带 Expires，过期就打不开了）。
+
+    返回 {ok, public_url, asset_id, file_size, object_key}；失败返回 {ok: False, error}。
+    """
+    source = str(video_url or "").strip()
+    if not source.startswith(("http://", "https://")):
+        return {"ok": False, "error": "成片地址无效"}
+    data, err = await _download(source, limit=MAX_SOURCE_BYTES)
+    if err:
+        return {"ok": False, "error": f"下载成片失败：{err}"}
+    from ..api.assets import _run_asset_upload_io, _save_upload_file_or_tos
+
+    import io as _io
+
+    handle = _io.BytesIO(data)
+    handle.name = "douyin-imitation.mp4"     # assets 上传助手会取 name/suffix
+    asset_id, object_key, file_size, public_url = await _run_asset_upload_io(
+        _save_upload_file_or_tos, handle, ".mp4", "video/mp4"
+    )
+    if not public_url:
+        return {"ok": False, "error": "成片转存失败：存储没返回公网地址"}
+    logger.info("[douyin-imitation] stored title=%s asset=%s size=%s", str(title)[:40], asset_id, file_size)
+    return {"ok": True, "public_url": public_url, "asset_id": asset_id,
+            "file_size": int(file_size or len(data)), "object_key": object_key}
+
+
+async def fetch_video_bytes(video_url: str, limit: int = MAX_SOURCE_BYTES) -> Tuple[Optional[bytes], str]:
+    """按地址取成片字节（下载接口用）。"""
+    return await _download(video_url, limit=limit)
+
+
 async def _upload_tos(data: bytes, suffix: str, content_type: str) -> Tuple[str, str]:
     """上传到 TOS，返回 (公网地址, 错误)。阿里云拉不到我们自己的域名，必须走 TOS。"""
     from ..api.assets import _run_asset_upload_io, _save_upload_file_or_tos

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import desc
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import DouyinImitationTask, User
+from ..models import Asset, DouyinImitationTask, User
 from ..services.credits_amount import credits_json_float
 from ..services import douyin_desk_billing as billing
-from ..services.douyin_imitation_video import _max_seconds, prepare_imitation, query_imitation
+from ..services.douyin_imitation_video import (_max_seconds, fetch_video_bytes, prepare_imitation,
+                                              query_imitation, store_generated_video)
 from ..services.douyin_platform_information_desk import information_desk_response, search_information_desk
 from ..services.user_feature_flags import (
     DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
@@ -98,6 +99,9 @@ def _task_payload(row: DouyinImitationTask) -> dict:
         "fail_reason": row.fail_reason,
         "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
         "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None,
+        "asset_id": row.asset_id or "",
+        "download_url": (f"/api/douyin/platform-information-desk/imitation/{row.task_id}/download"
+                         if row.task_id else ""),
         "billable_seconds": int(row.billable_seconds or 0),
         "credits_charged": credits_json_float(row.credits_charged or 0),
         "credits_refunded": credits_json_float(row.credits_refunded or 0),
@@ -143,6 +147,66 @@ async def list_information_desk_imitation(
     return {"items": [_task_payload(row) for row in rows], "count": len(rows)}
 
 
+async def _store_task_video(db: Session, user: User, row: DouyinImitationTask) -> dict:
+    """把成片转存进我们自己的存储（TOS）并登记到素材库；阿里云出的链接会过期。"""
+    source = str(row.stored_url or row.video_url or "").strip()
+    if not source or row.asset_id:
+        return {"ok": bool(row.asset_id), "url": row.stored_url or row.video_url, "asset_id": row.asset_id}
+    stored = await store_generated_video(source, title=row.title or row.task_id)
+    if not stored.get("ok"):
+        return {"ok": False, "error": stored.get("error") or "成片入库失败"}
+    public_url = str(stored.get("public_url") or "")
+    asset_id = str(stored.get("asset_id") or "")
+    row.stored_url = public_url
+    row.video_url = public_url
+    row.asset_id = asset_id
+    row.file_size = int(stored.get("file_size") or 0)
+    if asset_id:
+        exists = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+        if exists is None:
+            db.add(Asset(
+                asset_id=asset_id,
+                user_id=int(user.id),
+                filename=f"douyin-imitation-{row.task_id}.mp4",
+                media_type="video",
+                file_size=int(stored.get("file_size") or 0),
+                source_url=public_url,
+                tags="douyin,imitation,generated",
+            ))
+    db.commit()
+    return {"ok": True, "url": public_url, "asset_id": asset_id}
+
+
+@router.get("/api/douyin/platform-information-desk/imitation/{task_id}/download",
+            summary="下载做同款成片（未入库会先入库）")
+async def download_information_desk_imitation(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_information_desk_access(current_user, db)
+    row = (db.query(DouyinImitationTask)
+           .filter(DouyinImitationTask.task_id == str(task_id),
+                   DouyinImitationTask.user_id == int(current_user.id))
+           .first())
+    if row is None:
+        raise HTTPException(status_code=404, detail="没有这条生成记录")
+    if not row.asset_id and row.status == "SUCCESS":
+        stored = await _store_task_video(db, current_user, row)
+        if not stored.get("ok"):
+            raise HTTPException(status_code=502, detail=stored.get("error") or "成片入库失败")
+    source = str(row.stored_url or row.video_url or "").strip()
+    if not source:
+        raise HTTPException(status_code=409, detail="这次任务还没有成片（生成中或已失败）")
+    data, err = await fetch_video_bytes(source)
+    if err or not data:
+        raise HTTPException(status_code=502, detail=err or "取成片失败")
+    filename = f"douyin-imitation-{row.id or task_id}.mp4"
+    return Response(content=data, media_type="video/mp4",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Content-Length": str(len(data))})
+
+
 @router.get("/api/douyin/platform-information-desk/imitation/{task_id}", summary="查询做同款任务进度")
 async def get_information_desk_imitation(
     task_id: str,
@@ -168,6 +232,13 @@ async def get_information_desk_imitation(
                            reason="douyin_imitation_failed")
             row.credits_refunded = row.credits_charged
             db.commit()
+        if row.status == "SUCCESS" and not row.asset_id:
+            stored = await _store_task_video(db, current_user, row)
+            if stored.get("ok"):
+                result["video_url"] = stored.get("url") or result.get("video_url")
+                result["stored_url"] = stored.get("url")
+                result["asset_id"] = stored.get("asset_id")
+                result["download_url"] = f"/api/douyin/platform-information-desk/imitation/{task_id}/download"
     return result
 
 

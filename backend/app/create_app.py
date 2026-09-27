@@ -176,6 +176,12 @@ def _migrate_douyin_imitation_task_columns():
                 conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN credits_charged NUMERIC(20, 4) NOT NULL DEFAULT 0"))
             if "credits_refunded" not in cols:
                 conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN credits_refunded NUMERIC(20, 4) NOT NULL DEFAULT 0"))
+            if "asset_id" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN asset_id VARCHAR(64) NOT NULL DEFAULT ''"))
+            if "stored_url" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN stored_url TEXT"))
+            if "file_size" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0"))
         logger.info("Migration douyin_imitation_task billing columns ok")
     except Exception as e:  # noqa: BLE001
         logger.warning("Migration douyin_imitation_task billing columns skipped: %s", e)
