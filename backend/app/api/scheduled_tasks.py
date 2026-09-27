@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, update
+from sqlalchemy import and_, func, or_, update
 from sqlalchemy.orm import Session, defer
 
 from ..db import get_db
@@ -3907,6 +3907,10 @@ def _expire_workflow_node_runs(
 
 
 def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
+    # 一次性任务如果一次都没跑过（设备忙/离线、排队中），不要因为"迟到"被静默丢掉；
+    # 保留 24h 排队等待领取，否则用户点下发以后工作历史里什么都没有。
+    if str(getattr(task, "schedule_type", "") or "").strip() == "once" and int(getattr(task, "run_count", 0) or 0) == 0:
+        return 86400
     env_name = (
         "LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS"
         if task.schedule_type == "daily_times"
@@ -5843,6 +5847,7 @@ def pending_scheduled_task_runs(
     if skipped_pending or expired_after_enqueue:
         db.flush()
     stale_cutoff = now - timedelta(minutes=20)
+    hard_cutoff = now - timedelta(seconds=_client_run_online_hard_timeout_seconds())
     stale_rows = (
         db.query(ScheduledTaskRun)
         .options(defer(ScheduledTaskRun.progress), defer(ScheduledTaskRun.result_payload))
@@ -5851,18 +5856,23 @@ def pending_scheduled_task_runs(
             ScheduledTaskRun.status == "processing",
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
             ScheduledTaskRun.claimed_at.isnot(None),
-            ScheduledTaskRun.claimed_at < stale_cutoff,
-            ScheduledTaskRun.updated_at < stale_cutoff,
+            or_(
+                and_(ScheduledTaskRun.claimed_at < stale_cutoff, ScheduledTaskRun.updated_at < stale_cutoff),
+                ScheduledTaskRun.claimed_at < hard_cutoff,
+            ),
         )
         .order_by(ScheduledTaskRun.claimed_at.asc())
         .limit(100)
         .all()
     )
     for row in stale_rows:
-        if not _client_processing_run_is_stale(row, now):
-            continue
-        if _client_run_is_within_online_grace(db, row, now):
-            continue
+        # 超过硬超时（默认 8h）就不再给"设备还活着"的宽限，直接收掉，避免队列被永久堵死
+        hard_expired = bool(row.claimed_at and row.claimed_at < hard_cutoff)
+        if not hard_expired:
+            if not _client_processing_run_is_stale(row, now):
+                continue
+            if _client_run_is_within_online_grace(db, row, now):
+                continue
         row.status = "failed"
         row.error = "客户端长时间未上报进度，本轮任务已结束"
         row.finished_at = now
