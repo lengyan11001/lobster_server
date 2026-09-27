@@ -10531,3 +10531,13 @@
 /* 信息台关键词搜索 */
 .douyin-information-desk-search { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; }
 .douyin-information-desk-search input { flex: 1 1 auto; min-width: 0; }
+
+/* 公众号文章：AI 创作 / 复刻 顶部 tab 栏 */
+.article-mode-tabs { display: flex; gap: 6px; padding: 4px; margin: 0 0 14px; background: #eef2f8; border-radius: 10px; }
+.article-mode-tabs .article-mode-tab { flex: 1 1 0; height: 40px; min-height: 40px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #46516a; font-size: 15px; font-weight: 600; line-height: 40px; }
+.article-mode-tabs .article-mode-tab.active { background: #2f6fed; color: #fff; }
+/* 公众号文章：整块单列铺满（tab 栏在最上面一行，输入控件不再挤成多列） */
+.article-fields-stack { grid-column: 1 / -1; display: block; min-width: 0; }
+.article-fields-stack > * { margin-bottom: 12px; }
+.article-fields-stack > *:last-child { margin-bottom: 0; }
+.article-fields-stack .field { margin: 0; }

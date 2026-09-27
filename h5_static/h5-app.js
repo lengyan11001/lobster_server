@@ -4492,17 +4492,20 @@
 
     function articleFieldsHtml(prefix, titleValue = "公众号文章") {
       const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
-      const tab = (key, label) => `<button type="button" data-article-tab-prefix="${prefix}" data-article-field-tab="${key}" class="${mode === key ? "active" : ""}">${label}</button>`;
-      // 和 online 一样：复刻 tab 里只留一个链接输入，任务名称/目标读者/高级设置都收起来
-      return `<div data-article-title-block="${prefix}" class="${mode === "remix" ? "hidden" : ""}">`
+      const tab = (key, label) => `<button type="button" class="article-mode-tab${mode === key ? " active" : ""}" data-article-tab-prefix="${prefix}" data-article-field-tab="${key}">${label}</button>`;
+      const tabBar = `<div class="article-mode-tabs">${tab("compose", "AI 创作")}${tab("remix", "复刻")}</div>`;
+      // 和 online 一样：tab 在最上面单独一行；复刻 tab 里只留一个链接输入，任务名称/目标读者/高级设置都收起来
+      return `<div class="article-fields-stack">`
+        + tabBar
+        + `<div data-article-title-block="${prefix}" class="${mode === "remix" ? "hidden" : ""}">`
         + taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue, `data-article-default-title="${titleValue}"`))
         + `</div>`
-        + `<div class="seg" style="margin:0.2rem 0 0.7rem">${tab("compose", "AI 创作")}${tab("remix", "复刻")}</div>`
         + `<div data-article-prefix="${prefix}" data-article-panel="compose" class="${mode === "compose" ? "" : "hidden"}">${articleComposeFieldsHtml(prefix)}</div>`
         + `<div data-article-prefix="${prefix}" data-article-panel="remix" class="${mode === "remix" ? "" : "hidden"}">${articleRemixFieldsHtml(prefix)}</div>`
         + `<div data-article-compose-only="${prefix}" class="${mode === "compose" ? "" : "hidden"}">`
         + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
         + articleAdvancedFieldsHtml(prefix)
+        + `</div>`
         + `</div>`;
     }
 
