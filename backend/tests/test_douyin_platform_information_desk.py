@@ -557,3 +557,17 @@ def test_search_endpoint_requires_permission(db_session, db_session_factory, tes
     _seed_snapshot(db_session, "2026-09-29")
     client = _client(db_session_factory, test_user.id)
     assert client.get("/api/douyin/platform-information-desk/search?q=火锅").status_code == 403
+
+def test_imitation_status_normalized_for_both_clients():
+    """online 老版本轮询只认 SUCCESS，DashScope 返回 SUCCEEDED，必须归一化。"""
+    from backend.app.services import douyin_imitation_video as imitation
+
+    assert imitation.normalize_status("SUCCEEDED") == "SUCCESS"
+    assert imitation.normalize_status("success") == "SUCCESS"
+    assert imitation.normalize_status("RUNNING") == "RUNNING"
+    assert imitation.normalize_status("PENDING") == "RUNNING"
+    assert imitation.normalize_status("NOT_START") == "RUNNING"
+    assert imitation.normalize_status("") == "RUNNING"
+    assert imitation.normalize_status("FAILED") == "FAILED"
+    assert imitation.normalize_status("CANCELED") == "FAILED"
+    assert imitation.normalize_status("WeIrD") == "FAILED"

@@ -64,6 +64,21 @@ FAIL_HINTS = {
 }
 
 
+# 上游状态五花八门（DashScope: SUCCEEDED/RUNNING/FAILED；Comfly: SUCCESS/FAILURE/PENDING），
+# 统一成 SUCCESS / RUNNING / FAILED，前端（H5 与 online 两个版本）只认这三个。
+_RAW_OK = {"SUCCESS", "SUCCEEDED", "COMPLETED", "FINISHED"}
+_RAW_RUNNING = {"RUNNING", "PENDING", "NOT_START", "QUEUED", "PROCESSING", "IN_PROGRESS", "SUBMITTED"}
+
+
+def normalize_status(raw_status: str) -> str:
+    value = str(raw_status or "").strip().upper()
+    if value in _RAW_OK:
+        return "SUCCESS"
+    if value in _RAW_RUNNING or not value:
+        return "RUNNING"
+    return "FAILED"
+
+
 def _dashscope_base() -> str:
     return (os.environ.get("DASHSCOPE_BASE_URL") or DASHSCOPE_BASE).strip().rstrip("/")
 
@@ -353,17 +368,19 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
         output = ((resp.json() or {}).get("output") or {})
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"解析换人结果失败：{exc}"}
-    status = str(output.get("task_status") or "").upper()
+    raw_status = str(output.get("task_status") or "").upper()
+    status = normalize_status(raw_status)
     video_url = str(output.get("video_url") or "").strip()
     return {
         "ok": True,
         "task_id": clean_id,
         "status": status,
-        "progress": "100%" if status == "SUCCEEDED" else "",
-        "video_url": video_url if status == "SUCCEEDED" else "",
+        "raw_status": raw_status,
+        "progress": "100%" if status == "SUCCESS" else "",
+        "video_url": video_url if status == "SUCCESS" else "",
         "fail_reason": (friendly_error(str(output.get("code") or ""), str(output.get("message") or ""))
-                        if status in {"FAILED", "CANCELED", "UNKNOWN"} else ""),
-        "done": status in {"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"},
+                        if status == "FAILED" else ""),
+        "done": status in {"SUCCESS", "FAILED"},
     }
 
 
