@@ -3422,29 +3422,18 @@
 
     function workScopeOptions(scope) {
       const options = [{ type: "all", label: "全部记录" }];
-      const active = activeViewKey();
-      let department = null;
-      let lookup = null;
-      if (active === "department") department = departmentById(state.currentDepartmentId);
-      if (active === "ability") {
-        lookup = activeAbilityLookup();
-        department = displayDepartmentForAbility(lookup);
-      }
-      if (!department && scope && scope.departmentId) department = departmentById(scope.departmentId);
+      // 只按当前选中的筛选条件推导 tab（不看当前停在哪个页面），
+      // 避免"首页全部任务" 和"下发成功->查看工作历史"落到同一个页却看到不同的 tab。
+      const next = scope && typeof scope === "object" ? scope : {};
+      let department = next.departmentId ? departmentById(next.departmentId) : null;
+      const lookup = next.abilityKey ? abilityLookup(next.abilityKey) : null;
+      if (!department && lookup) department = displayDepartmentForAbility(lookup);
       if (department) options.push(departmentScope(department));
       if (lookup && Array.isArray(lookup.trail)) {
         lookup.trail.forEach((node, idx) => {
-          const next = abilityScope(lookup, idx);
-          if (!options.some((item) => scopeId(item) === scopeId(next))) options.push(next);
+          const item = abilityScope(lookup, idx);
+          if (!options.some((existing) => scopeId(existing) === scopeId(item))) options.push(item);
         });
-      } else if (scope && scope.abilityKey) {
-        const scopedLookup = abilityLookup(scope.abilityKey);
-        if (scopedLookup) {
-          scopedLookup.trail.forEach((node, idx) => {
-            const next = abilityScope(scopedLookup, idx);
-            if (!options.some((item) => scopeId(item) === scopeId(next))) options.push(next);
-          });
-        }
       }
       return options;
     }
@@ -29479,7 +29468,8 @@
     });
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
-    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
+    // 下发成功 -> 查看工作历史：和首页「全部」一样落到全部记录（不再带部门/能力的筛选 tab，避免两个入口长得不一样）
+    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, viewTargetFromCurrent("profile")));
     document.addEventListener("click", (event) => {
       const target = event.target;
       const btn = target && target.closest ? target.closest("[data-article-field-tab]") : null;
