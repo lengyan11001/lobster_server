@@ -571,3 +571,64 @@ def test_imitation_status_normalized_for_both_clients():
     assert imitation.normalize_status("FAILED") == "FAILED"
     assert imitation.normalize_status("CANCELED") == "FAILED"
     assert imitation.normalize_status("WeIrD") == "FAILED"
+
+def test_imitation_history_records_and_refreshes(db_session, db_session_factory, test_user, monkeypatch):
+    """做同款要落库，历史列表能列出来，查询任务后状态与成片要回写。"""
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import DouyinImitationTask, UserSkillVisibility
+    from backend.app.services.user_feature_flags import DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID
+
+    db_session.add(UserSkillVisibility(user_id=test_user.id,
+                                       package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID))
+    db_session.commit()
+
+    async def fake_prepare(image_url, item_id, prompt=""):
+        return {"ok": True, "task_id": "his-1", "model": "wan2.7-videoedit", "provider": "videoedit",
+                "prompt": prompt or "换人", "source_desc": "想吃哈哈哈哈", "video_seconds": 15,
+                "image_url": "https://tos.test/a.png", "video_url": "https://tos.test/v.mp4"}
+
+    monkeypatch.setattr(desk_api, "prepare_imitation", fake_prepare)
+    client = _client(db_session_factory, test_user.id)
+
+    created = client.post(
+        "/api/douyin/platform-information-desk/imitation",
+        json={"image_url": "https://tos.test/a.png", "item_id": "7689077964000973561", "title": "想吃哈哈哈哈"},
+    )
+    assert created.status_code == 200
+    assert created.json()["history_id"]
+
+    row = db_session.query(DouyinImitationTask).filter(DouyinImitationTask.task_id == "his-1").first()
+    assert row is not None and row.user_id == test_user.id and row.status == "RUNNING"
+
+    hist = client.get("/api/douyin/platform-information-desk/imitation/history?refresh=0")
+    assert hist.status_code == 200
+    items = hist.json()["items"]
+    assert len(items) == 1
+    assert items[0]["task_id"] == "his-1" and items[0]["status"] == "RUNNING"
+    assert items[0]["title"] == "想吃哈哈哈哈"
+
+    async def fake_query(task_id):
+        return {"ok": True, "task_id": task_id, "status": "SUCCESS", "progress": "100%",
+                "video_url": "https://cdn.test/out.mp4", "fail_reason": "", "done": True}
+
+    monkeypatch.setattr(desk_api, "query_imitation", fake_query)
+    assert client.get("/api/douyin/platform-information-desk/imitation/his-1").status_code == 200
+
+    hist2 = client.get("/api/douyin/platform-information-desk/imitation/history?refresh=0").json()["items"]
+    assert hist2[0]["status"] == "SUCCESS"
+    assert hist2[0]["video_url"] == "https://cdn.test/out.mp4"
+
+
+def test_imitation_history_is_per_user(db_session, db_session_factory, test_user, monkeypatch):
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import DouyinImitationTask, UserSkillVisibility
+    from backend.app.services.user_feature_flags import DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID
+
+    db_session.add(UserSkillVisibility(user_id=test_user.id,
+                                       package_id=DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID))
+    db_session.add(DouyinImitationTask(user_id=test_user.id + 1, task_id="other-1", title="别人的"))
+    db_session.commit()
+
+    rows = _client(db_session_factory, test_user.id).get(
+        "/api/douyin/platform-information-desk/imitation/history?refresh=0").json()["items"]
+    assert rows == []

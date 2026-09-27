@@ -2296,3 +2296,35 @@ class PublishMetricEvent(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+class DouyinImitationTask(Base):
+    """抖音信息台「做同款（换人）」任务记录。
+
+    以前任务号只在前端内存里，用户一搜索/切 tab 就找不回自己的成片，
+    这里按用户落库，信息台可以列出「生成历史」再点回去看。
+    """
+
+    __tablename__ = "douyin_imitation_task"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_douyin_imitation_task_id"),
+        Index("ix_douyin_imitation_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    source_desc: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    model: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="RUNNING", nullable=False)
+    progress: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    video_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    image_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    source_video_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    fail_reason: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
