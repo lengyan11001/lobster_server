@@ -111,3 +111,16 @@ def test_report_claim_ack_flow_works_across_devices(db_session_factory, db_sessi
     )
     assert again.json()["created"] == 0
     assert again.json()["skipped"] == 1
+
+
+def test_normalize_contact_value_keeps_wechat_hyphen():
+    """手机号去掉分隔符；微信号的 - 和 _ 要保留（否则加错人）。"""
+    from backend.app.api.wechat_contact_pool import normalize_contact_value
+
+    assert normalize_contact_value("139-2748-5337") == ("13927485337", "mobile")
+    assert normalize_contact_value(" 139 2748 5337 ") == ("13927485337", "mobile")
+    assert normalize_contact_value("Meng2026-ok") == ("Meng2026-ok", "wechat_id")
+    assert normalize_contact_value("lisijia_8888") == ("lisijia_8888", "wechat_id")
+    assert normalize_contact_value("abc12") == ("", "")
+    assert normalize_contact_value("微信号") == ("", "")
+    assert normalize_contact_value("") == ("", "")

@@ -79,14 +79,23 @@ def _installation_id(request: Request) -> str:
 
 
 def normalize_contact_value(raw: Any) -> Tuple[str, str]:
-    """把号码/微信号归一化，返回 (值, 类型)；认不出来返回 ("", "")。"""
-    text = re.sub(r"[\s\-()（）]", "", str(raw or "").strip())
-    if not text:
+    """把号码/微信号归一化，返回 (值, 类型)；认不出来返回 ("", "")。
+
+    注意：手机号可以带空格/横线（139-2748-5337），要去掉；
+    但微信号里的 "-" 和 "_" 是**合法字符**（Meng2026-ok），不能一起删掉。
+    """
+    original = str(raw or "").strip()
+    compact = re.sub(r"[\s\-()（）]", "", original)
+    if not compact:
         return "", ""
-    if _MOBILE_RE.match(text):
-        return text, "mobile"
-    if _WECHAT_ID_RE.match(text):
-        return text, "wechat_id"
+    if _MOBILE_RE.match(compact):
+        return compact, "mobile"
+    # 微信号：只去空格，保留 - 和 _
+    candidate = re.sub(r"\s+", "", original)
+    if _WECHAT_ID_RE.match(candidate):
+        return candidate, "wechat_id"
+    if _WECHAT_ID_RE.match(compact):
+        return compact, "wechat_id"
     return "", ""
 
 
