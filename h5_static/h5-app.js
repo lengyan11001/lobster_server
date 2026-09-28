@@ -25930,6 +25930,25 @@
       return `src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)}`;
     }
 
+    // 自己 TOS CDN 上的公开地址：直接给直链（下载/预览都快），不再绕云端代理。
+    const DIRECT_MEDIA_URL_RE = /^https:\/\/[^/]+\.tos-cn-[a-z0-9-]+\.volces\.com\//i;
+
+    function isDirectMediaUrl(url) {
+      return DIRECT_MEDIA_URL_RE.test(String(url || "").trim());
+    }
+
+    function mediaViewUrl(url, filename) {
+      const value = String(url || "").trim();
+      if (isDirectMediaUrl(value)) return value;
+      return mediaProxyUrl(value, "inline", filename);
+    }
+
+    function mediaDownloadHref(url, filename) {
+      const value = String(url || "").trim();
+      if (isDirectMediaUrl(value)) return value;
+      return mediaProxyUrl(value, "attachment", filename);
+    }
+
     function mediaProxyUrl(url, disposition, filename) {
       const params = new URLSearchParams({
         url,
@@ -26360,8 +26379,8 @@
         ? String(mediaKindHint).toLowerCase()
         : mediaPreviewKind(url, filename);
       const openSource = libraryMediaSource(url, filename);
-      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaProxyUrl(url, "inline", filename));
-      const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
+      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaViewUrl(url, filename));
+      const downloadUrl = escapeHtml(mediaDownloadHref(url, filename));
       const safeName = escapeHtml(filename);
       if (IS_WECHAT) {
         return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
@@ -26377,12 +26396,12 @@
         ? String(mediaKindHint).toLowerCase()
         : mediaPreviewKind(url, filename);
       const openSource = libraryMediaSource(url, filename);
-      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaProxyUrl(url, "inline", filename));
+      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaViewUrl(url, filename));
       const safeName = escapeHtml(filename);
       const primaryActions = IS_WECHAT
         ? `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button>`
         : (() => {
-          const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
+          const downloadUrl = escapeHtml(mediaDownloadHref(url, filename));
           const label = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
           const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
           return `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}" data-media-download-kind="${escapeHtml(mediaKind)}"${iosAttr}>${escapeHtml(label)}</a>`;
