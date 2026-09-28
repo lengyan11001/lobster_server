@@ -1317,9 +1317,13 @@ def h5_static_asset(filename: str):
     root = _H5_STATIC_DIR.resolve()
     if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".html", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
         raise HTTPException(status_code=404, detail="文件不存在")
-    # H5 assets are versioned in index.html query strings. Keep them on disk
-    # between cold starts so mobile WebViews do not redownload the 1MB+ bundle.
-    cache_control = "public, max-age=86400"
+    # 静态资源在 index.html 里带 ?v= 版本号，可以长缓存；
+    # 但 html（尤其 index.html）必须不缓存，否则手机/WebView 会拿 24h 前的页面
+    # 继续引用旧的 js 版本，表现成"还在跳老界面 / 接口加载失败"。
+    if path.suffix.lower() == ".html":
+        cache_control = "no-store, no-cache, must-revalidate, max-age=0"
+    else:
+        cache_control = "public, max-age=86400"
     return FileResponse(str(path), media_type=_h5_static_media_type(path), headers={"Cache-Control": cache_control})
 
 
