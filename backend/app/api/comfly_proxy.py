@@ -3848,6 +3848,44 @@ async def _execute_image_generation_request(
     last_error = ""
     attempts_per_model = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
     reference_urls = _image_reference_urls(body)
+    if reference_urls:
+        # 垫图走 generations 会被上游忽略（实测 openmindapi 只按纯文本出图，结果与垫图无关）。
+        # 这里把参考图下载成真实图片，改走 edits 通道，保留垫图语义。
+        buffered_files: List[Tuple[str, str, bytes, str]] = []
+        for ref_url in reference_urls[:4]:
+            try:
+                ref_bytes, ref_content_type, ref_ext = await _download_image_bytes(ref_url)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "参考图下载失败，无法作为垫图使用（可能是内网/需要登录的地址），"
+                        "请改用上传图片作为垫图。%s" % str(exc)[:120]
+                    ),
+                )
+            if ref_bytes:
+                buffered_files.append(("image", "reference%s" % (ref_ext or ".png"), ref_bytes, ref_content_type or "image/png"))
+        if buffered_files:
+            edit_data: Dict[str, str] = {
+                str(k): (json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v))
+                for k, v in body.items()
+                if v is not None and str(k) not in {"image", "image_url", "image_urls", "images"}
+            }
+            edit_data.setdefault("response_format", "url")
+            client_request_id = body.get("client_request_id")
+            logger.info(
+                "[image_generate] routing to edits model=%s refs=%d",
+                model,
+                len(buffered_files),
+            )
+            return await _execute_image_edit_request(
+                request_user_id=request_user_id,
+                billing_user_id=billing_user_id,
+                model=model,
+                data=edit_data,
+                buffered_files=buffered_files,
+                client_request_id=str(client_request_id or "").strip()[:120],
+            )
 
     for index, attempt_model in enumerate(attempt_models, start=1):
         try:
