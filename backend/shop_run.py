@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .app.api.auth import router as auth_router
 from .app.api.shop import cms_router, router as shop_router
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,6 +21,7 @@ STATIC = ROOT / "shop_static"
 PORT = int(os.environ.get("SHOP_PORT", "8031"))
 
 app = FastAPI(title="shop 独立站")
+app.include_router(auth_router, prefix="/auth")  # 同源登录：手机号密码登录
 app.include_router(shop_router)
 app.include_router(cms_router)
 

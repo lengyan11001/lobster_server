@@ -30,7 +30,7 @@ from ..shop_models import (
     ShopReferral,
     ShopReferralClick,
 )
-from .auth import get_current_user, get_password_hash
+from .auth import PHONE_EMAIL_SUFFIX, get_current_user, get_password_hash
 
 router = APIRouter()          # 独立站 / 选品广场（公开 + 登录用户）
 cms_router = APIRouter()      # 商家后台
@@ -157,7 +157,7 @@ class ProductReq(BaseModel):
 
 @cms_router.post("/api/shop-cms/merchants/register", summary="商家注册开店")
 def merchant_register(body: MerchantRegisterReq, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    email = f"{body.phone.strip()}@shop.lobster.local"
+    email = f"{body.phone.strip()}{PHONE_EMAIL_SUFFIX}"  # 与 /auth 手机号登录一致
     exists = db.query(User).filter(User.email == email).first()
     if exists is not None:
         raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
