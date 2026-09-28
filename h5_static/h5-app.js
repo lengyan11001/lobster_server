@@ -1974,11 +1974,13 @@
 
     function openWorkHistory(scope = null, backTarget = null) {
       closeTaskSuccessDialog();
-      const nextScope = scope || scopeFromActiveView();
-      const options = workScopeOptions(nextScope);
-      const target = backTarget ? normalizeViewTarget(backTarget) : viewTargetFromCurrent("profile");
+      // 统一：工作列表只做"全部记录"，不再按部门/能力分 tab（所有入口落到同一个列表）
+      const nextScope = { type: "all", label: "全部记录" };
+      const options = [{ type: "all", label: "全部记录" }];
+      // 返回：回到"点进来之前那一页"（传入的优先；否则就是当前页）
+      const target = normalizeViewTarget(backTarget || viewTargetFromCurrent("office"), "office");
       state.workListBackTarget = target;
-      state.workListBackTab = target.tab || "profile";
+      state.workListBackTab = target.tab || "office";
       setWorkListScope(nextScope, options);
       switchTab("workList");
       // 打开工作历史时强制刷新，避免"下发完点查看，列表里看不到刚创建的任务"（原来是拿旧缓存直接渲染）
@@ -3467,6 +3469,12 @@
       const options = state.workListScopeOptions && state.workListScopeOptions.length
         ? state.workListScopeOptions
         : workScopeOptions(state.workListScope);
+      if (options.length <= 1) {
+        box.innerHTML = "";
+        box.classList.add("hidden");
+        return;
+      }
+      box.classList.remove("hidden");
       const active = scopeId(state.workListScope || { type: "all" });
       box.innerHTML = options.map((item) => `<button type="button" class="${scopeId(item) === active ? "active" : ""}" data-work-scope="${escapeHtml(scopeId(item))}">${escapeHtml(item.label || "全部记录")}</button>`).join("");
     }
@@ -28710,7 +28718,7 @@
       if (!btn) return;
       const department = departmentById(btn.dataset.secretaryDept || "");
       if (!department) return;
-      openWorkHistory(departmentScope(department), { tab: "secretary" });
+      openWorkHistory(null, { tab: "secretary" });
     });
     $("abilityChildren")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-ability-key]");
@@ -28874,8 +28882,8 @@
       }
       openContextChat(context);
     });
-    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId))));
-    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup())));
+    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(null, viewTargetFromCurrent("office")));
+    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(null, viewTargetFromCurrent("office")));
     $("scrollTopBtn")?.addEventListener("click", () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
     window.addEventListener("scroll", () => syncScrollTopButton(), { passive: true });
     setupWorkListInfiniteScroll();
