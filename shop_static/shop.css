@@ -98,10 +98,22 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .card.plaza .tip{font-size:12px;margin-top:10px;word-break:break-all;color:var(--dim)}
 .card.plaza .tip.ok{color:var(--gold)}
 .card.plaza .tip.err{color:#c0392b}
-/* ── 广场登录行 ── */
-.login-inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:24px}
-.login-inline input{border:1px solid var(--line);border-radius:999px;padding:10px 16px;font:inherit;background:var(--card);color:var(--ink);min-width:190px}
-.login-inline .btn{padding:10px 18px;font-size:13px}
-.login-inline .btn.mini{padding:8px 16px}
-.login-inline .tip{color:var(--dim);font-size:12px}
-.login-inline .tip.err{color:#c0392b}
+/* ── 頂栏登录 + 登录弹窗（广场页） ── */
+[hidden]{display:none !important}
+nav .auth-state{color:var(--dim);font-size:12px;margin-left:22px}
+.btn.mini{padding:8px 16px;font-size:13px}
+nav .btn.mini.line{margin-left:18px}
+.modal[hidden]{display:none}
+.modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center}
+.modal-mask{position:absolute;inset:0;background:rgba(24,28,20,.42)}
+.modal-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:30px 32px 26px;width:min(92vw,380px);box-shadow:0 24px 60px rgba(0,0,0,.18)}
+.modal-card h3{margin:0;font-size:20px;letter-spacing:1px}
+.modal-card .auth-lede{margin:8px 0 0;font-size:13px}
+.modal-card .field{display:block;margin:16px 0 0}
+.modal-card .field span{display:block;font-size:12px;color:var(--dim);margin-bottom:6px}
+.modal-card input{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font:inherit;background:var(--bg);color:var(--ink)}
+.btn.block{display:block;width:100%;margin-top:20px;text-align:center}
+.modal-close{position:absolute;top:10px;right:14px;border:0;background:none;font-size:22px;line-height:1;color:var(--dim);cursor:pointer}
+.modal-card .tip{margin-top:12px;font-size:12px;color:var(--dim)}
+.modal-card .tip.err{color:#c0392b}
+body.auth-modal-open{overflow:hidden}

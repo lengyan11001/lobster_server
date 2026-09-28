@@ -6,7 +6,7 @@
 </head><body data-plaza="1">
 <header><div class="wrap bar">
   <a class="brand" href="/" data-store-link>选品广场<small>shop.bhzn.top</small></a>
-  <nav><a href="/" data-store-link>店铺首页</a><span id="auth-state" class="muted" style="margin-left:30px;font-size:12px"></span></nav>
+  <nav><a href="/" data-store-link>店铺首页</a><span id="auth-state" class="auth-state"></span><button class="btn mini line" id="auth-open" type="button" hidden>登录</button><button class="btn mini line" id="auth-logout" type="button" hidden>退出登录</button></nav>
 </div></header>
 <div class="wrap">
   <section class="hero small"><div class="art"></div><div class="inner">
@@ -14,7 +14,6 @@
     <h1>选品广场</h1>
     <p class="lede">在售商品按热度排序，一键生成带你归因参数的推广链接；买家从链接进店下单，佣金按订单实付计。</p>
   </div></section>
-  <div id="auth-box"></div>
   <form id="plaza-filter" class="filters">
     <input id="q" placeholder="搜商品名 / 关键词，例如：苹果">
     <select id="cat"><option value="">全部类目</option></select>
@@ -27,5 +26,17 @@
   <div>© 2026 独立商城 · 由 shop.bhzn.top 提供独立站能力</div>
   <div>商品图 / 主视觉由 AI 生成通道产出</div>
 </div></footer>
+<div class="modal" id="auth-modal" hidden>
+  <div class="modal-mask" data-auth-close="1"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <button class="modal-close" type="button" data-auth-close="1" aria-label="关闭">×</button>
+    <h3 id="auth-title">登录</h3>
+    <p class="muted auth-lede">登录后一键复制带归因的推广链接；不登录也能看商品、复制普通链接。</p>
+    <label class="field"><span>手机号 / 邮箱</span><input id="plaza-acct" autocomplete="username" placeholder="手机号 / 邮箱"></label>
+    <label class="field"><span>登录密码</span><input id="plaza-pwd" type="password" autocomplete="current-password" placeholder="登录密码"></label>
+    <button class="btn block" id="plaza-login" type="button">登录</button>
+    <div class="tip" id="plaza-login-tip"></div>
+  </div>
+</div>
 <script src="/shop-core.js"></script>
 </body></html>
