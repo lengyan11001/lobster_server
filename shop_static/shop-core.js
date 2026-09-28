@@ -362,5 +362,136 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
-  window.ShopFront = { renderStore: renderStore, renderProduct: renderProduct, ref: loadRef, trackClick: trackClick, yuan: yuan };
+  window.ShopFront = { renderStore: renderStore, renderProduct: renderProduct, ref: loadRef, trackClick: trackClick, yuan: yuan, esc: esc, attr: attr, api: api, coverOf: coverOf, priceLine: priceLine, commissionLine: commissionLine, withRef: withRef, visitorId: visitorId };
+})();
+/* ───────────── P3 选品广场：GET /api/shop/plaza + POST /api/shop/plaza/link ───────────── */
+(function () {
+  'use strict';
+  var F = window.ShopFront;
+  if (!F || !document.body.hasAttribute('data-plaza')) return;
+  var TOKEN_KEY = 'shop_token_v1';
+
+  function token() {
+    var q = new URLSearchParams(location.search);
+    var t = (q.get('token') || '').trim();
+    if (t) { try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) { /* 隐私模式 */ } return t; }
+    try {
+      return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem('lobster_token') || localStorage.getItem('token') || '';
+    } catch (e) { return ''; }
+  }
+  function authed(path, opts) {
+    var init = opts || {};
+    init.headers = { 'Content-Type': 'application/json' };
+    if (token()) init.headers.Authorization = 'Bearer ' + token();
+    return fetch(path, init).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok || d.ok === false) {
+          var m = (d && (d.detail || d.message)) || ('HTTP ' + r.status);
+          var err = new Error(typeof m === 'string' ? m : JSON.stringify(m));
+          err.status = r.status;
+          throw err;
+        }
+        return d;
+      });
+    });
+  }
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return Promise.reject(new Error('clipboard unavailable'));
+  }
+  var state = { keyword: '', category: '', sort: 'heat', page: 1, size: 24 };
+
+  function plazaCard(p) {
+    return [
+      '<div class="card plaza" data-product="' + F.esc(p.id) + '">',
+      F.coverOf(p),
+      '<div class="body">',
+      '<div class="name">' + F.esc(p.title) + '</div>',
+      p.subtitle ? '<div class="desc">' + F.esc(p.subtitle) + '</div>' : '',
+      F.priceLine(p),
+      F.commissionLine(p),
+      p.merchant ? '<div class="desc">' + F.esc(p.merchant.company_name || '') + (p.category ? ' · ' + F.esc(p.category) : '') + '</div>' : '',
+      '<div class="acts">',
+      '<button class="btn copy" type="button" data-copy="' + F.esc(p.id) + '">一键复制推广链接</button>',
+      '<a class="btn line" href="' + F.attr(F.withRef('/p/' + p.id)) + '">预览商品页</a>',
+      '</div>',
+      '<div class="tip" data-tip="' + F.esc(p.id) + '"></div>',
+      '</div></div>'
+    ].join('');
+  }
+
+  function bindCopy(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('[data-copy]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var pid = btn.getAttribute('data-copy');
+        var tip = root.querySelector('[data-tip="' + pid + '"]');
+        var plain = location.origin + '/p/' + pid;
+        btn.disabled = true;
+        tip.className = 'tip';
+        tip.textContent = '正在生成推广链接…';
+        authed('/api/shop/plaza/link', { method: 'POST', body: JSON.stringify({ product_id: Number(pid), source: 'online_plaza' }) })
+          .then(function (r) {
+            copyText(r.link).catch(function () {});
+            document.body.dataset.lastLink = JSON.stringify(r);
+            tip.className = 'tip ok';
+            tip.innerHTML = '已复制推广链接 · 预计佣金 ' + F.yuan(r.commission_estimate_cents)
+              + ' (' + (Number(r.commission_bp || 0) / 100) + '%)<br><span class="muted">' + F.esc(r.link) + '</span>';
+            btn.textContent = '已复制';
+            btn.disabled = false;
+          })
+          .catch(function (e) {
+            document.body.dataset.lastLinkError = e.message + '#' + (e.status || 0);
+            copyText(plain).catch(function () {});
+            tip.className = 'tip err';
+            tip.textContent = (e.status === 401 || /authenticat|凭证/i.test(e.message))
+              ? '需要登录态：已复制普通商品链接 ' + plain + '；登录后可生成带归因 (?r=&rf=) 的推广链接。'
+              : '生成失败：' + e.message + '（已复制普通商品链接 ' + plain + '）';
+            btn.disabled = false;
+          });
+      });
+    });
+  }
+
+  function load(root) {
+    var url = '/api/shop/plaza?sort=' + encodeURIComponent(state.sort) + '&page=' + state.page + '&size=' + state.size
+      + (state.keyword ? '&keyword=' + encodeURIComponent(state.keyword) : '')
+      + (state.category ? '&category=' + encodeURIComponent(state.category) : '');
+    root.innerHTML = '<div class="loading">正在加载选品广场…</div>';
+    return F.api(url).then(function (d) {
+      var items = d.items || [];
+      var seen = {}, cats = [];
+      items.forEach(function (p) { if (p.category && !seen[p.category]) { seen[p.category] = 1; cats.push(p.category); } });
+      var catEl = document.getElementById('cat');
+      if (catEl) {
+        catEl.innerHTML = '<option value="">全部类目</option>' + cats.map(function (c) {
+          return '<option value="' + F.attr(c) + '"' + (c === state.category ? ' selected' : '') + '>' + F.esc(c) + '</option>';
+        }).join('');
+      }
+      root.innerHTML = '<div class="ptitle"><h2>选品广场</h2><span>在售 ' + Number(d.total || 0) + ' 个商品</span></div>'
+        + (items.length ? '<div class="grid">' + items.map(plazaCard).join('') + '</div>'
+          : '<div class="empty"><b>没有匹配的商品</b><div class="muted">换个关键词或类目再试</div></div>');
+      document.body.dataset.plazaReady = JSON.stringify({ total: Number(d.total || 0), items: items.length, cats: cats });
+      bindCopy(root);
+    }).catch(function (e) {
+      root.innerHTML = '<div class="empty"><b>选品广场加载失败</b><div class="muted">' + F.esc(e.message) + '</div></div>';
+      document.body.dataset.plazaError = e.message;
+    });
+  }
+
+  var form = document.getElementById('plaza-filter');
+  if (form) {
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      state.keyword = (document.getElementById('q').value || '').trim();
+      state.category = document.getElementById('cat').value || '';
+      state.sort = document.getElementById('sort').value || 'heat';
+      state.page = 1;
+      document.body.dataset.plazaQuery = JSON.stringify(state);
+      load(document.getElementById('app'));
+    });
+  }
+  var badge = document.getElementById('auth-state');
+  if (badge) badge.textContent = token() ? '已带登录态：可一键生成带归因的推广链接' : '未登录：复制按钮会退回普通商品链接';
+  document.body.dataset.hasToken = token() ? '1' : '0';
+  load(document.getElementById('app'));
 })();

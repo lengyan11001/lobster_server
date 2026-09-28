@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -84,6 +85,22 @@ def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = No
         data["referral_link"] = None
     return data
 
+
+# ── 访客（无登录态）也能下单：无 token 返回 None，无效 token 不 401；带 token 时仍解析出用户 ──
+_optional_bearer = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
+
+async def get_optional_user(
+    request: Request,
+    token: Optional[str] = Depends(_optional_bearer),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        return await get_current_user(request, token=token, db=db)
+    except HTTPException:
+        return None
 
 # ────────────────────────── 商家后台 /api/shop-cms ──────────────────────────
 
@@ -479,7 +496,7 @@ class OrderCreateReq(BaseModel):
 @router.post("/api/shop/orders", summary="下单（P0：货到付款/线下）")
 def order_create(
     body: OrderCreateReq,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     product = db.query(ShopProduct).filter(ShopProduct.id == body.product_id, ShopProduct.status == ON_SALE).first()

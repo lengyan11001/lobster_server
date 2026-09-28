@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>选品广场 · shop.bhzn.top</title>
+<link rel="stylesheet" href="/shop.css">
+</head><body data-plaza="1">
+<header><div class="wrap bar">
+  <a class="brand" href="/" data-store-link>选品广场<small>shop.bhzn.top</small></a>
+  <nav><a href="/" data-store-link>店铺首页</a><span id="auth-state" class="muted" style="margin-left:30px;font-size:12px"></span></nav>
+</div></header>
+<div class="wrap">
+  <section class="hero small"><div class="art"></div><div class="inner">
+    <div class="kicker">PROMOTER PLAZA</div>
+    <h1>选品广场</h1>
+    <p class="lede">在售商品按热度排序，一键生成带你归因参数的推广链接；买家从链接进店下单，佣金按订单实付计。</p>
+  </div></section>
+  <form id="plaza-filter" class="filters">
+    <input id="q" placeholder="搜商品名 / 关键词，例如：苹果">
+    <select id="cat"><option value="">全部类目</option></select>
+    <select id="sort"><option value="heat">按热度</option><option value="new">按最新上架</option></select>
+    <button class="btn" type="submit">筛选</button>
+  </form>
+  <main id="app"></main>
+</div>
+<footer><div class="wrap">
+  <div>© 2026 独立商城 · 由 shop.bhzn.top 提供独立站能力</div>
+  <div>商品图 / 主视觉由 AI 生成通道产出</div>
+</div></footer>
+<script src="/shop-core.js"></script>
+</body></html>
