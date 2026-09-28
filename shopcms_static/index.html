@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>商家后台 · shopcms</title>
+<style>
+:root{--bg:#0d0f14;--panel:#151922;--line:#242a36;--txt:#e8ecf3;--dim:#8b95a7;--gold:#c9a227;--ok:#2ecc71;--warn:#f5a623}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+aside{background:linear-gradient(180deg,#12161e,#0d0f14);border-right:1px solid var(--line);padding:22px 18px}
+.logo{font-size:18px;font-weight:700;letter-spacing:.5px}.logo b{color:var(--gold)}
+nav a{display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--dim);text-decoration:none;padding:9px 12px;border-radius:10px;margin:4px 0}
+nav a.on,nav a:hover{background:#1b2130;color:var(--txt)}nav i{font-style:normal;color:var(--gold);font-size:12px}
+main{padding:26px 30px}
+h1{font-size:22px;margin:0 0 4px;font-weight:650}.sub{color:var(--dim);margin-bottom:22px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+.card .k{color:var(--dim);font-size:12px;letter-spacing:.4px}.card .v{font-size:24px;font-weight:700;margin-top:6px}
+.card .v em{font-style:normal;color:var(--gold);font-size:13px;margin-left:6px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:18px}
+.panel h2{font-size:15px;margin:0 0 14px;font-weight:600}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+label{display:block;color:var(--dim);font-size:12px;margin:0 0 6px}
+input,select,textarea{width:100%;background:#0f131b;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 11px;font:inherit}
+textarea{min-height:78px;resize:vertical}
+.btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#c9a227,#e0c766);color:#171a20;border:0;border-radius:11px;padding:10px 16px;font-weight:650;cursor:pointer}
+.btn.ghost{background:#1b2130;color:var(--txt);border:1px solid var(--line)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:13px}
+th{color:var(--dim);font-weight:500}td .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#1b2130;color:var(--dim)}
+.tag.on{background:rgba(46,204,113,.14);color:var(--ok)}.tag.pend{background:rgba(245,166,35,.14);color:var(--warn)}
+.thumbs{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px}
+.thumb{aspect-ratio:1;border-radius:12px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px;background:linear-gradient(135deg,#171c26,#11151d)}
+.hint{color:var(--dim);font-size:12px;margin-top:8px}
+</style></head><body><div class="wrap">
+<aside>
+  <div class="logo">shop<b>cms</b></div>
+  <div class="hint" style="margin:2px 0 18px">商家后台 · 独立站开店</div>
+  <nav>
+    <a class="on" href="#">概览 <i>P0</i></a><a href="#">公司资料 / 分佣</a><a href="#">商品管理</a>
+    <a href="#">AI 素材生成 <i>NEW</i></a><a href="#">订单</a><a href="#">佣金与结算</a><a href="#">店铺装修</a><a href="#">提现账户</a>
+  </nav>
+</aside>
+<main>
+  <h1>概览</h1><div class="sub">今天 · 你在 shop 独立站的经营数据</div>
+  <div class="cards">
+    <div class="card"><div class="k">今日 GMV</div><div class="v">¥ 12,480 <em>+18%</em></div></div>
+    <div class="card"><div class="k">今日订单</div><div class="v">36</div></div>
+    <div class="card"><div class="k">待确认佣金</div><div class="v">¥ 1,246</div></div>
+    <div class="card"><div class="k">店铺状态</div><div class="v"><span class="tag on">已上架 12 品</span></div></div>
+  </div>
+  <div class="panel">
+    <h2>公司资料 / 分佣默认值</h2>
+    <div class="row">
+      <div><label>公司名称</label><input value="深圳市万物智能科技有限公司"></div>
+      <div><label>店铺短址</label><input value="wanwu-ai"></div>
+      <div><label>联系人 / 电话</label><input value="李经理 · 138****8888"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><label>默认分佣比例（基点，1000=10%）</label><input value="1200"></div>
+      <div><label>平台抽成（基点，300=3%）</label><input value="300"></div>
+      <div><label>归因窗口（天）</label><input value="30"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><label>单笔佣金封顶（元，0=不限）</label><input value="200"></div>
+      <div><label>佣金保底（元，0=不保底）</label><input value="0"></div>
+      <div><label>结算账户</label><input value="支付宝 · 138****8888"></div>
+    </div>
+    <div style="margin-top:14px"><button class="btn">保存</button></div>
+  </div>
+  <div class="panel">
+    <h2>商品管理 · 新建/编辑（含 AI 素材生成）</h2>
+    <div class="row">
+      <div><label>标题</label><input value="AI 智能员工 · 企业增长套件"></div>
+      <div><label>类目</label><input value="企业服务 / 私域营销"></div>
+      <div><label>品牌</label><input value="万物智能"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><label>售价（元）</label><input value="3980"></div>
+      <div><label>划线价（元）</label><input value="5980"></div>
+      <div><label>库存</label><input value="500"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><label>商品分佣比例（基点，0=用默认）</label><input value="1500"></div>
+      <div><label>佣金类型</label><select><option>按比例 percent</option><option>固定金额 fixed</option></select></div>
+      <div><label>状态</label><select><option>上架 on_sale</option><option>草稿 draft</option></select></div>
+    </div>
+    <div><label style="margin-top:12px">卖点 / 详情文案（AI 会据此生成素材与详情长图）</label><textarea>一套顶 3 个运营：自动获客、自动跟进、自动出内容；7 天上线，90 天跑出增长曲线。</textarea></div>
+    <div style="margin-top:14px"><button class="btn">🤖 AI 生成素材包（主视觉 / 主图×5 / 详情长图 / Logo）</button> <button class="btn ghost">保存并上架</button></div>
+    <div class="thumbs"><div class="thumb">AI 主视觉</div><div class="thumb">主图 1</div><div class="thumb">主图 2</div><div class="thumb">主图 3</div><div class="thumb">详情长图</div><div class="thumb">Logo</div></div>
+    <div class="hint">素材由服务端生成通道产出（gpt-image-2 / nano-banana），生成后自动回填到商品，可单张替换。</div>
+  </div>
+  <div class="panel">
+    <h2>最近订单</h2>
+    <table><tr><th>订单号</th><th>商品</th><th>金额</th><th>推广者</th><th>佣金</th><th>状态</th></tr>
+      <tr><td>SH20260928103001</td><td>AI 智能员工 · 企业增长套件</td><td>¥3,980</td><td>u2156</td><td>¥597</td><td><span class="tag pend">待确认</span></td></tr>
+      <tr><td>SH20260928094512</td><td>短视频代运营 · 3 个月</td><td>¥6,800</td><td>u3312</td><td>¥816</td><td><span class="tag on">已确认</span></td></tr>
+    </table>
+  </div>
+</main></div></body></html>
