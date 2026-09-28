@@ -3873,13 +3873,16 @@ def list_h5_digital_library(
 
     page_offset = (page - 1) * size
     fetch_size = page_offset + size
+    # 模板里关联形象/分身只能用训练成功的：未完成 / 失败的直接不进这个库
     hifly_query = db.query(UserHiflyAvatarAsset).filter(
         UserHiflyAvatarAsset.user_id == current_user.id,
-        UserHiflyAvatarAsset.status != "deleted",
+        UserHiflyAvatarAsset.status == "success",
     )
     shanjian_query = db.query(ShanjianDigitalHumanProfile).filter(
         ShanjianDigitalHumanProfile.user_id == int(current_user.id),
-        ShanjianDigitalHumanProfile.status != "deleted",
+        ShanjianDigitalHumanProfile.status == "succeed",
+        ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+        ShanjianDigitalHumanProfile.virtualman_id != "",
     )
     hifly_total = hifly_query.count()
     shanjian_total = shanjian_query.count()
