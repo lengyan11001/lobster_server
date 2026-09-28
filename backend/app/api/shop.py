@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import User
 from ..services import shop_commission as sc
+from ..services.shop_theme import resolve_theme, theme_css_vars
 from ..shop_models import (
     ShopCommission,
     ShopMerchant,
@@ -330,6 +331,8 @@ def store_home(slug: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     )
     return {
         "ok": True,
+        "theme": resolve_theme(merchant.theme, category=(products[0].category if products else "")),
+        "theme_css": theme_css_vars(resolve_theme(merchant.theme)),
         "store": {
             "slug": merchant.slug,
             "company_name": merchant.company_name,
