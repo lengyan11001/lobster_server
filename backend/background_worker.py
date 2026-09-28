@@ -97,6 +97,27 @@ def _enabled_from_env(name: str, default: bool = True) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+async def shanjian_video_task_refresh_loop(interval_seconds: float = 180.0) -> None:
+    """客户端关页面后不再轮询：后台定时把生成中的数字人口播视频状态补到最新（含计费结算）。"""
+    from backend.app.api.shanjian_digital_human import refresh_stale_video_tasks
+    from backend.app.db import SessionLocal
+
+    while True:
+        db = SessionLocal()
+        try:
+            refreshed = await refresh_stale_video_tasks(db, limit=20, min_age_minutes=5)
+            if refreshed:
+                logger.info("[background] shanjian video task refreshed=%s", refreshed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[background] shanjian video task refresh failed: %s", str(exc)[:200])
+        finally:
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(max(60.0, float(interval_seconds)))
+
+
 def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
     factories: List[tuple[str, Callable[[], Awaitable[None]]]] = []
     if _enabled_from_env("LOBSTER_BACKGROUND_SUTUI_LLM_PROBE_ENABLED", True) and is_sutui_llm_probe_enabled_for_this_instance():
@@ -134,6 +155,11 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("provider_balance_monitor", provider_balance_monitor_loop_forever))
     else:
         logger.info("[background] provider balance monitor disabled")
+
+    if _enabled_from_env("LOBSTER_BACKGROUND_SHANJIAN_VIDEO_REFRESH_ENABLED", True):
+        factories.append(("shanjian_video_task_refresh", lambda: shanjian_video_task_refresh_loop(180.0)))
+    else:
+        logger.info("[background] 数字人视频状态后台刷新未启用")
 
     if _enabled_from_env("LOBSTER_BACKGROUND_RUNTIME_MONITOR_ENABLED", True) and is_runtime_monitor_enabled():
         factories.append(("runtime_monitor", runtime_monitor_loop_forever))

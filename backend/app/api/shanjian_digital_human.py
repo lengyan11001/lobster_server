@@ -11,7 +11,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -2265,6 +2265,69 @@ async def create_profile(
         "request_id": row.request_id or "",
         "raw": upstream,
     }
+
+
+
+
+def _service_request_for_user(user: User) -> Request:
+    """后台兜底轮询用的合成请求：带该用户的 token，保证计费结算/退款能走通。"""
+    from .auth import access_token_claims, create_access_token
+
+    token = create_access_token(access_token_claims(user), expires_delta=timedelta(minutes=30))
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/shanjian-digital-human/video/task",
+            "headers": [
+                (b"authorization", ("Bearer " + token).encode("latin-1")),
+                (b"content-type", b"application/json"),
+            ],
+        }
+    )
+
+
+async def refresh_stale_video_tasks(
+    db: Session,
+    *,
+    limit: int = 20,
+    min_age_minutes: int = 5,
+) -> int:
+    """客户端页面关掉后不再轮询，后台把生成中的数字人口播视频状态补到最新。"""
+    token = (os.environ.get("SHANJIAN_OPENAPI_TOKEN") or getattr(settings, "shanjian_openapi_token", "") or "").strip()
+    if not token:
+        return 0
+    cutoff = datetime.utcnow() - timedelta(minutes=max(2, int(min_age_minutes)))
+    rows = (
+        db.query(ShanjianDigitalHumanVideoTask)
+        .filter(
+            ShanjianDigitalHumanVideoTask.status.in_(("processing", "pending")),
+            ShanjianDigitalHumanVideoTask.updated_at < cutoff,
+        )
+        .order_by(ShanjianDigitalHumanVideoTask.updated_at.asc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    refreshed = 0
+    for row in rows:
+        user = db.query(User).filter(User.id == row.user_id).first()
+        if user is None:
+            continue
+        try:
+            await query_video_task(
+                VideoTaskBody(record_id=int(row.id), token=token),
+                _service_request_for_user(user),
+                user,
+                db,
+            )
+            refreshed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[shanjian-dh] background refresh failed row=%s err=%s", row.id, str(exc)[:200])
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    return refreshed
 
 
 @router.post("/api/shanjian-digital-human/profile/task")
