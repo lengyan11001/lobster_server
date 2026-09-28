@@ -28602,15 +28602,9 @@
         if (window.__momentsCoachBack()) return;
       }
       if (activeId === "abilityView") {
-        const lookup = activeAbilityLookup();
-        if (String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID) {
-          if (lookup && lookup.trail.length > 1) {
-            const parent = lookup.trail[lookup.trail.length - 2];
-            if (parent && parent.key) {
-              openAbilityView(parent.key, AI_MARKETING_CREATION_ID);
-              return;
-            }
-          }
+        // 用 isMarketingCreationMode()：部门 id 可能是 ai_marketing_creation 也可能是 marketing
+        if (isMarketingCreationMode()) {
+          // AI营销创作：工作台返回直接回首页，不再经过已废弃的二级页
           switchTab("office");
           return;
         }
