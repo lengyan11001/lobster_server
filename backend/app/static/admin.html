@@ -2211,6 +2211,11 @@ function merchantFilters() {
 async function loadMerchants(page) {
   const table = document.getElementById('merchantTable');
   merchantPage = Math.max(1, Number(page) || 1);
+  if (!TOKEN) {
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">登录已过期，请重新登录</div>';
+    doLogout();
+    return;
+  }
   if (table) table.innerHTML = '<div class="empty">加载中...</div>';
   const f = merchantFilters();
   try {
@@ -2218,12 +2223,15 @@ async function loadMerchants(page) {
       + '&q=' + encodeURIComponent(f.q) + '&status=' + encodeURIComponent(f.status));
     renderMerchants(data);
   } catch (e) {
-    toast(e.message, 'error');
+    const msg = String((e && e.message) || '');
+    const expired = /401|凭证|缺少管理/.test(msg);
+    toast(expired ? '登录已过期，请重新登录' : msg, 'error');
     const stats = document.getElementById('merchantStats');
     if (stats) stats.innerHTML = '';
-    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">' + (expired ? '登录已过期，请重新登录' : '加载失败：' + escapeHtml(msg)) + '</div>';
     const pager = document.getElementById('merchantPagination');
     if (pager) pager.innerHTML = '';
+    if (expired) doLogout();
   }
 }
 

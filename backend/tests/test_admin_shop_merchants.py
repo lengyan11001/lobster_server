@@ -78,3 +78,19 @@ def test_admin_shop_merchants_pagination_query_detail_status(ctx):
     patched = client.patch("/admin/api/shop-merchants/%d" % merchants[0].id, headers=HEADERS, json={"status": "active"})
     assert patched.status_code == 200 and patched.json()["merchant"]["status"] == "active"
     assert client.patch("/admin/api/shop-merchants/%d" % merchants[0].id, headers=HEADERS, json={"status": "oops"}).status_code == 400
+
+
+def test_admin_shop_merchants_accepts_bearer_token(ctx):
+    """页面里其他接口用 Authorization: Bearer，商家接口也一样认。"""
+    client, _ = ctx
+    r = client.get("/admin/api/shop-merchants", headers={"Authorization": "Bearer " + ADMIN_TOKEN})
+    assert r.status_code == 200 and r.json()["total"] == 2
+    bad = client.get("/admin/api/shop-merchants", headers={"Authorization": "Bearer lobster-admin-wrong"})
+    assert bad.status_code == 401
+
+
+def test_admin_shop_merchants_empty_header_message(ctx):
+    """空白凭证要明确提示重新登录，而不是报 404/模糊错误。"""
+    client, _ = ctx
+    r = client.get("/admin/api/shop-merchants", headers={"X-Admin-Token": "   "})
+    assert r.status_code == 401 and "重新登录" in r.json()["detail"]

@@ -86,12 +86,16 @@ def _admin_enabled() -> bool:
 def _verify_admin_token(
     x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
     x_lobster_brand: Optional[str] = Header(None, alias="X-Lobster-Brand"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> AdminContext:
     """解析管理后台 token，返回角色上下文。支持管理员 token 和代理商 JWT token。"""
-    if not x_admin_token or not x_admin_token.strip():
-        raise HTTPException(status_code=401, detail="缺少管理凭证")
-    token = x_admin_token.strip()
+    token = (x_admin_token or "").strip()
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        # 兼容 Authorization: Bearer <token>（与页面里其他接口一致）
+        token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少管理凭证，请重新登录管理后台")
     brand_mark = str(resolve_brand_mark_candidates(x_lobster_brand))
     brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
     if brand_row is None and brand_mark not in BUILTIN_BRANDS:
