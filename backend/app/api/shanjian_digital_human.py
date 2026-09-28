@@ -2202,6 +2202,53 @@ async def delete_video_task(
     return {"ok": True, "deleted": record_id}
 
 
+
+
+_PROFILE_MEDIA_LIMIT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("videoUrl", "video", "训练视频"),
+    ("imageUrl", "image", "训练图片"),
+    ("authVideoUrl", "video", "授权视频"),
+)
+
+
+async def _ensure_profile_payload_within_shanjian_limit(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """数字人分身/训练素材：超过分辨率上限就先压一份副本再提交闪剪（原件不动）。
+
+    压不了就直接 400 报错说明原因，而不是把上游的 InvalidFile.Resolution 丢给用户。
+    """
+    max_edge = _shanjian_material_max_edge()
+    report: Dict[str, Any] = {}
+    for key, kind, label in _PROFILE_MEDIA_LIMIT_FIELDS:
+        url = _clean_text(payload.get(key))
+        if not url:
+            continue
+        usable, action = await _ensure_material_within_shanjian_limit(
+            {"type": kind, "fileUrl": url},
+            max_edge=max_edge,
+            label=label,
+        )
+        report[key] = action
+        if action == "shrunk" and usable:
+            payload[key] = _clean_text(usable.get("fileUrl")) or url
+            logger.info(
+                "[shanjian-dh] profile media shrunk field=%s from=%s to=%s",
+                key,
+                _url_hint(url),
+                _url_hint(payload[key]),
+            )
+            continue
+        if action in {"ok", "probe_unknown"}:
+            continue
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{label}分辨率超过 {max_edge}x{max_edge}，自动压缩失败（{action}）："
+                "请换一个分辨率更小的素材再试。"
+            ),
+        )
+    return report
+
+
 @router.post("/api/shanjian-digital-human/profile/train")
 async def create_profile(
     body: ProfileTrainBody,
@@ -2216,6 +2263,8 @@ async def create_profile(
         current_user=current_user,
     )
     _release_db_transaction(db)
+    # 训练视频/图片超过分辨率上限：先压副本再提交，避免上游报 2000x2000
+    await _ensure_profile_payload_within_shanjian_limit(payload)
     upstream = await _post(endpoint, body.token, payload)
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
