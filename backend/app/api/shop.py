@@ -7,11 +7,14 @@
 """
 from __future__ import annotations
 
+import html
 import secrets
+import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -36,6 +39,10 @@ router = APIRouter()          # 独立站 / 选品广场（公开 + 登录用户
 cms_router = APIRouter()      # 商家后台
 
 SHOP_BASE_URL = "https://shop.bhzn.top"
+SHOP_UPLOADS_DIR = Path(__file__).resolve().parents[3] / "shop_uploads"
+SHOP_UPLOADS_URL = "/shop-uploads"
+SHOP_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
+SHOP_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 MERCHANT_ROLE = "merchant"
 ON_SALE = "on_sale"
 
@@ -54,6 +61,32 @@ def _merchant_of(db: Session, user: User) -> ShopMerchant:
     return merchant
 
 
+def _text_blocks_to_html(text: str) -> str:
+    """把商家输入的纯文字转成安全段落 HTML（商家不需要写 HTML）。"""
+    blocks = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "".join(f"<p>{html.escape(block.strip())}</p>" for block in blocks if block.strip())
+
+
+def _apply_product_media(product: ShopProduct, body: "ProductReq") -> None:
+    """商品图片/详情只从上传结果与纯文字来：不接受 URL、JSON、HTML 文本。"""
+    media = dict(product.media or {})
+    gallery = [str(u).strip() for u in (body.gallery or []) if str(u or "").strip()]
+    detail_images = [str(u).strip() for u in (body.detail_images or []) if str(u or "").strip()]
+    if gallery:
+        media["gallery"] = gallery
+    if detail_images:
+        media["detail_images"] = detail_images
+    detail_text = str(body.detail_text or "").strip()
+    if detail_text:
+        media["detail_text"] = detail_text
+        product.detail_html = _text_blocks_to_html(detail_text)
+    product.media = media
+    if gallery:
+        product.cover_url = gallery[0]
+    elif not product.cover_url and str(body.cover_url or "").strip():
+        product.cover_url = str(body.cover_url).strip()
+
+
 def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = None, *, promoter_view: bool = False) -> Dict[str, Any]:
     data: Dict[str, Any] = {
         "id": product.id,
@@ -63,6 +96,12 @@ def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = No
         "brand": product.brand,
         "cover_url": product.cover_url,
         "media": product.media or {},
+        "gallery": (product.media or {}).get("gallery", []),
+        "detail_images": (product.media or {}).get("detail_images", []),
+        "detail_text": (product.media or {}).get("detail_text", ""),
+        "detail_html": product.detail_html or "",
+        "specs": product.specs or {},
+        "commission_bp_own": int(product.commission_bp or 0),
         "price_cents": int(product.price_cents or 0),
         "market_price_cents": int(product.market_price_cents or 0),
         "stock": int(product.stock or 0),
@@ -142,6 +181,10 @@ class ProductReq(BaseModel):
     keywords: str = ""
     brand: str = ""
     cover_url: str = ""
+    # 图片/详情都由后台上传控件与纯文字产生，不接受 URL / JSON / HTML 文本
+    gallery: List[str] = Field(default_factory=list)
+    detail_images: List[str] = Field(default_factory=list)
+    detail_text: str = ""
     media: Optional[dict] = None
     detail_html: str = ""
     specs: Optional[dict] = None
@@ -242,9 +285,14 @@ def cms_products(
 @cms_router.post("/api/shop-cms/products", summary="新建商品")
 def cms_product_create(body: ProductReq, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
     merchant = _merchant_of(db, current_user)
-    product = ShopProduct(merchant_id=merchant.id, spu=f"P{secrets.token_hex(4).upper()}", **body.model_dump(exclude={"status"}))
+    product = ShopProduct(
+        merchant_id=merchant.id,
+        spu=f"P{secrets.token_hex(4).upper()}",
+        **body.model_dump(exclude={"status", "gallery", "detail_images", "detail_text"}),
+    )
     if body.status in {"draft", "reviewing", ON_SALE, "off_shelf"}:
         product.status = body.status
+    _apply_product_media(product, body)
     db.add(product)
     db.commit()
     db.refresh(product)
@@ -262,9 +310,10 @@ def cms_product_update(
     product = db.query(ShopProduct).filter(ShopProduct.id == product_id, ShopProduct.merchant_id == merchant.id).first()
     if product is None:
         raise HTTPException(status_code=404, detail="商品不存在")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    for field, value in body.model_dump(exclude_unset=True, exclude={"gallery", "detail_images", "detail_text"}).items():
         if value is not None and hasattr(product, field):
             setattr(product, field, value)
+    _apply_product_media(product, body)
     db.commit()
     return {"ok": True, "product": _product_payload(product, merchant)}
 
@@ -286,6 +335,30 @@ def cms_product_publish(
     product.published_at = datetime.utcnow() if on else product.published_at
     db.commit()
     return {"ok": True, "status": product.status}
+
+
+@cms_router.post("/api/shop-cms/uploads", summary="商品图片上传（商家后台）")
+async def cms_upload_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """后台上传控件直接传图，返回可用图片 URL；商家不需要自己填链接。"""
+    merchant = _merchant_of(db, current_user)
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件为空，请重新选择图片")
+    if len(raw) > SHOP_IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="图片不能超过 8MB，请压缩后再传")
+    name = str(file.filename or "")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in SHOP_IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="只支持 jpg / png / webp / gif 图片")
+    folder = SHOP_UPLOADS_DIR / f"m{merchant.id}"
+    folder.mkdir(parents=True, exist_ok=True)
+    filename = f"{int(time.time())}_{secrets.token_hex(6)}.{ext}"
+    (folder / filename).write_bytes(raw)
+    return {"ok": True, "url": f"{SHOP_UPLOADS_URL}/m{merchant.id}/{filename}", "bytes": len(raw)}
 
 
 @cms_router.get("/api/shop-cms/orders", summary="订单列表")

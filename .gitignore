@@ -72,3 +72,6 @@ remote_support_server/public/downloads/
 Thumbs.db
 .idea/
 .vscode/
+
+# 商家上传的商品图片
+shop_uploads/

@@ -32,6 +32,9 @@ def product_page(product_id: int) -> FileResponse:
     return FileResponse(str(STATIC / "index.html"))
 
 
+UPLOADS = ROOT / "shop_uploads"
+UPLOADS.mkdir(parents=True, exist_ok=True)
+app.mount("/shop-uploads", StaticFiles(directory=str(UPLOADS)), name="uploads")
 app.mount("/", StaticFiles(directory=str(STATIC), html=True), name="site")
 
 
