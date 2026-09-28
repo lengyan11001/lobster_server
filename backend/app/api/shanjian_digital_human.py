@@ -2269,20 +2269,24 @@ async def create_profile(
 
 
 
-def _service_request_for_user(user: User) -> Request:
-    """后台兜底轮询用的合成请求：带该用户的 token，保证计费结算/退款能走通。"""
+def _service_request_for_user(user: User, installation_id: str = "") -> Request:
+    """后台兜底轮询用的合成请求：带该用户的 token + X-Installation-Id，保证计费结算/退款能走通。"""
     from .auth import access_token_claims, create_access_token
 
     token = create_access_token(access_token_claims(user), expires_delta=timedelta(minutes=30))
+    headers = [
+        (b"authorization", ("Bearer " + token).encode("latin-1")),
+        (b"content-type", b"application/json"),
+    ]
+    slot = str(installation_id or getattr(user, "client_installation_id", "") or "").strip()
+    if slot:
+        headers.append((b"x-installation-id", slot.encode("latin-1", "ignore")))
     return Request(
         {
             "type": "http",
             "method": "POST",
             "path": "/api/shanjian-digital-human/video/task",
-            "headers": [
-                (b"authorization", ("Bearer " + token).encode("latin-1")),
-                (b"content-type", b"application/json"),
-            ],
+            "headers": headers,
         }
     )
 
@@ -2304,7 +2308,8 @@ async def refresh_stale_video_tasks(
             ShanjianDigitalHumanVideoTask.status.in_(("processing", "pending")),
             ShanjianDigitalHumanVideoTask.updated_at < cutoff,
         )
-        .order_by(ShanjianDigitalHumanVideoTask.updated_at.asc())
+        # 先处理最近卡住的（旧记录媒体已过期，排前面会把新任务挤出队列）
+        .order_by(ShanjianDigitalHumanVideoTask.updated_at.desc())
         .limit(max(1, int(limit)))
         .all()
     )
@@ -2316,7 +2321,7 @@ async def refresh_stale_video_tasks(
         try:
             await query_video_task(
                 VideoTaskBody(record_id=int(row.id), token=token),
-                _service_request_for_user(user),
+                _service_request_for_user(user, str(getattr(row, "installation_id", "") or "")),
                 user,
                 db,
             )
