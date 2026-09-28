@@ -567,6 +567,7 @@ body{background:#edf2f7}
       <div class="nav-tab" data-icon="牌" data-nav="brands" id="brandsNavTab" onclick="switchNav('brands')">品牌管理</div>
       <div class="nav-tab" data-icon="远" data-nav="remoteSupport" id="remoteSupportNavTab" onclick="switchNav('remoteSupport')" style="display:none">远程支持设备</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
+      <div class="nav-tab" data-icon="商" data-nav="merchants" id="merchantsNavTab" onclick="switchNav('merchants')" style="display:none">商家审核</div>
     </div>
   </aside>
   <main class="admin-main">
@@ -1728,6 +1729,29 @@ body{background:#edf2f7}
     </div>
   </div>
 
+  <!-- Page: Shop merchants（商家审核） -->
+  <div class="container" id="pageMerchants" style="display:none">
+    <div class="card">
+      <h3>店铺商家审核</h3>
+      <div id="merchantStats" class="stats-grid" style="margin-bottom:14px"></div>
+      <div class="search-bar" style="margin-bottom:14px">
+        <input type="text" id="merchantSearch" placeholder="搜公司名 / slug / 联系人 / 手机号 / 地区" onkeydown="if(event.key==='Enter')loadMerchants(1)">
+        <select id="merchantStatus" onchange="loadMerchants(1)">
+          <option value="">全部状态</option>
+          <option value="pending">待审核</option>
+          <option value="active">正常</option>
+          <option value="suspended">已停用</option>
+          <option value="rejected">已驳回</option>
+          <option value="draft">草稿</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadMerchants(1)">查询</button>
+        <button class="btn btn-outline btn-sm" onclick="resetMerchantFilters()">重置</button>
+      </div>
+      <div id="merchantTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="merchantPagination"></div>
+    </div>
+  </div>
+
   <!-- Page: TikHub records -->
   <div class="container" id="pageTikhubRecords" style="display:none">
     <div class="card">
@@ -2145,6 +2169,8 @@ function showDashboard() {
   if (brandsTab) brandsTab.style.display = isAdmin() ? '' : 'none';
   const remoteTab = document.getElementById('remoteSupportNavTab');
   if (remoteTab) remoteTab.style.display = isAdmin() ? '' : 'none';
+  const merchantTab = document.getElementById('merchantsNavTab');
+  if (merchantTab) merchantTab.style.display = isAdmin() ? '' : 'none';
 
   requestAnimationFrame(() => {
     statsCache = null;
@@ -2153,6 +2179,161 @@ function showDashboard() {
 }
 
 let currentNav = 'stats';
+/* ── 店铺商家审核（平台管理员；数据来自 shopcms 商家后台） ── */
+const MERCHANT_PAGE_SIZE = 20;
+let merchantPage = 1;
+let merchantPages = 1;
+
+function merchantMoney(cents) {
+  return '¥' + (Number(cents || 0) / 100).toFixed(2);
+}
+
+function merchantStatusBadge(status, label) {
+  const map = { active: 'badge-green', pending: 'badge-yellow', suspended: 'badge-red', rejected: 'badge-red', draft: 'badge-blue' };
+  return '<span class="badge ' + (map[status] || 'badge-blue') + '">' + escapeHtml(label || status || '-') + '</span>';
+}
+
+async function merchantApi(path, opts) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(path, { ...(opts || {}), headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.detail || data.message || ('HTTP ' + res.status));
+  return data;
+}
+
+function merchantFilters() {
+  const q = (document.getElementById('merchantSearch') || {}).value || '';
+  const status = (document.getElementById('merchantStatus') || {}).value || '';
+  return { q: String(q).trim(), status: String(status) };
+}
+
+async function loadMerchants(page) {
+  const table = document.getElementById('merchantTable');
+  merchantPage = Math.max(1, Number(page) || 1);
+  if (table) table.innerHTML = '<div class="empty">加载中...</div>';
+  const f = merchantFilters();
+  try {
+    const data = await merchantApi('/api/manage/shop-merchants?page=' + merchantPage + '&size=' + MERCHANT_PAGE_SIZE
+      + '&q=' + encodeURIComponent(f.q) + '&status=' + encodeURIComponent(f.status));
+    renderMerchants(data);
+  } catch (e) {
+    toast(e.message, 'error');
+    const stats = document.getElementById('merchantStats');
+    if (stats) stats.innerHTML = '';
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+    const pager = document.getElementById('merchantPagination');
+    if (pager) pager.innerHTML = '';
+  }
+}
+
+function renderMerchants(data) {
+  const s = data.summary || {};
+  const stats = document.getElementById('merchantStats');
+  if (stats) {
+    stats.innerHTML = statCard('商家总数', Number(s.merchants_total || 0), '正常 ' + Number(s.merchants_active || 0) + ' · 待审核 ' + Number(s.merchants_pending || 0))
+      + statCard('商品总数', Number(s.products_total || 0), '全平台（含草稿）')
+      + statCard('订单 / 成交额', Number(s.orders_total || 0), merchantMoney(s.pay_amount_cents))
+      + statCard('佣金合计', merchantMoney(s.commission_total_cents), '待确认 ' + merchantMoney(s.commission_pending_cents));
+  }
+  merchantPages = Number(data.pages || 1);
+  const items = data.items || [];
+  const table = document.getElementById('merchantTable');
+  const pager = document.getElementById('merchantPagination');
+  if (!items.length) {
+    const f = merchantFilters();
+    table.innerHTML = '<div class="empty">' + ((f.q || f.status) ? '没有匹配的商家' : '还没有商家入驻') + '</div>';
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>商家</th><th>状态</th><th>联系人</th><th>在售/商品</th><th>订单</th><th>成交额</th><th>待结佣金</th><th>注册</th><th>操作</th></tr></thead><tbody>';
+  items.forEach(function (m) {
+    html += '<tr id="merchantRow' + m.id + '">'
+      + '<td><b>' + escapeHtml(m.company_name || '-') + '</b><div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(m.slug || '') + ' · ' + escapeHtml(m.email || '') + '</div></td>'
+      + '<td>' + merchantStatusBadge(m.status, m.status_label) + '</td>'
+      + '<td>' + escapeHtml(m.contact_name || '-') + '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(m.contact_phone || '') + (m.region ? ' · ' + escapeHtml(m.region) : '') + '</div></td>'
+      + '<td>' + Number(m.on_sale_count || 0) + ' / ' + Number(m.product_count || 0) + '</td>'
+      + '<td>' + Number(m.order_count || 0) + '</td>'
+      + '<td>' + merchantMoney(m.pay_amount_cents) + '</td>'
+      + '<td>' + merchantMoney(m.commission_pending_cents) + '</td>'
+      + '<td style="font-size:12px;color:var(--text-secondary)">' + escapeHtml(String(m.created_at || '').slice(0, 10)) + '</td>'
+      + '<td style="white-space:nowrap">'
+      + '<button class="btn btn-outline btn-sm" onclick="toggleMerchantDetail(' + m.id + ')">查看</button> '
+      + '<button class="btn btn-primary btn-sm" onclick="setMerchantStatus(' + m.id + ', \'active\')">通过</button> '
+      + '<button class="btn btn-outline btn-sm" onclick="setMerchantStatus(' + m.id + ', \'suspended\')">停用</button> '
+      + '<button class="btn btn-outline btn-sm" onclick="setMerchantStatus(' + m.id + ', \'rejected\')">驳回</button>'
+      + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  table.innerHTML = html;
+  if (pager) {
+    let pageHtml = '';
+    if (merchantPage > 1) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadMerchants(' + (merchantPage - 1) + ')">上一页</button>';
+    pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">共 ' + Number(data.total || 0) + ' 家 · 第 ' + merchantPage + ' / ' + merchantPages + ' 页</span>';
+    if (merchantPage < merchantPages) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadMerchants(' + (merchantPage + 1) + ')">下一页</button>';
+    pager.innerHTML = pageHtml;
+  }
+}
+
+async function toggleMerchantDetail(id) {
+  const row = document.getElementById('merchantRow' + id);
+  if (!row) return;
+  const existing = document.getElementById('merchantDetail' + id);
+  if (existing) { existing.remove(); return; }
+  const holder = document.createElement('tr');
+  holder.id = 'merchantDetail' + id;
+  holder.innerHTML = '<td colspan="9"><div class="empty">加载中...</div></td>';
+  row.parentNode.insertBefore(holder, row.nextSibling);
+  try {
+    const d = await merchantApi('/api/manage/shop-merchants/' + id);
+    const m = d.merchant || {};
+    const prod = (d.products || []).map(function (p) {
+      return '<tr><td>' + escapeHtml(p.title || '-') + '</td><td>' + merchantMoney(p.price_cents) + '</td><td>' + Number(p.stock || 0) + '</td><td>' + (Number(p.commission_bp || 0) / 100) + '%</td><td>' + escapeHtml(p.status || '') + '</td></tr>';
+    }).join('');
+    const ord = (d.orders || []).map(function (o) {
+      return '<tr><td>' + escapeHtml(o.order_no || '') + '</td><td>' + escapeHtml(o.status_label || o.status || '') + '</td><td>' + merchantMoney(o.pay_amount_cents) + '</td><td>' + merchantMoney(o.commission_cents) + '</td><td>' + escapeHtml(String(o.created_at || '').slice(0, 19).replace('T', ' ')) + '</td></tr>';
+    }).join('');
+    holder.innerHTML = '<td colspan="9" style="background:#f7f8fa">'
+      + '<div style="font-size:13px;line-height:1.9;margin-bottom:8px">'
+      + '<b>' + escapeHtml(m.company_name || '') + '</b> · ' + escapeHtml(m.status_label || '') + ' · 账号 ' + escapeHtml(m.email || '-')
+      + ' · 联系人 ' + escapeHtml(m.contact_name || '-') + ' ' + escapeHtml(m.contact_phone || '')
+      + ' · 注册 ' + escapeHtml(String(m.created_at || '').slice(0, 19).replace('T', ' '))
+      + '<br>商品 在售 ' + Number(m.on_sale_count || 0) + ' / 全部 ' + Number(m.product_count || 0)
+      + ' · 订单 ' + Number(m.order_count || 0) + ' 单 / 成交 ' + merchantMoney(m.pay_amount_cents)
+      + ' · 佣金 待确认 ' + merchantMoney(m.commission_pending_cents) + ' / 已确认 ' + merchantMoney(m.commission_confirmed_cents) + ' / 已结 ' + merchantMoney(m.commission_settled_cents)
+      + '</div>'
+      + '<div style="display:flex;gap:16px;flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:320px"><div style="font-weight:600;margin-bottom:6px">最近商品</div>'
+      + (prod ? '<div class="table-wrap"><table><thead><tr><th>标题</th><th>价格</th><th>库存</th><th>佣金</th><th>状态</th></tr></thead><tbody>' + prod + '</tbody></table></div>' : '<div class="empty">还没有商品</div>')
+      + '</div>'
+      + '<div style="flex:1;min-width:320px"><div style="font-weight:600;margin-bottom:6px">最近订单</div>'
+      + (ord ? '<div class="table-wrap"><table><thead><tr><th>订单号</th><th>状态</th><th>实付</th><th>佣金</th><th>下单</th></tr></thead><tbody>' + ord + '</tbody></table></div>' : '<div class="empty">还没有订单</div>')
+      + '</div></div>'
+      + '</td>';
+  } catch (e) {
+    toast(e.message, 'error');
+    holder.remove();
+  }
+}
+
+async function setMerchantStatus(id, status) {
+  const label = { active: '审核通过', suspended: '停用', rejected: '驳回' }[status] || status;
+  if (!confirm('确认把商家 #' + id + ' ' + label + '？')) return;
+  try {
+    await merchantApi('/api/manage/shop-merchants/' + id, { method: 'PATCH', body: JSON.stringify({ status: status }) });
+    toast('商家 #' + id + ' 已' + label);
+    loadMerchants(merchantPage);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function resetMerchantFilters() {
+  const q = document.getElementById('merchantSearch'); if (q) q.value = '';
+  const st = document.getElementById('merchantStatus'); if (st) st.value = '';
+  loadMerchants(1);
+}
+
 function navTitle(nav) {
   return {
     stats: '首页数据大盘',
@@ -2166,6 +2347,7 @@ function navTitle(nav) {
     brands: '品牌管理',
     commissions: '分润记录',
     remoteSupport: '远程支持设备',
+    merchants: '商家审核',
   }[nav] || '首页数据大盘';
 }
 
@@ -2174,6 +2356,7 @@ function switchNav(nav) {
   if (nav === 'brands' && !isAdmin()) nav = 'stats';
   if (nav === 'remoteSupport' && !isAdmin()) nav = 'stats';
   if (nav === 'systemWorkflows' && !isAdmin()) nav = 'stats';
+  if (nav === 'merchants' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
@@ -2198,6 +2381,8 @@ function switchNav(nav) {
   if (pageBrands) pageBrands.style.display = nav === 'brands' ? '' : 'none';
   const pageRemoteSupport = document.getElementById('pageRemoteSupport');
   if (pageRemoteSupport) pageRemoteSupport.style.display = nav === 'remoteSupport' ? '' : 'none';
+  const pageMerchants = document.getElementById('pageMerchants');
+  if (pageMerchants) pageMerchants.style.display = nav === 'merchants' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'customers') loadCustomers(customerPage || 1);
@@ -2208,6 +2393,7 @@ function switchNav(nav) {
   if (nav === 'commissions') loadCommissions(0);
   if (nav === 'brands') loadBrands();
   if (nav === 'remoteSupport') loadRemoteSupportDevices();
+  if (nav === 'merchants') loadMerchants(merchantPage || 1);
 }
 
 async function loadRemoteSupportDevices() {
