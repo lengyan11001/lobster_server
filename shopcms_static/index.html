@@ -1,97 +1,334 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>商家后台 · shopcms</title>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>商家后台 · shopcms.bhzn.top</title>
 <style>
-:root{--bg:#0d0f14;--panel:#151922;--line:#242a36;--txt:#e8ecf3;--dim:#8b95a7;--gold:#c9a227;--ok:#2ecc71;--warn:#f5a623}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-.wrap{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
-aside{background:linear-gradient(180deg,#12161e,#0d0f14);border-right:1px solid var(--line);padding:22px 18px}
-.logo{font-size:18px;font-weight:700;letter-spacing:.5px}.logo b{color:var(--gold)}
-nav a{display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--dim);text-decoration:none;padding:9px 12px;border-radius:10px;margin:4px 0}
-nav a.on,nav a:hover{background:#1b2130;color:var(--txt)}nav i{font-style:normal;color:var(--gold);font-size:12px}
-main{padding:26px 30px}
-h1{font-size:22px;margin:0 0 4px;font-weight:650}.sub{color:var(--dim);margin-bottom:22px}
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
-.card .k{color:var(--dim);font-size:12px;letter-spacing:.4px}.card .v{font-size:24px;font-weight:700;margin-top:6px}
-.card .v em{font-style:normal;color:var(--gold);font-size:13px;margin-left:6px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:18px}
-.panel h2{font-size:15px;margin:0 0 14px;font-weight:600}
-.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-label{display:block;color:var(--dim);font-size:12px;margin:0 0 6px}
-input,select,textarea{width:100%;background:#0f131b;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 11px;font:inherit}
-textarea{min-height:78px;resize:vertical}
-.btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#c9a227,#e0c766);color:#171a20;border:0;border-radius:11px;padding:10px 16px;font-weight:650;cursor:pointer}
-.btn.ghost{background:#1b2130;color:var(--txt);border:1px solid var(--line)}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:13px}
-th{color:var(--dim);font-weight:500}td .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#1b2130;color:var(--dim)}
-.tag.on{background:rgba(46,204,113,.14);color:var(--ok)}.tag.pend{background:rgba(245,166,35,.14);color:var(--warn)}
-.thumbs{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px}
-.thumb{aspect-ratio:1;border-radius:12px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px;background:linear-gradient(135deg,#171c26,#11151d)}
-.hint{color:var(--dim);font-size:12px;margin-top:8px}
-</style></head><body><div class="wrap">
-<aside>
-  <div class="logo">shop<b>cms</b></div>
-  <div class="hint" style="margin:2px 0 18px">商家后台 · 独立站开店</div>
-  <nav>
-    <a class="on" href="#">概览 <i>P0</i></a><a href="#">公司资料 / 分佣</a><a href="#">商品管理</a>
-    <a href="#">AI 素材生成 <i>NEW</i></a><a href="#">订单</a><a href="#">佣金与结算</a><a href="#">店铺装修</a><a href="#">提现账户</a>
-  </nav>
-</aside>
-<main>
-  <h1>概览</h1><div class="sub">今天 · 你在 shop 独立站的经营数据</div>
-  <div class="cards">
-    <div class="card"><div class="k">今日 GMV</div><div class="v">¥ 12,480 <em>+18%</em></div></div>
-    <div class="card"><div class="k">今日订单</div><div class="v">36</div></div>
-    <div class="card"><div class="k">待确认佣金</div><div class="v">¥ 1,246</div></div>
-    <div class="card"><div class="k">店铺状态</div><div class="v"><span class="tag on">已上架 12 品</span></div></div>
-  </div>
-  <div class="panel">
-    <h2>公司资料 / 分佣默认值</h2>
-    <div class="row">
-      <div><label>公司名称</label><input value="深圳市万物智能科技有限公司"></div>
-      <div><label>店铺短址</label><input value="wanwu-ai"></div>
-      <div><label>联系人 / 电话</label><input value="李经理 · 138****8888"></div>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <div><label>默认分佣比例（基点，1000=10%）</label><input value="1200"></div>
-      <div><label>平台抽成（基点，300=3%）</label><input value="300"></div>
-      <div><label>归因窗口（天）</label><input value="30"></div>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <div><label>单笔佣金封顶（元，0=不限）</label><input value="200"></div>
-      <div><label>佣金保底（元，0=不保底）</label><input value="0"></div>
-      <div><label>结算账户</label><input value="支付宝 · 138****8888"></div>
-    </div>
-    <div style="margin-top:14px"><button class="btn">保存</button></div>
-  </div>
-  <div class="panel">
-    <h2>商品管理 · 新建/编辑（含 AI 素材生成）</h2>
-    <div class="row">
-      <div><label>标题</label><input value="AI 智能员工 · 企业增长套件"></div>
-      <div><label>类目</label><input value="企业服务 / 私域营销"></div>
-      <div><label>品牌</label><input value="万物智能"></div>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <div><label>售价（元）</label><input value="3980"></div>
-      <div><label>划线价（元）</label><input value="5980"></div>
-      <div><label>库存</label><input value="500"></div>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <div><label>商品分佣比例（基点，0=用默认）</label><input value="1500"></div>
-      <div><label>佣金类型</label><select><option>按比例 percent</option><option>固定金额 fixed</option></select></div>
-      <div><label>状态</label><select><option>上架 on_sale</option><option>草稿 draft</option></select></div>
-    </div>
-    <div><label style="margin-top:12px">卖点 / 详情文案（AI 会据此生成素材与详情长图）</label><textarea>一套顶 3 个运营：自动获客、自动跟进、自动出内容；7 天上线，90 天跑出增长曲线。</textarea></div>
-    <div style="margin-top:14px"><button class="btn">🤖 AI 生成素材包（主视觉 / 主图×5 / 详情长图 / Logo）</button> <button class="btn ghost">保存并上架</button></div>
-    <div class="thumbs"><div class="thumb">AI 主视觉</div><div class="thumb">主图 1</div><div class="thumb">主图 2</div><div class="thumb">主图 3</div><div class="thumb">详情长图</div><div class="thumb">Logo</div></div>
-    <div class="hint">素材由服务端生成通道产出（gpt-image-2 / nano-banana），生成后自动回填到商品，可单张替换。</div>
-  </div>
-  <div class="panel">
-    <h2>最近订单</h2>
-    <table><tr><th>订单号</th><th>商品</th><th>金额</th><th>推广者</th><th>佣金</th><th>状态</th></tr>
-      <tr><td>SH20260928103001</td><td>AI 智能员工 · 企业增长套件</td><td>¥3,980</td><td>u2156</td><td>¥597</td><td><span class="tag pend">待确认</span></td></tr>
-      <tr><td>SH20260928094512</td><td>短视频代运营 · 3 个月</td><td>¥6,800</td><td>u3312</td><td>¥816</td><td><span class="tag on">已确认</span></td></tr>
-    </table>
-  </div>
-</main></div></body></html>
+:root{--bg:#0f1115;--card:#161a21;--ink:#e8eaee;--dim:#9aa3b0;--line:rgba(255,255,255,.10);--brand:#2f7d46;--warn:#e0a84a}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+a{color:inherit}
+.wrap{max-width:1180px;margin:0 auto;padding:0 22px}
+.top{position:sticky;top:0;background:rgba(15,17,21,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);z-index:5}
+.top .bar{display:flex;align-items:center;justify-content:space-between;height:64px;gap:14px}
+.brand{font-weight:650;letter-spacing:2px}.brand small{display:block;font-weight:400;color:var(--dim);font-size:11px;letter-spacing:1px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;padding:14px 0 0}
+.tab{border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:999px;padding:7px 16px;cursor:pointer;font:inherit}
+.tab.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+main{padding:22px 0 60px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpi{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:16px 18px}
+.kpi b{display:block;font-size:22px;margin-top:6px}
+.kpi span{color:var(--dim);font-size:12px}
+.panel{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:18px;margin-top:16px}
+.panel h3{margin:0 0 12px;font-size:15px;letter-spacing:1px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left;vertical-align:middle}
+th{color:var(--dim);font-weight:400}
+input,select,textarea{background:#0c0e12;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 11px;font:inherit;width:100%}
+label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
+.row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.btn{background:var(--brand);border:0;color:#fff;border-radius:999px;padding:10px 20px;font:inherit;font-weight:600;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.mini{padding:5px 12px;font-size:12px;font-weight:500}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
+.muted{color:var(--dim)}.ok{color:#4cc38a}.err{color:#ff6b6b}
+.login{max-width:400px;margin:9vh auto;border:1px solid var(--line);background:var(--card);border-radius:16px;padding:28px}
+.login h1{margin:0 0 6px;font-size:20px;letter-spacing:1px}
+.tag{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--dim)}
+.tag.on{border-color:var(--brand);color:#7fd8a2}
+.hint{font-size:12px;color:var(--dim);margin-top:10px}
+@media(max-width:860px){.grid{grid-template-columns:repeat(2,1fr)}.row{grid-template-columns:1fr 1fr}}
+</style>
+</head><body>
+<div class="top"><div class="wrap bar">
+  <div class="brand">商家后台<small>shopcms.bhzn.top</small></div>
+  <div id="who" class="muted"></div>
+</div></div>
+<div class="wrap"><main id="app"></main></div>
+<script>
+(function () {
+  'use strict';
+  var TOKEN_KEY = 'shopcms_token_v1';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  function yuan(c) { var v = Number(c || 0) / 100; return '¥' + (v % 1 === 0 ? v : v.toFixed(2)); }
+  function token() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+  function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+  function jfetch(path, opts) {
+    var init = opts || {};
+    init.headers = { 'Content-Type': 'application/json' };
+    if (token()) init.headers.Authorization = 'Bearer ' + token();
+    return fetch(path, init).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (r.status === 401) { setToken(''); render(); throw new Error('登录已过期，请重新登录'); }
+        if (!r.ok || d.ok === false) {
+          var m = (d && (d.detail || d.message)) || ('HTTP ' + r.status);
+          throw new Error(typeof m === 'string' ? m : JSON.stringify(m));
+        }
+        return d;
+      });
+    });
+  }
+  var state = { view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '' };
+
+  function loginView() {
+    return [
+      '<div class="login">',
+      '<h1>商家后台登录</h1><div class="muted">用开店时的手机号 + 密码登录</div>',
+      '<label for="acct">手机号 / 邮箱</label><input id="acct" autocomplete="username" placeholder="如 17000000000">',
+      '<label for="pwd">密码</label><input id="pwd" type="password" autocomplete="current-password" placeholder="登录密码">',
+      '<div style="margin-top:16px"><button class="btn" id="do-login" type="button" style="width:100%">登录</button></div>',
+      '<div class="hint" id="login-tip">还没有店铺？联系平台开通商家账号。</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function overviewView() {
+    var m = state.me || {};
+    var c = state.summary || {};
+    var onSale = state.products.filter(function (p) { return p.status === 'on_sale'; }).length;
+    return [
+      '<div class="grid">',
+      '<div class="kpi"><span>店铺</span><b>' + esc(m.company_name || '-') + '</b><span>slug: ' + esc(m.slug || '-') + ' · ' + esc(m.status || '') + '</span></div>',
+      '<div class="kpi"><span>商品（在售/全部）</span><b>' + onSale + ' / ' + state.products.length + '</b><span>库存合计 ' + state.products.reduce(function (s, p) { return s + Number(p.stock || 0); }, 0) + '</span></div>',
+      '<div class="kpi"><span>订单</span><b>' + state.orders.length + '</b><span>实付合计 ' + yuan(state.orders.reduce(function (s, o) { return s + Number(o.pay_amount_cents || 0); }, 0)) + '</span></div>',
+      '<div class="kpi"><span>待结佣金</span><b>' + yuan(c.pending || 0) + '</b><span>已结 ' + yuan(c.settled || 0) + ' · 作废 ' + yuan(c.invalid || 0) + '</span></div>',
+      '</div>',
+      '<div class="panel"><h3>店铺信息</h3>',
+      '<div class="muted">独立站：<a href="https://shop.bhzn.top/?slug=' + encodeURIComponent(m.slug || '') + '" target="_blank">https://shop.bhzn.top/?slug=' + esc(m.slug || '') + '</a></div>',
+      '<div class="muted">默认佣金 ' + (Number(m.commission_default_bp || 0) / 100) + '% · 平台抽成 ' + (Number(m.platform_fee_bp || 0) / 100) + '% · 归因窗口 ' + Number(m.attribution_days || 0) + ' 天</div>',
+      '<div class="muted">主题：' + esc((m.theme || {}).preset || '（按类目自动）') + '</div>',
+      '</div>',
+      '<div class="panel"><h3>最近订单</h3>' + ordersTable(state.orders.slice(0, 5)) + '</div>'
+    ].join('');
+  }
+
+  function statusTag(s) {
+    var on = s === 'on_sale';
+    return '<span class="tag' + (on ? ' on' : '') + '">' + esc(on ? '在售' : (s === 'off_shelf' ? '已下架' : s || '-')) + '</span>';
+  }
+
+  function productsView() {
+    var rows = state.products.map(function (p) {
+      return '<tr>' +
+        '<td>' + esc(p.title) + '<div class="muted">' + esc(p.subtitle || '') + '</div></td>' +
+        '<td>' + yuan(p.price_cents) + '</td>' +
+        '<td>' + (Number(p.commission_bp || 0) / 100) + '%<div class="muted">预计 ' + yuan(p.commission_estimate_cents) + '</div></td>' +
+        '<td>' + Number(p.stock || 0) + '</td>' +
+        '<td>' + statusTag(p.status) + '</td>' +
+        '<td>' +
+        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">编辑</button> ' +
+        '<button class="btn mini" data-toggle="' + p.id + '" data-on="' + (p.status === 'on_sale' ? '0' : '1') + '" type="button">' + (p.status === 'on_sale' ? '下架' : '上架') + '</button>' +
+        '</td></tr>';
+    }).join('');
+    return [
+      '<div class="panel"><h3>商品管理</h3>',
+      '<table><thead><tr><th>商品</th><th>价格</th><th>佣金</th><th>库存</th><th>状态</th><th>操作</th></tr></thead><tbody>',
+      rows || '<tr><td colspan="6" class="muted">还没有商品，点下面「新建商品」</td></tr>',
+      '</tbody></table>',
+      '<div style="margin-top:16px"><button class="btn" id="new-product" type="button">新建商品</button></div>',
+      state.editing ? productForm(state.editing) : '',
+      '</div>'
+    ].join('');
+  }
+
+  function productForm(p) {
+    var isNew = !p.id;
+    return [
+      '<div class="panel" style="border-color:var(--brand)"><h3>' + (isNew ? '新建商品' : '编辑商品 #' + p.id) + '</h3>',
+      '<div class="row">',
+      '<div><label>标题</label><input id="f-title" value="' + esc(p.title || '') + '"></div>',
+      '<div><label>副标题</label><input id="f-subtitle" value="' + esc(p.subtitle || '') + '"></div>',
+      '<div><label>类目</label><input id="f-category" value="' + esc(p.category || '') + '"></div>',
+      '<div><label>品牌</label><input id="f-brand" value="' + esc(p.brand || '') + '"></div>',
+      '</div><div class="row">',
+      '<div><label>售价（元）</label><input id="f-price" value="' + (Number(p.price_cents || 0) / 100) + '"></div>',
+      '<div><label>划线价（元）</label><input id="f-market" value="' + (Number(p.market_price_cents || 0) / 100) + '"></div>',
+      '<div><label>库存</label><input id="f-stock" value="' + Number(p.stock || 0) + '"></div>',
+      '<div><label>佣金（%）</label><input id="f-bp" value="' + (Number(p.commission_bp || 0) / 100) + '"></div>',
+      '</div><div class="row">',
+      '<div><label>标签（逗号分隔）</label><input id="f-tags" value="' + esc((p.tags || []).join ? (p.tags || []).join(',') : (p.tags || '')) + '"></div>',
+      '<div><label>主图 URL（可留空）</label><input id="f-cover" value="' + esc(p.cover_url || '') + '"></div>',
+      '<div><label>关键词</label><input id="f-keywords" value="' + esc(p.keywords || '') + '"></div>',
+      '<div><label>状态</label><select id="f-status"><option value="draft">草稿</option><option value="on_sale">直接上架</option></select></div>',
+      '</div>',
+      '<label>规格参数（JSON，如 {"产地":"甘肃天水"}）</label><textarea id="f-specs" rows="2">' + esc(p.specs ? JSON.stringify(p.specs) : '') + '</textarea>',
+      '<label>详情 HTML</label><textarea id="f-detail" rows="3">' + esc(p.detail_html || '') + '</textarea>',
+      '<div style="margin-top:14px"><button class="btn" id="save-product" type="button">保存</button> <button class="btn ghost" id="cancel-product" type="button">取消</button></div>',
+      '</div>'
+    ].join('');
+  }
+
+  function ordersTable(items) {
+    var rows = (items || []).map(function (o) {
+      return '<tr><td>' + esc(o.order_no) + '</td><td>' + esc(o.status) + '</td><td>' + yuan(o.pay_amount_cents) + '</td><td>' + yuan(o.commission_cents) + '</td><td>' + esc(o.commission_status || '-') + '</td><td class="muted">' + esc((o.created_at || '').replace('T', ' ').slice(0, 19)) + '</td></tr>';
+    }).join('');
+    return '<table><thead><tr><th>订单号</th><th>状态</th><th>实付</th><th>佣金</th><th>佣金状态</th><th>时间</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="muted">暂无订单</td></tr>') + '</tbody></table>';
+  }
+
+  function commissionsView() {
+    var c = state.summary || {};
+    var keys = Object.keys(c);
+    return '<div class="panel"><h3>佣金概览</h3><table><thead><tr><th>状态</th><th>金额</th></tr></thead><tbody>' +
+      (keys.length ? keys.map(function (k) { return '<tr><td>' + esc(k) + '</td><td>' + yuan(c[k]) + '</td></tr>'; }).join('') : '<tr><td colspan="2" class="muted">暂无佣金记录</td></tr>') +
+      '</tbody></table><div class="hint">订单状态推进到 paid/shipped/completed 后佣金才从 pending 进入 confirmed/settled（当前状态机由后续版本补齐）。</div></div>';
+  }
+
+  function settingsView() {
+    var m = state.me || {};
+    return [
+      '<div class="panel"><h3>店铺设置</h3>',
+      '<div class="row">',
+      '<div><label>店铺名</label><input id="s-name" value="' + esc(m.company_name || '') + '"></div>',
+      '<div><label>主题</label><select id="s-theme">' +
+      ['', 'fresh_green', 'dark_gold', 'clean_blue', 'warm_beige'].map(function (t) {
+        var cur = ((m.theme || {}).preset || '');
+        return '<option value="' + t + '"' + (t === cur ? ' selected' : '') + '>' + (t || '按类目自动') + '</option>';
+      }).join('') + '</select></div>',
+      '<div><label>默认佣金（%）</label><input id="s-bp" value="' + (Number(m.commission_default_bp || 0) / 100) + '"></div>',
+      '<div><label>归因天数</label><input id="s-days" value="' + Number(m.attribution_days || 0) + '"></div>',
+      '</div>',
+      '<label>店铺介绍（独立站「店铺介绍」段落，换行分段）</label><textarea id="s-intro" rows="3">' + esc(m.intro || '') + '</textarea>',
+      '<div style="margin-top:14px"><button class="btn" id="save-settings" type="button">保存设置</button></div>',
+      '</div>'
+    ].join('');
+  }
+
+  function render() {
+    var app = $('#app');
+    if (!token()) { app.innerHTML = loginView(); bindLogin(); return; }
+    var tabs = [['overview', '概览'], ['products', '商品'], ['orders', '订单'], ['commissions', '佣金'], ['settings', '设置']];
+    var body = state.view === 'products' ? productsView()
+      : state.view === 'orders' ? '<div class="panel"><h3>订单</h3>' + ordersTable(state.orders) + '</div>'
+        : state.view === 'commissions' ? commissionsView()
+          : state.view === 'settings' ? settingsView() : overviewView();
+    app.innerHTML = '<div class="tabs">' + tabs.map(function (t) {
+      return '<button class="tab' + (state.view === t[0] ? ' on' : '') + '" data-view="' + t[0] + '" type="button">' + t[1] + '</button>';
+    }).join('') + '<button class="tab" id="logout" type="button">退出登录</button></div>' +
+      (state.msg ? '<div class="panel" style="border-color:var(--brand)">' + esc(state.msg) + '</div>' : '') + body;
+    $('#who').textContent = state.me ? (state.me.company_name + ' · ' + state.me.slug) : '';
+    bindApp();
+  }
+
+  function loadAll() {
+    return Promise.all([
+      jfetch('/api/shop-cms/merchants/me'),
+      jfetch('/api/shop-cms/products?size=100'),
+      jfetch('/api/shop-cms/orders?size=50'),
+      jfetch('/api/shop-cms/commissions/summary')
+    ]).then(function (r) {
+      state.me = r[0].merchant;
+      state.products = r[1].items || [];
+      state.orders = r[2].items || [];
+      state.summary = r[3].by_status || {};
+    });
+  }
+
+  function bindLogin() {
+    var btn = $('#do-login');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var acct = $('#acct').value.trim(), pwd = $('#pwd').value;
+      var tip = $('#login-tip');
+      if (!acct || !pwd) { tip.className = 'hint err'; tip.textContent = '请输入手机号和密码'; return; }
+      btn.disabled = true; tip.className = 'hint'; tip.textContent = '登录中…';
+      fetch('/auth/login-phone-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account: acct, password: pwd }) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
+        .then(function (res) {
+          if (res.s !== 200 || !res.d.access_token) throw new Error(res.d.detail || ('HTTP ' + res.s));
+          setToken(res.d.access_token);
+          return loadAll().then(function () { render(); });
+        })
+        .catch(function (e) { btn.disabled = false; tip.className = 'hint err'; tip.textContent = '登录失败：' + e.message; });
+    });
+  }
+
+  function bindApp() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) {
+      b.addEventListener('click', function () { state.view = b.getAttribute('data-view'); state.editing = null; state.msg = ''; render(); });
+    });
+    var lo = $('#logout');
+    if (lo) lo.addEventListener('click', function () { setToken(''); state.me = null; render(); });
+    var np = $('#new-product');
+    if (np) np.addEventListener('click', function () { state.editing = { status: 'draft', commission_bp: state.me ? state.me.commission_default_bp : 1000 }; render(); });
+    var cp = $('#cancel-product');
+    if (cp) cp.addEventListener('click', function () { state.editing = null; render(); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-edit]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-edit'));
+        state.editing = state.products.filter(function (p) { return p.id === id; })[0] || null;
+        render();
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-toggle]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-toggle')), on = b.getAttribute('data-on') === '1';
+        b.disabled = true;
+        jfetch('/api/shop-cms/products/' + id + '/publish?on=' + (on ? 'true' : 'false'), { method: 'POST' })
+          .then(function () { state.msg = '商品 #' + id + (on ? ' 已上架' : ' 已下架'); return loadAll(); })
+          .then(render)
+          .catch(function (e) { b.disabled = false; state.msg = '操作失败：' + e.message; render(); });
+      });
+    });
+    var sp = $('#save-product');
+    if (sp) sp.addEventListener('click', function () {
+      var bpPct = Number($('#f-bp').value || 0);
+      var payload = {
+        title: $('#f-title').value.trim(),
+        subtitle: $('#f-subtitle').value.trim(),
+        category: $('#f-category').value.trim(),
+        brand: $('#f-brand').value.trim(),
+        keywords: $('#f-keywords').value.trim(),
+        cover_url: $('#f-cover').value.trim(),
+        price_cents: Math.round(Number($('#f-price').value || 0) * 100),
+        market_price_cents: Math.round(Number($('#f-market').value || 0) * 100),
+        stock: parseInt($('#f-stock').value || '0', 10) || 0,
+        commission_bp: Math.round(bpPct * 100),
+        commission_type: 'percent',
+        tags: $('#f-tags').value.trim(),
+        detail_html: $('#f-detail').value,
+        status: $('#f-status').value
+      };
+      var raw = $('#f-specs').value.trim();
+      if (raw) { try { payload.specs = JSON.parse(raw); } catch (e) { state.msg = '规格参数不是合法 JSON'; render(); return; } }
+      if (!payload.title) { state.msg = '标题不能为空'; render(); return; }
+      sp.disabled = true;
+      var url = state.editing && state.editing.id ? ('/api/shop-cms/products/' + state.editing.id) : '/api/shop-cms/products';
+      jfetch(url, { method: state.editing && state.editing.id ? 'PUT' : 'POST', body: JSON.stringify(payload) })
+        .then(function (r) {
+          var pid = r.product ? r.product.id : (state.editing || {}).id;
+          state.editing = null;
+          state.msg = '已保存商品 #' + pid;
+          if (payload.status === 'on_sale' && pid) {
+            return jfetch('/api/shop-cms/products/' + pid + '/publish?on=true', { method: 'POST' }).then(loadAll);
+          }
+          return loadAll();
+        })
+        .then(function () { state.view = 'products'; render(); })
+        .catch(function (e) { sp.disabled = false; state.msg = '保存失败：' + e.message; render(); });
+    });
+    var ss = $('#save-settings');
+    if (ss) ss.addEventListener('click', function () {
+      var theme = $('#s-theme').value;
+      var body = {
+        company_name: $('#s-name').value.trim(),
+        intro: $('#s-intro').value,
+        commission_default_bp: Math.round(Number($('#s-bp').value || 0) * 100),
+        attribution_days: parseInt($('#s-days').value || '30', 10) || 30
+      };
+      if (theme) body.theme = { preset: theme };
+      ss.disabled = true;
+      jfetch('/api/shop-cms/merchants/me', { method: 'PUT', body: JSON.stringify(body) })
+        .then(function () { state.msg = '设置已保存'; return loadAll(); })
+        .then(render)
+        .catch(function (e) { ss.disabled = false; state.msg = '保存失败：' + e.message; render(); });
+    });
+  }
+
+  window.ShopCms = { state: state };
+  render();
+  if (token()) {
+    loadAll().then(render).catch(function (e) { state.msg = '加载失败：' + e.message; render(); });
+  }
+})();
+</script>
+</body></html>

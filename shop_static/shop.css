@@ -98,3 +98,10 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .card.plaza .tip{font-size:12px;margin-top:10px;word-break:break-all;color:var(--dim)}
 .card.plaza .tip.ok{color:var(--gold)}
 .card.plaza .tip.err{color:#c0392b}
+/* ── 广场登录行 ── */
+.login-inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:24px}
+.login-inline input{border:1px solid var(--line);border-radius:999px;padding:10px 16px;font:inherit;background:var(--card);color:var(--ink);min-width:190px}
+.login-inline .btn{padding:10px 18px;font-size:13px}
+.login-inline .btn.mini{padding:8px 16px}
+.login-inline .tip{color:var(--dim);font-size:12px}
+.login-inline .tip.err{color:#c0392b}

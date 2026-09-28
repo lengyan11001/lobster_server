@@ -376,7 +376,7 @@
     var t = (q.get('token') || '').trim();
     if (t) { try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) { /* 隐私模式 */ } return t; }
     try {
-      return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem('lobster_token') || localStorage.getItem('token') || '';
+      return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem('lobster_token') || localStorage.getItem('token') || '';
     } catch (e) { return ''; }
   }
   function authed(path, opts) {
@@ -490,8 +490,47 @@
       load(document.getElementById('app'));
     });
   }
-  var badge = document.getElementById('auth-state');
-  if (badge) badge.textContent = token() ? '已带登录态：可一键生成带归因的推广链接' : '未登录：复制按钮会退回普通商品链接';
+  var box = document.getElementById('auth-box');
+  if (box) {
+    if (token()) {
+      box.innerHTML = '<div class="login-inline"><span class="muted">已登录：可一键生成带归因 (?r=&rf=) 的推广链接</span><button class="btn mini line" id="plaza-logout" type="button">退出登录</button></div>';
+      var lo = document.getElementById('plaza-logout');
+      if (lo) lo.addEventListener('click', function () {
+        try { localStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(TOKEN_KEY); } catch (e) {}
+        location.reload();
+      });
+    } else {
+      box.innerHTML = [
+        '<div class="login-inline">',
+        '<input id="plaza-acct" autocomplete="username" placeholder="手机号 / 邮箱">',
+        '<input id="plaza-pwd" type="password" autocomplete="current-password" placeholder="登录密码">',
+        '<button class="btn mini" id="plaza-login" type="button">登录</button>',
+        '<span class="tip" id="plaza-login-tip">登录后一键复制带归因的推广链接；不登录也能看商品、复制普通链接</span>',
+        '</div>'
+      ].join('');
+      var pbtn = document.getElementById('plaza-login');
+      if (pbtn) pbtn.addEventListener('click', function () {
+        var acct = (document.getElementById('plaza-acct').value || '').trim();
+        var pwd = document.getElementById('plaza-pwd').value || '';
+        var tip = document.getElementById('plaza-login-tip');
+        if (!acct || !pwd) { tip.className = 'tip err'; tip.textContent = '请输入账号和密码'; return; }
+        pbtn.disabled = true; tip.className = 'tip'; tip.textContent = '登录中…';
+        fetch('/auth/login-phone-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account: acct, password: pwd }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
+          .then(function (res) {
+            if (res.s !== 200 || !res.d.access_token) throw new Error(res.d.detail || ('HTTP ' + res.s));
+            try { localStorage.setItem(TOKEN_KEY, res.d.access_token); } catch (e) {}
+            document.body.dataset.plazaLogin = 'ok';
+            location.reload();
+          })
+          .catch(function (e) {
+            pbtn.disabled = false; tip.className = 'tip err'; tip.textContent = '登录失败：' + e.message;
+            document.body.dataset.plazaLogin = 'fail:' + e.message;
+          });
+      });
+    }
+  }  var badge = document.getElementById('auth-state');
+  if (badge) badge.textContent = token() ? '已带登录态：可一键生成带归因的推广链接' : '未登录：可在此页登录，或复制普通商品链接';
   document.body.dataset.hasToken = token() ? '1' : '0';
   load(document.getElementById('app'));
 })();
