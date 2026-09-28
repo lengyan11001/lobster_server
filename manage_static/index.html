@@ -305,6 +305,7 @@ body.overlay-open #drawer{z-index:501}
     <button data-go="s-cond"><span class="ic">✦</span>条件</button>
       <button data-go="s-fin"><span class="ic">◎</span>财务</button>
       <button data-go="s-stats"><span class="ic">▤</span>数据</button>
+    <button data-go="s-merchants" class="hide"><span class="ic">▦</span>商家</button>
     <button data-go="s-metrics" class="hide"><span class="ic">▶</span>发布数据</button>
     <button data-go="s-my" class="hide"><span class="ic">✓</span>我的任务</button>
   </aside>
@@ -337,6 +338,7 @@ body.overlay-open #drawer{z-index:501}
       <section id="s-cond" class="view hide"></section>
       <section id="s-fin" class="view hide"></section>
     <section id="s-stats" class="view hide"></section>
+    <section id="s-merchants" class="view hide"></section>
       <section id="s-metrics" class="view hide"></section>
       <section id="s-my" class="view hide"></section>
     </div>
@@ -593,6 +595,8 @@ body.overlay-open #drawer{z-index:501}
       updateCompanyActions();
       var metBtn = document.querySelector('[data-go="s-metrics"]');
       if (metBtn) metBtn.classList.toggle("hide", !IS_ADMIN);  // 发布数据是跨客户端的运营数据，只给平台管理员
+      var mchBtn = document.querySelector('[data-go="s-merchants"]');
+      if (mchBtn) mchBtn.classList.toggle("hide", !IS_ADMIN);  // 全平台商家数据只给平台管理员
       // 我的任务：真实员工登录后默认落到这里（管理员也能看，方便替员工检查）
       var myBtn = document.querySelector('[data-go="s-my"]');
       if (myBtn) myBtn.classList.remove("hide");
@@ -745,6 +749,7 @@ body.overlay-open #drawer{z-index:501}
     "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
     "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
     "s-stats": ["数据面板", "虚拟员工产出：视频 · 发布 · 精准客户 · 个微回复"],
+    "s-merchants": ["商家", "平台所有开店商家：商品 / 订单 / 佣金，可搜索、可分页，点「查看」看明细"],
     "s-metrics": ["发布数据", "online 客户端每天凌晨 02:00-06:00 错峰采集抖音 / 视频号播放量，云端汇总（朋友圈不做）"],
     "s-my": ["我的任务", "派给自己的任务（真实员工登录只看自己的）· 每条可让 AI 出思路与执行方案"],
   };
@@ -753,12 +758,13 @@ body.overlay-open #drawer{z-index:501}
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-prod","s-inv","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-metrics","s-my"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-inv","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-merchants","s-metrics","s-my"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
       if (id === "s-metrics") loadMetrics();
       if (id === "s-my") loadMyTasks();
       if (id === "s-stats") loadStats();
+      if (id === "s-merchants") loadMerchants(1);
       $("#pgTitle").textContent = TITLES[id][0];
       $("#pgSub").textContent = TITLES[id][1];
     });
@@ -770,6 +776,8 @@ body.overlay-open #drawer{z-index:501}
     loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadInv(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
     loadMyTasks();
     loadStats();
+    var mbox = document.getElementById("s-merchants");
+    if (mbox && !mbox.classList.contains("hide")) loadMerchants(MERCH.page);
   }
 
   /* ================= 简报 ================= */
@@ -3316,6 +3324,156 @@ body.overlay-open #drawer{z-index:501}
     var cnt = root.querySelector("[data-sq-count]");
     if (cnt) cnt.textContent = q ? ("匹配 " + shown + " 条") : "";
   }
+  /* ================= 商家（shopcms 全平台，仅平台管理员） ================= */
+  var MERCH = { page: 1, size: 20, q: "", status: "", total: 0, pages: 1, items: [], summary: {}, statuses: {} };
+  var MERCH_TAG = { active: "ok", pending: "wn", suspended: "bd", rejected: "bd", draft: "" };
+
+  function merchantYuan(cents){
+    var v = (Number(cents) || 0) / 100;
+    return "¥" + v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function loadMerchants(page){
+    var box = document.getElementById("s-merchants");
+    if (!box) return;
+    MERCH.page = Math.max(1, Number(page) || 1);
+    box.innerHTML = '<div class="glass card"><div class="dim">正在加载商家数据…</div></div>';
+    api("/api/manage/shop-merchants?page=" + MERCH.page + "&size=" + MERCH.size
+        + "&q=" + encodeURIComponent(MERCH.q) + "&status=" + encodeURIComponent(MERCH.status))
+      .then(function(d){
+        MERCH.items = d.items || [];
+        MERCH.total = Number(d.total || 0);
+        MERCH.pages = Number(d.pages || 1);
+        MERCH.summary = d.summary || {};
+        MERCH.statuses = d.statuses || {};
+        renderMerchants();
+      })
+      .catch(function(e){ showErr(e.message, e); });
+  }
+
+  function renderMerchants(){
+    var box = document.getElementById("s-merchants");
+    if (!box) return;
+    var sum = MERCH.summary || {}, st = MERCH.statuses || {};
+    var statusOpts = '<option value="">全部状态</option>' + Object.keys(st).map(function(k){
+      return '<option value="' + k + '"' + (MERCH.status === k ? " selected" : "") + ">" + esc(st[k]) + "</option>";
+    }).join("");
+    var rows = MERCH.items.map(function(m){
+      var tag = MERCH_TAG[m.status] === undefined ? "" : MERCH_TAG[m.status];
+      return "<tr>"
+        + "<td><b>" + esc(m.company_name || "-") + '</b><div class="dim" style="font-size:11.5px">' + esc(m.slug || "") + " · " + esc(m.email || "") + "</div></td>"
+        + '<td><span class="tag ' + tag + '">' + esc(m.status_label || m.status || "-") + "</span></td>"
+        + "<td>" + esc(m.contact_name || "-") + '<div class="dim" style="font-size:11.5px">' + esc(m.contact_phone || "") + (m.region ? " · " + esc(m.region) : "") + "</div></td>"
+        + '<td class="right num">' + Number(m.on_sale_count || 0) + " / " + Number(m.product_count || 0) + "</td>"
+        + '<td class="right num">' + Number(m.order_count || 0) + "</td>"
+        + '<td class="right num">' + merchantYuan(m.pay_amount_cents) + "</td>"
+        + '<td class="right num">' + merchantYuan(m.commission_pending_cents) + '<div class="dim" style="font-size:11.5px">已结 ' + merchantYuan(m.commission_settled_cents) + "</div></td>"
+        + '<td class="dim" style="font-size:12px">' + esc(String(m.created_at || "").slice(0, 10)) + "</td>"
+        + '<td class="right"><button class="btn sm ghost" data-mdetail="' + m.id + '">查看</button></td>'
+        + "</tr>";
+    }).join("");
+    box.innerHTML =
+      '<div class="g4">'
+      + '<div class="glass card kpi"><div class="t">商家总数</div><div class="v num">' + Number(sum.merchants_total || 0) + '</div><div class="dim" style="font-size:11.5px">正常 ' + Number(sum.merchants_active || 0) + " · 待审核 " + Number(sum.merchants_pending || 0) + "</div></div>"
+      + '<div class="glass card kpi"><div class="t">商品总数</div><div class="v num">' + Number(sum.products_total || 0) + '</div><div class="dim" style="font-size:11.5px">全平台（含草稿）</div></div>'
+      + '<div class="glass card kpi"><div class="t">订单 / 成交额</div><div class="v num">' + Number(sum.orders_total || 0) + '</div><div class="dim" style="font-size:11.5px">' + merchantYuan(sum.pay_amount_cents) + "</div></div>"
+      + '<div class="glass card kpi"><div class="t">佣金合计</div><div class="v num">' + merchantYuan(sum.commission_total_cents) + '</div><div class="dim" style="font-size:11.5px">待确认 ' + merchantYuan(sum.commission_pending_cents) + "</div></div>"
+      + "</div>"
+      + '<div class="glass card" style="margin-top:14px">'
+      + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+      + '<input id="merchQ" placeholder="搜公司名 / slug / 联系人 / 手机号 / 地区" value="' + esc(MERCH.q) + '" style="max-width:330px" />'
+      + '<select id="merchStatus" style="max-width:150px">' + statusOpts + "</select>"
+      + '<button class="btn sm" id="merchSearch">查询</button>'
+      + '<button class="btn sm ghost" id="merchReset">重置</button>'
+      + '<span class="grow"></span>'
+      + '<span class="dim" style="font-size:12px">共 ' + MERCH.total + " 家 · 第 " + MERCH.page + " / " + MERCH.pages + " 页</span>"
+      + "</div>"
+      + '<div style="margin-top:12px;overflow:auto"><table class="tb"><thead><tr>'
+      + "<th>商家</th><th>状态</th><th>联系人</th><th class=\"right\">在售/商品</th>"
+      + '<th class="right">订单</th><th class="right">成交额</th><th class="right">待结佣金</th><th>注册时间</th><th class="right">操作</th>'
+      + "</tr></thead><tbody>"
+      + (rows || '<tr><td colspan="9" class="dim">' + (MERCH.q || MERCH.status ? "没有匹配的商家" : "还没有商家入驻") + "</td></tr>")
+      + "</tbody></table></div>"
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">'
+      + '<button class="btn sm ghost" id="merchPrev"' + (MERCH.page <= 1 ? " disabled" : "") + ">上一页</button>"
+      + '<span class="dim" style="font-size:12px">' + MERCH.page + " / " + MERCH.pages + "</span>"
+      + '<button class="btn sm ghost" id="merchNext"' + (MERCH.page >= MERCH.pages ? " disabled" : "") + ">下一页</button>"
+      + "</div>"
+      + "</div>";
+
+    var q = document.getElementById("merchQ");
+    if (q){
+      q.addEventListener("keydown", function(ev){ if (ev.key === "Enter"){ MERCH.q = q.value.trim(); loadMerchants(1); } });
+      q.addEventListener("compositionend", function(){ /* 输入法结束不自动查，点查询/回车 */ });
+    }
+    var sbox = document.getElementById("merchStatus");
+    if (sbox) sbox.addEventListener("change", function(){ MERCH.status = sbox.value; loadMerchants(1); });
+    var sbtn = document.getElementById("merchSearch");
+    if (sbtn) sbtn.addEventListener("click", function(){ var el = document.getElementById("merchQ"); MERCH.q = el ? el.value.trim() : ""; loadMerchants(1); });
+    var rbtn = document.getElementById("merchReset");
+    if (rbtn) rbtn.addEventListener("click", function(){ MERCH.q = ""; MERCH.status = ""; loadMerchants(1); });
+    var pbtn = document.getElementById("merchPrev");
+    if (pbtn) pbtn.addEventListener("click", function(){ if (MERCH.page > 1) loadMerchants(MERCH.page - 1); });
+    var nbtn = document.getElementById("merchNext");
+    if (nbtn) nbtn.addEventListener("click", function(){ if (MERCH.page < MERCH.pages) loadMerchants(MERCH.page + 1); });
+    $$("#s-merchants [data-mdetail]").forEach(function(b){
+      b.addEventListener("click", function(){ openMerchantDetail(Number(b.dataset.mdetail)); });
+    });
+  }
+
+  function merchantKv(k, v){
+    return '<div style="display:flex;gap:10px;margin-bottom:6px"><div class="dim" style="width:88px;flex:none;font-size:12px">' + esc(k) + '</div><div style="flex:1">' + v + "</div></div>";
+  }
+
+  function openMerchantDetail(id){
+    api("/api/manage/shop-merchants/" + id).then(function(d){
+      var m = d.merchant || {};
+      var prodRows = (d.products || []).map(function(p){
+        return "<tr><td>" + esc(p.title || "-") + '</td><td class="right num">' + merchantYuan(p.price_cents) + '</td><td class="right num">' + Number(p.stock || 0) + '</td><td class="right num">' + (Number(p.commission_bp || 0) / 100) + "%</td><td>" + esc(p.status || "") + "</td></tr>";
+      }).join("");
+      var orderRows = (d.orders || []).map(function(o){
+        return "<tr><td>" + esc(o.order_no || "") + "</td><td>" + esc(o.status_label || o.status || "") + '</td><td class="right num">' + merchantYuan(o.pay_amount_cents) + '</td><td class="right num">' + merchantYuan(o.commission_cents) + '</td><td class="dim" style="font-size:12px">' + esc(String(o.created_at || "").slice(0, 19).replace("T", " ")) + "</td></tr>";
+      }).join("");
+      openDrawer("商家", m.company_name || ("商家 #" + id),
+        '<div class="dsec"><h4>基本信息</h4>'
+        + merchantKv("状态", '<span class="tag ' + (MERCH_TAG[m.status] || "") + '">' + esc(m.status_label || m.status || "-") + "</span>")
+        + merchantKv("slug", esc(m.slug || "-"))
+        + merchantKv("账号", esc(m.email || "-") + (m.user_id ? " #" + m.user_id : ""))
+        + merchantKv("联系人", esc(m.contact_name || "-") + (m.contact_phone ? " · " + esc(m.contact_phone) : ""))
+        + merchantKv("地区", esc(m.region || "-"))
+        + merchantKv("注册", esc(String(m.created_at || "").slice(0, 19).replace("T", " ")))
+        + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+        + '<button class="btn sm" data-mstatus="active">审核通过</button>'
+        + '<button class="btn sm ghost" data-mstatus="suspended">停用</button>'
+        + '<button class="btn sm ghost" data-mstatus="rejected">驳回</button>'
+        + "</div></div>"
+        + '<div class="dsec"><h4>经营数据</h4>'
+        + merchantKv("商品", "在售 " + Number(m.on_sale_count || 0) + " / 全部 " + Number(m.product_count || 0))
+        + merchantKv("订单", Number(m.order_count || 0) + " 单 · 成交 " + merchantYuan(m.pay_amount_cents))
+        + merchantKv("佣金", "待确认 " + merchantYuan(m.commission_pending_cents) + " · 已确认 " + merchantYuan(m.commission_confirmed_cents) + " · 已结 " + merchantYuan(m.commission_settled_cents))
+        + "</div>"
+        + '<div class="dsec"><h4>最近商品</h4>'
+        + (prodRows ? '<table class="tb"><thead><tr><th>标题</th><th class="right">价格</th><th class="right">库存</th><th class="right">佣金</th><th>状态</th></tr></thead><tbody>' + prodRows + "</tbody></table>" : '<div class="dim">还没有商品</div>')
+        + "</div>"
+        + '<div class="dsec"><h4>最近订单</h4>'
+        + (orderRows ? '<table class="tb"><thead><tr><th>订单号</th><th>状态</th><th class="right">实付</th><th class="right">佣金</th><th>下单</th></tr></thead><tbody>' + orderRows + "</tbody></table>" : '<div class="dim">还没有订单</div>')
+        + "</div>");
+      $$("#dBody [data-mstatus]").forEach(function(b){
+        b.addEventListener("click", function(){ setMerchantStatus(id, b.dataset.mstatus); });
+      });
+    }).catch(function(e){ showErr(e.message, e); });
+  }
+
+  function setMerchantStatus(id, status){
+    api("/api/manage/shop-merchants/" + id, { method: "PATCH", body: { status: status } })
+      .then(function(){
+        toast("商家 #" + id + " 状态已更新：" + status);
+        loadMerchants(MERCH.page);
+        openMerchantDetail(id);
+      })
+      .catch(function(e){ showErr(e.message, e); });
+  }
+
   function bindListSearch(rootId){
     var root = document.getElementById(rootId);
     if (!root) return;

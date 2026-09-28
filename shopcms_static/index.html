@@ -36,6 +36,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 .tag{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--dim)}
 .tag.on{border-color:var(--brand);color:#7fd8a2}
 .hint{font-size:12px;color:var(--dim);margin-top:10px}
+.hint a{color:#7fd8a2}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .hint.err{color:#ff6b6b}
 .upload{border:1px dashed var(--line);border-radius:12px;padding:12px 14px;margin-top:6px;background:#0c0e12}
 .upload input[type=file]{border:0;padding:0;background:transparent;color:var(--ink)}
@@ -76,16 +78,35 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
     });
   }
-  var state = { view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [] };
+  var state = { view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], authMode: 'login' };
 
   function loginView() {
+    if (state.authMode === 'register') {
+      return [
+        '<div class="login">',
+        '<h1>开店入驻</h1><div class="muted">手机号 + 密码就能开店，注册后可直接上传商品</div>',
+        '<label for="r-name">店铺 / 公司名称 *</label><input id="r-name" placeholder="如 天水花牛果专营店">',
+        '<div class="row2">',
+        '<div><label for="r-type">类型</label><select id="r-type"><option value="company">企业</option><option value="individual">个体 / 个人</option></select></div>',
+        '<div><label for="r-region">地区</label><input id="r-region" placeholder="省市 / 区县"></div>',
+        '</div>',
+        '<div class="row2">',
+        '<div><label for="r-contact">联系人</label><input id="r-contact" placeholder="姓名"></div>',
+        '<div><label for="r-phone">手机号 *</label><input id="r-phone" autocomplete="username" placeholder="登录用手机号"></div>',
+        '</div>',
+        '<label for="r-pwd">登录密码 *</label><input id="r-pwd" type="password" autocomplete="new-password" placeholder="至少 6 位">',
+        '<div style="margin-top:16px"><button class="btn" id="do-register" type="button" style="width:100%">开店入驻</button></div>',
+        '<div class="hint" id="login-tip">提交后立即开通（状态先为待审核，不影响你建商品、上架）。已经有店铺？<a href="javascript:void(0)" id="go-login">去登录</a></div>',
+        '</div>'
+      ].join('');
+    }
     return [
       '<div class="login">',
       '<h1>商家后台登录</h1><div class="muted">用开店时的手机号 + 密码登录</div>',
       '<label for="acct">手机号 / 邮箱</label><input id="acct" autocomplete="username" placeholder="如 17000000000">',
       '<label for="pwd">密码</label><input id="pwd" type="password" autocomplete="current-password" placeholder="登录密码">',
       '<div style="margin-top:16px"><button class="btn" id="do-login" type="button" style="width:100%">登录</button></div>',
-      '<div class="hint" id="login-tip">还没有店铺？联系平台开通商家账号。</div>',
+      '<div class="hint" id="login-tip">还没有店铺？<a href="javascript:void(0)" id="go-register">立即开店入驻</a>（手机号 + 密码即可）</div>',
       '</div>'
     ].join('');
   }
@@ -269,6 +290,12 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   }
 
   function bindLogin() {
+    var toRegister = $('#go-register');
+    if (toRegister) toRegister.addEventListener('click', function () { state.authMode = 'register'; state.msg = ''; render(); });
+    var toLogin = $('#go-login');
+    if (toLogin) toLogin.addEventListener('click', function () { state.authMode = 'login'; state.msg = ''; render(); });
+    var rbtn = $('#do-register');
+    if (rbtn) rbtn.addEventListener('click', function () { doRegister(rbtn); });
     var btn = $('#do-login');
     if (!btn) return;
     btn.addEventListener('click', function () {
@@ -285,6 +312,37 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         })
         .catch(function (e) { btn.disabled = false; tip.className = 'hint err'; tip.textContent = '登录失败：' + e.message; });
     });
+  }
+
+  function doRegister(btn) {
+    var tip = $('#login-tip');
+    var body = {
+      company_name: ($('#r-name').value || '').trim(),
+      company_type: ($('#r-type').value || 'company'),
+      phone: ($('#r-phone').value || '').trim(),
+      password: $('#r-pwd').value || '',
+      contact_name: ($('#r-contact').value || '').trim(),
+      region: ($('#r-region').value || '').trim()
+    };
+    if (!body.company_name) { tip.className = 'hint err'; tip.textContent = '请填店铺 / 公司名称'; return; }
+    if (!body.phone || !body.password) { tip.className = 'hint err'; tip.textContent = '请填手机号和密码'; return; }
+    if (body.password.length < 6) { tip.className = 'hint err'; tip.textContent = '密码至少 6 位'; return; }
+    btn.disabled = true; tip.className = 'hint'; tip.textContent = '正在开通店铺…';
+    fetch('/api/shop-cms/merchants/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
+      .then(function (res) {
+        if (res.s !== 200 && res.s !== 201) throw new Error(res.d.detail || ('HTTP ' + res.s));
+        tip.textContent = '店铺已开通，正在登录…';
+        return fetch('/auth/login-phone-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account: body.phone, password: body.password }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); });
+      })
+      .then(function (res) {
+        if (res.s !== 200 || !res.d.access_token) throw new Error('开店成功，但自动登录失败，请手动登录');
+        setToken(res.d.access_token);
+        state.authMode = 'login';
+        return loadAll().then(function () { state.msg = '店铺已开通，先去「商品」上传你的商品吧'; state.view = 'products'; render(); });
+      })
+      .catch(function (e) { btn.disabled = false; tip.className = 'hint err'; tip.textContent = e.message; });
   }
 
   function uploadImage(file, tipEl) {
