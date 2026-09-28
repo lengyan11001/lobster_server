@@ -744,144 +744,247 @@ body{background:#edf2f7}
   // 与 H5 同源：直接镜像 h5_static/h5-app.js 里 SALES_WORKFLOW_PRESET（+ 发布动作），
   // 节点 key/名称/默认参数都照抄 H5，管理后台不再自己维护一份节点表。
   var NODE_PRESETS =   [
-      {
-          "key": "local_bestseller",
-          "label": "创作同城爆款视频",
-          "note": "创作一条同城爆款视频（用于发公域平台）",
-          "group": "AI营销",
-          "params": {}
-      },
-      {
-          "key": "hifly.video.create_by_tts",
-          "label": "创作数字人口播视频",
-          "note": "创作一条数字人口播视频（用于发朋友圈）",
-          "group": "AI营销",
-          "params": {}
-      },
-      {
-          "key": "native_wechat_poll",
-          "label": "微信私信接管",
-          "note": "微信私信接管",
-          "group": "个微",
-          "params": {
-              "group_invite_enabled": true,
-              "group_invite_rule_status": "pending_rules",
-              "trigger": "qualified_intent"
-          }
-      },
-      {
-          "key": "douyin_leads",
-          "label": "抖音自动养号",
-          "note": "抖音自动养号",
-          "group": "抖音",
-          "params": {}
-      },
-      {
-          "key": "native_wechat_moments_engage",
-          "label": "微信朋友圈点赞评论",
-          "note": "微信朋友圈点赞评论",
-          "group": "个微",
-          "params": {}
-      },
-      {
-          "key": "douyin_leads",
-          "label": "抖音获客·关键词抓取精准客户",
-          "note": "抖音获客·关键词抓取精准客户",
-          "group": "抖音",
-          "params": {
-              "customer_scope": "current_collection_batch"
-          }
-      },
-      {
-          "key": "douyin_leads",
-          "label": "抖音精准获客AI",
-          "note": "抖音精准获客AI",
-          "group": "抖音",
-          "params": {
-              "ai_keywords": true,
-              "ai_keyword_count": 3,
-              "ai_keyword_avoid_days": 7,
-              "ai_keyword_publish_days": 7,
-              "customer_scope": "current_collection_batch"
-          }
-      },
-      {
-          "key": "native_wechat_moments_engage",
-          "label": "微信朋友圈自己评论区接管",
-          "note": "微信朋友圈自己评论区接管",
-          "group": "个微",
-          "params": {
-              "moment_action": "comment"
-          }
-      },
-      {
-          "key": "douyin_leads",
-          "label": "抖音私信接管",
-          "note": "抖音私信接管",
-          "group": "抖音",
-          "params": {}
-      },
-      {
-          "key": "douyin_leads",
-          "label": "抖音精准用户触达",
-          "note": "抖音精准用户触达",
-          "group": "抖音",
-          "params": {
-              "touch_actions": [
-                  "follow_comment"
-              ],
-              "customer_scope": "precise_pool",
-              "max_users": 20
-          }
-      },
-      {
-          "key": "douyin_leads",
-          "label": "抖音我的评论区",
-          "note": "抖音我的评论区",
-          "group": "抖音",
-          "params": {}
-      },
-      {
-          "key": "native_wechat_moments_engage",
-          "label": "朋友圈点赞评论（微信）",
-          "note": "朋友圈点赞评论（微信）",
-          "group": "个微",
-          "params": {}
-      },
-      {
-          "key": "publish_content",
-          "label": "发布到抖音",
-          "note": "沿用上级节点素材，配文案带标签发布",
-          "group": "发布",
-          "params": {
-              "platform": "douyin",
-              "source_mode": "parent_latest_run",
-              "media_type": "video"
-          }
-      },
-      {
-          "key": "publish_content",
-          "label": "发布到视频号",
-          "note": "沿用上级节点素材，配文案带标签发布",
-          "group": "发布",
-          "params": {
-              "platform": "wechat_channels",
-              "source_mode": "parent_latest_run",
-              "media_type": "video"
-          }
-      },
-      {
-          "key": "publish_content",
-          "label": "发布到朋友圈",
-          "note": "沿用上级节点素材，配文案带标签发布",
-          "group": "发布",
-          "params": {
-              "platform": "wechat_moments",
-              "source_mode": "parent_latest_run",
-              "media_type": "image_text"
-          }
-      }
-  ];
+        {
+            "key": "douyin_leads",
+            "label": "抖音自动养号",
+            "note": "抖音自动养号",
+            "group": "抖音",
+            "params": {}
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音获客·关键词抓取精准客户",
+            "note": "抖音获客·关键词抓取精准客户",
+            "group": "抖音",
+            "params": {
+                "customer_scope": "current_collection_batch"
+            }
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音精准获客AI",
+            "note": "抖音精准获客AI",
+            "group": "抖音",
+            "params": {
+                "ai_keywords": true,
+                "ai_keyword_count": 3,
+                "ai_keyword_avoid_days": 7,
+                "ai_keyword_publish_days": 7,
+                "customer_scope": "current_collection_batch"
+            }
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音私信接管",
+            "note": "抖音私信接管",
+            "group": "抖音",
+            "params": {}
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音精准用户触达",
+            "note": "抖音精准用户触达",
+            "group": "抖音",
+            "params": {
+                "touch_actions": [
+                    "follow_comment"
+                ],
+                "customer_scope": "precise_pool",
+                "max_users": 20
+            }
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音我的评论区",
+            "note": "抖音我的评论区",
+            "group": "抖音",
+            "params": {}
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音私信记忆接管",
+            "note": "读取抖音新私信，按记忆文件和会话上下文回复，不拉群、不引导加微信。",
+            "group": "抖音",
+            "params": {
+                "sales_action": "stranger_message",
+                "reply_mode": "ai_memory",
+                "memory_takeover": true,
+                "wechat_add_friend_targets_source": "douyin_private_message_phone"
+            }
+        },
+        {
+            "key": "native_wechat_poll",
+            "label": "微信私信接管",
+            "note": "微信私信接管",
+            "group": "个微",
+            "params": {
+                "group_invite_enabled": true,
+                "group_invite_rule_status": "pending_rules",
+                "trigger": "qualified_intent"
+            }
+        },
+        {
+            "key": "native_wechat_moments_engage",
+            "label": "微信朋友圈点赞评论",
+            "note": "微信朋友圈点赞评论",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "native_wechat_moments_engage",
+            "label": "微信朋友圈自己评论区接管",
+            "note": "微信朋友圈自己评论区接管",
+            "group": "个微",
+            "params": {
+                "moment_action": "comment"
+            }
+        },
+        {
+            "key": "native_wechat_moments_engage",
+            "label": "朋友圈点赞评论（微信）",
+            "note": "朋友圈点赞评论（微信）",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "native_wechat_add_friend",
+            "label": "个微自动加好友",
+            "note": "把目标手机号或微信号加入本机个人微信加好友队列。",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "native_whatsapp_poll",
+            "label": "个人 whatapp 助手",
+            "note": "接管 Windows 桌面版 WhatsApp，按轮次处理私聊消息。",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "local_bestseller",
+            "label": "创作同城爆款视频",
+            "note": "创作一条同城爆款视频（用于发公域平台）",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "hifly.video.create_by_tts",
+            "label": "创作数字人口播视频",
+            "note": "创作一条数字人口播视频（用于发朋友圈）",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "comfly.seedance.tvc.pipeline",
+            "label": "创意分镜头视频",
+            "note": "按连续分镜规划视频，并生成完整成片。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "comfly.daihuo.pipeline",
+            "label": "爆款 TVC",
+            "note": "使用素材或产品图生成广告短片。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "viral_video_remix",
+            "label": "爆款复刻",
+            "note": "基于爆款结构复刻视频脚本和执行方案。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "image_composer_studio",
+            "label": "AI 设计图",
+            "note": "根据文案或产品资料生成海报、详情页和朋友圈配图。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "ip_content_oral",
+            "label": "IP 口播文案",
+            "note": "包含行业热门口播和专业热门 IP 口播。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "ip_content_moments",
+            "label": "朋友圈图文",
+            "note": "生成首条朋友圈图文并自动生成 3 张配图。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "wewrite.article.pipeline",
+            "label": "公众号文章",
+            "note": "根据主题生成公众号文章、配图和发布草稿。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "linkedin_leads",
+            "label": "LinkedIn 线索挖掘",
+            "note": "采集 LinkedIn 相关线索和账号资料。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "reddit_leads",
+            "label": "Reddit 线索采集",
+            "note": "采集社区帖子、评论并分析精准用户。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "x_leads",
+            "label": "X 线索采集",
+            "note": "采集账号内容、评论和潜在线索。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "tiktok_leads",
+            "label": "TikTok 线索采集",
+            "note": "采集账号作品、视频评论和潜在线索。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "publish_content",
+            "label": "发布到抖音",
+            "note": "沿用上级节点素材，配文案带标签发布",
+            "group": "发布",
+            "params": {
+                "platform": "douyin",
+                "source_mode": "parent_latest_run",
+                "media_type": "video"
+            }
+        },
+        {
+            "key": "publish_content",
+            "label": "发布到视频号",
+            "note": "沿用上级节点素材，配文案带标签发布",
+            "group": "发布",
+            "params": {
+                "platform": "wechat_channels",
+                "source_mode": "parent_latest_run",
+                "media_type": "video"
+            }
+        },
+        {
+            "key": "publish_content",
+            "label": "发布到朋友圈",
+            "note": "沿用上级节点素材，配文案带标签发布",
+            "group": "发布",
+            "params": {
+                "platform": "wechat_moments",
+                "source_mode": "parent_latest_run",
+                "media_type": "image_text"
+            }
+        }
+    ];
   function presetAt(i) {
     var idx = Number(i);
     return (idx >= 0 && idx < NODE_PRESETS.length) ? NODE_PRESETS[idx] : null;
