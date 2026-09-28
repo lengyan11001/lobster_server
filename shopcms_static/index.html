@@ -69,7 +69,15 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if (token()) init.headers.Authorization = 'Bearer ' + token();
     return fetch(path, init).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (d) {
-        if (r.status === 401) { setToken(''); render(); throw new Error('登录已过期，请重新登录'); }
+        if (r.status === 401) { setToken(''); state.authNotice = '登录已过期，请重新登录'; render(); throw new Error(state.authNotice); }
+        if (r.status === 403) {
+          var raw = (d && (d.detail || d.message)) || '';
+          var text = typeof raw === 'string' ? raw : ((raw && raw[0] && raw[0].msg) || '无权访问该接口');
+          if (/停用|驳回|未通过/.test(text)) {
+            setToken(''); state.me = null; state.products = []; state.orders = []; state.authNotice = text; render();
+          }
+          throw new Error(text);
+        }
         if (!r.ok || d.ok === false) {
           var m = (d && (d.detail || d.message)) || ('HTTP ' + r.status);
           throw new Error(typeof m === 'string' ? m : JSON.stringify(m));
@@ -78,7 +86,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
     });
   }
-  var state = { view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], authMode: 'login' };
+  var state = { view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], authMode: 'login', authNotice: '' };
 
   function loginView() {
     if (state.authMode === 'register') {
@@ -96,7 +104,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         '</div>',
         '<label for="r-pwd">登录密码 *</label><input id="r-pwd" type="password" autocomplete="new-password" placeholder="至少 6 位">',
         '<div style="margin-top:16px"><button class="btn" id="do-register" type="button" style="width:100%">开店入驻</button></div>',
-        '<div class="hint" id="login-tip">提交后立即开通（状态先为待审核，不影响你建商品、上架）。已经有店铺？<a href="javascript:void(0)" id="go-login">去登录</a></div>',
+        '<div class="hint' + (state.authNotice ? ' err' : '') + '" id="login-tip">' + (state.authNotice ? esc(state.authNotice) : '提交后立即开通（状态先为待审核，不影响你建商品、上架）。已经有店铺？<a href="javascript:void(0)" id="go-login">去登录</a>') + '</div>',
         '</div>'
       ].join('');
     }
@@ -106,7 +114,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<label for="acct">手机号 / 邮箱</label><input id="acct" autocomplete="username" placeholder="如 17000000000">',
       '<label for="pwd">密码</label><input id="pwd" type="password" autocomplete="current-password" placeholder="登录密码">',
       '<div style="margin-top:16px"><button class="btn" id="do-login" type="button" style="width:100%">登录</button></div>',
-      '<div class="hint" id="login-tip">还没有店铺？<a href="javascript:void(0)" id="go-register">立即开店入驻</a>（手机号 + 密码即可）</div>',
+      '<div class="hint' + (state.authNotice ? ' err' : '') + '" id="login-tip">' + (state.authNotice ? esc(state.authNotice) : '还没有店铺？<a href="javascript:void(0)" id="go-register">立即开店入驻</a>（手机号 + 密码即可）') + '</div>',
       '</div>'
     ].join('');
   }
@@ -291,9 +299,9 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 
   function bindLogin() {
     var toRegister = $('#go-register');
-    if (toRegister) toRegister.addEventListener('click', function () { state.authMode = 'register'; state.msg = ''; render(); });
+    if (toRegister) toRegister.addEventListener('click', function () { state.authMode = 'register'; state.msg = ''; state.authNotice = ''; render(); });
     var toLogin = $('#go-login');
-    if (toLogin) toLogin.addEventListener('click', function () { state.authMode = 'login'; state.msg = ''; render(); });
+    if (toLogin) toLogin.addEventListener('click', function () { state.authMode = 'login'; state.msg = ''; state.authNotice = ''; render(); });
     var rbtn = $('#do-register');
     if (rbtn) rbtn.addEventListener('click', function () { doRegister(rbtn); });
     var btn = $('#do-login');
@@ -301,6 +309,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     btn.addEventListener('click', function () {
       var acct = $('#acct').value.trim(), pwd = $('#pwd').value;
       var tip = $('#login-tip');
+      state.authNotice = '';
       if (!acct || !pwd) { tip.className = 'hint err'; tip.textContent = '请输入手机号和密码'; return; }
       btn.disabled = true; tip.className = 'hint'; tip.textContent = '登录中…';
       fetch('/auth/login-phone-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account: acct, password: pwd }) })

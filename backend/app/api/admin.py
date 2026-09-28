@@ -19,7 +19,7 @@ from typing import Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Query, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -3696,3 +3696,57 @@ def admin_juhe_retry_friend_batch(
     db.commit()
     background_tasks.add_task(_juhe_process_friend_batch, batch.id)
     return {"ok": True, "batch": _juhe_batch_payload(batch)}
+
+
+# ────────────────────────── 商家审核（商家后台 shopcms） ──────────────────────────
+
+class ShopMerchantStatusBody(BaseModel):
+    status: str = Field(..., min_length=1, max_length=16)
+
+
+@router.get("/admin/api/shop-merchants", summary="商家列表（分页 + 查询）")
+def admin_shop_merchants(
+    q: str = "",
+    status: str = "",
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """平台管理员看全部开店商家：商品 / 订单 / 佣金 + 分页 + 关键词搜索。"""
+    from ..services import shop_merchant_admin as sma
+
+    return sma.list_shop_merchants(db, q=q, status=status, page=page, size=size)
+
+
+@router.get("/admin/api/shop-merchants/{merchant_id}", summary="商家详情")
+def admin_shop_merchant_detail(
+    merchant_id: int,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..services import shop_merchant_admin as sma
+
+    try:
+        return sma.shop_merchant_detail(db, merchant_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="商家不存在")
+
+
+@router.patch("/admin/api/shop-merchants/{merchant_id}", summary="商家状态（审核通过 / 停用 / 驳回）")
+def admin_update_shop_merchant_status(
+    merchant_id: int,
+    body: ShopMerchantStatusBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..services import shop_merchant_admin as sma
+
+    try:
+        result = sma.set_shop_merchant_status(db, merchant_id, body.status)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="商家不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    logger.info("[admin] shop merchant %s status -> %s", merchant_id, body.status)
+    return result

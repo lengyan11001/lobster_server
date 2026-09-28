@@ -2214,7 +2214,7 @@ async function loadMerchants(page) {
   if (table) table.innerHTML = '<div class="empty">加载中...</div>';
   const f = merchantFilters();
   try {
-    const data = await merchantApi('/api/manage/shop-merchants?page=' + merchantPage + '&size=' + MERCHANT_PAGE_SIZE
+    const data = await merchantApi('/admin/api/shop-merchants?page=' + merchantPage + '&size=' + MERCHANT_PAGE_SIZE
       + '&q=' + encodeURIComponent(f.q) + '&status=' + encodeURIComponent(f.status));
     renderMerchants(data);
   } catch (e) {
@@ -2285,7 +2285,7 @@ async function toggleMerchantDetail(id) {
   holder.innerHTML = '<td colspan="9"><div class="empty">加载中...</div></td>';
   row.parentNode.insertBefore(holder, row.nextSibling);
   try {
-    const d = await merchantApi('/api/manage/shop-merchants/' + id);
+    const d = await merchantApi('/admin/api/shop-merchants/' + id);
     const m = d.merchant || {};
     const prod = (d.products || []).map(function (p) {
       return '<tr><td>' + escapeHtml(p.title || '-') + '</td><td>' + merchantMoney(p.price_cents) + '</td><td>' + Number(p.stock || 0) + '</td><td>' + (Number(p.commission_bp || 0) / 100) + '%</td><td>' + escapeHtml(p.status || '') + '</td></tr>';
@@ -2320,7 +2320,7 @@ async function setMerchantStatus(id, status) {
   const label = { active: '审核通过', suspended: '停用', rejected: '驳回' }[status] || status;
   if (!confirm('确认把商家 #' + id + ' ' + label + '？')) return;
   try {
-    await merchantApi('/api/manage/shop-merchants/' + id, { method: 'PATCH', body: JSON.stringify({ status: status }) });
+    await merchantApi('/admin/api/shop-merchants/' + id, { method: 'PATCH', body: JSON.stringify({ status: status }) });
     toast('商家 #' + id + ' 已' + label);
     loadMerchants(merchantPage);
   } catch (e) {

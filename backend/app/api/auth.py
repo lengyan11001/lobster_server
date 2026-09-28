@@ -599,12 +599,31 @@ def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Ses
     user = user_for_account(db, account_key, brand_mark)
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="账号或密码错误")
+    _assert_merchant_login_allowed(db, user)
     access_token = create_access_token(data=access_token_claims(user))
     raw_iid = optional_installation_id_from_request(request)
     iid = scoped_installation_id(raw_iid, brand_mark)
     if iid:
         ensure_installation_slot(db, user.id, iid)
     return Token(access_token=access_token)
+
+
+def _assert_merchant_login_allowed(db, user) -> None:
+    """商家店铺被停用 / 驳回后不允许再登录商家后台。"""
+    if str(getattr(user, "role", "") or "").lower() != "merchant":
+        return
+    try:
+        from ..services.shop_merchant_status import shop_merchant_blocked_reason
+        from ..shop_models import ShopMerchant
+
+        merchant = db.query(ShopMerchant).filter(ShopMerchant.user_id == int(user.id)).first()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[auth/login] merchant status check skipped user=%s: %s", getattr(user, "id", None), exc)
+        return
+    reason = shop_merchant_blocked_reason(getattr(merchant, "status", "")) if merchant is not None else ""
+    if reason:
+        logger.info("[auth/login] blocked merchant login user=%s status=%s", getattr(user, "id", None), merchant.status)
+        raise HTTPException(status_code=403, detail=reason)
 
 
 @router.post("/set-password", summary="当前登录用户设置手机号密码")

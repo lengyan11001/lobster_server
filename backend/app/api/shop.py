@@ -24,6 +24,7 @@ from ..db import get_db
 from ..models import User
 from ..services import shop_commission as sc
 from ..services.shop_theme import resolve_theme, theme_css_vars
+from ..services.shop_merchant_status import shop_merchant_blocked_reason
 from ..shop_models import (
     ShopCommission,
     ShopMerchant,
@@ -58,6 +59,10 @@ def _merchant_of(db: Session, user: User) -> ShopMerchant:
     merchant = db.query(ShopMerchant).filter(ShopMerchant.user_id == int(user.id)).first()
     if merchant is None:
         raise HTTPException(status_code=403, detail="当前账号还不是商家，请先注册开店")
+    # 店铺被停用 / 驳回后，商家后台所有接口（含上架）都不再可用
+    blocked = shop_merchant_blocked_reason(merchant.status)
+    if blocked:
+        raise HTTPException(status_code=403, detail=blocked)
     return merchant
 
 
