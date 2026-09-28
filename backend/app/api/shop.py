@@ -532,8 +532,9 @@ def order_create(
     )
     commission_cents = plan.amount_cents if (promoter_id is not None and allowed) else 0
 
+    next_seq = int(db.query(func.coalesce(func.max(ShopOrder.id), 0)).scalar() or 0) + 1
     order = ShopOrder(
-        order_no=sc.make_order_no(product.merchant_id, seq=int(func.coalesce(func.max(ShopOrder.id), 0) or 0) + 1 if False else 0),
+        order_no=sc.make_order_no(product.merchant_id, seq=next_seq),
         merchant_id=product.merchant_id,
         buyer_user_id=int(current_user.id) if current_user is not None else None,
         buyer_name=body.buyer_name[:64],
@@ -563,6 +564,21 @@ def order_create(
             subtotal_cents=goods,
         )
     )
+    if commission_cents > 0 and promoter_id is not None:
+        # 佣金明细落地：与订单上的 commission_cents 同源（plan.base/rate），状态与订单一致
+        db.add(
+            ShopCommission(
+                order_id=int(order.id),
+                promoter_user_id=int(promoter_id),
+                merchant_id=int(product.merchant_id),
+                product_id=int(product.id),
+                base_cents=int(plan.base_cents or 0),
+                rate_bp=int(plan.rate_bp or 0),
+                amount_cents=int(commission_cents),
+                status=str(order.commission_status or "pending"),
+                reason="",
+            )
+        )
     db.commit()
     db.refresh(order)
     return {
