@@ -165,50 +165,8 @@ def test_retry_clip_without_materials_strips_groups_and_materials(monkeypatch):
     assert row.status == "processing"
 
 
-def test_profile_training_video_is_shrunk_before_submit(monkeypatch):
-    """数字人分身：训练视频超 2000x2000 时提交前先换成压缩副本。"""
-    async def fake_download(_url, **_kwargs):
-        return b"original-video", "video/mp4"
-
-    def fake_shrink(**_kwargs):
-        return b"shrunk-video"
-
-    def fake_save(data, ext, content_type):
-        assert data == b"shrunk-video"
-        return "asset-9", "asset-9.mp4", len(data), "https://tos.example/asset-9.mp4"
-
-    monkeypatch.setattr(dh, "_probe_material_dimensions", lambda _url: (1080, 2400))
-    monkeypatch.setattr(dh, "_download_media_bytes", fake_download)
-    monkeypatch.setattr(dh, "_shrink_material_bytes", fake_shrink)
-    monkeypatch.setattr(dh, "_save_bytes_or_tos", fake_save)
-
-    payload = {"videoUrl": "https://tos.example/big.mp4", "authVideoUrl": "https://tos.example/small.mp4", "authText": "x"}
-    report = asyncio.run(dh._ensure_profile_payload_within_shanjian_limit(payload))
-
-    assert payload["videoUrl"] == "https://tos.example/asset-9.mp4"
-    assert report["videoUrl"] == "shrunk"
-
-
-def test_profile_training_video_within_limit_kept(monkeypatch):
-    monkeypatch.setattr(dh, "_probe_material_dimensions", lambda _url: (1918, 1038))
-    payload = {"videoUrl": "https://tos.example/ok.mp4", "authText": "x"}
-    report = asyncio.run(dh._ensure_profile_payload_within_shanjian_limit(payload))
-    assert payload["videoUrl"] == "https://tos.example/ok.mp4"
-    assert report == {"videoUrl": "ok"}
-
-
-def test_profile_training_video_shrink_failure_reports_clear_error(monkeypatch):
-    async def fake_download(_url, **_kwargs):
-        raise HTTPException(status_code=400, detail="下载媒体失败")
-
-    monkeypatch.setattr(dh, "_probe_material_dimensions", lambda _url: (2160, 3840))
-    monkeypatch.setattr(dh, "_download_media_bytes", fake_download)
-
-    payload = {"videoUrl": "https://tos.example/huge.mp4", "authText": "x"}
-    try:
-        asyncio.run(dh._ensure_profile_payload_within_shanjian_limit(payload))
-        raise AssertionError("should raise")
-    except HTTPException as exc:
-        assert exc.status_code == 400
-        assert "2000x2000" in exc.detail
-        assert "shrink_failed" in exc.detail
+def test_shanjian_material_rejection_detected():
+    """云端不再转码，但仍要认得上游的分辨率超限报错。"""
+    assert dh._is_shanjian_material_rejection("InvalidFile.Resolution: 2000x2000")
+    assert dh._is_shanjian_material_rejection("", {"message": "视频素材分辨率不能超过2000x2000"})
+    assert not dh._is_shanjian_material_rejection("ok")

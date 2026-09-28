@@ -12526,6 +12526,46 @@
       return data;
     }
 
+    // 数字人 2.0 训练素材分辨率上限（闪剪限制）：在手机本地读，不消耗服务器
+    const SHANJIAN_TRAINING_MAX_EDGE = 2000;
+
+    function readLocalMediaEdge(file) {
+      return new Promise((resolve) => {
+        if (!file || !file.type) return resolve(0);
+        let url = "";
+        try { url = URL.createObjectURL(file); } catch (err) { return resolve(0); }
+        const done = (edge) => {
+          try { URL.revokeObjectURL(url); } catch (err) { /* ignore */ }
+          resolve(Number(edge) || 0);
+        };
+        if (/^image\//i.test(file.type)) {
+          const img = new Image();
+          img.onload = () => done(Math.max(img.naturalWidth || 0, img.naturalHeight || 0));
+          img.onerror = () => done(0);
+          img.src = url;
+          return;
+        }
+        if (/^video\//i.test(file.type)) {
+          const video = document.createElement("video");
+          video.preload = "metadata";
+          video.onloadedmetadata = () => done(Math.max(video.videoWidth || 0, video.videoHeight || 0));
+          video.onerror = () => done(0);
+          video.src = url;
+          return;
+        }
+        done(0);
+      });
+    }
+
+    // 超限素材不在云端压（服务器压力）：直接在手机上提示换素材 / 到 online 提交
+    async function shanjianTrainingMaterialEdgeError(file, label) {
+      const edge = await readLocalMediaEdge(file);
+      if (edge > SHANJIAN_TRAINING_MAX_EDGE) {
+        return `${label}分辨率 ${edge}px 超过 ${SHANJIAN_TRAINING_MAX_EDGE}x${SHANJIAN_TRAINING_MAX_EDGE}：请到 online（本机）里提交（会自动压好副本），或换一个分辨率更小的素材。`;
+      }
+      return "";
+    }
+
     async function submitAssetAvatarForm(evt) {
       evt.preventDefault();
       const selectedFile = selectedFilesForInput("assetAvatarFile")[0] || null;
@@ -12547,6 +12587,10 @@
           return toast(`授权说明必须使用当前品牌“${brandName}”`);
         }
         if (!$("assetAvatarAgree")?.checked) return toast("请先确认已取得形象本人授权");
+        const sourceEdgeError = await shanjianTrainingMaterialEdgeError(file, sourceType === "video" ? "训练视频" : "训练图片");
+        if (sourceEdgeError) return toast(sourceEdgeError);
+        const authEdgeError = await shanjianTrainingMaterialEdgeError(authFile, "授权视频");
+        if (authEdgeError) return toast(authEdgeError);
       }
       const btn = $("assetAvatarSubmit");
       const oldText = btn ? btn.textContent : "";
