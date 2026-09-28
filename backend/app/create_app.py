@@ -51,6 +51,7 @@ from .api.shanjian_digital_human import router as shanjian_digital_human_router
 from .api.provider_balances import router as provider_balances_router
 from .api.meshy_proxy import router as meshy_proxy_router
 from .api.runtime_monitor import router as runtime_monitor_router
+from .api.shop import cms_router as shop_cms_router, router as shop_router
 from .api.aliyun_wan_role import router as aliyun_wan_role_router
 from .api.wechat_oa import router as wechat_oa_router
 from .api.messenger import router as messenger_router
@@ -1775,6 +1776,8 @@ def create_app() -> FastAPI:
     app.include_router(provider_balances_router, prefix="")
     app.include_router(meshy_proxy_router, prefix="")
     app.include_router(runtime_monitor_router, prefix="")
+    app.include_router(shop_router, prefix="")
+    app.include_router(shop_cms_router, prefix="")
     app.include_router(aliyun_wan_role_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
