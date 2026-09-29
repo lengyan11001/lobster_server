@@ -279,6 +279,51 @@ def fallback_price_from_table(price: Dict[str, Any], body: Dict[str, Any]) -> "o
     return Decimal("0")
 
 
+# 界面里一律显示我们的价：报价/估价响应里的这些价格字段，一律改写成我们的价
+_PRICE_KEYS = {"credits", "credit", "estimated_credits", "total_credits", "estimate_credits",
+               "points", "money", "price", "cost", "fee", "amount", "estimated_price", "total_price"}
+
+
+def our_price_for_display(model: str, body: Dict[str, Any]) -> "object":
+    """只用定价表算价（不查余额），供「界面显示」用；算不出返回 None。"""
+    from decimal import Decimal
+
+    from ..services.sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing
+
+    price = fetch_model_pricing(model)
+    if not price:
+        return None
+    version_price = version_base_price(model, body)
+    if version_price is not None:
+        return apply_vip_discount(price, version_price) if price.get("vip_discount") else version_price
+    estimate = estimate_credits_from_pricing(price, body or {})
+    if estimate and Decimal(str(estimate)) > 0:
+        if price.get("vip_discount"):
+            return apply_vip_discount(price, estimate)
+        return apply_canvas_markup(model, estimate)
+    base = fallback_price_from_table(price, body or {})
+    if base and Decimal(str(base)) > 0:
+        if price.get("vip_discount"):
+            return apply_vip_discount(price, base)
+        return base * Decimal(str(CANVAS_PRICE_MARKUP))
+    return None
+
+
+def rewrite_prices(node: Any, amount: "object") -> Any:
+    """把报价响应里的价格字段递归改写成我们的价（其它字段不动）。"""
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if isinstance(key, str) and key.lower() in _PRICE_KEYS and isinstance(value, (int, float)):
+                out[key] = float(amount)
+            else:
+                out[key] = rewrite_prices(value, amount)
+        return out
+    if isinstance(node, list):
+        return [rewrite_prices(item, amount) for item in node]
+    return node
+
+
 def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]) -> "object":
     """按**我们自己的定价表**估算这次要扣多少积分（余额不足直接 402）。
 
@@ -666,6 +711,21 @@ async def canvas_proxy(
     if upstream.status_code >= 400 and pre_charged:
         refund_canvas(db, user, pre_charged, model, normalized, f"上游 {upstream.status_code}")
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
+
+    # 报价/估价：给界面看的价格一律换成我们的价（不出现 apiz 原本的价格）
+    if (upstream.status_code < 400 and model
+            and any(hint in normalized for hint in ("quote", "estimate", "price"))
+            and "json" in (upstream.headers.get("content-type") or "")):
+        display_price = our_price_for_display(model, body_json)
+        if display_price:
+            try:
+                payload = json.loads(upstream.content.decode("utf-8", "replace"))
+                rewritten = rewrite_prices(payload, display_price)
+                logger.info("[canvas] 报价改写为我们定价: %s -> %s（%s）", model, display_price, normalized)
+                return JSONResponse(content=rewritten, status_code=upstream.status_code)
+            except Exception as exc:
+                logger.warning("[canvas] 报价改写失败: %s", exc)
+
     media_type = upstream.headers.get("content-type") or "application/json"
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)
 
