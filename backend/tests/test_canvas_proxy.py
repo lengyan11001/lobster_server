@@ -129,8 +129,24 @@ def test_task_create_body_is_forwarded_with_server_key(client, monkeypatch):
     assert "sk-browser-placeholder" not in str(seen["headers"])
 
 
-def test_unknown_path_is_rejected(client):
-    assert client.get("/canvas-api/api/whatever").status_code == 403
+def test_business_paths_are_forwarded(client, monkeypatch):
+    """画布业务接口（项目模板、素材、任务）默认放行——白名单曾经把它们全 403 了。"""
+    for path in ["/canvas-api/api/v1/projects/public", "/canvas-api/api/get_draft_template", "/canvas-api/api/get_file_list"]:
+        seen = patch_upstream(monkeypatch)
+        resp = client.post(path, json={})
+        assert resp.status_code == 200, path
+        assert seen["url"].startswith("https://api.apiz.ai/"), path
+
+
+def test_money_and_login_paths_are_blocked(client):
+    for path in ["/canvas-api/api/login", "/canvas-api/api/get_qrcode", "/canvas-api/api/user_info",
+                 "/canvas-api/api/get_user_money", "/canvas-api/api/create_wx_order_info",
+                 "/canvas-api/api/v3/account/pay", "/canvas-api/api/admin/get_all_tickets"]:
+        assert client.post(path, json={}).status_code == 403, path
+
+
+def test_path_traversal_is_rejected(client):
+    assert client.get("/canvas-api/..%2F..%2Fetc%2Fpasswd").status_code in (403, 404)
 
 
 def test_create_app_still_compiles():
