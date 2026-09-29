@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Dict, Tuple
@@ -142,6 +143,56 @@ _EMPTY_OK_PATHS = (
     "api/get_activity_banner_list",
     "api/get_official_notification",
 )
+
+
+def _payload_model(body: Dict[str, Any]) -> str:
+    """从画布请求体里找模型 id（各家字段名不一样）。"""
+    if not isinstance(body, dict):
+        return ""
+    for key in ("model", "model_id", "modelId", "app_name", "model_name"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    params = body.get("params")
+    if isinstance(params, dict):
+        for key in ("model", "model_id", "modelId"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def settle_generation_credits(db: Session, user: User, response_body: bytes, model: str, path: str) -> float:
+    """生成结束后按上游回报的消耗扣积分（走已有的定价/流水逻辑）。返回实扣数量。"""
+    try:
+        from ..services.credit_ledger import append_credit_ledger
+        from ..services.credits_amount import quantize_credits, user_balance_decimal
+        from ..services.sutui_pricing import extract_upstream_reported_credits
+
+        body: Any = response_body
+        try:
+            body = json.loads(response_body.decode("utf-8", "replace"))
+        except Exception:
+            pass
+        charged = extract_upstream_reported_credits(body)
+        charged = quantize_credits(charged or 0)
+        if charged <= 0:
+            return 0.0
+        db.refresh(user)
+        balance = user_balance_decimal(user)
+        if balance <= 0:
+            return 0.0
+        real = min(charged, balance)
+        user.credits = balance - real
+        append_credit_ledger(db, user.id, -real, "canvas_generate", user.credits,
+                             description=f"画布生成：{model or path}", ref_type="canvas_api", ref_id=path,
+                             meta={"model": model, "reported": float(charged)})
+        db.commit()
+        logger.info("[canvas] 生成扣费 user=%s model=%s 扣=%s 余额=%s", user.id, model, real, user.credits)
+        return float(real)
+    except Exception as exc:  # 计费本身不能把生成结果搞丢
+        logger.warning("[canvas] 生成扣费失败（不影响生成）: %s", exc, exc_info=True)
+        return 0.0
 
 
 def _ok_list(items=None, total: int = 0, extra: Optional[Dict] = None) -> JSONResponse:
@@ -281,16 +332,10 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         return JSONResponse({"code": 200, "ok": True, **result, "data": result})
 
     if normalized == "api/get_draft_template":
-        # 公开模板内容：用速推 key 现拉（不是用户数据，不涉及串号）
-        try:
-            data = await hub.apiz_json("POST", "/api/get_draft_template",
-                                       {"page": int(body.get("page") or 1),
-                                        "page_size": int(body.get("page_size") or 12)})
-        except Exception as exc:
-            logger.info("[canvas] 拉草稿模板失败: %s", exc)
-            data = {"code": 200, "data": []}
-        items = data.get("data") if isinstance(data, dict) else []
-        return JSONResponse({"code": 200, "data": items or [], "list": items or []})
+        # Coze 草稿模板：拉进我们自己的库，之后读我们的库
+        await hub.sync_draft_templates(db, limit=int(body.get("page_size") or 60))
+        items = hub.list_draft_templates(db, limit=int(body.get("page_size") or 60))
+        return JSONResponse({"code": 200, "data": items, "list": items, "msg": "获取成功"})
 
     if normalized in _EMPTY_OK_PATHS:
         return _ok_list([], 0)
@@ -332,6 +377,20 @@ async def canvas_proxy(
                              "data": None, "path": normalized})
 
     body = await request.body()
+    body_json: Dict[str, Any] = {}
+    try:
+        parsed_body = json.loads(body.decode("utf-8", "replace")) if body else {}
+        if isinstance(parsed_body, dict):
+            body_json = parsed_body
+    except Exception:
+        body_json = {}
+    # 生成类先按速推定价表预检（余额不足 402 / 无价 400），调用后再按上游回报扣费
+    model = _payload_model(body_json)
+    if model:
+        from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
+
+        assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body_json, action_label="画布生成")
+
     headers = await _apiz_headers()
     for name in ("content-type", "accept", "accept-language"):
         value = request.headers.get(name)
@@ -354,6 +413,8 @@ async def canvas_proxy(
     except httpx.TransportError as exc:
         raise HTTPException(status_code=502, detail=f"apiz 连接失败：{exc}") from exc
 
+    if upstream.status_code < 400 and model:
+        settle_generation_credits(db, user, upstream.content, model, normalized)
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
     media_type = upstream.headers.get("content-type") or "application/json"
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)

@@ -126,6 +126,12 @@ def test_forwarding_injects_server_key_and_passes_status_through(client, monkeyp
 
 
 def test_task_create_body_is_forwarded_with_server_key(client, monkeypatch):
+    from decimal import Decimal
+
+    monkeypatch.setattr(
+        "backend.app.services.sutui_billing_gate.assert_pricing_pre_deduct_allows_upstream_or_http",
+        lambda *a, **k: Decimal("1"),
+    )
     seen = patch_upstream(monkeypatch, FakeResponse(content=b'{"code": 200, "data": {"task_id": "t-1"}}'))
     resp = client.post(
         "/canvas-api/api/v3/tasks/create",
@@ -259,3 +265,60 @@ def test_public_templates_are_synced_into_our_library(client, monkeypatch):
     monkeypatch.setattr(canvas_hub, "apiz_json", None)
     again = client.post("/canvas-api/api/v1/projects/public?skip=0&limit=20", json={})
     assert [p["uuid"] for p in again.json()["projects"]] == ["tpl-1"]
+
+
+def test_draft_templates_are_stored_in_our_library(client, monkeypatch):
+    """Coze 草稿模板：用速推 key 拉一次 -> 入我们的库 -> 之后读我们的库。"""
+
+    async def fake_apiz(method, path, body=None, **kwargs):
+        return {"code": 200, "data": [
+            {"id": 164, "title": "一键生成儿童绘本视频", "img_url": "https://img/1.png",
+             "video_url": "https://v/1.mp4", "url": "https://www.coze.cn/s/abc/", "user_name": "coze",
+             "sort": 999999},
+        ]}
+
+    monkeypatch.setattr(canvas_hub, "apiz_json", fake_apiz)
+    monkeypatch.setattr(canvas_hub, "_draft_sync_at", 0.0)
+
+    first = client.post("/canvas-api/api/get_draft_template", json={"page": 1, "page_size": 12})
+    assert first.status_code == 200, first.text
+    rows = first.json()["data"]
+    assert rows[0]["title"] == "一键生成儿童绘本视频"
+    assert rows[0]["img_url"] == "https://img/1.png"
+
+    monkeypatch.setattr(canvas_hub, "apiz_json", None)
+    again = client.post("/canvas-api/api/get_draft_template", json={"page": 1, "page_size": 12})
+    assert again.json()["data"][0]["url"] == "https://www.coze.cn/s/abc/"
+
+
+def test_generation_precheck_blocks_when_no_credits(client, monkeypatch):
+    """生成类：余额不足/无定价时先拦下来，不能白花服务器的 key。"""
+    from fastapi import HTTPException
+
+    def deny(*args, **kwargs):
+        raise HTTPException(status_code=402, detail="积分不足")
+
+    monkeypatch.setattr(
+        "backend.app.services.sutui_billing_gate.assert_pricing_pre_deduct_allows_upstream_or_http", deny
+    )
+
+    def boom(*args, **kwargs):
+        raise AssertionError("预检没过就不该调用上游")
+
+    monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient", boom)
+    resp = client.post("/canvas-api/api/create_video_task", json={"model": "minimax/h3", "prompt": "x"})
+    assert resp.status_code == 402
+
+
+def test_generation_relay_goes_to_apiz_with_server_key(client, monkeypatch):
+    from decimal import Decimal
+
+    monkeypatch.setattr(
+        "backend.app.services.sutui_billing_gate.assert_pricing_pre_deduct_allows_upstream_or_http",
+        lambda *a, **k: Decimal("1"),
+    )
+    seen = patch_upstream(monkeypatch, FakeResponse(content=b'{"code": 200, "data": {"task_id": "t-9"}}'))
+    resp = client.post("/canvas-api/api/create_video_task", json={"model": "minimax/h3"})
+    assert resp.status_code == 200
+    assert seen["url"] == "https://api.apiz.ai/api/create_video_task"
+    assert seen["headers"]["Authorization"] == "Bearer sk-server-key"

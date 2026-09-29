@@ -52,6 +52,20 @@ canvas_project_table = Table(
     Column("updated_at", Float, nullable=False, default=0.0),
 )
 
+canvas_draft_template_table = Table(
+    "canvas_draft_template",
+    Base.metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("source_id", Integer, nullable=False, unique=True),
+    Column("title", String(255), nullable=False, default=""),
+    Column("img_url", Text, nullable=False, default=""),
+    Column("video_url", Text, nullable=False, default=""),
+    Column("url", Text, nullable=False, default=""),
+    Column("user_name", String(128), nullable=False, default=""),
+    Column("sort", Integer, nullable=False, default=0),
+    Column("synced_at", Float, nullable=False, default=0.0),
+)
+
 canvas_asset_table = Table(
     "canvas_asset",
     Base.metadata,
@@ -69,7 +83,8 @@ def ensure_tables(db: Session) -> None:
     global _tables_ready
     if _tables_ready:
         return
-    Base.metadata.create_all(bind=db.get_bind(), tables=[canvas_project_table, canvas_asset_table])
+    Base.metadata.create_all(bind=db.get_bind(),
+                             tables=[canvas_project_table, canvas_asset_table, canvas_draft_template_table])
     _tables_ready = True
 
 
@@ -158,6 +173,61 @@ async def sync_public_templates(db: Session, *, limit: int = 100, force: bool = 
     _template_sync_at = now
     logger.info("[canvas] 公开模板已同步进我们的库：%d 条", saved)
     return saved
+
+
+_draft_sync_at = 0.0
+
+
+async def sync_draft_templates(db: Session, *, limit: int = 60, force: bool = False) -> int:
+    """Coze 草稿模板也拉进我们自己的库（公开内容，TTL 30 分钟）。"""
+    global _draft_sync_at
+    now = time.time()
+    if not force and _draft_sync_at and (now - _draft_sync_at) < _TEMPLATE_SYNC_TTL:
+        return 0
+    try:
+        payload = await apiz_json("POST", "/api/get_draft_template", {"page": 1, "page_size": limit})
+    except Exception as exc:
+        logger.info("[canvas] 同步草稿模板失败，继续用库里已有的: %s", exc)
+        return 0
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return 0
+    saved = 0
+    for item in rows:
+        if not isinstance(item, dict) or item.get("id") in (None, ""):
+            continue
+        params = {
+            "sid": int(item.get("id")),
+            "title": str(item.get("title") or "")[:255],
+            "img": str(item.get("img_url") or ""),
+            "video": str(item.get("video_url") or ""),
+            "url": str(item.get("url") or ""),
+            "user_name": str(item.get("user_name") or "")[:128],
+            "sort": int(item.get("sort") or 0),
+            "now": now,
+        }
+        exists = db.execute(text("SELECT id FROM canvas_draft_template WHERE source_id = :sid"), params).fetchone()
+        if exists is None:
+            db.execute(text("INSERT INTO canvas_draft_template (source_id, title, img_url, video_url, url,"
+                            " user_name, sort, synced_at) VALUES (:sid, :title, :img, :video, :url, :user_name,"
+                            " :sort, :now)"), params)
+        else:
+            db.execute(text("UPDATE canvas_draft_template SET title = :title, img_url = :img, video_url = :video,"
+                            " url = :url, user_name = :user_name, sort = :sort, synced_at = :now"
+                            " WHERE source_id = :sid"), params)
+        saved += 1
+    db.commit()
+    _draft_sync_at = now
+    logger.info("[canvas] 草稿模板已入我们的库：%d 条", saved)
+    return saved
+
+
+def list_draft_templates(db: Session, limit: int = 60) -> List[Dict[str, Any]]:
+    rows = db.execute(text("SELECT * FROM canvas_draft_template ORDER BY sort DESC, id DESC LIMIT :limit"),
+                      {"limit": max(1, min(200, limit))}).fetchall()
+    return [{"id": r.source_id, "title": r.title, "img_url": r.img_url, "video_url": r.video_url,
+             "url": r.url, "user_name": r.user_name, "sort": r.sort, "status": 1,
+             "time": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(r.synced_at or 0))} for r in rows]
 
 
 def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, Any]:
