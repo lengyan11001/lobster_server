@@ -28,18 +28,52 @@ from .auth import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_BLOCKED_PREFIXES: Tuple[str, ...] = (
-    # 登录 / 注册 / 验证码：画布自带账号体系一律不用（登录态由服务器侧 JWT + 服务器 key 提供）
+# 只中转「生成」类：模型/任务/语音/字幕/工具/素材转码等（用服务器速推 key）
+_RELAY_PREFIXES: Tuple[str, ...] = (
+    "api/v3/tasks",
+    "api/v3/models",
+    "api/v3/mcp/models",
+    "api/v3/voices",
+    "api/v3/captioning",
+    "api/v3/tools",
+    "api/v3/skills",
+    "api/v3/uploads",
+    "api/v3/apikeys",          # 只回占位 sk-（见下方特判）
+    "api/v2/tasks",
+    "api/fal/",
+    "api/jimeng/",
+    "api/flux_kontext/",
+    "api/cozetask/",
+    "api/doubao_task_list",
+    "api/create_",
+    "api/text_gen_video",
+    "api/change_",
+    "api/get_dall_task",
+    "api/get_video_task",
+    "api/get_audio_task",
+    "api/get_face_task",
+    "api/get_video_gen_task",
+    "api/get_change_video_task",
+    "api/get_lip_sync_tasks",
+    "api/get_video_to_text_task",
+    "api/get_video_info_by_id",
+    "api/video/",
+    "api/voice/",
+    "api/scene/",
+    "api/storyboard/submit_",
+    "api/storyboard/get_voice_list",
+    "api/storyboard/multi_voice_tts",
+    "api/upload",
+)
+
+# 账号 / 钱 / Key / 后台：既不由我们实现，也不许中转（先于中转判断）
+_REFUSE_PREFIXES: Tuple[str, ...] = (
     "api/login",
     "api/register2",
     "api/unregister",
     "api/get_qrcode",
     "api/check_qrcode_status",
     "api/get_message_code",
-    "api/update_user_info",
-    "api/update_user_token",
-    # 钱：余额 / 订单 / 充值 / 提现 / 优惠券 / 激活码 / 合同
-    "api/deduct_user_money",
     "api/create_wx_order_info",
     "api/create_alipay_order_info",
     "api/get_order_info",
@@ -53,17 +87,11 @@ _BLOCKED_PREFIXES: Tuple[str, ...] = (
     "api/get_contract_info",
     "api/submit_contract",
     "api/courses/purchase",
-    # 资产库 / 上传：暂时挡上，改由**我们自己的服务器**实现（apiz 是共享账号，
-    # 放行会让不同用户互相看到对方的上传；sutui key 只留给"生成"类调用）
-    "api/get_sts_token",
-    # Key 管理 / 站点账号安全
-    "api/get_api_token",
+    "api/deduct_user_money",
     "api/reset_api_token",
     "api/v3/keys",
     "api/v3/account/pay",
     "api/v3/account/packages",
-    "api/v3/apikeys",
-    # 后台
     "api/admin",
 )
 
@@ -91,11 +119,17 @@ def _normalize_path(path: str) -> str:
     return str(path or "").strip().lstrip("/")
 
 
-def _path_blocked(path: str) -> bool:
-    for blocked in _BLOCKED_PREFIXES:
-        if path == blocked or path.startswith(blocked):
+def _path_refused(path: str) -> bool:
+    """账号/钱/Key/后台：我们自己不做，也绝不拿共享 key 去替用户操作。"""
+    for prefix in _REFUSE_PREFIXES:
+        if path == prefix or path.startswith(prefix):
             return True
     return False
+
+
+def _path_relayable(path: str) -> bool:
+    """只有「生成」类才中转 apiz。"""
+    return any(path == p.rstrip("/") or path.startswith(p) for p in _RELAY_PREFIXES)
 
 
 _EMPTY_OK_PATHS = (
@@ -283,13 +317,19 @@ async def canvas_proxy(
     if normalized.startswith("api/v3/apikeys"):
         return JSONResponse({"code": 200, "data": {"items": [{"status": "active", "key": "sk-lobster-canvas-proxy"}]}})
 
+    # 顺序：先由我们自己的实现回答 -> 账号/钱类拒绝 -> 剩下的只有「生成」中转，其余明确回「未接入」
     hub_response = await _hub_route(normalized, request, user, db)
     if hub_response is not None:
         return hub_response
 
-    if _path_blocked(normalized):
-        logger.warning("[canvas] blocked path=%s user=%s", normalized, getattr(user, "id", ""))
-        raise HTTPException(status_code=403, detail="该接口不在画布允许范围内")
+    if _path_refused(normalized):
+        logger.warning("[canvas] refused path=%s user=%s", normalized, getattr(user, "id", ""))
+        raise HTTPException(status_code=403, detail="该接口属于账号/资金/Key 管理，画布内不提供")
+
+    if not _path_relayable(normalized):
+        logger.info("[canvas] not-implemented path=%s user=%s", normalized, getattr(user, "id", ""))
+        return JSONResponse({"code": 0, "msg": "该功能还没接到我们自己的服务器（生成类之外的都在逐步自建）",
+                             "data": None, "path": normalized})
 
     body = await request.body()
     headers = await _apiz_headers()
