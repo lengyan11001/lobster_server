@@ -288,31 +288,61 @@ _PRICE_KEYS = {"credits", "credit", "estimated_credits", "total_credits", "estim
 
 
 def our_price_for_display(model: str, body: Dict[str, Any]) -> "object":
-    """只用定价表算价（不查余额），供「界面显示」用；算不出返回 None。"""
+    """只用定价表算价（不查余额）；任何异常都不外抛（报价接口不能 500），失败返回保底价或 None。"""
     from decimal import Decimal
 
     from ..services.sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing
 
+    price = None
     try:
         price = fetch_model_pricing(model)
-    except Exception as exc:  # noqa: BLE001 取价失败不能让报价接口 500
-        logger.info("[canvas] 取定价失败: %s", exc)
-        return None
-    if not price:
-        return None
-    version_price = version_base_price(model, body)
-    if version_price is not None:
-        return apply_vip_discount(price, version_price) if price.get("vip_discount") else version_price
-    estimate = estimate_credits_from_pricing(price, body or {})
-    if estimate and Decimal(str(estimate)) > 0:
-        if price.get("vip_discount"):
-            return apply_vip_discount(price, estimate)
-        return apply_canvas_markup(model, estimate)
-    base = fallback_price_from_table(price, body or {})
-    if base and Decimal(str(base)) > 0:
-        if price.get("vip_discount"):
-            return apply_vip_discount(price, base)
-        return base * Decimal(str(CANVAS_PRICE_MARKUP))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[canvas] 取定价失败: %s", exc)
+
+    base_price = None
+    if isinstance(price, dict):
+        raw = price.get("base_price")
+        try:
+            if raw not in (None, ""):
+                base_price = Decimal(str(raw))
+        except Exception:
+            base_price = None
+
+    try:
+        if price:
+            version_price = version_base_price(model, body)
+            if version_price is not None:
+                return apply_vip_discount(price, version_price) if price.get("vip_discount") else version_price
+            try:
+                estimate = estimate_credits_from_pricing(price, body or {})
+            except Exception as exc:  # noqa: BLE001 参数不认识时不该 500
+                logger.info("[canvas] 定价表估算失败(model=%s): %s", model, exc)
+                estimate = None
+            if estimate and Decimal(str(estimate)) > 0:
+                if price.get("vip_discount"):
+                    return apply_vip_discount(price, estimate)
+                return apply_canvas_markup(model, estimate)
+            try:
+                base = fallback_price_from_table(price, body or {})
+            except Exception as exc:  # noqa: BLE001
+                logger.info("[canvas] 兜底计价失败(model=%s): %s", model, exc)
+                base = None
+            if base and Decimal(str(base)) > 0:
+                if price.get("vip_discount"):
+                    return apply_vip_discount(price, base)
+                return base * Decimal(str(CANVAS_PRICE_MARKUP))
+    except Exception as exc:  # noqa: BLE001 上面的加价/会员倍率也不许外抛
+        logger.warning("[canvas] 计价异常(model=%s): %s", model, exc, exc_info=True)
+
+    # 保底价：定价表里的基础价（乘会员倍率/加价系数），保证界面有价可显示
+    if base_price and base_price > 0:
+        try:
+            if isinstance(price, dict) and price.get("vip_discount"):
+                return apply_vip_discount(price, base_price)
+            return apply_canvas_markup(model, base_price)
+        except Exception:
+            return base_price
+    logger.info("[canvas] %s 完全没有可用定价（model=%s）", "保底也没有", model)
     return None
 
 
