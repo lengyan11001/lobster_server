@@ -1866,7 +1866,7 @@ def create_app() -> FastAPI:
 
     logger.info("[启动] create_app 完成")
     try:
-        _canvas_web_dir = _BASE_DIR / "canvas_web_dist"
+        _canvas_web_dir = Path(__file__).resolve().parent.parent.parent / "canvas_web_dist"
         if _canvas_web_dir.exists():
             app.mount(
                 "/canvas-web",
