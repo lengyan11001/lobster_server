@@ -293,7 +293,11 @@ def our_price_for_display(model: str, body: Dict[str, Any]) -> "object":
 
     from ..services.sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing
 
-    price = fetch_model_pricing(model)
+    try:
+        price = fetch_model_pricing(model)
+    except Exception as exc:  # noqa: BLE001 取价失败不能让报价接口 500
+        logger.info("[canvas] 取定价失败: %s", exc)
+        return None
     if not price:
         return None
     version_price = version_base_price(model, body)
@@ -371,22 +375,25 @@ def _local_quote_response(path: str, body: Dict[str, Any]) -> JSONResponse:
     price = our_price_for_display(model, body) if model else None
     amount = float(price) if price else 0.0
     logger.info("[canvas] 本地报价 %s model=%s -> %s", path, model, amount)
-    payload: Dict[str, Any] = {
-        "code": 200,
-        "msg": "ok",
-        "credits": amount,
+    inner: Dict[str, Any] = {
+        "quote_available": True,
+        "billing_mode": "prepaid",
+        "currency": "points",
+        "estimated_points": amount,
+        "estimated_price": amount,
+        "estimated_credits": amount,
+        "total_credits": amount,
         "price": amount,
+        "credits": amount,
         "money": amount,
-        "data": {
-            "credits": amount,
-            "price": amount,
-            "money": amount,
-            "estimated_credits": amount,
-            "total_credits": amount,
-            "model": model,
-            "unit": "credits",
-        },
+        "points": amount,
+        "model": model,
+        "unit": "credits",
     }
+    payload: Dict[str, Any] = {"code": 200, "msg": "ok", "quote_available": True,
+                               "billing_mode": "prepaid", "currency": "points",
+                               "estimated_points": amount, "price": amount,
+                               "credits": amount, "points": amount, "data": inner}
     return JSONResponse(payload)
 
 
