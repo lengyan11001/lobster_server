@@ -145,6 +145,14 @@ _EMPTY_OK_PATHS = (
 )
 
 
+# 只有「真正下单」的接口才结算；报价/估价/列表/查询一律不扣（曾被 tasks/quote 误扣 4 分/次）
+_SETTLE_PATH_HINTS = ("/create", "/submit", "create_", "text_gen_video", "storyboard/submit_")
+
+
+def _should_settle(path: str) -> bool:
+    return any(hint in path for hint in _SETTLE_PATH_HINTS)
+
+
 def _payload_model(body: Dict[str, Any]) -> str:
     """从画布请求体里找模型 id（各家字段名不一样）。"""
     if not isinstance(body, dict):
@@ -424,7 +432,8 @@ async def canvas_proxy(
         raise HTTPException(status_code=502, detail=f"apiz 连接失败：{exc}") from exc
 
     if upstream.status_code < 400 and model:
-        settle_generation_credits(db, user, upstream.content, model, normalized)
+        if _should_settle(normalized):
+            settle_generation_credits(db, user, upstream.content, model, normalized)
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
     media_type = upstream.headers.get("content-type") or "application/json"
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)
