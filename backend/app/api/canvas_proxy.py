@@ -180,7 +180,15 @@ _CANVAS_MARKUP_MODELS = {
     "minimax/voice-design": 1.5,
     "minimax/voice-clone": 1.5,
     "minimax/t2a": 1.5,
+    # seedance 这类 token 结算的模型本来就贵，按 1.2 收（2026-09-29 口径）
+    "bytedance/seedance-2.5": 1.2,
+    "apiz/seedance-2.5": 1.2,
+    "doubao-seedance-2-0-fast-260128": 1.2,
+    "doubao-seedance-2-0-260128-betydance": 1.2,
 }
+
+# token 后结算、且表里没写「积分/秒」的模型：先按同族秒价估（避免算不出价直接白送）
+_TOKEN_MODEL_RATE_FALLBACK = 100.0
 
 
 def apply_canvas_markup(model: str, amount: "object") -> "object":
@@ -262,11 +270,14 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
     import re as _re
 
     per_second = [float(x) for x in _re.findall(r"(\d+(?:\.\d+)?)\s*积分/秒", desc)]
-    if per_second:
+    if per_second or (price or {}).get("price_type") == "token_postcharge":
         duration = float(body.get("duration") or body.get("video_length") or body.get("seconds") or 5)
-        base = max(per_second) * duration
-        logger.info("[canvas] %s token 类按秒价兜底: %s 积分/秒 × %ss × 1.5", model, max(per_second), duration)
-        return Decimal(str(base)) * Decimal(str(CANVAS_PRICE_MARKUP))
+        rate = max(per_second) if per_second else _TOKEN_MODEL_RATE_FALLBACK
+        base = rate * duration
+        factor = _CANVAS_MARKUP_MODELS.get(model, float(CANVAS_PRICE_MARKUP))
+        logger.info("[canvas] %s token 类按秒价估算: %s 积分/秒 × %ss × %s = %s",
+                    model, rate, duration, factor, Decimal(str(base)) * Decimal(str(factor)))
+        return Decimal(str(base)) * Decimal(str(factor))
         logger.info("[canvas] %s 连兜底也算不出价（type=%s），本次不扣", model, price.get("price_type"))
     return Decimal("0")
 
