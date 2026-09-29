@@ -19,12 +19,16 @@ import uuid as uuidlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# 上传产物对外的公开只读前缀（apiz 生成时要能直接取图，所以不能挂在需要登录的画布接口下）
+PUBLIC_MEDIA_PREFIX = "/canvas-media"
 
 ROOT = Path(__file__).resolve().parents[3]
 UPLOAD_DIR = ROOT / "data" / "canvas_uploads"
@@ -406,12 +410,34 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 def store_upload(user_id: int, filename: str, content_type: str, data: bytes) -> str:
     """把上传落盘，返回可对外访问的绝对 URL（这个 URL 会喂给生成接口）。"""
     suffix = Path(filename or "").suffix[:10] or (mimetypes.guess_extension(content_type or "") or ".bin")
-    target_dir = UPLOAD_DIR / str(user_id)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    name = str(filename or "file")
+    if not name.lower().endswith(suffix.lower()):
+        name = f"{name}{suffix}"
+    return store_upload_key(new_upload_key(user_id, name), data)
+
+
+@router.get(PUBLIC_MEDIA_PREFIX + "/{rel:path}", include_in_schema=False)
+def public_canvas_media(rel: str) -> FileResponse:
+    """公开只读：给 apiz 拉参考图/上传产物用（带随机 key，不含用户隐私列表）。"""
+    return media_response(rel)
+
+
+def new_upload_key(user_id: int, filename: str) -> str:
+    suffix = Path(filename or "").suffix[:10] or ".bin"
     safe = _SAFE_NAME.sub("_", Path(filename or "").stem)[:40] or "file"
-    name = f"{int(time.time())}_{uuidlib.uuid4().hex[:8]}_{safe}{suffix}"
-    (target_dir / name).write_bytes(data)
-    return f"{public_base()}/canvas-api/media/{user_id}/{name}"
+    return f"{user_id}/{uuidlib.uuid4().hex[:16]}_{safe}{suffix}"
+
+
+def store_upload_key(key: str, data: bytes) -> str:
+    """按给定 key 落盘（key 由我们自己签发），返回公开可取的绝对 URL。"""
+    root = UPLOAD_DIR.resolve()
+    parts = [part for part in str(key or "").replace(chr(92), "/").split("/") if part]
+    if len(parts) < 2 or any(part == ".." for part in parts):
+        raise HTTPException(status_code=400, detail="上传 key 不合法")
+    target = root.joinpath(*parts)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return f"{public_base()}{PUBLIC_MEDIA_PREFIX}/" + "/".join(parts)
 
 
 def resolve_media(rel: str) -> Path:
@@ -438,6 +464,7 @@ async def handle_upload(request: Request, user_id: int) -> Dict[str, Any]:
     """兼容两种上传：multipart 表单，或直接 PUT/POST 原始字节（预签名 URL 那种）。"""
     content_type = request.headers.get("content-type") or ""
     filename = request.query_params.get("name") or request.query_params.get("filename") or ""
+    key = request.query_params.get("key") or ""
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         upload: Optional[UploadFile] = None
@@ -455,6 +482,9 @@ async def handle_upload(request: Request, user_id: int) -> Dict[str, Any]:
         content_type = content_type or "application/octet-stream"
     if not data:
         raise HTTPException(status_code=400, detail="上传内容为空")
-    url = store_upload(user_id, filename or "file", content_type, data)
+    if key:
+        url = store_upload_key(key, data)
+    else:
+        url = store_upload(user_id, filename or "file", content_type, data)
     return {"url": url, "file_url": url, "name": filename or "file", "file_type": content_type,
             "file_size": len(data)}

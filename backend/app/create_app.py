@@ -50,6 +50,7 @@ from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.shanjian_digital_human import router as shanjian_digital_human_router
 from .api.provider_balances import router as provider_balances_router
 from .api.canvas_proxy import router as canvas_proxy_router
+from .api.canvas_hub import router as canvas_hub_public_router
 from .api.meshy_proxy import router as meshy_proxy_router
 from .api.runtime_monitor import router as runtime_monitor_router
 from .api.shop import cms_router as shop_cms_router, router as shop_router
@@ -1875,6 +1876,7 @@ def create_app() -> FastAPI:
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("Mount canvas-web static skipped: %s", e)
+    app.include_router(canvas_hub_public_router, prefix="")
     app.include_router(canvas_proxy_router, prefix="")
     return app
 

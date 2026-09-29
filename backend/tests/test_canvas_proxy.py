@@ -65,6 +65,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(canvas_hub, "UPLOAD_DIR", tmp_path / "uploads")
 
     app = FastAPI()
+    app.include_router(canvas_hub.router)
     app.include_router(canvas_proxy.router)
     app.dependency_overrides[get_current_user] = lambda: FakeUser()
     app.dependency_overrides[get_db] = lambda: session_factory()
@@ -224,8 +225,8 @@ def test_assets_upload_and_media_are_ours(client, monkeypatch):
     items = listing.json()["list"]
     assert len(items) == 1 and items[0]["file_url"] == url
 
-    rel = url.split("/canvas-api/media/", 1)[1]
-    media = client.get(f"/canvas-api/media/{rel}")
+    rel = url.split("/canvas-media/", 1)[1] if "/canvas-media/" in url else url.split("/canvas-api/media/", 1)[1]
+    media = client.get(f"/canvas-media/{rel}")
     assert media.status_code == 200
     assert media.content == b"hello-canvas-bytes"
     assert client.get("/canvas-api/media/..%2F..%2Fetc%2Fpasswd").status_code == 404
@@ -322,3 +323,21 @@ def test_generation_relay_goes_to_apiz_with_server_key(client, monkeypatch):
     assert resp.status_code == 200
     assert seen["url"] == "https://api.apiz.ai/api/create_video_task"
     assert seen["headers"]["Authorization"] == "Bearer sk-server-key"
+
+
+def test_upload_voucher_points_at_our_server(client, monkeypatch):
+    """上传凭证必须是「相对上传地址 + 我们服务器的公开 URL」，不能指到外站（否则浏览器 PUT 过去没登录态 -> 没授权）。"""
+    monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不许打 apiz")))
+    token = client.post("/canvas-api/api/get_cf_r2_token", json={"file_name": "pic.png", "content_type": "image/png"})
+    assert token.status_code == 200, token.text
+    data = token.json()["data"]
+    assert data["upload_url"].startswith("/canvas-api/api/upload?key=")
+    assert data["public_url"].endswith(data["file_key"])
+    assert data["public_url"].startswith("http")
+
+    put = client.put(data["upload_url"], content=b"png-bytes", headers={"Content-Type": "image/png"})
+    assert put.status_code == 200, put.text
+    assert put.json()["url"] == data["public_url"]
+
+    media = client.get(data["public_url"].split("/canvas-media/", 1)[1].join(["/canvas-media/", ""]))
+    assert media.status_code == 200 and media.content == b"png-bytes"

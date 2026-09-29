@@ -319,12 +319,15 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         return JSONResponse({"code": 200, "data": {"upload_url": "/canvas-api/api/upload", "token": "lobster-canvas",
                                                    "expires_in": 3600, "public_base": hub.public_base()}})
     if normalized == "api/get_cf_r2_token":
+        # 我们自己的「R2」：上传打相对地址（本机代理带登录态），产物落在我们服务器、公开只读可取
         name = str(body.get("file_name") or request.query_params.get("name") or "file")
-        base = hub.public_base()
+        key = hub.new_upload_key(uid, name)
         return JSONResponse({"code": 200, "data": {
-            "upload_url": f"{base}/canvas-api/api/upload?name={name}",
-            "public_url": f"{base}/canvas-api/api/upload?name={name}",
-            "file_url": f"{base}/canvas-api/api/upload?name={name}",
+            "upload_url": f"/canvas-api/api/upload?key={key}",
+            "public_url": f"{hub.public_base()}{hub.PUBLIC_MEDIA_PREFIX}/{key}",
+            "file_url": f"{hub.public_base()}{hub.PUBLIC_MEDIA_PREFIX}/{key}",
+            "file_key": key,
+            "content_type": str(body.get("content_type") or ""),
         }})
     if normalized in ("api/upload", "api/upload/", "api/user_upload"):
         result = await hub.handle_upload(request, uid)
