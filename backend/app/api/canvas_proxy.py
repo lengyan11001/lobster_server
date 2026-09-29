@@ -324,6 +324,38 @@ def rewrite_prices(node: Any, amount: "object") -> Any:
     return node
 
 
+def _is_quote_path(path: str) -> bool:
+    """报价/估价/预价类：一律由我们自己算，绝不请求 apiz。"""
+    if "create" in path or "submit" in path:
+        return False
+    return any(hint in path for hint in ("quote", "estimate", "price", "pre_deduct", "precheck"))
+
+
+def _local_quote_response(path: str, body: Dict[str, Any]) -> JSONResponse:
+    """本地报价：按我们自己的定价表算，返回我们自己的价。"""
+    model = _payload_model(body)
+    price = our_price_for_display(model, body) if model else None
+    amount = float(price) if price else 0.0
+    logger.info("[canvas] 本地报价 %s model=%s -> %s", path, model, amount)
+    payload: Dict[str, Any] = {
+        "code": 200,
+        "msg": "ok",
+        "credits": amount,
+        "price": amount,
+        "money": amount,
+        "data": {
+            "credits": amount,
+            "price": amount,
+            "money": amount,
+            "estimated_credits": amount,
+            "total_credits": amount,
+            "model": model,
+            "unit": "credits",
+        },
+    }
+    return JSONResponse(payload)
+
+
 def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]) -> "object":
     """按**我们自己的定价表**估算这次要扣多少积分（余额不足直接 402）。
 
@@ -661,6 +693,10 @@ async def canvas_proxy(
     if _path_refused(normalized):
         logger.warning("[canvas] refused path=%s user=%s", normalized, getattr(user, "id", ""))
         raise HTTPException(status_code=403, detail="该接口属于账号/资金/Key 管理，画布内不提供")
+
+    # 报价/估价类：本地算，绝不发给 apiz（界面显示的就是我们的价）
+    if _is_quote_path(normalized):
+        return _local_quote_response(normalized, body_json)
 
     if not _path_relayable(normalized):
         logger.info("[canvas] not-implemented path=%s user=%s", normalized, getattr(user, "id", ""))
