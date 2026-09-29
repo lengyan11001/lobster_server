@@ -171,3 +171,15 @@ def test_hypit_video_replication_is_off_until_granted(db_session, test_user):
     db_session.commit()
     flags = user_feature_flags(db_session, test_user.id)
     assert flags["hypit_video_replication_skill"] is True
+
+def test_canvas_studio_entry_is_off_until_granted(db_session, test_user):
+    """灵感画布（canvas_web）入口：开关存在但默认关，授权后才显示。"""
+    from backend.app.models import UserSkillVisibility
+
+    flags = user_feature_flags(db_session, test_user.id)
+    assert flags["canvas_studio_entry"] is False
+
+    db_session.add(UserSkillVisibility(user_id=test_user.id, package_id="canvas_studio_entry"))
+    db_session.commit()
+    flags = user_feature_flags(db_session, test_user.id)
+    assert flags["canvas_studio_entry"] is True

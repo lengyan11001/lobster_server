@@ -32,6 +32,7 @@ AI_MARKETING_ENTRY_ID = "ai_marketing_entry"
 PRIVATE_DOMAIN_ENTRY_ID = "private_domain_entry"
 OVERSEAS_PLATFORM_ENTRY_ID = "overseas_platform_entry"
 TUTORIAL_ENTRY_ID = "tutorial_entry"
+CANVAS_STUDIO_ENTRY_ID = "canvas_studio_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
 # 视频复刻（Hypit）开关：默认不开，需要时在管理后台按用户/代理商授权。
@@ -311,6 +312,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": TUTORIAL_ENTRY_ID,
+    },
+    {
+        "id": CANVAS_STUDIO_ENTRY_ID,
+        "name": "灵感画布入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": CANVAS_STUDIO_ENTRY_ID,
     },
     {
         "id": LOCAL_BESTSELLER_SKILL_ID,
