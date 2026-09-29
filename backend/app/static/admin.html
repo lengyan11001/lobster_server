@@ -1036,6 +1036,11 @@ body{background:#edf2f7}
   function toRow(node, index) {
     var n = node && typeof node === 'object' ? node : {};
     var payload = (n.plan && n.plan.payload) || {}, params = Object.assign({}, payload.params || {});
+    // 能力节点（数字人口播等）参数直接在 payload.payload 里：不合并这一层，
+    // H5/online 保存的节点在这里看不到已选参数。
+    if (String(payload.capability_id || '').trim() && payload.payload && typeof payload.payload === 'object') {
+      params = Object.assign({}, payload.payload, params);
+    }
     var key = String(n.ability_key || n.key || '').trim();
     var label = String(n.ability_label || n.label || '').trim();
     var note = String(n.note || '').trim();

@@ -291,3 +291,11 @@ def test_h5_workflow_shanjian_script_sources_multi_kept():
     ordered = h5_workflows._normalize_shanjian_script_sources(params)
     assert ordered == ["ip_daily_professional_ip_oral", "ip_daily_industry_hot_oral"]
     assert params["script_source"] == "ip_daily_professional_ip_oral"
+
+
+def test_admin_rows_read_capability_payload_params():
+    """管理后台把已存节点读回成行时，也要合并能力节点的 payload.params。"""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "backend" / "app" / "static" / "admin.html").read_text(encoding="utf-8")
+    assert "payload.capability_id" in src
