@@ -109,14 +109,39 @@ def _apiz_base() -> str:
     return str(base or "https://api.apiz.ai").strip().rstrip("/")
 
 
-async def _apiz_headers() -> Dict[str, str]:
-    """服务器配置的速推 key（池），没有单独的画布 key。"""
+async def apiz_token() -> str:
+    """服务器配置的速推 key（池）。"""
     from mcp.sutui_tokens import next_sutui_server_token_with_pool
 
     token, pool_key = await next_sutui_server_token_with_pool()
     if not token:
         raise HTTPException(status_code=503, detail=f"速推 key 未配置（pool={pool_key or 'none'}）")
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    return str(token)
+
+
+def _rewrite_body_token(body: bytes, token: str) -> bytes:
+    """画布把 token 放在请求体里（占位值），中转前换成服务器自己的 key，否则上游判「非法token」。"""
+    if not body:
+        return body
+    try:
+        payload = json.loads(body.decode("utf-8", "replace"))
+    except Exception:
+        return body
+    if not isinstance(payload, dict):
+        return body
+    changed = False
+    for key in ("token", "user_token", "access_token"):
+        if key in payload:
+            payload[key] = token
+            changed = True
+    if not changed:
+        return body
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+async def _apiz_headers() -> Dict[str, str]:
+    """服务器配置的速推 key（池），没有单独的画布 key。"""
+    return {"Authorization": f"Bearer {await apiz_token()}", "Accept": "application/json"}
 
 
 def _normalize_path(path: str) -> str:
@@ -807,7 +832,7 @@ async def canvas_proxy(
             upstream = await client.request(
                 request.method,
                 url,
-                content=body or None,
+                content=_rewrite_body_token(body, (headers.get("Authorization") or "").replace("Bearer ", "").strip()) or None,
                 headers=headers,
                 params=dict(request.query_params),
             )
