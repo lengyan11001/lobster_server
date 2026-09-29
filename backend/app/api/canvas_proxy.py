@@ -195,6 +195,30 @@ _TOKEN_MODEL_RATE_FALLBACK = 100.0
 CANVAS_VIP_LEVEL = os.environ.get("CANVAS_VIP_LEVEL", "0")
 
 
+# 按版本定价的模型：请求里带哪个版本就用哪个采购价（apiz 页面口径）
+# minimax/music-gen：music-2.5 = 100 积分/首、music-2.0 = 25 积分/首
+_VERSION_PRICE_OVERRIDES = {
+    ("minimax/music-gen", "2.0"): 25.0,
+    ("minimax/music-gen", "2.5"): 100.0,
+}
+
+
+def version_base_price(model: str, body: Dict[str, Any]) -> "object":
+    """请求里指明了版本时，用该版本的采购价（作为表价基数）。"""
+    import json as _json
+    from decimal import Decimal
+
+    if not any(key[0] == model for key in _VERSION_PRICE_OVERRIDES):
+        return None
+    blob = _json.dumps(body, ensure_ascii=False).lower()
+    for (m, version), price in _VERSION_PRICE_OVERRIDES.items():
+        if m != model:
+            continue
+        if version in blob:
+            return Decimal(str(price))
+    return None
+
+
 def apply_vip_discount(price: Dict[str, Any], amount: "object") -> "object":
     """定价表里写了 vip_discount 的模型：按会员等级倍率收（普通用户 2 倍）。"""
     from decimal import Decimal
@@ -276,6 +300,11 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
         return Decimal("0")
 
     price = fetch_model_pricing(model)
+    version_price = version_base_price(model, body)
+    if version_price is not None:
+        charged = apply_vip_discount(price, version_price) if price else version_price
+        logger.info("[canvas] %s 按版本价: base=%s -> 收 %s", model, version_price, charged)
+        return charged
     if estimate and Decimal(str(estimate)) > 0:
         if price and price.get("vip_discount"):
             return apply_vip_discount(price, estimate)
