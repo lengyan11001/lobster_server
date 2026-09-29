@@ -153,6 +153,46 @@ def _should_settle(path: str) -> bool:
     return any(hint in path for hint in _SETTLE_PATH_HINTS)
 
 
+# 画布加价系数：定价表算不出来的计价类型（composite_media_price / char_based），
+# 先按表里写明的单价 ×1.5 收（2026-09-29 用户口径）
+CANVAS_PRICE_MARKUP = os.environ.get("CANVAS_PRICE_MARKUP", "1.5")
+# 文档口径：1 元 = 100 积分
+CREDITS_PER_YUAN = 100.0
+
+
+def fallback_price_from_table(price: Dict[str, Any], body: Dict[str, Any]) -> "object":
+    """定价表里有价、但我们的估算函数不认的计价类型（复合媒体价 / 按字符），按描述里的单价算。"""
+    import re
+    from decimal import Decimal
+
+    desc = str(price.get("price_description") or "")
+    ptype = str(price.get("price_type") or "")
+    try:
+        if ptype == "composite_media_price":
+            duration = float(body.get("duration") or body.get("video_length") or body.get("seconds") or 5)
+            resolution = str(body.get("resolution") or body.get("quality") or "768P")
+            rate = None
+            for pattern in (rf"{re.escape(resolution)}\s*(\d+(?:\.\d+)?)\s*积分/秒",
+                            r"(\d+(?:\.\d+)?)\s*积分/秒"):
+                m = re.search(pattern, desc)
+                if m:
+                    rate = float(m.group(1))
+                    break
+            if rate is None:
+                return Decimal("0")
+            return Decimal(str(duration * rate))
+        if ptype == "char_based":
+            text = str(body.get("text") or body.get("prompt") or "")
+            m = re.search(r"(\d+(?:\.\d+)?)\s*元/万字符", desc)
+            if not m or not text:
+                return Decimal("0")
+            per_10k_yuan = float(m.group(1))
+            return Decimal(str(len(text) / 10000.0 * per_10k_yuan * CREDITS_PER_YUAN))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[canvas] 兜底算价失败: %s", exc)
+    return Decimal("0")
+
+
 def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]) -> "object":
     """按**我们自己的定价表**估算这次要扣多少积分（余额不足直接 402）。
 
@@ -163,13 +203,29 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
 
     from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 
+    from ..services.sutui_pricing import fetch_model_pricing
+
     try:
-        return assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body, action_label="画布生成")
+        estimate = assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body, action_label="画布生成")
     except HTTPException as exc:
         if getattr(exc, "status_code", 0) == 402:
             raise  # 余额不足：明确挡住
         logger.info("[canvas] 该模型没有我们的定价，先不扣费: %s (%s)", model, getattr(exc, "detail", ""))
         return Decimal("0")
+
+    if estimate and Decimal(str(estimate)) > 0:
+        return estimate
+
+    # 估算不出价（复合媒体价 / 按字符）：按表里写明的单价 ×加价系数收
+    price = fetch_model_pricing(model)
+    if price:
+        base = fallback_price_from_table(price, body)
+        if base > 0:
+            marked = base * Decimal(str(CANVAS_PRICE_MARKUP))
+            logger.info("[canvas] %s 按表内单价兜底计价: base=%s ×%s = %s", model, base, CANVAS_PRICE_MARKUP, marked)
+            return marked
+        logger.info("[canvas] %s 连兜底也算不出价（type=%s），本次不扣", model, price.get("price_type"))
+    return Decimal("0")
 
 
 def pre_deduct_canvas(db: Session, user: User, amount: "object", model: str, path: str) -> "object":
