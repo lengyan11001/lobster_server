@@ -34,6 +34,7 @@ OVERSEAS_PLATFORM_ENTRY_ID = "overseas_platform_entry"
 TUTORIAL_ENTRY_ID = "tutorial_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
+# 视频复刻（Hypit）开关：默认不开，需要时在管理后台按用户/代理商授权。
 HYPIT_VIDEO_REPLICATION_SKILL_ID = "hypit_video_replication_skill"
 MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
@@ -74,7 +75,6 @@ HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     AI_MARKETING_ENTRY_ID,
     TUTORIAL_ENTRY_ID,
     LOCAL_BESTSELLER_SKILL_ID,
-    HYPIT_VIDEO_REPLICATION_SKILL_ID,
 )
 
 FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
@@ -338,6 +338,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": MULTI_CLIP_MIXER_SKILL_ID,
+    },
+    {
+        "id": HYPIT_VIDEO_REPLICATION_SKILL_ID,
+        "name": "视频复刻入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": HYPIT_VIDEO_REPLICATION_SKILL_ID,
     },
     {
         "id": BIHUO_25_VIDEO_SKILL_ID,

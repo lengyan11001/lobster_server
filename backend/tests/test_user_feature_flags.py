@@ -158,7 +158,16 @@ def test_multi_clip_mixer_flag_follows_server_visibility(db_session, test_user):
     assert flags[MULTI_CLIP_MIXER_SKILL_ID] is True
 
 
-def test_hypit_video_replication_visible_by_default(db_session, test_user):
-    """视频复刻（Hypit）开关：默认开着，后台可随时撤销。"""
+def test_hypit_video_replication_is_off_until_granted(db_session, test_user):
+    """视频复刻（Hypit）：开关存在但默认关，授权后才可见。"""
+    from backend.app.models import UserSkillVisibility
+
+    flags = user_feature_flags(db_session, test_user.id)
+    assert flags["hypit_video_replication_skill"] is False
+
+    db_session.add(
+        UserSkillVisibility(user_id=test_user.id, package_id="hypit_video_replication_skill")
+    )
+    db_session.commit()
     flags = user_feature_flags(db_session, test_user.id)
     assert flags["hypit_video_replication_skill"] is True
