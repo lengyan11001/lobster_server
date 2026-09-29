@@ -1859,6 +1859,17 @@ def create_app() -> FastAPI:
     app.mount(
         "/client/miniprogram",
         StaticFiles(directory=str(_miniprogram_static_dir)),
+    try:
+        _canvas_web_dir = _BASE_DIR / "canvas_web_dist"
+        if _canvas_web_dir.exists():
+            app.mount(
+                "/canvas-web",
+                StaticFiles(directory=str(_canvas_web_dir), html=True),
+                name="canvas-web",
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Mount canvas-web static skipped: %s", e)
+
         name="client_miniprogram",
     )
 
