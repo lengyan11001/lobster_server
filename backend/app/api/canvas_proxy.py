@@ -160,6 +160,39 @@ CANVAS_PRICE_MARKUP = os.environ.get("CANVAS_PRICE_MARKUP", "1.5")
 CREDITS_PER_YUAN = 100.0
 
 
+# 零毛利模型（我们的表价 = apiz 采购价）：统一 ×1.5（2026-09-29 口径）
+_CANVAS_MARKUP_MODELS = {
+    "apiz/gpt-image-2.5-flare": 1.5,
+    "apiz/gpt-image-2.5-sunburst": 1.5,
+    "fal-ai/nano-banana-2": 1.5,
+    "fal-ai/nano-banana-pro": 1.5,
+    "xai/grok-imagine-image-2.0/text-to-image": 1.5,
+    "xai/grok-imagine-image-2.0/edit": 1.5,
+    "apiz/seedream-5.0-pro": 1.5,
+    "kapon/gemini-3-pro-image-preview": 1.5,
+    "fal-ai/kling-video/v3/standard/motion-control": 1.5,
+    "fal-ai/kling-video/v3/pro/motion-control": 1.5,
+    "fal-ai/kling-video/v2.6/standard/motion-control": 1.5,
+    "leonardo/seed-audio-1.0": 1.5,
+    "volcengine/speech-to-text/bigmodel-v2": 1.5,
+    "volcengine/captioning/ata-speech": 1.5,
+    "volcengine/captioning/ata-singing": 1.5,
+    "minimax/voice-design": 1.5,
+    "minimax/voice-clone": 1.5,
+    "minimax/t2a": 1.5,
+}
+
+
+def apply_canvas_markup(model: str, amount: "object") -> "object":
+    """零毛利模型统一加价（×1.5），其余按原价。"""
+    from decimal import Decimal
+
+    factor = _CANVAS_MARKUP_MODELS.get(model)
+    if not factor or amount is None:
+        return amount
+    return Decimal(str(amount)) * Decimal(str(factor))
+
+
 def fallback_price_from_table(price: Dict[str, Any], body: Dict[str, Any]) -> "object":
     """定价表里有价、但我们的估算函数不认的计价类型（复合媒体价 / 按字符），按描述里的单价算。"""
     import re
@@ -214,7 +247,7 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
         return Decimal("0")
 
     if estimate and Decimal(str(estimate)) > 0:
-        return estimate
+        return apply_canvas_markup(model, estimate)
 
     # 估算不出价（复合媒体价 / 按字符）：按表里写明的单价 ×加价系数收
     price = fetch_model_pricing(model)
@@ -224,6 +257,16 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
             marked = base * Decimal(str(CANVAS_PRICE_MARKUP))
             logger.info("[canvas] %s 按表内单价兜底计价: base=%s ×%s = %s", model, base, CANVAS_PRICE_MARKUP, marked)
             return marked
+    # token 后结算类（seedance 等）：按描述里的「x 积分/秒」× 时长 ×1.5 先收，不亏
+    desc = str((price or {}).get("price_description") or "")
+    import re as _re
+
+    per_second = [float(x) for x in _re.findall(r"(\d+(?:\.\d+)?)\s*积分/秒", desc)]
+    if per_second:
+        duration = float(body.get("duration") or body.get("video_length") or body.get("seconds") or 5)
+        base = max(per_second) * duration
+        logger.info("[canvas] %s token 类按秒价兜底: %s 积分/秒 × %ss × 1.5", model, max(per_second), duration)
+        return Decimal(str(base)) * Decimal(str(CANVAS_PRICE_MARKUP))
         logger.info("[canvas] %s 连兜底也算不出价（type=%s），本次不扣", model, price.get("price_type"))
     return Decimal("0")
 
