@@ -131,7 +131,7 @@ def test_task_create_body_is_forwarded_with_server_key(client, monkeypatch):
 
 def test_business_paths_are_forwarded(client, monkeypatch):
     """画布业务接口（项目模板、素材、任务）默认放行——白名单曾经把它们全 403 了。"""
-    for path in ["/canvas-api/api/v1/projects/public", "/canvas-api/api/get_draft_template", "/canvas-api/api/get_file_list"]:
+    for path in ["/canvas-api/api/v1/projects/public", "/canvas-api/api/get_draft_template", "/canvas-api/api/create_video_task"]:
         seen = patch_upstream(monkeypatch)
         resp = client.post(path, json={})
         assert resp.status_code == 200, path
