@@ -70,6 +70,14 @@ canvas_draft_template_table = Table(
     Column("synced_at", Float, nullable=False, default=0.0),
 )
 
+canvas_remote_cache_table = Table(
+    "canvas_remote_cache",
+    Base.metadata,
+    Column("cache_key", String(128), primary_key=True),
+    Column("payload", Text, nullable=False, default=""),
+    Column("synced_at", Float, nullable=False, default=0.0),
+)
+
 canvas_asset_table = Table(
     "canvas_asset",
     Base.metadata,
@@ -88,7 +96,8 @@ def ensure_tables(db: Session) -> None:
     if _tables_ready:
         return
     Base.metadata.create_all(bind=db.get_bind(),
-                             tables=[canvas_project_table, canvas_asset_table, canvas_draft_template_table])
+                             tables=[canvas_project_table, canvas_asset_table, canvas_draft_template_table,
+                                    canvas_remote_cache_table])
     _tables_ready = True
 
 
@@ -420,6 +429,38 @@ def store_upload(user_id: int, filename: str, content_type: str, data: bytes) ->
 def public_canvas_media(rel: str) -> FileResponse:
     """公开只读：给 apiz 拉参考图/上传产物用（带随机 key，不含用户隐私列表）。"""
     return media_response(rel)
+
+
+async def cached_remote_json(db: Session, cache_key: str, path: str, body: Optional[Dict[str, Any]] = None,
+                            *, method: str = "GET", ttl: int = 1800, force: bool = False) -> Any:
+    """把 apiz 的公开目录类数据缓存到我们自己的库里，按 TTL 刷新；刷新失败用旧值。"""
+    now = time.time()
+    row = db.execute(text("SELECT payload, synced_at FROM canvas_remote_cache WHERE cache_key = :k"),
+                     {"k": cache_key}).fetchone()
+    if row and not force and (now - float(row.synced_at or 0)) < ttl:
+        try:
+            return json.loads(row.payload)
+        except Exception:
+            pass
+    try:
+        payload = await apiz_json(method, path, body)
+    except Exception as exc:
+        logger.info("[canvas] 拉取 %s 失败，用库里缓存: %s", path, exc)
+        if row:
+            try:
+                return json.loads(row.payload)
+            except Exception:
+                pass
+        return None
+    dumped = json.dumps(payload, ensure_ascii=False)
+    if row:
+        db.execute(text("UPDATE canvas_remote_cache SET payload = :p, synced_at = :t WHERE cache_key = :k"),
+                   {"p": dumped, "t": now, "k": cache_key})
+    else:
+        db.execute(text("INSERT INTO canvas_remote_cache (cache_key, payload, synced_at) VALUES (:k, :p, :t)"),
+                   {"k": cache_key, "p": dumped, "t": now})
+    db.commit()
+    return payload
 
 
 def new_upload_key(user_id: int, filename: str) -> str:

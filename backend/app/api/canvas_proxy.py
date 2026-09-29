@@ -30,16 +30,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 只中转「生成」类：模型/任务/语音/字幕/工具/素材转码等（用服务器速推 key）
+# 只中转「生成」类（这些才是真正花钱调用模型能力的）
 _RELAY_PREFIXES: Tuple[str, ...] = (
     "api/v3/tasks",
-    "api/v3/models",
-    "api/v3/mcp/models",
-    "api/v3/voices",
     "api/v3/captioning",
     "api/v3/tools",
-    "api/v3/skills",
-    "api/v3/uploads",
-    "api/v3/apikeys",          # 只回占位 sk-（见下方特判）
     "api/v2/tasks",
     "api/fal/",
     "api/jimeng/",
@@ -64,8 +59,16 @@ _RELAY_PREFIXES: Tuple[str, ...] = (
     "api/storyboard/submit_",
     "api/storyboard/get_voice_list",
     "api/storyboard/multi_voice_tts",
-    "api/upload",
 )
+
+# 公开目录类（模型/音色/技能）：本地缓存 + 我们的价，不转发
+_CATALOG_PATHS = {
+    "api/v3/mcp/models": "/api/v3/mcp/models?lang=zh-CN",
+    "api/v3/models": "/api/v3/mcp/models?lang=zh-CN",
+    "api/v3/models/list": "/api/v3/mcp/models?lang=zh-CN",
+    "api/v3/voices": "/api/v3/voices",
+    "api/v3/skills": "/api/v3/skills",
+}
 
 # 账号 / 钱 / Key / 后台：既不由我们实现，也不许中转（先于中转判断）
 _REFUSE_PREFIXES: Tuple[str, ...] = (
@@ -322,6 +325,37 @@ def rewrite_prices(node: Any, amount: "object") -> Any:
     if isinstance(node, list):
         return [rewrite_prices(item, amount) for item in node]
     return node
+
+
+
+async def _catalog_response(normalized: str, db: Session) -> Response:
+    """模型/音色/技能目录：读我们库里的缓存（必要时从 apiz 拉一次），价格字段换成我们的价。"""
+    payload = await canvas_hub.cached_remote_json(db, normalized, _CATALOG_PATHS[normalized])
+    if payload is None:
+        return JSONResponse({"code": 200, "data": {"models": []}})
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    models = None
+    if isinstance(data, dict) and isinstance(data.get("models"), list):
+        models = data["models"]
+    elif isinstance(payload, dict) and isinstance(payload.get("models"), list):
+        models = payload["models"]
+
+    if isinstance(models, list) and normalized != "api/v3/voices":
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or "")
+            ours = our_price_for_display(model_id, item) if model_id else None
+            if ours:
+                amount = float(ours)
+                item["pricing_summary"] = {"from_price": amount, "price_label": "%s 积分" % amount}
+                for key in ("price", "credits", "money"):
+                    if key in item:
+                        item[key] = amount
+        logger.info("[canvas] 模型目录按我们定价返回（%d 个）", len(models))
+    return JSONResponse(content=payload)
+
 
 
 def _is_quote_path(path: str) -> bool:
@@ -697,6 +731,10 @@ async def canvas_proxy(
     # 报价/估价类：本地算，绝不发给 apiz（界面显示的就是我们的价）
     if _is_quote_path(normalized):
         return _local_quote_response(normalized, body_json)
+
+    # 模型/音色/技能目录：本地缓存 + 我们的价
+    if normalized in _CATALOG_PATHS:
+        return await _catalog_response(normalized, db)
 
     if not _path_relayable(normalized):
         logger.info("[canvas] not-implemented path=%s user=%s", normalized, getattr(user, "id", ""))

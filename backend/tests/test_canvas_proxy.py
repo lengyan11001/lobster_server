@@ -343,18 +343,19 @@ def test_upload_voucher_points_at_our_server(client, monkeypatch):
     assert media.status_code == 200 and media.content == b"png-bytes"
 
 
-def test_quote_never_settles_credits(client, monkeypatch):
-    """报价/估价接口不能扣费（线上曾经把 tasks/quote 当生成扣了 4 积分/次）。"""
-    from decimal import Decimal
+def test_quote_is_answered_locally(client, monkeypatch):
+    """报价由我们本地算：不发 apiz，返回里就是我们自己的价。"""
 
-    monkeypatch.setattr(
-        "backend.app.services.sutui_billing_gate.assert_pricing_pre_deduct_allows_upstream_or_http",
-        lambda *a, **k: Decimal("4"),
-    )
-    called = []
-    monkeypatch.setattr(canvas_proxy, "settle_generation_credits", lambda *a, **k: called.append(a) or 0.0)
-    patch_upstream(monkeypatch, FakeResponse(content=b'{"code": 200, "data": {"credits": 4}}'))
-    assert client.post("/canvas-api/api/v3/tasks/quote", json={"model": "openai/gpt-image-2"}).status_code == 200
-    assert called == []
-    assert canvas_proxy._should_settle("api/v3/tasks/create") is True
-    assert canvas_proxy._should_settle("api/v3/tasks/quote") is False
+    def boom(*args, **kwargs):
+        raise AssertionError("报价不该请求 apiz")
+
+    monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient", boom)
+    resp = client.post("/canvas-api/api/v3/tasks/quote", json={"model": "openai/gpt-image-2"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["credits"] == body["data"]["credits"]
+    assert canvas_proxy._is_quote_path("api/v3/tasks/quote") is True
+    assert canvas_proxy._is_quote_path("api/v3/tasks/create") is False
+    assert canvas_proxy._path_relayable("api/v3/mcp/models") is False
+    assert canvas_proxy._path_relayable("api/v3/tasks/create") is True
