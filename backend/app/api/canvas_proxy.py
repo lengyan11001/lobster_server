@@ -191,6 +191,27 @@ _CANVAS_MARKUP_MODELS = {
 _TOKEN_MODEL_RATE_FALLBACK = 100.0
 
 
+# 会员等级 -> 定价表里的 vip_discount 倍率（0=普通用户 2.0、1=一级 1.5、2=二级 1.0）
+CANVAS_VIP_LEVEL = os.environ.get("CANVAS_VIP_LEVEL", "0")
+
+
+def apply_vip_discount(price: Dict[str, Any], amount: "object") -> "object":
+    """定价表里写了 vip_discount 的模型：按会员等级倍率收（普通用户 2 倍）。"""
+    from decimal import Decimal
+
+    table = (price or {}).get("vip_discount")
+    if not isinstance(table, dict) or amount is None:
+        return amount
+    entry = table.get(str(CANVAS_VIP_LEVEL)) or table.get(int(CANVAS_VIP_LEVEL)) if CANVAS_VIP_LEVEL.isdigit() else None
+    if isinstance(entry, dict):
+        multiplier = entry.get("multiplier")
+    else:
+        multiplier = None
+    if multiplier in (None, 0, ""):
+        return amount
+    return Decimal(str(amount)) * Decimal(str(multiplier))
+
+
 def apply_canvas_markup(model: str, amount: "object") -> "object":
     """零毛利模型统一加价（×1.5），其余按原价。"""
     from decimal import Decimal
@@ -254,14 +275,18 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
         logger.info("[canvas] 该模型没有我们的定价，先不扣费: %s (%s)", model, getattr(exc, "detail", ""))
         return Decimal("0")
 
+    price = fetch_model_pricing(model)
     if estimate and Decimal(str(estimate)) > 0:
+        if price and price.get("vip_discount"):
+            return apply_vip_discount(price, estimate)
         return apply_canvas_markup(model, estimate)
 
     # 估算不出价（复合媒体价 / 按字符）：按表里写明的单价 ×加价系数收
-    price = fetch_model_pricing(model)
     if price:
         base = fallback_price_from_table(price, body)
         if base > 0:
+            if price.get("vip_discount"):
+                return apply_vip_discount(price, base)
             marked = base * Decimal(str(CANVAS_PRICE_MARKUP))
             logger.info("[canvas] %s 按表内单价兜底计价: base=%s ×%s = %s", model, base, CANVAS_PRICE_MARKUP, marked)
             return marked
