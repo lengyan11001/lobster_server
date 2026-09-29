@@ -115,15 +115,14 @@ def test_apikeys_returns_placeholder_not_real_key(client):
 
 
 def test_forwarding_injects_server_key_and_passes_status_through(client, monkeypatch):
+    """生成类中转：带服务器速推 key、状态码原样透传。"""
     seen = patch_upstream(monkeypatch, FakeResponse(status_code=402, content=b'{"detail": "insufficient credits"}'))
-    resp = client.get("/canvas-api/api/v3/mcp/models?lang=zh-CN")
+    resp = client.post("/canvas-api/api/create_video_task", json={"model": "x"})
     assert resp.status_code == 402
     assert resp.text == '{"detail": "insufficient credits"}'
-    assert seen["method"] == "GET"
-    assert seen["url"] == "https://api.apiz.ai/api/v3/mcp/models"
-    assert seen["params"] == {"lang": "zh-CN"}
+    assert seen["method"] == "POST"
+    assert seen["url"] == "https://api.apiz.ai/api/create_video_task"
     assert seen["headers"]["Authorization"] == "Bearer sk-server-key"
-    assert "sk-server-key" not in str(seen.get("params"))
 
 
 def test_task_create_body_is_forwarded_with_server_key(client, monkeypatch):
@@ -147,7 +146,7 @@ def test_task_create_body_is_forwarded_with_server_key(client, monkeypatch):
 
 def test_business_paths_are_forwarded(client, monkeypatch):
     """画布业务接口（项目模板、素材、任务）默认放行——白名单曾经把它们全 403 了。"""
-    for path in ["/canvas-api/api/create_video_task", "/canvas-api/api/v2/tasks/create", "/canvas-api/api/v3/mcp/models"]:
+    for path in ["/canvas-api/api/create_video_task", "/canvas-api/api/v2/tasks/create", "/canvas-api/api/fal/tasks/create"]:
         seen = patch_upstream(monkeypatch)
         resp = client.post(path, json={})
         assert resp.status_code == 200, path

@@ -757,6 +757,15 @@ async def canvas_proxy(
         return JSONResponse({"code": 200, "data": {"items": [{"status": "active", "key": "sk-lobster-canvas-proxy"}]}})
 
     # 顺序：先由我们自己的实现回答 -> 账号/钱类拒绝 -> 剩下的只有「生成」中转，其余明确回「未接入」
+    body = await request.body()
+    body_json: Dict[str, Any] = {}
+    try:
+        parsed_body = json.loads(body.decode("utf-8", "replace")) if body else {}
+        if isinstance(parsed_body, dict):
+            body_json = parsed_body
+    except Exception:
+        body_json = {}
+
     hub_response = await _hub_route(normalized, request, user, db)
     if hub_response is not None:
         return hub_response
@@ -778,14 +787,6 @@ async def canvas_proxy(
         return JSONResponse({"code": 0, "msg": "该功能还没接到我们自己的服务器（生成类之外的都在逐步自建）",
                              "data": None, "path": normalized})
 
-    body = await request.body()
-    body_json: Dict[str, Any] = {}
-    try:
-        parsed_body = json.loads(body.decode("utf-8", "replace")) if body else {}
-        if isinstance(parsed_body, dict):
-            body_json = parsed_body
-    except Exception:
-        body_json = {}
     # 生成类先按速推定价表预检（余额不足 402 / 无价 400），调用后再按上游回报扣费
     model = _payload_model(body_json)
     pre_charged = None
