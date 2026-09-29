@@ -34,6 +34,7 @@ OVERSEAS_PLATFORM_ENTRY_ID = "overseas_platform_entry"
 TUTORIAL_ENTRY_ID = "tutorial_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
+HYPIT_VIDEO_REPLICATION_SKILL_ID = "hypit_video_replication_skill"
 MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
 IP_CONTENT_ORAL_SKILL_ID = "ip_content_oral_skill"
@@ -73,6 +74,7 @@ HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     AI_MARKETING_ENTRY_ID,
     TUTORIAL_ENTRY_ID,
     LOCAL_BESTSELLER_SKILL_ID,
+    HYPIT_VIDEO_REPLICATION_SKILL_ID,
 )
 
 FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (

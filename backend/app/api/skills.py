@@ -27,6 +27,7 @@ BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
 # may already have v1 while still missing the employee defaults added later.
 _DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v3"
 _PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER = "__personal_whatsapp_assistant_visibility_seeded_v1"
+_HYPIT_VIDEO_REPLICATION_VISIBILITY_MARKER = "__hypit_video_replication_visibility_seeded_v1"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -120,6 +121,7 @@ DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
         "ip_content_moments_skill",
         "wewrite_official_account_skill",
         "viral_video_remix_skill",
+        "hypit_video_replication_skill",
         "create_video_pipeline_skill",
         "create_ppt_skill",
         "multi_clip_mixer_skill",
@@ -225,6 +227,23 @@ def _user_visible_package_ids(
             db.rollback()
         rows.add("personal_whatsapp_assistant")
         rows.add(_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER)
+    # 视频复刻（Hypit）：老账号也默认可见（一次性），后续管理后台取消授权依然生效（标记不会重复播种）。
+    if _HYPIT_VIDEO_REPLICATION_VISIBILITY_MARKER not in rows:
+        package_id = "hypit_video_replication_skill"
+        if package_id not in rows:
+            db.add(UserSkillVisibility(user_id=user.id, package_id=package_id))
+        db.add(
+            UserSkillVisibility(
+                user_id=user.id,
+                package_id=_HYPIT_VIDEO_REPLICATION_VISIBILITY_MARKER,
+            )
+        )
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        rows.add(package_id)
+        rows.add(_HYPIT_VIDEO_REPLICATION_VISIBILITY_MARKER)
     return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 
