@@ -425,6 +425,30 @@ def store_upload(user_id: int, filename: str, content_type: str, data: bytes) ->
     return store_upload_key(new_upload_key(user_id, name), data)
 
 
+_REMOTE_MEDIA_HOSTS = {"cdn-video.51sux.com", "cdn-hk.51sux.com", "cdn-ali-hk.51sux.com",
+                       "st-video.cc", "videos-jp.ss3.life"}
+
+
+async def remote_media_response(host: str, path: str, query: str = "") -> Response:
+    """素材 CDN 由我们服务器中转：前端不再直连外部（白名单限定这几个展示素材域名）。"""
+    import httpx
+    from fastapi.responses import Response as _Response
+
+    if host not in _REMOTE_MEDIA_HOSTS:
+        raise HTTPException(status_code=404, detail="不允许的外部素材来源")
+    url = f"https://{host}/{path}"
+    if query:
+        url += "?" + query
+    try:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False, follow_redirects=True) as client:
+            resp = await client.get(url)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"取素材失败：{exc}") from exc
+    return _Response(content=resp.content, status_code=resp.status_code,
+                     media_type=resp.headers.get("content-type") or "application/octet-stream",
+                     headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get(PUBLIC_MEDIA_PREFIX + "/{rel:path}", include_in_schema=False)
 def public_canvas_media(rel: str) -> FileResponse:
     """公开只读：给 apiz 拉参考图/上传产物用（带随机 key，不含用户隐私列表）。"""

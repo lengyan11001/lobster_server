@@ -640,6 +640,13 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
     if normalized.startswith("media/"):
         return hub.media_response(normalized[len("media/"):])
 
+    if normalized.startswith("canvas-remote-media/"):
+        rest = normalized[len("canvas-remote-media/"):]
+        parts = rest.split("/", 1)
+        if len(parts) != 2:
+            raise HTTPException(status_code=404, detail="素材地址不合法")
+        return await hub.remote_media_response(parts[0], parts[1], str(request.url.query or ""))
+
     if normalized == "api/user_info":
         from ..services.credits_amount import credits_json_float
 
