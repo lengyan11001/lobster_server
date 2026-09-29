@@ -87,3 +87,11 @@ def test_forwarding_allowlist_and_key_injection(client, monkeypatch):
 def test_unknown_path_is_rejected(client):
     resp = client.get("/canvas-api/api/whatever", headers=AUTH)
     assert resp.status_code == 403
+
+def test_create_app_still_compiles():
+    """防止又把静态挂载插进多行语句里：create_app.py 必须能编译。"""
+    import py_compile
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    py_compile.compile(str(root / "backend" / "app" / "create_app.py"), doraise=True)
