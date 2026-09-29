@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS canvas_project (
     is_public INTEGER NOT NULL DEFAULT 0,
     snapshot TEXT,
     thumbnail_url TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
     sort INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -66,6 +67,10 @@ def ensure_tables(db: Session) -> None:
         return
     db.execute(text(_PROJECT_DDL))
     db.execute(text(_ASSET_DDL))
+    try:  # 老库补列（新库 DDL 里已经带了）
+        db.execute(text("ALTER TABLE canvas_project ADD COLUMN source_url TEXT NOT NULL DEFAULT ''"))
+    except Exception:
+        pass
     db.commit()
     _tables_ready = True
 
@@ -84,6 +89,79 @@ def _now() -> float:
     return time.time()
 
 
+async def apiz_json(method: str, path: str, body: Optional[Dict[str, Any]] = None,
+                    *, timeout: float = 40.0) -> Dict[str, Any]:
+    """用服务器的速推 key 池调 apiz（只用于「生成」和「公开内容」拉取）。"""
+    import httpx
+
+    from mcp.sutui_tokens import next_sutui_server_token_with_pool
+
+    token, pool = await next_sutui_server_token_with_pool()
+    if not token:
+        raise RuntimeError(f"速推 key 未配置（pool={pool or 'none'}）")
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False, follow_redirects=True) as client:
+        resp = await client.request(method, f"https://api.apiz.ai{path}", json=body,
+                                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    try:
+        return resp.json()
+    except Exception:
+        return {"code": resp.status_code, "raw": resp.text[:500]}
+
+
+_TEMPLATE_SYNC_TTL = 60 * 30
+_template_sync_at = 0.0
+TEMPLATE_SEED_USER_ID = 0
+
+
+async def sync_public_templates(db: Session, *, limit: int = 100, force: bool = False) -> int:
+    """把 apiz 的公开作品同步进 canvas_project（user_id=0 表示官方模板）。失败不影响首页。"""
+    global _template_sync_at
+    now = time.time()
+    if not force and _template_sync_at and (now - _template_sync_at) < _TEMPLATE_SYNC_TTL:
+        return 0
+    try:
+        payload = await apiz_json("POST", "/api/v1/projects/public", {"skip": 0, "limit": limit})
+    except Exception as exc:
+        logger.info("[canvas] 同步公开模板失败，继续用库里已有的: %s", exc)
+        return 0
+    projects = payload.get("projects") if isinstance(payload, dict) else None
+    if not isinstance(projects, list):
+        return 0
+    saved = 0
+    for item in projects:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("uuid") or item.get("id") or "").strip()
+        if not pid:
+            continue
+        row = db.execute(text("SELECT id FROM canvas_project WHERE uuid = :u"), {"u": pid}).fetchone()
+        params = {
+            "u": pid,
+            "name": str(item.get("name") or "官方模板")[:200],
+            "descr": str(item.get("description") or "")[:1000],
+            "pub": 1 if item.get("is_public") else 0,
+            "thumb": str(item.get("thumbnail_url") or item.get("cover_url") or "")[:1000],
+            "src": str(item.get("canvas_url") or "")[:1000],
+            "sort": int(item.get("sort") or 9999),
+            "now": now,
+        }
+        if row is None:
+            db.execute(
+                text("INSERT INTO canvas_project (uuid, user_id, name, description, is_public, snapshot,"
+                     " thumbnail_url, source_url, sort, created_at, updated_at)"
+                     " VALUES (:u, %d, :name, :descr, :pub, NULL, :thumb, :src, :sort, :now, :now)"
+                     % TEMPLATE_SEED_USER_ID), params)
+        else:
+            db.execute(text("UPDATE canvas_project SET name = :name, description = :descr, is_public = :pub,"
+                            " thumbnail_url = :thumb, source_url = :src, sort = :sort, updated_at = :now"
+                            " WHERE uuid = :u"), params)
+        saved += 1
+    db.commit()
+    _template_sync_at = now
+    logger.info("[canvas] 公开模板已同步进我们的库：%d 条", saved)
+    return saved
+
+
 def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, Any]:
     data = {
         "id": row.id,
@@ -94,6 +172,9 @@ def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, A
         "is_public": bool(row.is_public),
         "thumbnail_url": row.thumbnail_url or "",
         "cover": row.thumbnail_url or "",
+        "cover_url": row.thumbnail_url or "",
+        "canvas_url": getattr(row, "source_url", "") or "",
+        "is_template": int(row.user_id or 0) == TEMPLATE_SEED_USER_ID,
         "sort": row.sort,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -149,6 +230,30 @@ def create_project(db: Session, *, user_id: int, name: str, description: str, is
     db.commit()
     row = db.execute(text("SELECT * FROM canvas_project WHERE uuid = :u"), {"u": uid}).fetchone()
     return project_row_to_json(row)
+
+
+async def ensure_snapshot(db: Session, row: Any, user_id: int) -> Any:
+    """官方模板：库里没快照时按 canvas_url 拉一次并缓存进我们库。"""
+    if row is None or (row.snapshot if isinstance(row.snapshot, str) else None):
+        return row
+    source = getattr(row, "source_url", "") or ""
+    if not source or int(row.user_id or 0) != TEMPLATE_SEED_USER_ID:
+        return row
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=40.0, trust_env=False, follow_redirects=True) as client:
+            resp = await client.get(source)
+        if resp.status_code < 400:
+            snapshot = resp.json()
+            clause, params = _identifier_clause(str(row.uuid))
+            params["snap"] = json.dumps(snapshot, ensure_ascii=False)
+            db.execute(text(f"UPDATE canvas_project SET snapshot = :snap WHERE {clause}"), params)
+            db.commit()
+            return db.execute(text(f"SELECT * FROM canvas_project WHERE {clause}"), params).fetchone()
+    except Exception as exc:
+        logger.info("[canvas] 拉模板快照失败 %s: %s", row.uuid, exc)
+    return row
 
 
 def get_project(db: Session, identifier: str, *, user_id: Optional[int] = None) -> Optional[Any]:

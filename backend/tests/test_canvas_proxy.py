@@ -234,3 +234,28 @@ def test_task_lists_and_templates_are_empty_not_errors(client, monkeypatch):
                  "/canvas-api/api/v3/points-campaigns/active"]:
         resp = client.post(path, json={})
         assert resp.status_code == 200 and resp.json()["code"] == 200, path
+
+
+def test_public_templates_are_synced_into_our_library(client, monkeypatch):
+    """首页模板：用速推 key 从 apiz 拉公开作品 -> 入我们自己的库 -> 首页读我们的库。"""
+
+    async def fake_apiz(method, path, body=None, **kwargs):
+        return {"total": 1, "projects": [
+            {"uuid": "tpl-1", "name": "官方模板一", "description": "d", "is_public": True,
+             "thumbnail_url": "https://cdn.example/tpl1.png", "canvas_url": "https://tos.example/tpl1.json", "sort": 9999},
+        ]}
+
+    monkeypatch.setattr(canvas_hub, "apiz_json", fake_apiz)
+    monkeypatch.setattr(canvas_hub, "_template_sync_at", 0.0)
+
+    resp = client.post("/canvas-api/api/v1/projects/public?skip=0&limit=20", json={})
+    assert resp.status_code == 200, resp.text
+    projects = resp.json()["projects"]
+    assert [p["uuid"] for p in projects] == ["tpl-1"]
+    assert projects[0]["thumbnail_url"] == "https://cdn.example/tpl1.png"
+    assert projects[0]["is_template"] is True
+
+    # 第二次不再重复同步（TTL 内），但库里的数据照旧能读到
+    monkeypatch.setattr(canvas_hub, "apiz_json", None)
+    again = client.post("/canvas-api/api/v1/projects/public?skip=0&limit=20", json={})
+    assert [p["uuid"] for p in again.json()["projects"]] == ["tpl-1"]

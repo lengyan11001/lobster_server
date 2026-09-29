@@ -168,6 +168,8 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
             items = hub.list_projects(db, user_id=uid, only_public=False, skip=skip, limit=limit)
             return _ok_list(items, len(items))
         if rest == "public":
+            if not skip:
+                await hub.sync_public_templates(db, limit=max(60, limit))
             items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit)
             return _ok_list(items, len(items))
         if rest == "search":
@@ -203,6 +205,7 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
                 row = hub.get_project(db, ident, user_id=uid)
                 if row is None:
                     raise HTTPException(status_code=404, detail="作品不存在")
+                row = await hub.ensure_snapshot(db, row, uid)
                 project = hub.project_row_to_json(row, with_snapshot=True)
                 return JSONResponse({"code": 200, "snapshot": project["snapshot"], "canvas": project["canvas"],
                                      "data": {"snapshot": project["snapshot"], "canvas": project["canvas"]}})
@@ -242,6 +245,18 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         result = await hub.handle_upload(request, uid)
         hub.add_asset(db, uid, result["url"], result["file_type"], result["file_size"], result["name"])
         return JSONResponse({"code": 200, "ok": True, **result, "data": result})
+
+    if normalized == "api/get_draft_template":
+        # 公开模板内容：用速推 key 现拉（不是用户数据，不涉及串号）
+        try:
+            data = await hub.apiz_json("POST", "/api/get_draft_template",
+                                       {"page": int(body.get("page") or 1),
+                                        "page_size": int(body.get("page_size") or 12)})
+        except Exception as exc:
+            logger.info("[canvas] 拉草稿模板失败: %s", exc)
+            data = {"code": 200, "data": []}
+        items = data.get("data") if isinstance(data, dict) else []
+        return JSONResponse({"code": 200, "data": items or [], "list": items or []})
 
     if normalized in _EMPTY_OK_PATHS:
         return _ok_list([], 0)
