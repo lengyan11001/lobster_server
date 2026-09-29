@@ -153,6 +153,77 @@ def _should_settle(path: str) -> bool:
     return any(hint in path for hint in _SETTLE_PATH_HINTS)
 
 
+def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]) -> "object":
+    """按**我们自己的定价表**估算这次要扣多少积分（余额不足直接 402）。
+
+    定价来源：services/sutui_pricing（我们的定价表/文档表）+ 参数估算。
+    没有定价的模型返回 0 —— 不猜价、不按上游报价扣。
+    """
+    from decimal import Decimal
+
+    from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
+
+    try:
+        return assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body, action_label="画布生成")
+    except HTTPException as exc:
+        if getattr(exc, "status_code", 0) == 402:
+            raise  # 余额不足：明确挡住
+        logger.info("[canvas] 该模型没有我们的定价，先不扣费: %s (%s)", model, getattr(exc, "detail", ""))
+        return Decimal("0")
+
+
+def pre_deduct_canvas(db: Session, user: User, amount: "object", model: str, path: str) -> "object":
+    """按我们的定价预扣（写 pre_deduct 流水）。任何内部异常都不影响生成，只是不扣。"""
+    from decimal import Decimal
+
+    from ..services.credit_ledger import append_credit_ledger
+    from ..services.credits_amount import quantize_credits, user_balance_decimal
+
+    try:
+        amount = quantize_credits(amount or 0)
+        if amount <= 0:
+            return Decimal("0")
+        db.refresh(user)
+        balance = user_balance_decimal(user)
+        if balance < amount:
+            raise HTTPException(status_code=402, detail=f"积分不足：本次预扣 {amount}，当前余额 {balance}")
+        user.credits = balance - amount
+        append_credit_ledger(db, user.id, -amount, "pre_deduct", user.credits,
+                             description=f"画布预扣：{model or path}", ref_type="canvas_api", ref_id=path,
+                             meta={"model": model, "pre_estimated": float(amount)})
+        db.commit()
+        logger.info("[canvas] 预扣 user=%s model=%s 扣=%s 余额=%s", getattr(user, "id", ""), model, amount, user.credits)
+        return amount
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("[canvas] 预扣失败（不影响生成）: %s", exc, exc_info=True)
+        return Decimal("0")
+
+
+def refund_canvas(db: Session, user: User, amount: "object", model: str, path: str, reason: str) -> None:
+    """生成失败/被拒：把预扣退回（写 refund 流水）。"""
+    from decimal import Decimal
+
+    from ..services.credit_ledger import append_credit_ledger
+    from ..services.credits_amount import quantize_credits, user_balance_decimal
+
+    try:
+        amount = quantize_credits(amount or 0)
+        if amount <= 0:
+            return
+        db.refresh(user)
+        balance = user_balance_decimal(user)
+        user.credits = balance + amount
+        append_credit_ledger(db, user.id, amount, "refund", user.credits,
+                             description=f"画布生成失败退回（{reason}）", ref_type="canvas_api", ref_id=path,
+                             meta={"model": model, "refund": float(amount), "reason": reason})
+        db.commit()
+        logger.info("[canvas] 退回 user=%s model=%s 退=%s 余额=%s", getattr(user, "id", ""), model, amount, user.credits)
+    except Exception as exc:
+        logger.warning("[canvas] 退回失败: %s", exc, exc_info=True)
+
+
 def _payload_model(body: Dict[str, Any]) -> str:
     """从画布请求体里找模型 id（各家字段名不一样）。"""
     if not isinstance(body, dict):
@@ -397,17 +468,10 @@ async def canvas_proxy(
         body_json = {}
     # 生成类先按速推定价表预检（余额不足 402 / 无价 400），调用后再按上游回报扣费
     model = _payload_model(body_json)
-    if model:
-        from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
-
-        try:
-            assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body_json, action_label="画布生成")
-        except HTTPException as exc:
-            if exc.status_code == 402:
-                raise  # 余额不足：明确挡住，别白花服务器 key
-            # 速推侧没有这个模型的定价表（画布里有些 apiz 模型没进 docs）：
-            # 不硬拦，照常调用，调用后按上游回报的消耗扣费
-            logger.info("[canvas] 模型无速推定价表，跳过预扣、按上游回报扣费: %s (%s)", model, getattr(exc, "detail", ""))
+    pre_charged = None
+    if model and _should_settle(normalized):
+        # 按**我们自己的定价**预扣（余额不足 402 挡住）；没定价的模型返回 0，不猜价
+        pre_charged = pre_deduct_canvas(db, user, estimate_our_price(db, user, model, body_json), model, normalized)
 
     headers = await _apiz_headers()
     for name in ("content-type", "accept", "accept-language"):
@@ -432,8 +496,11 @@ async def canvas_proxy(
         raise HTTPException(status_code=502, detail=f"apiz 连接失败：{exc}") from exc
 
     if upstream.status_code < 400 and model:
-        if _should_settle(normalized):
-            settle_generation_credits(db, user, upstream.content, model, normalized)
+        # 成功：价格按我们自己的定价（前面已预扣），不再按 apiz 回报扣一次
+        if pre_charged:
+            logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
+    if upstream.status_code >= 400 and pre_charged:
+        refund_canvas(db, user, pre_charged, model, normalized, f"上游 {upstream.status_code}")
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
     media_type = upstream.headers.get("content-type") or "application/json"
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)
