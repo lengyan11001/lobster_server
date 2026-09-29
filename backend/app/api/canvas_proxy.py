@@ -16,10 +16,13 @@ import os
 from typing import Dict, Tuple
 
 import httpx
+from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from ..db import get_db
 from ..models import User
+from . import canvas_hub
 from .auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -33,11 +36,9 @@ _BLOCKED_PREFIXES: Tuple[str, ...] = (
     "api/get_qrcode",
     "api/check_qrcode_status",
     "api/get_message_code",
-    "api/user_info",
     "api/update_user_info",
     "api/update_user_token",
     # 钱：余额 / 订单 / 充值 / 提现 / 优惠券 / 激活码 / 合同
-    "api/get_user_money",
     "api/deduct_user_money",
     "api/create_wx_order_info",
     "api/create_alipay_order_info",
@@ -54,10 +55,6 @@ _BLOCKED_PREFIXES: Tuple[str, ...] = (
     "api/courses/purchase",
     # 资产库 / 上传：暂时挡上，改由**我们自己的服务器**实现（apiz 是共享账号，
     # 放行会让不同用户互相看到对方的上传；sutui key 只留给"生成"类调用）
-    "api/get_file_list",
-    "api/user_oss_upload",
-    "api/upload-token",
-    "api/get_cf_r2_token",
     "api/get_sts_token",
     # Key 管理 / 站点账号安全
     "api/get_api_token",
@@ -101,12 +98,168 @@ def _path_blocked(path: str) -> bool:
     return False
 
 
+_EMPTY_OK_PATHS = (
+    "api/get_draft_template",
+    "api/draft_flow_template/list",
+    "api/fal/tasks/list",
+    "api/task_list",
+    "api/tasks/list",
+    "api/v3/points-campaigns/active",
+    "api/get_activity_banner_list",
+    "api/get_official_notification",
+)
+
+
+def _ok_list(items=None, total: int = 0, extra: Optional[Dict] = None) -> JSONResponse:
+    body = {"code": 200, "projects": items or [], "list": items or [], "items": items or [],
+            "total": total, "data": {"projects": items or [], "list": items or [], "total": total}}
+    if extra:
+        body.update(extra)
+    return JSONResponse(body)
+
+
+async def _hub_route(normalized: str, request: Request, user: User, db: Session) -> Optional[Response]:
+    """画布自有数据（会话/项目/资产/上传）：本机自己回答，不打 apiz。"""
+    hub = canvas_hub
+    hub.ensure_tables(db)
+    uid = int(getattr(user, "id", 0) or 0)
+    method = request.method.upper()
+
+    body: Dict[str, Any] = {}
+    if method in ("POST", "PUT", "PATCH"):
+        try:
+            parsed = await request.json()
+            if isinstance(parsed, dict):
+                body = parsed
+        except Exception:
+            body = {}
+    skip = int(request.query_params.get("skip") or 0)
+    limit = int(request.query_params.get("limit") or request.query_params.get("page_size") or 50)
+
+    if normalized.startswith("media/"):
+        return hub.media_response(normalized[len("media/"):])
+
+    if normalized == "api/user_info":
+        from ..services.credits_amount import credits_json_float
+
+        return JSONResponse({
+            "code": 200, "token": "lobster-canvas", "id": uid,
+            "name": getattr(user, "admin_remark", "") or f"用户 {uid}",
+            "email": getattr(user, "email", "") or "", "phone": "",
+            "points_balance": credits_json_float(getattr(user, "credits", 0)),
+        })
+    if normalized == "api/get_user_money":
+        from ..services.credits_amount import credits_json_float
+
+        credits = credits_json_float(getattr(user, "credits", 0))
+        return JSONResponse({"code": 200, "points_balance": credits, "money": credits,
+                             "data": {"points_balance": credits}})
+    if normalized == "api/check_admin_permission":
+        return JSONResponse({"code": 200, "data": {"is_admin": False}})
+
+    if normalized.startswith("api/v1/projects"):
+        rest = normalized[len("api/v1/projects"):].strip("/")
+        if rest in ("", "create"):
+            project = hub.create_project(db, user_id=uid, name=str(body.get("name") or ""),
+                                         description=str(body.get("description") or ""),
+                                         is_public=bool(body.get("is_public")))
+            return JSONResponse({"code": 200, **project, "project": project, "data": project})
+        if rest == "my":
+            items = hub.list_projects(db, user_id=uid, only_public=False, skip=skip, limit=limit)
+            return _ok_list(items, len(items))
+        if rest == "public":
+            items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit)
+            return _ok_list(items, len(items))
+        if rest == "search":
+            keyword = str(request.query_params.get("q") or "")
+            items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit, keyword=keyword)
+            return _ok_list(items, len(items))
+        if rest.startswith("admin/"):
+            return JSONResponse({"code": 200, "data": {"list": [], "total": 0}})
+
+        parts = rest.split("/")
+        ident = parts[0]
+        action = parts[1] if len(parts) > 1 else ""
+        if action == "update":
+            row = hub.update_project(db, ident, uid, body)
+            if row is None:
+                raise HTTPException(status_code=404, detail="作品不存在")
+            project = hub.project_row_to_json(row)
+            return JSONResponse({"code": 200, **project, "project": project, "data": project})
+        if action == "delete":
+            hub.delete_project(db, ident, uid)
+            return JSONResponse({"code": 200, "ok": True})
+        if action == "clone":
+            row = hub.get_project(db, ident, user_id=uid)
+            if row is None:
+                raise HTTPException(status_code=404, detail="作品不存在")
+            copy = hub.create_project(db, user_id=uid, name=f"{row.name} 副本",
+                                      description=row.description or "", is_public=False)
+            if row.snapshot:
+                hub.save_snapshot(db, copy["uuid"], uid, row.snapshot, row.thumbnail_url or "")
+            return JSONResponse({"code": 200, **copy, "project": copy, "data": copy})
+        if action == "canvas":
+            if len(parts) > 2 and parts[2] == "load":
+                row = hub.get_project(db, ident, user_id=uid)
+                if row is None:
+                    raise HTTPException(status_code=404, detail="作品不存在")
+                project = hub.project_row_to_json(row, with_snapshot=True)
+                return JSONResponse({"code": 200, "snapshot": project["snapshot"], "canvas": project["canvas"],
+                                     "data": {"snapshot": project["snapshot"], "canvas": project["canvas"]}})
+            snapshot = body.get("snapshot") if isinstance(body.get("snapshot"), dict) else body.get("canvas")
+            row = hub.save_snapshot(db, ident, uid, snapshot or {}, str(body.get("thumbnail_url") or ""))
+            if row is None:
+                raise HTTPException(status_code=404, detail="作品不存在")
+            project = hub.project_row_to_json(row)
+            return JSONResponse({"code": 200, "ok": True, "project": project, "data": project})
+
+        row = hub.get_project(db, ident, user_id=uid)
+        if row is None:
+            raise HTTPException(status_code=404, detail="作品不存在")
+        project = hub.project_row_to_json(row, with_snapshot=True)
+        return JSONResponse({"code": 200, **project, "project": project, "data": project})
+
+    if normalized == "api/get_file_list":
+        items = hub.list_assets(db, uid, skip, int(request.query_params.get("page_size") or 30))
+        return JSONResponse({"code": 200, "list": items, "total": len(items),
+                             "data": {"list": items, "total": len(items)}})
+    if normalized == "api/user_oss_upload":
+        asset = hub.add_asset(db, uid, str(body.get("file_url") or ""), str(body.get("file_type") or ""),
+                              int(body.get("file_size") or 0), str(body.get("name") or ""))
+        return JSONResponse({"code": 200, "ok": True, "data": asset, **asset})
+    if normalized == "api/upload-token":
+        return JSONResponse({"code": 200, "data": {"upload_url": "/canvas-api/api/upload", "token": "lobster-canvas",
+                                                   "expires_in": 3600, "public_base": hub.public_base()}})
+    if normalized == "api/get_cf_r2_token":
+        name = str(body.get("file_name") or request.query_params.get("name") or "file")
+        base = hub.public_base()
+        return JSONResponse({"code": 200, "data": {
+            "upload_url": f"{base}/canvas-api/api/upload?name={name}",
+            "public_url": f"{base}/canvas-api/api/upload?name={name}",
+            "file_url": f"{base}/canvas-api/api/upload?name={name}",
+        }})
+    if normalized in ("api/upload", "api/upload/", "api/user_upload"):
+        result = await hub.handle_upload(request, uid)
+        hub.add_asset(db, uid, result["url"], result["file_type"], result["file_size"], result["name"])
+        return JSONResponse({"code": 200, "ok": True, **result, "data": result})
+
+    if normalized in _EMPTY_OK_PATHS:
+        return _ok_list([], 0)
+
+    return None
+
+
 @router.api_route(
     "/canvas-api/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     include_in_schema=False,
 )
-async def canvas_proxy(path: str, request: Request, user: User = Depends(get_current_user)) -> Response:
+async def canvas_proxy(
+    path: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
     normalized = _normalize_path(path)
     if not normalized or "://" in normalized or ".." in normalized.split("/"):
         raise HTTPException(status_code=404, detail="缺少接口路径")
@@ -114,6 +267,10 @@ async def canvas_proxy(path: str, request: Request, user: User = Depends(get_cur
     # 画布会拿 sk- 调 V3 模型：不把真 key 发到浏览器，只回占位值，转发时再注入速推 key
     if normalized.startswith("api/v3/apikeys"):
         return JSONResponse({"code": 200, "data": {"items": [{"status": "active", "key": "sk-lobster-canvas-proxy"}]}})
+
+    hub_response = await _hub_route(normalized, request, user, db)
+    if hub_response is not None:
+        return hub_response
 
     if _path_blocked(normalized):
         logger.warning("[canvas] blocked path=%s user=%s", normalized, getattr(user, "id", ""))
@@ -147,6 +304,6 @@ async def canvas_proxy(path: str, request: Request, user: User = Depends(get_cur
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)
 
 
-# 还没做（下一轮）：按消耗扣算力。现在只做 key 中转，用户不扣积分、apiz 成本由服务器承担。
+# 还没做（下一轮）：按消耗扣算力。现在生成类只做 key 中转，用户不扣积分、apiz 成本由服务器承担。
 # 建议做法：任务在 apiz 侧完成后，响应里会带本次消耗（services/sutui_pricing.extract_upstream_reported_credits），
 # 以 task_id 幂等结算一次（services/credit_ledger.append_credit_ledger），失败/取消要回滚。
