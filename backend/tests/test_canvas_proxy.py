@@ -140,6 +140,8 @@ def test_business_paths_are_forwarded(client, monkeypatch):
 
 def test_money_and_login_paths_are_blocked(client):
     for path in ["/canvas-api/api/login", "/canvas-api/api/get_qrcode", "/canvas-api/api/user_info",
+                 "/canvas-api/api/get_file_list", "/canvas-api/api/user_oss_upload",
+                 "/canvas-api/api/upload-token", "/canvas-api/api/get_cf_r2_token",
                  "/canvas-api/api/get_user_money", "/canvas-api/api/create_wx_order_info",
                  "/canvas-api/api/v3/account/pay", "/canvas-api/api/admin/get_all_tickets"]:
         assert client.post(path, json={}).status_code == 403, path

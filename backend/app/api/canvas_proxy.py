@@ -52,6 +52,13 @@ _BLOCKED_PREFIXES: Tuple[str, ...] = (
     "api/get_contract_info",
     "api/submit_contract",
     "api/courses/purchase",
+    # 资产库 / 上传：暂时挡上，改由**我们自己的服务器**实现（apiz 是共享账号，
+    # 放行会让不同用户互相看到对方的上传；sutui key 只留给"生成"类调用）
+    "api/get_file_list",
+    "api/user_oss_upload",
+    "api/upload-token",
+    "api/get_cf_r2_token",
+    "api/get_sts_token",
     # Key 管理 / 站点账号安全
     "api/get_api_token",
     "api/reset_api_token",
