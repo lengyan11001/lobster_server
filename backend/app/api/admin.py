@@ -3754,3 +3754,160 @@ def admin_update_shop_merchant_status(
         raise HTTPException(status_code=400, detail=str(exc))
     logger.info("[admin] shop merchant %s status -> %s", merchant_id, body.status)
     return result
+
+
+# ── 可调度设备（系统设备）：管理后台按槽位号维护，H5 用户可在「我的」里选用 ──
+
+class DispatchDeviceBody(BaseModel):
+    slot: str = ""
+    installation_id: str = ""
+    name: str = ""
+    note: str = ""
+
+
+class DispatchDevicePatchBody(BaseModel):
+    name: Optional[str] = None
+    note: Optional[str] = None
+    status: Optional[str] = None
+
+
+def _dispatch_device_payload(db: Session, row) -> dict:
+    from ..models import H5ChatDevicePresence
+
+    now = datetime.utcnow()
+    presence = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.installation_id == row.installation_id)
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .first()
+    )
+    last_seen = getattr(presence, "last_seen_at", None)
+    return {
+        "id": int(row.id),
+        "installation_id": row.installation_id,
+        "name": row.name or "",
+        "note": row.note or "",
+        "status": row.status or "enabled",
+        "online": bool(presence is not None and is_device_online(last_seen, now=now)),
+        "last_seen_at": last_seen.isoformat() if last_seen else "",
+        "owner_user_id": int(getattr(presence, "user_id", 0) or 0) or None if presence is not None else None,
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
+@router.get("/admin/api/dispatch-devices", summary="可调度设备列表（分页 + 搜索）")
+def admin_list_dispatch_devices(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    q: str = Query("", max_length=128),
+    status_filter: str = Query("", alias="status", max_length=16),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+
+    query = db.query(DispatchDevice)
+    keyword = (q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        query = query.filter(
+            or_(
+                DispatchDevice.installation_id.ilike(like),
+                DispatchDevice.name.ilike(like),
+                DispatchDevice.note.ilike(like),
+            )
+        )
+    wanted_status = (status_filter or "").strip().lower()
+    if wanted_status in {"enabled", "disabled"}:
+        query = query.filter(DispatchDevice.status == wanted_status)
+    total = query.count()
+    rows = (
+        query.order_by(DispatchDevice.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    items = [_dispatch_device_payload(db, row) for row in rows]
+    return {
+        "ok": True,
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+@router.post("/admin/api/dispatch-devices", summary="按槽位号添加可调度设备")
+def admin_create_dispatch_device(
+    body: DispatchDeviceBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+    from ..services import dispatch_devices as dispatch_devices_service
+
+    slot = dispatch_devices_service.normalize_slot(body.slot or body.installation_id)
+    if not slot:
+        raise HTTPException(status_code=400, detail="缺少槽位号")
+    exists = (
+        db.query(DispatchDevice)
+        .filter(DispatchDevice.installation_id == slot)
+        .first()
+    )
+    if exists is not None:
+        raise HTTPException(status_code=409, detail="该槽位号已在可调度设备列表中")
+    row = DispatchDevice(
+        installation_id=slot,
+        name=(body.name or "").strip()[:128],
+        note=(body.note or "").strip()[:255],
+        created_by=int(getattr(ctx, "user_id", 0) or 0) or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info("[admin] dispatch device added slot=%s by=%s", slot, getattr(ctx, "user_id", None))
+    return {"ok": True, "device": _dispatch_device_payload(db, row)}
+
+
+@router.patch("/admin/api/dispatch-devices/{device_id}", summary="修改可调度设备（名称/备注/启用状态）")
+def admin_update_dispatch_device(
+    device_id: int,
+    body: DispatchDevicePatchBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+
+    row = db.query(DispatchDevice).filter(DispatchDevice.id == int(device_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    if body.name is not None:
+        row.name = (body.name or "").strip()[:128]
+    if body.note is not None:
+        row.note = (body.note or "").strip()[:255]
+    if body.status is not None:
+        wanted = (body.status or "").strip().lower()
+        if wanted not in {"enabled", "disabled"}:
+            raise HTTPException(status_code=400, detail="状态只能是 enabled / disabled")
+        row.status = wanted
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "device": _dispatch_device_payload(db, row)}
+
+
+@router.delete("/admin/api/dispatch-devices/{device_id}", summary="删除可调度设备")
+def admin_delete_dispatch_device(
+    device_id: int,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+
+    row = db.query(DispatchDevice).filter(DispatchDevice.id == int(device_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": int(device_id)}

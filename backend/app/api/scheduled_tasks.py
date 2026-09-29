@@ -67,6 +67,7 @@ from .social_leads import (
 from .wechat_channels_transcript import run_wechat_channels_transcript_payload_to_completion
 from .installation_slots import ensure_installation_slot, installation_slot_id_for_user
 from .mobile_identity import online_user_for_mobile_user
+from ..services import dispatch_devices
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import ensure_system_task_session
@@ -5418,6 +5419,7 @@ def create_scheduled_task(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    dispatch_devices.assert_marketing_only_allowed(db, owner_user.id, "scheduled_task_create")
     requested_kind = _normalize_task_kind(body.task_kind)
     xi = _header_installation_id(request)
     if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:

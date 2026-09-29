@@ -2336,3 +2336,33 @@ class DouyinImitationTask(Base):
     credits_refunded: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class DispatchDevice(Base):
+    """可调度设备：管理后台按槽位号维护，H5 用户可以在「我的」里选用。"""
+
+    __tablename__ = "dispatch_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    note: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="enabled", nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class UserDeviceSelection(Base):
+    """H5 用户当前选中的设备：own=自己的在线设备，system=后台配置的可调度设备。"""
+
+    __tablename__ = "user_device_selections"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    source: Mapped[str] = mapped_column(String(16), default="own", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )

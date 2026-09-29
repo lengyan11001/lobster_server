@@ -124,6 +124,9 @@
       devices: [],
       devicesLoaded: false,
       selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
+      systemDevices: [],
+      deviceSelectionSource: localStorage.getItem(brandStorageKey("lobster_h5_device_selection_source")) || "",
+      systemDeviceModeNoticeShown: false,
       liveExecutor: {
         image: null,
         imagePreviewUrl: "",
@@ -15400,16 +15403,107 @@
       state.officeSummaryLoading = null;
     }
 
+    function systemDeviceModeActive() {
+      return String(state.deviceSelectionSource || "").trim() === "system";
+    }
+
+    function isSystemDeviceId(id) {
+      const wanted = String(id || "").trim();
+      if (!wanted) return false;
+      return (state.systemDevices || []).some((device) => String(device.installation_id || "").trim() === wanted);
+    }
+
+    function systemDeviceOption(device) {
+      const item = device && typeof device === "object" ? device : {};
+      const id = String(item.installation_id || "").trim();
+      const name = String(item.name || "").trim() || `系统设备 ${id.slice(0, 8)}`;
+      return Object.assign({}, item, { display_name: name, is_system_device: true });
+    }
+
+    function findDeviceById(id) {
+      const wanted = String(id || "").trim();
+      if (!wanted) return null;
+      const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
+      if (own) return own;
+      const system = (state.systemDevices || []).find((d) => String(d.installation_id || "") === wanted);
+      return system ? systemDeviceOption(system) : null;
+    }
+
+    function selectableDevice(id) {
+      const wanted = String(id || "").trim();
+      if (!wanted) return false;
+      const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
+      if (own && own.online) return true;
+      // 系统设备（后台配置的可调度设备）：离线也允许保留选择
+      return isSystemDeviceId(wanted) && String(state.deviceSelectionSource || "").trim() === "system";
+    }
+
+    function persistDeviceSelectionLocal() {
+      const slot = String(state.selectedInstallationId || "").trim();
+      const source = String(state.deviceSelectionSource || "").trim();
+      if (slot) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), slot);
+      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      if (source) localStorage.setItem(brandStorageKey("lobster_h5_device_selection_source"), source);
+      else localStorage.removeItem(brandStorageKey("lobster_h5_device_selection_source"));
+    }
+
+    function applyServerDeviceSelection(selection) {
+      const info = selection && typeof selection === "object" ? selection : {};
+      const slot = String(info.installation_id || "").trim();
+      if (!slot) return;
+      const serverSource = String(info.source || "").trim() === "system" ? "system" : "own";
+      const localSlot = String(state.selectedInstallationId || "").trim();
+      const localSource = String(state.deviceSelectionSource || "").trim();
+      // 本机刚改过、还没保存完时不要被服务端旧值回退
+      if (localSlot && localSource && localSlot !== slot) return;
+      if (localSlot === slot && localSource === serverSource) return;
+      state.selectedInstallationId = slot;
+      state.deviceSelectionSource = serverSource;
+      persistDeviceSelectionLocal();
+      applySystemDeviceMode();
+    }
+
+    async function saveDeviceSelectionToServer(slot, source) {
+      const wanted = String(slot || "").trim();
+      if (!wanted) return;
+      const kind = source === "system" || isSystemDeviceId(wanted) ? "system" : "own";
+      try {
+        const data = await api("/api/h5-chat/device-selection", {
+          method: "POST",
+          json: { installation_id: wanted, source: kind },
+          blocking: false,
+        });
+        if (data && data.marketing_only) {
+          state.deviceSelectionSource = "system";
+          persistDeviceSelectionLocal();
+        }
+      } catch (err) {
+        toast(err.message || "设备选择保存失败");
+      }
+    }
+
+    function applySystemDeviceMode() {
+      const active = systemDeviceModeActive();
+      document.body.classList.toggle("system-device-mode", active);
+      renderHomeQuickGrid();
+      renderProfileDeviceSelect();
+      if (typeof renderWorkflowDeviceSelect === "function") renderWorkflowDeviceSelect();
+      if (active && !state.systemDeviceModeNoticeShown) {
+        state.systemDeviceModeNoticeShown = true;
+        toast("已选中系统设备：只能使用 AI 营销创作");
+      }
+    }
+
     function ensureSelectedInstallationId() {
       const selected = String(state.selectedInstallationId || "").trim();
       if (!state.devicesLoaded && !(state.devices || []).length) return selected;
-      if (selected && state.devices.some((d) => d.online && String(d.installation_id || "") === selected)) return selected;
+      if (selected && selectableDevice(selected)) return selected;
       const previous = state.selectedInstallationId;
       const preferred = state.devices.find((d) => d.online && d.installation_id);
       const next = String((preferred || {}).installation_id || "");
       state.selectedInstallationId = next;
-      if (next) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), next);
-      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      state.deviceSelectionSource = next ? "own" : "";
+      persistDeviceSelectionLocal();
       if (previous !== next) invalidateSelectedDeviceData();
       return next;
     }
@@ -15437,17 +15531,20 @@
       renderWorkList();
     }
 
-    function setSelectedInstallationId(value) {
+    function setSelectedInstallationId(value, explicitSource) {
       const next = String(value || "").trim();
-      const hit = next ? (state.devices || []).find((d) => String(d.installation_id || "") === next) : null;
+      const systemPick = next ? (explicitSource === "system" || isSystemDeviceId(next)) : false;
+      const hit = next && !systemPick ? (state.devices || []).find((d) => String(d.installation_id || "") === next) : null;
       const previous = String(state.selectedInstallationId || "").trim();
-      state.selectedInstallationId = hit ? next : "";
-      if (state.selectedInstallationId) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), state.selectedInstallationId);
-      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      const previousSource = String(state.deviceSelectionSource || "").trim();
+      state.selectedInstallationId = hit || (systemPick && isSystemDeviceId(next)) ? next : "";
+      state.deviceSelectionSource = state.selectedInstallationId ? (systemPick ? "system" : "own") : "";
+      persistDeviceSelectionLocal();
       renderProfileDeviceSelect();
-      if (previous === state.selectedInstallationId) return;
+      applySystemDeviceMode();
+      if (state.selectedInstallationId) saveDeviceSelectionToServer(state.selectedInstallationId, state.deviceSelectionSource).catch(() => {});
+      if (previous === state.selectedInstallationId && previousSource === state.deviceSelectionSource) return;
       invalidateSelectedDeviceData();
-      renderProfileDeviceSelect();
       fillPublishPlatformSelect();
       fillPublishRunPlatformSelect();
       syncRecorderNativeAuth();
@@ -15457,7 +15554,7 @@
 
     function selectedDevice() {
       const id = ensureSelectedInstallationId();
-      return (state.devices || []).find((d) => String(d.installation_id || "") === id) || null;
+      return findDeviceById(id);
     }
 
     function currentInstallationId() {
@@ -18619,24 +18716,34 @@
       const selects = [$("profileHeaderDeviceSelect"), $("profileDeviceSelect")].filter(Boolean);
       if (!selects.length) return;
       ensureSelectedInstallationId();
-      const rows = (state.devices || []).filter((device) => device.online && device.installation_id);
-      const options = rows.length
-        ? rows.map((device) => {
-            const id = String(device.installation_id || "");
-            const accountCount = Number(device.publish_account_count || 0);
-            const suffix = accountCount ? ` / ${accountCount}个发布账号` : "";
-            return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
-          }).join("")
-        : optionHtml("", "暂无在线设备");
+      const ownRows = (state.devices || []).filter((device) => device.online && device.installation_id);
+      const ownOptions = ownRows.map((device) => {
+        const id = String(device.installation_id || "");
+        const accountCount = Number(device.publish_account_count || 0);
+        const suffix = accountCount ? ` / ${accountCount}个发布账号` : "";
+        return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
+      }).join("");
+      const systemRows = (state.systemDevices || []).filter((device) => device.installation_id);
+      const systemOptions = systemRows.map((device) => {
+        const id = String(device.installation_id || "");
+        const name = String(device.name || "").trim() || `系统设备 ${id.slice(0, 8)}`;
+        return optionHtml(id, `系统设备 · ${name}${device.online ? "" : "（离线）"}`);
+      }).join("");
+      let options = "";
+      if (ownOptions) options += `<optgroup label="我的设备">${ownOptions}</optgroup>`;
+      if (systemOptions) options += `<optgroup label="系统设备（只能用 AI 营销创作）">${systemOptions}</optgroup>`;
+      if (!options) options = optionHtml("", "暂无可用设备");
+      const choiceCount = ownRows.length + systemRows.length;
       selects.forEach((select) => {
         select.innerHTML = options;
         select.value = state.selectedInstallationId || "";
-        select.disabled = !rows.length;
+        select.disabled = !choiceCount;
       });
       const selected = selectedDevice();
+      const modeSuffix = systemDeviceModeActive() ? "（系统设备 · 仅限 AI 营销创作）" : "";
       const text = selected
-        ? `在线 / ${deviceSelectorLabel(selected)}`
-        : "暂无在线设备";
+        ? `${selected.online === false ? "离线" : "在线"} / ${deviceSelectorLabel(selected)}${modeSuffix}`
+        : "暂无可用设备";
       if ($("profileDeviceText")) $("profileDeviceText").textContent = text;
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
@@ -19349,6 +19456,8 @@
           }
           const data = await api("/api/h5-chat/devices/status");
           state.devices = Array.isArray(data.devices) ? data.devices : [];
+          state.systemDevices = Array.isArray(data.system_devices) ? data.system_devices : [];
+          applyServerDeviceSelection(data.selection);
           state.devicesLoaded = true;
           h5CacheWrite("devices", state.devices.slice(0, 40));
           const previousInstallationId = String(state.selectedInstallationId || "").trim();
@@ -22695,6 +22804,8 @@
     function workQuickItemVisible(item) {
       if (!item) return false;
       if (item.hidden) return false;
+      // 选中可调度系统设备时：只保留 AI 营销创作的入口
+      if (systemDeviceModeActive() && String(item.department || "AI营销创作") !== "AI营销创作") return false;
       if (item.always) return true;
       if (item.featureKey) return !!(state.user && state.user.features && state.user.features[item.featureKey]);
       if (!state.taskSkillsLoaded) return false;

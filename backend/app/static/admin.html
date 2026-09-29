@@ -568,6 +568,7 @@ body{background:#edf2f7}
       <div class="nav-tab" data-icon="远" data-nav="remoteSupport" id="remoteSupportNavTab" onclick="switchNav('remoteSupport')" style="display:none">远程支持设备</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
       <div class="nav-tab" data-icon="商" data-nav="merchants" id="merchantsNavTab" onclick="switchNav('merchants')" style="display:none">商家审核</div>
+      <div class="nav-tab" data-icon="备" data-nav="dispatchDevices" id="dispatchDevicesNavTab" onclick="switchNav('dispatchDevices')" style="display:none">可调度设备</div>
     </div>
   </aside>
   <main class="admin-main">
@@ -1878,6 +1879,34 @@ body{background:#edf2f7}
     </div>
   </div>
 
+  <!-- Page: 可调度设备（系统设备，按槽位号添加） -->
+  <div class="container" id="pageDispatchDevices" style="display:none">
+    <div class="card">
+      <h3>可调度设备</h3>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
+        按客户端「本地槽位 ID」添加。H5 用户可以在「我的」里选择这些设备；选中系统设备后，该用户只能使用 AI 营销创作。
+      </div>
+      <div class="search-bar" style="margin-bottom:14px;flex-wrap:wrap">
+        <input type="text" id="dispatchDeviceSearch" placeholder="搜槽位号 / 名称 / 备注" onkeydown="if(event.key==='Enter')loadDispatchDevices(1)">
+        <select id="dispatchDeviceStatus" onchange="loadDispatchDevices(1)">
+          <option value="">全部状态</option>
+          <option value="enabled">启用中</option>
+          <option value="disabled">已停用</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadDispatchDevices(1)">查询</button>
+        <button class="btn btn-outline btn-sm" onclick="resetDispatchDeviceFilters()">重置</button>
+      </div>
+      <div class="search-bar" style="margin-bottom:14px;flex-wrap:wrap">
+        <input type="text" id="dispatchDeviceSlot" placeholder="槽位号（客户端「本地槽位 ID」，可复制整串）" style="min-width:320px">
+        <input type="text" id="dispatchDeviceName" placeholder="名称（可选，例如 直播机A）" style="min-width:200px">
+        <input type="text" id="dispatchDeviceNote" placeholder="备注（可选）" style="min-width:200px">
+        <button class="btn btn-primary btn-sm" onclick="addDispatchDevice()">添加设备</button>
+      </div>
+      <div id="dispatchDeviceTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="dispatchDevicePagination"></div>
+    </div>
+  </div>
+
   <!-- Page: TikHub records -->
   <div class="container" id="pageTikhubRecords" style="display:none">
     <div class="card">
@@ -2296,6 +2325,8 @@ function showDashboard() {
   const remoteTab = document.getElementById('remoteSupportNavTab');
   if (remoteTab) remoteTab.style.display = isAdmin() ? '' : 'none';
   const merchantTab = document.getElementById('merchantsNavTab');
+  const dispatchDevicesTab = document.getElementById('dispatchDevicesNavTab');
+  if (dispatchDevicesTab) dispatchDevicesTab.style.display = isAdmin() ? '' : 'none';
   if (merchantTab) merchantTab.style.display = isAdmin() ? '' : 'none';
 
   requestAnimationFrame(() => {
@@ -2482,6 +2513,7 @@ function navTitle(nav) {
     commissions: '分润记录',
     remoteSupport: '远程支持设备',
     merchants: '商家审核',
+    dispatchDevices: '可调度设备',
   }[nav] || '首页数据大盘';
 }
 
@@ -2491,6 +2523,7 @@ function switchNav(nav) {
   if (nav === 'remoteSupport' && !isAdmin()) nav = 'stats';
   if (nav === 'systemWorkflows' && !isAdmin()) nav = 'stats';
   if (nav === 'merchants' && !isAdmin()) nav = 'stats';
+  if (nav === 'dispatchDevices' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
@@ -2517,6 +2550,8 @@ function switchNav(nav) {
   if (pageRemoteSupport) pageRemoteSupport.style.display = nav === 'remoteSupport' ? '' : 'none';
   const pageMerchants = document.getElementById('pageMerchants');
   if (pageMerchants) pageMerchants.style.display = nav === 'merchants' ? '' : 'none';
+  const pageDispatchDevices = document.getElementById('pageDispatchDevices');
+  if (pageDispatchDevices) pageDispatchDevices.style.display = nav === 'dispatchDevices' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'customers') loadCustomers(customerPage || 1);
@@ -2528,6 +2563,7 @@ function switchNav(nav) {
   if (nav === 'brands') loadBrands();
   if (nav === 'remoteSupport') loadRemoteSupportDevices();
   if (nav === 'merchants') loadMerchants(merchantPage || 1);
+  if (nav === 'dispatchDevices') loadDispatchDevices(dispatchDevicePage || 1);
 }
 
 async function loadRemoteSupportDevices() {
@@ -2694,6 +2730,123 @@ async function setBrandEnabled(mark, enabled) {
     toast(enabled ? '品牌已启用' : '品牌已停用');
     loadBrands();
   } catch(e) { toast(e.message, 'error'); }
+}
+
+/* ── 可调度设备（系统设备；H5 用户选中后只能用 AI 营销创作） ── */
+const DISPATCH_DEVICE_PAGE_SIZE = 20;
+let dispatchDevicePage = 1;
+let dispatchDevicePages = 1;
+
+function dispatchDeviceFilters() {
+  const q = (document.getElementById('dispatchDeviceSearch') || {}).value || '';
+  const status = (document.getElementById('dispatchDeviceStatus') || {}).value || '';
+  return { q: String(q).trim(), status: String(status).trim() };
+}
+
+function resetDispatchDeviceFilters() {
+  const q = document.getElementById('dispatchDeviceSearch'); if (q) q.value = '';
+  const s = document.getElementById('dispatchDeviceStatus'); if (s) s.value = '';
+  loadDispatchDevices(1);
+}
+
+function renderDispatchDevicePagination(total, pages) {
+  const box = document.getElementById('dispatchDevicePagination');
+  if (!box) return;
+  if (!pages || pages <= 1) { box.innerHTML = ''; return; }
+  let html = '<button class="btn btn-outline btn-sm" ' + (dispatchDevicePage <= 1 ? 'disabled' : '') + ' onclick="loadDispatchDevices(' + (dispatchDevicePage - 1) + ')">上一页</button>';
+  html += '<span style="margin:0 10px;font-size:13px;color:var(--text-secondary)">第 ' + dispatchDevicePage + ' / ' + pages + ' 页 · 共 ' + total + ' 台</span>';
+  html += '<button class="btn btn-outline btn-sm" ' + (dispatchDevicePage >= pages ? 'disabled' : '') + ' onclick="loadDispatchDevices(' + (dispatchDevicePage + 1) + ')">下一页</button>';
+  box.innerHTML = html;
+}
+
+async function loadDispatchDevices(page) {
+  dispatchDevicePage = Math.max(1, Number(page || 1));
+  const target = document.getElementById('dispatchDeviceTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const f = dispatchDeviceFilters();
+    const params = new URLSearchParams({ page: String(dispatchDevicePage), page_size: String(DISPATCH_DEVICE_PAGE_SIZE), q: f.q, status: f.status });
+    const data = await api('/admin/api/dispatch-devices?' + params.toString());
+    const rows = Array.isArray(data.items) ? data.items : [];
+    const total = Number(data.total || 0);
+    dispatchDevicePages = Math.max(1, Number(data.pages || 1));
+    if (!rows.length) {
+      target.innerHTML = '<div class="empty">' + (total ? '没有匹配的可调度设备' : '还没有配置可调度设备，按槽位号添加一台') + '</div>';
+      renderDispatchDevicePagination(total, 1);
+      return;
+    }
+    const body = rows.map(function(row) {
+      const enabled = String(row.status || 'enabled') !== 'disabled';
+      return '<tr>'
+        + '<td><code>' + escapeHtml(row.installation_id || '-') + '</code></td>'
+        + '<td>' + escapeHtml(row.name || '-') + '</td>'
+        + '<td>' + escapeHtml(row.note || '-') + '</td>'
+        + '<td>' + (row.online ? '<span class="badge badge-green">在线</span>' : '<span class="badge badge-yellow">离线</span>') + '</td>'
+        + '<td>' + escapeHtml(row.last_seen_at || '-') + '</td>'
+        + '<td>' + (enabled ? '<span class="badge badge-blue">启用中</span>' : '<span class="badge badge-red">已停用</span>') + '</td>'
+        + '<td>'
+        + '<button class="btn btn-outline btn-sm" onclick="toggleDispatchDevice(' + row.id + ', \x27' + (enabled ? 'disabled' : 'enabled') + '\x27)">' + (enabled ? '停用' : '启用') + '</button> '
+        + '<button class="btn btn-outline btn-sm" onclick="renameDispatchDevice(' + row.id + ', \x27' + escapeHtml(row.name || '').replace(/'/g, '') + '\x27)">改名</button> '
+        + '<button class="btn btn-outline btn-sm" onclick="deleteDispatchDevice(' + row.id + ')">删除</button>'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>槽位号</th><th>名称</th><th>备注</th><th>在线</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+    renderDispatchDevicePagination(total, dispatchDevicePages);
+  } catch (err) {
+    target.innerHTML = '<div class="empty">加载失败：' + escapeHtml((err && err.message) || err) + '</div>';
+  }
+}
+
+async function addDispatchDevice() {
+  const slot = ((document.getElementById('dispatchDeviceSlot') || {}).value || '').trim();
+  const name = ((document.getElementById('dispatchDeviceName') || {}).value || '').trim();
+  const note = ((document.getElementById('dispatchDeviceNote') || {}).value || '').trim();
+  if (!slot) { toast('请先填写槽位号', 'error'); return; }
+  try {
+    await api('/admin/api/dispatch-devices', { method: 'POST', body: JSON.stringify({ slot: slot, name: name, note: note }) });
+    toast('已添加可调度设备');
+    const s = document.getElementById('dispatchDeviceSlot'); if (s) s.value = '';
+    const n = document.getElementById('dispatchDeviceName'); if (n) n.value = '';
+    const t = document.getElementById('dispatchDeviceNote'); if (t) t.value = '';
+    loadDispatchDevices(1);
+  } catch (err) {
+    toast((err && err.message) || '添加失败', 'error');
+  }
+}
+
+async function toggleDispatchDevice(id, status) {
+  try {
+    await api('/admin/api/dispatch-devices/' + id, { method: 'PATCH', body: JSON.stringify({ status: status }) });
+    toast(status === 'disabled' ? '已停用' : '已启用');
+    loadDispatchDevices(dispatchDevicePage);
+  } catch (err) {
+    toast((err && err.message) || '操作失败', 'error');
+  }
+}
+
+async function renameDispatchDevice(id, current) {
+  const name = window.prompt('设备名称（留空表示清空）', current || '');
+  if (name === null) return;
+  try {
+    await api('/admin/api/dispatch-devices/' + id, { method: 'PATCH', body: JSON.stringify({ name: name }) });
+    toast('已保存');
+    loadDispatchDevices(dispatchDevicePage);
+  } catch (err) {
+    toast((err && err.message) || '保存失败', 'error');
+  }
+}
+
+async function deleteDispatchDevice(id) {
+  if (!window.confirm('确认从可调度设备里删除？删除后 H5 用户不能再选它。')) return;
+  try {
+    await api('/admin/api/dispatch-devices/' + id, { method: 'DELETE' });
+    toast('已删除');
+    loadDispatchDevices(dispatchDevicePage);
+  } catch (err) {
+    toast((err && err.message) || '删除失败', 'error');
+  }
 }
 
 function switchTab(tab) {

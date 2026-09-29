@@ -32,6 +32,7 @@ from ..models import (
 from .admin import _agent_sub_user_ids
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
+from ..services import dispatch_devices
 from .scheduled_tasks import (
     ScheduledTaskCreate,
     _SERVER_SIDE_TASK_KINDS,
@@ -3736,6 +3737,7 @@ def activate_workflow_template(
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
+    dispatch_devices.assert_marketing_only_allowed(db, owner.id, "workflow_activate")
     iid = (body.installation_id or "").strip()
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")
@@ -3799,6 +3801,7 @@ def activate_inline_workflow_template(
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
+    dispatch_devices.assert_marketing_only_allowed(db, owner.id, "workflow_activate_inline")
     iid = (body.installation_id or "").strip()
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")

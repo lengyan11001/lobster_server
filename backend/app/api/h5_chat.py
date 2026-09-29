@@ -44,6 +44,7 @@ from ..services import device_labels
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import attach_system_task_message
 from ..services.installation_slot_ownership import assert_installation_slot_owner
+from ..services import dispatch_devices
 from ..services.mastra_attachment_security import (
     UnsafeMastraImageError,
     assert_safe_mastra_image,
@@ -1855,7 +1856,15 @@ def h5_devices_status(
         devices.append(
             entry
         )
-    return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
+    selection_slot, selection_source = dispatch_devices.get_selection(db, owner_user.id)
+    return {
+        "ok": True,
+        "online": any(d["online"] for d in devices),
+        "devices": devices,
+        "system_devices": dispatch_devices.system_device_rows(db, now=now),
+        "selection": {"installation_id": selection_slot, "source": selection_source},
+        "marketing_only": dispatch_devices.user_uses_system_device(db, owner_user.id),
+    }
 
 
 @router.get("/api/h5-chat/wechat-contacts", summary="H5 按需读取 online 微信通讯录（选择联系人时才拉）")
@@ -2314,3 +2323,65 @@ def h5_complete_message(
     _finish_mastra_parent_from_children(db, row)
     db.commit()
     return {"ok": True, "status": row.status}
+
+
+class H5DeviceSelectionIn(BaseModel):
+    """H5 选择设备：installation_id + source（own / system）。"""
+
+    installation_id: str = ""
+    source: str = ""
+
+
+@router.get("/api/h5-chat/device-selection", summary="H5 当前选择的设备")
+def h5_get_device_selection(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    slot, source = dispatch_devices.get_selection(db, owner_user.id)
+    return {
+        "ok": True,
+        "installation_id": slot,
+        "source": source,
+        "marketing_only": dispatch_devices.user_uses_system_device(db, owner_user.id),
+    }
+
+
+@router.post("/api/h5-chat/device-selection", summary="H5 选择设备（自己的设备 / 可调度系统设备）")
+def h5_save_device_selection(
+    body: H5DeviceSelectionIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    slot = dispatch_devices.normalize_slot(body.installation_id)
+    kind = "system" if str(body.source or "").strip().lower() == "system" else "own"
+    if not slot:
+        raise HTTPException(status_code=400, detail="缺少设备")
+    if kind == "system":
+        if not dispatch_devices.is_system_device(db, slot):
+            raise HTTPException(status_code=403, detail="该设备不在可调度设备列表中")
+    else:
+        owned = (
+            db.query(H5ChatDevicePresence)
+            .filter(
+                H5ChatDevicePresence.user_id == owner_user.id,
+                H5ChatDevicePresence.installation_id == slot,
+            )
+            .first()
+        )
+        if owned is None:
+            raise HTTPException(status_code=403, detail="不是当前账号的设备")
+    saved_slot, saved_kind = dispatch_devices.save_selection(db, owner_user.id, slot, kind)
+    logger.info(
+        "[h5-chat] device selection user_id=%s slot=%s source=%s",
+        owner_user.id,
+        saved_slot,
+        saved_kind,
+    )
+    return {
+        "ok": True,
+        "installation_id": saved_slot,
+        "source": saved_kind,
+        "marketing_only": saved_kind == dispatch_devices.SYSTEM_DEVICE_SOURCE,
+    }
