@@ -392,7 +392,14 @@ async def canvas_proxy(
     if model:
         from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 
-        assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body_json, action_label="画布生成")
+        try:
+            assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body_json, action_label="画布生成")
+        except HTTPException as exc:
+            if exc.status_code == 402:
+                raise  # 余额不足：明确挡住，别白花服务器 key
+            # 速推侧没有这个模型的定价表（画布里有些 apiz 模型没进 docs）：
+            # 不硬拦，照常调用，调用后按上游回报的消耗扣费
+            logger.info("[canvas] 模型无速推定价表，跳过预扣、按上游回报扣费: %s (%s)", model, getattr(exc, "detail", ""))
 
     headers = await _apiz_headers()
     for name in ("content-type", "accept", "accept-language"):
