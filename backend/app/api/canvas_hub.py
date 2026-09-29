@@ -31,47 +31,45 @@ UPLOAD_DIR = ROOT / "data" / "canvas_uploads"
 
 _tables_ready = False
 
-_PROJECT_DDL = """
-CREATE TABLE IF NOT EXISTS canvas_project (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL DEFAULT '',
-    description TEXT NOT NULL DEFAULT '',
-    is_public INTEGER NOT NULL DEFAULT 0,
-    snapshot TEXT,
-    thumbnail_url TEXT NOT NULL DEFAULT '',
-    source_url TEXT NOT NULL DEFAULT '',
-    sort INTEGER NOT NULL DEFAULT 0,
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
-)
-"""
+from sqlalchemy import Column, Float, Integer, String, Table, Text
 
-_ASSET_DDL = """
-CREATE TABLE IF NOT EXISTS canvas_asset (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    url TEXT NOT NULL,
-    file_type TEXT NOT NULL DEFAULT '',
-    file_size INTEGER NOT NULL DEFAULT 0,
-    name TEXT NOT NULL DEFAULT '',
-    created_at REAL NOT NULL
+from ..db import Base
+
+canvas_project_table = Table(
+    "canvas_project",
+    Base.metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("uuid", String(64), nullable=False, unique=True),
+    Column("user_id", Integer, nullable=False, default=0),
+    Column("name", String(200), nullable=False, default=""),
+    Column("description", Text, nullable=False, default=""),
+    Column("is_public", Integer, nullable=False, default=0),
+    Column("snapshot", Text),
+    Column("thumbnail_url", Text, nullable=False, default=""),
+    Column("source_url", Text, nullable=False, default=""),
+    Column("sort", Integer, nullable=False, default=0),
+    Column("created_at", Float, nullable=False, default=0.0),
+    Column("updated_at", Float, nullable=False, default=0.0),
 )
-"""
+
+canvas_asset_table = Table(
+    "canvas_asset",
+    Base.metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, nullable=False),
+    Column("url", Text, nullable=False),
+    Column("file_type", String(128), nullable=False, default=""),
+    Column("file_size", Integer, nullable=False, default=0),
+    Column("name", String(255), nullable=False, default=""),
+    Column("created_at", Float, nullable=False, default=0.0),
+)
 
 
 def ensure_tables(db: Session) -> None:
     global _tables_ready
     if _tables_ready:
         return
-    db.execute(text(_PROJECT_DDL))
-    db.execute(text(_ASSET_DDL))
-    try:  # 老库补列（新库 DDL 里已经带了）
-        db.execute(text("ALTER TABLE canvas_project ADD COLUMN source_url TEXT NOT NULL DEFAULT ''"))
-    except Exception:
-        pass
-    db.commit()
+    Base.metadata.create_all(bind=db.get_bind(), tables=[canvas_project_table, canvas_asset_table])
     _tables_ready = True
 
 
@@ -221,8 +219,8 @@ def create_project(db: Session, *, user_id: int, name: str, description: str, is
     db.execute(
         text(
             "INSERT INTO canvas_project (uuid, user_id, name, description, is_public, snapshot,"
-            " thumbnail_url, sort, created_at, updated_at)"
-            " VALUES (:uuid, :uid, :name, :descr, :pub, NULL, '', 0, :now, :now)"
+            " thumbnail_url, source_url, sort, created_at, updated_at)"
+            " VALUES (:uuid, :uid, :name, :descr, :pub, NULL, '', '', 0, :now, :now)"
         ),
         {"uuid": uid, "uid": user_id, "name": name[:200] or "未命名作品", "descr": description[:1000],
          "pub": 1 if is_public else 0, "now": now},
