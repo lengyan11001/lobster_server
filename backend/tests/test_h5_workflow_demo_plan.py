@@ -282,3 +282,12 @@ def test_online_demo_button_calls_the_server_plan_endpoint():
     assert "/api/h5-workflows/demo-plan" in body
     assert "template_id:templateId" in body
     assert "plan.server_side ? [] : [iid]" in body
+
+
+def test_h5_workflow_shanjian_script_sources_multi_kept():
+    from backend.app.api import h5_workflows
+
+    params = {"script_sources": ["ip_daily_professional_ip_oral", "ip_daily_industry_hot_oral"]}
+    ordered = h5_workflows._normalize_shanjian_script_sources(params)
+    assert ordered == ["ip_daily_professional_ip_oral", "ip_daily_industry_hot_oral"]
+    assert params["script_source"] == "ip_daily_professional_ip_oral"

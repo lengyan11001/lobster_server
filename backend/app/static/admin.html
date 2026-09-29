@@ -1084,7 +1084,14 @@ body{background:#edf2f7}
       fields.push('<label class="sw-f">接管分钟<input class="sw-p sw-num" data-k="takeover_session_minutes"' + num('takeover_session_minutes', 30) + '></label>');
     }
     if (p.key === 'hifly.video.create_by_tts') {
-      fields.push('<label class="sw-f">口播文案<input class="sw-p sw-wide" data-k="script" value="' + esc(params.script || params.prompt || '') + '" placeholder="留空按 IP 人设生成"></label>');
+      var oralPicked = Array.isArray(params.script_sources) && params.script_sources.length
+        ? params.script_sources.map(String)
+        : [String(params.script_source || 'ip_daily_industry_hot_oral')];
+      fields.push('<label class="sw-f">口播文案<input class="sw-p sw-wide" data-k="script" value="' + esc(params.script || params.prompt || '') + '" placeholder="留空按下面的口播来源生成"></label>');
+      fields.push('<label class="sw-f">口播来源（可多选，都选则每次随机一种）<select class="sw-p" data-k="script_sources" multiple size="2">'
+        + '<option value="ip_daily_industry_hot_oral"' + (oralPicked.indexOf('ip_daily_industry_hot_oral') >= 0 ? ' selected' : '') + '>行业口播</option>'
+        + '<option value="ip_daily_professional_ip_oral"' + (oralPicked.indexOf('ip_daily_professional_ip_oral') >= 0 ? ' selected' : '') + '>IP 口播</option>'
+        + '</select></label>');
     }
     if (p.key === 'douyin_leads' && p.label.indexOf('关键词') >= 0) {
       fields.push('<label class="sw-f">关键词<input class="sw-p sw-wide" data-k="keyword" value="' + esc(params.keyword || '') + '" placeholder="留空用设备已配关键词"></label>');
@@ -1238,6 +1245,10 @@ body{background:#edf2f7}
     } else if (key === 'hifly.video.create_by_tts') {
       action = 'shanjian_digital_human_video';
       params.virtualman_selection_mode = params.virtualman_selection_mode || 'daily_round_robin';
+      var oralSources = Array.isArray(params.script_sources) ? params.script_sources.filter(Boolean) : [];
+      if (!oralSources.length) oralSources = [String(params.script_source || 'ip_daily_industry_hot_oral')];
+      params.script_sources = oralSources;
+      params.script_source = oralSources[0];
       delete params.capability_id;
     } else if (key === 'local_bestseller') {
       action = 'local_bestseller_daily_video';
@@ -1389,6 +1400,13 @@ body{background:#edf2f7}
       Array.prototype.forEach.call(extra.querySelectorAll('.sw-p'), function (inp) {
         var k = inp.getAttribute('data-k');
         if (!k) return;
+        if (inp.multiple) {
+          var pickedMulti = Array.prototype.map.call(inp.selectedOptions || [], function (opt) { return opt.value; });
+          if (k === 'script_sources' && !pickedMulti.length) pickedMulti = ['ip_daily_industry_hot_oral'];
+          r.params[k] = pickedMulti;
+          if (k === 'script_sources') r.params.script_source = pickedMulti[0];
+          return;
+        }
         var raw = String(inp.value || '').trim();
         if (k === 'regions') {
           r.params[k] = raw ? raw.split(/[，,、|]/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];

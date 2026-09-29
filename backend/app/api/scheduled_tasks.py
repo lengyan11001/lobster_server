@@ -121,6 +121,28 @@ _WECHAT_CHANNELS_PLATFORMS = {"wechat_channels", "channels", "sph"}
 
 
 _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
+
+# 数字人节点口播来源：行业热门口播（默认）/ 专业 IP 口播
+_SHANJIAN_SCRIPT_SOURCES = {"ip_daily_industry_hot_oral", "ip_daily_professional_ip_oral"}
+_SHANJIAN_DEFAULT_SCRIPT_SOURCE = "ip_daily_industry_hot_oral"
+
+def _normalize_shanjian_script_sources(params: Dict[str, Any]) -> List[str]:
+    """数字人节点口播来源（多选）归一：保留合法值，顺便给旧客户端写入单值。"""
+    raw = params.get("script_sources")
+    values: List[str] = []
+    if isinstance(raw, list):
+        values = [_h5_dh_clean_text(item, 64) for item in raw]
+    elif str(raw or "").strip():
+        values = [_h5_dh_clean_text(raw, 64)]
+    legacy = _h5_dh_clean_text(params.get("script_source"), 64)
+    if legacy:
+        values.append(legacy)
+    ordered = list(dict.fromkeys([value for value in values if value in _SHANJIAN_SCRIPT_SOURCES]))
+    if not ordered:
+        ordered = [_SHANJIAN_DEFAULT_SCRIPT_SOURCE]
+    params["script_sources"] = ordered
+    params["script_source"] = ordered[0]
+    return ordered
 _SHANJIAN_DIGITAL_HUMAN_ACTION = "shanjian_digital_human_video"
 _DIGITAL_HUMAN_PROVIDER_LEGACY = "hifly_legacy"
 _DIGITAL_HUMAN_PROVIDER_V2 = "shanjian_v2"
@@ -608,7 +630,7 @@ def _maybe_convert_h5_digital_human_task(
             latest_virtualman = _h5_dh_latest_virtualman(db, target_user_id)
             if latest_virtualman:
                 params["virtualman_id"] = latest_virtualman
-    params["script_source"] = "ip_daily_industry_hot_oral"
+    _normalize_shanjian_script_sources(params)
     if _h5_dh_provider() != _DIGITAL_HUMAN_PROVIDER_V2:
         legacy_payload = dict(payload)
         legacy_payload["payload"] = params
@@ -661,7 +683,7 @@ def _normalize_sales_digital_human_run_payload(
     if _h5_dh_clean_text(source.get("action"), 128) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
         return source
     params = source.get("params") if isinstance(source.get("params"), dict) else {}
-    if _h5_dh_clean_text(params.get("script_source"), 128) != "ip_daily_industry_hot_oral":
+    if not _normalize_shanjian_script_sources(dict(params)):
         return source
     normalized_params = dict(params)
     normalized_params.pop("prompt", None)

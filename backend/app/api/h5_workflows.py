@@ -79,6 +79,28 @@ _WORKFLOW_CHILD_ACTION_TYPES = {
 }
 _SYSTEM_WORKFLOW_OWNER_ID = 0
 _SYSTEM_WORKFLOW_CATALOG_SOURCE = "system_catalog"
+
+# 数字人节点口播来源：行业热门口播（默认）/ 专业 IP 口播
+_SHANJIAN_SCRIPT_SOURCES = {"ip_daily_industry_hot_oral", "ip_daily_professional_ip_oral"}
+_SHANJIAN_DEFAULT_SCRIPT_SOURCE = "ip_daily_industry_hot_oral"
+
+def _normalize_shanjian_script_sources(params) -> list:
+    """数字人节点口播来源（多选）归一：保留合法值，顺便给旧客户端写入单值。"""
+    raw = params.get("script_sources") if isinstance(params, dict) else None
+    values = []
+    if isinstance(raw, list):
+        values = [_clean_text(item, 64) for item in raw]
+    elif str(raw or "").strip():
+        values = [_clean_text(raw, 64)]
+    legacy = _clean_text((params or {}).get("script_source"), 64)
+    if legacy:
+        values.append(legacy)
+    ordered = list(dict.fromkeys([value for value in values if value in _SHANJIAN_SCRIPT_SOURCES]))
+    if not ordered:
+        ordered = [_SHANJIAN_DEFAULT_SCRIPT_SOURCE]
+    params["script_sources"] = ordered
+    params["script_source"] = ordered[0]
+    return ordered
 _ENABLED_SYSTEM_WORKFLOW_KEYS = {
     "system_sales",
     "system_short_video_wechat",
@@ -2544,7 +2566,7 @@ def _prepare_sales_workflow_nodes(
                 params["language"] = template_language
                 params["target_language"] = template_language
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
-                params["script_source"] = "ip_daily_industry_hot_oral"
+                _normalize_shanjian_script_sources(params)
                 params["virtualman_candidates"] = copy.deepcopy(shanjian_virtualmans)
                 params["virtualman_selection_mode"] = "daily_round_robin" if shanjian_virtualmans else "fixed"
                 params.pop("virtualman_id", None)
@@ -2603,7 +2625,7 @@ def _prepare_sales_workflow_nodes(
                 params["language"] = template_language
                 params["target_language"] = template_language
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
-                params["script_source"] = "ip_daily_industry_hot_oral"
+                _normalize_shanjian_script_sources(params)
                 params["virtualman_candidates"] = copy.deepcopy(shanjian_virtualmans)
                 params["virtualman_selection_mode"] = "daily_round_robin" if shanjian_virtualmans else "fixed"
                 params.pop("virtualman_id", None)

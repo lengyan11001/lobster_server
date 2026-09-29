@@ -27,7 +27,7 @@ def _context():
 
 def test_h5_legacy_digital_human_uses_ip_daily_script_context(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_LEGACY)
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _context())
 
     task_kind, payload = scheduled_tasks._maybe_convert_h5_digital_human_task(
         object(), task_kind="capability", payload=_payload(), target_user_id=7
@@ -41,7 +41,7 @@ def test_h5_legacy_digital_human_uses_ip_daily_script_context(monkeypatch):
 
 def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_V2)
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _context())
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_virtualman", lambda db, user_id: "virtualman-1")
     monkeypatch.setattr(
         scheduled_tasks,
@@ -76,7 +76,7 @@ def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
 
 def test_h5_v2_digital_human_preserves_duration_and_template_choices(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_V2)
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _context())
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_virtualman", lambda db, user_id: "virtualman-1")
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_available_virtualmans", lambda db, user_id: [])
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_voice", lambda db, user_id: "voice-2")
@@ -222,7 +222,7 @@ def test_one_off_digital_human_does_not_require_personal_template_validation(db_
     monkeypatch.setattr(
         scheduled_tasks,
         "_h5_dh_context_params",
-        lambda db, user_id: {
+        lambda db, user_id, installation_id="": {
             "digital_human_template": {"style_id": "template-1"},
             "digital_human_resources": {
                 "avatars": [{"virtualman_id": "avatar-1"}],
@@ -249,7 +249,7 @@ def test_live_template_validation_allows_audio_driven_capability_without_voice(d
     monkeypatch.setattr(
         scheduled_tasks,
         "_h5_dh_context_params",
-        lambda db, user_id: {
+        lambda db, user_id, installation_id="": {
             "digital_human_template": {"style_id": "template-1"},
             "digital_human_resources": {
                 "avatars": [{"virtualman_id": "avatar-1"}],
@@ -320,3 +320,15 @@ def test_workflow_claim_uses_latest_personal_template_instead_of_payload_snapsho
     assert [item["virtualman_id"] for item in params["virtualman_candidates"]] == ["latest-avatar"]
     assert params["voice"] == "latest-voice"
     assert params["speed_ratio"] == 1.25
+
+
+def test_shanjian_script_sources_multi_normalized():
+    """多选口播来源要原样保留，并给旧客户端写入单值。"""
+    params = {"script_sources": ["ip_daily_professional_ip_oral", "bogus", "ip_daily_industry_hot_oral"]}
+    ordered = scheduled_tasks._normalize_shanjian_script_sources(params)
+    assert ordered == ["ip_daily_professional_ip_oral", "ip_daily_industry_hot_oral"]
+    assert params["script_source"] == "ip_daily_professional_ip_oral"
+
+    empty = {}
+    assert scheduled_tasks._normalize_shanjian_script_sources(empty) == ["ip_daily_industry_hot_oral"]
+    assert empty["script_source"] == "ip_daily_industry_hot_oral"

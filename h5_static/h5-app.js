@@ -5044,13 +5044,15 @@
         const driveMode = workflowParamValue("workflowParamHiflyDriveMode") || "tts";
         const voice = workflowParamValue("workflowParamVoice");
         const script = workflowParamValue("workflowParamHiflyScript");
+        const oralSourcesRaw = workflowParamMulti("workflowParamHiflyScriptSources");
+        const oralSources = oralSourcesRaw.length ? oralSourcesRaw : ["ip_daily_industry_hot_oral"];
         const audioValue = assetPickerSelectedValues("workflowParamHiflyAudio")[0] || "";
         const longVideo = workflowParamValue("workflowParamHiflyDurationMode") === "long";
         const useTemplate = workflowParamValue("workflowParamHiflyTemplateMode") === "template";
         const videoDuration = longVideo ? workflowParamNumber("workflowParamHiflyTargetDuration", 60, 31, 300) : 30;
         if (!avatar) throw new Error("请选择数字人");
         if (driveMode === "tts" && !voice) throw new Error("请选择声音");
-        if (driveMode === "tts" && !script) throw new Error("请填写口播文案");
+        if (driveMode === "tts" && !script && !oralSources.length) throw new Error("请填写口播文案或选择口播来源");
         if (driveMode === "audio" && !audioValue) throw new Error("请选择驱动音频");
         const styleId = workflowParamValue("workflowParamHiflyTemplate");
         if (useTemplate && !styleId) throw new Error("请选择剪辑模板");
@@ -5065,7 +5067,15 @@
             virtualman_id: avatar,
             drive_mode: driveMode,
             ...(driveMode === "tts"
-              ? { voice, speaker_id: voice, script, text: script, prompt: script }
+              ? {
+                  voice,
+                  speaker_id: voice,
+                  script,
+                  text: script,
+                  prompt: script,
+                  script_sources: oralSources,
+                  script_source: oralSources[0],
+                }
               : (/^https?:\/\//i.test(audioValue) ? { audio_url: audioValue } : { audio_asset_id: audioValue })),
             rate: workflowParamValue("workflowParamHiflyRate") || "1",
             speed_ratio: Number(workflowParamValue("workflowParamHiflyRate") || 1),
@@ -6873,6 +6883,7 @@
         setFieldValue("workflowParamVoice", hifly.voice || hifly.speaker_id || "");
         setFieldValue("workflowParamHiflyTitle", plan.title || nodeInfo.label || "数字人口播");
         setFieldValue("workflowParamHiflyScript", hifly.script || hifly.text || hifly.prompt || "");
+        setHiflyOralSources(Array.isArray(hifly.script_sources) && hifly.script_sources.length ? hifly.script_sources : (hifly.script_source ? [hifly.script_source] : []));
         setFieldValue("workflowParamHiflyAudio", hifly.audio_url || hifly.audio_asset_id || "");
         setFieldValue("workflowParamHiflyDurationMode", hifly.long_video === true ? "long" : "short");
         setFieldValue("workflowParamHiflyTargetDuration", hifly.video_duration || hifly.duration_seconds || (hifly.long_video === true ? 60 : 30));
@@ -23307,6 +23318,7 @@
       const audioMode = workflowParamValue("workflowParamHiflyDriveMode") === "audio";
       $("workflowParamHiflyAudioField")?.classList.toggle("hidden", !audioMode);
       $("workflowParamHiflyScript")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      $("workflowParamHiflyScriptSources")?.closest(".field")?.classList.toggle("hidden", audioMode);
       $("workflowParamVoice")?.closest(".field")?.classList.toggle("hidden", audioMode);
       const longVideo = workflowParamValue("workflowParamHiflyDurationMode") === "long";
       $("workflowParamHiflyTargetDurationField")?.classList.toggle("hidden", !longVideo);
@@ -23529,6 +23541,27 @@
       }).filter(Boolean).slice(0, 20);
     }
 
+    function workflowParamMulti(id) {
+      const el = document.getElementById(id);
+      if (!el) return [];
+      return Array.prototype.slice.call(el.selectedOptions || []).map((opt) => opt.value).filter(Boolean);
+    }
+    function workflowOralSourceMultiHtml(id) {
+      const picked = workflowParamMulti(id);
+      const list = picked.length ? picked : ["ip_daily_industry_hot_oral"];
+      return `<select id="${id}" multiple size="2" style="width:100%;">`
+        + optionHtml("ip_daily_industry_hot_oral", "行业口播")
+        + optionHtml("ip_daily_professional_ip_oral", "IP 口播")
+        + "</select>";
+    }
+    function setHiflyOralSources(values) {
+      const el = document.getElementById("workflowParamHiflyScriptSources");
+      if (!el) return;
+      const picked = (Array.isArray(values) ? values : []).map(String);
+      const list = picked.length ? picked : ["ip_daily_industry_hot_oral"];
+      Array.prototype.forEach.call(el.options || [], (opt) => { opt.selected = list.indexOf(opt.value) >= 0; });
+    }
+
     function workflowDigitalHumanFieldsHtml() {
       return taskFieldHtml("数字人", taskSelectHtml("workflowParamAvatar", optionHtml("", "加载中...")))
         + taskFieldHtml("驱动方式", taskSelectHtml("workflowParamHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
@@ -23538,7 +23571,8 @@
         + `<div class="field hidden" id="workflowParamHiflyTargetDurationField"><label>预计视频时长</label><div class="work-duration-input"><input id="workflowParamHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div></div>`
         + taskFieldHtml("剪辑方式", taskSelectHtml("workflowParamHiflyTemplateMode", optionHtml("none", "不套模板") + optionHtml("template", "套用模板")))
         + `<div class="field hidden" id="workflowParamHiflyTemplateField"><label>剪辑模板</label>${taskSelectHtml("workflowParamHiflyTemplate", optionHtml("", "模板加载中..."))}</div>`
-        + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "填写要让数字人口播的完整文案"), true)
+        + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "留空则按下面选的口播来源自动生成"), true)
+        + taskFieldHtml("口播来源（可多选，都选则每次随机一种）", workflowOralSourceMultiHtml("workflowParamHiflyScriptSources"), true)
         + `<div class="field full hidden" id="workflowParamHiflyAudioField"><label>驱动音频</label>${assetPickerControlHtml("workflowParamHiflyAudio", { mediaType: "audio", output: "url", accept: "audio/*,.mp3,.m4a,.wav", uploadText: "上传音频", selectText: "选择音频" })}</div>`
         + taskAdvancedFieldsHtml(
           taskFieldHtml("语速", workInputHtml("workflowParamHiflyRate", "number", "1", 'min="0.5" max="2" step="0.1"'))
