@@ -6,6 +6,27 @@ reset the remote checkout to origin/main, then run server_update_and_restart.sh.
 """
 from __future__ import annotations
 
+
+_DEPLOY_CONFIRM_PHRASE = "发"
+
+
+def _require_user_deploy_confirmation() -> None:
+    """部署/发布硬闸门：必须用户明确说「发」；AI 会话不得绕过。
+
+    授权：环境变量 LOBSTER_DEPLOY_CONFIRM=发 或命令行 --i-said-fa。
+    """
+    args = list(sys.argv[1:])
+    if (os.environ.get("LOBSTER_DEPLOY_CONFIRM") or "").strip() == _DEPLOY_CONFIRM_PHRASE or "--i-said-fa" in args:
+        return
+    print(
+        "[BLOCKED] 未经用户授权，部署/发布已拦截。\n"
+        "  请让用户明确说「发」，然后：\n"
+        "    LOBSTER_DEPLOY_CONFIRM=发 python <本脚本> ...   （或加 --i-said-fa）",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+
 import argparse
 import os
 import shlex
@@ -194,6 +215,7 @@ def deploy_target(target: Target, *, reset: bool = True) -> None:
 
 
 def main() -> int:
+    _require_user_deploy_confirmation()
     parser = argparse.ArgumentParser(description="Deploy lobster_server from Windows/Python without local bash.")
     parser.add_argument("--env", type=Path, default=ROOT / ".env.deploy", help=".env.deploy path")
     parser.add_argument("--test", action="store_true", help="Deploy only LOBSTER_DEPLOY_HOST_TEST")

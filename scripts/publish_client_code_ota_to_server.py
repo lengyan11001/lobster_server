@@ -17,6 +17,27 @@ is no longer the default download target for clients.
 """
 from __future__ import annotations
 
+
+_DEPLOY_CONFIRM_PHRASE = "发"
+
+
+def _require_user_deploy_confirmation() -> None:
+    """部署/发布硬闸门：必须用户明确说「发」；AI 会话不得绕过。
+
+    授权：环境变量 LOBSTER_DEPLOY_CONFIRM=发 或命令行 --i-said-fa。
+    """
+    args = list(sys.argv[1:])
+    if (os.environ.get("LOBSTER_DEPLOY_CONFIRM") or "").strip() == _DEPLOY_CONFIRM_PHRASE or "--i-said-fa" in args:
+        return
+    print(
+        "[BLOCKED] 未经用户授权，部署/发布已拦截。\n"
+        "  请让用户明确说「发」，然后：\n"
+        "    LOBSTER_DEPLOY_CONFIRM=发 python <本脚本> ...   （或加 --i-said-fa）",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+
 import argparse
 import hashlib
 import json
@@ -378,6 +399,7 @@ print(public_domain + "/" + {json.dumps(object_key)})
 
 
 def main() -> int:
+    _require_user_deploy_confirmation()
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path", type=Path, help="local OTA zip")
     ap.add_argument("--version", default="1.0.5", help="manifest.version")

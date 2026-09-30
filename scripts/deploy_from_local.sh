@@ -2,6 +2,12 @@
 # 在本地开发机执行：推送后通过 SSH 在服务器上拉取并重启（需配置 LOBSTER_DEPLOY_HOST）
 # 可选：LOBSTER_DEPLOY_HOST_OVERSEAS → lobster-server.icu 等海外机（Messenger/Twilio 等需出海 API）
 # 若存在 .env.deploy 会自动加载（勿提交，已 gitignore）
+# ── 硬闸门：生产发布必须由用户明确说「发」，AI 会话不得绕过 ──
+if [ "${LOBSTER_DEPLOY_CONFIRM:-}" != "发" ]; then
+  echo "[BLOCKED] 未经用户授权：部署/发布已拦截。请让用户明确说「发」，然后：" >&2
+  echo "  LOBSTER_DEPLOY_CONFIRM=发 bash $0 $*" >&2
+  exit 3
+fi
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
