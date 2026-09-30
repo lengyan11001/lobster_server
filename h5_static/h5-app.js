@@ -19660,7 +19660,7 @@ async function api(path, options = {}) {
     function seedanceVideoRequestForModel(model) {
       if (seedanceIsXing25Model(model)) return { model: "seedance-2.5", channel: "xing" };
       if (seedanceIsOpenMindGrokModel(model)) return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };
-      if (seedanceIsYunwuVeoModel(model)) return { model: "veo3.1", channel: "yunwu" };
+      if (seedanceIsYunwuVeoModel(model)) return { model: "veo3.1", channel: "openmind" };
       return { model: String(model || "doubao-seedance-2-0-260128").trim(), channel: "" };
     }
 

@@ -4942,6 +4942,22 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             ],
         }
 
+    # veo3.1 text-to-video (yingmeng 1.0): yunwu retired -> OpenMind(veo31) then our comfly.
+    # image-to-video / reference-to-video keep the grok branch below.
+    if (
+        low_channel == "yunwu"
+        or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"}
+        or low_model.startswith("apiz/veo3.1/text-to-video")
+    ):
+        return {
+            "ok": True,
+            "model_family": "veo31",
+            "providers": [
+                {"channel": "openmind", "model": "veo3.1", "base_url": proxy_base},
+                {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
+            ],
+        }
+
     if low_model.startswith("apiz/veo3.1/image-to-video") or low_model.startswith("apiz/veo3.1/reference-to-video"):
         low_channel = "grok"
 
@@ -4969,7 +4985,8 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "veo31",
             "providers": [
-                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+                {"channel": "openmind", "model": "veo3.1", "base_url": proxy_base},
+                {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
             ],
         }
 

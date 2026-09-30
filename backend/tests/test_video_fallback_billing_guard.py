@@ -179,18 +179,24 @@ def test_wan30_position_switch(monkeypatch):
     assert providers[0]["channel"] == "dashscope"
 
 
-def test_veo_family_falls_back_to_xai_direct_only():
+def test_veo_family_uses_openmind_never_yunwu():
     policy = _video_provider_policy("apiz/veo3.1/text-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "veo31"
     assert policy["providers"] == [
         {
-            "channel": "xai",
-            "model": "grok-imagine-video-1.5",
+            "channel": "openmind",
+            "model": "veo3.1",
             "base_url": "/api/comfly-proxy",
-        }
+        },
+        {
+            "channel": "comfly",
+            "model": "veo3.1-fast",
+            "base_url": "/api/comfly-proxy",
+        },
     ]
+    assert all(item["channel"] != "yunwu" for item in policy["providers"])
 
 
 def test_seedance25_uses_xing_provider():
@@ -458,3 +464,20 @@ def test_openmind_video_poll_uses_cached_tos_url_without_queue(monkeypatch):
     assert result["video"]["url"] == tos_url
     assert result["video"]["source_url"] == source_url
     assert queued == []
+
+
+def test_yingmeng_1_0_never_routes_to_yunwu():
+    """影梦 1.0（yunwu-veo3.1-plus）已停用 yunwu：任何入口都只能拿到 OpenMind / comfly。"""
+    for model, channel_name in (
+        ("yunwu-veo3.1-plus", "yunwu"),
+        ("veo3.1", "yunwu"),
+        ("veo3.1", "openmind"),
+        ("veo3.1", ""),
+    ):
+        policy = _video_provider_policy(model, channel_name)
+        assert policy["model_family"] == "veo31", (model, channel_name)
+        assert [item["channel"] for item in policy["providers"]] == ["openmind", "comfly"], (model, channel_name)
+
+    h5 = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    assert 'return { model: "veo3.1", channel: "openmind" };' in h5
+    assert 'return { model: "veo3.1", channel: "yunwu" };' not in h5
