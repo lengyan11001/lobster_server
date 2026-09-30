@@ -22805,7 +22805,10 @@
       if (!item) return false;
       if (item.hidden) return false;
       // 选中可调度系统设备时：只保留 AI 营销创作的入口
-      if (systemDeviceModeActive() && String(item.department || "AI营销创作") !== "AI营销创作") return false;
+      // 系统设备（可调度设备）下：只拦「需要自有设备」的动作（抖音/个微/私域/发布/海外），
+// AI 营销创作以及图片、视频等生成入口一律保留（服务端也只拦工作流启动与定时任务创建）。
+const OWN_DEVICE_ONLY_DEPARTMENTS = ["抖音", "个微", "私域", "私域销冠", "AI获客", "发布中心", "AI海外平台", "海外平台"];
+if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item.department || "").trim())) return false;
       if (item.always) return true;
       if (item.featureKey) return !!(state.user && state.user.features && state.user.features[item.featureKey]);
       if (!state.taskSkillsLoaded) return false;

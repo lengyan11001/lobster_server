@@ -10541,3 +10541,41 @@
 .article-fields-stack > * { margin-bottom: 12px; }
 .article-fields-stack > *:last-child { margin-bottom: 0; }
 .article-fields-stack .field { margin: 0; }
+
+
+/* 2026-09-30 设备下拉卡片化（个人中心/顶部） */
+#profileHeaderDeviceSelect,
+#profileDeviceSelect {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.94);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b6478' stroke-width='2.4' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 14px 14px;
+  color: #12203a;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 8px 34px 8px 14px;
+  max-width: 100%;
+  box-shadow: 0 2px 8px rgba(9, 30, 66, 0.12);
+}
+#profileHeaderDeviceSelect:focus,
+#profileDeviceSelect:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.28);
+}
+#profileHeaderDeviceSelect option,
+#profileDeviceSelect option {
+  padding: 10px 14px;
+  font-size: 14px;
+  color: #12203a;
+}
+#profileHeaderDeviceSelect optgroup,
+#profileDeviceSelect optgroup {
+  font-weight: 700;
+  color: #6b7280;
+}
