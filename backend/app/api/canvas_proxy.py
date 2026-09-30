@@ -554,6 +554,21 @@ def refund_canvas(db: Session, user: User, amount: "object", model: str, path: s
         logger.warning("[canvas] 退回失败: %s", exc, exc_info=True)
 
 
+# apiz 的生硬报错 -> 我们自己的中文提示（界面直接显示这句）
+_APIZ_MESSAGE_MAP = (
+    ("至少要有一个非空 text", "提示词不能为空：请先在节点里填写文本再提交"),
+    ("非法token", "登录态已失效，请重新登录客户端后再试"),
+    ("余额不足", "积分不足，请先充值"),
+)
+
+
+def humanize_upstream_error(body_text: str) -> str:
+    for needle, message in _APIZ_MESSAGE_MAP:
+        if needle in body_text:
+            return message
+    return ""
+
+
 def _pricing_body(body: Dict[str, Any]) -> Dict[str, Any]:
     """画布 v3 的 body 是 {model, params}，参数在 params 里；定价要按展平后的看。"""
     if not isinstance(body, dict):
@@ -870,6 +885,12 @@ async def canvas_proxy(
         # 成功：价格按我们自己的定价（前面已预扣），不再按 apiz 回报扣一次
         if pre_charged:
             logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
+    # 上游拒绝时把话翻成我们自己的中文（界面直接显示），不再只甩「请检查参数」
+    friendly = humanize_upstream_error(upstream.content[:2000].decode("utf-8", "replace"))
+    if friendly and upstream.status_code >= 400 or (friendly and b"text" in upstream.content):
+        logger.warning("[canvas] 上游拒绝 %s -> %s", normalized, friendly)
+        return JSONResponse({"code": 400, "msg": friendly, "detail": friendly, "data": None}, status_code=400)
+
     if upstream.status_code < 400 and _should_settle(normalized):
         try:
             canvas_hub.ensure_tables(db)
