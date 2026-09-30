@@ -15456,11 +15456,14 @@ async function api(path, options = {}) {
     function selectableDevice(id) {
       const wanted = String(id || "").trim();
       if (!wanted) return false;
+      // 2026-09-30：尊重用户显式选择——槽位只要还在名单里就保留，
+      // 不再因为「离线 / source 不是 system」把选择重置回第一台在线设备。
       const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
-      if (own && own.online) return true;
-      // 系统设备（后台配置的可调度设备）：离线也允许保留选择
-      return isSystemDeviceId(wanted) && String(state.deviceSelectionSource || "").trim() === "system";
-    }
+      if (own) return true;
+      const system = (state.systemDevices || []).find((d) => String(d.installation_id || "") === wanted);
+      if (system) return true;
+      return isSystemDeviceId(wanted);
+}
 
     function persistDeviceSelectionLocal() {
       const slot = String(state.selectedInstallationId || "").trim();
