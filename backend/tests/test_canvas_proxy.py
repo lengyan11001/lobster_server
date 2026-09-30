@@ -220,9 +220,9 @@ def test_assets_upload_and_media_are_ours(client, monkeypatch):
     url = upload.json()["url"]
     assert url.endswith(".png") or "/canvas-api/media/" in url
 
+    # 画布上传只做临时素材：不进素材库（列表为空），但文件本体必须取得到
     listing = client.post("/canvas-api/api/get_file_list", json={"page": 1, "page_size": 30})
-    items = listing.json()["list"]
-    assert len(items) == 1 and items[0]["file_url"] == url
+    assert listing.json()["list"] == []
 
     rel = url.split("/canvas-media/", 1)[1] if "/canvas-media/" in url else url.split("/canvas-api/media/", 1)[1]
     media = client.get(f"/canvas-media/{rel}")

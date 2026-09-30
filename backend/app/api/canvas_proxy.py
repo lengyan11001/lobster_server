@@ -880,13 +880,12 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
                              "data": {"list": task_items, "total": len(task_items)}})
 
     if normalized == "api/get_file_list":
-        items = hub.list_assets(db, uid, skip, int(request.query_params.get("page_size") or 30))
+        items = []  # 画布不再有自己的资产库；素材库只由客户端「素材库上传」产生
         return JSONResponse({"code": 200, "list": items, "total": len(items),
                              "data": {"list": items, "total": len(items)}})
     if normalized == "api/user_oss_upload":
-        asset = hub.add_asset(db, uid, str(body.get("file_url") or ""), str(body.get("file_type") or ""),
-                              int(body.get("file_size") or 0), str(body.get("name") or ""))
-        return JSONResponse({"code": 200, "ok": True, "data": asset, **asset})
+        # 画布上传只当生成用的临时素材：不登记素材库、也不进内容记录
+        return JSONResponse({"code": 200, "ok": True, "data": {"url": str(body.get("file_url") or "")}})
     if normalized == "api/upload-token":
         return JSONResponse({"code": 200, "data": {"upload_url": "/canvas-api/api/upload", "token": "lobster-canvas",
                                                    "expires_in": 3600, "public_base": hub.public_base()}})
@@ -902,8 +901,8 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
             "content_type": str(body.get("content_type") or ""),
         }})
     if normalized in ("api/upload", "api/upload/", "api/user_upload"):
+        # 临时素材：落盘给生成用（apiz 要能取到），但不登记素材库
         result = await hub.handle_upload(request, uid)
-        hub.add_asset(db, uid, result["url"], result["file_type"], result["file_size"], result["name"])
         return JSONResponse({"code": 200, "ok": True, **result, "data": result})
 
     if normalized == "api/get_draft_template":
