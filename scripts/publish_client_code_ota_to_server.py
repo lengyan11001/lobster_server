@@ -78,11 +78,9 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "static/css",
     "static/js",
     "static/views",
-    # 灵感画布本体（与 pack_client_code_ota.WEBSITE_OTA_PATHS 保持一致）：
-    # 客户端更新器只对 manifest.paths 列出的路径做对账，漏了这里画布就永远下不去。
+    # 灵感画布代码/功能资源（与 pack_client_code_ota.WEBSITE_OTA_PATHS 保持一致）。
+    # 只列代码与功能资源，不列用户运行目录（会被对账删除）。
     "static/canvas-web",
-    "static/hifly_avatars",
-    "static/skill-cards",
     "static/douyin-origin",
     "static/vendor",
     "static/data",
