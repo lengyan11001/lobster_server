@@ -217,3 +217,16 @@ def test_website_ota_carries_remote_support_agent(tmp_path):
     # The manifest must stay granular: publishing "desktop" would make the
     # updater reconcile the whole directory and delete unrelated client files.
     assert "desktop" not in paths
+
+
+def test_website_manifest_paths_cover_canvas_web():
+    """2026-09-30 build 381 事故回归：画布本体没进 manifest.paths → 客户端 404。"""
+    from backend.tests import test_publish_client_code_ota as mod  # noqa: F401
+    from pathlib import Path
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import publish_client_code_ota_to_server as pub
+
+    assert "static/canvas-web" in pub.WEBSITE_CLIENT_CODE_OTA_PATHS
+    assert "static/views" in pub.WEBSITE_CLIENT_CODE_OTA_PATHS
