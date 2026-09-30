@@ -1037,10 +1037,16 @@ async def canvas_proxy(
             status_text = str((data or {}).get("status") or payload.get("status") or "completed")
             media_type = "video" if any(k in result_url.lower() for k in (".mp4", ".mov", ".webm")) else "image"
             canvas_hub.ensure_tables(db)
-            canvas_hub.register_generated_asset(db, uid, result_url, media_type,
-                                                name="%s 生成" % (model or normalized),
-                                                task_id=str((data or {}).get("task_id") or ""),
-                                                status=status_text)
+            canvas_hub.register_content_record(
+                db, uid, result_url,
+                media_type=media_type,
+                title="%s 生成" % (model or normalized),
+                task_id=str((data or {}).get("task_id") or ""),
+                model=model,
+                extra={"status": status_text,
+                       "duration": (data or {}).get("duration"),
+                       "resolution": (data or {}).get("resolution")},
+            )
 
     if upstream.status_code < 400 and _should_settle(normalized):
         try:

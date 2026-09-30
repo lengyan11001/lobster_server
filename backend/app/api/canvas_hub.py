@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 import mimetypes
 import re
 import time
@@ -493,6 +494,52 @@ def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_b
                         " VALUES (:uid, :url, '', 0, :name, :now)"),
                    {"uid": user_id, "url": result_url, "name": (model or "canvas") + " 生成", "now": now})
     db.commit()
+
+
+def register_content_record(db: Session, user_id: int, url: str, *, media_type: str = "image",
+                            title: str = "", task_id: str = "", model: str = "",
+                            extra: Optional[Dict[str, Any]] = None) -> bool:
+    """生成产物写入「内容记录」（user_content_records）。同一任务幂等。"""
+    if not url or not url.startswith("http"):
+        return False
+    from ..models import UserContentRecord
+
+    source_id = str(task_id or url)[:128]
+    try:
+        row = (
+            db.query(UserContentRecord)
+            .filter(UserContentRecord.user_id == user_id,
+                    UserContentRecord.source == "canvas",
+                    UserContentRecord.source_id == source_id)
+            .first()
+        )
+        meta = {"model": model, "media_type": media_type, "url": url}
+        meta.update(extra or {})
+        if row is None:
+            row = UserContentRecord(
+                user_id=user_id,
+                source="canvas",
+                source_id=source_id,
+                kind=("video" if media_type == "video" else "image"),
+                title=(title or "画布生成")[:500],
+                summary=(title or "")[:180] or None,
+                cover_url=(url if media_type != "video" else None),
+                file_url=url,
+                status="completed",
+                meta=meta,
+                source_created_at=datetime.utcnow(),
+            )
+            db.add(row)
+        else:
+            row.file_url = url
+            row.status = "completed"
+            row.meta = meta
+        db.commit()
+        logger.info("[canvas] 生成内容已入内容记录: uid=%s kind=%s %s", user_id, media_type, url[:70])
+        return True
+    except Exception as exc:  # noqa: BLE001 记内容失败不影响生成
+        logger.warning("[canvas] 写入内容记录失败: %s", exc, exc_info=True)
+        return False
 
 
 def _extract_result_url(payload: Any) -> str:
