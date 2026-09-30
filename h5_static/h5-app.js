@@ -31401,9 +31401,7 @@
         await showLoginShell();
       }
       markH5PageReady("boot_ready");
-      setInterval(() => {
-        if (!state.token || !window.__lobsterH5AuthReady || document.visibilityState === "hidden") return;
-        if (["assetLibrary", "mountedAccounts"].includes(activeViewKey())) return;
-        refreshDeviceStatus();
-      }, 7000);
+          // 2026-09-30：设备状态不再定时轮询（首页刷新 / 切到「我的」时各取一次即可）；
+    // 需要持续轮询的只有「正在执行中的任务」，那部分走各自的 poller。
+
     })();
