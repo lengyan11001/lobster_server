@@ -327,7 +327,7 @@ def test_shanjian_script_sources_multi_normalized():
     params = {"script_sources": ["ip_daily_professional_ip_oral", "bogus", "ip_daily_industry_hot_oral"]}
     ordered = scheduled_tasks._normalize_shanjian_script_sources(params)
     assert ordered == ["ip_daily_professional_ip_oral", "ip_daily_industry_hot_oral"]
-    assert params["script_source"] == "ip_daily_professional_ip_oral"
+    assert params["script_source"] in params["script_sources"]  # 多选随机：只要求取自多选集合
 
     empty = {}
     assert scheduled_tasks._normalize_shanjian_script_sources(empty) == ["ip_daily_industry_hot_oral"]

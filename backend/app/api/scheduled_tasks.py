@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 import asyncio
 import copy
 import ipaddress
@@ -142,7 +144,8 @@ def _normalize_shanjian_script_sources(params: Dict[str, Any]) -> List[str]:
     if not ordered:
         ordered = [_SHANJIAN_DEFAULT_SCRIPT_SOURCE]
     params["script_sources"] = ordered
-    params["script_source"] = ordered[0]
+    # 多选时每次随机取一种（对齐界面文案「都选则每次随机一种」）；单选/默认值保持原样。
+    params["script_source"] = random.choice(ordered) if len(ordered) > 1 else ordered[0]
     return ordered
 _SHANJIAN_DIGITAL_HUMAN_ACTION = "shanjian_digital_human_video"
 _DIGITAL_HUMAN_PROVIDER_LEGACY = "hifly_legacy"
