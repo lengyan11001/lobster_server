@@ -523,29 +523,12 @@ def register_generated_asset(db: Session, user_id: int, url: str, media_type: st
     if not url or not url.startswith("http"):
         return False
     now = time.time()
-    exists = db.execute(text("SELECT 1 FROM canvas_asset WHERE user_id = :uid AND url = :url"),
-                        {"uid": user_id, "url": url}).fetchone()
-    if not exists:
-        db.execute(text("INSERT INTO canvas_asset (user_id, url, file_type, file_size, name, created_at)"
-                        " VALUES (:uid, :url, :ft, 0, :name, :now)"),
-                   {"uid": user_id, "url": url, "ft": media_type, "name": (name or "canvas")[:200], "now": now})
+    # 注意：素材库只放「用户上传」的东西；生成产物属于「内容记录」，不写 canvas_asset
     if task_id:
         db.execute(text("UPDATE canvas_task SET status = :st, result_url = :url, updated_at = :now"
                         " WHERE task_id = :tid"), {"st": status or "completed", "url": url, "now": now, "tid": task_id})
     db.commit()
-    try:  # 同时进客户端内容库
-        from ..models import User
-        from .assets import RegisterAssetUrlReq, upsert_registered_assets, online_user_for_mobile_user
-
-        user = db.query(User).filter(User.id == user_id).first()
-        if user is not None:
-            owner = online_user_for_mobile_user(db, user)
-            req = RegisterAssetUrlReq(url=url, media_type=media_type or "image")
-            rows, _, _ = upsert_registered_assets(db, owner.id, [req], registered_from="canvas")
-            db.commit()
-            logger.info("[canvas] 产物已入内容库: %s（%d 条）", url[:70], len(rows or []))
-    except Exception as exc:  # noqa: BLE001 入库失败不影响生成
-        logger.warning("[canvas] 产物入内容库失败: %s", exc)
+    # TODO(下一步)：写入服务器的内容记录（user_content_records，走 api/content_records 的同步逻辑）
     return True
 
 
