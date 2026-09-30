@@ -2141,6 +2141,34 @@ def _clear_pending_empty_for_target(kind: str, user_id: int, installation_id: Op
         _clear_pending_empty(_pending_cache_key(kind, user_id, ""))
 
 
+def _resolve_system_device_targets(db: Session, installation_ids, *, now: Optional[datetime] = None):
+    """把目标里的哨兵「system」解析成当前空闲的可调度设备。
+
+    解析不到空闲设备时保留哨兵（= 排队等下个空闲），不报错。
+    """
+    cleaned = _clean_installation_ids(installation_ids)
+    if not cleaned:
+        return cleaned
+    if not any(str(x).strip() == dispatch_devices.SYSTEM_SELECTION for x in cleaned):
+        return cleaned
+    idle = ""
+    try:
+        idle = dispatch_devices.pick_idle_system_device(db, now=now)
+    except Exception:
+        idle = ""
+    out = []
+    for slot in cleaned:
+        if str(slot).strip() == dispatch_devices.SYSTEM_SELECTION:
+            if idle:
+                if idle not in out:
+                    out.append(idle)
+            else:
+                out.append(dispatch_devices.SYSTEM_SELECTION)
+        elif slot not in out:
+            out.append(slot)
+    return out
+
+
 def _clean_installation_ids(values: Optional[List[str]]) -> List[str]:
     seen: set[str] = set()
     out: List[str] = []
@@ -3695,7 +3723,7 @@ def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Di
         ):
             # Workflow IP-daily nodes are live references. Keep node-specific
             # counts/tasks, but discard any activation-time template snapshot.
-            targets = _clean_installation_ids(task.target_installation_ids or [])
+            targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
             run_payload = _use_current_personal_template_options(
                 db,
                 int(task.user_id),
@@ -4704,7 +4732,7 @@ def _enqueue_task(
         task.last_error = f"定时任务能力已下线：{disabled_capability}"
         task.updated_at = now
         return []
-    targets = _clean_installation_ids(task.target_installation_ids or [])
+    targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
     if _is_server_side_task(task):
         targets = [""]
     if not targets:
@@ -4959,7 +4987,7 @@ def _workflow_dependency_state(
             continue
         if template_id and str(candidate_context.get("workflow_template_id") or "").strip() != template_id:
             continue
-        targets = _clean_installation_ids(candidate.target_installation_ids or [])
+        targets = _resolve_system_device_targets(db, candidate.target_installation_ids or [])
         if installation_id and targets and installation_id not in targets:
             continue
         parent_task = candidate
@@ -5023,7 +5051,7 @@ def _enqueue_due_tasks(
     for candidate in q.all():
         is_once = str(candidate.schedule_type or "").strip() == "once"
         if target_installation and not _is_server_side_task(candidate):
-            targets = _clean_installation_ids(candidate.target_installation_ids or [])
+            targets = _resolve_system_device_targets(db, candidate.target_installation_ids or [])
             if targets and target_installation not in targets:
                 continue
             # once 任务即使设备正忙也先排进队列（设备侧串行领取），
@@ -5031,7 +5059,7 @@ def _enqueue_due_tasks(
             if target_busy and not is_once:
                 continue
         if not target_installation and not _is_server_side_task(candidate):
-            targets = _clean_installation_ids(candidate.target_installation_ids or [])
+            targets = _resolve_system_device_targets(db, candidate.target_installation_ids or [])
             if not is_once and any(
                 _installation_has_unclaimed_work(db, user_id=candidate.user_id, installation_id=target)
                 for target in targets
@@ -5368,7 +5396,7 @@ def _create_task_row(
         )
     payload = dict(payload)
     payload["schedule_config"] = schedule_config
-    installation_ids = _clean_installation_ids(body.installation_ids)
+    installation_ids = _resolve_system_device_targets(db, body.installation_ids, now=now)
     title = _task_title(body, task_kind)
     duplicate = _find_duplicate_active_recurring_task(
         db,
@@ -5412,7 +5440,7 @@ def _create_task_row(
     db.add(task)
     db.flush()
     if not _is_server_side_task(task) and task.next_run_at and task.next_run_at <= now:
-        targets = _clean_installation_ids(task.target_installation_ids or [])
+        targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
         busy = any(
             _installation_has_unclaimed_work(
                 db,
@@ -5704,7 +5732,7 @@ def run_scheduled_task_now(
         raise HTTPException(status_code=404, detail="任务不存在")
     _assert_user_task_access(task.user_id, current_user, owner_user)
     now = datetime.utcnow()
-    targets = _clean_installation_ids(task.target_installation_ids or [])
+    targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
     if (
         not _is_server_side_task(task)
         and str(task.schedule_type or "").strip() != "once"
