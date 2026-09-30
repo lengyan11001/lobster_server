@@ -4917,7 +4917,7 @@ async def proxy_videos_generations_poll(
 
 
 
-def _video_provider_policy(model: str, channel: str = "", feature: str = "") -> Dict[str, Any]:
+def _video_provider_policy_raw(model: str, channel: str = "", feature: str = "") -> Dict[str, Any]:
     raw_model = (model or "").strip()
     low_model = raw_model.lower().replace("_", "-").replace(" ", "")
     low_channel = (channel or "").strip().lower()
@@ -4928,7 +4928,8 @@ def _video_provider_policy(model: str, channel: str = "", feature: str = "") -> 
     # 2026-09-18 冒烟确认可用（5s 9:16 出片耗时约 274s，直连 DASHSCOPE_WAN30_API_KEY）。
     # 位置由 VIDEO_POLICY_WAN30_POSITION 控制：first(默认)/last/off。
     wan30_provider = {"channel": "dashscope", "model": "wan3.0-video", "base_url": proxy_base}
-    wan30_position = (os.environ.get("VIDEO_POLICY_WAN30_POSITION") or "first").strip().lower()
+    # 用户口径（2026-09-30）：openmind 优先，wan3.0 / seedance 放最后调度。
+    wan30_position = (os.environ.get("VIDEO_POLICY_WAN30_POSITION") or "last").strip().lower()
 
     if _is_dashscope_wan30_model(raw_model):
         return {
@@ -5037,9 +5038,44 @@ def _video_provider_policy(model: str, channel: str = "", feature: str = "") -> 
         "ok": True,
         "model_family": "default",
         "providers": [
+            {"channel": "openmind", "model": "doubao-seedance-2-0-260128", "base_url": proxy_base},
             {"channel": "seedance", "model": raw_model or "doubao-seedance-2-0-260128", "base_url": proxy_base},
         ],
     }
+
+
+# 视频通道调度优先级（2026-09-30 用户口径）：openmind 优先；wan3.0(dashscope) 与 seedance 放最后。
+_VIDEO_CHANNEL_PRIORITY: Dict[str, int] = {
+    "openmind": 0,
+    "comfly": 10,
+    "xai": 20,
+    "xing": 30,
+    "dashscope": 900,
+    "seedance": 910,
+}
+_VIDEO_CHANNEL_PRIORITY_DEFAULT = 500
+
+
+def _ordered_video_providers(providers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按通道优先级稳定排序：openmind → comfly → xai → xing → wan/seedance（最后）。"""
+    indexed = list(enumerate(providers or []))
+    indexed.sort(
+        key=lambda pair: (
+            _VIDEO_CHANNEL_PRIORITY.get(str((pair[1] or {}).get("channel") or "").strip().lower(), _VIDEO_CHANNEL_PRIORITY_DEFAULT),
+            pair[0],
+        )
+    )
+    return [item for _, item in indexed]
+
+
+def _video_provider_policy(model: str, channel: str = "", feature: str = "") -> Dict[str, Any]:
+    """对外入口：先算原始策略，再强制按全局通道优先级排序。"""
+    policy = _video_provider_policy_raw(model, channel, feature)
+    providers = policy.get("providers") if isinstance(policy, dict) else None
+    if isinstance(providers, list) and len(providers) > 1:
+        policy = dict(policy)
+        policy["providers"] = _ordered_video_providers(providers)
+    return policy
 
 
 @router.get("/api/comfly-proxy/video/provider-policy", summary="Server-controlled video provider fallback policy")

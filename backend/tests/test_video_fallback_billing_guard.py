@@ -125,21 +125,16 @@ def test_xai_video_body_maps_duration_and_first_image():
     }
 
 
-def test_wan30_is_first_provider_for_grok_family():
-    """分镜台默认（grok 家族）先跑万相3.0（DashScope），失败再退 comfly/xai/openmind。"""
+def test_grok_family_runs_openmind_first_and_wan30_last():
+    """用户口径（2026-09-30）：openmind 优先，wan3.0(DashScope) 放最后调度。"""
     policy = _video_provider_policy("xai/grok-imagine-video-1.5/image-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
-    assert policy["providers"][0] == {
-        "channel": "dashscope",
-        "model": "wan3.0-video",
-        "base_url": "/api/comfly-proxy",
-    }
     assert policy["providers"] == [
         {
-            "channel": "dashscope",
-            "model": "wan3.0-video",
+            "channel": "openmind",
+            "model": "grok-video-3",
             "base_url": "/api/comfly-proxy",
         },
         {
@@ -153,15 +148,15 @@ def test_wan30_is_first_provider_for_grok_family():
             "base_url": "/api/comfly-proxy",
         },
         {
-            "channel": "openmind",
-            "model": "grok-video-3",
+            "channel": "dashscope",
+            "model": "wan3.0-video",
             "base_url": "/api/comfly-proxy",
         },
     ]
 
 
-def test_wan30_position_switch(monkeypatch):
-    """VIDEO_POLICY_WAN30_POSITION 控制万相3.0 在调度列表里的位置（first 默认 / last / off）。"""
+def test_wan30_inclusion_switch(monkeypatch):
+    """VIDEO_POLICY_WAN30_POSITION=off 时不带万相3.0；默认带上但排在最后（openmind 优先）。"""
     monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "last")
     providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
     assert providers[-1] == {
@@ -176,7 +171,28 @@ def test_wan30_position_switch(monkeypatch):
 
     monkeypatch.delenv("VIDEO_POLICY_WAN30_POSITION", raising=False)
     providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
-    assert providers[0]["channel"] == "dashscope"
+    assert providers[0]["channel"] == "openmind"
+    assert providers[-1]["channel"] == "dashscope"
+
+
+def test_video_provider_global_order_openmind_first_wan_seedance_last(monkeypatch):
+    """全局调度顺序：openmind 优先；wan3.0(dashscope) 与 seedance 通道放最后。"""
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "first")
+
+    grok = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "seedance_tvc")
+    channels = [item["channel"] for item in grok["providers"]]
+    assert channels[0] == "openmind"
+    assert channels[-1] == "dashscope"
+
+    seedance20 = _video_provider_policy("seedance2.0-900", "")
+    channels20 = [item["channel"] for item in seedance20["providers"]]
+    assert channels20[0] == "openmind"
+    assert channels20[-1] == "seedance"
+
+    unknown = _video_provider_policy("some-unknown-video-model", "")
+    channels_unknown = [item["channel"] for item in unknown["providers"]]
+    assert channels_unknown[0] == "openmind"
+    assert channels_unknown[-1] == "seedance"
 
 
 def test_veo_family_uses_openmind_never_yunwu():
@@ -479,6 +495,7 @@ def test_local_bestseller_video_policy_skips_expensive_wan30(monkeypatch):
     # 其它功能（分镜台批量）仍然保留 wan3.0 兜底
     other = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "seedance_tvc")
     assert any(item["channel"] == "dashscope" for item in other["providers"])
+    assert [item["channel"] for item in other["providers"]][-1] == "dashscope"
 
 
 def test_yingmeng_1_0_never_routes_to_yunwu():
