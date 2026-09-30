@@ -231,15 +231,19 @@ def test_assets_upload_and_media_are_ours(client, monkeypatch):
     assert client.get("/canvas-api/media/..%2F..%2Fetc%2Fpasswd").status_code == 404
 
 
-def test_task_lists_and_templates_are_empty_not_errors(client, monkeypatch):
+def test_task_lists_come_from_our_library(client, monkeypatch):
+    """任务记录/最近任务：读我们自己的库（下单时记的），不再空表、也不打 apiz。"""
+
     def boom(*args, **kwargs):
-        raise AssertionError("这些不该再去打 apiz")
+        raise AssertionError("任务列表不该请求 apiz")
 
     monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient", boom)
-    for path in ["/canvas-api/api/fal/tasks/list", "/canvas-api/api/get_draft_template",
-                 "/canvas-api/api/v3/points-campaigns/active"]:
-        resp = client.post(path, json={})
+    for path in ["/canvas-api/api/fal/tasks/list", "/canvas-api/api/task_list"]:
+        resp = client.post(path, json={"page": 1, "page_size": 30})
         assert resp.status_code == 200 and resp.json()["code"] == 200, path
+        assert "list" in resp.json()
+    resp = client.post("/canvas-api/api/get_draft_template", json={"page": 1, "page_size": 12})
+    assert resp.status_code == 200 and resp.json()["code"] == 200
 
 
 def test_public_templates_are_synced_into_our_library(client, monkeypatch):

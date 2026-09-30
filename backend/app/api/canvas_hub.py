@@ -70,6 +70,20 @@ canvas_draft_template_table = Table(
     Column("synced_at", Float, nullable=False, default=0.0),
 )
 
+canvas_task_table = Table(
+    "canvas_task",
+    Base.metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, nullable=False, index=True),
+    Column("model", String(128), nullable=False, default=""),
+    Column("path", String(255), nullable=False, default=""),
+    Column("status", String(32), nullable=False, default="submitted"),
+    Column("task_id", String(128), nullable=False, default=""),
+    Column("result_url", Text, nullable=False, default=""),
+    Column("created_at", Float, nullable=False, default=0.0),
+    Column("updated_at", Float, nullable=False, default=0.0),
+)
+
 canvas_remote_cache_table = Table(
     "canvas_remote_cache",
     Base.metadata,
@@ -97,7 +111,7 @@ def ensure_tables(db: Session) -> None:
         return
     Base.metadata.create_all(bind=db.get_bind(),
                              tables=[canvas_project_table, canvas_asset_table, canvas_draft_template_table,
-                                    canvas_remote_cache_table])
+                                    canvas_remote_cache_table, canvas_task_table])
     _tables_ready = True
 
 
@@ -453,6 +467,42 @@ async def remote_media_response(host: str, path: str, query: str = "") -> Respon
 def public_canvas_media(rel: str) -> FileResponse:
     """公开只读：给 apiz 拉参考图/上传产物用（带随机 key，不含用户隐私列表）。"""
     return media_response(rel)
+
+
+def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_body: bytes = b"") -> None:
+    """生成下单时记一条我们的任务记录（画布「任务记录/最近任务」读这里）。"""
+    task_id = ""
+    result_url = ""
+    try:
+        payload = json.loads(response_body.decode("utf-8", "replace")) if response_body else {}
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, dict):
+            task_id = str(data.get("task_id") or data.get("id") or "")
+            for key in ("url", "video_url", "image_url", "output", "result_url"):
+                if isinstance(data.get(key), str) and data.get(key):
+                    result_url = data[key]
+                    break
+    except Exception:
+        pass
+    now = time.time()
+    db.execute(text("INSERT INTO canvas_task (user_id, model, path, status, task_id, result_url,"
+                    " created_at, updated_at) VALUES (:uid, :model, :path, 'submitted', :tid, :url, :now, :now)"),
+               {"uid": user_id, "model": model, "path": path, "tid": task_id, "url": result_url, "now": now})
+    if result_url:
+        db.execute(text("INSERT INTO canvas_asset (user_id, url, file_type, file_size, name, created_at)"
+                        " VALUES (:uid, :url, '', 0, :name, :now)"),
+                   {"uid": user_id, "url": result_url, "name": (model or "canvas") + " 生成", "now": now})
+    db.commit()
+
+
+def list_canvas_tasks(db: Session, user_id: int, limit: int = 30) -> List[Dict[str, Any]]:
+    rows = db.execute(text("SELECT * FROM canvas_task WHERE user_id = :uid ORDER BY id DESC LIMIT :limit"),
+                      {"uid": user_id, "limit": max(1, min(100, limit))}).fetchall()
+    return [{"id": r.id, "task_id": r.task_id, "app_name": r.model, "model": r.model, "status": r.status,
+             "url": r.result_url, "video_url": r.result_url, "image_url": r.result_url,
+             "created_at": r.created_at, "updated_at": r.updated_at,
+             "created_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.created_at or 0))}
+            for r in rows]
 
 
 async def cached_remote_json(db: Session, cache_key: str, path: str, body: Optional[Dict[str, Any]] = None,

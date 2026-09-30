@@ -162,14 +162,7 @@ def _path_relayable(path: str) -> bool:
 
 
 _EMPTY_OK_PATHS = (
-    "api/get_draft_template",
     "api/draft_flow_template/list",
-    "api/fal/tasks/list",
-    "api/task_list",
-    "api/tasks/list",
-    "api/v3/points-campaigns/active",
-    "api/get_activity_banner_list",
-    "api/get_official_notification",
 )
 
 
@@ -730,6 +723,13 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         project = hub.project_row_to_json(row, with_snapshot=True)
         return JSONResponse({"code": 200, **project, "project": project, "data": project})
 
+    # 任务记录/最近任务：读我们自己的库（生成时记的）
+    if normalized in ("api/fal/tasks/list", "api/task_list", "api/tasks/list"):
+        limit = int(request.query_params.get("page_size") or body.get("page_size") or body.get("limit") or 30)
+        task_items = hub.list_canvas_tasks(db, uid, limit)
+        return JSONResponse({"code": 200, "list": task_items, "total": len(task_items),
+                             "data": {"list": task_items, "total": len(task_items)}})
+
     if normalized == "api/get_file_list":
         items = hub.list_assets(db, uid, skip, int(request.query_params.get("page_size") or 30))
         return JSONResponse({"code": 200, "list": items, "total": len(items),
@@ -852,6 +852,12 @@ async def canvas_proxy(
         # 成功：价格按我们自己的定价（前面已预扣），不再按 apiz 回报扣一次
         if pre_charged:
             logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
+    if upstream.status_code < 400 and _should_settle(normalized):
+        try:
+            hub.add_canvas_task(db, uid, model, normalized, upstream.content)
+        except Exception as exc:  # noqa: BLE001 记任务不能影响生成
+            logger.warning("[canvas] 记录任务失败: %s", exc)
+
     if upstream.status_code >= 400 and pre_charged:
         refund_canvas(db, user, pre_charged, model, normalized, f"上游 {upstream.status_code}")
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
