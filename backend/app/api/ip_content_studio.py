@@ -1695,6 +1695,109 @@ def _source_used_for(row: TikHubSourceItem, task: str = "") -> bool:
     return any(str(item.get("task") or "") == task_key for item in usage)
 
 
+def _source_cooldown_days() -> int:
+    """同一素材被同一 task 用过后的冷却天数：冷却期内不再被选中（默认 7 天）。"""
+    try:
+        return max(0, min(365, int(os.environ.get("IP_CONTENT_SOURCE_COOLDOWN_DAYS") or 7)))
+    except (TypeError, ValueError):
+        return 7
+
+
+def _source_ttl_days() -> int:
+    """素材有效期：入库超过 N 天的素材退出选材池（默认 14 天；<=0 表示不过期）。"""
+    try:
+        return max(0, min(365, int(os.environ.get("IP_CONTENT_SOURCE_TTL_DAYS") or 14)))
+    except (TypeError, ValueError):
+        return 14
+
+
+def _source_limit(default: int) -> int:
+    """每批参考素材条数，可用 IP_CONTENT_SOURCE_LIMIT 覆盖（默认沿用调用点原值）。"""
+    try:
+        return max(4, min(200, int(os.environ.get("IP_CONTENT_SOURCE_LIMIT") or default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _source_used_recently(row: TikHubSourceItem, task: str = "", *, days: int = 0) -> bool:
+    """该素材在冷却期内是否已被同一 task 用过；days<=0 时取环境默认。"""
+    window = days if days > 0 else _source_cooldown_days()
+    task_key = (task or "").strip()
+    cutoff = _utcnow() - timedelta(days=window)
+    for item in _source_usage(row):
+        item_task = str(item.get("task") or "")
+        if task_key and item_task != task_key:
+            continue
+        if not task_key and not item_task:
+            continue
+        raw_ts = str(item.get("used_at") or "").strip()
+        if window <= 0 or not raw_ts:
+            return True
+        try:
+            used_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return True
+        if used_at >= cutoff:
+            return True
+    return False
+
+
+def _source_within_ttl(row: TikHubSourceItem, *, days: int = 0) -> bool:
+    """素材是否还在有效期内（按入库时间 created_at 判断）。"""
+    window = days if days > 0 else _source_ttl_days()
+    if window <= 0:
+        return True
+    created = row.created_at or row.updated_at
+    if created is None:
+        return True
+    return created >= _utcnow() - timedelta(days=window)
+
+
+def _cross_run_dedup_days() -> int:
+    """跨轮选题去重窗口（默认 7 天；<=0 关闭）。"""
+    try:
+        return max(0, min(60, int(os.environ.get("IP_CONTENT_CROSS_RUN_DEDUP_DAYS") or 7)))
+    except (TypeError, ValueError):
+        return 7
+
+
+def _recent_draft_titles(db: Session, user_id: int, task: str, *, limit: int = 30) -> list[str]:
+    """近 N 天该账号该任务已生成过的标题，用于让模型换角度。"""
+    days = _cross_run_dedup_days()
+    if days <= 0 or not task:
+        return []
+    since = _utcnow() - timedelta(days=days)
+    try:
+        rows = (
+            db.query(IPContentDraftRecord.title)
+            .filter(
+                IPContentDraftRecord.user_id == int(user_id),
+                IPContentDraftRecord.task == task,
+                IPContentDraftRecord.created_at >= since,
+            )
+            .order_by(IPContentDraftRecord.id.desc())
+            .limit(max(1, int(limit)))
+            .all()
+        )
+    except Exception:
+        # 去重只是锦上添花：查库失败不能让生成挂掉（也兼容测试替身 session）。
+        logging.getLogger(__name__).warning("ip-content recent draft titles lookup failed", exc_info=True)
+        return []
+    out: list[str] = []
+    for row in rows:
+        title = _clean_long_text(row[0] if not isinstance(row, str) else row, 120)
+        if title and title not in out:
+            out.append(title)
+    return out
+
+
+def _cross_run_dedup_note(db: Session, user_id: int, task: str) -> str:
+    titles = _recent_draft_titles(db, user_id, task)
+    if not titles:
+        return ""
+    return "\n\n近期已写过以下选题，请务必避开或换一个完全不同的角度（不要换汤不换药）：" + "；".join(titles)
+
+
 def _merge_source_raw(raw_value: Any, meta: Optional[dict[str, Any]] = None, usage: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     raw = dict(raw_value or {}) if isinstance(raw_value, dict) else {"value": raw_value}
     if meta is not None:
@@ -4337,6 +4440,10 @@ def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int
         source_name = str(meta.get("source") or "")
         if source_name and source_name not in {"keyword_sync", "keyword_video_sync", "keyword_sync_fallback"}:
             continue
+        if not _source_within_ttl(row):
+            continue  # 超过有效期的旧素材退出选材池
+        if _source_used_recently(row, task):
+            continue  # 冷却期内（默认 7 天）同一任务不再选用这条素材
         bucket_id = keyword_id or fallback_bucket
         bucket = buckets.setdefault(bucket_id, {"fresh": [], "reused": []})
         if _source_used_for(row, task):
@@ -4400,6 +4507,10 @@ def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: li
             continue
         source_name = str(meta.get("source") or "")
         if source_name and source_name != "competitor_sync":
+            continue
+        if not _source_within_ttl(row):
+            continue
+        if _source_used_recently(row, task):
             continue
         if _source_used_for(row, task):
             continue
@@ -5007,6 +5118,7 @@ async def _generate_and_save_ip_content_records(
     all_drafts: list[dict[str, Any]] = []
     source_items: list[dict[str, Any]] = [_item_payload(row) for row in rows]
     requirements_text = _draft_requirements(task_key, platform, target_count)
+    cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
     clean_reference_image_urls = _extract_reference_image_urls(reference_image_urls or [], limit=8)
@@ -5063,7 +5175,7 @@ async def _generate_and_save_ip_content_records(
             _clean_long_text((draft.get("title") or draft.get("body") or "") if isinstance(draft, dict) else "", 120)
             for draft in all_drafts[-10:]
         ]
-        batch_extra = extra_requirements
+        batch_extra = (str(extra_requirements or "") + cross_run_note).strip()
         if total_batches > 1:
             batch_extra = (
                 f"{extra_requirements}\n\n"
@@ -5622,22 +5734,22 @@ async def run_ip_content_daily_scheduled(
         generated_groups.append(group_payload)
 
     industry_rows = (
-        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=40)
+        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=_source_limit(40))
         if "industry_hot_oral" in selected_tasks
         else []
     )
     ip_rows = (
-        _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=40)
+        _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=_source_limit(40))
         if "professional_ip_oral" in selected_tasks
         else []
     )
     moment_rows = (
-        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=24)
+        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=_source_limit(24))
         if "moments_candidate" in selected_tasks
         else []
     )
     if "moments_candidate" in selected_tasks:
-        moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=24))
+        moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=_source_limit(24)))
     seen: set[int] = set()
     moment_rows = [row for row in moment_rows if not (row.id in seen or seen.add(row.id))][:40]
     keyword_fallback_sources = _keyword_seed_briefs(keywords)
@@ -7098,7 +7210,7 @@ async def generate_industry_hot_oral(
                 sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
-    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=40)
+    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _generate_and_save_ip_content_records(
         db=db,
@@ -7136,7 +7248,7 @@ async def generate_professional_ip_oral(
                 sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
-    rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=40)
+    rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _generate_and_save_ip_content_records(
         db=db,
@@ -7183,8 +7295,8 @@ async def generate_moments_candidates(
                 sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
-    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="moments_candidate", limit=24)
-    rows.extend(_select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="moments_candidate", limit=24))
+    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="moments_candidate", limit=_source_limit(24))
+    rows.extend(_select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="moments_candidate", limit=_source_limit(24)))
     seen: set[int] = set()
     rows = [row for row in rows if not (row.id in seen or seen.add(row.id))][:40]
     memories = _memory_payload_from_docs(body.memory_docs)
