@@ -1027,6 +1027,22 @@ async def canvas_proxy(
         logger.warning("[canvas] 上游拒绝 %s -> %s", normalized, friendly)
         return JSONResponse({"code": 400, "msg": friendly, "detail": friendly, "data": None}, status_code=400)
 
+    if upstream.status_code < 400 and ("query" in normalized or _should_settle(normalized)):
+        try:
+            payload = json.loads(upstream.content.decode("utf-8", "replace")) if upstream.content else {}
+        except Exception:
+            payload = {}
+        data = payload.get("data") if isinstance(payload, dict) else None
+        result_url = canvas_hub._extract_result_url(data if data is not None else payload)
+        if result_url:
+            status_text = str((data or {}).get("status") or payload.get("status") or "completed")
+            media_type = "video" if any(k in result_url.lower() for k in (".mp4", ".mov", ".webm")) else "image"
+            canvas_hub.ensure_tables(db)
+            canvas_hub.register_generated_asset(db, uid, result_url, media_type,
+                                                name="%s 生成" % (model or normalized),
+                                                task_id=str((data or {}).get("task_id") or ""),
+                                                status=status_text)
+
     if upstream.status_code < 400 and _should_settle(normalized):
         try:
             canvas_hub.ensure_tables(db)

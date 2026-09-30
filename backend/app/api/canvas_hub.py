@@ -495,6 +495,60 @@ def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_b
     db.commit()
 
 
+def _extract_result_url(payload: Any) -> str:
+    """从上游响应里挖出产物地址（各家字段名不一样）。"""
+    if isinstance(payload, str):
+        return payload if payload.startswith("http") else ""
+    if isinstance(payload, dict):
+        for key in ("video_url", "image_url", "url", "output", "result_url", "file_url"):
+            value = payload.get(key)
+            found = _extract_result_url(value)
+            if found:
+                return found
+        for value in payload.values():
+            found = _extract_result_url(value)
+            if found:
+                return found
+    if isinstance(payload, list):
+        for item in payload:
+            found = _extract_result_url(item)
+            if found:
+                return found
+    return ""
+
+
+def register_generated_asset(db: Session, user_id: int, url: str, media_type: str = "image",
+                             name: str = "", task_id: str = "", status: str = "") -> bool:
+    """生成产物入我们的库：canvas_asset + 客户端内容库（assets 表）。返回是否新登记。"""
+    if not url or not url.startswith("http"):
+        return False
+    now = time.time()
+    exists = db.execute(text("SELECT 1 FROM canvas_asset WHERE user_id = :uid AND url = :url"),
+                        {"uid": user_id, "url": url}).fetchone()
+    if not exists:
+        db.execute(text("INSERT INTO canvas_asset (user_id, url, file_type, file_size, name, created_at)"
+                        " VALUES (:uid, :url, :ft, 0, :name, :now)"),
+                   {"uid": user_id, "url": url, "ft": media_type, "name": (name or "canvas")[:200], "now": now})
+    if task_id:
+        db.execute(text("UPDATE canvas_task SET status = :st, result_url = :url, updated_at = :now"
+                        " WHERE task_id = :tid"), {"st": status or "completed", "url": url, "now": now, "tid": task_id})
+    db.commit()
+    try:  # 同时进客户端内容库
+        from ..models import User
+        from .assets import RegisterAssetUrlReq, upsert_registered_assets, online_user_for_mobile_user
+
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is not None:
+            owner = online_user_for_mobile_user(db, user)
+            req = RegisterAssetUrlReq(url=url, media_type=media_type or "image")
+            rows, _, _ = upsert_registered_assets(db, owner.id, [req], registered_from="canvas")
+            db.commit()
+            logger.info("[canvas] 产物已入内容库: %s（%d 条）", url[:70], len(rows or []))
+    except Exception as exc:  # noqa: BLE001 入库失败不影响生成
+        logger.warning("[canvas] 产物入内容库失败: %s", exc)
+    return True
+
+
 def list_canvas_tasks(db: Session, user_id: int, limit: int = 30) -> List[Dict[str, Any]]:
     rows = db.execute(text("SELECT * FROM canvas_task WHERE user_id = :uid ORDER BY id DESC LIMIT :limit"),
                       {"uid": user_id, "limit": max(1, min(100, limit))}).fetchall()
