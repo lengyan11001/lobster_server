@@ -2141,6 +2141,24 @@ def _clear_pending_empty_for_target(kind: str, user_id: int, installation_id: Op
         _clear_pending_empty(_pending_cache_key(kind, user_id, ""))
 
 
+def _system_dispatch_task_ids(db: Session, user_id: int) -> list:
+    """该账号下目标为哨兵「system」的任务 id（= 系统调度任务）。"""
+    sys_ids: list = []
+    try:
+        rows = (
+            db.query(ScheduledTask.id, ScheduledTask.target_installation_ids)
+            .filter(ScheduledTask.user_id == int(user_id))
+            .all()
+        )
+        for tid, targets in rows:
+            values = targets if isinstance(targets, list) else []
+            if any(str(v).strip() == dispatch_devices.SYSTEM_SELECTION for v in values):
+                sys_ids.append(tid)
+    except Exception:
+        return []
+    return sys_ids
+
+
 def _resolve_system_device_targets(db: Session, installation_ids, *, now: Optional[datetime] = None):
     """把目标里的哨兵「system」解析成当前空闲的可调度设备。
 
@@ -5396,7 +5414,8 @@ def _create_task_row(
         )
     payload = dict(payload)
     payload["schedule_config"] = schedule_config
-    installation_ids = _resolve_system_device_targets(db, body.installation_ids, now=now)
+    # 任务保留哨兵「system」= 这是系统调度任务（运行期再解析成具体空闲设备）
+    installation_ids = _clean_installation_ids(body.installation_ids)
     title = _task_title(body, task_kind)
     duplicate = _find_duplicate_active_recurring_task(
         db,
@@ -5772,7 +5791,15 @@ def list_scheduled_task_runs(
     _enqueue_due_tasks(db, owner_user.id, _header_installation_id(request))
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
     selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
-    if selected_installation_id:
+    system_task_ids = _system_dispatch_task_ids(db, owner_user.id)
+    if selected_installation_id == "system":
+        # 选了「系统设备」：只看系统调度的任务（由系统派给空闲设备执行的）
+        if system_task_ids:
+            query = query.filter(ScheduledTaskRun.task_id.in_(system_task_ids))
+        else:
+            query = query.filter(ScheduledTaskRun.id.is_(None))
+    elif selected_installation_id:
+        # 选了具体槽位：只看这个槽位的任务，且排除系统调度来的（两者不混）
         query = query.filter(
             or_(
                 ScheduledTaskRun.installation_id == selected_installation_id,
@@ -5780,6 +5807,8 @@ def list_scheduled_task_runs(
                 ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
             )
         )
+        if system_task_ids:
+            query = query.filter(~ScheduledTaskRun.task_id.in_(system_task_ids))
     # Keep direct Python callers (whose omitted Query default is a Query
     # object) equivalent to the HTTP default of false.
     if active_only is True:
