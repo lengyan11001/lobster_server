@@ -608,6 +608,16 @@ def _ensure_text_content(body: Dict[str, Any]) -> Dict[str, Any]:
 
 _transfer_cache: Dict[str, str] = {}
 
+# 我们的速推 key 没有权限的模型 -> 同族可用模型（2026-09-30 实测 doubao-seedance-2-5-cloud 无权限）
+_MODEL_FALLBACKS = {
+    "apiz/seedance-2.5": "st-ai/super-seed2-lite",
+    "doubao-seedance-2-0-fast-260128": "st-ai/super-seed2-lite",
+}
+
+
+def map_model(model: str) -> str:
+    return _MODEL_FALLBACKS.get(model, model)
+
 
 async def transfer_media_url(url: str, kind: str = "image") -> str:
     """把外链图片转成 apiz 自己的可访问地址（apiz 的生成模型只认它自己的链接）。"""
@@ -654,7 +664,7 @@ async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
             value["url"] = await transfer_media_url(value["url"])
 
     # 该模型不接受 content（seedance 等）：把文字拆成 prompt，图片提到顶层
-    if model.startswith("apiz/seedance") or "kling" in model or "seedance" in model:
+    if "seedance" in model or "super-seed" in model or "kling" in model:
         text = ""
         images: List[str] = []
         content = params.pop("content", None) or []
@@ -967,7 +977,11 @@ async def canvas_proxy(
     if _path_relayable(normalized) and _should_settle(normalized) and isinstance(body_json.get("params"), dict):
         try:
             body_json = dict(body_json)
-            body_json["params"] = await prepare_params(str(body_json.get("model") or ""), body_json["params"])
+            mapped = map_model(str(body_json.get("model") or ""))
+            if mapped != body_json.get("model"):
+                logger.info("[canvas] 模型映射 %s -> %s（我们的 key 对该模型无权限）", body_json.get("model"), mapped)
+                body_json["model"] = mapped
+            body_json["params"] = await prepare_params(mapped, body_json["params"])
         except Exception as exc:  # noqa: BLE001 适配失败就原样提交
             logger.info("[canvas] 参数适配失败（原样提交）: %s", exc)
 
