@@ -328,11 +328,11 @@ def our_price_for_display(model: str, body: Dict[str, Any]) -> "object":
 
     try:
         if price:
-            version_price = version_base_price(model, body)
+            version_price = version_base_price(model, _pricing_body(body))
             if version_price is not None:
                 return apply_vip_discount(price, version_price) if price.get("vip_discount") else version_price
             try:
-                estimate = estimate_credits_from_pricing(price, body or {})
+                estimate = estimate_credits_from_pricing(price, _pricing_body(body))
             except Exception as exc:  # noqa: BLE001 参数不认识时不该 500
                 logger.info("[canvas] 定价表估算失败(model=%s): %s", model, exc)
                 estimate = None
@@ -341,7 +341,7 @@ def our_price_for_display(model: str, body: Dict[str, Any]) -> "object":
                     return apply_vip_discount(price, estimate)
                 return apply_canvas_markup(model, estimate)
             try:
-                base = fallback_price_from_table(price, body or {})
+                base = fallback_price_from_table(price, _pricing_body(body))
             except Exception as exc:  # noqa: BLE001
                 logger.info("[canvas] 兜底计价失败(model=%s): %s", model, exc)
                 base = None
@@ -552,6 +552,19 @@ def refund_canvas(db: Session, user: User, amount: "object", model: str, path: s
         logger.info("[canvas] 退回 user=%s model=%s 退=%s 余额=%s", getattr(user, "id", ""), model, amount, user.credits)
     except Exception as exc:
         logger.warning("[canvas] 退回失败: %s", exc, exc_info=True)
+
+
+def _pricing_body(body: Dict[str, Any]) -> Dict[str, Any]:
+    """画布 v3 的 body 是 {model, params}，参数在 params 里；定价要按展平后的看。"""
+    if not isinstance(body, dict):
+        return {}
+    merged: Dict[str, Any] = dict(body)
+    for key in ("params", "input_params", "request_payload"):
+        nested = body.get(key)
+        if isinstance(nested, dict):
+            merged.update(nested)
+    merged.pop("params", None)
+    return merged
 
 
 def _payload_model(body: Dict[str, Any]) -> str:
