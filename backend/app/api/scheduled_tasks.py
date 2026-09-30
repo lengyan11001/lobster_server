@@ -76,6 +76,25 @@ from ..services.h5_chat_sessions import ensure_system_task_session
 from ..services.installation_slot_ownership import assert_installation_slot_owner
 
 router = APIRouter()
+
+
+def _from_marketing_page(request) -> bool:
+    """这次提交是不是从 AI 营销创作页面（含二级菜单）发出的。
+
+    1) H5 显式标记头 X-H5-AI-Marketing: 1
+    2) 兜底：Referer / Origin 指向 AI营销创作页面（路由里带 marketing / 营销）
+    """
+    try:
+        for name in ("x-h5-ai-marketing", "x-ai-marketing"):
+            value = str(request.headers.get(name) or "").strip().lower()
+            if value in ("1", "true", "yes", "marketing", "ai_marketing", "ai-marketing"):
+                return True
+        ref = (str(request.headers.get("referer") or "") + " " + str(request.headers.get("origin") or "")).lower()
+        return any(k in ref for k in ("ai-marketing", "ai_marketing", "/marketing", "marketing/", "营销"))
+    except Exception:
+        return False
+
+
 logger = logging.getLogger(__name__)
 
 _TASK_KINDS = {"chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}

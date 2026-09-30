@@ -89,13 +89,16 @@ def is_marketing_target(target: str) -> bool:
     return any(value.startswith(prefix) or prefix in value for prefix in MARKETING_TARGET_PREFIXES)
 
 
-def assert_marketing_only_allowed(db: Session, user_id: int, action: str = "", target: str = "") -> None:
-    """选中系统设备时只允许 AI 营销创作：AI 营销创作的动作放行，其余工作流/任务拒绝。"""
-    if not user_uses_system_device(db, int(user_id)):
+def assert_marketing_only_allowed(db: Session, user_id: int, action: str = "",
+                                  from_marketing: bool = False) -> None:
+    """选中系统设备时只允许 AI 营销创作。
+
+    from_marketing=True：这次提交来自 AI 营销创作页面（含二级菜单）—— 不拦。
+    """
+    if from_marketing:
         return
-    if is_marketing_target(target):
-        return  # 系统设备下，AI 营销创作（文案/图片/视频/音乐等）照常可用
-    raise HTTPException(status_code=403, detail=MARKETING_ONLY_MESSAGE)
+    if user_uses_system_device(db, int(user_id)):
+        raise HTTPException(status_code=403, detail=MARKETING_ONLY_MESSAGE)
 
 
 def system_device_rows(db: Session, now: Optional[datetime] = None) -> List[dict]:
