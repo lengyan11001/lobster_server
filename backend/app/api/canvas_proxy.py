@@ -309,6 +309,12 @@ _PRICE_KEYS = {"credits", "credit", "estimated_credits", "total_credits", "estim
 
 def our_price_for_display(model: str, body: Dict[str, Any]) -> "object":
     """只用定价表算价（不查余额）；任何异常都不外抛（报价接口不能 500），失败返回保底价或 None。"""
+    # 定价表里的 model 是「计价档位」（mini/fast/标准/vip…），不是 apiz 模型 id；
+    # 传模型 id 进去匹配不到档位 -> 回落到最贵档（曾把 250 算成 3500）
+    if str((body or {}).get("model") or "") == str(model or ""):
+        body = dict(body or {})
+        body.pop("model", None)
+
     from decimal import Decimal
 
     from ..services.sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing
