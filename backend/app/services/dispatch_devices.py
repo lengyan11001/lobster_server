@@ -71,10 +71,31 @@ def user_uses_system_device(db: Session, user_id: int) -> bool:
     return bool(slot) and source == SYSTEM_DEVICE_SOURCE
 
 
-def assert_marketing_only_allowed(db: Session, user_id: int, action: str = "") -> None:
-    """选中系统设备时只允许 AI 营销创作；其他工作流/任务一律拒绝。"""
-    if user_uses_system_device(db, int(user_id)):
-        raise HTTPException(status_code=403, detail=MARKETING_ONLY_MESSAGE)
+# AI 营销创作的动作（技能/模板）前缀：在系统设备下放行
+MARKETING_TARGET_PREFIXES = (
+    # AI 营销创作里的技能/模板（H5 侧真实 key）
+    "ip_content", "image", "image_composer", "comfly.", "local_bestseller", "viral_video_remix",
+    "wewrite.", "moments", "marketing", "seedance", "hypit", "ai_marketing",
+    "shanjian", "digital", "hifly", "tts", "article", "wechat", "seedream", "banana",
+    "kling", "sora", "veo", "hailuo", "minimax", "gpt", "music", "voice", "poster", "copywriting",
+    "营销创作", "营销", "文案", "图片", "视频", "音频", "音乐", "海报", "朋友圈", "公众号",
+)
+
+
+def is_marketing_target(target: str) -> bool:
+    value = str(target or "").strip().lower()
+    if not value:
+        return False
+    return any(value.startswith(prefix) or prefix in value for prefix in MARKETING_TARGET_PREFIXES)
+
+
+def assert_marketing_only_allowed(db: Session, user_id: int, action: str = "", target: str = "") -> None:
+    """选中系统设备时只允许 AI 营销创作：AI 营销创作的动作放行，其余工作流/任务拒绝。"""
+    if not user_uses_system_device(db, int(user_id)):
+        return
+    if is_marketing_target(target):
+        return  # 系统设备下，AI 营销创作（文案/图片/视频/音乐等）照常可用
+    raise HTTPException(status_code=403, detail=MARKETING_ONLY_MESSAGE)
 
 
 def system_device_rows(db: Session, now: Optional[datetime] = None) -> List[dict]:

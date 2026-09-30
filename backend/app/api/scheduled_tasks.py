@@ -5422,7 +5422,11 @@ def create_scheduled_task(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    dispatch_devices.assert_marketing_only_allowed(db, owner_user.id, "scheduled_task_create")
+    dispatch_devices.assert_marketing_only_allowed(
+        db, owner_user.id, "scheduled_task_create",
+        " ".join(str(x or "") for x in (getattr(body, "app_name", ""), getattr(body, "task_kind", ""),
+                                        getattr(body, "skill_key", ""))),
+    )
     requested_kind = _normalize_task_kind(body.task_kind)
     xi = _header_installation_id(request)
     if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:

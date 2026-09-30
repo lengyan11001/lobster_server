@@ -3740,11 +3740,16 @@ def activate_workflow_template(
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
-    dispatch_devices.assert_marketing_only_allowed(db, owner.id, "workflow_activate")
     iid = (body.installation_id or "").strip()
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")
     template = _accessible_template(db, body.template_id, owner.id)
+    # 系统设备下只拦「需要自有设备」的工作流；AI 营销创作模板放行
+    dispatch_devices.assert_marketing_only_allowed(
+        db, owner.id, "workflow_activate",
+        " ".join(str(x or "") for x in (getattr(template, "template_key", ""), getattr(template, "name", ""),
+                                        getattr(template, "department", ""))),
+    )
     bound_iid = _clean_text(template.installation_id, 128)
     # A granted template belongs to the granting account's template namespace,
     # but it must run on the recipient's own device. Only enforce the bound
@@ -3804,7 +3809,8 @@ def activate_inline_workflow_template(
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
-    dispatch_devices.assert_marketing_only_allowed(db, owner.id, "workflow_activate_inline")
+    dispatch_devices.assert_marketing_only_allowed(db, owner.id, "workflow_activate_inline",
+                                                   str(body.template_key or ""))
     iid = (body.installation_id or "").strip()
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")
