@@ -1695,28 +1695,31 @@ def _source_used_for(row: TikHubSourceItem, task: str = "") -> bool:
     return any(str(item.get("task") or "") == task_key for item in usage)
 
 
+# ── 素材去重策略（直接写死在代码里，不再用环境变量）──
+_SOURCE_COOLDOWN_DAYS = 7      # 同一素材 + 同一任务被用过之后，N 天内不再被选中
+_SOURCE_TTL_DAYS = 14          # 入库超过 N 天的素材退出选材池（只归档，不再端给模型）
+_SOURCE_BATCH_LIMIT = 16       # 每批参考素材条数上限（原先 40/24，素材消耗是产出的 8 倍）
+_CROSS_RUN_DEDUP_DAYS = 7      # 跨轮选题去重窗口：让模型避开最近 N 天写过的标题
+
+
 def _source_cooldown_days() -> int:
-    """同一素材被同一 task 用过后的冷却天数：冷却期内不再被选中（默认 7 天）。"""
-    try:
-        return max(0, min(365, int(os.environ.get("IP_CONTENT_SOURCE_COOLDOWN_DAYS") or 7)))
-    except (TypeError, ValueError):
-        return 7
+    return _SOURCE_COOLDOWN_DAYS
 
 
 def _source_ttl_days() -> int:
-    """素材有效期：入库超过 N 天的素材退出选材池（默认 14 天；<=0 表示不过期）。"""
-    try:
-        return max(0, min(365, int(os.environ.get("IP_CONTENT_SOURCE_TTL_DAYS") or 14)))
-    except (TypeError, ValueError):
-        return 14
+    return _SOURCE_TTL_DAYS
 
 
 def _source_limit(default: int) -> int:
-    """每批参考素材条数，可用 IP_CONTENT_SOURCE_LIMIT 覆盖（默认沿用调用点原值）。"""
+    """每批参考素材条数：不超过 _SOURCE_BATCH_LIMIT。"""
     try:
-        return max(4, min(200, int(os.environ.get("IP_CONTENT_SOURCE_LIMIT") or default)))
+        return max(4, min(int(default), _SOURCE_BATCH_LIMIT))
     except (TypeError, ValueError):
-        return default
+        return _SOURCE_BATCH_LIMIT
+
+
+def _cross_run_dedup_days() -> int:
+    return _CROSS_RUN_DEDUP_DAYS
 
 
 def _source_used_recently(row: TikHubSourceItem, task: str = "", *, days: int = 0) -> bool:
@@ -1751,14 +1754,6 @@ def _source_within_ttl(row: TikHubSourceItem, *, days: int = 0) -> bool:
     if created is None:
         return True
     return created >= _utcnow() - timedelta(days=window)
-
-
-def _cross_run_dedup_days() -> int:
-    """跨轮选题去重窗口（默认 7 天；<=0 关闭）。"""
-    try:
-        return max(0, min(60, int(os.environ.get("IP_CONTENT_CROSS_RUN_DEDUP_DAYS") or 7)))
-    except (TypeError, ValueError):
-        return 7
 
 
 def _recent_draft_titles(db: Session, user_id: int, task: str, *, limit: int = 30) -> list[str]:
