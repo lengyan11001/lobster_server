@@ -569,6 +569,40 @@ def humanize_upstream_error(body_text: str) -> str:
     return ""
 
 
+def _ensure_text_content(body: Dict[str, Any]) -> Dict[str, Any]:
+    """上游要求 content 里必须有非空 text；前端拼装偏差时在这里补齐（写别处的文字也算数）。"""
+    if not isinstance(body, dict):
+        return body
+    params = body.get("params")
+    if not isinstance(params, dict):
+        return body
+    content = params.get("content")
+    if isinstance(content, list) and any(
+            isinstance(item, dict) and item.get("type") == "text" and str(item.get("text") or "").strip()
+            for item in content):
+        return body
+    text = ""
+    for key in ("prompt", "text", "input_text", "description", "caption"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            break
+    if not text:
+        for key in ("prompt", "text", "input_text"):
+            value = body.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                break
+    if not text:
+        return body
+    if not isinstance(content, list):
+        content = []
+    content = [{"type": "text", "text": text}] + [item for item in content if isinstance(item, dict)]
+    params["content"] = content
+    logger.info("[canvas] 中转补齐提示词 text（前端未带上）: %s", text[:40])
+    return body
+
+
 def _pricing_body(body: Dict[str, Any]) -> Dict[str, Any]:
     """画布 v3 的 body 是 {model, params}，参数在 params 里；定价要按展平后的看。"""
     if not isinstance(body, dict):
@@ -872,7 +906,11 @@ async def canvas_proxy(
             upstream = await client.request(
                 request.method,
                 url,
-                content=_rewrite_body_token(body, (headers.get("Authorization") or "").replace("Bearer ", "").strip()) or None,
+                content=_rewrite_body_token(
+                    json.dumps(_ensure_text_content(body_json), ensure_ascii=False).encode("utf-8")
+                    if body_json else body,
+                    (headers.get("Authorization") or "").replace("Bearer ", "").strip(),
+                ) or None,
                 headers=headers,
                 params=dict(request.query_params),
             )
