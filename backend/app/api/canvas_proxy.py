@@ -201,6 +201,8 @@ _CANVAS_MARKUP_MODELS = {
     "minimax/voice-design": 1.5,
     "minimax/voice-clone": 1.5,
     "minimax/t2a": 1.5,
+    "openai/gpt-image-2": 1.5,
+    "openai/gpt-image-2/edit": 1.5,
     # seedance 这类 token 结算的模型本来就贵，按 1.2 收（2026-09-29 口径）
     "bytedance/seedance-2.5": 1.2,
     "apiz/seedance-2.5": 1.2,
@@ -603,6 +605,75 @@ def _ensure_text_content(body: Dict[str, Any]) -> Dict[str, Any]:
     return body
 
 
+
+_transfer_cache: Dict[str, str] = {}
+
+
+async def transfer_media_url(url: str, kind: str = "image") -> str:
+    """把外链图片转成 apiz 自己的可访问地址（apiz 的生成模型只认它自己的链接）。"""
+    if not isinstance(url, str) or not url.startswith("http"):
+        return url
+    if "51sux.com" in url or "apiz" in url:
+        return url
+    cached = _transfer_cache.get(url)
+    if cached:
+        return cached
+    try:
+        payload = await canvas_hub.apiz_json("POST", "/api/v3/tools/transfer_url", {"url": url, "type": kind})
+        data = (payload or {}).get("data") or {}
+        new_url = data.get("url") or data.get("file_url") or ""
+        if isinstance(new_url, str) and new_url.startswith("http"):
+            _transfer_cache[url] = new_url
+            logger.info("[canvas] 素材转存 apiz: %s -> %s", url[:60], new_url[:60])
+            return new_url
+    except Exception as exc:  # noqa: BLE001 转存失败就原样提交
+        logger.info("[canvas] 素材转存失败（原样提交）: %s", exc)
+    return url
+
+
+async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """提交前把素材链接换成 apiz 可访问的，并按模型需要调整参数结构。"""
+    import copy as _copy
+    import re as _re
+
+    params = _copy.deepcopy(params or {})
+    # 媒体链接转存
+    if isinstance(params.get("content"), list):
+        for item in params["content"]:
+            if isinstance(item, dict) and item.get("type") == "image_url":
+                holder = item.get("image_url")
+                if isinstance(holder, dict) and holder.get("url"):
+                    holder["url"] = await transfer_media_url(holder["url"])
+                elif isinstance(holder, str):
+                    item["image_url"] = {"url": await transfer_media_url(holder)}
+    for key in ("image_url", "image", "first_frame", "last_frame", "video_url"):
+        value = params.get(key)
+        if isinstance(value, str) and value.startswith("http"):
+            params[key] = await transfer_media_url(value)
+        elif isinstance(value, dict) and isinstance(value.get("url"), str):
+            value["url"] = await transfer_media_url(value["url"])
+
+    # 该模型不接受 content（seedance 等）：把文字拆成 prompt，图片提到顶层
+    if model.startswith("apiz/seedance") or "kling" in model or "seedance" in model:
+        text = ""
+        images: List[str] = []
+        content = params.pop("content", None) or []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text":
+                text = (text + "\n" + str(item.get("text") or "")).strip()
+            elif item.get("type") == "image_url":
+                holder = item.get("image_url")
+                if isinstance(holder, dict) and holder.get("url"):
+                    images.append(holder["url"])
+        if text and not params.get("prompt"):
+            params["prompt"] = text
+        if images and not params.get("image_url"):
+            params["image_url"] = images[0] if len(images) == 1 else images
+    return params
+
+
 def _pricing_body(body: Dict[str, Any]) -> Dict[str, Any]:
     """画布 v3 的 body 是 {model, params}，参数在 params 里；定价要按展平后的看。"""
     if not isinstance(body, dict):
@@ -892,6 +963,13 @@ async def canvas_proxy(
             charged_now = our_price_for_display(model, body_json) or 0
             logger.info("[canvas] 用兜底价预扣: %s -> %s", model, charged_now)
         pre_charged = pre_deduct_canvas(db, user, charged_now, model, normalized)
+
+    if _path_relayable(normalized) and _should_settle(normalized) and isinstance(body_json.get("params"), dict):
+        try:
+            body_json = dict(body_json)
+            body_json["params"] = await prepare_params(str(body_json.get("model") or ""), body_json["params"])
+        except Exception as exc:  # noqa: BLE001 适配失败就原样提交
+            logger.info("[canvas] 参数适配失败（原样提交）: %s", exc)
 
     headers = await _apiz_headers()
     for name in ("content-type", "accept", "accept-language"):
