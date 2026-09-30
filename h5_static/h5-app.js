@@ -15572,11 +15572,13 @@ async function api(path, options = {}) {
 
     function setSelectedInstallationId(value, explicitSource) {
       const next = String(value || "").trim();
-      const systemPick = next ? (explicitSource === "system" || isSystemDeviceId(next)) : false;
+      const systemPick = next
+        ? (explicitSource === "system" || isSystemDeviceId(next) || next === SYSTEM_DEVICE_VALUE)
+        : false;
       const hit = next && !systemPick ? (state.devices || []).find((d) => String(d.installation_id || "") === next) : null;
       const previous = String(state.selectedInstallationId || "").trim();
       const previousSource = String(state.deviceSelectionSource || "").trim();
-      state.selectedInstallationId = hit || (systemPick && isSystemDeviceId(next)) ? next : "";
+      state.selectedInstallationId = hit || (systemPick && (isSystemDeviceId(next) || next === SYSTEM_DEVICE_VALUE)) ? next : "";
       state.deviceSelectionSource = state.selectedInstallationId ? (systemPick ? "system" : "own") : "";
       persistDeviceSelectionLocal();
       renderProfileDeviceSelect();
