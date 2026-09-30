@@ -89,6 +89,9 @@ class CreateVideoBody(_TokenBody):
     virtualman_id: Optional[str] = None
     title: str = "数字人口播"
     text: Optional[str] = None
+    # 本次文案的口播来源（工作流随机抽中的那个）
+    script_source: Optional[str] = None
+    script_sources: Optional[List[str]] = None
     speaker_id: Optional[str] = None
     audio_url: Optional[str] = None
     audio_asset_id: Optional[str] = None
@@ -2002,6 +2005,7 @@ def _profile_to_dict(row: ShanjianDigitalHumanProfile) -> Dict[str, Any]:
 
 
 def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
+    _submit = row.submit_payload if isinstance(row.submit_payload, dict) else {}
     return {
         "id": row.id,
         "user_id": row.user_id,
@@ -2016,6 +2020,8 @@ def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
         "audio_url": row.audio_url or "",
         "speaker_id": row.speaker_id or "",
         "text": row.text or "",
+        "script_source": str(_submit.get("script_source") or ""),
+        "script_sources": list(_submit.get("script_sources") or []),
         "video_url": row.video_url or "",
         "cover_url": row.cover_url or "",
         "duration": row.duration,
@@ -2463,6 +2469,13 @@ async def create_video(
 
     template_meta, template_source = _resolve_video_template_meta(db, int(current_user.id), body)
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
+    _script_src = _clean_text(getattr(body, "script_source", ""), 64)
+    if _script_src:
+        submit_payload["script_source"] = _script_src
+    _script_srcs = [_clean_text(v, 64) for v in (getattr(body, "script_sources", None) or [])]
+    _script_srcs = [v for v in _script_srcs if v]
+    if _script_srcs:
+        submit_payload["script_sources"] = _script_srcs
     if body.long_video:
         submit_payload["output_constraints"] = {"duration_mode": "long"}
     elif body.hard_max_duration is not None:
