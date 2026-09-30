@@ -726,7 +726,7 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
     # 任务记录/最近任务：读我们自己的库（生成时记的）
     if normalized in ("api/fal/tasks/list", "api/task_list", "api/tasks/list"):
         limit = int(request.query_params.get("page_size") or body.get("page_size") or body.get("limit") or 30)
-        task_items = hub.list_canvas_tasks(db, uid, limit)
+        task_items = canvas_hub.list_canvas_tasks(db, uid, limit)
         return JSONResponse({"code": 200, "list": task_items, "total": len(task_items),
                              "data": {"list": task_items, "total": len(task_items)}})
 
@@ -824,7 +824,12 @@ async def canvas_proxy(
     pre_charged = None
     if model and _should_settle(normalized):
         # 按**我们自己的定价**预扣（余额不足 402 挡住）；没定价的模型返回 0，不猜价
-        pre_charged = pre_deduct_canvas(db, user, estimate_our_price(db, user, model, body_json), model, normalized)
+        # 先走余额预检（不足直接 402），预检拿不到正价时再用我们的兜底价
+        charged_now = estimate_our_price(db, user, model, body_json)
+        if not charged_now or charged_now <= 0:
+            charged_now = our_price_for_display(model, body_json) or 0
+            logger.info("[canvas] 用兜底价预扣: %s -> %s", model, charged_now)
+        pre_charged = pre_deduct_canvas(db, user, charged_now, model, normalized)
 
     headers = await _apiz_headers()
     for name in ("content-type", "accept", "accept-language"):
@@ -854,12 +859,15 @@ async def canvas_proxy(
             logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
     if upstream.status_code < 400 and _should_settle(normalized):
         try:
-            hub.add_canvas_task(db, uid, model, normalized, upstream.content)
+            canvas_hub.add_canvas_task(db, uid, model, normalized, upstream.content)
         except Exception as exc:  # noqa: BLE001 记任务不能影响生成
             logger.warning("[canvas] 记录任务失败: %s", exc)
 
     if upstream.status_code >= 400 and pre_charged:
         refund_canvas(db, user, pre_charged, model, normalized, f"上游 {upstream.status_code}")
+    if upstream.status_code >= 400 or upstream.content.find("请检查参数".encode("utf-8")) >= 0:
+        logger.warning("[canvas] 上游异常 %s %s -> %s body=%s", request.method, normalized,
+                       upstream.status_code, upstream.content[:600].decode("utf-8", "replace"))
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
 
     # 报价/估价：给界面看的价格一律换成我们的价（不出现 apiz 原本的价格）
