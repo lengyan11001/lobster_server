@@ -565,9 +565,17 @@ def resolve_media(rel: str) -> Path:
         target.relative_to(root)
     except ValueError:
         raise HTTPException(status_code=404, detail="文件不存在") from None
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    return target
+    if target.is_file():
+        return target
+    # 容错：历史链接可能丢了扩展名/后半段（画布上传时名字被截断）——
+    # 按前缀在同一个目录里找唯一匹配（例如 31/xxx_abc 命中 31/xxx_abcd.mp4）
+    parent = target.parent
+    if parent.is_dir():
+        matches = sorted(p for p in parent.iterdir() if p.is_file() and p.name.startswith(target.name))
+        if len(matches) == 1:
+            logger.info("[canvas] 素材按前缀命中: %s -> %s", target.name, matches[0].name)
+            return matches[0]
+    raise HTTPException(status_code=404, detail="文件不存在")
 
 
 def media_response(rel: str) -> FileResponse:
