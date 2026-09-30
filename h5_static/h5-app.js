@@ -2279,7 +2279,30 @@
       }
     }
 
-    async function api(path, options = {}) {
+    // 2026-09-30：判断这次请求是不是从「AI 营销创作」页面或其二级菜单发出的。
+// 是的话，请求会带 X-H5-AI-Marketing: 1，服务端闸门据此放行（系统设备下也允许生成）。
+function inAiMarketingContext() {
+  try {
+    const dept = String(
+      (state.currentTask && state.currentTask.department)
+      || state.activeDepartment
+      || state.currentDepartment
+      || (state.activeTask && state.activeTask.department)
+      || ""
+    ).trim();
+    if (dept === "AI营销创作") return true;
+    if (state.aiMarketingOpen === true) return true;
+    const route = String(window.location.hash || "") + String(window.location.pathname || "");
+    if (/marketing|ai-marketing|营销/i.test(route)) return true;
+    const active = String(document.body && document.body.dataset ? (document.body.dataset.activeView || "") : "");
+    if (/marketing|营销/i.test(active)) return true;
+    return false;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function api(path, options = {}) {
       const requestOptions = { ...options };
       const requestedAttempts = Number(requestOptions.maxAttempts || 0);
       const timeoutMs = Math.max(0, Number(requestOptions.timeoutMs || 0));
@@ -2287,6 +2310,7 @@
       delete requestOptions.maxAttempts;
       delete requestOptions.timeoutMs;
       const headers = { ...(requestOptions.headers || {}), ...authHeaders() };
+  if (inAiMarketingContext()) headers["X-H5-AI-Marketing"] = "1";
       if (requestOptions.json) {
         headers["Content-Type"] = "application/json";
         requestOptions.body = JSON.stringify(requestOptions.json);
