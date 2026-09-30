@@ -872,15 +872,18 @@ async def canvas_proxy(
             logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
     if upstream.status_code < 400 and _should_settle(normalized):
         try:
+            canvas_hub.ensure_tables(db)
             canvas_hub.add_canvas_task(db, uid, model, normalized, upstream.content)
         except Exception as exc:  # noqa: BLE001 记任务不能影响生成
             logger.warning("[canvas] 记录任务失败: %s", exc)
 
     if upstream.status_code >= 400 and pre_charged:
         refund_canvas(db, user, pre_charged, model, normalized, f"上游 {upstream.status_code}")
-    if upstream.status_code >= 400 or upstream.content.find("请检查参数".encode("utf-8")) >= 0:
-        logger.warning("[canvas] 上游异常 %s %s -> %s body=%s", request.method, normalized,
-                       upstream.status_code, upstream.content[:600].decode("utf-8", "replace"))
+    _body_text = upstream.content[:2000].decode("utf-8", "replace")
+    _looks_bad = any(k in _body_text for k in ("请检查参数", "参数", "failed", "error", "失败", "\"status\": \"fail"))
+    if upstream.status_code >= 400 or _looks_bad:
+        logger.warning("[canvas] 上游返回 %s %s -> %s body=%s", request.method, normalized,
+                       upstream.status_code, _body_text[:800])
     logger.info("[canvas] user=%s %s %s -> %s", getattr(user, "id", ""), request.method, normalized, upstream.status_code)
 
     # 报价/估价：给界面看的价格一律换成我们的价（不出现 apiz 原本的价格）
