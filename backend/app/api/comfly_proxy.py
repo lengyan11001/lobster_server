@@ -4917,10 +4917,11 @@ async def proxy_videos_generations_poll(
 
 
 
-def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
+def _video_provider_policy(model: str, channel: str = "", feature: str = "") -> Dict[str, Any]:
     raw_model = (model or "").strip()
     low_model = raw_model.lower().replace("_", "-").replace(" ", "")
     low_channel = (channel or "").strip().lower()
+    low_feature = (feature or "").strip().lower().replace("-", "_")
     proxy_base = "/api/comfly-proxy"
 
     # 分镜台/批量创意视频共用的万相3.0（DashScope）：批量视频那条链路一直在用，
@@ -4970,6 +4971,18 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
             {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
         ]
+        if low_feature in {"local_bestseller", "localbestseller"}:
+            # 同城爆款单段 10 秒视频：固定 OpenMind 主通道（grok-video-3，160 积分/条），
+            # 不插 DashScope 万相3.0（wan3.0-video，1200 积分/条），否则余额不足会整条失败。
+            return {
+                "ok": True,
+                "model_family": "grok",
+                "providers": [
+                    {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+                    {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+                ],
+            }
+
         if wan30_position in {"first", "1", "primary"}:
             providers.insert(0, dict(wan30_provider))
         elif wan30_position in {"last", "2"}:
@@ -5038,7 +5051,7 @@ async def proxy_video_provider_policy(
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
-    policy = _video_provider_policy(model, channel)
+    policy = _video_provider_policy(model, channel, feature)
     _audit("video_provider_policy", user_id=current_user.id, model=model, channel=channel, feature=feature, family=policy.get("model_family"))
     return JSONResponse(policy)
 

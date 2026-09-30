@@ -466,6 +466,21 @@ def test_openmind_video_poll_uses_cached_tos_url_without_queue(monkeypatch):
     assert queued == []
 
 
+def test_local_bestseller_video_policy_skips_expensive_wan30(monkeypatch):
+    """同城爆款单段视频固定 OpenMind(160)，不能插 wan3.0(1200)，否则用户余额不足直接失败。"""
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "first")
+
+    policy = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "local_bestseller")
+    assert policy["model_family"] == "grok"
+    assert [item["channel"] for item in policy["providers"]] == ["openmind", "comfly"]
+    assert policy["providers"][0]["model"] == "grok-video-3"
+    assert all(item["model"] != "wan3.0-video" for item in policy["providers"])
+
+    # 其它功能（分镜台批量）仍然保留 wan3.0 兜底
+    other = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "seedance_tvc")
+    assert any(item["channel"] == "dashscope" for item in other["providers"])
+
+
 def test_yingmeng_1_0_never_routes_to_yunwu():
     """影梦 1.0（yunwu-veo3.1-plus）已停用 yunwu：任何入口都只能拿到 OpenMind / comfly。"""
     for model, channel_name in (
