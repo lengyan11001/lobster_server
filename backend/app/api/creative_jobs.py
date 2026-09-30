@@ -31,6 +31,29 @@ _OMIT_PAYLOAD_KEYS = {
 }
 
 
+def _sweep_stale_jobs(db: Session, *, user_id: Optional[int] = None, hours: int = 6) -> int:
+    """把长时间没有进展的 running/queued 记录标成 stale（终端态），避免界面永远显示"进行中"。"""
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(hours=int(hours))
+    query = db.query(CreativeGenerationJob).filter(
+        CreativeGenerationJob.status.in_(("running", "queued")),
+        CreativeGenerationJob.updated_at < cutoff,
+    )
+    if user_id is not None:
+        query = query.filter(CreativeGenerationJob.user_id == int(user_id))
+    rows = query.all()
+    if not rows:
+        return 0
+    for row in rows:
+        row.status = "stale"
+        if not getattr(row, "error", None):
+            row.error = "长时间无进展（客户端中断/重启未回写），已自动标记中断"
+        row.updated_at = datetime.utcnow()
+    db.commit()
+    logger.info("[creative-jobs] 自动标记 stale：%d 条（user_id=%s）", len(rows), user_id)
+    return len(rows)
+
 def _compact_job_payload(value: Any, *, string_limit: int = 12000, max_items: int = 80, _depth: int = 0) -> Any:
     if _depth > 8:
         return {"omitted": True, "reason": "max_depth"}
@@ -289,6 +312,9 @@ async def list_creative_jobs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # 2026-09-30 兜底：客户端中断/重启后没人回写终态 -> 超过 6 小时没进展的记录自动标 stale
+    _sweep_stale_jobs(db, user_id=current_user.id)
+
     query = db.query(CreativeGenerationJob).filter(
         CreativeGenerationJob.user_id == current_user.id,
         CreativeGenerationJob.deleted_at.is_(None),
