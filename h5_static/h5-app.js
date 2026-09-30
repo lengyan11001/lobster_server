@@ -15427,8 +15427,15 @@ async function api(path, options = {}) {
       state.officeSummaryLoading = null;
     }
 
+    // 「系统设备」是一个逻辑选项：用户不关心哪台，由系统挑空闲设备
+    const SYSTEM_DEVICE_VALUE = "system";
+
+    function selectedIsSystemDevice() {
+      return String(state.selectedInstallationId || "").trim() === SYSTEM_DEVICE_VALUE;
+    }
+
     function systemDeviceModeActive() {
-      return String(state.deviceSelectionSource || "").trim() === "system";
+      return String(state.deviceSelectionSource || "").trim() === "system" || selectedIsSystemDevice();
     }
 
     function isSystemDeviceId(id) {
@@ -15447,6 +15454,9 @@ async function api(path, options = {}) {
     function findDeviceById(id) {
       const wanted = String(id || "").trim();
       if (!wanted) return null;
+      if (wanted === SYSTEM_DEVICE_VALUE) {
+        return { installation_id: SYSTEM_DEVICE_VALUE, display_name: "系统设备", name: "系统设备", is_system_device: true, online: true, system_pool: true };
+      }
       const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
       if (own) return own;
       const system = (state.systemDevices || []).find((d) => String(d.installation_id || "") === wanted);
@@ -15460,6 +15470,7 @@ async function api(path, options = {}) {
       // 不再因为「离线 / source 不是 system」把选择重置回第一台在线设备。
       const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
       if (own) return true;
+      if (wanted === SYSTEM_DEVICE_VALUE) return (state.systemDevices || []).length > 0;
       const system = (state.systemDevices || []).find((d) => String(d.installation_id || "") === wanted);
       if (system) return true;
       return isSystemDeviceId(wanted);
@@ -15523,6 +15534,7 @@ async function api(path, options = {}) {
 
     function ensureSelectedInstallationId() {
       const selected = String(state.selectedInstallationId || "").trim();
+      if (selected === SYSTEM_DEVICE_VALUE && (state.systemDevices || []).length) return selected;
       if (!state.devicesLoaded && !(state.devices || []).length) return selected;
       if (selected && selectableDevice(selected)) return selected;
       const previous = state.selectedInstallationId;
@@ -18751,11 +18763,10 @@ async function api(path, options = {}) {
         return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
       }).join("");
       const systemRows = (state.systemDevices || []).filter((device) => device.installation_id);
-      const systemOptions = systemRows.map((device) => {
-        const id = String(device.installation_id || "");
-        const name = String(device.name || "").trim() || `系统设备 ${id.slice(0, 8)}`;
-        return optionHtml(id, `系统设备 · ${name}${device.online ? "" : "（离线）"}`);
-      }).join("");
+      // 「系统设备」只给一个选项：具体派给哪台由系统挑空闲设备
+      const systemOptions = systemRows.length
+        ? optionHtml(SYSTEM_DEVICE_VALUE, "系统设备（系统自动调度空闲设备 · 仅限 AI 营销创作）")
+        : "";
       let options = "";
       if (ownOptions) options += `<optgroup label="我的设备">${ownOptions}</optgroup>`;
       if (systemOptions) options += `<optgroup label="系统设备（只能用 AI 营销创作）">${systemOptions}</optgroup>`;
@@ -18767,7 +18778,7 @@ async function api(path, options = {}) {
         select.disabled = !choiceCount;
       });
       const selected = selectedDevice();
-      const modeSuffix = systemDeviceModeActive() ? "（系统设备 · 仅限 AI 营销创作）" : "";
+      const modeSuffix = systemDeviceModeActive() ? "（系统设备 · 自动调度空闲设备 · 仅限 AI 营销创作）" : "";
       const text = selected
         ? `${selected.online === false ? "离线" : "在线"} / ${deviceSelectorLabel(selected)}${modeSuffix}`
         : "暂无可用设备";

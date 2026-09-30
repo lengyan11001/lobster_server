@@ -2358,6 +2358,11 @@ def h5_save_device_selection(
     kind = "system" if str(body.source or "").strip().lower() == "system" else "own"
     if not slot:
         raise HTTPException(status_code=400, detail="缺少设备")
+    if dispatch_devices.is_system_selection(slot):
+        # 「系统设备」= 交给系统调度：池子空则拒绝；池子非空则存哨兵（派发时挑空闲设备）
+        if not dispatch_devices.has_system_devices(db):
+            raise HTTPException(status_code=403, detail="系统设备池为空，请联系管理员在后台添加可调度设备")
+        kind = dispatch_devices.SYSTEM_DEVICE_SOURCE
     if kind == "system":
         if not dispatch_devices.is_system_device(db, slot):
             raise HTTPException(status_code=403, detail="该设备不在可调度设备列表中")

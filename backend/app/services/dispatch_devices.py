@@ -15,6 +15,8 @@ from sqlalchemy.orm import Session
 from ..models import DispatchDevice, H5ChatDevicePresence, UserDeviceSelection
 
 SYSTEM_DEVICE_SOURCE = "system"
+# 「系统设备」这个逻辑选项的哨兵值：用户不关心哪台，由系统挑空闲设备
+SYSTEM_SELECTION = "system"
 OWN_DEVICE_SOURCE = "own"
 MARKETING_ONLY_MESSAGE = "当前选中的是可调度系统设备，只能使用 AI 营销创作"
 
@@ -28,10 +30,22 @@ def system_device_ids(db: Session) -> set:
     return {normalize_slot(r[0]) for r in rows if normalize_slot(r[0])}
 
 
+def is_system_selection(value: object) -> bool:
+    """是否是「系统设备」这个逻辑选项（不是具体槽位）。"""
+    return normalize_slot(value) == SYSTEM_SELECTION
+
+
+def has_system_devices(db: Session) -> bool:
+    return bool(system_device_ids(db))
+
+
 def is_system_device(db: Session, installation_id: str) -> bool:
     slot = normalize_slot(installation_id)
     if not slot:
         return False
+    if slot == SYSTEM_SELECTION:
+        # 逻辑选项：只要可调度设备池非空就算合法（具体派给哪台由 pick_idle 决定）
+        return has_system_devices(db)
     row = (
         db.query(DispatchDevice.id)
         .filter(DispatchDevice.installation_id == slot, DispatchDevice.status == "enabled")
@@ -64,6 +78,63 @@ def save_selection(db: Session, user_id: int, installation_id: str, source: str)
         db.add(row)
     db.commit()
     return slot, kind
+
+
+def pick_idle_system_device(db: Session, now: Optional[datetime] = None) -> str:
+    """挑一台空闲的系统设备：池内 enabled、在线、且没有进行中的任务。
+
+    找不到空闲时返回空串（调用方据此排队等待，而不是报错）。"""
+    from .device_presence import is_device_online
+    from ..models import ScheduledTaskRun
+
+    moment = now or datetime.utcnow()
+    devices = (
+        db.query(DispatchDevice.installation_id)
+        .filter(DispatchDevice.status == "enabled")
+        .order_by(DispatchDevice.id.asc())
+        .all()
+    )
+    slots = [normalize_slot(r[0]) for r in devices if normalize_slot(r[0])]
+    if not slots:
+        return ""
+    busy = {
+        normalize_slot(r[0])
+        for r in db.query(ScheduledTaskRun.installation_id)
+        .filter(
+            ScheduledTaskRun.status.in_(("pending", "running", "claimed", "processing")),
+            ScheduledTaskRun.installation_id.in_(slots),
+        )
+        .all()
+        if normalize_slot(r[0])
+    }
+    presence = {}
+    rows = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.installation_id.in_(slots))
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .all()
+    )
+    for row in rows:
+        key = normalize_slot(row.installation_id)
+        if key and key not in presence:
+            presence[key] = row
+    online_slots = [
+        slot for slot in slots
+        if is_device_online(getattr(presence.get(slot), "last_seen_at", None), now=moment)
+    ]
+    idle_online = [slot for slot in online_slots if slot not in busy]
+    if idle_online:
+        return idle_online[0]
+    # 没有"在线且空闲"的：退而求其次给一台在线但可能排队的（保持"排队等空闲"语义，别丢目标）
+    return online_slots[0] if online_slots else ""
+
+
+def resolve_selection_target(db: Session, user_id: int, now: Optional[datetime] = None) -> str:
+    """当前选择该把任务派给谁：自己的设备→原样；系统设备→当前空闲的一台（没有则空串=排队）。"""
+    slot, source = get_selection(db, int(user_id))
+    if source == SYSTEM_DEVICE_SOURCE or is_system_selection(slot):
+        return pick_idle_system_device(db, now=now)
+    return slot
 
 
 def user_uses_system_device(db: Session, user_id: int) -> bool:
