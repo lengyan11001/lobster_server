@@ -845,9 +845,13 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
             row = hub.get_project(db, ident, user_id=uid)
             if row is None:
                 raise HTTPException(status_code=404, detail="作品不存在")
+            # 官方模板可能还没被打开过（库里 snapshot 为空），先按 canvas_url 拉一次；
+            # 否则副本是空的，画布前端只能给默认一组控件（用户报的「复制后不全」）
+            row = await hub.ensure_snapshot(db, row, uid)
             copy = hub.create_project(db, user_id=uid, name=f"{row.name} 副本",
                                       description=row.description or "", is_public=False)
             if row.snapshot:
+                # row.snapshot 是库里的 JSON 文本；save_snapshot 会先拆包再存（别再叠一层 json.dumps）
                 hub.save_snapshot(db, copy["uuid"], uid, row.snapshot, row.thumbnail_url or "")
             return JSONResponse({"code": 200, **copy, "project": copy, "data": copy})
         if action == "canvas":
@@ -859,8 +863,12 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
                 project = hub.project_row_to_json(row, with_snapshot=True)
                 return JSONResponse({"code": 200, "snapshot": project["snapshot"], "canvas": project["canvas"],
                                      "data": {"snapshot": project["snapshot"], "canvas": project["canvas"]}})
-            snapshot = body.get("snapshot") if isinstance(body.get("snapshot"), dict) else body.get("canvas")
-            row = hub.save_snapshot(db, ident, uid, snapshot or {}, str(body.get("thumbnail_url") or ""))
+            # 前端可能发对象，也可能发 JSON 文本；都交给 save_snapshot 统一拆包，别在这里把文本丢掉
+            snapshot = body.get("snapshot")
+            if snapshot is None:
+                snapshot = body.get("canvas")
+            row = hub.save_snapshot(db, ident, uid, {} if snapshot is None else snapshot,
+                                    str(body.get("thumbnail_url") or ""))
             if row is None:
                 raise HTTPException(status_code=404, detail="作品不存在")
             project = hub.project_row_to_json(row)

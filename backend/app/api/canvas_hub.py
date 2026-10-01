@@ -126,6 +126,28 @@ def public_base() -> str:
     return "https://bhzn.top"
 
 
+def snapshot_as_dict(value: Any) -> Dict[str, Any]:
+    """把 snapshot 统一成 dict（最多拆两层 JSON 文本）。
+
+    2026-10-01 踩过的坑：克隆时把数据库里的 snapshot（JSON 文本）又 json.dumps 了一次，
+    副本里就成了「字符串里再套一层 JSON」。画布前端拿到的 snapshot 不是对象、读不到 nodes，
+    于是渲染默认画布并自动保存 —— 表现就是「复制后只剩一组、每个副本内容都一样」。
+    写入和读取都过这个函数，保证只存一层。
+    """
+    for _ in range(2):
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            try:
+                value = json.loads(text)
+            except Exception:
+                return {}
+            continue
+        break
+    return value if isinstance(value, dict) else {}
+
+
 def _now() -> float:
     return time.time()
 
@@ -276,14 +298,10 @@ def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, A
         "updated_at": row.updated_at,
     }
     if with_snapshot:
-        snapshot = row.snapshot
-        if isinstance(snapshot, str) and snapshot:
-            try:
-                snapshot = json.loads(snapshot)
-            except Exception:
-                snapshot = None
-        data["snapshot"] = snapshot or {}
-        data["canvas"] = snapshot or {}
+        # 兜底拆包：即使历史数据里存的是「字符串套 JSON」，也要能读出真正的画布
+        snapshot = snapshot_as_dict(row.snapshot)
+        data["snapshot"] = snapshot
+        data["canvas"] = snapshot
     return data
 
 
@@ -343,7 +361,7 @@ async def ensure_snapshot(db: Session, row: Any, user_id: int) -> Any:
         if resp.status_code < 400:
             snapshot = resp.json()
             clause, params = _identifier_clause(str(row.uuid))
-            params["snap"] = json.dumps(snapshot, ensure_ascii=False)
+            params["snap"] = json.dumps(snapshot_as_dict(snapshot), ensure_ascii=False)
             db.execute(text(f"UPDATE canvas_project SET snapshot = :snap WHERE {clause}"), params)
             db.commit()
             return db.execute(text(f"SELECT * FROM canvas_project WHERE {clause}"), params).fetchone()
@@ -385,7 +403,8 @@ def update_project(db: Session, identifier: str, user_id: int, fields: Dict[str,
 
 def save_snapshot(db: Session, identifier: str, user_id: int, snapshot: Any, thumbnail_url: str = "") -> Optional[Any]:
     clause, params = _identifier_clause(identifier)
-    params.update({"uid": user_id, "snap": json.dumps(snapshot or {}, ensure_ascii=False), "now": _now()})
+    # snapshot 可能是 dict，也可能是数据库里的 JSON 文本（克隆/转发过来的），统一拆成一层
+    params.update({"uid": user_id, "snap": json.dumps(snapshot_as_dict(snapshot), ensure_ascii=False), "now": _now()})
     sets = "snapshot = :snap, updated_at = :now"
     if thumbnail_url:
         sets += ", thumbnail_url = :thumb"

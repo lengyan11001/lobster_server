@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -362,3 +363,92 @@ def test_quote_is_answered_locally(client, monkeypatch):
     assert canvas_proxy._is_quote_path("api/v3/tasks/create") is False
     assert canvas_proxy._path_relayable("api/v3/mcp/models") is False
     assert canvas_proxy._path_relayable("api/v3/tasks/create") is True
+
+
+def test_clone_keeps_full_snapshot(client, monkeypatch):
+    """克隆必须原样带上模板快照（多组控件不能丢）；不能出现「字符串套 JSON」。"""
+    def boom(*args, **kwargs):
+        raise AssertionError("克隆不该再打 apiz")
+
+    monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient", boom)
+
+    snapshot = {
+        "nodes": [{"id": "n1", "type": "promptInput"}, {"id": "n2", "type": "videoTask"},
+                  {"id": "n3", "type": "sora2Video"}],
+        "edges": [{"id": "e1", "source": "n1", "target": "n3"}],
+    }
+    created = client.post("/canvas-api/api/v1/projects/", json={"name": "多组模板", "is_public": True})
+    uid = created.json()["project"]["uuid"]
+    saved = client.post(f"/canvas-api/api/v1/projects/{uid}/canvas", json={"snapshot": snapshot})
+    assert saved.status_code == 200, saved.text
+
+    cloned = client.post(f"/canvas-api/api/v1/projects/{uid}/clone", json={})
+    assert cloned.status_code == 200, cloned.text
+    copy_uuid = cloned.json()["project"]["uuid"]
+
+    loaded = client.post(f"/canvas-api/api/v1/projects/{copy_uuid}/canvas/load", json={})
+    body = loaded.json()["snapshot"]
+    assert isinstance(body, dict), "副本 snapshot 不能是字符串（画布会读不出 nodes）"
+    assert body["nodes"] == snapshot["nodes"]
+    assert body["edges"] == snapshot["edges"]
+
+
+def test_save_snapshot_accepts_json_text(client):
+    """调用方塞 JSON 文本也只能存一层（幂等），避免把画布存成字符串套 JSON。"""
+    created = client.post("/canvas-api/api/v1/projects/", json={"name": "文本快照"})
+    uid = created.json()["project"]["uuid"]
+    saved = client.post(f"/canvas-api/api/v1/projects/{uid}/canvas",
+                        json={"snapshot": json.dumps({"nodes": [{"id": "n9"}], "edges": []})})
+    assert saved.status_code == 200, saved.text
+    loaded = client.post(f"/canvas-api/api/v1/projects/{uid}/canvas/load", json={})
+    assert loaded.json()["snapshot"]["nodes"] == [{"id": "n9"}]
+
+
+def test_clone_pulls_missing_template_snapshot(client, monkeypatch):
+    """模板没打开过（库里快照为空）时，克隆要先按 canvas_url 拉快照，副本不能是空的。"""
+    import httpx
+
+    canvas = {"nodes": [{"id": "g1", "type": "promptInput"}, {"id": "g2", "type": "videoTask"}],
+              "edges": [{"id": "e1"}]}
+
+    async def fake_apiz(method, path, body=None, **kwargs):
+        return {"projects": [{"uuid": "tpl-clone-1", "name": "多组模板", "is_public": True,
+                              "canvas_url": "https://example.invalid/canvas/tpl-clone-1.json"}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            assert "tpl-clone-1.json" in url
+
+            class Resp:
+                status_code = 200
+
+                def json(self):
+                    return canvas
+
+            return Resp()
+
+        async def request(self, *args, **kwargs):
+            raise AssertionError("克隆/加载不该转发到 apiz")
+
+    monkeypatch.setattr(canvas_hub, "apiz_json", fake_apiz)
+    monkeypatch.setattr(canvas_hub, "_template_sync_at", 0.0)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    public = client.post("/canvas-api/api/v1/projects/public?skip=0&limit=20", json={})
+    tpl = public.json()["projects"][0]
+    assert tpl["name"] == "多组模板"
+
+    cloned = client.post(f"/canvas-api/api/v1/projects/{tpl['uuid']}/clone", json={})
+    assert cloned.status_code == 200, cloned.text
+    copy_uuid = cloned.json()["project"]["uuid"]
+    loaded = client.post(f"/canvas-api/api/v1/projects/{copy_uuid}/canvas/load", json={})
+    assert loaded.json()["snapshot"]["nodes"] == canvas["nodes"]
