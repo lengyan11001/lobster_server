@@ -100,6 +100,16 @@ _REFUSE_PREFIXES: Tuple[str, ...] = (
 )
 
 _DEFAULT_TIMEOUT = 120.0
+# 画布会给自己创建的本地任务（例如 videoConcat-<时间戳> 这种本机合成任务）轮询任务状态，
+# 这些 id 上游 apiz 一定查不到，会回 404「任务不存在」。这个 404 不该透给画布前端
+# （前端会弹「404 任务不存在」，用户看到的就是"进模板看完返回报错"）。
+_TASK_ABSENT_TOLERANT_PATHS = {
+    "api/fal/tasks/info",
+    "api/v2/tasks/info",
+    "api/v3/tasks/info",
+    "api/fal/tasks/delete",
+}
+
 _UPLOAD_TIMEOUT = 600.0
 
 
@@ -1023,6 +1033,12 @@ async def canvas_proxy(
         raise HTTPException(status_code=504, detail=f"apiz 请求超时：{exc}") from exc
     except httpx.TransportError as exc:
         raise HTTPException(status_code=502, detail=f"apiz 连接失败：{exc}") from exc
+
+    if upstream.status_code == 404 and normalized in _TASK_ABSENT_TOLERANT_PATHS:
+        # 上游没有这个 task_id（本地任务/已清理任务）：返回空态，让画布继续用自己的状态，
+        # 不要把 404 抛给前端弹「任务不存在」。
+        logger.info("[canvas] %s 上游查不到 task_id（404 已按空态返回）", normalized)
+        return JSONResponse({"code": 200, "message": "ok", "msg": "ok", "data": None}, status_code=200)
 
     if upstream.status_code < 400 and model:
         # 成功：价格按我们自己的定价（前面已预扣），不再按 apiz 回报扣一次

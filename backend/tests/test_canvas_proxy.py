@@ -475,3 +475,29 @@ def test_own_project_exposes_canvas_url_once_it_has_canvas(client):
 
     loaded = client.post(f"/canvas-api/api/v1/projects/{uid}/canvas/load", json={})
     assert [n["id"] for n in loaded.json()["snapshot"]["nodes"]] == ["n1", "n2", "n3", "n4"]
+
+
+def test_task_info_404_is_swallowed(client, monkeypatch):
+    """画布轮询上游不存在的 task_id（本地合成任务）时，不能把 404「任务不存在」透给前端。"""
+    patch_upstream(
+        monkeypatch,
+        FakeResponse(status_code=404, content='{"detail":"任务不存在"}'.encode("utf-8")),
+    )
+    res = client.post("/canvas-api/api/fal/tasks/info", json={"task_id": "videoConcat-1768202287843"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["code"] == 200 and body["data"] is None
+
+    # v2 通道同样处理
+    res2 = client.post("/canvas-api/api/v2/tasks/info", json={"task_id": "videoConcat-1768202287843"})
+    assert res2.status_code == 200 and res2.json()["data"] is None
+
+
+def test_other_404_still_reaches_client(client, monkeypatch):
+    """别的路径的 404 该透还是透，别被这条规则一起吞掉。"""
+    patch_upstream(
+        monkeypatch,
+        FakeResponse(status_code=404, content='{"detail":"作品不存在"}'.encode("utf-8")),
+    )
+    res = client.post("/canvas-api/api/v1/projects/not-exist/canvas/load", json={})
+    assert res.status_code == 404
