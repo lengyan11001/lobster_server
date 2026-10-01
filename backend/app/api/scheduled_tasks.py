@@ -846,6 +846,23 @@ def douyin_node_label(node: Any) -> str:
     return ""
 
 
+def workflow_node_time_key(node: Any) -> tuple:
+    """按「节点设置的开始时间」排序用（HH:MM / HH：MM）；没时间或写错的排最后。"""
+    payload = node if isinstance(node, dict) else {}
+    raw = str(payload.get("time") or "").strip()
+    match = re.match(r"^(\d{1,2})\s*[:：]\s*(\d{1,2})", raw)
+    if match:
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return (0, hour * 60 + minute)
+    return (1, 0)
+
+
+def sort_workflow_nodes_by_time(nodes: Any) -> list:
+    """按开始时间排好序的新列表（稳定排序：同一时间保持原相对顺序）。"""
+    return sorted([node for node in (nodes or []) if isinstance(node, dict)], key=workflow_node_time_key)
+
+
 def normalize_workflow_nodes_for_save(nodes: Any) -> "tuple":
     """保存工作流模板前：递归把节点 plan 里写错的抖音 kind 归一。
 
@@ -873,9 +890,15 @@ def normalize_workflow_nodes_for_save(nodes: Any) -> "tuple":
                     fixed += 1
             fixed += _fix(node.get("actions"))
             fixed += _fix(node.get("children"))
+            # 新增的节点按开始时间插到该在的位置，而不是永远排在最后
+            for child_key in ("actions", "children"):
+                children = node.get(child_key)
+                if isinstance(children, list):
+                    children.sort(key=workflow_node_time_key)
         return fixed
 
     cleaned = [dict(node) for node in (nodes or []) if isinstance(node, dict)]
+    cleaned.sort(key=workflow_node_time_key)
     return cleaned, _fix(cleaned)
 
 

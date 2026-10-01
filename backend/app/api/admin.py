@@ -2085,8 +2085,10 @@ def _system_workflow_rows(db: Session, key: str) -> tuple:
 
 
 def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
+    from .scheduled_tasks import sort_workflow_nodes_by_time
+
     catalog, mirrors = _system_workflow_rows(db, key)
-    nodes = list(catalog.nodes or []) if catalog is not None else []
+    nodes = sort_workflow_nodes_by_time(catalog.nodes) if catalog is not None else []
     db_name = str(getattr(catalog, "name", "") or "").strip() if catalog is not None else ""
     return {
         "key": key,
@@ -2098,6 +2100,15 @@ def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
         "direct_user_count": len({int(row.owner_user_id or 0) for row in mirrors}),
         "mirror_count": len(mirrors),
     }
+
+
+# H5 里系统模板的硬编码默认名（h5_static/h5-app.js）：后台改名后这些镜像也要跟着改，
+# 否则 H5/客户端「启用中」还显示旧名字。
+_LEGACY_SYSTEM_MIRROR_NAMES: Dict[str, tuple] = {
+    "system_sales": ("销售24小时员工",),
+    "system_short_video_wechat": ("短视频+微信员工",),
+    "system_douyin_leads": ("抖音获客员工",),
+}
 
 
 class SystemWorkflowBody(BaseModel):
@@ -2180,7 +2191,10 @@ def _system_workflow_catalog_items(db: Session) -> List[Dict[str, Any]]:
         key = str(meta.get("system_template_key") or "").strip()
         if not key:
             continue
-        nodes = list(row.nodes or [])
+        from .scheduled_tasks import sort_workflow_nodes_by_time
+
+        # 编辑器按开始时间展示（库里老数据顺序乱了也能看对）
+        nodes = sort_workflow_nodes_by_time(row.nodes)
         mirrors = _system_workflow_rows(db, key)[1]
         items.append(
             {
@@ -2372,13 +2386,16 @@ def admin_publish_system_workflow(
     if new_name:
         # 以前这里不落 body.name，后台改名字就一直不生效
         catalog.name = new_name
+    logger.info("[admin] 系统模板 %s 保存：名字 %r -> %r，节点 %d 个",
+                key, old_name, new_name or "(前端未提交名字)", len(nodes))
     catalog.updated_at = now
     synced_users = set()
     for row in mirrors:
         # 只覆盖"直接启用系统模板"的镜像；复制过的副本没有 system_template_key。
         row.nodes = nodes
-        if new_name and str(row.name or "").strip() in ("", old_name):
-            # 镜像还顶着旧名字（或没名字）才跟着改；用户自己改过名字的不动
+        allowed_mirror_names = {"", old_name, *_LEGACY_SYSTEM_MIRROR_NAMES.get(key, ())}
+        if new_name and str(row.name or "").strip() in allowed_mirror_names:
+            # 镜像还顶着旧名字/默认名（或没名字）才跟着改；用户自己改过名字的不动
             row.name = new_name
         row.updated_at = now
         synced_users.add(int(row.owner_user_id or 0))

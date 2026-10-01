@@ -2791,7 +2791,10 @@ def _prepare_sales_workflow_nodes(
 
 
 def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, source: str = "own", grants: Optional[list[int]] = None) -> dict[str, Any]:
-    nodes = _canonical_workflow_nodes(row.nodes)
+    from .scheduled_tasks import sort_workflow_nodes_by_time
+
+    # 节点按「设置的开始时间」展示/执行，而不是按添加顺序（库里老数据顺序乱了也照样对）
+    nodes = sort_workflow_nodes_by_time(_canonical_workflow_nodes(row.nodes))
     # System catalog rows are immutable shared defaults.  Hide any legacy
     # reply mode/prompt that may still exist in the database; the actual run
     # resolves the current account's Online configuration.

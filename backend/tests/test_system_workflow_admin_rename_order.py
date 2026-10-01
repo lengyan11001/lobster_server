@@ -132,3 +132,53 @@ def test_admin_order_does_not_touch_nodes_or_publish_state(db_session):
     assert [n["id"] for n in catalog.nodes] == mark
     assert catalog.meta.get("system_published") is None
     assert catalog.meta.get("system_order") == 10
+
+
+
+def test_nodes_are_sorted_by_time_on_save():
+    """新增节点必须按「节点设置的开始时间」插到该在的位置，不是永远排最后。"""
+    from backend.app.api.scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes = [
+        {"time": "09:00", "ability_label": "A"},
+        {"time": "19:00", "ability_label": "B"},
+        {"time": "08:00", "ability_label": "C"},   # 后来新加的
+        {"time": "12:15", "ability_label": "D"},   # 后来新加的
+    ]
+    cleaned, _fixed = normalize_workflow_nodes_for_save(nodes)
+    assert [n["time"] for n in cleaned] == ["08:00", "09:00", "12:15", "19:00"]
+
+    # 下级动作也按时间排
+    parent = [{"time": "09:00", "ability_label": "P", "actions": [
+        {"time": "10:00", "ability_label": "c1"},
+        {"time": "09:30", "ability_label": "c2"},
+    ]}]
+    cleaned2, _ = normalize_workflow_nodes_for_save(parent)
+    assert [a["time"] for a in cleaned2[0]["actions"]] == ["09:30", "10:00"]
+
+
+def test_admin_catalog_items_return_nodes_sorted_by_time(db_session):
+    row = _catalog(db_session, "system_custom_sorted", "排序测试")
+    row.nodes = [
+        {"id": "n1", "time": "09:00", "ability_label": "A"},
+        {"id": "n2", "time": "20:00", "ability_label": "B"},
+        {"id": "n3", "time": "08:00", "ability_label": "C"},
+    ]
+    db_session.commit()
+    items = admin._system_workflow_catalog_items(db_session)
+    got = next(it for it in items if it["key"] == "system_custom_sorted")
+    assert [n["time"] for n in got["nodes"]] == ["08:00", "09:00", "20:00"]
+
+
+def test_rename_syncs_mirror_with_legacy_h5_default_name(db_session):
+    """H5 里 system_sales 的硬编码默认名是「销售24小时员工」，后台改名要一起刷新这种镜像。"""
+    sales_key = "system_sales"   # H5 里这个 key 的硬编码默认名就是「销售24小时员工」
+    catalog = _catalog(db_session, sales_key, "旧名字")
+    legacy = _mirror(db_session, sales_key, "销售24小时员工", user_id=35)
+    customized = _mirror(db_session, sales_key, "我自己改的", user_id=36)
+    body = admin.SystemWorkflowBody(name="新名字", nodes=catalog.nodes, confirm=True)
+    admin.admin_publish_system_workflow(key=sales_key, body=body, ctx=admin.AdminContext(role="admin"), db=db_session)
+    db_session.refresh(legacy)
+    db_session.refresh(customized)
+    assert legacy.name == "新名字"
+    assert customized.name == "我自己改的"
