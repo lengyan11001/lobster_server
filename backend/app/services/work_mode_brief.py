@@ -27,8 +27,8 @@ WORK_BRIEF_END = "【简要目录结束】"
 _CACHE_LOCK = threading.Lock()
 _CACHE: Dict[str, Tuple[float, List[str]]] = {}
 _CACHE_TTL_SECONDS = 120.0
-_MAX_ITEMS = 40
-_MEMORY_LIMIT = 30
+_MAX_ITEMS = 15
+_MEMORY_LIMIT = 12
 
 
 def _enabled() -> bool:
@@ -59,7 +59,7 @@ def _capability_lines(db) -> List[str]:
             desc = str(getattr(row, "description", "") or "").strip()
             if not cid:
                 continue
-            lines.append(f"- {cid}：{desc[:80]}" if desc else f"- {cid}")
+            lines.append(f"- {cid}：{desc[:50]}" if desc else f"- {cid}")
     except Exception:
         lines = []
     lines = lines[:_MAX_ITEMS]
@@ -94,7 +94,7 @@ def _memory_lines(db, user_id: int, installation_id: str = "") -> List[str]:
             title = str(getattr(row, "title", "") or "").strip()
             if not doc_id:
                 continue
-            lines.append(f"- {doc_id}：{title[:60]}" if title else f"- {doc_id}")
+            lines.append(f"- {doc_id}：{title[:30]}" if title else f"- {doc_id}")
     except Exception:
         lines = []
     return lines
@@ -120,7 +120,12 @@ def build_brief_block(db, user_id: int, installation_id: str = "") -> str:
     return "\n\n".join(blocks)
 
 
-def maybe_prepend_brief(content: str, db, user_id: int, installation_id: str = "") -> str:
+def maybe_attach_brief(content: str, db, user_id: int, installation_id: str = "") -> str:
+    """把简要目录附在**用户消息之后**。
+
+    注意（2026-10-01 线上回归）：如果目录放在最前面，agent 会认为"这一轮只收到能力目录、
+    没收到具体任务"，直接不动手。所以必须保持用户任务在首行，目录只作为补充信息跟在后面。
+    """
     text = str(content or "")
     if not text.strip():
         return content
@@ -129,7 +134,11 @@ def maybe_prepend_brief(content: str, db, user_id: int, installation_id: str = "
     block = build_brief_block(db, user_id, installation_id)
     if not block:
         return content
-    return block + "\n\n" + text
+    return text + "\n\n" + block
+
+
+# 兼容旧名字（外部若还引用不会炸）
+maybe_prepend_brief = maybe_attach_brief
 
 
 def strip_work_brief(value: str) -> str:
