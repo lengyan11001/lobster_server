@@ -310,8 +310,9 @@ def build_service_context(question: str, history_text: str = "", auth_header: st
     if index:
         blocks.append("【客服百问百答目录（需要时再问用户细节）】\n" + index)
     blocks.append(
-        "【回答要求】先给可直接复制给客户的答复（口语、简短），再给一行「内部提示」；"
-        "命中条目里没有答案就照实说需要确认，不要编造；不要执行任何创作/发布类动作。"
+        "【回答要求】只输出「可以直接复制发给客户」的那一段答复：口语、简短（1-3 句）、不带任何标记或小标题。"
+        "禁止写「【可直接发给客户】」「【内部提示】」「内部提示：」这类字样，禁止给内部建议、解释或反问用户；"
+        "命中条目里没有答案就照实说：我需要确认后再回复您，稍后给您准确说明。"
     )
     joined = "\n\n".join(blocks)
     return FAQ_MARK_START + "\n" + joined + "\n" + FAQ_MARK_END
@@ -320,6 +321,38 @@ def build_service_context(question: str, history_text: str = "", auth_header: st
 def with_customer_service_faq(message: str) -> str:
     """兼容旧调用：只走关键词检索（不调 LLM）。"""
     return build_service_context(message, history_text="", auth_header="")
+
+
+_INTERNAL_MARKERS = ("【内部提示】", "内部提示：", "内部提示:", "【内部】", "（内部提示）", "【仅内部】")
+_LABEL_PREFIXES = (
+    "【可直接发给客户】",
+    "【可直接发给客户的答复】",
+    "【客户答复】",
+    "【可发给客户】",
+    "可直接发给客户：",
+    "【答复】",
+)
+
+
+def clean_service_reply(value: str) -> str:
+    """客服模式的答复只保留「可直接发给客户」的那段：去标记 + 砍掉内部提示部分。"""
+    text = str(value or "")
+    for marker in _INTERNAL_MARKERS:
+        index = text.find(marker)
+        if index >= 0:
+            text = text[:index]
+    out: List[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            out.append("")
+            continue
+        for label in _LABEL_PREFIXES:
+            if stripped.startswith(label):
+                stripped = stripped[len(label) :].strip()
+        if stripped:
+            out.append(stripped)
+    return "\n".join(out).strip()
 
 
 def strip_customer_service_faq(value: str) -> str:

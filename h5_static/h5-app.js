@@ -27619,6 +27619,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
           if (ev.type === "final") {
             msg.status = "completed";
             msg.reply_text = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || msg.reply_text;
+            if (h5ChatDutyMode() === "service" && msg.reply_text) msg.reply_text = cleanH5ServiceReply(msg.reply_text);
             msg.finished_at = ev.created_at || new Date().toISOString();
           }
           if (ev.type === "error") {
@@ -27659,7 +27660,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       renderPublishDraftActions(bubble, ev.payload || {});
       if (ev.type === "final") {
-        const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
+        let reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
+        if (h5ChatDutyMode() === "service") reply = cleanH5ServiceReply(reply);
         setBubbleText(bubble, reply);
         renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
         renderPublishDraftActions(bubble, ev.payload || {});
@@ -31180,6 +31182,28 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     const H5_DUTY_SERVICE_PLACEHOLDER = "输入客户咨询、售后、价格、话术等客服问题";
     let h5DutyPlaceholderBackup = "";
     const H5_CHAT_DUTY_SERVICE_HINT = "客服模式：按客服百问百答回答（咨询 / 售后 / 价格 / 使用 / 话术）";
+
+    function cleanH5ServiceReply(text) {
+      // 客服模式的答复只保留「可直接发给客户」的那段：去掉标记，砍掉内部提示部分
+      let value = String(text || "");
+      if (!value) return value;
+      const markers = ["【内部提示】", "内部提示：", "内部提示:", "【内部】", "（内部提示）", "【仅内部】"];
+      for (const marker of markers) {
+        const idx = value.indexOf(marker);
+        if (idx >= 0) value = value.slice(0, idx);
+      }
+      const labels = ["【可直接发给客户】", "【可直接发给客户的答复】", "【客户答复】", "【可发给客户】", "可直接发给客户：", "【答复】"];
+      const out = [];
+      value.split("\n").forEach((line) => {
+        let stripped = line.trim();
+        if (!stripped) { out.push(""); return; }
+        labels.forEach((label) => {
+          if (stripped.indexOf(label) === 0) stripped = stripped.slice(label.length).trim();
+        });
+        if (stripped) out.push(stripped);
+      });
+      return out.join("\n").trim();
+    }
 
     function h5ChatDutyMode() {
       const sel = $("h5ChatDutyMode");

@@ -17,7 +17,7 @@ def test_h5_chat_duty_mode_select_and_wiring():
     assert '<option value="work" selected>工作</option>' in html
     assert '<option value="service">客服</option>' in html
     assert ".composer-duty-wrap select" in css
-    assert "h5-app.js?v=20261001-work-mode-isolation-v4" in html
+    assert "h5-app.js?v=20261001-clean-service-reply-v5" in html
     assert "h5ChatDutyMode() === \"service\"" in js
     assert "h5-app.css?v=20261001-chat-duty-mode-v1" in html
 
@@ -39,3 +39,9 @@ def test_h5_chat_duty_mode_select_and_wiring():
     # 初始化 + 记住选择
     assert "initH5ChatDutyMode();" in js
     assert "lobster_h5_chat_duty_mode" in js
+
+def test_h5_service_reply_is_cleaned_before_display():
+    js = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert "function cleanH5ServiceReply(" in js
+    assert 'if (h5ChatDutyMode() === "service") reply = cleanH5ServiceReply(reply);' in js
+    assert 'if (h5ChatDutyMode() === "service" && msg.reply_text) msg.reply_text = cleanH5ServiceReply(msg.reply_text);' in js

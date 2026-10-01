@@ -90,3 +90,24 @@ def test_client_side_has_no_refusal_wrapper():
         return
     js = client_chat.read_text(encoding="utf-8")
     assert "【客服模式】" not in js
+
+def test_reply_instruction_forbids_labels_and_internal_notes():
+    context = faq.build_service_context("图片怎么生成", history_text="", auth_header="")
+    assert "只输出「可以直接复制发给客户」的那一段答复" in context
+    assert "禁止写「【可直接发给客户】」「【内部提示】」" in context
+
+
+def test_clean_service_reply_strips_labels_and_internal_part():
+    raw = (
+        "【可直接发给客户】\n"
+        "您好，在客户端左侧「AI营销创作 → 图片创作」里写提示词就能生成图片哦～\n"
+        "【内部提示】\n"
+        "客户问的是图片生成，命中 Q105；建议补一条 H5 步骤。"
+    )
+    cleaned = faq.clean_service_reply(raw)
+    assert cleaned == "您好，在客户端左侧「AI营销创作 → 图片创作」里写提示词就能生成图片哦～"
+    assert "内部提示" not in cleaned
+    assert "Q105" not in cleaned
+
+    # 没标记时就原样返回
+    assert faq.clean_service_reply("直接一段话") == "直接一段话"
