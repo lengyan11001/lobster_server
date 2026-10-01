@@ -31177,7 +31177,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
 
     // ---- AI 调度助手处理范围：工作 / 客服（客服模式下只把客服问题交给 AI）----
     const H5_CHAT_DUTY_MODE_KEY = "lobster_h5_chat_duty_mode";
-    const H5_CHAT_DUTY_SERVICE_HINT = "客服模式：只处理客服问题（咨询 / 售后 / 价格 / 使用 / 话术）";
+    const H5_CHAT_DUTY_SERVICE_HINT = "客服模式：按客服百问百答回答（咨询 / 售后 / 价格 / 使用 / 话术）";
 
     function h5ChatDutyMode() {
       const sel = $("h5ChatDutyMode");
@@ -31189,17 +31189,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     }
 
     function applyH5DutyModeToContent(content) {
-      const text = String(content || "");
-      if (h5ChatDutyMode() !== "service") return text;
-      return [
-        "【客服模式】现在只处理客服问题：客户咨询、售前售后、产品功能与价格、开通与退款、使用答疑、话术与催单、投诉安抚。",
-        "如果用户这条内容不是客服问题（例如让 AI 去创作/发帖/采集/跑工作流，或与客户无关的内部事务），不要执行、不要调用任何能力，直接回复：",
-        "“当前是客服模式，只处理客服问题；要安排工作请把输入框左下角的下拉切回「工作」。”，并停止。",
-        "回答客户问题时：先给可直接复制发给客户的答复（口语、简短），再补一句给老板看的内部提示（需要人工跟进就写明）。",
-        "不要编造系统里没有的功能；不确定就回复“我需要确认后再回复您”。",
-        "",
-        "用户消息：" + text,
-      ].join("\n");
+      // 客服模式不在前端做判断/隔离：duty_mode 交给服务端，由服务端注入客服百问百答。
+      return String(content || "");
     }
 
     function syncH5ChatDutyModeUi() {

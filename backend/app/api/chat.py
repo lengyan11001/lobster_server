@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from .auth import access_token_claims, create_access_token, get_current_user, oauth2_scheme
+from ..services.customer_service_faq import strip_customer_service_faq, with_customer_service_faq
 from .sutui_chat_proxy import _normalize_deepseek_messages
 # 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
 # from .consumption_accounts import get_effective_sutui_token
@@ -153,6 +154,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., description="当前用户输入")
+    duty_mode: Optional[str] = Field(default="", description="work=照旧；service=客服模式（把百问百答交给 LLM）")
     history: Optional[List[ChatMessage]] = Field(default_factory=list)
     session_id: Optional[str] = None
     context_id: Optional[str] = None
@@ -2637,6 +2639,9 @@ async def chat_stream_endpoint(
     """Stream SSE events: tool_start, tool_end, then done with reply. Frontend can show progress in chat."""
     user_id = int(current_user.id)
     preferred_model = str(getattr(current_user, "preferred_model", None) or "")
+    # 客服模式：把百问百答整篇交给 LLM 去回答（不做问题判断/隔离）
+    if str(getattr(payload, "duty_mode", "") or "").strip().lower() == "service":
+        payload.message = with_customer_service_faq(payload.message)
     db.commit()
     return StreamingResponse(
         _chat_stream_events(payload, raw_token, user_id, preferred_model, request),
@@ -2669,7 +2674,7 @@ def list_chat_history(
             "id": r.id,
             "session_id": r.session_id,
             "context_id": r.context_id,
-            "user_message": r.user_message,
+            "user_message": strip_customer_service_faq(r.user_message),
             "assistant_reply": r.assistant_reply,
             "meta": r.meta,
             "created_at": r.created_at.isoformat() if r.created_at else "",

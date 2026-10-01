@@ -50,6 +50,7 @@ from ..services.mastra_attachment_security import (
     assert_safe_mastra_image,
 )
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
+from ..services.customer_service_faq import strip_customer_service_faq
 from .auth import (
     ALGORITHM,
     get_current_user,
@@ -716,7 +717,7 @@ def _serialize_message(
         "target_message_id": row.target_message_id or "",
         "session_id": row.session_id,
         "parent_message_id": row.parent_message_id,
-        "content": row.content,
+        "content": strip_customer_service_faq(row.content),
         "attachments": row.attachments or [],
         "status": row.status,
         "installation_id": row.installation_id,

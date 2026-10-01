@@ -52,6 +52,7 @@ from .h5_chat import (
     _collect_server_publish_accounts,
     _serialize_message,
 )
+from ..services.customer_service_faq import with_customer_service_faq
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .publish import SUPPORTED_PLATFORMS
@@ -71,6 +72,7 @@ class MastraAttachment(BaseModel):
 
 class MastraMessageCreate(BaseModel):
     content: str = Field(default="", max_length=8000)
+    duty_mode: str = Field(default="", max_length=16)
     installation_id: Optional[str] = Field(default=None, max_length=128)
     session_id: str = Field(default="", max_length=64)
     attachments: List[MastraAttachment] = Field(default_factory=list, max_length=8)
@@ -946,6 +948,9 @@ def create_mastra_message(
     owner = online_user_for_mobile_user(db, current_user)
     session = _ensure_chat_session(db, owner.id, body.session_id)
     content = (body.content or "").strip()
+    # 客服模式：把百问百答整篇交给 LLM 去回答（不做问题判断/隔离）
+    if (body.duty_mode or "").strip().lower() == "service" and content:
+        content = with_customer_service_faq(content)
     attachments = _normalize_attachments(db, owner.id, body.attachments)
     if not content and not attachments:
         raise HTTPException(status_code=400, detail="消息和素材不能同时为空")
