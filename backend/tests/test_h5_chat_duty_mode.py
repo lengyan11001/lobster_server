@@ -17,7 +17,8 @@ def test_h5_chat_duty_mode_select_and_wiring():
     assert '<option value="work" selected>工作</option>' in html
     assert '<option value="service">客服</option>' in html
     assert ".composer-duty-wrap select" in css
-    assert "h5-app.js?v=20261001-chat-duty-mode-v1" in html
+    assert "h5-app.js?v=20261001-chat-duty-mode-v2" in html
+    assert "h5ChatDutyMode() === \"service\"" in js
     assert "h5-app.css?v=20261001-chat-duty-mode-v1" in html
 
     # 逻辑：默认工作；客服模式包一层指令，非客服问题不执行

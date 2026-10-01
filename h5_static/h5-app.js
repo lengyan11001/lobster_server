@@ -16513,7 +16513,9 @@ async function api(path, options = {}) {
       }
       if (input) {
         input.disabled = false;
-        input.placeholder = "继续输入下一条指令";
+        input.placeholder = h5ChatDutyMode() === "service"
+          ? "输入客户咨询、售后、价格、话术等客服问题"
+          : "继续输入下一条指令";
       }
       if (send) send.disabled = !!state.chatSubmitPending;
       autosizeMessageInput();
