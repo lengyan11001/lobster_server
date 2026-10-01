@@ -53,6 +53,7 @@ from .h5_chat import (
     _serialize_message,
 )
 from ..services.customer_service_faq import build_service_context, strip_customer_service_faq
+from ..services.work_mode_brief import maybe_prepend_brief, strip_work_brief
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .publish import SUPPORTED_PLATFORMS
@@ -970,6 +971,9 @@ def create_mastra_message(
     owner = online_user_for_mobile_user(db, current_user)
     session = _ensure_chat_session(db, owner.id, body.session_id)
     content = (body.content or "").strip()
+    # 工作模式：先把「简要目录」（可用能力 + 我的记忆文件）预取注入，省掉它先调工具问目录的那一轮
+    if content and (body.duty_mode or "").strip().lower() != "service":
+        content = maybe_prepend_brief(content, db, owner.id, str(body.installation_id or ""))
     # 客服模式：两段式给知识（先让检索 LLM 看目录挑章节，再只发相关章节；失败退回关键词）
     if (body.duty_mode or "").strip().lower() == "service" and content:
         content = build_service_context(

@@ -30,6 +30,7 @@ from ..core.config import settings
 from ..db import SessionLocal, get_db
 from .auth import access_token_claims, create_access_token, get_current_user, oauth2_scheme
 from ..services.customer_service_faq import build_service_context, strip_customer_service_faq
+from ..services.work_mode_brief import strip_work_brief
 from .sutui_chat_proxy import _normalize_deepseek_messages
 # 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
 # from .consumption_accounts import get_effective_sutui_token
@@ -2683,7 +2684,7 @@ def list_chat_history(
             "id": r.id,
             "session_id": r.session_id,
             "context_id": r.context_id,
-            "user_message": strip_customer_service_faq(r.user_message),
+            "user_message": strip_work_brief(strip_customer_service_faq(r.user_message)),
             "assistant_reply": r.assistant_reply,
             "meta": r.meta,
             "created_at": r.created_at.isoformat() if r.created_at else "",

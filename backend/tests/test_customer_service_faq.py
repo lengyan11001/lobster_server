@@ -63,7 +63,7 @@ def test_endpoints_accept_duty_mode_and_use_two_stage_context():
     assert "payload.message = await asyncio.to_thread(" in chat
     assert "build_service_context," in chat
     assert "strip_customer_service_faq(r.user_message)" in chat
-    assert '"content": strip_customer_service_faq(row.content),' in h5
+    assert '"content": strip_work_brief(strip_customer_service_faq(row.content)),' in h5
 
 
 def test_two_stage_outline_and_chapters():

@@ -51,6 +51,7 @@ from ..services.mastra_attachment_security import (
 )
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from ..services.customer_service_faq import strip_customer_service_faq
+from ..services.work_mode_brief import strip_work_brief
 from .auth import (
     ALGORITHM,
     get_current_user,
@@ -717,7 +718,7 @@ def _serialize_message(
         "target_message_id": row.target_message_id or "",
         "session_id": row.session_id,
         "parent_message_id": row.parent_message_id,
-        "content": strip_customer_service_faq(row.content),
+        "content": strip_work_brief(strip_customer_service_faq(row.content)),
         "attachments": row.attachments or [],
         "status": row.status,
         "installation_id": row.installation_id,
