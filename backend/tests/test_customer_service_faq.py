@@ -16,11 +16,33 @@ def test_faq_file_is_shipped_with_server():
 
 
 def test_wrap_and_strip_round_trip():
-    wrapped = faq.with_customer_service_faq("怎么生成图片")
+    wrapped = faq.with_customer_service_faq("图片怎么生成")
     assert wrapped.startswith(faq.FAQ_MARK_START)
-    assert "客服百问百答" in wrapped
-    assert wrapped.endswith("用户问题：怎么生成图片")
-    assert faq.strip_customer_service_faq(wrapped) == "怎么生成图片"
+    assert wrapped.endswith(faq.FAQ_MARK_END)
+    assert faq.strip_customer_service_faq(wrapped) == "图片怎么生成"
+
+
+def test_retrieval_picks_operation_steps_for_image_question():
+    """问「图片怎么生成」必须命中操作步骤条目（Q105/Q106），且注入体量可控（防被下游截断）。"""
+    hits = faq.retrieve_faq_entries("图片怎么生成")
+    ids = [item["id"] for item in hits]
+    assert "Q105" in ids and "Q106" in ids
+    assert ids[0] in {"Q105", "Q106"}
+
+    wrapped = faq.with_customer_service_faq("图片怎么生成")
+    assert "Q105" in wrapped and "图片创作" in wrapped
+    assert len(wrapped) < 6000
+    assert "客服百问百答目录" in wrapped
+
+
+def test_retrieval_picks_video_entries_and_falls_back():
+    video_hits = faq.retrieve_faq_entries("同城爆款视频怎么生成")
+    video_ids = [item["id"] for item in video_hits]
+    assert "Q107" in video_ids
+
+    # 完全无关的问题也有兜底（不会注入空内容）
+    fallback = faq.retrieve_faq_entries("zzzzzzz")
+    assert fallback
 
 
 def test_strip_keeps_plain_text_and_handles_broken_marker():
