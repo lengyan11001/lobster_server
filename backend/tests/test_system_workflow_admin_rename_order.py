@@ -236,3 +236,25 @@ def test_admin_save_sends_name_for_both_create_and_publish():
     assert new_branch_pos > read_pos, "name 必须在 if (isNew) 之前读取"
     assert publish_pos > 0, "publish 请求必须带上 name"
     assert "JSON.stringify({ nodes: nodes, confirm: true })" not in text, "publish 请求不能缺 name"
+
+
+
+def test_admin_editor_rows_sorted_by_time():
+    """后台编辑器里的节点列表必须按开始时间排（新加节点插到该在的位置）。"""
+    from pathlib import Path
+
+    text = (Path(admin.__file__).resolve().parent.parent / "static" / "admin.html").read_text(encoding="utf-8")
+    assert "function swTimeKey(r)" in text
+    assert "rows.sort(function (a, b) { return swTimeKey(a) - swTimeKey(b); });" in text
+    # 下级节点排完要写回，否则编辑/删除的索引会错位
+    assert "if (Array.isArray(r.children)) r.children = children;" in text
+
+
+
+def test_admin_new_node_opens_the_node_itself_after_sort():
+    """新增节点后列表立刻按时间排；弹窗必须打开新加的这一条（排序后下标会变）。"""
+    from pathlib import Path
+
+    text = (Path(admin.__file__).resolve().parent.parent / "static" / "admin.html").read_text(encoding="utf-8")
+    assert "openNodeModal(rows.length - 1);" not in text
+    assert "var newIndex = rows.indexOf(row);" in text

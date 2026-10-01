@@ -1176,8 +1176,19 @@ body{background:#edf2f7}
   function platformLabel(platform) {
     return platform === 'wechat_channels' ? '发布到视频号' : (platform === 'wechat_moments' ? '发布到朋友圈' : '发布到抖音');
   }
+  function swTimeKey(r) {
+    var m = /^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/.exec(String((r && r.time) || ''));
+    if (m) {
+      var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+      if (h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return h * 60 + mi;
+    }
+    return 9999;
+  }
   function renderRows() {
     var host = document.getElementById('swNodes'); if (!host) return;
+    // 2026-10-01：编辑器里也按「节点设置的开始时间」排——新加的节点插到该在的位置，
+    // 不再永远显示在最后（稳定排序：同一时间保持原相对顺序）。
+    rows.sort(function (a, b) { return swTimeKey(a) - swTimeKey(b); });
     rows.forEach(function (r, idx) { r.i = idx; });
     host.className = 'workflow-time-list';
     if (!rows.length) {
@@ -1187,7 +1198,9 @@ body{background:#edf2f7}
     }
     var nodeHtml = function (r, idx) {
       var children = Array.isArray(r.children) ? r.children.slice() : [];
-      children.sort(function (a, b) { return String(a.time || '').localeCompare(String(b.time || '')); });
+      children.sort(function (a, b) { return swTimeKey(a) - swTimeKey(b); });
+      // 排完写回，保证「点第几个下级」编辑的索引和显示顺序一致（以前显示排了、索引还是旧的）
+      if (Array.isArray(r.children)) r.children = children;
       var collapsed = r.collapsed === true;
       var childHtml = children.map(function (c, ci) {
         return '<div class="workflow-node-card workflow-action-card workflow-time-node">' +
@@ -1574,7 +1587,9 @@ body{background:#edf2f7}
     };
     rows.push(row);
     renderRows();
-    openNodeModal(rows.length - 1);
+    // 排序后新节点的位置会变，必须按对象找它自己的下标，否则弹窗会开到别的节点上
+    var newIndex = rows.indexOf(row);
+    openNodeModal(newIndex >= 0 ? newIndex : rows.length - 1);
   });
   bind('swCancelBtn', function () { document.getElementById('swEditor').style.display = 'none'; editKey = ''; isNew = false; });
   bind('swDraftBtn', function () {
