@@ -280,7 +280,23 @@ def list_draft_templates(db: Session, limit: int = 60) -> List[Dict[str, Any]]:
              "time": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(r.synced_at or 0))} for r in rows]
 
 
+def _has_canvas(snapshot: Any) -> bool:
+    """库里有没有真正的画布内容（空对象/空串都算没有）。"""
+    text = snapshot if isinstance(snapshot, str) else json.dumps(snapshot or {}, ensure_ascii=False)
+    text = (text or "").strip()
+    return bool(text) and text not in ("{}", "null")
+
+
 def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, Any]:
+    # 画布前端（canvas-web bundle）只在 canvas_url 非空时才去调 canvas/load：
+    #   if (a.canvas_url) { A = (await loadDrawCanvas(token, n)).snapshot }
+    #   if (!A.nodes.length) { A = 默认画布(一组 3 个节点) }
+    # 所以自有作品/副本必须给一个非空 canvas_url，否则编辑器永远用默认画布，
+    # 再自动保存就把真内容覆盖掉（用户报的「每个画布进去都是同一个内容、只剩一组」）。
+    source_url = getattr(row, "source_url", "") or ""
+    canvas_url = source_url or (
+        f"/canvas-api/api/v1/projects/{row.uuid}/canvas/load" if _has_canvas(row.snapshot) else ""
+    )
     data = {
         "id": row.id,
         "uuid": row.uuid,
@@ -291,7 +307,7 @@ def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, A
         "thumbnail_url": row.thumbnail_url or "",
         "cover": row.thumbnail_url or "",
         "cover_url": row.thumbnail_url or "",
-        "canvas_url": getattr(row, "source_url", "") or "",
+        "canvas_url": canvas_url,
         "is_template": int(row.user_id or 0) == TEMPLATE_SEED_USER_ID,
         "sort": row.sort,
         "created_at": row.created_at,

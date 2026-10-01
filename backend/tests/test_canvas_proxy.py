@@ -452,3 +452,26 @@ def test_clone_pulls_missing_template_snapshot(client, monkeypatch):
     copy_uuid = cloned.json()["project"]["uuid"]
     loaded = client.post(f"/canvas-api/api/v1/projects/{copy_uuid}/canvas/load", json={})
     assert loaded.json()["snapshot"]["nodes"] == canvas["nodes"]
+
+
+def test_own_project_exposes_canvas_url_once_it_has_canvas(client):
+    """画布前端只在 canvas_url 非空时才 load 快照；自有作品有内容后必须给非空 canvas_url。"""
+    created = client.post("/canvas-api/api/v1/projects/", json={"name": "多组作品"})
+    uid = created.json()["project"]["uuid"]
+
+    before = client.post(f"/canvas-api/api/v1/projects/{uid}", json={}).json()["project"]
+    assert before["canvas_url"] == "", "新项目还没有画布，canvas_url 应为空（前端会用默认画布）"
+
+    snapshot = {"nodes": [{"id": "n1"}, {"id": "n2"}, {"id": "n3"}, {"id": "n4"}],
+                "edges": [{"id": "e1"}]}
+    assert client.post(f"/canvas-api/api/v1/projects/{uid}/canvas",
+                       json={"snapshot": snapshot}).status_code == 200
+
+    after = client.post(f"/canvas-api/api/v1/projects/{uid}", json={}).json()["project"]
+    assert after["canvas_url"], "有画布之后 canvas_url 必须非空，否则前端不会去 load（只会渲染默认一组）"
+
+    listed = client.post("/canvas-api/api/v1/projects/my", json={}).json()["projects"][0]
+    assert listed["canvas_url"]
+
+    loaded = client.post(f"/canvas-api/api/v1/projects/{uid}/canvas/load", json={})
+    assert [n["id"] for n in loaded.json()["snapshot"]["nodes"]] == ["n1", "n2", "n3", "n4"]
