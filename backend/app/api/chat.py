@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from .auth import access_token_claims, create_access_token, get_current_user, oauth2_scheme
-from ..services.customer_service_faq import strip_customer_service_faq, with_customer_service_faq
+from ..services.customer_service_faq import build_service_context, strip_customer_service_faq
 from .sutui_chat_proxy import _normalize_deepseek_messages
 # 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
 # from .consumption_accounts import get_effective_sutui_token
@@ -2639,9 +2639,18 @@ async def chat_stream_endpoint(
     """Stream SSE events: tool_start, tool_end, then done with reply. Frontend can show progress in chat."""
     user_id = int(current_user.id)
     preferred_model = str(getattr(current_user, "preferred_model", None) or "")
-    # 客服模式：把百问百答整篇交给 LLM 去回答（不做问题判断/隔离）
+    # 客服模式：两段式给知识（先让检索 LLM 看目录挑章节，再只发相关章节；多轮一起给）
     if str(getattr(payload, "duty_mode", "") or "").strip().lower() == "service":
-        payload.message = with_customer_service_faq(payload.message)
+        history_text = "\n".join(
+            f"{str(getattr(item, 'role', '') or '')}：{str(getattr(item, 'content', '') or '')[:300]}"
+            for item in (payload.history or [])[-6:]
+        )
+        payload.message = await asyncio.to_thread(
+            build_service_context,
+            payload.message,
+            history_text,
+            request.headers.get("authorization", ""),
+        )
     db.commit()
     return StreamingResponse(
         _chat_stream_events(payload, raw_token, user_id, preferred_model, request),

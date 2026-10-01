@@ -52,7 +52,7 @@ from .h5_chat import (
     _collect_server_publish_accounts,
     _serialize_message,
 )
-from ..services.customer_service_faq import with_customer_service_faq
+from ..services.customer_service_faq import build_service_context, strip_customer_service_faq
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .publish import SUPPORTED_PLATFORMS
@@ -938,6 +938,28 @@ def _cancel_root_message(
     return True
 
 
+def _recent_chat_text(db: Session, user_id: int, session_id: str, limit: int = 6) -> str:
+    """最近几轮对话（剥掉知识库注入块），给检索 LLM 理解追问用。"""
+    if not session_id:
+        return ""
+    rows = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.user_id == int(user_id), H5ChatMessage.session_id == str(session_id))
+        .order_by(H5ChatMessage.created_at.desc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    parts: List[str] = []
+    for row in reversed(rows):
+        question = strip_customer_service_faq(row.content or "").strip()
+        answer = (row.reply_text or "").strip()
+        if question:
+            parts.append("用户：" + question[:300])
+        if answer:
+            parts.append("助手：" + answer[:300])
+    return "\n".join(parts[-8:])
+
+
 @router.post("/api/mastra-chat/messages", summary="创建 AI 调度会话消息")
 def create_mastra_message(
     body: MastraMessageCreate,
@@ -948,9 +970,13 @@ def create_mastra_message(
     owner = online_user_for_mobile_user(db, current_user)
     session = _ensure_chat_session(db, owner.id, body.session_id)
     content = (body.content or "").strip()
-    # 客服模式：把百问百答整篇交给 LLM 去回答（不做问题判断/隔离）
+    # 客服模式：两段式给知识（先让检索 LLM 看目录挑章节，再只发相关章节；失败退回关键词）
     if (body.duty_mode or "").strip().lower() == "service" and content:
-        content = with_customer_service_faq(content)
+        content = build_service_context(
+            content,
+            history_text=_recent_chat_text(db, owner.id, session.id),
+            auth_header=request.headers.get("authorization", ""),
+        )
     attachments = _normalize_attachments(db, owner.id, body.attachments)
     if not content and not attachments:
         raise HTTPException(status_code=400, detail="消息和素材不能同时为空")

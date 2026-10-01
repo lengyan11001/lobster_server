@@ -1,32 +1,37 @@
-"""客服模式知识库：按用户问题从「客服百问百答」里挑相关条目交给 LLM 回答。
+"""客服模式知识库：两段式取知识（先让 LLM 看目录挑章节，再只把相关章节发给回答模型）。
 
-设计取舍（2026-10-01）：整篇 20KB 直接塞进一条消息会被下游截断（实测模型只看到开头
-「账号与登录」那一段），所以改成：
-1) 把用户问题放最前面（即使被截断也先保住问题）；
-2) 按关键词从 MD 里检索最相关的若干条（含答案）拼进去；
-3) 再附一份紧凑目录（章节 + 问题标题），让模型知道知识库里还有什么；
-4) 检索不到就说“我需要确认后再回复您”，不编造。
-完整 MD 仍保留在文件里（backend/app/data/customer-service-faq.md），客户端也带一份。
+用户口径（2026-10-01）：
+- 不喜欢“关键词撞上一个答一个、换个说法就漏”的方案；
+- 希望先给 LLM 目录（章节 + 问题），让它理解用户问题、指出该看哪些章节，
+  再把那部分内容发给 LLM；不要一次把整篇全发。
+- 多轮：第 1 段把最近几轮对话一起给检索 LLM，能理解“那 H5 呢？”这类追问。
+
+兜底：LLM 挑选失败/超时 → 退回关键词检索；都拿不到 → 只给目录，让回答模型照实说需要确认。
+完整 MD 仍在 backend/app/data/customer-service-faq.md（客户端也带一份）。
 """
 from __future__ import annotations
 
+import json
 import re
 import threading
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _LOCK = threading.Lock()
 _CACHE: Dict[str, Tuple[float, str]] = {}
-_ENTRY_CACHE: Dict[str, Tuple[float, List[Dict[str, str]], str]] = {}
+_ENTRY_CACHE: Dict[str, Tuple[float, List[Dict[str, str]], str, List[Tuple[str, str]]]] = {}
 
 FAQ_PATH = Path(__file__).resolve().parents[1] / "data" / "customer-service-faq.md"
 
-FAQ_MARK_START = "【客服知识库·百问百答（系统注入，请优先依据下面命中的条目回答；没有的直接说“我需要确认后再回复您”，不要编造）】"
+FAQ_MARK_START = "【客服知识库·百问百答（系统注入：先看目录判断，再按命中的章节/条目回答；没有的就说“我需要确认后再回复您”，不要编造）】"
 FAQ_MARK_END = "【客服知识库结束】"
-
-_MAX_ENTRIES = 8
-_MAX_ENTRY_CHARS = 420
 _QUESTION_PREFIX = "用户问题："
+
+_MAX_ENTRIES = 10
+_MAX_ENTRY_CHARS = 520
+_MAX_TOTAL_CHARS = 7000
+_INTERNAL_LLM_URL = "http://127.0.0.1:8000/api/sutui-chat/completions"
+_PICK_TIMEOUT_SECONDS = 25.0
 
 _STOP_TOKENS = {
     "怎么", "如何", "如何用", "什么", "哪些", "可以", "能不能", "是否", "有没有", "的话", "吗", "呢", "吧",
@@ -58,7 +63,7 @@ def customer_service_faq_text() -> str:
     return _read_cached(FAQ_PATH).strip()
 
 
-def _parse_entries(md: str) -> Tuple[List[Dict[str, str]], str]:
+def _parse_entries(md: str) -> Tuple[List[Dict[str, str]], str, List[Tuple[str, str]]]:
     entries: List[Dict[str, str]] = []
     sections: List[Tuple[str, List[str]]] = []
     current_section = ""
@@ -66,13 +71,12 @@ def _parse_entries(md: str) -> Tuple[List[Dict[str, str]], str]:
     lines = md.splitlines()
     idx = 0
     while idx < len(lines):
-        line = lines[idx]
-        stripped = line.strip()
+        stripped = lines[idx].strip()
         if stripped.startswith("## "):
-            current_section = stripped[3:].strip()
-            if current_titles:
+            if current_section or current_titles:
                 sections.append((current_section, current_titles))
-                current_titles = []
+            current_section = stripped[3:].strip()
+            current_titles = []
             idx += 1
             continue
         match = re.match(r"^\*\*(Q\d+)\s*[:：]\s*(.+?)\*\*\s*$", stripped)
@@ -87,31 +91,28 @@ def _parse_entries(md: str) -> Tuple[List[Dict[str, str]], str]:
                 if nxt:
                     body_lines.append(nxt)
                 idx += 1
-            body = " ".join(body_lines)
-            body = re.sub(r"^A\s*[:：]\s*", "", body).strip()
-            entries.append(
-                {
-                    "id": qid,
-                    "title": title,
-                    "section": current_section,
-                    "body": body,
-                }
-            )
+            body = re.sub(r"^A\s*[:：]\s*", "", " ".join(body_lines)).strip()
+            entries.append({"id": qid, "title": title, "section": current_section, "body": body})
             current_titles.append(f"{qid} {title}")
             continue
         idx += 1
-    if current_titles:
+    if current_section or current_titles:
         sections.append((current_section, current_titles))
     index_lines: List[str] = []
+    chapter_list: List[Tuple[str, str]] = []
     for name, titles in sections:
+        if not name:
+            continue
         index_lines.append(f"- {name}：" + "；".join(titles))
-    return entries, "\n".join(index_lines)
+        if titles:
+            chapter_list.append((name, f"{titles[0].split()[0]}-{titles[-1].split()[0]}"))
+    return entries, "\n".join(index_lines), chapter_list
 
 
-def _data() -> Tuple[List[Dict[str, str]], str]:
+def _data() -> Tuple[List[Dict[str, str]], str, List[Tuple[str, str]]]:
     md = customer_service_faq_text()
     if not md:
-        return [], ""
+        return [], "", []
     key = str(FAQ_PATH)
     try:
         mtime = FAQ_PATH.stat().st_mtime
@@ -120,11 +121,19 @@ def _data() -> Tuple[List[Dict[str, str]], str]:
     with _LOCK:
         cached = _ENTRY_CACHE.get(key)
         if cached and cached[0] == mtime:
-            return cached[1], cached[2]
-    entries, index = _parse_entries(md)
+            return cached[1], cached[2], cached[3]
+    entries, index, chapters = _parse_entries(md)
     with _LOCK:
-        _ENTRY_CACHE[key] = (mtime, entries, index)
-    return entries, index
+        _ENTRY_CACHE[key] = (mtime, entries, index, chapters)
+    return entries, index, chapters
+
+
+def faq_index_text() -> str:
+    return _data()[1]
+
+
+def faq_chapter_list() -> List[Tuple[str, str]]:
+    return _data()[2]
 
 
 def _tokens(text: str) -> List[str]:
@@ -137,21 +146,21 @@ def _tokens(text: str) -> List[str]:
             continue
         for i in range(len(chunk) - 1):
             bigram = chunk[i : i + 2]
-            if bigram in _STOP_TOKENS:
-                continue
-            out.append(bigram)
+            if bigram not in _STOP_TOKENS:
+                out.append(bigram)
         if len(chunk) == 1:
             out.append(chunk)
     return out
 
 
 def retrieve_faq_entries(query: str, limit: int = _MAX_ENTRIES) -> List[Dict[str, str]]:
-    question_tokens = _tokens(query)
-    if not question_tokens:
+    question_tokens = list(dict.fromkeys(_tokens(query)))
+    entries, _index, _chapters = _data()
+    if not entries:
         return []
-    unique = list(dict.fromkeys(question_tokens))
+    if not question_tokens:
+        return entries[: min(4, len(entries))]
     query_text = str(query or "")
-    entries, _index = _data()
     wants_image = any(word in query_text for word in ("图片", "图", "作图", "画图", "出图"))
     wants_video = any(word in query_text for word in ("视频", "短片", "成片", "出片"))
     is_howto = any(word in query_text for word in ("怎么", "如何", "步骤", "在哪", "入口", "操作", "打不开", "失败", "报错"))
@@ -161,62 +170,156 @@ def retrieve_faq_entries(query: str, limit: int = _MAX_ENTRIES) -> List[Dict[str
         body = entry.get("body") or ""
         text_all = title + " " + body
         score = 0.0
-        for token in unique:
+        for token in question_tokens:
             if token in title:
                 score += 3.0
             elif token in body:
                 score += 1.0
-        # 题材加权重：问图片优先图片类条目、问视频优先视频类条目
         if wants_image and any(word in text_all for word in ("图片", "出图", "作图", "画图")):
             score += 2.0
         if wants_video and any(word in text_all for word in ("视频", "成片", "出片", "分镜")):
             score += 2.0
-        # 操作类问题（怎么/步骤/在哪）优先带操作说明的条目
         if is_howto and any(word in title for word in ("怎么", "如何", "在哪", "步骤", "吗")):
             score += 2.0
-        # 第 13 章是「操作步骤速查」，操作类问题给它加权
         if is_howto and "操作步骤速查" in (entry.get("section") or ""):
             score += 2.5
         if score > 0:
             scored.append((score, -order, entry))
     scored.sort(reverse=True)
     picked = [item[2] for item in scored[: max(1, int(limit or _MAX_ENTRIES))]]
-    if picked:
-        return picked
-    # 没命中：给最前面的几条“通用”条目兜底（账号/安装/调度助手）
-    return entries[: min(4, len(entries))]
+    return picked or entries[: min(4, len(entries))]
 
 
-def faq_index_text() -> str:
-    _entries, index = _data()
-    return index
+def _entries_by_id() -> Dict[str, Dict[str, str]]:
+    entries, _index, _chapters = _data()
+    return {entry["id"]: entry for entry in entries}
 
 
-def with_customer_service_faq(message: str) -> str:
-    text = str(message or "").strip()
-    if not text:
-        return message
-    entries = retrieve_faq_entries(text)
-    index = faq_index_text()
-    if not entries and not index:
-        return message
-    hit_lines: List[str] = []
-    for entry in entries:
+def _entries_for_chapter(keyword: str) -> List[Dict[str, str]]:
+    entries, _index, _chapters = _data()
+    keyword = str(keyword or "").strip()
+    if not keyword:
+        return []
+    return [entry for entry in entries if keyword and keyword in (entry.get("section") or "")]
+
+
+def _render_entries(entries: List[Dict[str, str]]) -> str:
+    lines: List[str] = []
+    total = 0
+    for entry in entries[:_MAX_ENTRIES]:
         body = entry.get("body") or ""
         if len(body) > _MAX_ENTRY_CHARS:
             body = body[: _MAX_ENTRY_CHARS].rstrip() + "…"
-        hit_lines.append(f"[{entry.get('id')}] {entry.get('title')}\n{body}")
+        block = f"[{entry.get('id')}] {entry.get('title')}\n{body}"
+        if total + len(block) > _MAX_TOTAL_CHARS:
+            break
+        lines.append(block)
+        total += len(block)
+    return "\n\n".join(lines)
+
+
+def _pick_ids_with_llm(question: str, history_text: str, auth_header: str) -> Tuple[List[str], List[str]]:
+    """第 1 段：把目录 + 最近对话 + 当前问题交给 LLM，让它挑章节/条目。"""
+    entries, index, chapters = _data()
+    if not entries and not chapters:
+        return [], []
+    if not str(auth_header or "").strip():
+        return [], []
+    chapter_text = "\n".join(f"{idx + 1}. {name}（{span}）" for idx, (name, span) in enumerate(chapters))
+    system = (
+        "你是客服知识库检索助手。下面给你《客服百问百答》的章节目录和问题清单。\n"
+        "请判断用户当前问题最该看哪些章节/条目，让另一个客服助手据此回答。\n"
+        "只输出 JSON，不要解释：{\"chapters\":[章节序号数字],\"q_ids\":[\"Q105\"],\"reason\":\"一句话\"}\n"
+        "规则：最多 2 个章节、最多 10 个条目；追问（如“那 H5 呢”）要结合最近对话理解；"
+        "跟客服无关就返回 {\"chapters\":[],\"q_ids\":[]}。\n"
+    )
+    user = (
+        f"【章节】\n{chapter_text}\n\n【问题清单】\n{index}\n\n"
+        f"【最近对话】\n{(history_text or '（无）')[:1500]}\n\n【当前问题】\n{question}"
+    )
+    body = {
+        "model": "",
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "stream": False,
+        "temperature": 0.1,
+    }
+    try:
+        import httpx
+
+        with httpx.Client(timeout=_PICK_TIMEOUT_SECONDS, trust_env=False) as client:
+            resp = client.post(_INTERNAL_LLM_URL, json=body, headers={"Authorization": auth_header, "Content-Type": "application/json"})
+        if resp.status_code >= 400:
+            return [], []
+        data = resp.json() if resp.content else {}
+        text = ""
+        try:
+            text = str(data["choices"][0]["message"]["content"] or "")
+        except Exception:
+            text = str(data.get("text") or data.get("content") or "")
+    except Exception:
+        return [], []
+    match = re.search(r"\{.*\}", text, re.S)
+    if not match:
+        return [], []
+    try:
+        parsed = json.loads(match.group(0))
+    except Exception:
+        return [], []
+    chapter_ids: List[str] = []
+    for item in parsed.get("chapters") or []:
+        try:
+            number = int(str(item).strip())
+        except Exception:
+            continue
+        if 1 <= number <= len(chapters):
+            chapter_ids.append(chapters[number - 1][0])
+    q_ids = [str(item).strip().upper() for item in (parsed.get("q_ids") or []) if str(item).strip()]
+    return chapter_ids, q_ids
+
+
+def build_service_context(question: str, history_text: str = "", auth_header: str = "") -> str:
+    """两段式组装：LLM 挑章节 → 只把相关条目拼进去；失败退回关键词检索。"""
+    text = str(question or "").strip()
+    if not text:
+        return question
+    entries, index, _chapters = _data()
+    if not entries:
+        return question
+    picked: List[Dict[str, str]] = []
+    source = "keyword"
+    chapter_names, q_ids = _pick_ids_with_llm(text, history_text, auth_header)
+    if chapter_names or q_ids:
+        source = "llm"
+        by_id = _entries_by_id()
+        picked.extend(by_id[qid] for qid in q_ids if qid in by_id)
+        for name in chapter_names:
+            picked.extend(_entries_for_chapter(name))
+    if not picked:
+        picked = retrieve_faq_entries(text)
+    deduped: List[Dict[str, str]] = []
+    seen = set()
+    for entry in picked:
+        if entry["id"] in seen:
+            continue
+        seen.add(entry["id"])
+        deduped.append(entry)
+    hit_text = _render_entries(deduped)
     blocks = [f"{_QUESTION_PREFIX}{text}"]
-    if hit_lines:
-        blocks.append("【命中条目（来自客服百问百答，请据此回答）】\n" + "\n\n".join(hit_lines))
+    if hit_text:
+        blocks.append(f"【命中条目（第 1 段检索方式：{source}）】\n{hit_text}")
     if index:
-        blocks.append("【客服百问百答目录（知识库里还有这些）】\n" + index)
+        blocks.append("【客服百问百答目录（需要时再问用户细节）】\n" + index)
     blocks.append(
         "【回答要求】先给可直接复制给客户的答复（口语、简短），再给一行「内部提示」；"
         "命中条目里没有答案就照实说需要确认，不要编造；不要执行任何创作/发布类动作。"
     )
-    body = "\n\n".join(blocks)
-    return f"{FAQ_MARK_START}\n{body}\n{FAQ_MARK_END}"
+    joined = "\n\n".join(blocks)
+    return FAQ_MARK_START + "\n" + joined + "\n" + FAQ_MARK_END
+
+
+def with_customer_service_faq(message: str) -> str:
+    """兼容旧调用：只走关键词检索（不调 LLM）。"""
+    return build_service_context(message, history_text="", auth_header="")
 
 
 def strip_customer_service_faq(value: str) -> str:
@@ -228,8 +331,7 @@ def strip_customer_service_faq(value: str) -> str:
     if end < 0:
         return text
     body = text[start + len(FAQ_MARK_START) : end]
-    match = re.search(re.escape(_QUESTION_PREFIX) + r"(.+)", body)
-    if match:
-        return match.group(1).strip()
-    tail = text[end + len(FAQ_MARK_END) :].strip()
-    return tail
+    for line in body.splitlines():
+        if line.startswith(_QUESTION_PREFIX):
+            return line[len(_QUESTION_PREFIX) :].strip()
+    return text[end + len(FAQ_MARK_END) :].strip()

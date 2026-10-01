@@ -51,16 +51,37 @@ def test_strip_keeps_plain_text_and_handles_broken_marker():
     assert faq.strip_customer_service_faq(broken) == broken
 
 
-def test_endpoints_accept_duty_mode_and_inject_faq():
+def test_endpoints_accept_duty_mode_and_use_two_stage_context():
     mastra = (ROOT / "backend/app/api/mastra_chat.py").read_text(encoding="utf-8")
     chat = (ROOT / "backend/app/api/chat.py").read_text(encoding="utf-8")
     h5 = (ROOT / "backend/app/api/h5_chat.py").read_text(encoding="utf-8")
 
     assert "duty_mode: str = Field(default=\"\", max_length=16)" in mastra
-    assert "content = with_customer_service_faq(content)" in mastra
-    assert 'payload.message = with_customer_service_faq(payload.message)' in chat
+    # 两段式：先让检索 LLM 看目录挑章节，再把相关章节发给回答模型（带最近对话）
+    assert "content = build_service_context(" in mastra
+    assert "_recent_chat_text(db, owner.id, session.id)" in mastra
+    assert "payload.message = await asyncio.to_thread(" in chat
+    assert "build_service_context," in chat
     assert "strip_customer_service_faq(r.user_message)" in chat
     assert '"content": strip_customer_service_faq(row.content),' in h5
+
+
+def test_two_stage_outline_and_chapters():
+    chapters = faq.faq_chapter_list()
+    assert len(chapters) >= 10
+    outline = faq.faq_index_text()
+    assert "操作步骤速查" in outline
+
+    # 没带鉴权（LLM 不可用）时退化为关键词检索，仍必须命中操作步骤
+    context = faq.build_service_context("图片怎么生成", history_text="", auth_header="")
+    assert "Q105" in context and "Q106" in context
+    assert len(context) < 8000
+    assert "检索方式：keyword" in context
+
+
+def test_context_strips_back_to_the_original_question():
+    context = faq.build_service_context("H5 上同城爆款怎么做", history_text="用户：怎么生成图片\n助手：…", auth_header="")
+    assert faq.strip_customer_service_faq(context) == "H5 上同城爆款怎么做"
 
 
 def test_client_side_has_no_refusal_wrapper():
