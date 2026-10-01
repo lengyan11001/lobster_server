@@ -31173,6 +31173,54 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       }
     });
 
+    // ---- AI 调度助手处理范围：工作 / 客服（客服模式下只把客服问题交给 AI）----
+    const H5_CHAT_DUTY_MODE_KEY = "lobster_h5_chat_duty_mode";
+    const H5_CHAT_DUTY_SERVICE_HINT = "客服模式：只处理客服问题（咨询 / 售后 / 价格 / 使用 / 话术）";
+
+    function h5ChatDutyMode() {
+      const sel = $("h5ChatDutyMode");
+      let value = sel && sel.value ? String(sel.value) : "";
+      if (!value) {
+        try { value = String(localStorage.getItem(H5_CHAT_DUTY_MODE_KEY) || ""); } catch (e) { value = ""; }
+      }
+      return value === "service" ? "service" : "work";
+    }
+
+    function applyH5DutyModeToContent(content) {
+      const text = String(content || "");
+      if (h5ChatDutyMode() !== "service") return text;
+      return [
+        "【客服模式】现在只处理客服问题：客户咨询、售前售后、产品功能与价格、开通与退款、使用答疑、话术与催单、投诉安抚。",
+        "如果用户这条内容不是客服问题（例如让 AI 去创作/发帖/采集/跑工作流，或与客户无关的内部事务），不要执行、不要调用任何能力，直接回复：",
+        "“当前是客服模式，只处理客服问题；要安排工作请把输入框左下角的下拉切回「工作」。”，并停止。",
+        "回答客户问题时：先给可直接复制发给客户的答复（口语、简短），再补一句给老板看的内部提示（需要人工跟进就写明）。",
+        "不要编造系统里没有的功能；不确定就回复“我需要确认后再回复您”。",
+        "",
+        "用户消息：" + text,
+      ].join("\n");
+    }
+
+    function syncH5ChatDutyModeUi() {
+      const input = $("messageInput");
+      if (input) {
+        input.setAttribute("placeholder", h5ChatDutyMode() === "service" ? "输入客户咨询、售后、价格、话术等客服问题" : "随心输入");
+      }
+    }
+
+    function initH5ChatDutyMode() {
+      const sel = $("h5ChatDutyMode");
+      if (!sel) return;
+      let saved = "";
+      try { saved = String(localStorage.getItem(H5_CHAT_DUTY_MODE_KEY) || ""); } catch (e) { saved = ""; }
+      if (saved === "service" || saved === "work") sel.value = saved;
+      sel.addEventListener("change", () => {
+        try { localStorage.setItem(H5_CHAT_DUTY_MODE_KEY, h5ChatDutyMode()); } catch (e) {}
+        syncH5ChatDutyModeUi();
+        toast(h5ChatDutyMode() === "service" ? H5_CHAT_DUTY_SERVICE_HINT : "已切回工作模式");
+      });
+      syncH5ChatDutyModeUi();
+    }
+
     async function submitChatMessage(rawContent = null, options = {}) {
       const input = $("messageInput");
       const fromComposer = rawContent === null;
@@ -31200,7 +31248,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       }
       state.chatSubmitPending = true;
       $("sendBtn").disabled = true;
-      const messageContent = buildMessageContent(content);
+      const messageContent = buildMessageContent(applyH5DutyModeToContent(content));
       const userBubble = addBubble("user", content || `已添加 ${attachments.length} 个素材`);
       renderBubbleAttachments(userBubble, attachments);
       const bot = addBubble("bot", queueMode === "steer"
@@ -31218,6 +31266,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
             attachments,
             queue_mode: queueMode,
             target_message_id: targetMessageId,
+            duty_mode: h5ChatDutyMode(),
           },
         });
         const msg = data.message || {};
@@ -31253,6 +31302,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       evt.preventDefault();
       await submitChatMessage();
     });
+
+    initH5ChatDutyMode();
 
     $("chatQueueSummary")?.addEventListener("click", () => {
       state.chatQueueExpanded = !state.chatQueueExpanded;

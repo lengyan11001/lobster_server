@@ -10579,3 +10579,8 @@
   font-weight: 700;
   color: #6b7280;
 }
+
+.composer-duty-wrap { display:inline-flex; align-items:center; gap:0.3rem; padding:0.1rem 0.5rem; border:1px solid rgba(148,163,184,0.35); border-radius:999px; background:rgba(148,163,184,0.08); font-size:0.78rem; }
+.composer-duty-label { opacity:0.7; }
+.composer-duty-wrap select { border:0; background:transparent; color:inherit; font:inherit; outline:none; cursor:pointer; padding:0.1rem 0; }
+.composer-duty-wrap select option { color:#0f172a; }
