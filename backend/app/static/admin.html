@@ -1,6 +1,33 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-brand="__ADMIN_BRAND_MARK__">
 <head>
+<script id="admin-build-selfheal">/* 2026-10-01：部署后开着的老页面自动刷新，不需要人工清缓存 / Ctrl+F5。
+   页面带构建标识（__ADMIN_BUILD__），定时 + 切回前台时问 /admin/api/build，不一致就 reload。*/
+(function () {
+  window.__ADMIN_BUILD__ = "__ADMIN_BUILD__";
+  var current = window.__ADMIN_BUILD__;
+  if (!current) return;
+  var checking = false;
+  function check() {
+    if (checking) return;
+    checking = true;
+    fetch('/admin/api/build?_=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        checking = false;
+        if (data && data.build && data.build !== current) {
+          console.warn('[admin] 检测到新版本 ' + data.build + '，自动刷新');
+          location.reload();
+        }
+      })
+      .catch(function () { checking = false; });
+  }
+  setInterval(check, 20000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+  window.addEventListener('focus', check);
+})();
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>__ADMIN_BRAND_TITLE__管理后台</title>
@@ -1565,10 +1592,13 @@ body{background:#edf2f7}
     var published = document.getElementById('swPublished').checked;
     var saveButton = document.getElementById('swSaveBtn');
     var restore = function () { if (saveButton) { saveButton.disabled = false; saveButton.textContent = '确认生效'; } };
+    // 2026-10-01 修：name 必须在 isNew 分支外读。
+    // 以前写成 var name = ... 只在「新建」分支里赋值，编辑走 publish 分支时 name 是 undefined，
+    // JSON.stringify 会把 undefined 字段直接丢掉 → 请求体里根本没有 name → 改名永远不生效。
+    var name = (document.getElementById('swName').value || '').trim();
+    if (!name) { alert('请先填写系统模板名称'); restore(); return; }
     if (saveButton) { saveButton.disabled = true; saveButton.textContent = '保存中…'; }
     if (isNew) {
-      var name = (document.getElementById('swName').value || '').trim();
-      if (!name) { alert('请先填写系统模板名称'); restore(); return; }
       api('/admin/api/system-workflows', { method: 'POST', body: JSON.stringify({ name: name, nodes: nodes, published: published }) })
         .then(function () { document.getElementById('swEditor').style.display = 'none'; toast('系统模板已创建'); return load(true); })
         .catch(function (e) { alert('创建失败：' + (e && e.message || e)); })

@@ -367,6 +367,13 @@ def _admin_recording_payload(row: RecorderAudioRecord) -> dict:
     }
 
 
+def admin_frontend_build() -> str:
+    """管理后台这一版前端的构建标识（部署后一定会变，页面据此自动刷新）。"""
+    from ..services.deploy_build import deploy_build_id
+
+    return deploy_build_id()
+
+
 # ── 页面 ──
 
 @router.get("/admin", include_in_schema=False)
@@ -388,6 +395,8 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
         "__ADMIN_BRAND_ICON_32__": icon_32,
         "__ADMIN_BRAND_ICON_64__": icon_64,
         "__ADMIN_BRAND_CONSOLE__": console_title,
+        # 前端构建标识：换了版本页面自己刷新（缓存自愈）
+        "__ADMIN_BUILD__": admin_frontend_build(),
     }
     for placeholder, value in replacements.items():
         content = content.replace(placeholder, html.escape(value, quote=True))
@@ -399,13 +408,19 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
         },
     )
 
+@router.get("/admin/api/build", include_in_schema=False)
+def admin_build() -> dict:
+    """前端版本探针：页面用它判断自己是不是旧版，旧版自动刷新（不用人工清缓存）。"""
+    return {"build": admin_frontend_build()}
+
+
 @router.get("/admin/static/{filename}", include_in_schema=False)
 def admin_static(filename: str):
     static_dir = Path(__file__).resolve().parent.parent / "static"
     fp = static_dir / filename
     if not fp.exists() or not fp.is_file():
         raise HTTPException(status_code=404)
-    return FileResponse(fp)
+    return FileResponse(fp, headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"})
 
 
 # ── API ──

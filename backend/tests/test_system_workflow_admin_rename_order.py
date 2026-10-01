@@ -182,3 +182,57 @@ def test_rename_syncs_mirror_with_legacy_h5_default_name(db_session):
     db_session.refresh(customized)
     assert legacy.name == "新名字"
     assert customized.name == "我自己改的"
+
+
+
+def test_deploy_build_id_is_stable_and_nonempty():
+    from backend.app.services.deploy_build import deploy_build_id
+
+    build = deploy_build_id()
+    assert build and len(build) > 3
+    assert deploy_build_id() == build
+
+
+def test_admin_page_has_build_selfheal():
+    """管理后台必须能自愈缓存：页面带构建标识 + 定时拿 /admin/api/build，不一致就 reload。"""
+    from pathlib import Path
+
+    text = (Path(admin.__file__).resolve().parent.parent / "static" / "admin.html").read_text(encoding="utf-8")
+    assert "__ADMIN_BUILD__" in text
+    assert "/admin/api/build" in text
+    assert "location.reload()" in text
+
+
+def test_admin_build_endpoint():
+    from backend.app.services.deploy_build import deploy_build_id
+
+    assert admin.admin_build() == {"build": deploy_build_id()}
+
+
+def test_h5_index_rewrites_asset_version_and_has_selfheal():
+    """H5 页面的 js/css ?v= 必须换成当前构建，并带自愈脚本（手机用户不用手动刷新）。"""
+    from backend.app.api import h5_chat
+    from backend.app.services.deploy_build import deploy_build_id
+
+    resp = h5_chat._h5_index_response({})
+    html_text = resp.body.decode("utf-8")
+    build = deploy_build_id()
+    assert "/h5-static/h5-app.js?v=" + build in html_text
+    assert "h5-build-selfheal" in html_text
+    assert h5_chat.h5_build() == {"build": build}
+
+
+
+def test_admin_save_sends_name_for_both_create_and_publish():
+    """改名 bug 回归：name 必须在 isNew 分支外读，否则 publish 请求里 name 是 undefined，
+    JSON.stringify 会丢掉这个字段 → 改名不生效（2026-10-01 用户报的问题）。"""
+    from pathlib import Path
+
+    text = (Path(admin.__file__).resolve().parent.parent / "static" / "admin.html").read_text(encoding="utf-8")
+    read_pos = text.find("var name = (document.getElementById('swName').value")
+    new_branch_pos = text.find("if (isNew) {", read_pos if read_pos >= 0 else 0)
+    publish_pos = text.find("/publish', { method: 'POST', body: JSON.stringify({ name: name", read_pos if read_pos >= 0 else 0)
+    assert read_pos > 0, "没有找到 name 读取"
+    assert new_branch_pos > read_pos, "name 必须在 if (isNew) 之前读取"
+    assert publish_pos > 0, "publish 请求必须带上 name"
+    assert "JSON.stringify({ nodes: nodes, confirm: true })" not in text, "publish 请求不能缺 name"

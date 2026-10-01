@@ -1304,7 +1304,35 @@ def _h5_index_response(branding: Dict[str, Any]) -> Response:
     content = _H5_INDEX.read_text(encoding="utf-8")
     for placeholder, value in replacements.items():
         content = content.replace(placeholder, html.escape(value, quote=True))
+    # 每次部署都把 js/css 的 ?v= 换成当前构建：浏览器必然当新资源去取，
+    # 手机端不会再有「还停在老界面，要用户自己刷新」的情况。
+    from ..services.deploy_build import deploy_build_id
+
+    build = deploy_build_id()
+    content = re.sub(r'(/h5-static/[^"?\s]+)\?v=[^"\']*', r"\1?v=" + build, content)
+    healer = (
+        '<script id="h5-build-selfheal">(function(){'
+        "window.__H5_BUILD__=" + json.dumps(build) + ";"
+        "var c=window.__H5_BUILD__;if(!c)return;var k=false;"
+        "function q(){if(k)return;k=true;"
+        'fetch("/h5/api/build?_="+Date.now(),{cache:"no-store"})'
+        ".then(function(r){return r.ok?r.json():null;})"
+        ".then(function(d){k=false;if(d&&d.build&&d.build!==c){console.warn('[h5] 新版本 '+d.build+'，自动刷新');location.reload();}})"
+        '.catch(function(){k=false;});}'
+        "setInterval(q,20000);"
+        'document.addEventListener("visibilitychange",function(){if(!document.hidden)q();});'
+        "window.addEventListener('focus',q);})();</script>"
+    )
+    content = content.replace("</head>", healer + "</head>", 1)
     return Response(content=content, media_type="text/html", headers=_H5_INDEX_HEADERS)
+
+
+@router.get("/h5/api/build", include_in_schema=False)
+def h5_build() -> dict:
+    """H5 前端版本探针（页面据此自动刷新）。"""
+    from ..services.deploy_build import deploy_build_id
+
+    return {"build": deploy_build_id()}
 
 
 @router.get("/h5", include_in_schema=False)
