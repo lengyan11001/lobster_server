@@ -31177,6 +31177,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
 
     // ---- AI 调度助手处理范围：工作 / 客服（客服模式下只把客服问题交给 AI）----
     const H5_CHAT_DUTY_MODE_KEY = "lobster_h5_chat_duty_mode";
+    const H5_DUTY_SERVICE_PLACEHOLDER = "输入客户咨询、售后、价格、话术等客服问题";
+    let h5DutyPlaceholderBackup = "";
     const H5_CHAT_DUTY_SERVICE_HINT = "客服模式：按客服百问百答回答（咨询 / 售后 / 价格 / 使用 / 话术）";
 
     function h5ChatDutyMode() {
@@ -31194,9 +31196,17 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     }
 
     function syncH5ChatDutyModeUi() {
+      // 只改客服模式的文案；切回「工作」恢复原 placeholder，工作模式行为不变。
       const input = $("messageInput");
-      if (input) {
-        input.setAttribute("placeholder", h5ChatDutyMode() === "service" ? "输入客户咨询、售后、价格、话术等客服问题" : "随心输入");
+      if (!input) return;
+      if (h5ChatDutyMode() === "service") {
+        if (input.getAttribute("placeholder") !== H5_DUTY_SERVICE_PLACEHOLDER) {
+          h5DutyPlaceholderBackup = input.getAttribute("placeholder") || "随心输入";
+          input.setAttribute("placeholder", H5_DUTY_SERVICE_PLACEHOLDER);
+        }
+      } else if (input.getAttribute("placeholder") === H5_DUTY_SERVICE_PLACEHOLDER) {
+        input.setAttribute("placeholder", h5DutyPlaceholderBackup || "随心输入");
+        h5DutyPlaceholderBackup = "";
       }
     }
 
@@ -31259,7 +31269,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
             attachments,
             queue_mode: queueMode,
             target_message_id: targetMessageId,
-            duty_mode: h5ChatDutyMode(),
+            ...(h5ChatDutyMode() === "service" ? { duty_mode: "service" } : {}),
           },
         });
         const msg = data.message || {};

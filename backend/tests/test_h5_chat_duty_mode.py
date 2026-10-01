@@ -17,7 +17,7 @@ def test_h5_chat_duty_mode_select_and_wiring():
     assert '<option value="work" selected>工作</option>' in html
     assert '<option value="service">客服</option>' in html
     assert ".composer-duty-wrap select" in css
-    assert "h5-app.js?v=20261001-faq-injection-v3" in html
+    assert "h5-app.js?v=20261001-work-mode-isolation-v4" in html
     assert "h5ChatDutyMode() === \"service\"" in js
     assert "h5-app.css?v=20261001-chat-duty-mode-v1" in html
 
@@ -32,7 +32,9 @@ def test_h5_chat_duty_mode_select_and_wiring():
 
     # 请求：content 用包装后的文本，并带上 duty_mode
     assert "buildMessageContent(applyH5DutyModeToContent(content))" in js
-    assert "duty_mode: h5ChatDutyMode()," in js
+    # 工作模式请求体保持原样：只有客服模式才带 duty_mode
+    assert '...(h5ChatDutyMode() === "service" ? { duty_mode: "service" } : {})' in js
+    assert "h5DutyPlaceholderBackup" in js
 
     # 初始化 + 记住选择
     assert "initH5ChatDutyMode();" in js
