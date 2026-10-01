@@ -710,6 +710,8 @@ body{background:#edf2f7}
         '<div style="flex:1;min-width:0"><b>' + esc(it.name) + '</b> <span style="color:var(--text-secondary);font-size:12px">' + esc(it.key) + '</span>' +
         '<div style="color:var(--text-secondary);font-size:12px">' + it.node_count + ' 个节点 · 直接启用 ' + it.direct_user_count + ' 人 · 更新 ' + esc(String(it.updated_at || '').replace('T', ' ').slice(0, 16)) + '</div></div>' +
         '<label style="font-size:12px"><input type="checkbox" ' + (it.published ? 'checked' : '') + ' onchange="swToggle(\'' + esc(it.key) + '\', this.checked)"> 上架</label>' +
+        '<button type="button" class="btn btn-sm" title="上移" onclick="swMove(\'' + esc(it.key) + '\', -1)">↑</button>' +
+        '<button type="button" class="btn btn-sm" title="下移" onclick="swMove(\'' + esc(it.key) + '\', 1)">↓</button>' +
         '<button type="button" class="btn btn-sm" onclick="swEdit(\'' + esc(it.key) + '\')">编辑</button></div>';
     }).join('') : '<div style="color:var(--text-secondary);font-size:12px">暂无系统模板</div>';
   }
@@ -729,6 +731,15 @@ body{background:#edf2f7}
   window.swToggle = function (key, published) {
     return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/status', { method: 'POST', body: JSON.stringify({ published: !!published }) })
       .then(load).catch(function (e) { alert('上下架失败：' + (e && e.message || e)); return load(); });
+  };
+  window.swMove = function (key, delta) {
+    var idx = -1;
+    for (var i = 0; i < items.length; i++) if (items[i].key === key) idx = i;
+    if (idx < 0) return;
+    var target = idx + Number(delta || 0);
+    if (target < 0 || target >= items.length) return;
+    return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/order', { method: 'POST', body: JSON.stringify({ order: target + 1 }) })
+      .then(load).catch(function (e) { alert('调整顺序失败：' + (e && e.message || e)); return load(); });
   };
   window.swEdit = function (key) {
     var it = null;
@@ -1564,7 +1575,7 @@ body{background:#edf2f7}
         .then(restore);
       return;
     }
-    api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', body: JSON.stringify({ nodes: nodes, confirm: true }) })
+    api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', body: JSON.stringify({ name: name, nodes: nodes, confirm: true }) })
       .then(function () { return api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/status', { method: 'POST', body: JSON.stringify({ published: published }) }); })
       .then(function () { document.getElementById('swEditor').style.display = 'none'; toast('系统模板已生效，直接启用它的用户已同步'); return load(true); })
       .catch(function (e) { alert('保存失败：' + (e && e.message || e)); })

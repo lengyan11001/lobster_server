@@ -2029,7 +2029,12 @@ def _system_workflow_key_labels(db: Session) -> Dict[str, str]:
                 continue
             key = str(meta.get("system_template_key") or "").strip()
             if key:
-                labels.setdefault(key, str(row.name or key))
+                # 后台改过名字就以库里的名字为准，硬编码文案只做兜底
+                db_name = str(row.name or "").strip()
+                if db_name:
+                    labels[key] = db_name
+                else:
+                    labels.setdefault(key, key)
     except Exception:
         logger.warning("system workflow catalog scan failed", exc_info=True)
     return labels
@@ -2082,9 +2087,10 @@ def _system_workflow_rows(db: Session, key: str) -> tuple:
 def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
     catalog, mirrors = _system_workflow_rows(db, key)
     nodes = list(catalog.nodes or []) if catalog is not None else []
+    db_name = str(getattr(catalog, "name", "") or "").strip() if catalog is not None else ""
     return {
         "key": key,
-        "name": _system_workflow_key_labels(db).get(key, key),
+        "name": db_name or _system_workflow_key_labels(db).get(key, key),
         "template_id": int(catalog.id) if catalog is not None else None,
         "nodes": nodes,
         "node_count": len(nodes),
@@ -2097,6 +2103,12 @@ def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
 class SystemWorkflowBody(BaseModel):
     nodes: list[dict] = []
     confirm: bool = False
+    # 后台编辑时一起提交的名字：以前没带这个名字，导致「改名字不生效」
+    name: str = ""
+
+
+class SystemWorkflowOrderBody(BaseModel):
+    order: int = 0  # 目标名次（从 1 开始）
 
 
 class SystemWorkflowCreateBody(BaseModel):
@@ -2143,7 +2155,11 @@ def _clear_workflow_template_cache() -> None:
 def _system_workflow_catalog_items(db: Session) -> List[Dict[str, Any]]:
     """目录里的全部系统模板（含新增的），带上下架状态。"""
     from ..models import H5WorkflowTemplate
-    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+    from .h5_workflows import (
+        _SYSTEM_WORKFLOW_CATALOG_SOURCE,
+        _SYSTEM_WORKFLOW_OWNER_ID,
+        system_catalog_display_key,
+    )
 
     rows = (
         db.query(H5WorkflowTemplate)
@@ -2154,6 +2170,8 @@ def _system_workflow_catalog_items(db: Session) -> List[Dict[str, Any]]:
         .order_by(H5WorkflowTemplate.id.asc())
         .all()
     )
+    # 顺序：后台排过序的按 system_order，老的按 id 兜底（与 H5 同一套规则）
+    rows = sorted(rows, key=system_catalog_display_key)
     items: List[Dict[str, Any]] = []
     for row in rows:
         meta = row.meta if isinstance(row.meta, dict) else {}
@@ -2348,12 +2366,20 @@ def admin_publish_system_workflow(
     if catalog is None:
         raise HTTPException(status_code=404, detail="系统模板本体不存在")
     now = datetime.utcnow()
+    old_name = str(catalog.name or "").strip()
+    new_name = str(getattr(body, "name", "") or "").strip()[:160]
     catalog.nodes = nodes
+    if new_name:
+        # 以前这里不落 body.name，后台改名字就一直不生效
+        catalog.name = new_name
     catalog.updated_at = now
     synced_users = set()
     for row in mirrors:
         # 只覆盖"直接启用系统模板"的镜像；复制过的副本没有 system_template_key。
         row.nodes = nodes
+        if new_name and str(row.name or "").strip() in ("", old_name):
+            # 镜像还顶着旧名字（或没名字）才跟着改；用户自己改过名字的不动
+            row.name = new_name
         row.updated_at = now
         synced_users.add(int(row.owner_user_id or 0))
     db.commit()
@@ -2366,11 +2392,46 @@ def admin_publish_system_workflow(
     return {
         "ok": True,
         "key": key,
-        "name": _system_workflow_key_labels(db).get(key, key),
+        "name": str(catalog.name or "").strip() or _system_workflow_key_labels(db).get(key, key),
         "node_count": len(nodes),
         "mirror_count": len(mirrors),
         "synced_users": len(synced_users),
     }
+
+
+@router.post("/admin/api/system-workflows/{key}/order", summary="调整系统模板顺序（仅管理员）")
+def admin_set_system_workflow_order(
+    key: str,
+    body: SystemWorkflowOrderBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    '''把某个系统模板挪到指定名次：按后台列表顺序重排，H5 也按同一顺序展示。
+
+    顺序写在 catalog 行的 meta["system_order"]（10/20/30…），不影响节点、镜像和复制。
+    '''
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    items = _system_workflow_catalog_items(db)
+    keys = [str(item["key"]) for item in items]
+    if key not in keys:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    try:
+        target = int(body.order) - 1
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="顺序参数不合法") from None
+    target = max(0, min(len(keys) - 1, target))
+    keys.insert(target, keys.pop(keys.index(key)))
+    for position, item_key in enumerate(keys, start=1):
+        row = _system_catalog_row(db, item_key)
+        if row is None:
+            continue
+        meta = dict(row.meta or {})
+        meta["system_order"] = position * 10
+        row.meta = meta
+    db.commit()
+    _clear_workflow_template_cache()
+    return {"ok": True, "key": key, "order": target + 1, "keys": keys}
 
 
 # ── 数据统计 ──

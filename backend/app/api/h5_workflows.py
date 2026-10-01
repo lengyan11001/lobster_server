@@ -2880,6 +2880,8 @@ def _workflow_template_payloads(db: Session, owner: User, installation_id: str) 
             .all()
         )
         system_rows = [row for row in system_rows if _is_system_catalog_template(row)]
+        # 系统模板顺序由管理后台决定（meta["system_order"]），不是数据库创建顺序
+        system_rows.sort(key=system_catalog_display_key)
         system_catalog_keys = {
             _clean_text((row.meta or {}).get("system_template_key"), 128)
             for row in system_rows
@@ -3030,6 +3032,20 @@ def _system_workflow_template(
         if _clean_text((item.meta or {}).get("system_template_key"), 128) == system_template_key:
             return item
     return None
+
+
+def system_catalog_display_key(row: Any) -> tuple:
+    """系统模板展示顺序：后台排过序（meta["system_order"] = 10/20/30…）的按它排，
+    没排过的老数据按 id 兜底，保证两边顺序稳定一致。"""
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    try:
+        order = int(meta.get("system_order"))
+    except (TypeError, ValueError):
+        order = 0
+    rid = int(getattr(row, "id", 0) or 0)
+    if order <= 0:
+        return (1, 0, rid)
+    return (0, order, rid)
 
 
 def _is_system_catalog_template(row: Optional[H5WorkflowTemplate]) -> bool:
