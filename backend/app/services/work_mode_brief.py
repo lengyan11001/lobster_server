@@ -78,9 +78,17 @@ def _memory_lines(db, user_id: int, installation_id: str = "") -> List[str]:
             OpenClawMemoryDocument.status == "active",
         )
         install = str(installation_id or "").strip()
+        rows = []
         if install:
-            query = query.filter(OpenClawMemoryDocument.installation_id == install)
-        rows = query.order_by(OpenClawMemoryDocument.updated_at.desc()).limit(_MEMORY_LIMIT).all()
+            # H5 的 installation_id 可能和上传记忆时的设备不同：先按设备过滤，查不到就退回该用户全部记忆
+            rows = (
+                query.filter(OpenClawMemoryDocument.installation_id == install)
+                .order_by(OpenClawMemoryDocument.updated_at.desc())
+                .limit(_MEMORY_LIMIT)
+                .all()
+            )
+        if not rows:
+            rows = query.order_by(OpenClawMemoryDocument.updated_at.desc()).limit(_MEMORY_LIMIT).all()
         for row in rows:
             doc_id = str(getattr(row, "doc_id", "") or "").strip()
             title = str(getattr(row, "title", "") or "").strip()
