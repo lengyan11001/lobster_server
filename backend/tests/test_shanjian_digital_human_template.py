@@ -793,3 +793,39 @@ async def test_asset_keyword_gate_can_be_disabled(db_session, test_user, monkeyp
 
     assert result["asset_group_selection"]["status"] == "selected"
     assert result["asset_group_selection"]["selected_ids"] == ["asset-any"]
+
+
+def test_clean_text_accepts_optional_length_limit():
+    """回归 2026-10-04 线上事故：数字人视频 create 100% 500。
+
+    create_video 记录口播来源（submit_payload.script_source）时按
+    ``_clean_text(value, 64)`` 调用，而 helper 当时只接受 1 个参数：
+    TypeError: _clean_text() takes 1 positional argument but 2 were given，
+    于是 POST /api/shanjian-digital-human/video/create 对所有人 500。
+    """
+    import inspect
+
+    assert digital_human_api._clean_text("  abc  ") == "abc"
+    assert digital_human_api._clean_text("x" * 100, 64) == "x" * 64
+    assert digital_human_api._clean_text(None, 64) == ""
+    assert digital_human_api._clean_text("", 64) == ""
+    assert digital_human_api._clean_text("  keep  ", 0) == "keep"
+
+    params = list(inspect.signature(digital_human_api._clean_text).parameters.values())
+    assert len(params) >= 2, "create_video 会以 (value, 64) 调用 _clean_text，必须支持第二个参数"
+
+
+def test_shanjian_create_video_two_arg_clean_text_calls_are_supported():
+    """模块里所有 `_clean_text(x, N)` 形式的调用都必须能跑通（防止再出现同款 500）。"""
+    import inspect
+    import re
+    from pathlib import Path
+
+    signature = inspect.signature(digital_human_api._clean_text)
+    accepts_limit = len(list(signature.parameters.values())) >= 2
+    assert accepts_limit
+
+    source = Path(digital_human_api.__file__).read_text(encoding="utf-8")
+    two_arg_calls = re.findall(r"_clean_text\([^()]*,[^()]*\)", source)
+    assert two_arg_calls, "至少应存在 create_video 里记录口播来源的两参调用"
+    assert digital_human_api._clean_text("y" * 80, 64) == "y" * 64

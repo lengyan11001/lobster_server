@@ -125,8 +125,19 @@ class VideoTaskBody(_TokenBody):
     record_id: Optional[int] = None
 
 
-def _clean_text(value: Optional[str]) -> str:
-    return str(value or "").strip()
+def _clean_text(value: Optional[str], limit: int = 0) -> str:
+    """去空白；limit>0 时再截断到该长度。
+
+    2026-10-04 线上事故：create_video 记录口播来源时写成 ``_clean_text(v, 64)``，
+    而当时这个 helper 只接受 1 个参数 → ``TypeError: _clean_text() takes 1
+    positional argument but 2 were given`` → ``POST /api/shanjian-digital-human/
+    video/create`` 对所有人返回 500（10-01 起 74 次调用 0 成功），数字人口播视频
+    全部做不出来。这里补上可选长度上限，两种调用方式都成立。
+    """
+    text = str(value or "").strip()
+    if limit and int(limit) > 0:
+        return text[: int(limit)]
+    return text
 
 
 def _validated_profile_auth_text(db: Session, current_user: User, body: ProfileTrainBody) -> tuple[str, str]:
