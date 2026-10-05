@@ -1055,10 +1055,18 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
 
     # 任务记录/最近任务：读我们自己的库（生成时记的）
     if normalized in ("api/fal/tasks/list", "api/task_list", "api/tasks/list"):
-        limit = int(request.query_params.get("page_size") or body.get("page_size") or body.get("limit") or 30)
-        task_items = canvas_hub.list_canvas_tasks(db, uid, limit)
-        return JSONResponse({"code": 200, "list": task_items, "total": len(task_items),
-                             "data": {"list": task_items, "total": len(task_items)}})
+        # 2026-10-05 修复：canvas_hub.list_canvas_tasks 现在返回 {"list": [...], "total": n}，
+        # 这里必须解包再拼响应 —— 之前直接把 dict 当 list 返回，画布「任务记录」页拿到非数组
+        # 就渲染成空列表（用户反馈"历史记录都是空的"）。
+        page = int(request.query_params.get("page") or body.get("page") or 1)
+        limit = int(request.query_params.get("page_size") or body.get("page_size") or body.get("limit") or 12)
+        raw_status = str(body.get("status") or request.query_params.get("status") or "").strip()
+        statuses = [part.strip() for part in raw_status.replace("，", ",").split(",") if part.strip()]
+        payload = canvas_hub.list_canvas_tasks(db, uid, limit, page=page, statuses=statuses)
+        items = payload.get("list") or []
+        total = int(payload.get("total") or 0)
+        return JSONResponse({"code": 200, "list": items, "items": items, "total": total,
+                             "data": {"list": items, "total": total}})
 
     if normalized == "api/get_file_list":
         items = []  # 画布不再有自己的资产库；素材库只由客户端「素材库上传」产生

@@ -783,3 +783,29 @@ def test_display_amount_prefers_recorded_charge(monkeypatch):
     amount = canvas_proxy._display_amount_for_response(None, 42, payload, {}, "openai/gpt-image-2")
 
     assert amount == Decimal("6.0")
+
+
+def test_task_list_returns_array_for_frontend(client, monkeypatch):
+    """画布「任务记录」页只认数组：list/data.list 必须是 list。
+
+    2026-10-05 回归：canvas_hub.list_canvas_tasks 改成返回 {"list","total"} 后，
+    路由没解包，直接把 dict 塞进 list → 前端判定不是数组 → 历史记录全空。
+    """
+    monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("任务列表不该请求 apiz")))
+    resp = client.post("/canvas-api/api/fal/tasks/list", json={"page": 1, "page_size": 12})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert isinstance(body["list"], list)
+    assert isinstance(body.get("items"), list)
+    assert isinstance(body["data"]["list"], list)
+    assert isinstance(body["total"], int)
+
+
+def test_task_list_status_filter_is_passed_through(client, monkeypatch):
+    monkeypatch.setattr(canvas_proxy.httpx, "AsyncClient",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("任务列表不该请求 apiz")))
+    for status in ("", "completed", "pending,processing", "failed,webhook_error"):
+        resp = client.post("/canvas-api/api/fal/tasks/list", json={"page": 1, "page_size": 12, "status": status})
+        assert resp.status_code == 200, (status, resp.text)
+        assert isinstance(resp.json()["list"], list)
