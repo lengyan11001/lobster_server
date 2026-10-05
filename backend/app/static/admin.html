@@ -2622,7 +2622,7 @@ async function loadWechatContacts(page) {
       let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>平台</th><th>客户 / 会话</th><th>类型</th><th>号码 / 微信号</th><th>状态</th><th>会话原文</th></tr></thead><tbody>';
       items.forEach(function (it) {
         html += '<tr>'
-          + '<td>' + esc(String(it.created_at || '').replace('T', ' ').slice(0, 19)) + '</td>'
+          + '<td>' + esc(it.created_at ? new Date(it.created_at).toLocaleString() : '') + '</td>'
           + '<td>' + esc((it.user_email || '') + ' (#' + (it.user_id || '') + ')') + '</td>'
           + '<td>' + esc(it.platform || '') + '</td>'
           + '<td>' + esc(it.contact_name || '') + '</td>'
