@@ -800,6 +800,22 @@ def sync_canvas_task(db: Session, user_id: int, *, task_id: str, status: str = "
             "charged": float(row.charged or 0), "refunded": bool(row.refunded)}
 
 
+def canvas_task_charged(db: Session, user_id: int, task_id: str) -> Optional[float]:
+    """这条任务我们实际预扣了多少（界面显示「已预扣 x 积分」要用我们的价，不能用 apiz 的 price）。"""
+    tid = str(task_id or "").strip()
+    if not tid:
+        return None
+    row = db.execute(text("SELECT charged FROM canvas_task WHERE user_id = :uid AND task_id = :tid"
+                          " ORDER BY id DESC LIMIT 1"),
+                     {"uid": user_id, "tid": tid}).fetchone()
+    if row is None:
+        return None
+    try:
+        return float(row.charged or 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def mark_canvas_task_refunded(db: Session, user_id: int, *, task_id: str) -> None:
     db.execute(text("UPDATE canvas_task SET refunded = :yes, updated_at = :now"
                     " WHERE user_id = :uid AND task_id = :tid"),

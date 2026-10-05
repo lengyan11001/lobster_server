@@ -708,3 +708,78 @@ def test_relayed_moderation_error_is_translated_to_chinese():
     # 正常字段（message="查询成功"）不该被改写
     assert rewritten["message"] == "查询成功"
     assert rewritten["data"]["output"]["error_code"] == "PROVIDER_MODERATION_ERROR"
+
+
+def test_query_price_uses_our_recorded_charge(tmp_path, monkeypatch):
+    """界面「已预扣 x 积分」必须显示我们的价，不能把 apiz 的采购价(price=4)透给前端。
+
+    2026-10-05 用户反馈：节点上显示「已预扣 4 积分」，而我们实际预扣 6。
+    上游 query 响应里带 "price": 4.0，中转时没改写，前端直接显示了它。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "price.db").replace("\\", "/"))
+    monkeypatch.setattr(canvas_hub, "_tables_ready", False)
+    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    app = FastAPI()
+    app.include_router(canvas_hub.router)
+    app.include_router(canvas_proxy.router)
+    app.dependency_overrides[get_current_user] = lambda: FakeUser()
+    app.dependency_overrides[get_db] = lambda: session_factory()
+    local_client = TestClient(app)
+
+    with session_factory() as seed_db:
+        canvas_hub.ensure_tables(seed_db)
+        canvas_hub.add_canvas_task(
+            seed_db, FakeUser.id, "openai/gpt-image-2", "api/v3/tasks/create",
+            json.dumps({"code": 200, "data": {"task_id": "t-price"}}).encode(),
+            prompt="吉卜力风格女孩", params=json.dumps({"quality": "low"}), charged=6,
+        )
+
+    upstream_body = {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "task_id": "t-price",
+            "status": "completed",
+            "price": 4.0,
+            "credits": 4,
+            "params": {"prompt": "吉卜力风格女孩", "quality": "low"},
+            "output": {"image_url": "https://cdn.example.com/girl.png"},
+        },
+    }
+    patch_upstream(monkeypatch, FakeResponse(content=json.dumps(upstream_body).encode("utf-8")))
+
+    resp = local_client.post("/canvas-api/api/v3/tasks/query", json={"task_id": "t-price"})
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["price"] == 6, data
+    assert data["credits"] == 6, data
+    assert data["task_id"] == "t-price"
+
+
+def test_display_amount_falls_back_to_our_pricing(monkeypatch):
+    """没有我们自己的任务记录时（老任务），也要按上游回带的 params 用我们定价表算。"""
+    from decimal import Decimal
+
+    monkeypatch.setattr(canvas_proxy, "our_price_for_display", lambda model, body: Decimal("6"))
+    payload = {"data": {"task_id": "unknown", "params": {"quality": "low"}}}
+
+    amount = canvas_proxy._display_amount_for_response(None, 42, payload, {}, "openai/gpt-image-2")
+
+    assert amount == Decimal("6")
+
+
+def test_display_amount_prefers_recorded_charge(monkeypatch):
+    """有我们自己记的实扣就用它（老任务 charged=0 时才回退）。"""
+    from decimal import Decimal
+
+    monkeypatch.setattr(canvas_hub, "canvas_task_charged", lambda db, uid, tid: 6.0)
+    payload = {"data": {"task_id": "t-1", "params": {"quality": "low"}}}
+
+    amount = canvas_proxy._display_amount_for_response(None, 42, payload, {}, "openai/gpt-image-2")
+
+    assert amount == Decimal("6.0")

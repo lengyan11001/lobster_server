@@ -655,6 +655,53 @@ def _upstream_error_text(data: Any) -> str:
     return ""
 
 
+def _payload_task_id(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    holder = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    for key in ("task_id", "taskId", "id"):
+        value = holder.get(key) if isinstance(holder, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _display_amount_for_response(db: Session, uid: int, payload: Any, body_json: Dict[str, Any], model: str,
+                                 pre_charged: Any = None) -> "object":
+    """界面要显示「已预扣/消耗」时一律用我们自己的价：apiz 响应里的 price 是采购价。
+
+    2026-10-05 用户反馈「节点上还是显示扣费 4」：tasks/query 的中转没改写价格，
+    前端就把上游的 price=4.0 显示成「已预扣 4 积分」，而我们实际预扣的是 6。
+    """
+    from decimal import Decimal
+
+    task_id = _payload_task_id(payload)
+    if task_id and db is not None:
+        try:
+            recorded = canvas_hub.canvas_task_charged(db, uid, task_id)
+        except Exception:
+            recorded = None
+        if recorded and float(recorded) > 0:
+            return Decimal(str(recorded))
+    if pre_charged and float(pre_charged) > 0:
+        return pre_charged
+    holder = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    params = holder.get("params") if isinstance(holder, dict) else None
+    if model and isinstance(params, dict):
+        try:
+            price = our_price_for_display(model, {"params": params})
+        except Exception:
+            price = None
+        if price and float(price) > 0:
+            return price
+    if model:
+        try:
+            return our_price_for_display(model, body_json)
+        except Exception:
+            return None
+    return None
+
+
 def _prompt_from_body(body: Dict[str, Any]) -> str:
     """从画布请求体里挖提示词（params.content 的 text 优先，其次 prompt/text）。"""
     if not isinstance(body, dict):
@@ -1242,12 +1289,17 @@ async def canvas_proxy(
     if upstream.content and "json" in media_type:
         try:
             payload = json.loads(upstream.content.decode("utf-8", "replace"))
-            rewritten_error = rewrite_error_messages(payload)
-            if rewritten_error != payload:
-                logger.info("[canvas] 上游报错已改写为中文: %s", normalized)
-                return JSONResponse(content=rewritten_error, status_code=upstream.status_code)
-        except Exception:
-            pass
+            rewritten = rewrite_error_messages(payload)
+            amount = _display_amount_for_response(db, uid, payload, body_json, model, pre_charged)
+            if amount and float(amount) > 0:
+                before = json.dumps(rewritten, ensure_ascii=False, sort_keys=True)
+                rewritten = rewrite_prices(rewritten, amount)
+                if json.dumps(rewritten, ensure_ascii=False, sort_keys=True) != before:
+                    logger.info("[canvas] 任务价改写为我们自己的价: %s -> %s（%s）", model, amount, normalized)
+            if rewritten != payload:
+                return JSONResponse(content=rewritten, status_code=upstream.status_code)
+        except Exception as exc:  # noqa: BLE001 改写失败就原样回
+            logger.info("[canvas] 响应改写跳过（%s）: %s", normalized, exc)
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)
 
 
