@@ -475,8 +475,17 @@ def estimate_our_price(db: Session, user: User, model: str, body: Dict[str, Any]
 
     from ..services.sutui_pricing import fetch_model_pricing
 
+    # 预扣必须和界面报价用同一套参数：画布的 body 是 {model, params}，矩阵定价
+    # （quality_size_matrix 之类）看的是 params 里的 resolution/quality。
+    # 2026-10-05 事故：这里把未展平的 body 交给闸门 → 定价逻辑看不到节点参数，
+    # 退到 _param_defaults 的默认档（1K/high=64），再 ×1.5 预扣 96；
+    # 而节点显示的是节点真实参数算出来的 1K/low(4)×1.5=6，差了 16 倍。
+    pricing_body = _pricing_body(body)
+
     try:
-        estimate = assert_pricing_pre_deduct_allows_upstream_or_http(db, user, model, body, action_label="画布生成")
+        estimate = assert_pricing_pre_deduct_allows_upstream_or_http(
+            db, user, model, pricing_body, action_label="画布生成"
+        )
     except HTTPException as exc:
         if getattr(exc, "status_code", 0) == 402:
             raise  # 余额不足：明确挡住

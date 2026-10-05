@@ -532,3 +532,59 @@ def test_canvas_proxy_defines_uid_for_record_step():
 
     source = inspect.getsource(canvas_proxy.canvas_proxy)
     assert "uid = int(getattr(user" in source, source[:400]
+
+
+def test_pre_deduct_uses_flattened_params(monkeypatch):
+    """预扣要按节点真实参数算：body 是 {model, params}，必须展平后交给闸门。
+
+    2026-10-05 事故：不展平 → 矩阵定价看不到 quality/resolution → 用默认档
+    （1K/high=64）×1.5=96，而节点上显示的是 1K/low(4)×1.5=6。
+    """
+    from decimal import Decimal
+
+    from backend.app.services import sutui_billing_gate, sutui_pricing
+
+    seen: dict = {}
+
+    def fake_gate(db, user, model_id, params, *, action_label=""):
+        seen["params"] = dict(params or {})
+        return Decimal("4")
+
+    monkeypatch.setattr(
+        sutui_billing_gate, "assert_pricing_pre_deduct_allows_upstream_or_http", fake_gate
+    )
+    monkeypatch.setattr(
+        sutui_pricing,
+        "fetch_model_pricing",
+        lambda model_id: {"base_price": None, "price_type": "quality_size_matrix"},
+    )
+
+    body = {
+        "model": "openai/gpt-image-2",
+        "params": {"prompt": "猫", "resolution": "1K", "quality": "low", "num_images": 1},
+    }
+    amount = canvas_proxy.estimate_our_price(None, object(), "openai/gpt-image-2", body)
+
+    assert seen["params"].get("quality") == "low", seen["params"]
+    assert seen["params"].get("resolution") == "1K", seen["params"]
+    assert "params" not in seen["params"], "闸门拿到的应该是展平后的参数"
+    assert amount == Decimal("6"), amount
+
+
+def test_matrix_priced_model_quote_and_pre_deduct_agree():
+    """矩阵定价模型：节点参数走展平后才和界面报价一致（不展平差 16 倍）。"""
+    from backend.app.services.sutui_pricing import estimate_credits_from_pricing
+
+    pricing = {
+        "price_type": "quality_size_matrix",
+        "price_description": "按分辨率等级与生成质量组合计费，不是固定单价。",
+        "price_factors": ["1K: 4 / 16 / 64（low / medium / high）", "2K: 4 / 24 / 92（low / medium / high）"],
+        "_param_defaults": {"resolution": "1K", "quality": "high", "num_images": 1},
+    }
+    body = {
+        "model": "openai/gpt-image-2",
+        "params": {"resolution": "1K", "quality": "low", "num_images": 1},
+    }
+
+    assert estimate_credits_from_pricing(pricing, canvas_proxy._pricing_body(body)) == 4
+    assert estimate_credits_from_pricing(pricing, body) == 64, "没展平就会退到默认最贵档"
