@@ -81,7 +81,7 @@ def test_prepare_imitation_resolves_douyin_page_link_through_tikhub(monkeypatch)
     async def fake_upload(data, suffix, content_type):
         return f"https://tos.test/up{suffix}", ""
 
-    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt=""):
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P"):
         seen["prompt"] = prompt
         return {"ok": True, "task_id": "t-1", "model": "m", "provider": "p"}
 
@@ -124,3 +124,62 @@ def test_prepare_imitation_rejects_html_for_direct_links(monkeypatch):
 
     assert result["ok"] is False
     assert "网页不是视频" in result["error"]
+
+
+def test_resolution_option_changes_price_and_has_no_480p():
+    """分辨率放给用户选：720P 0.6 元/秒、1080P 1 元/秒；官方没有 480P 档。"""
+    from backend.app.services.douyin_desk_billing import estimate_imitation, normalize_resolution
+    from backend.app.services.douyin_imitation_video import normalize_resolution as svc_norm
+
+    p720 = estimate_imitation(6, "720P")
+    p1080 = estimate_imitation(6, "1080P")
+
+    assert p720["billable_seconds"] == 12 and p720["credits"] == 1080
+    assert p720["yuan_per_second"] == 0.6
+    assert p1080["resolution"] == "1080P" and p1080["yuan_per_second"] == 1.0
+    assert p1080["credits"] == 1800, p1080
+
+    # 没有 480P：不认识的档位一律回落 720P
+    assert normalize_resolution("480P") == "720P"
+    assert normalize_resolution("1080p") == "1080P"
+    assert svc_norm("480P") == "720P"
+    assert svc_norm("1080p") == "1080P"
+
+
+def test_prepare_imitation_passes_resolution_to_submit(monkeypatch):
+    from backend.app.services import douyin_imitation_video as svc
+
+    seen = {}
+
+    async def fake_resolve(item_id):
+        return {"ok": True, "urls": ["https://cdn.example.com/real.mp4"], "url": "https://cdn.example.com/real.mp4",
+                "desc": "抖音作品"}
+
+    async def fake_download_first(urls, limit=None):
+        return b"\x00\x00\x00\x18ftypmp42", "https://cdn.example.com/real.mp4", ""
+
+    async def fake_download(url, limit=None):
+        return b"\xff\xd8\xff", ""
+
+    async def fake_upload(data, suffix, content_type):
+        return f"https://tos.test/up{suffix}", ""
+
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P"):
+        seen["resolution"] = resolution
+        return {"ok": True, "task_id": "t-r", "model": "m", "provider": "videoedit", "resolution": resolution}
+
+    monkeypatch.setattr(svc, "resolve_source_video", fake_resolve)
+    monkeypatch.setattr(svc, "_download_first", fake_download_first)
+    monkeypatch.setattr(svc, "_download", fake_download)
+    monkeypatch.setattr(svc, "_upload_tos", fake_upload)
+    monkeypatch.setattr(svc, "submit_imitation", fake_submit)
+    monkeypatch.setattr(svc, "trim_video", lambda data, seconds: (data, ""))
+    monkeypatch.setattr(svc, "probe_video_seconds", lambda data: 6.0)
+
+    result = asyncio.run(svc.prepare_imitation(
+        "https://tos.test/ref.png", "7688685833386071653", "", mode="effect_copy", resolution="1080P"
+    ))
+
+    assert seen["resolution"] == "1080P"
+    assert result["resolution"] == "1080P"
+    assert result["video_seconds"] == 6

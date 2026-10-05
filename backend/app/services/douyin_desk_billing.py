@@ -26,6 +26,7 @@ from .credits_amount import credits_json_float, quantize_credits, user_balance_d
 
 CREDITS_PER_YUAN = Decimal("100")
 _DEFAULT_YUAN_PER_SECOND = Decimal("0.6")     # 720P 输入+输出单价
+_DEFAULT_1080P_YUAN_PER_SECOND = Decimal("1")  # 1080P 输入+输出单价（官方档位只有 720P/1080P，没有 480P）
 _DEFAULT_BILLABLE_SIDES = Decimal("2")        # 输入 1 + 输出 1
 _DEFAULT_MARKUP = Decimal("1.5")              # 与 wan_role 一致的加价倍率
 _DEFAULT_SEARCH_CREDITS = Decimal("1")        # 每次搜索
@@ -42,7 +43,19 @@ def _decimal_env(name: str, default: Decimal) -> Decimal:
     return value if value >= 0 else default
 
 
-def yuan_per_second() -> Decimal:
+RESOLUTIONS = ("720P", "1080P")
+DEFAULT_RESOLUTION = "720P"
+
+
+def normalize_resolution(raw: object) -> str:
+    value = str(raw or "").strip().upper()
+    return value if value in RESOLUTIONS else DEFAULT_RESOLUTION
+
+
+def yuan_per_second(resolution: object = DEFAULT_RESOLUTION) -> Decimal:
+    """按分辨率取单价：720P 0.6 元/秒、1080P 1 元/秒（输入+输出都按这个价）。"""
+    if normalize_resolution(resolution) == "1080P":
+        return _decimal_env("DOUYIN_VIDEOEDIT_1080P_YUAN_PER_SECOND", _DEFAULT_1080P_YUAN_PER_SECOND)
     return _decimal_env("DOUYIN_VIDEOEDIT_YUAN_PER_SECOND", _DEFAULT_YUAN_PER_SECOND)
 
 
@@ -58,8 +71,8 @@ def search_credits() -> Decimal:
     return quantize_credits(_decimal_env("DOUYIN_DESK_SEARCH_CREDITS", _DEFAULT_SEARCH_CREDITS))
 
 
-def estimate_imitation(seconds: Any) -> Dict[str, Any]:
-    """按「输入+输出都计费」估算一次做同款的成本与扣费。"""
+def estimate_imitation(seconds: Any, resolution: object = DEFAULT_RESOLUTION) -> Dict[str, Any]:
+    """按「输入+输出都计费」估算一次做同款的成本与扣费（分辨率影响单价）。"""
     try:
         value = Decimal(str(seconds or 0))
     except Exception:  # noqa: BLE001
@@ -67,14 +80,16 @@ def estimate_imitation(seconds: Any) -> Dict[str, Any]:
     if value <= 0:
         value = Decimal("5")
     billable = (value * billable_sides()).to_integral_value(rounding=ROUND_CEILING)
-    cost_yuan = (Decimal(billable) * yuan_per_second()).quantize(Decimal("0.0001"))
+    rate = yuan_per_second(resolution)
+    cost_yuan = (Decimal(billable) * rate).quantize(Decimal("0.0001"))
     credits = quantize_credits(cost_yuan * CREDITS_PER_YUAN * markup())
     return {
         "seconds": int(value),
         "billable_seconds": int(billable),
         "cost_yuan": float(cost_yuan),
         "credits": credits_json_float(credits),
-        "yuan_per_second": float(yuan_per_second()),
+        "resolution": normalize_resolution(resolution),
+        "yuan_per_second": float(rate),
         "billable_sides": float(billable_sides()),
         "markup": float(markup()),
     }

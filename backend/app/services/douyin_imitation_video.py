@@ -412,8 +412,16 @@ def trim_video(data: bytes, max_seconds: int) -> Tuple[bytes, str]:
         return data, ""
 
 
+RESOLUTIONS = ("720P", "1080P")
+
+
+def normalize_resolution(raw: object) -> str:
+    value = str(raw or "").strip().upper()
+    return value if value in RESOLUTIONS else "720P"
+
+
 async def submit_imitation(image_url: str, source_video_url: str, *, mode: str = "wan-std",
-                           prompt: str = "") -> Dict[str, Any]:
+                           prompt: str = "", resolution: str = "720P") -> Dict[str, Any]:
     """提交做同款任务：返回 {ok, task_id, ...} 或 {ok: False, error}。"""
     image = str(image_url or "").strip()
     video = str(source_video_url or "").strip()
@@ -429,7 +437,8 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
             "input": {"prompt": str(prompt or "").strip()[:600] or default_prompt(),
                       "media": [{"type": "video", "url": video},
                                 {"type": "reference_image", "url": image}]},
-            "parameters": {"resolution": "720P", "prompt_extend": True, "watermark": False},
+            "parameters": {"resolution": normalize_resolution(resolution), "prompt_extend": True,
+                           "watermark": False},
         }
         url = _videoedit_host() + VIDEOEDIT_ENDPOINT
     else:
@@ -466,6 +475,7 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
     result = {"ok": True, "task_id": task_id, "model": _model(), "provider": provider}
     if provider == "videoedit":
         result["prompt"] = body["input"]["prompt"]
+        result["resolution"] = normalize_resolution(resolution)
     else:
         result["mode"] = body["parameters"]["mode"]
     return result
@@ -510,7 +520,8 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
 
 
 async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "", *,
-                            video_url: str = "", mode: str = "person_swap") -> Dict[str, Any]:
+                            video_url: str = "", mode: str = "person_swap",
+                            resolution: str = "720P") -> Dict[str, Any]:
     """把素材准备好并提交：用户图 + 原视频都转到 TOS，再按模式提交。
 
     2026-10-05：视频来源支持两种 —— 榜单作品（item_id）或用户自己给的视频地址
@@ -567,7 +578,7 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     if err:
         return {"ok": False, "error": err}
     final_prompt = prompt_for_mode(mode, prompt)
-    result = await submit_imitation(image_tos, video_tos, prompt=final_prompt)
+    result = await submit_imitation(image_tos, video_tos, prompt=final_prompt, resolution=resolution)
     if not result.get("ok"):
         return result
     result.update({"source_desc": source.get("desc") or "",
@@ -576,5 +587,6 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
                                         else int(effective_seconds) + 1),
                    "image_url": image_tos, "video_url": video_tos,
                    "mode": normalize_mode(mode), "mode_label": mode_label(mode),
+                   "resolution": normalize_resolution(result.get("resolution") or resolution),
                    "prompt": final_prompt})
     return result

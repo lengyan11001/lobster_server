@@ -56,6 +56,7 @@ class ImitationIn(BaseModel):
     item_id: str = Field(default="", max_length=64)
     video_url: str = Field(default="", max_length=2000)
     mode: str = "person_swap"
+    resolution: str = "720P"
     title: str = ""
     prompt: str = ""
 
@@ -74,14 +75,15 @@ async def create_information_desk_imitation(
     # 上游按「输入视频 + 输出视频」秒数计费，这里先按裁剪后的秒数预扣，失败全额退
     # 2026-10-05：改成按「原视频实际时长」计费 —— 先只按上限校验余额（不扣），
     # 等 prepare 探到真实时长后再按实际秒数扣费（失败/提交不成功不扣）。
-    cap_plan = billing.estimate_imitation(_max_seconds())
+    cap_plan = billing.estimate_imitation(_max_seconds(), body.resolution)
     billing.check_balance(db, current_user, billing.Decimal(str(cap_plan["credits"])))
     result = await prepare_imitation(body.image_url, body.item_id, body.prompt,
-                                     video_url=body.video_url, mode=body.mode)
+                                     video_url=body.video_url, mode=body.mode,
+                                     resolution=body.resolution)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
     seconds = int(result.get("video_seconds") or _max_seconds())
-    plan = billing.estimate_imitation(seconds)
+    plan = billing.estimate_imitation(seconds, result.get("resolution") or body.resolution)
     try:
         charged = billing.deduct(db, current_user, billing.Decimal(str(plan["credits"])),
                                  reason=f"douyin_imitation:{body.item_id or str(body.video_url)[:80]}")
@@ -91,7 +93,8 @@ async def create_information_desk_imitation(
     row = DouyinImitationTask(
         user_id=int(current_user.id), task_id=str(result.get("task_id") or ""),
         item_id=str(body.item_id or ""), title=str(body.title or "")[:255],
-        source_desc=(f"{result.get('mode_label') or '复刻人物（换人）'} · "
+        source_desc=(f"{result.get('resolution') or body.resolution} · "
+                     f"{result.get('mode_label') or '复刻人物（换人）'} · "
                      f"{result.get('source_desc') or ''}")[:255],
         provider=str(result.get("provider") or ""), model=str(result.get("model") or ""),
         prompt=str(result.get("prompt") or ""), status="RUNNING",
