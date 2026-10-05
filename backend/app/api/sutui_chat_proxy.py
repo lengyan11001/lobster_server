@@ -2274,10 +2274,15 @@ def _apply_chat_deduct(
 _WECHAT_REPLY_SYSTEM_MARKERS = ('"should_reply"', '"should_invite_group"')
 _WECHAT_CONTACT_KINDS = {"wechat_id", "mobile", "qq", "email"}
 _WECHAT_CONTACT_INSTRUCTION = (
-    '\n另外：对话里如果出现了可能是联系方式的字符串（微信号、手机号、QQ、邮箱），'
-    '你要判断哪一个才是对方真正的联系方式，填进 contact_shared，'
-    '格式 "contact_shared":[{"kind":"wechat_id|mobile|qq|email","value":"取到的值",'
-    '"evidence":"原文片段","direction":"inbound"}]；判断不出来就给空数组 []。'
+    '\n【必填字段】除了上面要求的 JSON 字段外，你还必须额外输出一个 contact_shared 字段（数组，不能省略）。'
+    '要求：通读对话（对方和我方都看），如果出现了可能是联系方式的字符串——微信号、手机号、QQ、邮箱——'
+    '你要判断哪一个才是真正的联系方式，把它填进去；一个都没有就返回空数组 []。'
+    '元素格式：{"kind":"wechat_id|mobile|qq|email","value":"取到的值（原样，不要改写）",'
+    '"evidence":"出现它的原文片段","direction":"inbound（对方发的）或 outbound（我方发的）"}。'
+    '示例：对方说「我的微信号是 djddjdjddn」时，contact_shared 必须是 '
+    '[{"kind":"wechat_id","value":"djddjdjddn","evidence":"我的微信号是 djddjdjddn","direction":"inbound"}]；'
+    '对方说「加我 13800138000」时，是 [{"kind":"mobile","value":"13800138000","evidence":"加我 13800138000","direction":"inbound"}]。'
+    '不要为了填空而编造：没有就 []。'
 )
 
 
@@ -2385,7 +2390,11 @@ def _persist_wechat_model_contacts(
             return 0
         first = choices[0] if isinstance(choices[0], dict) else {}
         message = first.get("message") if isinstance(first.get("message"), dict) else {}
-        items = _model_shared_contacts_from_content(message.get("content"))
+        raw_content = str(message.get("content") or "")
+        items = _model_shared_contacts_from_content(raw_content)
+        if not items:
+            logger.info("[wechat-contacts] 本轮没有联系方式 user_id=%s has_key=%s preview=%s",
+                        getattr(user, "id", ""), "contact_shared" in raw_content, raw_content[:200].replace("\n", " "))
         if not items:
             return 0
         from ..models import WechatSharedContact
