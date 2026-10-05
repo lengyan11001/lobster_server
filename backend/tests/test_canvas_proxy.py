@@ -501,3 +501,34 @@ def test_other_404_still_reaches_client(client, monkeypatch):
     )
     res = client.post("/canvas-api/api/v1/projects/not-exist/canvas/load", json={})
     assert res.status_code == 404
+
+
+def test_task_query_settles_without_undefined_uid(client, monkeypatch):
+    """回归 2026-10-05：轮询 tasks/query 拿到产物后登记内容时用了未定义的 uid。
+
+    线上表现（diag/本地 backend.log）：轮询一直 200，等出图那一刻变 500，
+    画布前端弹「暂时无法读取任务状态，请稍后重试」；服务端 journal 里是
+    canvas_proxy.py:1065 NameError: name 'uid' is not defined。
+    """
+    body = {
+        "code": 200,
+        "data": {
+            "task_id": "task-1",
+            "status": "completed",
+            "output": {"images": [{"url": "https://cdn.example.com/done.png"}]},
+        },
+    }
+    patch_upstream(monkeypatch, FakeResponse(content=json.dumps(body).encode("utf-8")))
+
+    resp = client.post("/canvas-api/api/v3/tasks/query", json={"task_id": "task-1"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["task_id"] == "task-1"
+
+
+def test_canvas_proxy_defines_uid_for_record_step():
+    """静态兜底：canvas_proxy 里用到 uid 的地方必须在函数内先赋值（别再引用 _hub_route 的局部变量）。"""
+    import inspect
+
+    source = inspect.getsource(canvas_proxy.canvas_proxy)
+    assert "uid = int(getattr(user" in source, source[:400]

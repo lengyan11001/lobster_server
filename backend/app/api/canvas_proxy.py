@@ -950,6 +950,12 @@ async def canvas_proxy(
     if not normalized or "://" in normalized or ".." in normalized.split("/"):
         raise HTTPException(status_code=404, detail="缺少接口路径")
 
+    # 转发成功后要按用户记「内容记录 / 画布任务」，这里先把用户 id 取一次。
+    # 2026-10-05 事故：tasks/query 轮询拿到产物后走到 canvas_hub.register_content_record
+    # 时用的是 _hub_route 里的局部变量 uid（本函数没有定义）→ NameError → 接口 500，
+    # 画布前端就显示「暂时无法读取任务状态，请稍后重试」并把已生成的图判成失败。
+    uid = int(getattr(user, "id", 0) or 0)
+
     # 画布会拿 sk- 调 V3 模型：不把真 key 发到浏览器，只回占位值，转发时再注入速推 key
     if normalized.startswith("api/v3/apikeys"):
         return JSONResponse({"code": 200, "data": {"items": [{"status": "active", "key": "sk-lobster-canvas-proxy"}]}})
