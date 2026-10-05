@@ -1917,7 +1917,7 @@ body{background:#edf2f7}
   <div class="container" id="pageWechatContacts" style="display:none">
     <div class="card">
       <h3>上报微信号</h3>
-      <p style="color:#888;font-size:13px;margin:0 0 12px">个微接管在聊天里识别到的联系方式（微信号 / 手机号 / QQ / 邮箱）。按用户账户查询：填用户 ID 或邮箱。</p>
+      <p style="color:#888;font-size:13px;margin:0 0 12px">两处来源合并：① 抖音私信接管识别到的联系方式（进加好友联系池）② 个微聊天里对方给出的联系方式。按用户账户查询：填用户 ID 或邮箱。</p>
       <div class="search-bar" style="margin-bottom:14px">
         <input type="text" id="wechatContactSearch" placeholder="用户ID / 用户邮箱 / 微信号 / 手机号 / 备注名" onkeydown="if(event.key==='Enter')loadWechatContacts(1)">
         <select id="wechatContactKind" onchange="loadWechatContacts(1)" style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
@@ -2584,7 +2584,10 @@ let wechatContactPage = 1;
 let wechatContactPages = 1;
 const WECHAT_CONTACT_PAGE_SIZE = 20;
 const WECHAT_CONTACT_KIND_LABEL = {wechat_id: '微信号', mobile: '手机号', qq: 'QQ', email: '邮箱'};
-const WECHAT_CONTACT_SOURCE_LABEL = {regex: '本地正则', model: '模型'};
+const WECHAT_CONTACT_STATUS_LABEL = {
+  pending: '待加好友', added: '已添加', failed: '加好友失败', captured: '已识别',
+  claimed: '已被领取', skipped: '已跳过'
+};
 
 function wechatContactKindLabel(kind, direction) {
   let label = WECHAT_CONTACT_KIND_LABEL[kind] || kind || '-';
@@ -2616,16 +2619,17 @@ async function loadWechatContacts(page) {
     if (!items.length) {
       target.innerHTML = '<div class="empty">暂无上报记录</div>';
     } else {
-      let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>联系人</th><th>类型</th><th>号码 / 微信号</th><th>识别来源</th><th>聊天原文</th></tr></thead><tbody>';
+      let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>来源</th><th>客户 / 会话</th><th>类型</th><th>号码 / 微信号</th><th>状态</th><th>原文 / 会话</th></tr></thead><tbody>';
       items.forEach(function (it) {
         html += '<tr>'
           + '<td>' + esc(String(it.created_at || '').replace('T', ' ').slice(0, 19)) + '</td>'
           + '<td>' + esc((it.user_email || '') + ' (#' + (it.user_id || '') + ')') + '</td>'
+          + '<td>' + esc(it.source_label || '') + '</td>'
           + '<td>' + esc(it.contact_name || it.contact_key || '') + '</td>'
           + '<td>' + esc(wechatContactKindLabel(it.kind, it.direction)) + '</td>'
           + '<td><b>' + esc(it.value || '') + '</b></td>'
-          + '<td>' + esc(WECHAT_CONTACT_SOURCE_LABEL[it.source] || it.source || '') + '</td>'
-          + '<td style="max-width:360px;white-space:normal;word-break:break-all">' + esc(it.evidence || '') + '</td>'
+          + '<td>' + esc(WECHAT_CONTACT_STATUS_LABEL[it.status] || it.status || '') + '</td>'
+          + '<td style="max-width:320px;white-space:normal;word-break:break-all">' + esc(it.evidence || '') + '</td>'
           + '</tr>';
       });
       html += '</tbody></table></div>';

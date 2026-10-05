@@ -146,3 +146,25 @@ def test_ensure_wechat_contact_instruction_only_for_old_client():
 
     plain = {"messages": [{"role": "system", "content": "你是助手"}]}
     assert sp._ensure_wechat_contact_instruction(plain) is False
+
+
+def test_admin_list_includes_douyin_dm_reports(db_session, test_user):
+    """抖音私信接管提取的微信号进的是 wechat_contact_reports（加好友联系池），管理后台也要能查到。"""
+    from backend.app.api import admin as admin_api
+    from backend.app.models import WechatContactReport
+
+    db_session.add(WechatContactReport(
+        user_id=test_user.id, brand_mark="daka", platform="douyin", kind="wechat_id",
+        value="djddjdjddn", source_username="张深根 微赢共创", source_conversation="我的微信号是 djddjdjddn",
+        status="pending",
+    ))
+    db_session.commit()
+
+    listed = admin_api.admin_list_wechat_shared_contacts(
+        user_id=test_user.id, kind="", q="", page=1, page_size=10, ctx=None, db=db_session)
+    assert listed["ok"] is True and listed["total"] == 1
+    item = listed["items"][0]
+    assert item["source_type"] == "douyin_dm" and item["source_label"] == "抖音私信接管"
+    assert item["value"] == "djddjdjddn" and item["kind"] == "wechat_id"
+    assert item["status"] == "pending"
+    assert item["user_email"] == test_user.email
