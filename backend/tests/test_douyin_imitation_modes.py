@@ -160,12 +160,16 @@ def test_user_duration_changes_billable_seconds():
     plan = estimate_imitation(16, "720P", sides=Decimal("1"))
     assert plan["billable_seconds"] == 16 and plan["credits"] == 1440
 
-    # 输出秒数夹取：不选=跟输入一样；下限 2；上限受「输入+输出 ≤30」约束
+    # 输出秒数夹取：不选=跟输入一样（但也不能超上限）；下限 2；上限用真实秒数算
     assert resolve_output_seconds(0, 6) == 6
     assert resolve_output_seconds(1, 6) == 2
     assert resolve_output_seconds(10, 6) == 10
-    assert resolve_output_seconds(30, 15) == 15
+    assert resolve_output_seconds(30, 15) == 14          # 30 - 15 - 0.05 → 14，避免 15+15=30.07 被上游拒
     assert resolve_output_seconds(30, 28) == 2
+    # 上游真实报错场景：输入 15.07s，用户选 16s / 不选，都必须落到 14s 以内
+    assert resolve_output_seconds(16, 15.07) == 14
+    assert resolve_output_seconds(0, 15.07) == 14
+    assert resolve_output_seconds(12, 15.07) == 12
 
 
 def test_prepare_imitation_passes_resolution_to_submit(monkeypatch):

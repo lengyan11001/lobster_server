@@ -581,15 +581,30 @@ MAX_TOTAL_SECONDS = 30
 
 
 def resolve_output_seconds(raw: object, input_seconds: float) -> int:
-    """用户选的成片秒数（0=跟输入一样长）；按「输入+输出 ≤30 秒」夹住。"""
+    """用户选的成片秒数（0 = 跟输入视频一样长）；按「输入 + 输出 ≤ 30 秒」夹住。
+
+    2026-10-05 事故：上游是按真实秒数校验的 ——
+      input_video_duration(15.07s) + duration(16.0s) = 31.07s exceeds 30s limit
+    以前这里把输入时长四舍五入成整数（15.07 → 15）再算上限，15 + 15 = 30 看着合规，
+    实际 30.07 秒被上游拒掉。现在用精确的小数时长算上限，并且留 0.05 秒浮点余量；
+    不选时长（0）时也照样夹，不能超过上限。
+    """
+    import math
     try:
         want = int(float(raw or 0))
     except (TypeError, ValueError):
         want = 0
-    sent = max(1, int(round(float(input_seconds or 0))))
+    try:
+        sent = float(input_seconds or 0)
+    except (TypeError, ValueError):
+        sent = 0.0
+    if sent <= 0:
+        sent = float(MAX_TOTAL_SECONDS)
+    ceiling = int(math.floor(MAX_TOTAL_SECONDS - sent - 0.05))
+    if ceiling < MIN_OUTPUT_SECONDS:
+        ceiling = MIN_OUTPUT_SECONDS
     if want <= 0:
-        return min(sent, MAX_TOTAL_SECONDS)
-    ceiling = max(MIN_OUTPUT_SECONDS, min(MAX_TOTAL_SECONDS - sent, MAX_TOTAL_SECONDS))
+        return max(MIN_OUTPUT_SECONDS, min(int(math.floor(sent)), ceiling))
     return max(MIN_OUTPUT_SECONDS, min(want, ceiling))
 
 
