@@ -27,6 +27,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import pathlib
@@ -369,6 +370,27 @@ async def _upload_tos(data: bytes, suffix: str, content_type: str) -> Tuple[str,
     return public_url, ""
 
 
+def probe_video_seconds(data: bytes) -> float:
+    """ffprobe 读视频实际时长（秒）。读不到返回 0（调用方按上限兜底收费，避免少收）。"""
+    from pathlib import Path
+
+    if not data:
+        return 0.0
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "probe.mp4"
+        path.write_bytes(data)
+        try:
+            done = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True, timeout=60, text=True,
+            )
+            return max(0.0, float(str(done.stdout or "").strip() or 0))
+        except Exception as exc:  # noqa: BLE001 探测失败就交给上限
+            logger.info("[douyin-imitation] 读取视频时长失败：%s", exc)
+            return 0.0
+
+
 def trim_video(data: bytes, max_seconds: int) -> Tuple[bytes, str]:
     """裁到 max_seconds（优先 -c copy，失败则重编码）。"""
     from pathlib import Path
@@ -528,6 +550,11 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
         if err:
             return {"ok": False, "error": err}
     max_seconds = _max_seconds()
+    # 2026-10-05：按原视频实际时长计费（超过上限才按上限），这里先探一次真实时长
+    source_seconds = await asyncio.to_thread(probe_video_seconds, video_bytes)
+    effective_seconds = float(max_seconds)
+    if source_seconds and source_seconds > 0:
+        effective_seconds = min(float(max_seconds), source_seconds)
     trimmed, _warn = trim_video(video_bytes, max_seconds)
     video_tos, err = await _upload_tos(trimmed, ".mp4", "video/mp4")
     if err:
@@ -543,7 +570,10 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     result = await submit_imitation(image_tos, video_tos, prompt=final_prompt)
     if not result.get("ok"):
         return result
-    result.update({"source_desc": source.get("desc") or "", "video_seconds": max_seconds,
+    result.update({"source_desc": source.get("desc") or "",
+                   "source_seconds": round(float(source_seconds or 0.0), 2),
+                   "video_seconds": max(1, int(effective_seconds) if float(effective_seconds).is_integer()
+                                        else int(effective_seconds) + 1),
                    "image_url": image_tos, "video_url": video_tos,
                    "mode": normalize_mode(mode), "mode_label": mode_label(mode),
                    "prompt": final_prompt})

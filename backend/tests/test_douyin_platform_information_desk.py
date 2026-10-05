@@ -710,11 +710,13 @@ def test_imitation_billing_refunds_when_submit_fails(db_session, db_session_fact
     from backend.app.models import CreditLedger
 
     db_session.expire_all()
+    # 2026-10-05 改成「拿到实际时长后才扣费」：提交没成功就完全不扣，也不需要退
     entries = (db_session.query(CreditLedger)
                .filter(CreditLedger.user_id == test_user.id,
                        CreditLedger.entry_type.in_(("deduct", "refund")))
                .order_by(CreditLedger.id).all())
-    assert [(e.entry_type, float(e.delta)) for e in entries] == [("deduct", -2700.0), ("refund", 2700.0)]
+    assert entries == []
+    assert _balance(db_session, test_user.id) == before
 
 
 def test_imitation_billing_refunds_when_task_fails(db_session, db_session_factory, test_user, monkeypatch):
@@ -755,3 +757,52 @@ def test_imitation_billing_refunds_when_task_fails(db_session, db_session_factor
                        CreditLedger.entry_type.in_(("deduct", "refund")))
                .order_by(CreditLedger.id).all())
     assert [(e.entry_type, float(e.delta)) for e in entries] == [("deduct", -2700.0), ("refund", 2700.0)]
+
+
+def test_imitation_charges_by_real_video_seconds(db_session, db_session_factory, test_user, monkeypatch):
+    """按原视频实际时长计费：6 秒的视频只收 6×2×0.6×100×1.5 = 1080，而不是上限 2700。"""
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import User
+
+    _grant_desk(db_session, test_user.id)
+    db_session.query(User).filter(User.id == test_user.id).first().credits = Decimal("100000.0000")
+    db_session.commit()
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+
+    async def short_prepare(image_url, item_id, prompt="", **kwargs):
+        return {"ok": True, "task_id": "short-1", "model": "wan2.7-videoedit", "provider": "videoedit",
+                "source_desc": "x", "image_url": "https://tos.test/a.png", "video_url": "https://tos.test/v.mp4",
+                "source_seconds": 6.0, "video_seconds": 6}
+
+    monkeypatch.setattr(desk_api, "prepare_imitation", short_prepare)
+    client = _client(db_session_factory, test_user.id)
+    created = client.post("/api/douyin/platform-information-desk/imitation",
+                          json={"image_url": "https://tos.test/a.png",
+                                "video_url": "https://www.douyin.com/video/7688685833386071653"})
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["billing"]["seconds"] == 6
+    assert body["billing"]["billable_seconds"] == 12
+    assert body["billing"]["credits_charged"] == 1080.0
+
+
+def test_imitation_uses_cap_seconds_when_probe_fails(db_session, db_session_factory, test_user, monkeypatch):
+    """探不到时长（老/异常视频）时按上限计费，宁可不少收。"""
+    from backend.app.api import douyin_platform_information_desk as desk_api
+    from backend.app.models import User
+
+    _grant_desk(db_session, test_user.id)
+    db_session.query(User).filter(User.id == test_user.id).first().credits = Decimal("100000.0000")
+    db_session.commit()
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+
+    async def unknown_prepare(image_url, item_id, prompt="", **kwargs):
+        return {"ok": True, "task_id": "cap-1", "model": "wan2.7-videoedit", "provider": "videoedit",
+                "source_desc": "x", "image_url": "https://tos.test/a.png", "video_url": "https://tos.test/v.mp4"}
+
+    monkeypatch.setattr(desk_api, "prepare_imitation", unknown_prepare)
+    client = _client(db_session_factory, test_user.id)
+    created = client.post("/api/douyin/platform-information-desk/imitation",
+                          json={"image_url": "https://tos.test/a.png", "item_id": "7689077964000973561"})
+    assert created.status_code == 200, created.text
+    assert created.json()["billing"]["credits_charged"] == 2700.0

@@ -97,6 +97,27 @@ def _apply(db: Session, user: Any, credits: Decimal, *, reason: str, refund: boo
     return credits
 
 
+def check_balance(db: Session, user: Any, credits: Decimal) -> None:
+    """只做余额校验（不扣费、不写流水）。
+
+    2026-10-05：跟创改成「按原视频实际时长」计费后，扣费时机挪到拿到时长之后；
+    但提交前仍要先按上限确认余额够，避免没钱还去跑一遍下载/裁剪/上传。
+    """
+    need = quantize_credits(credits or 0)
+    if need <= 0:
+        return
+    try:
+        db.refresh(user)
+    except Exception:  # noqa: BLE001 用例/跨会话场景下 user 可能不绑定当前 session，用现值即可
+        pass
+    balance = user_balance_decimal(user)
+    if balance < need:
+        raise HTTPException(
+            status_code=402,
+            detail=f"算力不足：本次最多预计消耗 {credits_json_float(need)} 算力，当前余额 {credits_json_float(balance)}。请充值后重试。",
+        )
+
+
 def deduct(db: Session, user: Any, credits: Decimal, *, reason: str) -> Decimal:
     return _apply(db, user, quantize_credits(credits), reason=reason)
 

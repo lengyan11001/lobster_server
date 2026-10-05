@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import desc
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ from ..services.user_feature_flags import (
 )
 from .auth import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -69,14 +72,22 @@ async def create_information_desk_imitation(
     if not str(body.image_url or "").strip():
         raise HTTPException(status_code=400, detail="请上传一张参考图（不传的话先在「IP人设定位」里放一张形象照）")
     # 上游按「输入视频 + 输出视频」秒数计费，这里先按裁剪后的秒数预扣，失败全额退
-    plan = billing.estimate_imitation(_max_seconds())
-    charged = billing.deduct(db, current_user, billing.Decimal(str(plan["credits"])),
-                             reason=f"douyin_imitation:{body.item_id or body.video_url[:80]}")
+    # 2026-10-05：改成按「原视频实际时长」计费 —— 先只按上限校验余额（不扣），
+    # 等 prepare 探到真实时长后再按实际秒数扣费（失败/提交不成功不扣）。
+    cap_plan = billing.estimate_imitation(_max_seconds())
+    billing.check_balance(db, current_user, billing.Decimal(str(cap_plan["credits"])))
     result = await prepare_imitation(body.image_url, body.item_id, body.prompt,
                                      video_url=body.video_url, mode=body.mode)
     if not result.get("ok"):
-        billing.refund(db, current_user, charged, reason="douyin_imitation_submit_failed")
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
+    seconds = int(result.get("video_seconds") or _max_seconds())
+    plan = billing.estimate_imitation(seconds)
+    try:
+        charged = billing.deduct(db, current_user, billing.Decimal(str(plan["credits"])),
+                                 reason=f"douyin_imitation:{body.item_id or str(body.video_url)[:80]}")
+    except HTTPException as exc:  # 提交前已校验过余额，这里兜底不把已提交的任务搞丢
+        logger.warning("[douyin-imitation] 扣费失败（任务已提交）: %s", getattr(exc, "detail", exc))
+        charged = billing.Decimal("0")
     row = DouyinImitationTask(
         user_id=int(current_user.id), task_id=str(result.get("task_id") or ""),
         item_id=str(body.item_id or ""), title=str(body.title or "")[:255],
