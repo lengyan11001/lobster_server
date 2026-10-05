@@ -22,8 +22,8 @@ def test_mode_prompts_are_distinct_and_normalized():
     assert normalize_mode("ACTION_COPY") == "action_copy"
     assert normalize_mode("谁也不是") == "person_swap"
 
-    assert prompt_for_mode("effect_copy") == "参考视频的特效，将这个特效应用到图片中女人身上，场景为街边。"
-    assert prompt_for_mode("action_copy") == "让图片中的人物模仿视频中的人的动作。"
+    assert prompt_for_mode("effect_copy") == "参考视频的特效，将这个特效应用到图片中的人物身上，场景与镜头跟随参考视频。"
+    assert prompt_for_mode("action_copy") == "让图片中的人物模仿参考视频中的人物动作，镜头与节奏和参考视频保持一致。"
     assert prompt_for_mode("person_swap") == MODE_PROMPTS["person_swap"]
     # 用户自己填了就用他的
     assert prompt_for_mode("effect_copy", "  我的提示词  ") == "我的提示词"
@@ -106,7 +106,7 @@ def test_prepare_imitation_resolves_douyin_page_link_through_tikhub(monkeypatch)
     assert seen["item_id"] == "7688685833386071653"
     # _download 还会被用来取参考图，这里只确认「抖音作品页链接」没走直链下载
     assert seen.get("direct_download") != "https://www.douyin.com/video/7688685833386071653"
-    assert result["prompt"] == "让图片中的人物模仿视频中的人的动作。"
+    assert result["prompt"] == "让图片中的人物模仿参考视频中的人物动作，镜头与节奏和参考视频保持一致。"
     assert result["mode_label"] == "复刻单人动作"
 
 
