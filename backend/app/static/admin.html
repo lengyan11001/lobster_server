@@ -591,6 +591,7 @@ body{background:#edf2f7}
       <div class="nav-tab" data-icon="系" data-nav="systemWorkflows" onclick="switchNav('systemWorkflows')">系统模板</div>
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
       <div class="nav-tab" data-icon="数" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询记录</div>
+<div class="nav-tab" data-icon="微" data-nav="wechatContacts" id="wechatContactsNavTab" onclick="switchNav('wechatContacts')" style="display:none">上报微信号</div>
       <div class="nav-tab" data-icon="牌" data-nav="brands" id="brandsNavTab" onclick="switchNav('brands')">品牌管理</div>
       <div class="nav-tab" data-icon="远" data-nav="remoteSupport" id="remoteSupportNavTab" onclick="switchNav('remoteSupport')" style="display:none">远程支持设备</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
@@ -1912,6 +1913,27 @@ body{background:#edf2f7}
     </div>
   </div>
 
+  <!-- Page: 上报微信号（个微接管识别到的联系方式） -->
+  <div class="container" id="pageWechatContacts" style="display:none">
+    <div class="card">
+      <h3>上报微信号</h3>
+      <p style="color:#888;font-size:13px;margin:0 0 12px">个微接管在聊天里识别到的联系方式（微信号 / 手机号 / QQ / 邮箱）。按用户账户查询：填用户 ID 或邮箱。</p>
+      <div class="search-bar" style="margin-bottom:14px">
+        <input type="text" id="wechatContactSearch" placeholder="用户ID / 用户邮箱 / 微信号 / 手机号 / 备注名" onkeydown="if(event.key==='Enter')loadWechatContacts(1)">
+        <select id="wechatContactKind" onchange="loadWechatContacts(1)" style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
+          <option value="">全部类型</option>
+          <option value="wechat_id">微信号</option>
+          <option value="mobile">手机号</option>
+          <option value="qq">QQ</option>
+          <option value="email">邮箱</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadWechatContacts(1)">查询</button>
+      </div>
+      <div id="wechatContactsTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="wechatContactsPagination"></div>
+    </div>
+  </div>
+
   <!-- Page: Shop merchants（商家审核） -->
   <div class="container" id="pageMerchants" style="display:none">
     <div class="card">
@@ -2383,6 +2405,8 @@ function showDashboard() {
   const merchantTab = document.getElementById('merchantsNavTab');
   const dispatchDevicesTab = document.getElementById('dispatchDevicesNavTab');
   if (dispatchDevicesTab) dispatchDevicesTab.style.display = isAdmin() ? '' : 'none';
+  const wechatContactsTab = document.getElementById('wechatContactsNavTab');
+  if (wechatContactsTab) wechatContactsTab.style.display = isAdmin() ? '' : 'none';
   if (merchantTab) merchantTab.style.display = isAdmin() ? '' : 'none';
 
   requestAnimationFrame(() => {
@@ -2555,6 +2579,70 @@ function resetMerchantFilters() {
   loadMerchants(1);
 }
 
+/* ── 上报微信号（个微接管识别到的联系方式） ── */
+let wechatContactPage = 1;
+let wechatContactPages = 1;
+const WECHAT_CONTACT_PAGE_SIZE = 20;
+const WECHAT_CONTACT_KIND_LABEL = {wechat_id: '微信号', mobile: '手机号', qq: 'QQ', email: '邮箱'};
+const WECHAT_CONTACT_SOURCE_LABEL = {regex: '本地正则', model: '模型'};
+
+function wechatContactKindLabel(kind, direction) {
+  let label = WECHAT_CONTACT_KIND_LABEL[kind] || kind || '-';
+  if (direction === 'outbound') label += '（我方发出）';
+  return label;
+}
+
+async function loadWechatContacts(page) {
+  wechatContactPage = Math.max(1, Number(page || 1));
+  const target = document.getElementById('wechatContactsTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const key = ((document.getElementById('wechatContactSearch') || {}).value || '').trim();
+    const kind = ((document.getElementById('wechatContactKind') || {}).value || '').trim();
+    const params = new URLSearchParams({
+      page: String(wechatContactPage),
+      page_size: String(WECHAT_CONTACT_PAGE_SIZE),
+      q: key,
+      kind: kind,
+    });
+    const data = await api('/admin/api/wechat-shared-contacts?' + params.toString());
+    const items = data.items || [];
+    wechatContactPages = Math.max(1, Math.ceil((Number(data.total) || 0) / WECHAT_CONTACT_PAGE_SIZE));
+    if (!items.length) {
+      target.innerHTML = '<div class="empty">暂无上报记录</div>';
+    } else {
+      let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>联系人</th><th>类型</th><th>号码 / 微信号</th><th>识别来源</th><th>聊天原文</th></tr></thead><tbody>';
+      items.forEach(function (it) {
+        html += '<tr>'
+          + '<td>' + esc(String(it.created_at || '').replace('T', ' ').slice(0, 19)) + '</td>'
+          + '<td>' + esc((it.user_email || '') + ' (#' + (it.user_id || '') + ')') + '</td>'
+          + '<td>' + esc(it.contact_name || it.contact_key || '') + '</td>'
+          + '<td>' + esc(wechatContactKindLabel(it.kind, it.direction)) + '</td>'
+          + '<td><b>' + esc(it.value || '') + '</b></td>'
+          + '<td>' + esc(WECHAT_CONTACT_SOURCE_LABEL[it.source] || it.source || '') + '</td>'
+          + '<td style="max-width:360px;white-space:normal;word-break:break-all">' + esc(it.evidence || '') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+      target.innerHTML = html;
+    }
+    renderWechatContactPagination();
+  } catch (e) {
+    target.innerHTML = '<div class="empty">加载失败：' + esc((e && e.message) || e) + '</div>';
+  }
+}
+
+function renderWechatContactPagination() {
+  const box = document.getElementById('wechatContactsPagination');
+  if (!box) return;
+  box.innerHTML = '<button class="btn btn-sm" ' + (wechatContactPage <= 1 ? 'disabled' : '')
+    + ' onclick="loadWechatContacts(' + (wechatContactPage - 1) + ')">上一页</button>'
+    + '<span style="margin:0 12px">第 ' + wechatContactPage + ' / ' + wechatContactPages + ' 页</span>'
+    + '<button class="btn btn-sm" ' + (wechatContactPage >= wechatContactPages ? 'disabled' : '')
+    + ' onclick="loadWechatContacts(' + (wechatContactPage + 1) + ')">下一页</button>';
+}
+
 function navTitle(nav) {
   return {
     stats: '首页数据大盘',
@@ -2565,6 +2653,7 @@ function navTitle(nav) {
     systemWorkflows: '系统模板工作流',
     generationRecords: '素材生成记录',
     tikhubRecords: '数据查询记录',
+    wechatContacts: '上报微信号',
     brands: '品牌管理',
     commissions: '分润记录',
     remoteSupport: '远程支持设备',
@@ -2580,6 +2669,7 @@ function switchNav(nav) {
   if (nav === 'systemWorkflows' && !isAdmin()) nav = 'stats';
   if (nav === 'merchants' && !isAdmin()) nav = 'stats';
   if (nav === 'dispatchDevices' && !isAdmin()) nav = 'stats';
+  if (nav === 'wechatContacts' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
@@ -2608,6 +2698,8 @@ function switchNav(nav) {
   if (pageMerchants) pageMerchants.style.display = nav === 'merchants' ? '' : 'none';
   const pageDispatchDevices = document.getElementById('pageDispatchDevices');
   if (pageDispatchDevices) pageDispatchDevices.style.display = nav === 'dispatchDevices' ? '' : 'none';
+  const pageWechatContacts = document.getElementById('pageWechatContacts');
+  if (pageWechatContacts) pageWechatContacts.style.display = nav === 'wechatContacts' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'customers') loadCustomers(customerPage || 1);
@@ -2615,6 +2707,7 @@ function switchNav(nav) {
   if (nav === 'templates') prepareTemplatePage();
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
   if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
+  if (nav === 'wechatContacts') loadWechatContacts(wechatContactPage || 1);
   if (nav === 'commissions') loadCommissions(0);
   if (nav === 'brands') loadBrands();
   if (nav === 'remoteSupport') loadRemoteSupportDevices();

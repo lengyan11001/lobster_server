@@ -7,9 +7,11 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
@@ -2267,6 +2269,174 @@ def _apply_chat_deduct(
     logger.info("[sutui-chat] 已扣积分 trace_id=%s user_id=%s model=%s credits=%s", tid, current_user.id, model, credits)
 
 
+# ── 个微接管自动回复：让 AI 判断对话里哪个才是联系方式，服务端直接入库 ──
+# 2026-10-05 用户口径：只认 AI 的判断，服务端不做正则/猜测（对方不一定按固定格式写）。
+_WECHAT_REPLY_SYSTEM_MARKERS = ('"should_reply"', '"should_invite_group"')
+_WECHAT_CONTACT_KINDS = {"wechat_id", "mobile", "qq", "email"}
+_WECHAT_CONTACT_INSTRUCTION = (
+    '\n另外：对话里如果出现了可能是联系方式的字符串（微信号、手机号、QQ、邮箱），'
+    '你要判断哪一个才是对方真正的联系方式，填进 contact_shared，'
+    '格式 "contact_shared":[{"kind":"wechat_id|mobile|qq|email","value":"取到的值",'
+    '"evidence":"原文片段","direction":"inbound"}]；判断不出来就给空数组 []。'
+)
+
+
+def _is_wechat_auto_reply_request(body: Dict[str, Any]) -> bool:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for item in messages:
+        if not isinstance(item, dict) or item.get("role") != "system":
+            continue
+        content = str(item.get("content") or "")
+        if all(marker in content for marker in _WECHAT_REPLY_SYSTEM_MARKERS):
+            return True
+    return False
+
+
+def _ensure_wechat_contact_instruction(body: Dict[str, Any]) -> bool:
+    """老客户端没写 contact_shared 规则时，服务端补一句（只补一次）。"""
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for item in messages:
+        if not isinstance(item, dict) or item.get("role") != "system":
+            continue
+        content = str(item.get("content") or "")
+        if all(marker in content for marker in _WECHAT_REPLY_SYSTEM_MARKERS):
+            if "contact_shared" in content:
+                return False
+            item["content"] = content + _WECHAT_CONTACT_INSTRUCTION
+            return True
+    return False
+
+
+def _wechat_auto_reply_peer(body: Dict[str, Any]) -> str:
+    for item in body.get("messages") or []:
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        match = re.search(r"会话对象[:：]\s*(.+)", str(item.get("content") or ""))
+        if match:
+            return match.group(1).strip()[:240]
+    return ""
+
+
+def _model_shared_contacts_from_content(content: Any) -> List[Dict[str, Any]]:
+    """只取 AI 返回的 contact_shared（服务端不做正则兜底）。"""
+    raw = str(content or "")
+    if "contact_shared" not in raw:
+        return []
+    start = raw.find("{")
+    while start != -1:
+        depth = 0
+        for idx in range(start, len(raw)):
+            if raw[idx] == "{":
+                depth += 1
+            elif raw[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        parsed = json.loads(raw[start:idx + 1])
+                    except Exception:
+                        parsed = None
+                    if isinstance(parsed, dict) and "contact_shared" in parsed:
+                        items = parsed.get("contact_shared")
+                        if not isinstance(items, list):
+                            return []
+                        out: List[Dict[str, Any]] = []
+                        for entry in items[:20]:
+                            if not isinstance(entry, dict):
+                                continue
+                            value = str(entry.get("value") or "").strip()
+                            if not value:
+                                continue
+                            kind = str(entry.get("kind") or "").strip().lower()
+                            if kind not in _WECHAT_CONTACT_KINDS:
+                                kind = "wechat_id"
+                            direction = str(entry.get("direction") or "").strip().lower()
+                            if direction not in {"inbound", "outbound"}:
+                                direction = "inbound"
+                            out.append({
+                                "kind": kind,
+                                "value": value[:120],
+                                "evidence": str(entry.get("evidence") or "")[:1000],
+                                "direction": direction,
+                            })
+                        return out
+                    start = raw.find("{", start + 1)
+                    break
+        else:
+            break
+    return []
+
+
+def _persist_wechat_model_contacts(
+    db: Session,
+    user: User,
+    body: Dict[str, Any],
+    out: Any,
+) -> int:
+    """把 AI 判断出的联系方式落库（同一用户+账号+联系人+类型+值 幂等）。"""
+    try:
+        if not isinstance(out, dict) or not _is_wechat_auto_reply_request(body):
+            return 0
+        choices = out.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return 0
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first.get("message"), dict) else {}
+        items = _model_shared_contacts_from_content(message.get("content"))
+        if not items:
+            return 0
+        from ..models import WechatSharedContact
+
+        peer = _wechat_auto_reply_peer(body)
+        account = "pc-wechat-default"
+        now = datetime.utcnow()
+        saved = 0
+        for item in items:
+            row = (
+                db.query(WechatSharedContact)
+                .filter(
+                    WechatSharedContact.user_id == int(user.id),
+                    WechatSharedContact.account_id == account,
+                    WechatSharedContact.contact_key == peer,
+                    WechatSharedContact.kind == item["kind"],
+                    WechatSharedContact.value == item["value"],
+                )
+                .first()
+            )
+            if row is None:
+                db.add(WechatSharedContact(
+                    user_id=int(user.id),
+                    account_id=account,
+                    contact_key=peer,
+                    contact_name="",
+                    kind=item["kind"],
+                    value=item["value"],
+                    evidence=item["evidence"],
+                    direction=item["direction"],
+                    source="model",
+                    created_at=now,
+                ))
+            else:
+                if item["evidence"]:
+                    row.evidence = item["evidence"]
+                row.direction = item["direction"]
+                row.updated_at = now
+            saved += 1
+        if saved:
+            db.commit()
+            logger.info("[wechat-contacts] user_id=%s peer=%s saved=%s", user.id, peer, saved)
+        return saved
+    except Exception as exc:  # noqa: BLE001 提取联系方式不能影响对话返回
+        logger.warning("[wechat-contacts] 落库失败 user_id=%s err=%s", getattr(user, "id", ""), str(exc)[:200])
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
 @router.post("/api/sutui-chat/chat/completions", include_in_schema=False)
 @router.post("/api/sutui-chat/completions", summary="速推 LLM 对话代理（需登录）")
 async def sutui_chat_completions(
@@ -2322,6 +2492,8 @@ async def sutui_chat_completions(
             llm_model_override,
             True,
         )
+    if _is_wechat_auto_reply_request(body) and _ensure_wechat_contact_instruction(body):
+        logger.info("[wechat-contacts] 已给老客户端补 contact_shared 规则 user_id=%s", current_user.id)
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
     # Keep the audit request URL-only, then prepare remote images for the
     # provider.  This prevents large base64 payloads from entering logs while
@@ -2717,6 +2889,8 @@ async def sutui_chat_completions(
                 resp_status = 503
         elif resp_status >= 400:
             out = _normalize_upstream_xskill_pool_errors_for_client(data)
+        if resp_status == 200:
+            _persist_wechat_model_contacts(db, current_user, body, out)
         return JSONResponse(
             content=out,
             status_code=resp_status,

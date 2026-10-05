@@ -4051,6 +4051,61 @@ def _imitation_record_brief(row: Any, email: str = "") -> Dict[str, Any]:
     }
 
 
+@router.get("/api/admin/wechat-shared-contacts", summary="个微上报联系方式（微信号/手机号）列表")
+def admin_list_wechat_shared_contacts(
+    user_id: int = Query(0, ge=0),
+    kind: str = Query("", max_length=24),
+    q: str = Query("", max_length=64, description="用户邮箱 / 微信号 / 手机号 / 备注名"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """管理后台「上报微信号」页：按用户账户查这个用户在服务器上记录的上报联系方式。"""
+    from ..models import WechatSharedContact
+
+    query = db.query(WechatSharedContact)
+    if user_id > 0:
+        query = query.filter(WechatSharedContact.user_id == int(user_id))
+    if kind.strip():
+        query = query.filter(WechatSharedContact.kind == kind.strip().lower())
+    keyword = str(q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        email_ids = [row_id for (row_id,) in db.query(User.id).filter(User.email.ilike(like)).all()] or [-1]
+        query = query.filter(or_(
+            WechatSharedContact.value.ilike(like),
+            WechatSharedContact.contact_name.ilike(like),
+            WechatSharedContact.contact_key.ilike(like),
+            WechatSharedContact.evidence.ilike(like),
+            WechatSharedContact.user_id.in_(email_ids),
+        ))
+    total = query.count()
+    rows = (query.order_by(WechatSharedContact.id.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+    user_ids = {int(row.user_id) for row in rows}
+    owners: Dict[int, str] = {}
+    if user_ids:
+        for uid, email in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all():
+            owners[int(uid)] = email or ""
+    return {"ok": True, "total": int(total), "page": page, "page_size": page_size,
+            "items": [{
+                "id": row.id,
+                "user_id": int(row.user_id),
+                "user_email": owners.get(int(row.user_id), ""),
+                "account_id": row.account_id,
+                "contact_key": row.contact_key,
+                "contact_name": row.contact_name,
+                "kind": row.kind,
+                "value": row.value,
+                "evidence": row.evidence,
+                "direction": row.direction,
+                "source": row.source,
+                "note": row.note,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            } for row in rows]}
+
+
 @router.get("/api/admin/imitation-records", summary="跟创生成记录列表")
 def admin_list_imitation_records(
     user_id: int = Query(0, ge=0),
