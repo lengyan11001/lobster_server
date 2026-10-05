@@ -2600,6 +2600,12 @@ async function loadWechatContacts(page) {
   const target = document.getElementById('wechatContactsTable');
   if (!target) return;
   target.innerHTML = '<div class="empty">加载中...</div>';
+  // 兜底：不管卡在网络还是渲染，20 秒后必须给出文字，绝不一直停在"加载中"
+  const guard = setTimeout(function () {
+    if (target.innerHTML.indexOf('加载中') >= 0) {
+      target.innerHTML = '<div class="empty">加载超时：接口没返回，请刷新页面重试（或看浏览器控制台报错）</div>';
+    }
+  }, 20000);
   try {
     const key = ((document.getElementById('wechatContactSearch') || {}).value || '').trim();
     const kind = ((document.getElementById('wechatContactKind') || {}).value || '').trim();
@@ -2637,7 +2643,11 @@ async function loadWechatContacts(page) {
     }
     renderWechatContactPagination();
   } catch (e) {
-    target.innerHTML = '<div class="empty">加载失败：' + esc((e && e.message) || e) + '</div>';
+    let msg = '';
+    try { msg = (e && e.message) || String(e); } catch (err) { msg = '未知错误'; }
+    target.innerHTML = '<div class="empty">加载失败：' + String(msg).replace(/[<>&]/g, '') + '</div>';
+  } finally {
+    clearTimeout(guard);
   }
 }
 
