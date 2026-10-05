@@ -573,15 +573,92 @@ def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_b
     db.commit()
 
 
+def _model_display_name(model: str) -> str:
+    """把上游模型 id 压成人看得懂的名字：fal-ai/nano-banana-2 -> nano-banana-2。"""
+    name = str(model or "").strip()
+    if not name or name.startswith("api/") or "/v3/" in name:
+        return ""
+    if "/" in name:
+        name = name.split("/")[-1]
+    return name.strip()
+
+
+def _looks_like_api_path(value: str) -> bool:
+    """接口路径不是给人看的标题（历史 bug：标题写成 api/v3/tasks/query 生成）。"""
+    text = str(value or "").strip()
+    return "api/" in text or "/v3/" in text
+
+
+def _media_ext(media_type: str, url: str = "") -> str:
+    lowered = str(url or "").split("?")[0].lower()
+    for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a"):
+        if lowered.endswith(ext):
+            return ext
+    return {"video": ".mp4", "audio": ".mp3"}.get(str(media_type or "").lower(), ".png")
+
+
+def content_record_labels(*, model: str = "", prompt: str = "", media_type: str = "image",
+                          url: str = "", asked_title: str = "") -> Tuple[str, str, str]:
+    """内容记录列表展示的三件套：标题 / 摘要 / 文件名。
+
+    2026-10-05 用户确认的口径：标题 = 模型名（+ 提示词前 40 字），不能出现接口路径；
+    摘要 = 提示词（拿不到就回标题）；文件名 = <模型>_<时间戳>.<ext>，
+    这样「内容记录」列表里能一眼看出是哪次生成、用的什么模型。
+    """
+    asked = str(asked_title or "").strip()
+    if not asked or _looks_like_api_path(asked):
+        asked = ""
+    display = _model_display_name(model) or "画布"
+    flat_prompt = " ".join(str(prompt or "").split())
+    prompt_head = flat_prompt[:40]
+    title = asked or (("%s · %s" % (display, prompt_head)) if prompt_head else ("%s 生成" % display))
+    summary = flat_prompt[:180] or title
+    filename = "%s_%s%s" % (display.replace("/", "-").replace(" ", ""), time.strftime("%Y%m%d_%H%M%S"),
+                            _media_ext(media_type, url))
+    return title[:500], summary[:180], filename[:255]
+
+
+def canvas_task_meta(db: Session, task_id: str) -> Dict[str, str]:
+    """回我们自己的 canvas_task 反查这次生成用的模型与提示词。
+
+    画布是拿 api/v3/tasks/query 轮询拿结果的，那个请求体里根本没有 model/prompt，
+    以前只能拿接口路径当标题（用户：生成的图在内容记录里"看不到"，其实是名字是
+    api/v3/tasks/query 生成）。下单时我们自己的 canvas_task 里记了 model + prompt。
+    """
+    tid = str(task_id or "").strip()
+    if not tid:
+        return {}
+    try:
+        row = db.execute(text(
+            "select model, prompt from canvas_task where task_id = :tid order by id desc limit 1"
+        ), {"tid": tid}).fetchone()
+    except Exception:  # noqa: BLE001 老库没这些列也不能影响登记
+        return {}
+    if row is None:
+        return {}
+    mapping = row._mapping
+    return {"model": str(mapping.get("model") or ""), "prompt": str(mapping.get("prompt") or "")}
+
+
 def register_content_record(db: Session, user_id: int, url: str, *, media_type: str = "image",
                             title: str = "", task_id: str = "", model: str = "",
-                            extra: Optional[Dict[str, Any]] = None) -> bool:
-    """生成产物写入「内容记录」（user_content_records）。同一任务幂等。"""
+                            prompt: str = "", extra: Optional[Dict[str, Any]] = None) -> bool:
+    """生成产物写入「内容记录」（user_content_records）。同一任务幂等。
+
+    标题口径见 content_record_labels：模型名 + 提示词摘要，绝不再写接口路径。
+    模型/提示词缺了就回 canvas_task 反查（轮询请求体里没有）。
+    """
     if not url or not url.startswith("http"):
         return False
     from ..models import UserContentRecord
 
     source_id = str(task_id or url)[:128]
+    if not str(model or "").strip() or not str(prompt or "").strip():
+        task_meta = canvas_task_meta(db, task_id)
+        model = str(model or task_meta.get("model") or "").strip()
+        prompt = str(prompt or task_meta.get("prompt") or "").strip()
+    record_title, record_summary, record_filename = content_record_labels(
+        model=model, prompt=prompt, media_type=media_type, url=url, asked_title=title)
     try:
         row = (
             db.query(UserContentRecord)
@@ -590,7 +667,7 @@ def register_content_record(db: Session, user_id: int, url: str, *, media_type: 
                     UserContentRecord.source_id == source_id)
             .first()
         )
-        meta = {"model": model, "media_type": media_type, "url": url}
+        meta = {"model": model, "media_type": media_type, "url": url, "prompt": prompt[:400]}
         meta.update(extra or {})
         if row is None:
             row = UserContentRecord(
@@ -598,8 +675,9 @@ def register_content_record(db: Session, user_id: int, url: str, *, media_type: 
                 source="canvas",
                 source_id=source_id,
                 kind=("video" if media_type == "video" else "image"),
-                title=(title or "画布生成")[:500],
-                summary=(title or "")[:180] or None,
+                title=record_title,
+                summary=record_summary,
+                filename=record_filename,
                 cover_url=(url if media_type != "video" else None),
                 file_url=url,
                 status="completed",
@@ -611,12 +689,49 @@ def register_content_record(db: Session, user_id: int, url: str, *, media_type: 
             row.file_url = url
             row.status = "completed"
             row.meta = meta
+            # 顺手把历史脏标题（接口路径 / 空）修成新口径
+            if not str(row.title or "").strip() or _looks_like_api_path(str(row.title or "")):
+                row.title = record_title
+            if not str(row.summary or "").strip() or _looks_like_api_path(str(row.summary or "")):
+                row.summary = record_summary
+            if not str(row.filename or "").strip():
+                row.filename = record_filename
         db.commit()
-        logger.info("[canvas] 生成内容已入内容记录: uid=%s kind=%s %s", user_id, media_type, url[:70])
+        logger.info("[canvas] 生成内容已入内容记录: uid=%s kind=%s title=%s %s",
+                    user_id, media_type, record_title[:40], url[:70])
         return True
     except Exception as exc:  # noqa: BLE001 记内容失败不影响生成
         logger.warning("[canvas] 写入内容记录失败: %s", exc, exc_info=True)
         return False
+
+
+def repair_canvas_record_titles(db: Session, *, user_id: int = 0, limit: int = 500) -> int:
+    """把历史上「标题是接口路径」的画布内容记录按新口径修一遍（幂等，部署后跑一次）。"""
+    from ..models import UserContentRecord
+
+    query = db.query(UserContentRecord).filter(UserContentRecord.source == "canvas")
+    if user_id:
+        query = query.filter(UserContentRecord.user_id == int(user_id))
+    fixed = 0
+    for row in query.order_by(UserContentRecord.id.desc()).limit(max(1, int(limit))).all():
+        if not _looks_like_api_path(str(row.title or "")) and str(row.filename or "").strip():
+            continue
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        task_meta = canvas_task_meta(db, str(row.source_id or ""))
+        model = str(meta.get("model") or task_meta.get("model") or "")
+        prompt = str(meta.get("prompt") or task_meta.get("prompt") or "")
+        media_type = str(meta.get("media_type") or "image")
+        record_title, record_summary, record_filename = content_record_labels(
+            model=model, prompt=prompt, media_type=media_type, url=str(row.file_url or ""),
+            asked_title="")
+        row.title = record_title
+        row.summary = record_summary
+        if not str(row.filename or "").strip() or _looks_like_api_path(str(row.filename or "")):
+            row.filename = record_filename
+        fixed += 1
+    if fixed:
+        db.commit()
+    return fixed
 
 
 def _extract_result_url(payload: Any) -> str:

@@ -1244,12 +1244,15 @@ async def canvas_proxy(
             status_text = str((data or {}).get("status") or payload.get("status") or "completed")
             media_type = "video" if any(k in result_url.lower() for k in (".mp4", ".mov", ".webm")) else "image"
             canvas_hub.ensure_tables(db)
+            # 2026-10-05：标题/文件名改成「模型名 + 提示词摘要」，不再拿接口路径当标题。
+            # 轮询请求体里没有 model/prompt，交给 register_content_record 回 canvas_task 反查。
+            record_task_id = str((data or {}).get("task_id") or body_json.get("task_id") or "")
             canvas_hub.register_content_record(
                 db, uid, result_url,
                 media_type=media_type,
-                title="%s 生成" % (model or normalized),
-                task_id=str((data or {}).get("task_id") or ""),
+                task_id=record_task_id,
                 model=model,
+                prompt=_prompt_from_body(body_json),
                 extra={"status": status_text,
                        "duration": (data or {}).get("duration"),
                        "resolution": (data or {}).get("resolution")},

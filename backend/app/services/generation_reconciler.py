@@ -146,7 +146,7 @@ async def reconcile_canvas_once(*, limit: Optional[int] = None, dry_run: bool = 
                         )
                         canvas_hub.register_content_record(
                             db, user_id, url, media_type=_media_type_for(url),
-                            title="%s 生成" % (model or "canvas"), task_id=task_id, model=model,
+                            task_id=task_id, model=model,
                             extra={"reconciled": True},
                         )
                         logger.info("[reconcile] task=%s 已补登记产物 %s", task_id, url[:80])
