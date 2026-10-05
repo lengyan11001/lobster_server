@@ -588,3 +588,123 @@ def test_matrix_priced_model_quote_and_pre_deduct_agree():
 
     assert estimate_credits_from_pricing(pricing, canvas_proxy._pricing_body(body)) == 4
     assert estimate_credits_from_pricing(pricing, body) == 64, "没展平就会退到默认最贵档"
+
+
+# ---------------------------------------------------------------- 任务记录 / 失败退款
+
+def _canvas_task_db(monkeypatch, tmp_path, name: str = "canvas_task_test.db"):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///" + str(tmp_path / name).replace("\\", "/"))
+    monkeypatch.setattr(canvas_hub, "_tables_ready", False)
+    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    db = session_factory()
+    canvas_hub.ensure_tables(db)
+    return db
+
+
+def test_task_records_include_prompt_status_and_points(monkeypatch, tmp_path):
+    """画布「任务记录」页要能显示提示词/状态/消耗/时间：
+
+    2026-10-05 用户反馈：历史记录全是「生成中」、提示词没记录。
+    原因是 canvas_task 只记了 task_id + status='submitted'（前端映射不到 completed/failed
+    就当「处理中」），而且压根没有 prompt 字段。
+    """
+    db = _canvas_task_db(monkeypatch, tmp_path)
+    canvas_hub.add_canvas_task(
+        db, 42, "openai/gpt-image-2", "api/v3/tasks/create",
+        json.dumps({"code": 200, "data": {"task_id": "t-100"}}).encode(),
+        prompt="减肥粉美女网红", params=json.dumps({"quality": "low"}), charged=6,
+    )
+    canvas_hub.sync_canvas_task(
+        db, 42, task_id="t-100", status="completed", result_url="https://cdn.example.com/a.png"
+    )
+
+    payload = canvas_hub.list_canvas_tasks(db, 42, 12)
+    assert payload["total"] == 1
+    item = payload["list"][0]
+    assert item["status"] == "completed"
+    assert item["app_name"] == "openai/gpt-image-2"
+    assert item["money"] == 6
+    assert json.loads(item["input_params"])["prompt"] == "减肥粉美女网红"
+    assert json.loads(item["output_params"])["image_url"] == "https://cdn.example.com/a.png"
+    assert item["created_at"] > 10 ** 12, "前端用 new Date(created_at)，必须是毫秒"
+
+
+def test_task_records_status_filter_and_submitted_shows_processing(monkeypatch, tmp_path):
+    db = _canvas_task_db(monkeypatch, tmp_path)
+    canvas_hub.add_canvas_task(db, 42, "openai/gpt-image-2", "api/v3/tasks/create", b"", prompt="p1", charged=6)
+    canvas_hub.add_canvas_task(db, 42, "fal-ai/nano-banana-2", "api/v3/tasks/create", b"", prompt="p2", charged=48)
+    canvas_hub.sync_canvas_task(db, 42, task_id="", status="failed")  # 空 task_id 直接忽略
+
+    all_items = canvas_hub.list_canvas_tasks(db, 42, 12)
+    assert all_items["total"] == 2
+    assert {item["status"] for item in all_items["list"]} == {"processing"}, "submitted 要显示成处理中"
+
+    done_only = canvas_hub.list_canvas_tasks(db, 42, 12, statuses=["completed"])
+    assert done_only["total"] == 0
+    pending_only = canvas_hub.list_canvas_tasks(db, 42, 12, statuses=["pending", "processing"])
+    assert pending_only["total"] == 2
+
+
+def test_failed_upstream_task_refunds_pre_deduct_once(monkeypatch, tmp_path):
+    """上游把任务判 failed（例如内容审核）时要退回预扣，且只退一次。"""
+    db = _canvas_task_db(monkeypatch, tmp_path)
+    canvas_hub.add_canvas_task(
+        db, 42, "openai/gpt-image-2", "api/v3/tasks/create",
+        json.dumps({"code": 200, "data": {"task_id": "t-200"}}).encode(),
+        prompt="减肥粉美女网红", charged=6,
+    )
+
+    refunds: list = []
+    monkeypatch.setattr(canvas_proxy, "refund_canvas", lambda *args, **kwargs: refunds.append(args))
+
+    class _User:
+        id = 42
+
+    data = {
+        "task_id": "t-200",
+        "status": "failed",
+        "params": {"prompt": "减肥粉美女网红"},
+        "output": {
+            "error": "PROVIDER_MODERATION_ERROR: The content of your generation was moderated by this Model.",
+            "error_code": "PROVIDER_MODERATION_ERROR",
+        },
+    }
+    canvas_proxy._sync_canvas_task_from_upstream(db, _User(), 42, data, "openai/gpt-image-2", "api/v3/tasks/query")
+    canvas_proxy._sync_canvas_task_from_upstream(db, _User(), 42, data, "openai/gpt-image-2", "api/v3/tasks/query")
+
+    assert len(refunds) == 1, refunds
+    from sqlalchemy import text as _sql_text
+
+    row = db.execute(_sql_text("SELECT status, refunded, error FROM canvas_task WHERE task_id = 't-200'")).fetchone()
+    assert row.status == "failed"
+    assert bool(row.refunded) is True
+    assert "审核" in row.error and "PROVIDER_MODERATION_ERROR:" not in row.error
+
+    items = canvas_hub.list_canvas_tasks(db, 42, 12)["list"]
+    assert items[0]["status"] == "failed"
+    assert "审核" in json.loads(items[0]["output_params"])["error"]
+
+
+def test_relayed_moderation_error_is_translated_to_chinese():
+    payload = {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "task_id": "t-1",
+            "status": "failed",
+            "output": {
+                "error": "PROVIDER_MODERATION_ERROR: The content of your generation was moderated by this Model.",
+                "error_code": "PROVIDER_MODERATION_ERROR",
+            },
+        },
+    }
+    rewritten = canvas_proxy.rewrite_error_messages(payload)
+    text = json.dumps(rewritten, ensure_ascii=False)
+    assert "审核" in text
+    assert "moderated by this Model" not in text
+    # 正常字段（message="查询成功"）不该被改写
+    assert rewritten["message"] == "查询成功"
+    assert rewritten["data"]["output"]["error_code"] == "PROVIDER_MODERATION_ERROR"

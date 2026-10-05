@@ -36,7 +36,7 @@ UPLOAD_DIR = ROOT / "data" / "canvas_uploads"
 
 _tables_ready = False
 
-from sqlalchemy import Column, Float, Integer, String, Table, Text
+from sqlalchemy import Boolean, Column, Float, Integer, String, Table, Text
 
 from ..db import Base
 
@@ -81,6 +81,12 @@ canvas_task_table = Table(
     Column("status", String(32), nullable=False, default="submitted"),
     Column("task_id", String(128), nullable=False, default=""),
     Column("result_url", Text, nullable=False, default=""),
+    # 画布「任务记录」页要显示提示词/消耗/失败原因，还要据此退款，所以下单时就记下来
+    Column("prompt", Text, nullable=False, default=""),
+    Column("params", Text, nullable=False, default=""),
+    Column("charged", Float, nullable=False, default=0.0),
+    Column("error", Text, nullable=False, default=""),
+    Column("refunded", Boolean, nullable=False, default=False),
     Column("created_at", Float, nullable=False, default=0.0),
     Column("updated_at", Float, nullable=False, default=0.0),
 )
@@ -106,6 +112,27 @@ canvas_asset_table = Table(
 )
 
 
+# 2026-10-05 新增：提示词 / 参数 / 预扣金额 / 失败原因 / 是否已退款
+_CANVAS_TASK_EXTRA_COLUMNS: Tuple[Tuple[str, str], ...] = (
+    ("prompt", "text not null default ''"),
+    ("params", "text not null default ''"),
+    ("charged", "double precision not null default 0"),
+    ("error", "text not null default ''"),
+    ("refunded", "boolean not null default false"),
+)
+
+
+def _ensure_canvas_task_columns(db: Session) -> None:
+    """给已存在的 canvas_task 补新列（老库不会因为 create_all 自动加列）。"""
+    for name, ddl in _CANVAS_TASK_EXTRA_COLUMNS:
+        try:
+            db.execute(text(f"ALTER TABLE canvas_task ADD COLUMN IF NOT EXISTS {name} {ddl}"))
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 补列失败不影响已有功能
+            db.rollback()
+            logger.info("[canvas] canvas_task 补列 %s 跳过: %s", name, exc)
+
+
 def ensure_tables(db: Session) -> None:
     global _tables_ready
     if _tables_ready:
@@ -113,6 +140,7 @@ def ensure_tables(db: Session) -> None:
     Base.metadata.create_all(bind=db.get_bind(),
                              tables=[canvas_project_table, canvas_asset_table, canvas_draft_template_table,
                                     canvas_remote_cache_table, canvas_task_table])
+    _ensure_canvas_task_columns(db)
     _tables_ready = True
 
 
@@ -505,8 +533,14 @@ def public_canvas_media(rel: str) -> FileResponse:
     return media_response(rel)
 
 
-def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_body: bytes = b"") -> None:
-    """生成下单时记一条我们的任务记录（画布「任务记录/最近任务」读这里）。"""
+def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_body: bytes = b"",
+                    *, prompt: str = "", params: str = "", charged: object = 0) -> None:
+    """生成下单时记一条我们的任务记录（画布「任务记录/最近任务」读这里）。
+
+    2026-10-05：以前只记 task_id/状态，所以任务记录里既没有提示词、状态也一直停在
+    submitted（前端把它当「处理中」），失败/完成都不会更新；现在把提示词、参数、
+    预扣金额一起记下，后面由 sync_canvas_task 更新状态并在失败时退款。
+    """
     task_id = ""
     result_url = ""
     try:
@@ -521,9 +555,17 @@ def add_canvas_task(db: Session, user_id: int, model: str, path: str, response_b
     except Exception:
         pass
     now = time.time()
+    try:
+        charged_value = float(charged or 0)
+    except (TypeError, ValueError):
+        charged_value = 0.0
     db.execute(text("INSERT INTO canvas_task (user_id, model, path, status, task_id, result_url,"
-                    " created_at, updated_at) VALUES (:uid, :model, :path, 'submitted', :tid, :url, :now, :now)"),
-               {"uid": user_id, "model": model, "path": path, "tid": task_id, "url": result_url, "now": now})
+                    " prompt, params, charged, error, refunded, created_at, updated_at)"
+                    " VALUES (:uid, :model, :path, 'submitted', :tid, :url, :prompt, :params, :charged,"
+                    " '', :refunded, :now, :now)"),
+               {"uid": user_id, "model": model, "path": path, "tid": task_id, "url": result_url,
+                "prompt": str(prompt or "")[:4000], "params": str(params or "")[:8000],
+                "charged": charged_value, "refunded": False, "now": now})
     if result_url:
         db.execute(text("INSERT INTO canvas_asset (user_id, url, file_type, file_size, name, created_at)"
                         " VALUES (:uid, :url, '', 0, :name, :now)"),
@@ -614,14 +656,155 @@ def register_generated_asset(db: Session, user_id: int, url: str, media_type: st
     return True
 
 
-def list_canvas_tasks(db: Session, user_id: int, limit: int = 30) -> List[Dict[str, Any]]:
-    rows = db.execute(text("SELECT * FROM canvas_task WHERE user_id = :uid ORDER BY id DESC LIMIT :limit"),
-                      {"uid": user_id, "limit": max(1, min(100, limit))}).fetchall()
-    return [{"id": r.id, "task_id": r.task_id, "app_name": r.model, "model": r.model, "status": r.status,
-             "url": r.result_url, "video_url": r.result_url, "image_url": r.result_url,
-             "created_at": r.created_at, "updated_at": r.updated_at,
-             "created_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.created_at or 0))}
-            for r in rows]
+# 前端（TaskRecordsPage + utils/taskRecord.js）认这几个状态；
+# 映射表里没有的状态一律当「处理中」——所以以前全是 submitted 就全显示生成中。
+_CANVAS_TASK_STATUS_MAP: Dict[str, str] = {
+    "succeed": "completed", "success": "completed", "done": "completed", "completed": "completed",
+    "failed": "failed", "fail": "failed", "error": "failed", "webhook_error": "failed",
+    "processing": "processing", "running": "processing", "submitted": "processing",
+    "pending": "pending", "queued": "pending",
+}
+
+
+def canvas_task_ui_status(status: Any) -> str:
+    return _CANVAS_TASK_STATUS_MAP.get(str(status or "").strip().lower(), "processing")
+
+
+# UI 口径 -> 库里可能存的真实值（筛选时要把这些展开）
+_STORED_STATUSES_FOR_UI: Dict[str, Tuple[str, ...]] = {
+    "completed": ("completed", "succeed", "success", "done"),
+    "processing": ("processing", "running", "submitted"),
+    "pending": ("pending", "queued", "submitted"),
+    "failed": ("failed", "fail", "error", "webhook_error"),
+}
+
+
+def _canvas_task_params(row: Any) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(str(getattr(row, "params", "") or "") or "{}")
+    except Exception:
+        parsed = {}
+    params = parsed if isinstance(parsed, dict) else {}
+    prompt = str(getattr(row, "prompt", "") or "")
+    if prompt and not str(params.get("prompt") or "").strip():
+        params = dict(params)
+        params["prompt"] = prompt
+    return params
+
+
+def _canvas_task_output(row: Any) -> Dict[str, Any]:
+    url = str(getattr(row, "result_url", "") or "")
+    output: Dict[str, Any] = {}
+    if url:
+        lowered = url.lower()
+        is_video = any(token in lowered for token in (".mp4", ".mov", ".webm", "/video/"))
+        is_audio = any(token in lowered for token in (".mp3", ".wav", ".m4a", ".aac", "/audio/"))
+        if is_video:
+            output["video_url"] = url
+        elif is_audio:
+            output["audio_url"] = url
+        else:
+            output["image_url"] = url
+        output["url"] = url
+    error = str(getattr(row, "error", "") or "")
+    if error:
+        output["error"] = error
+    return output
+
+
+def canvas_task_item(row: Any) -> Dict[str, Any]:
+    """画布「任务记录」页要的字段（status/app_name/input_params/output_params/money/created_at）。"""
+    params = _canvas_task_params(row)
+    output = _canvas_task_output(row)
+    created = float(getattr(row, "created_at", 0) or 0)
+    updated = float(getattr(row, "updated_at", 0) or 0)
+    result_url = str(getattr(row, "result_url", "") or "")
+    return {
+        "id": int(getattr(row, "id", 0) or 0),
+        "task_id": str(getattr(row, "task_id", "") or ""),
+        "app_name": str(getattr(row, "model", "") or ""),
+        "model": str(getattr(row, "model", "") or ""),
+        "status": canvas_task_ui_status(getattr(row, "status", "")),
+        "input_params": json.dumps(params, ensure_ascii=False) if params else "",
+        "output_params": json.dumps(output, ensure_ascii=False) if output else "",
+        "money": float(getattr(row, "charged", 0) or 0),
+        "url": result_url,
+        "image_url": result_url,
+        "video_url": result_url,
+        "created_at": created * 1000.0,
+        "updated_at": updated * 1000.0,
+        "created_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(created)) if created else "",
+        "error": str(getattr(row, "error", "") or ""),
+    }
+
+
+def list_canvas_tasks(db: Session, user_id: int, limit: int = 30, *, page: int = 1,
+                      statuses: Optional[List[str]] = None) -> Dict[str, Any]:
+    """画布任务记录：按页返回，支持状态筛选（前端筛选值是 UI 口径）。"""
+    page = max(1, int(page or 1))
+    size = max(1, min(100, int(limit or 30)))
+    where = ["user_id = :uid"]
+    values: Dict[str, Any] = {"uid": user_id, "limit": size, "offset": (page - 1) * size}
+    wanted = [canvas_task_ui_status(item) for item in (statuses or []) if str(item or "").strip()]
+    if wanted:
+        # 前端给的是 UI 口径（completed / pending,processing / failed,webhook_error），
+        # 库里存的可能是 submitted / succeed 这种，得展开成一组真实值再查
+        stored: List[str] = []
+        for item in wanted:
+            for candidate in _STORED_STATUSES_FOR_UI.get(item, ()):
+                if candidate not in stored:
+                    stored.append(candidate)
+        keys = [f"s{index}" for index in range(len(stored))]
+        where.append(f"status in ({', '.join(':' + key for key in keys)})")
+        values.update({key: value for key, value in zip(keys, stored)})
+    clause = " AND ".join(where)
+    total = db.execute(text(f"SELECT count(*) FROM canvas_task WHERE {clause}"), values).scalar() or 0
+    rows = db.execute(
+        text(f"SELECT * FROM canvas_task WHERE {clause} ORDER BY id DESC LIMIT :limit OFFSET :offset"),
+        values,
+    ).fetchall()
+    return {"list": [canvas_task_item(row) for row in rows], "total": int(total)}
+
+
+def sync_canvas_task(db: Session, user_id: int, *, task_id: str, status: str = "", result_url: str = "",
+                     error: str = "", params: str = "", model: str = "") -> Dict[str, Any]:
+    """把上游的任务状态写回 canvas_task；返回该行的预扣/退款状态供调用方决定要不要退钱。"""
+    tid = str(task_id or "").strip()
+    if not tid:
+        return {"found": False}
+    row = db.execute(text("SELECT id, model, charged, refunded FROM canvas_task"
+                          " WHERE user_id = :uid AND task_id = :tid ORDER BY id DESC LIMIT 1"),
+                     {"uid": user_id, "tid": tid}).fetchone()
+    if row is None:
+        return {"found": False}
+    sets = ["updated_at = :now"]
+    values: Dict[str, Any] = {"uid": user_id, "tid": tid, "now": time.time()}
+    if str(status or "").strip():
+        sets.append("status = :status")
+        values["status"] = str(status).strip().lower()[:32]
+    if result_url:
+        sets.append("result_url = :url")
+        values["url"] = str(result_url)[:2000]
+    if error:
+        sets.append("error = :err")
+        values["err"] = str(error)[:2000]
+    if params:
+        sets.append("params = :params")
+        values["params"] = str(params)[:8000]
+    if model:
+        sets.append("model = :model")
+        values["model"] = str(model)[:128]
+    db.execute(text(f"UPDATE canvas_task SET {', '.join(sets)} WHERE user_id = :uid AND task_id = :tid"), values)
+    db.commit()
+    return {"found": True, "id": int(row.id), "model": str(row.model or ""),
+            "charged": float(row.charged or 0), "refunded": bool(row.refunded)}
+
+
+def mark_canvas_task_refunded(db: Session, user_id: int, *, task_id: str) -> None:
+    db.execute(text("UPDATE canvas_task SET refunded = :yes, updated_at = :now"
+                    " WHERE user_id = :uid AND task_id = :tid"),
+               {"yes": True, "now": time.time(), "uid": user_id, "tid": str(task_id or "").strip()})
+    db.commit()
 
 
 async def cached_remote_json(db: Session, cache_key: str, path: str, body: Optional[Dict[str, Any]] = None,

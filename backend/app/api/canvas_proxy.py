@@ -586,6 +586,8 @@ _APIZ_MESSAGE_MAP = (
     ("至少要有一个非空 text", "提示词不能为空：请先在节点里填写文本再提交"),
     ("非法token", "登录态已失效，请重新登录客户端后再试"),
     ("余额不足", "积分不足，请先充值"),
+    ("PROVIDER_MODERATION_ERROR", "内容被模型审核拦下了：请换一下提示词/参考图，或换一个模型再试；本次预扣的积分已退回。"),
+    ("moderated by this Model", "内容被模型审核拦下了：请换一下提示词/参考图，或换一个模型再试；本次预扣的积分已退回。"),
 )
 
 
@@ -594,6 +596,111 @@ def humanize_upstream_error(body_text: str) -> str:
         if needle in body_text:
             return message
     return ""
+
+
+# 上游任务的失败原因（任务里带出来的，不是 HTTP 错误）-> 中文
+_UPSTREAM_TASK_ERROR_MESSAGES = (
+    ("PROVIDER_MODERATION_ERROR",
+     "内容被模型审核拦下了：请换一下提示词/参考图，或换一个模型再试；本次预扣的积分已退回。"),
+    ("moderated by this Model",
+     "内容被模型审核拦下了：请换一下提示词/参考图，或换一个模型再试；本次预扣的积分已退回。"),
+    ("PROVIDER_ERROR", "模型服务这次没跑成功：请稍后重试；本次预扣的积分已退回。"),
+    ("TIMEOUT", "上游超时了：请稍后重试；本次预扣的积分已退回。"),
+)
+
+# 界面会把这几段文本直接显示给用户，所以只改这些字段
+_ERROR_TEXT_KEYS = {"error", "detail", "message", "msg", "error_message", "errorMessage", "reason"}
+
+
+def humanize_task_error(text: str) -> str:
+    """上游任务里的失败原因 -> 中文（认不出来就加个前缀，别把英文原文直接甩给用户）。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    for needle, message in _UPSTREAM_TASK_ERROR_MESSAGES:
+        if needle.lower() in lowered:
+            return message
+    return f"生成失败：{raw[:200]}"
+
+
+def rewrite_error_messages(node: Any) -> Any:
+    """把中转响应里的上游英文报错改写成中文（报价改写之外的另一处「界面直接显示」）。"""
+    if isinstance(node, dict):
+        out: Dict[str, Any] = {}
+        for key, value in node.items():
+            if (
+                isinstance(value, str)
+                and key in _ERROR_TEXT_KEYS
+                and any(needle.lower() in value.lower() for needle, _ in _UPSTREAM_TASK_ERROR_MESSAGES)
+            ):
+                out[key] = humanize_task_error(value)
+            else:
+                out[key] = rewrite_error_messages(value)
+        return out
+    if isinstance(node, list):
+        return [rewrite_error_messages(item) for item in node]
+    return node
+
+
+def _upstream_error_text(data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    for holder in (data.get("output"), data.get("result"), data):
+        if isinstance(holder, dict):
+            for key in ("error", "error_code", "errorMessage", "message", "detail"):
+                value = holder.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return ""
+
+
+def _prompt_from_body(body: Dict[str, Any]) -> str:
+    """从画布请求体里挖提示词（params.content 的 text 优先，其次 prompt/text）。"""
+    if not isinstance(body, dict):
+        return ""
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    content = params.get("content")
+    if isinstance(content, list):
+        parts = [
+            str(item.get("text") or "").strip()
+            for item in content
+            if isinstance(item, dict) and str(item.get("type") or "") == "text"
+        ]
+        text = "\n".join(part for part in parts if part).strip()
+        if text:
+            return text
+    merged = _pricing_body(body)
+    for key in ("prompt", "text", "input_text", "description", "caption"):
+        value = merged.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _sync_canvas_task_from_upstream(db: Session, user: User, uid: int, data: Any, model: str, path: str) -> None:
+    """把上游任务状态写回我们自己的任务记录；上游判定失败时退回预扣（只退一次）。"""
+    if not isinstance(data, dict):
+        return
+    task_id = str(data.get("task_id") or data.get("id") or "").strip()
+    if not task_id:
+        return
+    status = str(data.get("status") or "").strip().lower()
+    result_url = canvas_hub._extract_result_url(data.get("output") or data.get("result") or data)
+    failed = status in ("failed", "fail", "error", "webhook_error")
+    error_text = humanize_task_error(_upstream_error_text(data)) if failed else ""
+    params = data.get("params") if isinstance(data.get("params"), dict) else None
+    info = canvas_hub.sync_canvas_task(
+        db, uid, task_id=task_id, status=status, result_url=result_url, error=error_text,
+        params=json.dumps(params, ensure_ascii=False) if params else "", model=model,
+    )
+    if not info.get("found"):
+        return
+    if failed and not info.get("refunded") and float(info.get("charged") or 0) > 0:
+        # 上游明确说「tokens 已退回」时我们也要退：以前只有 HTTP>=400 才退，任务级 failed 会白扣
+        refund_canvas(db, user, info["charged"], model, path, f"上游判定失败：{error_text[:60] or status}")
+        canvas_hub.mark_canvas_task_refunded(db, uid, task_id=task_id)
+        logger.info("[canvas] 上游判定失败，已退回预扣 %s（task=%s）", info["charged"], task_id)
 
 
 def _ensure_text_content(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -1071,6 +1178,12 @@ async def canvas_proxy(
         except Exception:
             payload = {}
         data = payload.get("data") if isinstance(payload, dict) else None
+        try:
+            _sync_canvas_task_from_upstream(
+                db, user, uid, data if isinstance(data, dict) else payload, model, normalized
+            )
+        except Exception as exc:  # noqa: BLE001 同步任务/退款不能把查询结果搞丢
+            logger.warning("[canvas] 同步任务记录失败: %s", exc)
         result_url = canvas_hub._extract_result_url(data if data is not None else payload)
         if result_url:
             status_text = str((data or {}).get("status") or payload.get("status") or "completed")
@@ -1090,7 +1203,15 @@ async def canvas_proxy(
     if upstream.status_code < 400 and _should_settle(normalized):
         try:
             canvas_hub.ensure_tables(db)
-            canvas_hub.add_canvas_task(db, uid, model, normalized, upstream.content)
+            canvas_hub.add_canvas_task(
+                db, uid, model, normalized, upstream.content,
+                prompt=_prompt_from_body(body_json),
+                params=json.dumps(
+                    body_json.get("params") if isinstance(body_json.get("params"), dict) else {},
+                    ensure_ascii=False,
+                ),
+                charged=pre_charged or 0,
+            )
         except Exception as exc:  # noqa: BLE001 记任务不能影响生成
             logger.warning("[canvas] 记录任务失败: %s", exc)
 
@@ -1118,6 +1239,15 @@ async def canvas_proxy(
                 logger.warning("[canvas] 报价改写失败: %s", exc)
 
     media_type = upstream.headers.get("content-type") or "application/json"
+    if upstream.content and "json" in media_type:
+        try:
+            payload = json.loads(upstream.content.decode("utf-8", "replace"))
+            rewritten_error = rewrite_error_messages(payload)
+            if rewritten_error != payload:
+                logger.info("[canvas] 上游报错已改写为中文: %s", normalized)
+                return JSONResponse(content=rewritten_error, status_code=upstream.status_code)
+        except Exception:
+            pass
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=media_type)
 
 
