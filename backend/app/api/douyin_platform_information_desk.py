@@ -43,10 +43,16 @@ def get_douyin_platform_information_desk(
 
 
 class ImitationIn(BaseModel):
-    """做同款（换人）入参：榜单作品 id + 用户上传的单人参考图公网地址。"""
+    """跟创入参：参考图 + 视频来源（榜单作品 id 或用户给的视频地址）+ 模式。
 
-    image_url: str = Field(min_length=8, max_length=2000)
-    item_id: str = Field(min_length=6, max_length=40)
+    2026-10-05：信息台改名「热门视频跟创」；视频来源除了榜单作品，还支持用户
+    粘贴视频直链或上传本地视频（上传后拿到的公网地址同样走 video_url）。
+    """
+
+    image_url: str = Field(default="", max_length=2000)
+    item_id: str = Field(default="", max_length=64)
+    video_url: str = Field(default="", max_length=2000)
+    mode: str = "person_swap"
     title: str = ""
     prompt: str = ""
 
@@ -58,18 +64,24 @@ async def create_information_desk_imitation(
     db: Session = Depends(get_db),
 ):
     _require_information_desk_access(current_user, db)
+    if not str(body.video_url or "").strip() and not str(body.item_id or "").strip():
+        raise HTTPException(status_code=400, detail="请先填视频链接、上传本地视频，或从榜单里点「跟创」")
+    if not str(body.image_url or "").strip():
+        raise HTTPException(status_code=400, detail="请上传一张参考图（不传的话先在「IP人设定位」里放一张形象照）")
     # 上游按「输入视频 + 输出视频」秒数计费，这里先按裁剪后的秒数预扣，失败全额退
     plan = billing.estimate_imitation(_max_seconds())
     charged = billing.deduct(db, current_user, billing.Decimal(str(plan["credits"])),
-                             reason=f"douyin_imitation:{body.item_id}")
-    result = await prepare_imitation(body.image_url, body.item_id, body.prompt)
+                             reason=f"douyin_imitation:{body.item_id or body.video_url[:80]}")
+    result = await prepare_imitation(body.image_url, body.item_id, body.prompt,
+                                     video_url=body.video_url, mode=body.mode)
     if not result.get("ok"):
         billing.refund(db, current_user, charged, reason="douyin_imitation_submit_failed")
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
     row = DouyinImitationTask(
         user_id=int(current_user.id), task_id=str(result.get("task_id") or ""),
         item_id=str(body.item_id or ""), title=str(body.title or "")[:255],
-        source_desc=str(result.get("source_desc") or "")[:255],
+        source_desc=(f"{result.get('mode_label') or '复刻人物（换人）'} · "
+                     f"{result.get('source_desc') or ''}")[:255],
         provider=str(result.get("provider") or ""), model=str(result.get("model") or ""),
         prompt=str(result.get("prompt") or ""), status="RUNNING",
         image_url=str(result.get("image_url") or ""),

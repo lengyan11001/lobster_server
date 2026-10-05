@@ -45,6 +45,36 @@ DEFAULT_VIDEOEDIT_HOST = "https://ws-ommi5yczus66lm97.cn-beijing.maas.aliyuncs.c
 DEFAULT_MODEL = "wan2.7-videoedit"
 DEFAULT_ANIMATE_MODEL = "wan2.2-animate-mix"
 DEFAULT_PROMPT = "将视频中的人物替换为图片中的人物，保持原视频的动作、镜头、场景与节奏不变"
+
+# 2026-10-05 需求：信息台改名「热门视频跟创」，新增两种模式（下拉选，选不同用不同提示词）。
+# 原来的「做同款（换人）」保留为默认模式，老记录/老调用不受影响。
+MODE_PROMPTS: Dict[str, str] = {
+    "person_swap": DEFAULT_PROMPT,
+    "effect_copy": "参考视频的特效，将这个特效应用到图片中女人身上，场景为街边。",
+    "action_copy": "让图片中的人物模仿视频中的人的动作。",
+}
+MODE_LABELS: Dict[str, str] = {
+    "person_swap": "复刻人物（换人）",
+    "effect_copy": "复刻特效",
+    "action_copy": "复刻单人动作",
+}
+
+
+def normalize_mode(raw: object) -> str:
+    value = str(raw or "").strip().lower()
+    return value if value in MODE_PROMPTS else "person_swap"
+
+
+def mode_label(raw: object) -> str:
+    return MODE_LABELS.get(normalize_mode(raw), MODE_LABELS["person_swap"])
+
+
+def prompt_for_mode(raw_mode: object, prompt: str = "") -> str:
+    """用户自己填了提示词就用他的；没填就按选中的模式用对应提示词。"""
+    text = str(prompt or "").strip()
+    if text:
+        return text[:600]
+    return MODE_PROMPTS.get(normalize_mode(raw_mode), DEFAULT_PROMPT)
 MAX_VIDEO_SECONDS = 30
 DEFAULT_MAX_SECONDS = 15
 MAX_SOURCE_BYTES = 400 * 1024 * 1024
@@ -416,17 +446,33 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
     }
 
 
-async def prepare_imitation(image_url: str, item_id: str, prompt: str = "") -> Dict[str, Any]:
-    """把素材准备好并提交：用户图 + 榜单原视频都转到 TOS，再提交换人。"""
+async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "", *,
+                            video_url: str = "", mode: str = "person_swap") -> Dict[str, Any]:
+    """把素材准备好并提交：用户图 + 原视频都转到 TOS，再按模式提交。
+
+    2026-10-05：视频来源支持两种 —— 榜单作品（item_id）或用户自己给的视频地址
+    （video_url，可以是粘贴的直链，也可以是本机上传后拿到的公网地址）。
+    """
     image_raw = str(image_url or "").strip()
     if not image_raw.startswith(("http://", "https://")):
         return {"ok": False, "error": "参考图地址无效，请重新上传"}
-    source = await resolve_source_video(item_id)
-    if not source.get("ok"):
-        return source
-    video_bytes, _used_url, err = await _download_first(source.get("urls") or [source["url"]])
-    if err:
-        return {"ok": False, "error": err}
+    custom_video = str(video_url or "").strip()
+    if custom_video:
+        if not custom_video.startswith(("http://", "https://")):
+            return {"ok": False, "error": "视频地址无效：请填 http(s) 直链，或改为上传本地视频"}
+        video_bytes, err = await _download(custom_video, limit=MAX_SOURCE_BYTES)
+        if err:
+            return {"ok": False, "error": f"读取视频失败：{err}"}
+        source = {"ok": True, "desc": "自定义视频", "url": custom_video}
+    else:
+        if not str(item_id or "").strip():
+            return {"ok": False, "error": "请先填视频链接、上传本地视频，或从榜单里点「跟创」"}
+        source = await resolve_source_video(item_id)
+        if not source.get("ok"):
+            return source
+        video_bytes, _used_url, err = await _download_first(source.get("urls") or [source["url"]])
+        if err:
+            return {"ok": False, "error": err}
     max_seconds = _max_seconds()
     trimmed, _warn = trim_video(video_bytes, max_seconds)
     video_tos, err = await _upload_tos(trimmed, ".mp4", "video/mp4")
@@ -439,9 +485,12 @@ async def prepare_imitation(image_url: str, item_id: str, prompt: str = "") -> D
     image_tos, err = await _upload_tos(image_bytes, suffix, "image/png" if suffix == ".png" else "image/jpeg")
     if err:
         return {"ok": False, "error": err}
-    result = await submit_imitation(image_tos, video_tos, prompt=prompt)
+    final_prompt = prompt_for_mode(mode, prompt)
+    result = await submit_imitation(image_tos, video_tos, prompt=final_prompt)
     if not result.get("ok"):
         return result
     result.update({"source_desc": source.get("desc") or "", "video_seconds": max_seconds,
-                   "image_url": image_tos, "video_url": video_tos})
+                   "image_url": image_tos, "video_url": video_tos,
+                   "mode": normalize_mode(mode), "mode_label": mode_label(mode),
+                   "prompt": final_prompt})
     return result

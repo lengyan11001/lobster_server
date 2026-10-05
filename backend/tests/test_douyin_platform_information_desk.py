@@ -387,7 +387,7 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
 
     captured = {}
 
-    async def fake_prepare(image_url, item_id, prompt=""):
+    async def fake_prepare(image_url, item_id, prompt="", **kwargs):
         captured.update(image_url=image_url, item_id=item_id, prompt=prompt)
         return {"ok": True, "task_id": "task-e2e", "model": "wan2.2-animate-mix",
                 "video_seconds": 15, "source_desc": "想吃哈哈哈哈"}
@@ -412,7 +412,7 @@ def test_imitation_endpoint_permission_and_forwarding(db_session, db_session_fac
     assert status.status_code == 200
     assert status.json()["video_url"] == "https://cdn.test/out.mp4"
 
-    async def fake_prepare_fail(image_url, item_id, prompt=""):
+    async def fake_prepare_fail(image_url, item_id, prompt="", **kwargs):
         return {"ok": False, "error": "这张图里没有检测到人物，请换一张只有一个人的清晰照片"}
 
     monkeypatch.setattr(desk_api, "prepare_imitation", fake_prepare_fail)
@@ -584,7 +584,7 @@ def test_imitation_history_records_and_refreshes(db_session, db_session_factory,
     test_user.credits = Decimal("100000.0000")
     db_session.commit()
 
-    async def fake_prepare(image_url, item_id, prompt=""):
+    async def fake_prepare(image_url, item_id, prompt="", **kwargs):
         return {"ok": True, "task_id": "his-1", "model": "wan2.7-videoedit", "provider": "videoedit",
                 "prompt": prompt or "换人", "source_desc": "想吃哈哈哈哈", "video_seconds": 15,
                 "image_url": "https://tos.test/a.png", "video_url": "https://tos.test/v.mp4"}
@@ -697,7 +697,7 @@ def test_imitation_billing_refunds_when_submit_fails(db_session, db_session_fact
     db_session.commit()
     monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
 
-    async def fail(image_url, item_id, prompt=""):
+    async def fail(image_url, item_id, prompt="", **kwargs):
         return {"ok": False, "error": "这张图里没有检测到人物"}
 
     monkeypatch.setattr(desk_api, "prepare_imitation", fail)
@@ -726,7 +726,7 @@ def test_imitation_billing_refunds_when_task_fails(db_session, db_session_factor
     db_session.commit()
     monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
 
-    async def ok_prepare(image_url, item_id, prompt=""):
+    async def ok_prepare(image_url, item_id, prompt="", **kwargs):
         return {"ok": True, "task_id": "bill-1", "model": "wan2.7-videoedit", "provider": "videoedit",
                 "source_desc": "x", "image_url": "https://tos.test/a.png", "video_url": "https://tos.test/v.mp4"}
 
