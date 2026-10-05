@@ -4051,6 +4051,7 @@ def _imitation_record_brief(row: Any, email: str = "") -> Dict[str, Any]:
     }
 
 
+@router.get("/admin/api/wechat-shared-contacts", summary="个微上报联系方式（管理后台页面用）")
 @router.get("/api/admin/wechat-shared-contacts", summary="个微上报联系方式（微信号/手机号）列表")
 def admin_list_wechat_shared_contacts(
     user_id: int = Query(0, ge=0),

@@ -2606,7 +2606,11 @@ async function loadWechatContacts(page) {
       q: key,
       kind: kind,
     });
-    const data = await api('/admin/api/wechat-shared-contacts?' + params.toString());
+    // 20 秒超时兜底：以前接口路径不对会一直停在"加载中"，看不出问题
+    const data = await Promise.race([
+      api('/admin/api/wechat-shared-contacts?' + params.toString()),
+      new Promise(function (_, reject) { setTimeout(function () { reject(new Error('加载超时，请重试')); }, 20000); })
+    ]);
     const items = data.items || [];
     wechatContactPages = Math.max(1, Math.ceil((Number(data.total) || 0) / WECHAT_CONTACT_PAGE_SIZE));
     if (!items.length) {
