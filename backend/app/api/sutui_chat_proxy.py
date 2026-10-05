@@ -1644,11 +1644,14 @@ def _guard_sse_event(event: bytes, guard: Any) -> bytes:
 
 
 def _sutui_chat_abort_model_fallback(http_status: int, data: Any) -> bool:
-    """此类结果换模型无意义，直接结束尝试。"""
+    """此类结果换模型无意义，直接结束尝试。
+
+    2026-10-05：402 以前也直接中断候选链 —— 结果只要**用户级偏好模型**在上游拿不到（xskill 对
+    某些模型返回 402 Payment Required），整条链就断在这里，用户端表现为"微信接管突然不回消息"。
+    现在 402 只在确实是托管池余额/额度错误（_xskill_upstream_pool_quota_error）时才中断，
+    否则继续换下一个候选模型（默认链里还有 deepseek-chat 这类可用模型）。
+    """
     if http_status == 401:
-        return True
-    # xskill chat 上游 402 多为托管池预扣/余额问题，换模型通常仍走同一 Token
-    if http_status == 402:
         return True
     if isinstance(data, dict) and _xskill_upstream_pool_quota_error(data):
         return True
@@ -2491,6 +2494,11 @@ async def sutui_chat_completions(
     if image_understand_internal:
         body["model"] = "gpt-5.6-sol"
     llm_model_override = "" if image_understand_internal else _user_llm_model_override(current_user)
+    if llm_model_override and llm_model_override in _disabled_sutui_chat_models():
+        # 偏好模型在上游被禁用/不可用：不要拿它去撞 402，直接回落默认模型
+        logger.info("[sutui-chat] 用户偏好模型不可用，回落默认 user_id=%s ignored=%s",
+                    current_user.id, llm_model_override)
+        llm_model_override = ""
     if llm_model_override:
         original_model = (body.get("model") or "").strip()
         body["model"] = llm_model_override
