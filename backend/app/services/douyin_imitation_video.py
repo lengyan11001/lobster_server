@@ -563,10 +563,21 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     max_seconds = _max_seconds()
     # 2026-10-05：按原视频实际时长计费（超过上限才按上限），这里先探一次真实时长
     source_seconds = await asyncio.to_thread(probe_video_seconds, video_bytes)
-    effective_seconds = float(max_seconds)
-    if source_seconds and source_seconds > 0:
-        effective_seconds = min(float(max_seconds), source_seconds)
     trimmed, _warn = trim_video(video_bytes, max_seconds)
+    # 关键：计费必须以「真正送去生成的视频」为准 —— trim_video 在 ffmpeg 两次都失败时
+    # 会把原片原样返回，如果那时按 15 秒收费却把 60 秒原片送上去，就是我们自己亏钱。
+    sent_seconds = await asyncio.to_thread(probe_video_seconds, trimmed)
+    if sent_seconds <= 0:
+        if source_seconds > float(max_seconds) + 0.5:
+            return {"ok": False,
+                    "error": "这个视频裁剪后确认不了时长（可能是异常编码），已取消提交，请换一个视频或上传本地文件"}
+        sent_seconds = float(source_seconds or max_seconds)
+    if sent_seconds > float(max_seconds) + 0.5:
+        return {"ok": False,
+                "error": f"视频裁剪后仍有 {sent_seconds:.1f} 秒（本档上限 {max_seconds} 秒），已取消提交，"
+                         "请换更短的视频"}
+    effective_seconds = float(max(1, int(sent_seconds) if float(sent_seconds).is_integer()
+                                  else int(sent_seconds) + 1))
     video_tos, err = await _upload_tos(trimmed, ".mp4", "video/mp4")
     if err:
         return {"ok": False, "error": err}
@@ -583,8 +594,8 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
         return result
     result.update({"source_desc": source.get("desc") or "",
                    "source_seconds": round(float(source_seconds or 0.0), 2),
-                   "video_seconds": max(1, int(effective_seconds) if float(effective_seconds).is_integer()
-                                        else int(effective_seconds) + 1),
+                   "sent_seconds": round(float(sent_seconds or 0.0), 2),
+                   "video_seconds": int(effective_seconds),
                    "image_url": image_tos, "video_url": video_tos,
                    "mode": normalize_mode(mode), "mode_label": mode_label(mode),
                    "resolution": normalize_resolution(result.get("resolution") or resolution),

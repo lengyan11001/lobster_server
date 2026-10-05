@@ -183,3 +183,87 @@ def test_prepare_imitation_passes_resolution_to_submit(monkeypatch):
     assert seen["resolution"] == "1080P"
     assert result["resolution"] == "1080P"
     assert result["video_seconds"] == 6
+
+
+def _stub_pipeline(monkeypatch, svc, *, source_seconds, sent_seconds):
+    """把下载/上传/提交都换成假实现，只观察「送审时长」怎么算。"""
+    async def fake_resolve(item_id):
+        return {"ok": True, "urls": ["https://cdn.example.com/v.mp4"], "url": "https://cdn.example.com/v.mp4",
+                "desc": "抖音作品"}
+
+    async def fake_download_first(urls, limit=None):
+        return b"video-bytes", "https://cdn.example.com/v.mp4", ""
+
+    async def fake_download(url, limit=None):
+        return b"\xff\xd8\xff", ""
+
+    async def fake_upload(data, suffix, content_type):
+        return f"https://tos.test/up{suffix}", ""
+
+    calls = {"submit": 0}
+
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P"):
+        calls["submit"] += 1
+        return {"ok": True, "task_id": "t-sent", "model": "m", "provider": "videoedit", "resolution": resolution}
+
+    probes = {"count": 0}
+
+    def fake_probe(data):
+        probes["count"] += 1
+        return float(source_seconds if probes["count"] == 1 else sent_seconds)
+
+    monkeypatch.setattr(svc, "resolve_source_video", fake_resolve)
+    monkeypatch.setattr(svc, "_download_first", fake_download_first)
+    monkeypatch.setattr(svc, "_download", fake_download)
+    monkeypatch.setattr(svc, "_upload_tos", fake_upload)
+    monkeypatch.setattr(svc, "submit_imitation", fake_submit)
+    monkeypatch.setattr(svc, "probe_video_seconds", fake_probe)
+    monkeypatch.setattr(svc, "trim_video", lambda data, seconds: (data, ""))
+    return calls
+
+
+def test_long_source_is_trimmed_and_charged_by_sent_seconds(monkeypatch):
+    """用户传 60 秒：我们裁到 15 秒再送，就按 15 秒收（2700），不会亏。"""
+    from backend.app.services import douyin_imitation_video as svc
+
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+    calls = _stub_pipeline(monkeypatch, svc, source_seconds=60.0, sent_seconds=15.0)
+
+    result = asyncio.run(svc.prepare_imitation("https://tos.test/ref.png", "7688685833386071653"))
+
+    assert result["ok"] is True, result
+    assert calls["submit"] == 1
+    assert result["source_seconds"] == 60.0
+    assert result["sent_seconds"] == 15.0
+    assert result["video_seconds"] == 15
+
+    from backend.app.services.douyin_desk_billing import estimate_imitation
+    plan = estimate_imitation(result["video_seconds"], "720P")
+    assert plan["cost_yuan"] == 18.0            # 上游成本
+    assert plan["credits"] == 2700              # 收用户 27 元 → 不亏
+
+
+def test_untrimmable_long_video_is_refused_instead_of_submitting_original(monkeypatch):
+    """裁剪没生效（送审的还是 60 秒）时直接拒单，避免按 15 秒收却按 60 秒付上游。"""
+    from backend.app.services import douyin_imitation_video as svc
+
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+    calls = _stub_pipeline(monkeypatch, svc, source_seconds=60.0, sent_seconds=60.0)
+
+    result = asyncio.run(svc.prepare_imitation("https://tos.test/ref.png", "7688685833386071653"))
+
+    assert result["ok"] is False
+    assert "已取消提交" in result["error"]
+    assert calls["submit"] == 0, "没裁成功就不该提交"
+
+
+def test_short_source_charged_by_its_own_length(monkeypatch):
+    """6 秒原视频：按 6 秒收 1080。"""
+    from backend.app.services import douyin_imitation_video as svc
+
+    monkeypatch.setenv("DOUYIN_IMITATION_MAX_SECONDS", "15")
+    _stub_pipeline(monkeypatch, svc, source_seconds=6.0, sent_seconds=6.0)
+
+    result = asyncio.run(svc.prepare_imitation("https://tos.test/ref.png", "7688685833386071653"))
+
+    assert result["video_seconds"] == 6
