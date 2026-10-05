@@ -4052,103 +4052,59 @@ def _imitation_record_brief(row: Any, email: str = "") -> Dict[str, Any]:
 
 
 @router.get("/admin/api/wechat-shared-contacts", summary="上报微信号（管理后台页面用）")
-@router.get("/api/admin/wechat-shared-contacts", summary="上报微信号列表（抖音私信接管 + 个微聊天）")
+@router.get("/api/admin/wechat-shared-contacts", summary="上报微信号列表（抖音私信接管上报）")
 def admin_list_wechat_shared_contacts(
     user_id: int = Query(0, ge=0),
     kind: str = Query("", max_length=24),
-    q: str = Query("", max_length=64, description="用户邮箱 / 微信号码 / 客户名"),
+    q: str = Query("", max_length=64, description="用户邮箱 / 号码 / 客户名 / 会话"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     ctx: AdminContext = Depends(_require_admin),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """管理后台「上报微信号」：合并两处上报来源，按用户账户可查。
+    """管理后台「上报微信号」：抖音私信接管提取到的客户联系方式（加好友联系池）。
 
-    1) 抖音私信接管上报（wechat_contact_reports）—— 客户的微信号/手机号进「加好友联系池」；
-    2) 个微聊天上报（wechat_shared_contacts）—— 私聊里对方给出的联系方式。
-    2026-10-05 用户澄清：抖音私信接管提取的微信号也属于这里，之前只查了第 2 张表所以"查不出来"。
+    数据来自 wechat_contact_reports：抖音私信接管识别到客户发来的微信号/手机号后上报，
+    后续由个微接管领走添加好友（status: pending → added / failed）。
     """
-    from ..models import WechatContactReport, WechatSharedContact
+    from ..models import WechatContactReport
 
     keyword = str(q or "").strip()
     like = f"%{keyword}%" if keyword else ""
-    email_ids: List[int] = []
-    if keyword:
-        email_ids = [row_id for (row_id,) in db.query(User.id).filter(User.email.ilike(like)).all()]
-
-    items: List[Dict[str, Any]] = []
-
-    # 1) 抖音私信接管 / 联系人上报（wechat_contact_reports）
     query = db.query(WechatContactReport)
     if user_id > 0:
         query = query.filter(WechatContactReport.user_id == int(user_id))
     if kind.strip():
         query = query.filter(WechatContactReport.kind == kind.strip().lower())
     if keyword:
+        email_ids = [row_id for (row_id,) in db.query(User.id).filter(User.email.ilike(like)).all()] or [-1]
         query = query.filter(or_(
             WechatContactReport.value.ilike(like),
             WechatContactReport.source_username.ilike(like),
             WechatContactReport.source_conversation.ilike(like),
-            WechatContactReport.user_id.in_(email_ids or [-1]),
+            WechatContactReport.user_id.in_(email_ids),
         ))
-    for row in query.order_by(WechatContactReport.id.desc()).limit(500).all():
-        items.append({
-            "id": f"report-{row.id}",
-            "source_type": "douyin_dm",
-            "source_label": "抖音私信接管",
-            "user_id": int(row.user_id),
-            "platform": row.platform or "",
-            "contact_name": row.source_username or row.source_conversation or "",
-            "kind": row.kind or "",
-            "value": row.value or "",
-            "status": row.status or "",
-            "direction": "",
-            "evidence": row.source_conversation or "",
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        })
-
-    # 2) 个微聊天里对方给出的联系方式（wechat_shared_contacts）
-    query2 = db.query(WechatSharedContact)
-    if user_id > 0:
-        query2 = query2.filter(WechatSharedContact.user_id == int(user_id))
-    if kind.strip():
-        query2 = query2.filter(WechatSharedContact.kind == kind.strip().lower())
-    if keyword:
-        query2 = query2.filter(or_(
-            WechatSharedContact.value.ilike(like),
-            WechatSharedContact.contact_name.ilike(like),
-            WechatSharedContact.contact_key.ilike(like),
-            WechatSharedContact.evidence.ilike(like),
-            WechatSharedContact.user_id.in_(email_ids or [-1]),
-        ))
-    for row in query2.order_by(WechatSharedContact.id.desc()).limit(500).all():
-        items.append({
-            "id": f"shared-{row.id}",
-            "source_type": "wechat_chat",
-            "source_label": "个微聊天",
-            "user_id": int(row.user_id),
-            "platform": "wechat",
-            "contact_name": row.contact_name or row.contact_key or "",
-            "kind": row.kind or "",
-            "value": row.value or "",
-            "status": "captured",
-            "direction": row.direction or "",
-            "evidence": row.evidence or "",
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        })
-
-    items.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
-    total = len(items)
-    user_ids = {int(row["user_id"]) for row in items}
+    total = query.count()
+    rows = (query.order_by(WechatContactReport.id.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+    user_ids = {int(row.user_id) for row in rows}
     owners: Dict[int, str] = {}
     if user_ids:
         for uid, email in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all():
             owners[int(uid)] = email or ""
-    for row in items:
-        row["user_email"] = owners.get(int(row["user_id"]), "")
-    start = (page - 1) * page_size
-    return {"ok": True, "total": total, "page": page, "page_size": page_size,
-            "items": items[start:start + page_size]}
+    return {"ok": True, "total": int(total), "page": page, "page_size": page_size,
+            "items": [{
+                "id": row.id,
+                "user_id": int(row.user_id),
+                "user_email": owners.get(int(row.user_id), ""),
+                "platform": row.platform or "douyin",
+                "contact_name": row.source_username or row.source_conversation or "",
+                "kind": row.kind or "mobile",
+                "value": row.value or "",
+                "status": row.status or "",
+                "evidence": row.source_conversation or "",
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            } for row in rows]}
 
 
 @router.get("/api/admin/imitation-records", summary="跟创生成记录列表")

@@ -2369,35 +2369,3 @@ class UserDeviceSelection(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
-
-
-class WechatSharedContact(Base):
-    """个微接管里「聊天中给出的联系方式」上报记录（微信号 / 手机号 / QQ / 邮箱）。
-
-    2026-10-05 需求：客户在微信里回「我的微信号是 xxx」这类消息时，要能识别并上报到服务器，
-    管理后台按用户账户查得到。以前微信接管的模型契约里根本没有联系方式字段，所以永远识别不到。
-    """
-
-    __tablename__ = "wechat_shared_contacts"
-    __table_args__ = (
-        UniqueConstraint("user_id", "account_id", "contact_key", "kind", "value",
-                         name="uq_wechat_shared_contacts_unique"),
-        Index("ix_wechat_shared_contacts_user_created", "user_id", "created_at"),
-        Index("ix_wechat_shared_contacts_value", "value"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    account_id: Mapped[str] = mapped_column(String(160), nullable=False, default="")
-    contact_key: Mapped[str] = mapped_column(String(240), nullable=False, default="")
-    contact_name: Mapped[str] = mapped_column(String(240), nullable=False, default="")
-    kind: Mapped[str] = mapped_column(String(24), nullable=False, default="")        # wechat_id / mobile / qq / email
-    value: Mapped[str] = mapped_column(String(120), nullable=False, default="")
-    evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    direction: Mapped[str] = mapped_column(String(16), nullable=False, default="inbound")   # inbound / outbound
-    source: Mapped[str] = mapped_column(String(16), nullable=False, default="model")        # model / regex
-    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
