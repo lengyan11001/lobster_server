@@ -127,24 +127,45 @@ def test_prepare_imitation_rejects_html_for_direct_links(monkeypatch):
     assert "网页不是视频" in result["error"]
 
 
-def test_resolution_option_changes_price_and_has_no_480p():
-    """分辨率放给用户选：720P 0.6 元/秒、1080P 1 元/秒；官方没有 480P 档。"""
+def test_resolution_option_changes_price_and_supports_480p():
+    """分辨率放给用户选：480P 0.3、720P 0.6、1080P 1 元/秒（2026-10-05 起上游 3.0 支持 480P）。"""
     from backend.app.services.douyin_desk_billing import estimate_imitation, normalize_resolution
     from backend.app.services.douyin_imitation_video import normalize_resolution as svc_norm
 
+    p480 = estimate_imitation(6, "480P")
     p720 = estimate_imitation(6, "720P")
     p1080 = estimate_imitation(6, "1080P")
 
+    assert p480["resolution"] == "480P" and p480["yuan_per_second"] == 0.3
+    assert p480["billable_seconds"] == 12 and p480["credits"] == 540
     assert p720["billable_seconds"] == 12 and p720["credits"] == 1080
     assert p720["yuan_per_second"] == 0.6
     assert p1080["resolution"] == "1080P" and p1080["yuan_per_second"] == 1.0
     assert p1080["credits"] == 1800, p1080
 
-    # 没有 480P：不认识的档位一律回落 720P
-    assert normalize_resolution("480P") == "720P"
+    assert normalize_resolution("480p") == "480P"
     assert normalize_resolution("1080p") == "1080P"
-    assert svc_norm("480P") == "720P"
+    assert normalize_resolution("乱七八糟") == "720P"      # 认不出来还是回落 720P
+    assert svc_norm("480p") == "480P"
     assert svc_norm("1080p") == "1080P"
+
+
+def test_user_duration_changes_billable_seconds():
+    """用户选了成片时长：按「输入 + 输出」计费（sides=1，避免重复乘）。"""
+    from backend.app.services.douyin_desk_billing import estimate_imitation
+    from backend.app.services.douyin_imitation_video import resolve_output_seconds
+    from decimal import Decimal
+
+    # 6 秒输入 + 10 秒成片 = 16 秒计费
+    plan = estimate_imitation(16, "720P", sides=Decimal("1"))
+    assert plan["billable_seconds"] == 16 and plan["credits"] == 1440
+
+    # 输出秒数夹取：不选=跟输入一样；下限 2；上限受「输入+输出 ≤30」约束
+    assert resolve_output_seconds(0, 6) == 6
+    assert resolve_output_seconds(1, 6) == 2
+    assert resolve_output_seconds(10, 6) == 10
+    assert resolve_output_seconds(30, 15) == 15
+    assert resolve_output_seconds(30, 28) == 2
 
 
 def test_prepare_imitation_passes_resolution_to_submit(monkeypatch):

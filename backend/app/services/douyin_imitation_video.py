@@ -446,7 +446,7 @@ def trim_video(data: bytes, max_seconds: int) -> Tuple[bytes, str]:
         return data, ""
 
 
-RESOLUTIONS = ("720P", "1080P")
+RESOLUTIONS = ("480P", "720P", "1080P")   # 2026-10-05：上游切 3.0（wan3.0-video-prime）后支持 480P
 
 
 def normalize_resolution(raw: object) -> str:
@@ -574,9 +574,28 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
     }
 
 
+# 2026-10-05：成片时长放给用户选。手册（Wan3.0）限制：有视频输入时「输入时长 + 输出时长 ≤ 30 秒」，
+# 最短 2 秒；duration_seconds=0 表示跟输入视频一样长（默认）。
+MIN_OUTPUT_SECONDS = 2
+MAX_TOTAL_SECONDS = 30
+
+
+def resolve_output_seconds(raw: object, input_seconds: float) -> int:
+    """用户选的成片秒数（0=跟输入一样长）；按「输入+输出 ≤30 秒」夹住。"""
+    try:
+        want = int(float(raw or 0))
+    except (TypeError, ValueError):
+        want = 0
+    sent = max(1, int(round(float(input_seconds or 0))))
+    if want <= 0:
+        return min(sent, MAX_TOTAL_SECONDS)
+    ceiling = max(MIN_OUTPUT_SECONDS, min(MAX_TOTAL_SECONDS - sent, MAX_TOTAL_SECONDS))
+    return max(MIN_OUTPUT_SECONDS, min(want, ceiling))
+
+
 async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "", *,
                             video_url: str = "", mode: str = "person_swap",
-                            resolution: str = "720P") -> Dict[str, Any]:
+                            resolution: str = "720P", duration_seconds: int = 0) -> Dict[str, Any]:
     """把素材准备好并提交：用户图 + 原视频都转到 TOS，再按模式提交。
 
     2026-10-05：视频来源支持两种 —— 榜单作品（item_id）或用户自己给的视频地址
@@ -644,14 +663,17 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     if err:
         return {"ok": False, "error": err}
     final_prompt = prompt_for_mode(mode, prompt)
+    output_seconds = resolve_output_seconds(duration_seconds, effective_seconds)
     result = await submit_imitation(image_tos, video_tos, prompt=final_prompt, resolution=resolution,
-                                    duration_seconds=int(effective_seconds))
+                                    duration_seconds=int(output_seconds))
     if not result.get("ok"):
         return result
     result.update({"source_desc": source.get("desc") or "",
                    "source_seconds": round(float(source_seconds or 0.0), 2),
                    "sent_seconds": round(float(sent_seconds or 0.0), 2),
                    "video_seconds": int(effective_seconds),
+                   "input_seconds": int(effective_seconds),
+                   "output_seconds": int(output_seconds),
                    "image_url": image_tos, "video_url": video_tos,
                    "mode": normalize_mode(mode), "mode_label": mode_label(mode),
                    "resolution": normalize_resolution(result.get("resolution") or resolution),

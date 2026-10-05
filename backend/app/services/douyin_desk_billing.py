@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal, ROUND_CEILING
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -28,6 +28,7 @@ from .credit_ledger import append_credit_ledger
 from .credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 
 CREDITS_PER_YUAN = Decimal("100")
+_DEFAULT_480P_YUAN_PER_SECOND = Decimal("0.3")   # 480P（3.0 新增档位；采购价待确认，先按 720P 的一半）
 _DEFAULT_YUAN_PER_SECOND = Decimal("0.6")     # 720P 输入+输出单价
 _DEFAULT_1080P_YUAN_PER_SECOND = Decimal("1")  # 1080P 输入+输出单价（官方档位只有 720P/1080P，没有 480P）
 _DEFAULT_BILLABLE_SIDES = Decimal("2")        # 输入 1 + 输出 1
@@ -46,7 +47,7 @@ def _decimal_env(name: str, default: Decimal) -> Decimal:
     return value if value >= 0 else default
 
 
-RESOLUTIONS = ("720P", "1080P")
+RESOLUTIONS = ("480P", "720P", "1080P")   # 2026-10-05：上游换成 wan3.0-video-prime 后支持 480P，放给用户选
 DEFAULT_RESOLUTION = "720P"
 
 
@@ -56,9 +57,12 @@ def normalize_resolution(raw: object) -> str:
 
 
 def yuan_per_second(resolution: object = DEFAULT_RESOLUTION) -> Decimal:
-    """按分辨率取单价：720P 0.6 元/秒、1080P 1 元/秒（输入+输出都按这个价）。"""
-    if normalize_resolution(resolution) == "1080P":
+    """按分辨率取单价：480P 0.3 元/秒、720P 0.6 元/秒、1080P 1 元/秒（输入+输出都按这个价）。"""
+    normalized = normalize_resolution(resolution)
+    if normalized == "1080P":
         return _decimal_env("DOUYIN_VIDEOEDIT_1080P_YUAN_PER_SECOND", _DEFAULT_1080P_YUAN_PER_SECOND)
+    if normalized == "480P":
+        return _decimal_env("DOUYIN_VIDEOEDIT_480P_YUAN_PER_SECOND", _DEFAULT_480P_YUAN_PER_SECOND)
     return _decimal_env("DOUYIN_VIDEOEDIT_YUAN_PER_SECOND", _DEFAULT_YUAN_PER_SECOND)
 
 
@@ -74,15 +78,21 @@ def search_credits() -> Decimal:
     return quantize_credits(_decimal_env("DOUYIN_DESK_SEARCH_CREDITS", _DEFAULT_SEARCH_CREDITS))
 
 
-def estimate_imitation(seconds: Any, resolution: object = DEFAULT_RESOLUTION) -> Dict[str, Any]:
-    """按「输入+输出都计费」估算一次做同款的成本与扣费（分辨率影响单价）。"""
+def estimate_imitation(seconds: Any, resolution: object = DEFAULT_RESOLUTION, *,
+                       sides: Optional[Decimal] = None) -> Dict[str, Any]:
+    """按「输入+输出都计费」估算一次做同款的成本与扣费（分辨率影响单价）。
+
+    sides 默认取 billable_sides()（=2，输入+输出各一份）；当调用方已经按
+    「输入秒数 + 输出秒数」算好总秒数时，传 sides=1，避免重复乘。
+    """
     try:
         value = Decimal(str(seconds or 0))
     except Exception:  # noqa: BLE001
         value = Decimal("0")
     if value <= 0:
         value = Decimal("5")
-    billable = (value * billable_sides()).to_integral_value(rounding=ROUND_CEILING)
+    factor = billable_sides() if sides is None else Decimal(str(sides))
+    billable = (value * factor).to_integral_value(rounding=ROUND_CEILING)
     rate = yuan_per_second(resolution)
     cost_yuan = (Decimal(billable) * rate).quantize(Decimal("0.0001"))
     credits = quantize_credits(cost_yuan * CREDITS_PER_YUAN * markup())
@@ -93,7 +103,7 @@ def estimate_imitation(seconds: Any, resolution: object = DEFAULT_RESOLUTION) ->
         "credits": credits_json_float(credits),
         "resolution": normalize_resolution(resolution),
         "yuan_per_second": float(rate),
-        "billable_sides": float(billable_sides()),
+        "billable_sides": float(billable_sides() if sides is None else Decimal(str(sides))),
         "markup": float(markup()),
     }
 

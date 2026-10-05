@@ -58,6 +58,9 @@ class ImitationIn(BaseModel):
     video_url: str = Field(default="", max_length=2000)
     mode: str = "person_swap"
     resolution: str = "720P"
+    # 2026-10-05：成片时长放给用户选（秒）。0 = 跟输入视频一样长；
+    # 上游/手册限制：有视频输入时「输入 + 输出 ≤ 30 秒」，最短 2 秒。
+    duration_seconds: int = 0
     title: str = ""
     prompt: str = ""
 
@@ -80,11 +83,20 @@ async def create_information_desk_imitation(
     billing.check_balance(db, current_user, billing.Decimal(str(cap_plan["credits"])))
     result = await prepare_imitation(body.image_url, body.item_id, body.prompt,
                                      video_url=body.video_url, mode=body.mode,
-                                     resolution=body.resolution)
+                                     resolution=body.resolution,
+                                     duration_seconds=body.duration_seconds)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
-    seconds = int(result.get("video_seconds") or _max_seconds())
-    plan = billing.estimate_imitation(seconds, result.get("resolution") or body.resolution)
+    # 计费口径：输入视频秒数 + 输出视频秒数（上游就是这么计的）。用户选了成片时长时，
+    # 输出按用户选的算；没选就按输入等长（跟老逻辑一致）。
+    input_seconds = int(result.get("input_seconds") or result.get("video_seconds") or _max_seconds())
+    output_seconds = int(result.get("output_seconds") or input_seconds)
+    total_seconds = input_seconds + output_seconds
+    plan = billing.estimate_imitation(total_seconds, result.get("resolution") or body.resolution,
+                                      sides=billing.Decimal("1"))
+    # 兼容老字段语义：seconds=输入秒数，billable_seconds=输入+输出，另给 total_seconds
+    plan["seconds"] = input_seconds
+    plan["total_seconds"] = total_seconds
     try:
         charged = billing.deduct(db, current_user, billing.Decimal(str(plan["credits"])),
                                  reason=f"douyin_imitation:{body.item_id or str(body.video_url)[:80]}")
@@ -96,6 +108,7 @@ async def create_information_desk_imitation(
         item_id=str(body.item_id or ""), title=str(body.title or "")[:255],
         source_desc=(f"{result.get('resolution') or body.resolution} · "
                      f"{result.get('mode_label') or '复刻人物（换人）'} · "
+                     f"{output_seconds}s · "
                      f"{result.get('source_desc') or ''}")[:255],
         provider=str(result.get("provider") or ""), model=str(result.get("model") or ""),
         prompt=str(result.get("prompt") or ""), status="RUNNING",
@@ -109,7 +122,10 @@ async def create_information_desk_imitation(
     db.add(row)
     db.commit()
     result["history_id"] = row.id
-    result["billing"] = {**plan, "credits_charged": credits_json_float(charged)}
+    result["input_seconds"] = input_seconds
+    result["output_seconds"] = output_seconds
+    result["billing"] = {**plan, "input_seconds": input_seconds, "output_seconds": output_seconds,
+                         "credits_charged": credits_json_float(charged)}
     return result
 
 
