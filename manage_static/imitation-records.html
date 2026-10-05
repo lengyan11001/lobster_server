@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>跟创生成记录 · 管理后台</title>
+<style>
+  :root { --border:#e5e7eb; --muted:#6b7280; --bg:#f8fafc; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.6 system-ui,-apple-system,"Microsoft YaHei",sans-serif; background:var(--bg); color:#111827; }
+  header { padding:16px 20px; background:#fff; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  input,select,button { font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:#fff; }
+  button { cursor:pointer; }
+  button.primary { background:#111827; color:#fff; border-color:#111827; }
+  table { width:100%; border-collapse:collapse; background:#fff; }
+  th,td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+  th { background:#f3f4f6; font-weight:600; white-space:nowrap; }
+  tr.clickable { cursor:pointer; }
+  tr.clickable:hover { background:#f9fafb; }
+  .muted { color:var(--muted); font-size:12px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid var(--border); }
+  .badge.ok { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }
+  .badge.fail { background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
+  .badge.run { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+  .wrap { padding:16px 20px; }
+  .modal { position:fixed; inset:0; background:rgba(17,24,39,.55); display:flex; align-items:center; justify-content:center; padding:18px; z-index:50; }
+  .modal[hidden] { display:none; }
+  .card { background:#fff; border-radius:14px; width:min(1000px,100%); max-height:90vh; overflow:auto; padding:16px 18px; }
+  .card h2 { margin:0 0 8px; font-size:16px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:10px; overflow:auto; max-height:320px; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-all; }
+  .kv { display:grid; grid-template-columns:110px 1fr; gap:4px 10px; margin:8px 0 14px; font-size:13px; }
+  .kv dt { color:var(--muted); }
+  .kv dd { margin:0; word-break:break-all; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  video { max-width:320px; border-radius:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>跟创生成记录</h1>
+  <input id="q" placeholder="上游任务号 / 用户邮箱 / 提示词" style="min-width:240px" />
+  <select id="status">
+    <option value="">全部状态</option>
+    <option value="RUNNING">生成中</option>
+    <option value="SUCCESS">已完成</option>
+    <option value="FAILED">失败</option>
+  </select>
+  <input id="userId" placeholder="用户 id" style="width:110px" />
+  <button class="primary" id="loadBtn">查询</button>
+  <span id="msg" class="muted"></span>
+</header>
+
+<div class="wrap">
+  <div class="row" id="tokenRow" hidden>
+    <span class="muted">需要管理员 token：</span>
+    <input id="tokenInput" placeholder="粘贴管理后台 token" style="min-width:320px" />
+    <button id="tokenSave">使用</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>时间</th><th>用户</th><th>上游任务号</th><th>来源 / 模式</th>
+        <th>状态</th><th>计费秒数</th><th>算力</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+  </table>
+  <div class="row" style="margin-top:12px">
+    <button id="prevPage">上一页</button>
+    <span id="pageInfo" class="muted"></span>
+    <button id="nextPage">下一页</button>
+  </div>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 id="modalTitle">记录详情</h2>
+      <button id="modalClose">关闭</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var TOKEN_KEYS = ["manage_admin_token", "manage_token", "m_token", "admin_token", "token"];
+  var state = { page: 1, pageSize: 20, total: 0 };
+
+  function $(id) { return document.getElementById(id); }
+
+  function token() {
+    for (var i = 0; i < TOKEN_KEYS.length; i += 1) {
+      try {
+        var value = localStorage.getItem(TOKEN_KEYS[i]);
+        if (value) return value;
+      } catch (e) {}
+    }
+    return "";
+  }
+
+  function headers() {
+    var t = token();
+    var out = { "Accept": "application/json" };
+    if (t) out["Authorization"] = "Bearer " + t;
+    return out;
+  }
+
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  function fmtTime(v) {
+    if (!v) return "-";
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? String(v) : d.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function statusBadge(s) {
+    var cls = s === "SUCCESS" ? "ok" : (s === "FAILED" ? "fail" : "run");
+    var label = s === "SUCCESS" ? "已完成" : (s === "FAILED" ? "失败" : "生成中");
+    return '<span class="badge ' + cls + '">' + label + "</span>";
+  }
+
+  function load() {
+    var params = new URLSearchParams();
+    params.set("page", String(state.page));
+    params.set("page_size", String(state.pageSize));
+    if ($("q").value.trim()) params.set("q", $("q").value.trim());
+    if ($("status").value) params.set("status", $("status").value);
+    var uid = parseInt($("userId").value, 10);
+    if (uid > 0) params.set("user_id", String(uid));
+    $("msg").textContent = "加载中…";
+    fetch("/api/manage/imitation-records?" + params.toString(), { headers: headers() })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (x) {
+        if (!x.ok) throw new Error((x.d && (x.d.detail || x.d.message)) || "加载失败");
+        state.total = x.d.total || 0;
+        var rows = (x.d.items || []).map(function (item) {
+          return "<tr class='clickable' data-id='" + item.id + "'>"
+            + "<td>" + esc(fmtTime(item.created_at)) + "</td>"
+            + "<td>" + esc(item.user_email || item.user_id) + "</td>"
+            + "<td class='muted'>" + esc(item.task_id) + "</td>"
+            + "<td>" + esc(item.source_desc || item.title || "-") + "<div class='muted'>" + esc(item.model) + "</div></td>"
+            + "<td>" + statusBadge(item.status) + "</td>"
+            + "<td>" + esc(item.billable_seconds) + "</td>"
+            + "<td>" + esc(item.credits_charged) + (item.credits_refunded ? "<div class='muted'>已退 " + esc(item.credits_refunded) + "</div>" : "") + "</td>"
+            + "<td><button class='detail' data-id='" + item.id + "'>详情</button></td>"
+            + "</tr>";
+        }).join("");
+        $("rows").innerHTML = rows || "<tr><td colspan='8' class='muted'>没有记录</td></tr>";
+        $("msg").textContent = "共 " + state.total + " 条";
+        $("pageInfo").textContent = "第 " + state.page + " 页 · 每页 " + state.pageSize + " 条";
+        $("rows").querySelectorAll("tr.clickable").forEach(function (tr) {
+          tr.addEventListener("click", function (ev) {
+            if (ev.target && ev.target.className === "detail") return;
+            openDetail(tr.getAttribute("data-id"));
+          });
+        });
+        $("rows").querySelectorAll("button.detail").forEach(function (btn) {
+          btn.addEventListener("click", function (ev) { ev.stopPropagation(); openDetail(btn.getAttribute("data-id")); });
+        });
+      })
+      .catch(function (err) {
+        $("msg").textContent = "加载失败：" + (err && err.message || err);
+        if (!token()) $("tokenRow").hidden = false;
+      });
+  }
+
+  function pretty(text) {
+    if (!text) return "（这条记录没存到）";
+    try { return JSON.stringify(JSON.parse(text), null, 2); } catch (e) { return String(text); }
+  }
+
+  function openDetail(id) {
+    fetch("/api/manage/imitation-records/" + encodeURIComponent(id), { headers: headers() })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (x) {
+        if (!x.ok) throw new Error((x.d && x.d.detail) || "加载失败");
+        var rec = x.d.record || {};
+        $("modalTitle").textContent = "记录 #" + rec.id + " · " + (rec.user_email || rec.user_id);
+        $("modalBody").innerHTML =
+          "<dl class='kv'>"
+          + "<dt>上游任务号</dt><dd>" + esc(rec.task_id) + "</dd>"
+          + "<dt>状态</dt><dd>" + esc(rec.status) + (rec.fail_reason ? " · " + esc(rec.fail_reason) : "") + "</dd>"
+          + "<dt>来源</dt><dd>" + esc(rec.source_desc || "") + " · " + esc(rec.model) + "</dd>"
+          + "<dt>计费 / 扣费</dt><dd>" + esc(rec.billable_seconds) + " 秒 · " + esc(rec.credits_charged) + " 算力"
+          + (rec.credits_refunded ? "（已退 " + esc(rec.credits_refunded) + "）" : "") + "</dd>"
+          + "<dt>参考图</dt><dd>" + esc(rec.image_url) + "</dd>"
+          + "<dt>原视频</dt><dd>" + esc(rec.source_video_url) + "</dd>"
+          + (rec.video_url ? "<dt>成片</dt><dd><a href='" + esc(rec.video_url) + "' target='_blank' rel='noreferrer'>打开</a></dd>" : "")
+          + "</dl>"
+          + "<h3 style='font-size:14px'>爆款提示词</h3><pre>" + esc(rec.prompt) + "</pre>"
+          + "<h3 style='font-size:14px'>我们请求上游的</h3><pre>" + esc(pretty(rec.upstream_request)) + "</pre>"
+          + "<h3 style='font-size:14px'>上游返回的</h3><pre>" + esc(pretty(rec.upstream_response)) + "</pre>";
+        $("modal").hidden = false;
+      })
+      .catch(function (err) {
+        $("modalBody").innerHTML = "<p class='muted'>" + esc(err && err.message || err) + "</p>";
+        $("modal").hidden = false;
+      });
+  }
+
+  $("loadBtn").addEventListener("click", function () { state.page = 1; load(); });
+  $("prevPage").addEventListener("click", function () { if (state.page > 1) { state.page -= 1; load(); } });
+  $("nextPage").addEventListener("click", function () {
+    if (state.page * state.pageSize < state.total) { state.page += 1; load(); }
+  });
+  $("modalClose").addEventListener("click", function () { $("modal").hidden = true; });
+  $("modal").addEventListener("click", function (ev) { if (ev.target === $("modal")) $("modal").hidden = true; });
+  if ($("tokenSave")) {
+    $("tokenSave").addEventListener("click", function () {
+      try { localStorage.setItem("manage_admin_token", $("tokenInput").value.trim()); } catch (e) {}
+      $("tokenRow").hidden = true;
+      load();
+    });
+  }
+  if (!token()) $("tokenRow").hidden = false;
+  load();
+})();
+</script>
+</body>
+</html>

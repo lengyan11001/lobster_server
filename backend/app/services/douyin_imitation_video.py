@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import pathlib
@@ -468,11 +469,18 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
             detail = {}
         return {"ok": False, "error": friendly_error(str(detail.get("code") or ""),
                                                      str(detail.get("message") or resp.text)[:200])}
-    task_id = str(((resp.json().get("output") or {}) or {}).get("task_id") or "").strip()
+    try:
+        resp_payload = resp.json() or {}
+    except Exception:  # noqa: BLE001
+        resp_payload = {"_raw": str(resp.text or "")[:4000]}
+    task_id = str(((resp_payload.get("output") or {}) or {}).get("task_id") or "").strip()
     if not task_id:
         return {"ok": False, "error": "做同款任务没有返回任务号"}
     logger.info("[douyin-imitation] submit provider=%s model=%s task=%s", provider, _model(), task_id)
-    result = {"ok": True, "task_id": task_id, "model": _model(), "provider": provider}
+    result = {"ok": True, "task_id": task_id, "model": _model(), "provider": provider,
+              # 管理后台留痕：我们提交给上游的原文 + 上游这次返回的原文
+              "request_body": body,
+              "response_body": json.dumps(resp_payload, ensure_ascii=False)[:20000]}
     if provider == "videoedit":
         result["prompt"] = body["input"]["prompt"]
         result["resolution"] = normalize_resolution(resolution)
@@ -500,7 +508,8 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
     if resp.status_code != 200:
         return {"ok": False, "error": f"查询换人任务失败：HTTP {resp.status_code}"}
     try:
-        output = ((resp.json() or {}).get("output") or {})
+        query_payload = resp.json() or {}
+        output = (query_payload.get("output") or {})
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"解析换人结果失败：{exc}"}
     raw_status = str(output.get("task_status") or "").upper()
@@ -516,6 +525,7 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
         "fail_reason": (friendly_error(str(output.get("code") or ""), str(output.get("message") or ""))
                         if status == "FAILED" else ""),
         "done": status in {"SUCCESS", "FAILED"},
+        "response_body": json.dumps(query_payload, ensure_ascii=False)[:20000],
     }
 
 

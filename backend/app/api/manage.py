@@ -4473,3 +4473,114 @@ def update_shop_merchant_status(
         raise HTTPException(status_code=400, detail=str(exc))
     logger.info("[MANAGE] shop merchant %s status -> %s by %s", merchant_id, body.status, getattr(actor, "id", ""))
     return result
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-05：跟创（抖音信息台做同款）生成记录 —— 管理后台列表 + 详情
+# 详情里能看到：爆款提示词、我们请求上游的原文、上游返回的原文
+# ---------------------------------------------------------------------------
+
+def _require_admin_actor(user: Any) -> None:
+    if _is_admin_actor(user) or str(getattr(user, "role", "") or "").lower() == "admin":
+        return
+    raise HTTPException(status_code=403, detail="需要管理员账号")
+
+
+def _imitation_record_brief(row: Any, email: str = "") -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "user_email": email,
+        "task_id": row.task_id,
+        "item_id": row.item_id,
+        "title": row.title,
+        "source_desc": row.source_desc,
+        "model": row.model,
+        "provider": row.provider,
+        "status": row.status,
+        "progress": row.progress,
+        "video_url": row.video_url,
+        "stored_url": getattr(row, "stored_url", "") or "",
+        "fail_reason": row.fail_reason,
+        "billable_seconds": int(row.billable_seconds or 0),
+        "credits_charged": float(row.credits_charged or 0),
+        "credits_refunded": float(row.credits_refunded or 0),
+        "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None,
+    }
+
+
+@router.get("/imitation-records", summary="跟创生成记录列表（管理后台）")
+def list_imitation_records(
+    user_id: int = Query(0, ge=0),
+    status: str = Query("", max_length=16),
+    q: str = Query("", max_length=64, description="按上游任务号 / 用户邮箱 / 提示词模糊搜"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    _require_admin_actor(current_user)
+    from ..models import DouyinImitationTask
+
+    query = db.query(DouyinImitationTask)
+    if user_id > 0:
+        query = query.filter(DouyinImitationTask.user_id == int(user_id))
+    if status.strip():
+        query = query.filter(DouyinImitationTask.status == status.strip().upper())
+    keyword = str(q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        query = query.filter(or_(
+            DouyinImitationTask.task_id.ilike(like),
+            DouyinImitationTask.prompt.ilike(like),
+            DouyinImitationTask.source_desc.ilike(like),
+            DouyinImitationTask.title.ilike(like),
+            DouyinImitationTask.user_id.in_(
+                db.query(User.id).filter(User.email.ilike(like)).scalar_subquery()
+            ) if False else DouyinImitationTask.user_id.in_(
+                [row_id for (row_id,) in db.query(User.id).filter(User.email.ilike(like)).all()]
+                or [-1]
+            ),
+        ))
+    total = query.count()
+    rows = (query.order_by(DouyinImitationTask.id.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+    user_ids = {int(row.user_id) for row in rows}
+    emails = {}
+    if user_ids:
+        for uid, email in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all():
+            emails[int(uid)] = email or ""
+    return {
+        "ok": True,
+        "total": int(total),
+        "page": page,
+        "page_size": page_size,
+        "items": [_imitation_record_brief(row, emails.get(int(row.user_id), "")) for row in rows],
+    }
+
+
+@router.get("/imitation-records/{record_id}", summary="跟创生成记录详情（含上游请求/返回原文）")
+def get_imitation_record(
+    record_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    _require_admin_actor(current_user)
+    from ..models import DouyinImitationTask
+
+    row = db.query(DouyinImitationTask).filter(DouyinImitationTask.id == int(record_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    user = db.query(User).filter(User.id == int(row.user_id)).first()
+    detail = _imitation_record_brief(row, (user.email if user else "") or "")
+    detail.update({
+        "prompt": row.prompt,
+        "image_url": row.image_url,
+        "source_video_url": row.source_video_url,
+        "upstream_request": row.upstream_request or "",
+        "upstream_response": row.upstream_response or "",
+        "asset_id": row.asset_id or "",
+    })
+    return {"ok": True, "record": detail,
+            "user": {"id": int(row.user_id), "email": (user.email if user else "") or ""}}

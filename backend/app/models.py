@@ -2322,6 +2322,9 @@ class DouyinImitationTask(Base):
     provider: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     model: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 管理后台「生成记录」要看：我们请求上游的原文 + 上游返回的原文
+    upstream_request: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    upstream_response: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="RUNNING", nullable=False)
     progress: Mapped[str] = mapped_column(String(16), default="", nullable=False)
     video_url: Mapped[str] = mapped_column(Text, default="", nullable=False)

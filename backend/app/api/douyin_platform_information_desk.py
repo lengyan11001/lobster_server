@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -98,6 +99,8 @@ async def create_information_desk_imitation(
                      f"{result.get('source_desc') or ''}")[:255],
         provider=str(result.get("provider") or ""), model=str(result.get("model") or ""),
         prompt=str(result.get("prompt") or ""), status="RUNNING",
+        upstream_request=json.dumps(result.get("request_body") or {}, ensure_ascii=False)[:20000],
+        upstream_response=json.dumps({"submit": result.get("response_body") or ""}, ensure_ascii=False)[:20000],
         image_url=str(result.get("image_url") or ""),
         source_video_url=str(result.get("video_url") or ""),
         billable_seconds=int(plan["billable_seconds"]),
@@ -252,6 +255,16 @@ async def get_information_desk_imitation(
         row.progress = str(result.get("progress") or "")
         row.video_url = str(result.get("video_url") or row.video_url or "")
         row.fail_reason = str(result.get("fail_reason") or "")[:255]
+        # 管理后台要看上游每次返回了什么：把最新一次查询结果并进 upstream_response
+        try:
+            history = json.loads(row.upstream_response or "{}")
+        except Exception:  # noqa: BLE001
+            history = {}
+        if not isinstance(history, dict):
+            history = {}
+        if result.get("response_body"):
+            history["last_query"] = result.get("response_body")
+        row.upstream_response = json.dumps(history, ensure_ascii=False)[:20000]
         db.commit()
         if row.status == "FAILED" and row.credits_charged and not row.credits_refunded:
             billing.refund(db, current_user, billing.Decimal(str(row.credits_charged)),

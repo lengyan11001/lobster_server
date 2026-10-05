@@ -202,6 +202,11 @@ def _migrate_douyin_imitation_task_columns():
                 conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN stored_url TEXT"))
             if "file_size" not in cols:
                 conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0"))
+            # 2026-10-05：管理后台要看「我们请求上游的什么 / 上游返回的什么」
+            if "upstream_request" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN upstream_request TEXT"))
+            if "upstream_response" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN upstream_response TEXT"))
         logger.info("Migration douyin_imitation_task billing columns ok")
     except Exception as e:  # noqa: BLE001
         logger.warning("Migration douyin_imitation_task billing columns skipped: %s", e)
