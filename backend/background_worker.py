@@ -42,6 +42,10 @@ from backend.app.core.config import settings
 from backend.app.services.ip_content_schedule_runner import ip_content_schedule_background_loop
 from backend.app.services.h5_chat_retention import h5_chat_retention_background_loop
 from backend.app.services.mastra_chat_runner import mastra_chat_background_loop
+from backend.app.services.generation_reconciler import (
+    generation_reconcile_loop,
+    is_generation_reconcile_enabled,
+)
 from backend.app.services.meta_social_schedule_runner import meta_social_schedule_background_loop
 from backend.app.services.provider_balance_monitor import (
     is_provider_balance_monitor_enabled,
@@ -155,6 +159,15 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("provider_balance_monitor", provider_balance_monitor_loop_forever))
     else:
         logger.info("[background] provider balance monitor disabled")
+
+    if _enabled_from_env("LOBSTER_BACKGROUND_GENERATION_RECONCILE_ENABLED", True) and is_generation_reconcile_enabled():
+        # 生成任务对账补偿（2026-10-05）：已预扣但前端没轮询到的任务，后台分批去上游对账
+        import os as _os
+
+        _reconcile_interval = float(_os.environ.get("GENERATION_RECONCILE_INTERVAL_SECONDS") or 60)
+        factories.append(("generation_reconcile", lambda: generation_reconcile_loop(_reconcile_interval)))
+    else:
+        logger.info("[background] 生成任务对账补偿未启用")
 
     if _enabled_from_env("LOBSTER_BACKGROUND_SHANJIAN_VIDEO_REFRESH_ENABLED", True):
         factories.append(("shanjian_video_task_refresh", lambda: shanjian_video_task_refresh_loop(180.0)))
