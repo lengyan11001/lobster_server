@@ -1,13 +1,26 @@
-"""抖音信息台「做同款（换人）」：榜单原视频 + 用户图片 → wan2.7-videoedit 视频编辑。
+"""抖音信息台「做同款（跟创）」：榜单/自传原视频 + 用户图片 → 视频编辑。
 
-主链路（2026-09-27 服务器实测出片，用独立 wan key）：
+2026-10-05 改（按阿里云百炼「Wan3.0视频创作者手册」的视频编辑写法）：
+  模型        wan2.7-videoedit  →  wan3.0-video-prime
+  media 类型  {"type":"video"}   →  {"type":"reference_video"}（源视频）
+              {"type":"reference_image"}（人物图，两代一致）
+  parameters  resolution / prompt_extend / watermark  →  再加 ratio(adaptive) 与 duration
+  实测：3.0 传 2.7 那代的 type=video 会被上游直接判
+        InvalidParameter: Input should be 'first_frame','last_frame','reference_image',
+        'reference_video','reference_audio','file' or 'link': input.media.0.type
+  实测：不显式传 duration 时上游默认只出 5 秒（15.07 秒原片 → output_video_duration=5.0），
+        我们按「输入+输出都计费」收钱，所以必须把 duration 设成真正送审的秒数。
+  实测（2026-10-05 15:02，480P，同一句「将视频中的人物替换为图片中的人物…」）：
+        提交 200 → 86 秒 SUCCEEDED，usage={duration:20.07, input_video_duration:15.07,
+        output_video_duration:5.0, SR:480, fps:30, ratio:9:16}。
+
+主链路（用独立 wan key）：
   POST {DOUYIN_IMITATION_HOST | DASHSCOPE_WAN_MAAS_HOST | 默认 MaaS 工作空间端点}
        /api/v1/services/aigc/video-generation/video-synthesis
-  {"model":"wan2.7-videoedit",
-   "input":{"prompt":"将视频中的人物替换为图片中的人物","media":[{"type":"video","url":..},{"type":"reference_image","url":..}]},
-   "parameters":{"resolution":"720P","prompt_extend":true,"watermark":false}}
+  {"model":"wan3.0-video-prime",
+   "input":{"prompt":"将视频中的人物替换为图片中的人物","media":[{"type":"reference_video","url":..},{"type":"reference_image","url":..}]},
+   "parameters":{"resolution":"720P","ratio":"adaptive","duration":15,"prompt_extend":true,"watermark":false}}
   查询 GET {host}/api/v1/tasks/{task_id}
-  实测：提交 200 → 约 4 分钟 SUCCEEDED，返回 video_url（dashscope OSS，带 Expires）
   Key 必须用独立的 wan key（DASHSCOPE_WAN30_API_KEY，116 位）；拿 DASHSCOPE_API_KEY 会被
   "Endpoint.AccessDenied: Workspace endpoint access denied." 拒掉。
 
@@ -45,7 +58,14 @@ DASHSCOPE_BASE = "https://dashscope.aliyuncs.com"
 ANIMATE_ENDPOINT = "/api/v1/services/aigc/image2video/video-synthesis"
 VIDEOEDIT_ENDPOINT = "/api/v1/services/aigc/video-generation/video-synthesis"
 DEFAULT_VIDEOEDIT_HOST = "https://ws-ommi5yczus66lm97.cn-beijing.maas.aliyuncs.com"
-DEFAULT_MODEL = "wan2.7-videoedit"
+DEFAULT_MODEL = "wan3.0-video-prime"   # 3.0 视频编辑（全能参考），2.7 见 LEGACY_MODEL
+LEGACY_MODEL = "wan2.7-videoedit"        # 老链路：media 用 type=video
+
+
+def video_media_type(model: str = "") -> str:
+    """源视频在 input.media 里的 type：3.0 用 reference_video，2.7 那代用 video。"""
+    name = str(model or "").strip().lower()
+    return "reference_video" if name.startswith("wan3") else "video"
 DEFAULT_ANIMATE_MODEL = "wan2.2-animate-mix"
 DEFAULT_PROMPT = "将视频中的人物替换为图片中的人物，保持原视频的动作、镜头、场景与节奏不变"
 
@@ -422,7 +442,8 @@ def normalize_resolution(raw: object) -> str:
 
 
 async def submit_imitation(image_url: str, source_video_url: str, *, mode: str = "wan-std",
-                           prompt: str = "", resolution: str = "720P") -> Dict[str, Any]:
+                           prompt: str = "", resolution: str = "720P", model: str = "",
+                           duration_seconds: int = 0) -> Dict[str, Any]:
     """提交做同款任务：返回 {ok, task_id, ...} 或 {ok: False, error}。"""
     image = str(image_url or "").strip()
     video = str(source_video_url or "").strip()
@@ -433,13 +454,21 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
         key = _wan_key()
         if not key:
             return {"ok": False, "error": "服务端未配置独立 wan key（DASHSCOPE_WAN30_API_KEY）"}
+        edit_model = str(model or _model()).strip() or DEFAULT_MODEL
+        source_media_type = video_media_type(edit_model)
+        parameters: Dict[str, Any] = {"resolution": normalize_resolution(resolution),
+                                      "prompt_extend": True, "watermark": False}
+        if source_media_type == "reference_video":
+            # 3.0：比例跟随原片；duration 不传上游只出 5 秒，必须显式给成片秒数
+            parameters["ratio"] = "adaptive"
+            if int(duration_seconds or 0) > 0:
+                parameters["duration"] = int(duration_seconds)
         body = {
-            "model": _model(),
+            "model": edit_model,
             "input": {"prompt": str(prompt or "").strip()[:600] or default_prompt(),
-                      "media": [{"type": "video", "url": video},
+                      "media": [{"type": source_media_type, "url": video},
                                 {"type": "reference_image", "url": image}]},
-            "parameters": {"resolution": normalize_resolution(resolution), "prompt_extend": True,
-                           "watermark": False},
+            "parameters": parameters,
         }
         url = _videoedit_host() + VIDEOEDIT_ENDPOINT
     else:
@@ -476,14 +505,17 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
     task_id = str(((resp_payload.get("output") or {}) or {}).get("task_id") or "").strip()
     if not task_id:
         return {"ok": False, "error": "做同款任务没有返回任务号"}
-    logger.info("[douyin-imitation] submit provider=%s model=%s task=%s", provider, _model(), task_id)
-    result = {"ok": True, "task_id": task_id, "model": _model(), "provider": provider,
+    used_model = str(body.get("model") or _model())
+    logger.info("[douyin-imitation] submit provider=%s model=%s task=%s", provider, used_model, task_id)
+    result = {"ok": True, "task_id": task_id, "model": used_model, "provider": provider,
               # 管理后台留痕：我们提交给上游的原文 + 上游这次返回的原文
               "request_body": body,
               "response_body": json.dumps(resp_payload, ensure_ascii=False)[:20000]}
     if provider == "videoedit":
         result["prompt"] = body["input"]["prompt"]
         result["resolution"] = normalize_resolution(resolution)
+        if body["parameters"].get("duration"):
+            result["duration"] = int(body["parameters"]["duration"])
     else:
         result["mode"] = body["parameters"]["mode"]
     return result
@@ -599,7 +631,8 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     if err:
         return {"ok": False, "error": err}
     final_prompt = prompt_for_mode(mode, prompt)
-    result = await submit_imitation(image_tos, video_tos, prompt=final_prompt, resolution=resolution)
+    result = await submit_imitation(image_tos, video_tos, prompt=final_prompt, resolution=resolution,
+                                    duration_seconds=int(effective_seconds))
     if not result.get("ok"):
         return result
     result.update({"source_desc": source.get("desc") or "",

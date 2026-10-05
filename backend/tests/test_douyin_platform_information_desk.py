@@ -435,7 +435,9 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
     monkeypatch.delenv("DOUYIN_IMITATION_HOST", raising=False)
 
     assert imitation._provider() == "videoedit"
-    assert imitation._model() == "wan2.7-videoedit"
+    assert imitation._model() == "wan3.0-video-prime"
+    assert imitation.video_media_type("wan3.0-video-prime") == "reference_video"
+    assert imitation.video_media_type("wan2.7-videoedit") == "video"
     assert "替换" in imitation.default_prompt()
     assert imitation._videoedit_host().startswith("https://ws-")
     assert "工作空间端点" in imitation.friendly_error(
@@ -468,15 +470,30 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
             return _Resp()
 
     monkeypatch.setattr(imitation.httpx, "AsyncClient", _Client)
-    out = asyncio.run(imitation.submit_imitation("https://tos.test/a.png", "https://tos.test/v.mp4"))
+    out = asyncio.run(imitation.submit_imitation("https://tos.test/a.png", "https://tos.test/v.mp4",
+                                                   duration_seconds=12))
     assert out["ok"] is True and out["task_id"] == "vid-1" and out["provider"] == "videoedit"
     assert captured["url"].endswith("/api/v1/services/aigc/video-generation/video-synthesis")
     assert captured["headers"]["Authorization"] == "Bearer wan-key"
-    assert captured["body"]["model"] == "wan2.7-videoedit"
+    assert captured["body"]["model"] == "wan3.0-video-prime"
     media = captured["body"]["input"]["media"]
-    assert media == [{"type": "video", "url": "https://tos.test/v.mp4"},
+    assert media == [{"type": "reference_video", "url": "https://tos.test/v.mp4"},
                      {"type": "reference_image", "url": "https://tos.test/a.png"}]
     assert captured["body"]["parameters"]["resolution"] == "720P"
+    # 3.0：比例跟随原片 + 必须显式给 duration（不给上游只出 5 秒）
+    assert captured["body"]["parameters"]["ratio"] == "adaptive"
+    assert captured["body"]["parameters"]["duration"] == 12
+    assert out["duration"] == 12
+
+    # 老链路（2.7 编辑）仍按 type=video、且不带 ratio/duration，方便随时切回
+    captured.clear()
+    out27 = asyncio.run(imitation.submit_imitation("https://tos.test/a.png", "https://tos.test/v.mp4",
+                                                   model="wan2.7-videoedit", duration_seconds=12))
+    assert out27["ok"] is True
+    assert captured["body"]["model"] == "wan2.7-videoedit"
+    assert captured["body"]["input"]["media"][0] == {"type": "video", "url": "https://tos.test/v.mp4"}
+    assert "duration" not in captured["body"]["parameters"]
+    assert "ratio" not in captured["body"]["parameters"]
 
     # 切回 animate 兜底时走 image2video 端点 + DASHSCOPE_API_KEY
     monkeypatch.setenv("DOUYIN_IMITATION_PROVIDER", "animate")

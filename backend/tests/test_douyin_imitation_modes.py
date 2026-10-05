@@ -81,7 +81,8 @@ def test_prepare_imitation_resolves_douyin_page_link_through_tikhub(monkeypatch)
     async def fake_upload(data, suffix, content_type):
         return f"https://tos.test/up{suffix}", ""
 
-    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P"):
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P",
+                        model="", duration_seconds=0):
         seen["prompt"] = prompt
         return {"ok": True, "task_id": "t-1", "model": "m", "provider": "p"}
 
@@ -164,7 +165,8 @@ def test_prepare_imitation_passes_resolution_to_submit(monkeypatch):
     async def fake_upload(data, suffix, content_type):
         return f"https://tos.test/up{suffix}", ""
 
-    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P"):
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P",
+                        model="", duration_seconds=0):
         seen["resolution"] = resolution
         return {"ok": True, "task_id": "t-r", "model": "m", "provider": "videoedit", "resolution": resolution}
 
@@ -202,7 +204,8 @@ def _stub_pipeline(monkeypatch, svc, *, source_seconds, sent_seconds):
 
     calls = {"submit": 0}
 
-    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P"):
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt="", resolution="720P",
+                        model="", duration_seconds=0):
         calls["submit"] += 1
         return {"ok": True, "task_id": "t-sent", "model": "m", "provider": "videoedit", "resolution": resolution}
 
