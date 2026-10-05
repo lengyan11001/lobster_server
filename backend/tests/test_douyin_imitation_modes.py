@@ -49,3 +49,78 @@ def test_prepare_imitation_rejects_bad_video_and_image_urls():
     result = asyncio.run(prepare_imitation("not-a-url", "123456", ""))
     assert result["ok"] is False
     assert "参考图" in result["error"]
+
+
+def test_extract_douyin_item_id_handles_page_links_and_plain_urls():
+    """用户贴 https://www.douyin.com/video/7688685833386071653 这种作品页链接要能识别。"""
+    from backend.app.services.douyin_imitation_video import extract_douyin_item_id
+
+    assert asyncio.run(extract_douyin_item_id("https://www.douyin.com/video/7688685833386071653")) == "7688685833386071653"
+    assert asyncio.run(extract_douyin_item_id("https://www.iesdouyin.com/share/video/7688685833386071653/?a=1")) == "7688685833386071653"
+    assert asyncio.run(extract_douyin_item_id("7688685833386071653")) == "7688685833386071653"
+    # 普通直链 / 本地文件名不该被当成抖音作品
+    assert asyncio.run(extract_douyin_item_id("https://cdn.example.com/a.mp4")) == ""
+    assert asyncio.run(extract_douyin_item_id("")) == ""
+
+
+def test_prepare_imitation_resolves_douyin_page_link_through_tikhub(monkeypatch):
+    """贴抖音作品链接时，不该去下载网页，而是用作品 id 走 TikHub 解析真实播放地址。"""
+    from backend.app.services import douyin_imitation_video as svc
+
+    seen = {}
+
+    async def fake_resolve(item_id):
+        seen["item_id"] = item_id
+        return {"ok": True, "urls": ["https://cdn.example.com/real.mp4"], "url": "https://cdn.example.com/real.mp4",
+                "desc": "抖音作品"}
+
+    async def fake_download_first(urls, limit=None):
+        seen["urls"] = list(urls)
+        return b"\x00\x00\x00\x18ftypmp42", "https://cdn.example.com/real.mp4", ""
+
+    async def fake_upload(data, suffix, content_type):
+        return f"https://tos.test/up{suffix}", ""
+
+    async def fake_submit(image_url, video_url, *, mode="wan-std", prompt=""):
+        seen["prompt"] = prompt
+        return {"ok": True, "task_id": "t-1", "model": "m", "provider": "p"}
+
+    async def fake_download(url, limit=None):
+        seen["direct_download"] = url
+        return b"<html></html>", ""
+
+    monkeypatch.setattr(svc, "resolve_source_video", fake_resolve)
+    monkeypatch.setattr(svc, "_download_first", fake_download_first)
+    monkeypatch.setattr(svc, "_download", fake_download)
+    monkeypatch.setattr(svc, "_upload_tos", fake_upload)
+    monkeypatch.setattr(svc, "submit_imitation", fake_submit)
+    monkeypatch.setattr(svc, "trim_video", lambda data, seconds: (data, ""))
+
+    result = asyncio.run(svc.prepare_imitation(
+        "https://tos.test/ref.png", "", "", video_url="https://www.douyin.com/video/7688685833386071653",
+        mode="action_copy",
+    ))
+
+    assert result["ok"] is True, result
+    assert seen["item_id"] == "7688685833386071653"
+    # _download 还会被用来取参考图，这里只确认「抖音作品页链接」没走直链下载
+    assert seen.get("direct_download") != "https://www.douyin.com/video/7688685833386071653"
+    assert result["prompt"] == "让图片中的人物模仿视频中的人的动作。"
+    assert result["mode_label"] == "复刻单人动作"
+
+
+def test_prepare_imitation_rejects_html_for_direct_links(monkeypatch):
+    """非抖音的网页地址：明确提示这不是视频，而不是丢给 ffmpeg 报错。"""
+    from backend.app.services import douyin_imitation_video as svc
+
+    async def fake_download(url, limit=None):
+        return b"<!DOCTYPE html><html><body>not a video</body></html>", ""
+
+    monkeypatch.setattr(svc, "_download", fake_download)
+
+    result = asyncio.run(svc.prepare_imitation(
+        "https://tos.test/ref.png", "", "", video_url="https://example.com/watch?v=1"
+    ))
+
+    assert result["ok"] is False
+    assert "网页不是视频" in result["error"]

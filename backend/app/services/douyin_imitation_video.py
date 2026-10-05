@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 from typing import Any, Dict, Optional, Tuple
@@ -67,6 +68,46 @@ def normalize_mode(raw: object) -> str:
 
 def mode_label(raw: object) -> str:
     return MODE_LABELS.get(normalize_mode(raw), MODE_LABELS["person_swap"])
+
+
+_DOUYIN_ITEM_ID_RE = re.compile(r"(?:video|note|share/video)/(\d{6,})")
+_DOUYIN_SHORT_LINK_RE = re.compile(r"(v\.douyin\.com|iesdouyin\.com/share)", re.I)
+_URL_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+
+async def extract_douyin_item_id(url: str) -> str:
+    """从抖音链接里抠作品 id。
+
+    2026-10-05：用户直接贴 https://www.douyin.com/video/7688685833386071653 这种
+    作品页链接（不是视频直链），这种链接下载回来是网页不是视频；只要能从链接里拿到
+    作品 id，就复用榜单那套 TikHub 解析去取真实播放地址。短链（v.douyin.com/xxx）
+    先跟一次跳转再抠 id。
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    match = _DOUYIN_ITEM_ID_RE.search(raw)
+    if match:
+        return match.group(1)
+    if raw.isdigit() and len(raw) >= 12:
+        return raw
+    if _DOUYIN_SHORT_LINK_RE.search(raw):
+        try:
+            async with httpx.AsyncClient(timeout=12.0, trust_env=False) as client:
+                resp = await client.get(raw, headers={"User-Agent": _URL_USER_AGENT},
+                                        follow_redirects=True)
+            match = _DOUYIN_ITEM_ID_RE.search(str(resp.url))
+            if match:
+                return match.group(1)
+        except Exception as exc:  # noqa: BLE001 短链解析失败就按直链处理
+            logger.info("[douyin-imitation] 短链解析失败：%s", exc)
+    return ""
+
+
+def _looks_like_web_page(data: bytes) -> bool:
+    head = (data or b"")[:512].lstrip().lower()
+    return head.startswith(b"<!doctype") or head.startswith(b"<html")
 
 
 def prompt_for_mode(raw_mode: object, prompt: str = "") -> str:
@@ -459,11 +500,24 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     custom_video = str(video_url or "").strip()
     if custom_video:
         if not custom_video.startswith(("http://", "https://")):
-            return {"ok": False, "error": "视频地址无效：请填 http(s) 直链，或改为上传本地视频"}
-        video_bytes, err = await _download(custom_video, limit=MAX_SOURCE_BYTES)
-        if err:
-            return {"ok": False, "error": f"读取视频失败：{err}"}
-        source = {"ok": True, "desc": "自定义视频", "url": custom_video}
+            return {"ok": False, "error": "视频地址无效：请填 http(s) 链接，或改为上传本地视频"}
+        url_item_id = await extract_douyin_item_id(custom_video)
+        if url_item_id:
+            # 抖音作品页/短链：先解析出作品 id，再走榜单同一套 TikHub 取真实播放地址
+            source = await resolve_source_video(url_item_id)
+            if not source.get("ok"):
+                return source
+            video_bytes, _used_url, err = await _download_first(source.get("urls") or [source["url"]])
+            if err:
+                return {"ok": False, "error": err}
+        else:
+            video_bytes, err = await _download(custom_video, limit=MAX_SOURCE_BYTES)
+            if err:
+                return {"ok": False, "error": f"读取视频失败：{err}"}
+            if _looks_like_web_page(video_bytes):
+                return {"ok": False, "error": "这个地址返回的是网页不是视频：抖音作品链接请用 www.douyin.com/video/… 这种形式，"
+                                              "或者直接上传本地视频"}
+            source = {"ok": True, "desc": "自定义视频", "url": custom_video}
     else:
         if not str(item_id or "").strip():
             return {"ok": False, "error": "请先填视频链接、上传本地视频，或从榜单里点「跟创」"}
