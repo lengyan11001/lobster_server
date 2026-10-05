@@ -19,7 +19,10 @@ from ..models import IPContentDraftRecord, ScheduledTaskRun, User, UserContentRe
 
 router = APIRouter()
 
-_CONTENT_KINDS = {"article", "wechat_article", "ppt"}
+# 2026-10-05：画布/生成类的图片、视频也落在 user_content_records（kind=image/video/audio），
+# 客户端「内容记录·生成」的图片/视频 tab 现在直接读这个接口；以前这里只放行 article/ppt，
+# 传 kind=image 会被判 400「内容类型无效」，前端于是永远看不到画布出的图。
+_CONTENT_KINDS = {"article", "wechat_article", "ppt", "image", "video", "audio"}
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^\s)]+)", re.IGNORECASE)
 _HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(https?://.*?)\1", re.IGNORECASE)
@@ -345,7 +348,7 @@ def _synced_payload(row: UserContentRecord, *, compact: bool = False) -> dict[st
         "file_url": row.file_url or "",
         "source_url": row.file_url or cover_url,
         "filename": row.filename or "",
-        "media_type": "document",
+        "media_type": (row.kind if row.kind in ("image", "video", "audio") else "document"),
         "status": row.status or "completed",
         "tags": f"content-record,{row.kind},{row.source}",
         "prompt": compact_preview if compact else (row.summary or ""),
