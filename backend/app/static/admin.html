@@ -4,8 +4,11 @@
 <script id="admin-build-selfheal">/* 2026-10-01：部署后开着的老页面自动刷新，不需要人工清缓存 / Ctrl+F5。
    页面带构建标识（__ADMIN_BUILD__），定时 + 切回前台时问 /admin/api/build，不一致就 reload。*/
 (function () {
-  window.__ADMIN_BUILD__ = "__ADMIN_BUILD__";
-  var current = window.__ADMIN_BUILD__;
+  // 注意：不要写成 window.__ADMIN_BUILD__ —— 服务端是整串替换 __ADMIN_BUILD__，
+  // 会把这个标识符也替换成 "560ec66e...-1791198321"，变成非法 JS（这一段以前一直没跑起来，
+  // 所以"部署后老页面自动刷新"一直没生效）。用方括号形式，替换后是合法字符串下标。
+  window['__ADMIN_BUILD__'] = "__ADMIN_BUILD__";
+  var current = window['__ADMIN_BUILD__'];
   if (!current) return;
   var checking = false;
   function check() {
@@ -2589,6 +2592,13 @@ const WECHAT_CONTACT_STATUS_LABEL = {
   claimed: '已被领取', skipped: '已跳过'
 };
 
+// esc/escapeHtml 是页面里别的 IIFE 的局部函数，全局取不到 —— 这里自带一个（2026-10-05 修复"加载中"卡死）
+function wechatContactEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+
 function wechatContactKindLabel(kind, direction) {
   let label = WECHAT_CONTACT_KIND_LABEL[kind] || kind || '-';
   if (direction === 'outbound') label += '（我方发出）';
@@ -2628,14 +2638,14 @@ async function loadWechatContacts(page) {
       let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>平台</th><th>客户 / 会话</th><th>类型</th><th>号码 / 微信号</th><th>状态</th><th>会话原文</th></tr></thead><tbody>';
       items.forEach(function (it) {
         html += '<tr>'
-          + '<td>' + esc(it.created_at ? new Date(it.created_at).toLocaleString() : '') + '</td>'
-          + '<td>' + esc((it.user_email || '') + ' (#' + (it.user_id || '') + ')') + '</td>'
-          + '<td>' + esc(it.platform || '') + '</td>'
-          + '<td>' + esc(it.contact_name || '') + '</td>'
-          + '<td>' + esc(wechatContactKindLabel(it.kind, it.direction)) + '</td>'
-          + '<td><b>' + esc(it.value || '') + '</b></td>'
-          + '<td>' + esc(WECHAT_CONTACT_STATUS_LABEL[it.status] || it.status || '') + '</td>'
-          + '<td style="max-width:320px;white-space:normal;word-break:break-all">' + esc(it.evidence || '') + '</td>'
+          + '<td>' + wechatContactEsc(it.created_at ? new Date(it.created_at).toLocaleString() : '') + '</td>'
+          + '<td>' + wechatContactEsc((it.user_email || '') + ' (#' + (it.user_id || '') + ')') + '</td>'
+          + '<td>' + wechatContactEsc(it.platform || '') + '</td>'
+          + '<td>' + wechatContactEsc(it.contact_name || '') + '</td>'
+          + '<td>' + wechatContactEsc(wechatContactKindLabel(it.kind, it.direction)) + '</td>'
+          + '<td><b>' + wechatContactEsc(it.value || '') + '</b></td>'
+          + '<td>' + wechatContactEsc(WECHAT_CONTACT_STATUS_LABEL[it.status] || it.status || '') + '</td>'
+          + '<td style="max-width:320px;white-space:normal;word-break:break-all">' + wechatContactEsc(it.evidence || '') + '</td>'
           + '</tr>';
       });
       html += '</tbody></table></div>';
