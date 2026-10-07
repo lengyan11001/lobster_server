@@ -1152,6 +1152,16 @@ body{background:#edf2f7}
     if (p.key === 'douyin_leads' && p.label.indexOf('AI') >= 0) {
       fields.push('<span style="font-size:12px;color:var(--text-secondary)">关键词由 AI 每轮决定，无需手填</span>');
     }
+    if (p.key === 'native_wechat_add_friend') {
+      // 一级「个微自动加好友」不能选「上级抖音私信结果」（那是抖音接管的下级动作），
+      // 这里只留 ① 本机导入名单 / ③ 服务端上报池，和 Online 节点弹窗一致。
+      var addSrc = String(params.source_mode || '').trim().toLowerCase();
+      fields.push('<label class="sw-f">加好友目标来源<select class="sw-p" data-k="source_mode">'
+        + '<option value="server_reported_pool"' + (addSrc === 'server_reported_pool' ? ' selected' : '') + '>③ 服务端上报池（同账号跨机器共用）</option>'
+        + '<option value="local_import"' + (addSrc === 'local_import' ? ' selected' : '') + '>① 本机导入名单（节点自带名单）</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f">每轮领取数量<input class="sw-p sw-num" data-k="max_targets"' + num('max_targets', 50) + '></label>');
+    }
     if (p.key === 'native_wechat_moments_engage') {
       var act = String(params.moment_action || 'like_comment');
       fields.push('<label class="sw-f">动作<select class="sw-p" data-k="moment_action">' +
@@ -1175,6 +1185,8 @@ body{background:#edf2f7}
     if (p.takeover_session_minutes !== undefined) parts.push('接管 ' + p.takeover_session_minutes + 'min');
     if (p.script) parts.push('口播：' + String(p.script).slice(0, 24));
     if (p.moment_action) parts.push('动作：' + p.moment_action);
+    if (p.source_mode === 'server_reported_pool') parts.push('加好友：服务端上报池');
+    else if (p.source_mode === 'local_import') parts.push('加好友：本机名单');
     return parts.join(' · ');
   }
   function platformLabel(platform) {

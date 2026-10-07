@@ -329,6 +329,60 @@ def test_legacy_sales_action_children_fold_into_parent_properties():
     assert douyin["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is True
 
 
+def _add_friend_and_douyin_nodes(source_mode=""):
+    add_params = {"account_id": "pc-wechat-default"}
+    if source_mode:
+        add_params["source_mode"] = source_mode
+    return [
+        {
+            "id": "sales_add_friend_0800",
+            "time": "08:00",
+            "ability_key": "native_wechat_add_friend",
+            "ability_label": "个微自动加好友",
+            "plan": {
+                "task_kind": "client_workflow",
+                "payload": {"action": "native_wechat_add_friend", "params": add_params},
+            },
+        },
+        {
+            "id": "sales_douyin",
+            "time": "08:30",
+            "ability_key": "douyin_leads",
+            "ability_label": "抖音私信接管",
+            "plan": {"task_kind": "douyin_leads", "payload": {"action": "stranger_message", "params": {}}},
+        },
+    ]
+
+
+def test_top_level_add_friend_node_survives_save_and_read():
+    """管理后台配的 8 点「个微自动加好友」不能被抖音节点连坐删掉。
+
+    2026-08-21 的折叠逻辑把所有一级加好友节点都 continue 掉了，而 2026-09-28
+    Online 已改成「只折叠来源=上级抖音私信结果的」；服务端没跟上，于是终端读
+    接口拿不到这个节点，只有管理后台（读原始行）能看到。
+    """
+    nodes = _add_friend_and_douyin_nodes("server_reported_pool")
+
+    cleaned = _clean_nodes(nodes)
+
+    assert [node["id"] for node in cleaned] == ["sales_add_friend_0800", "sales_douyin"]
+    assert cleaned[0]["plan"]["payload"]["params"]["source_mode"] == "server_reported_pool"
+    assert cleaned[1]["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is False
+
+    row = H5WorkflowTemplate(owner_user_id=1, name="销售员工", nodes=nodes)
+    payload_nodes = _template_payload(row)["nodes"]
+    assert [node["id"] for node in payload_nodes] == ["sales_add_friend_0800", "sales_douyin"]
+
+
+def test_douyin_sourced_top_level_add_friend_node_still_folds():
+    nodes = _add_friend_and_douyin_nodes("douyin_private_message_phone")
+
+    cleaned = _clean_nodes(nodes)
+
+    assert [node["id"] for node in cleaned] == ["sales_douyin"]
+    assert cleaned[0]["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is True
+
+
 def test_legacy_douyin_private_switch_defaults_to_false_in_server_payload():
     legacy_node = _douyin_private_body().nodes[0]
     row = H5WorkflowTemplate(owner_user_id=1, name="旧抖音员工", nodes=[legacy_node])

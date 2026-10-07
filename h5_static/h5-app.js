@@ -6203,12 +6203,29 @@ async function api(path, options = {}) {
       return prepared;
     }
 
+    // 一级「个微自动加好友」节点只有来源=上级抖音私信结果时才折叠进抖音父节点；
+    // 本机导入名单 / 服务端上报池自带目标清单，必须保持一级可见
+    // （和 Online h5-employees.js 的 nativeAddFriendSourceOf 同一口径）。
+    const DOUYIN_ADD_FRIEND_SOURCES = [
+      "douyin_private_message_phone",
+      "douyin_private_message_mobile",
+      "douyin_private_message_wechat_id",
+    ];
+
+    function isSalesDouyinBoundAddFriend(node) {
+      if (!isSalesWechatAddFriendRow(node)) return false;
+      const plan = node && node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      return DOUYIN_ADD_FRIEND_SOURCES.indexOf(String(params.source_mode || "").trim().toLowerCase()) >= 0;
+    }
+
     function migrateSalesDouyinAddFriendChildren(nodes) {
       const list = Array.isArray(nodes) ? nodes : [];
       const parents = list.filter(isSalesDouyinPrivateNode);
       if (!parents.length) return list;
-      const legacyRows = list.filter(isSalesWechatAddFriendRow);
-      const prepared = list.filter((node) => !isSalesWechatAddFriendRow(node));
+      const legacyRows = list.filter(isSalesDouyinBoundAddFriend);
+      const prepared = list.filter((node) => !isSalesDouyinBoundAddFriend(node));
       parents.forEach((parentNode) => {
         const plan = parentNode.plan && typeof parentNode.plan === "object" ? parentNode.plan : {};
         const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};

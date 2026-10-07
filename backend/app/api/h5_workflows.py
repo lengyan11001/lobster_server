@@ -897,6 +897,37 @@ def _is_legacy_add_friend_child(node: Any) -> bool:
     )
 
 
+# 「个微自动加好友」节点的目标来源：和 Online h5-employees.js 的
+# nativeAddFriendSourceOf / normalizeNativeAddFriendSource 保持同一口径。
+_DOUYIN_ADD_FRIEND_SOURCE_MODES = {
+    "douyin_private_message_phone",
+    "douyin_private_message_mobile",
+    "douyin_private_message_wechat_id",
+}
+
+
+def _add_friend_source_mode(node: Any) -> str:
+    if not isinstance(node, dict):
+        return ""
+    params = _node_payload(node).get("params")
+    if not isinstance(params, dict):
+        return ""
+    return _clean_text(params.get("source_mode"), 64).lower()
+
+
+def _is_douyin_bound_add_friend(node: Any) -> bool:
+    """只有「来源=上级抖音私信结果」的加好友节点才折叠进抖音父节点。
+
+    一级节点（本机导入名单 / 服务端上报池）自带目标清单，必须保持一级可见：
+    否则管理后台配好的「8 点个微自动加好友」在终端读接口（_template_payload）
+    时会被整条丢掉，终端就再也看不到这个节点。
+    """
+    return (
+        _is_legacy_add_friend_child(node)
+        and _add_friend_source_mode(node) in _DOUYIN_ADD_FRIEND_SOURCE_MODES
+    )
+
+
 def _is_douyin_private_sales_node(node: Any) -> bool:
     if not isinstance(node, dict):
         return False
@@ -960,10 +991,12 @@ def _clean_legacy_sales_action_children(nodes: Any) -> list[dict[str, Any]]:
         return []
     items = copy.deepcopy([item for item in nodes if isinstance(item, dict)])
     douyin_parents = [item for item in items if _is_douyin_private_sales_node(item)]
-    legacy_top_add = [item for item in items if _is_legacy_add_friend_child(item)] if douyin_parents else []
+    # 只有来源=上级抖音私信结果的一级加好友节点才折叠进抖音父节点；
+    # 本机导入名单 / 服务端上报池的一级节点保持不动（和 Online 同一口径）。
+    legacy_top_add = [item for item in items if _is_douyin_bound_add_friend(item)] if douyin_parents else []
     cleaned: list[dict[str, Any]] = []
     for item in items:
-        if douyin_parents and _is_legacy_add_friend_child(item) and item not in douyin_parents:
+        if douyin_parents and _is_douyin_bound_add_friend(item) and item not in douyin_parents:
             continue
         raw_children = item.get("children") if isinstance(item.get("children"), list) else item.get("actions")
         if isinstance(raw_children, list):
@@ -2204,8 +2237,8 @@ def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> lis
     if not parents:
         return nodes
 
-    legacy_rows = [node for node in nodes if isinstance(node, dict) and _is_native_wechat_add_friend_node(node)]
-    prepared = [node for node in nodes if not (isinstance(node, dict) and _is_native_wechat_add_friend_node(node))]
+    legacy_rows = [node for node in nodes if _is_douyin_bound_add_friend(node)]
+    prepared = [node for node in nodes if not _is_douyin_bound_add_friend(node)]
     for parent in parents:
         parent_plan = parent.get("plan") if isinstance(parent.get("plan"), dict) else {}
         parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
