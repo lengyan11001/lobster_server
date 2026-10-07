@@ -1121,6 +1121,15 @@ body{background:#edf2f7}
       children: children
     };
   }
+  function boolOn(value) { return value === true || value === 'true'; }
+  // 「回复模式」联动显示，和 Online 节点弹窗一致
+  window.swSyncReplyFields = function () {
+    var mode = String((document.getElementById('swReplyMode') || {}).value || '').toLowerCase();
+    [['swReplyFixed', 'fixed'], ['swReplyAi', 'ai'], ['swReplyRewrite', 'rewrite']].forEach(function (pair) {
+      var host = document.getElementById(pair[0]);
+      if (host) host.hidden = (mode !== pair[1]);
+    });
+  };
   function extraFields(r) {
     var p = presetAt(r && r.preset);
     if (!p) return '';
@@ -1142,16 +1151,45 @@ body{background:#edf2f7}
         + '<option value="ip_daily_professional_ip_oral"' + (oralPicked.indexOf('ip_daily_professional_ip_oral') >= 0 ? ' selected' : '') + '>IP 口播</option>'
         + '</select></label>');
     }
-    if (p.key === 'douyin_leads' && p.label.indexOf('关键词') >= 0) {
-      fields.push('<label class="sw-f">关键词<input class="sw-p sw-wide" data-k="keyword" value="' + esc(params.keyword || '') + '" placeholder="留空用设备已配关键词"></label>');
+    // 抖音采集节点：和 Online 的「精准获客参数」一一对应
+    var douyinCollection = p.key === 'douyin_leads' && (p.label.indexOf('关键词') >= 0 || p.label.indexOf('AI') >= 0);
+    var douyinAi = douyinCollection && p.label.indexOf('AI') >= 0;
+    if (douyinCollection) {
+      if (douyinAi) {
+        fields.push('<label class="sw-f">每轮关键词数量<input class="sw-p sw-num" data-k="ai_keyword_count" min="1" max="8"' + num('ai_keyword_count', 3) + '></label>');
+        fields.push('<label class="sw-f">关键词去重天数<input class="sw-p sw-num" data-k="ai_keyword_avoid_days" min="1" max="60"' + num('ai_keyword_avoid_days', 7) + '></label>');
+        fields.push('<label class="sw-f">只搜最近多少天发布的新视频<input class="sw-p sw-num" data-k="ai_keyword_publish_days" min="1" max="180"' + num('ai_keyword_publish_days', 7) + '></label>');
+      } else {
+        fields.push('<label class="sw-f sw-grow">采集关键词（可选，逗号或换行分隔；留空用设备已配关键词）<textarea class="sw-p" data-k="keyword" rows="2" style="min-height:56px;resize:vertical">' + esc(params.keyword || '') + '</textarea></label>');
+      }
       fields.push('<label class="sw-f">地区<input class="sw-p" data-k="regions" value="' + esc(Array.isArray(params.regions) ? params.regions.join('、') : (params.regions || '全国')) + '"></label>');
-      fields.push('<label class="sw-f">数量<input class="sw-p sw-num" data-k="max_results"' + num('max_results', 50) + '></label>');
+      fields.push('<label class="sw-f">搜索数量<input class="sw-p sw-num" data-k="max_results" min="10" max="100"' + num('max_results', 50) + '></label>');
+      var dmode = String(params.mode || '').trim().toLowerCase();
+      if (['script', 'api'].indexOf(dmode) < 0) dmode = 'script';
+      fields.push('<label class="sw-f">搜索方式<select class="sw-p" data-k="mode">'
+        + '<option value="script"' + (dmode === 'script' ? ' selected' : '') + '>浏览器脚本</option>'
+        + '<option value="api"' + (dmode === 'api' ? ' selected' : '') + '>接口模式</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="reply_precise_comments"' + (boolOn(params.reply_precise_comments) ? ' checked' : '') + '> 筛选后立即回复精准客户评论</span></label>');
+      var rmode = String(params.reply_comment_mode || '').trim().toLowerCase();
+      if (['fixed', 'ai', 'rewrite'].indexOf(rmode) < 0) rmode = '';
+      fields.push('<label class="sw-f">回复模式<select class="sw-p" id="swReplyMode" data-k="reply_comment_mode" onchange="swSyncReplyFields()">'
+        + '<option value=""' + (rmode === '' ? ' selected' : '') + '>不启用回复（默认）</option>'
+        + '<option value="fixed"' + (rmode === 'fixed' ? ' selected' : '') + '>固定文案</option>'
+        + '<option value="ai"' + (rmode === 'ai' ? ' selected' : '') + '>AI 按客户评论生成</option>'
+        + '<option value="rewrite"' + (rmode === 'rewrite' ? ' selected' : '') + '>AI 同方向改编</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f sw-grow" id="swReplyFixed"' + (rmode === 'fixed' ? '' : ' hidden') + '>固定回复文案<textarea class="sw-p" data-k="reply_comment_text" rows="2" style="min-height:56px;resize:vertical">' + esc(params.reply_comment_text || '') + '</textarea></label>');
+      fields.push('<label class="sw-f sw-grow" id="swReplyAi"' + (rmode === 'ai' ? '' : ' hidden') + '>回复要求<textarea class="sw-p" data-k="reply_comment_prompt" rows="2" style="min-height:56px;resize:vertical" placeholder="AI 模式：回复方向和约束">' + esc(params.reply_comment_prompt || '') + '</textarea></label>');
+      fields.push('<label class="sw-f sw-grow" id="swReplyRewrite"' + (rmode === 'rewrite' ? '' : ' hidden') + '>改编基准文案<textarea class="sw-p" data-k="reply_comment_seed_text" rows="2" style="min-height:56px;resize:vertical" placeholder="改编模式使用">' + esc(params.reply_comment_seed_text || '') + '</textarea></label>');
     }
     if (p.key === 'douyin_leads' && p.label.indexOf('触达') >= 0) {
-      fields.push('<label class="sw-f">触达数量<input class="sw-p sw-num" data-k="max_users"' + num('max_users', 20) + '></label>');
-    }
-    if (p.key === 'douyin_leads' && p.label.indexOf('AI') >= 0) {
-      fields.push('<span style="font-size:12px;color:var(--text-secondary)">关键词由 AI 每轮决定，无需手填</span>');
+      fields.push('<label class="sw-f">每次触达数量<input class="sw-p sw-num" data-k="max_users" min="1" max="200"' + num('max_users', 20) + '></label>');
+      var touchPicked = Array.isArray(params.touch_actions) ? params.touch_actions.map(String) : ['follow_comment', 'mention_comment', 'direct_message'];
+      var TOUCH_ACTIONS = [['follow_comment', '关注并评论'], ['mention_comment', '评论并@客户'], ['direct_message', '主动私信']];
+      fields.push('<span class="sw-f" style="grid-column:1/-1">执行动作（可多选）' + TOUCH_ACTIONS.map(function (pair) {
+        return '<label style="font-weight:400;flex-direction:row;align-items:center"><input type="checkbox" data-multi="touch_actions" data-val="' + pair[0] + '"' + (touchPicked.indexOf(pair[0]) >= 0 ? ' checked' : '') + '> ' + pair[1] + '</label>';
+      }).join('') + '</span>');
     }
     if (p.key === 'native_wechat_add_friend') {
       // 和 Online 节点弹窗完全一样：这里只配「方式」（目标来源）+ 每轮领取数量。
@@ -1463,6 +1501,7 @@ body{background:#edf2f7}
     var type = document.getElementById('swModalType').value;
     r.preset = Number(document.getElementById('swModalType').value);
     extra.innerHTML = extraFields(r);
+    if (typeof window.swSyncReplyFields === 'function') window.swSyncReplyFields();
   }
   function openNodeModal(index) {
     var r = rows[index]; if (!r) return;
@@ -1507,18 +1546,77 @@ body{background:#edf2f7}
         }
         var raw = String(inp.value || '').trim();
         if (k === 'regions') {
-          r.params[k] = raw ? raw.split(/[，,、|]/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
+          r.params[k] = raw ? raw.split(/[\s，,、|]+/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
         } else if (String(inp.className || '').indexOf('sw-num') >= 0) {
           r.params[k] = Number(raw || 0);
         } else {
           r.params[k] = raw;
         }
       });
+      // 多选 checkbox 组（抖音「执行动作」）单独收集成数组
+      var multiPicked = {};
+      Array.prototype.forEach.call(extra.querySelectorAll('input[type=checkbox][data-multi]'), function (inp) {
+        var mk = inp.getAttribute('data-multi');
+        if (!mk) return;
+        if (!multiPicked[mk]) multiPicked[mk] = [];
+        if (inp.checked) multiPicked[mk].push(inp.getAttribute('data-val'));
+      });
+      Object.keys(multiPicked).forEach(function (mk) { r.params[mk] = multiPicked[mk]; });
     }
     // 和 Online 节点弹窗一致：选①本机导入名单时不带来源/领取数量参数（只有③才带）。
     if (r.params.source_mode === 'local_import') {
       delete r.params.source_mode;
       delete r.params.max_targets;
+    }
+    // 和 Online 的 saveNodeFromModal 保持一致：
+    // 数值范围夹紧、采集与触达参数互斥、回复参数只在启用时保留
+    function clampNum(value, lo, hi, dflt) {
+      var n = Number(value);
+      if (!isFinite(n)) n = dflt;
+      return Math.max(lo, Math.min(hi, Math.round(n)));
+    }
+    var savedPreset = presetAt(r.preset), savedLabel = String((savedPreset && savedPreset.label) || '');
+    if (savedPreset && savedPreset.key === 'douyin_leads') {
+      if (savedLabel.indexOf('触达') >= 0) {
+        ['keyword', 'keywords', 'query', 'search_keyword', 'regions', 'mode', 'max_results'].forEach(function (k) { delete r.params[k]; });
+        r.params.max_users = clampNum(r.params.max_users, 1, 200, 20);
+        // 和 Online 一样：全不勾就是 []（节点不做事），不替用户偷偷补默认动作
+        r.params.touch_actions = Array.isArray(r.params.touch_actions) ? r.params.touch_actions.filter(Boolean) : [];
+        r.params.customer_scope = 'precise_pool';
+      } else if (savedLabel.indexOf('关键词') >= 0 || savedLabel.indexOf('AI') >= 0) {
+        delete r.params.max_users;
+        delete r.params.touch_actions;
+        delete r.params.followup_actions;
+        r.params.max_results = clampNum(r.params.max_results, 10, 100, 50);
+        var pickedRegions = Array.isArray(r.params.regions) ? r.params.regions.filter(Boolean) : [];
+        r.params.regions = pickedRegions.length ? pickedRegions : ['全国'];
+        r.params.mode = String(r.params.mode || '').toLowerCase() === 'api' ? 'api' : 'script';
+        if (savedLabel.indexOf('AI') >= 0) {
+          r.params.ai_keywords = true;
+          r.params.ai_keyword_count = clampNum(r.params.ai_keyword_count, 1, 8, 3);
+          r.params.ai_keyword_avoid_days = clampNum(r.params.ai_keyword_avoid_days, 1, 60, 7);
+          r.params.ai_keyword_publish_days = clampNum(r.params.ai_keyword_publish_days, 1, 180, 7);
+          ['keyword', 'keywords', 'query', 'search_keyword'].forEach(function (k) { delete r.params[k]; });
+        } else {
+          ['ai_keywords', 'ai_keyword_count', 'ai_keyword_avoid_days', 'ai_keyword_publish_days'].forEach(function (k) { delete r.params[k]; });
+          if (!String(r.params.keyword || '').trim()) ['keyword', 'keywords', 'query', 'search_keyword'].forEach(function (k) { delete r.params[k]; });
+        }
+        var replyEnabled = boolOn(r.params.reply_precise_comments);
+        var replyMode = String(r.params.reply_comment_mode || '').toLowerCase();
+        var replyText = String(r.params.reply_comment_text || '').trim();
+        var replyPrompt = String(r.params.reply_comment_prompt || '').trim();
+        var replySeed = String(r.params.reply_comment_seed_text || '').trim();
+        ['reply_precise_comments', 'reply_comment_mode', 'reply_comment_text', 'reply_comment_prompt', 'reply_comment_seed_text', 'comment_mode', 'comment_text', 'comment_prompt', 'comment_seed_text'].forEach(function (k) { delete r.params[k]; });
+        if (replyEnabled) {
+          r.params.reply_precise_comments = true;
+          if (['fixed', 'ai', 'rewrite'].indexOf(replyMode) >= 0) r.params.reply_comment_mode = replyMode;
+          if (replyText) r.params.reply_comment_text = replyText;
+          if (replyPrompt) r.params.reply_comment_prompt = replyPrompt;
+          if (replySeed) r.params.reply_comment_seed_text = replySeed;
+        }
+        r.params.followup_actions = [];
+        r.params.customer_scope = 'current_collection_batch';
+      }
     }
     document.getElementById('swNodeModal').classList.add('hidden');
     renderRows();
