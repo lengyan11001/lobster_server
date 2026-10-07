@@ -1153,28 +1153,15 @@ body{background:#edf2f7}
       fields.push('<span style="font-size:12px;color:var(--text-secondary)">关键词由 AI 每轮决定，无需手填</span>');
     }
     if (p.key === 'native_wechat_add_friend') {
-      // 一级「个微自动加好友」不能选「上级抖音私信结果」（那是抖音接管的下级动作），
-      // 这里只留 ① 本机导入名单 / ③ 服务端上报池，和 Online 节点弹窗一致。
-      // 参数口径对齐客户端 /api/native-wechat/friends/add：
-      //   targets(数组) / apply_message / remark / tags(数组) / permission / prepare_only
-      var addSrc = String(params.source_mode || '').trim().toLowerCase();
-      var addTargets = Array.isArray(params.targets) ? params.targets.join('、') : String(params.targets || '');
-      var addTags = Array.isArray(params.tags) ? params.tags.join('、') : String(params.tags || '');
-      var addPermission = String(params.permission || '朋友圈').trim() || '朋友圈';
+      // 和 Online 节点弹窗完全一样：这里只配「方式」（目标来源）+ 每轮领取数量。
+      // 申请语 / 备注 / 标签 / 朋友权限这些在 Online 的个微设置里配，节点不重复存一份。
+      // 没存 source_mode 的按 ① 本机导入名单 显示（Online 也是这个口径）。
+      var addPool = String(params.source_mode || '').trim().toLowerCase() === 'server_reported_pool';
       fields.push('<label class="sw-f">加好友目标来源<select class="sw-p" data-k="source_mode">'
-        + '<option value="server_reported_pool"' + (addSrc === 'server_reported_pool' ? ' selected' : '') + '>③ 服务端上报池（同账号跨机器共用）</option>'
-        + '<option value="local_import"' + (addSrc === 'local_import' ? ' selected' : '') + '>① 本机导入名单（节点自带名单）</option>'
+        + '<option value="server_reported_pool"' + (addPool ? ' selected' : '') + '>③ 服务端上报池（同账号跨机器共用）</option>'
+        + '<option value="local_import"' + (addPool ? '' : ' selected') + '>① 本机导入名单（节点自带名单）</option>'
         + '</select></label>');
       fields.push('<label class="sw-f">每轮领取数量<input class="sw-p sw-num" data-k="max_targets"' + num('max_targets', 50) + '></label>');
-      fields.push('<label class="sw-f sw-grow">本机名单（选①时用：手机号/微信号，逗号或换行分隔）<textarea class="sw-p" data-k="targets" rows="2" style="min-height:56px;resize:vertical" placeholder="例：13800000000、wxid_abc123">' + esc(addTargets) + '</textarea></label>');
-      fields.push('<label class="sw-f">添加申请语<input class="sw-p" data-k="apply_message" maxlength="120" value="' + esc(params.apply_message || '') + '"></label>');
-      fields.push('<label class="sw-f">备注<input class="sw-p" data-k="remark" maxlength="120" value="' + esc(params.remark || '') + '"></label>');
-      fields.push('<label class="sw-f">标签（逗号分隔）<input class="sw-p" data-k="tags" value="' + esc(addTags) + '"></label>');
-      fields.push('<label class="sw-f">朋友权限<select class="sw-p" data-k="permission">'
-        + '<option value="朋友圈"' + (addPermission === '朋友圈' ? ' selected' : '') + '>朋友圈</option>'
-        + '<option value="仅聊天"' + (addPermission === '仅聊天' ? ' selected' : '') + '>仅聊天</option>'
-        + '</select></label>');
-      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="prepare_only"' + (params.prepare_only === true || params.prepare_only === 'true' ? ' checked' : '') + '> 只入加好友队列，先不发送申请</span></label>');
     }
     // 抖音私信接管 / 记忆接管：识别到手机号后是「本机直接加」还是「上报到账号级池子」。
     // 不勾选（默认）= 上报池子，由「个微自动加好友（来源=③服务端上报池）」的节点去加。
@@ -1209,7 +1196,6 @@ body{background:#edf2f7}
     if (p.source_mode === 'server_reported_pool') parts.push('加好友：服务端上报池');
     else if (p.source_mode === 'local_import') parts.push('加好友：本机名单');
     if (p.max_targets) parts.push('每轮 ' + p.max_targets);
-    if (p.prepare_only === true) parts.push('只入队列');
     if (p.wechat_add_friend_enabled === true) parts.push('私信加好友：开');
     return parts.join(' · ');
   }
@@ -1511,15 +1497,17 @@ body{background:#edf2f7}
         var raw = String(inp.value || '').trim();
         if (k === 'regions') {
           r.params[k] = raw ? raw.split(/[，,、|]/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
-        } else if (k === 'targets' || k === 'tags') {
-          // 客户端 /api/native-wechat/friends/add 要的是数组，别把整串存进去
-          r.params[k] = raw ? raw.split(/[，,、|\s]+/).map(function (x) { return x.trim(); }).filter(Boolean) : [];
         } else if (String(inp.className || '').indexOf('sw-num') >= 0) {
           r.params[k] = Number(raw || 0);
         } else {
           r.params[k] = raw;
         }
       });
+    }
+    // 和 Online 节点弹窗一致：选①本机导入名单时不带来源/领取数量参数（只有③才带）。
+    if (r.params.source_mode === 'local_import') {
+      delete r.params.source_mode;
+      delete r.params.max_targets;
     }
     document.getElementById('swNodeModal').classList.add('hidden');
     renderRows();

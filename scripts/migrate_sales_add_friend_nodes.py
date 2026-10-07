@@ -70,8 +70,10 @@ def _ensure_params(node) -> bool:
     if not params.get("max_targets"):
         params["max_targets"] = DEFAULT_LIMIT
         changed = True
-    if not isinstance(params.get("targets"), list):
-        params["targets"] = []
+    # Online 的节点里不存 targets（一级节点的名单不落这里），
+    # 顺手清掉上一版脚本写进去的空 targets，保持两边参数一致；有内容的名单不动。
+    if isinstance(params.get("targets"), list) and not params["targets"]:
+        params.pop("targets", None)
         changed = True
     return changed
 
