@@ -1128,14 +1128,15 @@ body{background:#edf2f7}
     function num(k, d) { return ' value="' + (params[k] == null ? d : params[k]) + '"'; }
     var fields = [];
     if (p.key === 'native_wechat_poll') {
-      fields.push('<label class="sw-f">间隔秒<input class="sw-p sw-num" data-k="message_poll_interval_seconds"' + num('message_poll_interval_seconds', 15) + '></label>');
-      fields.push('<label class="sw-f">接管分钟<input class="sw-p sw-num" data-k="takeover_session_minutes"' + num('takeover_session_minutes', 30) + '></label>');
+      // 和 Online 节点弹窗一致：本轮个人会话数量 + 自动拉群。
+      // 间隔秒 / 接管时长由节点的时间区间自动推导，Online 上没有这两个输入。
+      fields.push('<label class="sw-f">本轮个人会话数量<input class="sw-p sw-num" data-k="private_sessions_per_round"' + num('private_sessions_per_round', 100) + '></label>');
+      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="group_invite_enabled"' + (params.group_invite_enabled === true || params.group_invite_enabled === 'true' ? ' checked' : '') + '> 自动拉群：命中拉群规则后立即执行</span></label>');
     }
     if (p.key === 'hifly.video.create_by_tts') {
       var oralPicked = Array.isArray(params.script_sources) && params.script_sources.length
         ? params.script_sources.map(String)
         : [String(params.script_source || 'ip_daily_industry_hot_oral')];
-      fields.push('<label class="sw-f">口播文案<input class="sw-p sw-wide" data-k="script" value="' + esc(params.script || params.prompt || '') + '" placeholder="留空按下面的口播来源生成"></label>');
       fields.push('<label class="sw-f">口播来源（可多选，都选则每次随机一种）<select class="sw-p" data-k="script_sources" multiple size="2">'
         + '<option value="ip_daily_industry_hot_oral"' + (oralPicked.indexOf('ip_daily_industry_hot_oral') >= 0 ? ' selected' : '') + '>行业口播</option>'
         + '<option value="ip_daily_professional_ip_oral"' + (oralPicked.indexOf('ip_daily_professional_ip_oral') >= 0 ? ' selected' : '') + '>IP 口播</option>'
@@ -1166,7 +1167,17 @@ body{background:#edf2f7}
     // 抖音私信接管 / 记忆接管：识别到手机号后是「本机直接加」还是「上报到账号级池子」。
     // 不勾选（默认）= 上报池子，由「个微自动加好友（来源=③服务端上报池）」的节点去加。
     if (p.key === 'douyin_leads' && (p.label.indexOf('私信接管') >= 0 || p.label.indexOf('记忆接管') >= 0)) {
+      // 和 Online 节点弹窗一致：回复策略 + 识别到手机号后是否本机加好友
       var addFriendOn = params.wechat_add_friend_enabled === true || params.wechat_add_friend_enabled === 'true';
+      var replyMode = String(params.reply_mode || '').trim().toLowerCase();
+      if (['fixed', 'ai_lead', 'ai_memory'].indexOf(replyMode) < 0) {
+        replyMode = p.label.indexOf('记忆接管') >= 0 ? 'ai_memory' : 'fixed';
+      }
+      fields.push('<label class="sw-f">抖音私信回复策略<select class="sw-p" data-k="reply_mode">'
+        + '<option value="fixed"' + (replyMode === 'fixed' ? ' selected' : '') + '>固定话术</option>'
+        + '<option value="ai_lead"' + (replyMode === 'ai_lead' ? ' selected' : '') + '>AI 引导加绿泡泡</option>'
+        + '<option value="ai_memory"' + (replyMode === 'ai_memory' ? ' selected' : '') + '>AI 记忆接管（按记忆文件回复）</option>'
+        + '</select></label>');
       fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="wechat_add_friend_enabled"' + (addFriendOn ? ' checked' : '') + '> 识别到手机号后直接在本机加微信好友</span></label>');
       fields.push('<span style="font-size:12px;color:var(--text-secondary)">不勾选：识别到的号码上报到账号级池子，由「个微自动加好友（来源=③服务端上报池）」的节点去加。</span>');
     }
@@ -1189,8 +1200,8 @@ body{background:#edf2f7}
     if (p.regions) parts.push('地区：' + (Array.isArray(p.regions) ? p.regions.join('/') : p.regions));
     if (p.max_results !== undefined && p.max_results !== '') parts.push('数量：' + p.max_results);
     if (p.max_users !== undefined && p.max_users !== '') parts.push('触达：' + p.max_users);
-    if (p.message_poll_interval_seconds !== undefined) parts.push('轮询 ' + p.message_poll_interval_seconds + 's');
-    if (p.takeover_session_minutes !== undefined) parts.push('接管 ' + p.takeover_session_minutes + 'min');
+    if (p.private_sessions_per_round) parts.push('单轮会话 ' + p.private_sessions_per_round);
+    if (p.group_invite_enabled === true) parts.push('自动拉群');
     if (p.script) parts.push('口播：' + String(p.script).slice(0, 24));
     if (p.moment_action) parts.push('动作：' + p.moment_action);
     if (p.source_mode === 'server_reported_pool') parts.push('加好友：服务端上报池');
