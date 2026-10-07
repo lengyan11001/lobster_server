@@ -1189,9 +1189,7 @@
         };
       }
       if (actionKey === "native_wechat_moments_engage") {
-        const rawTargets = Array.isArray(baseParams.contact_wx_nos) ? baseParams.contact_wx_nos : baseParams.targets;
-        const targets = Array.from(new Set((Array.isArray(rawTargets) ? rawTargets : []).map((value) => String(value || "").trim()).filter(Boolean)));
-        if (options.requireTargets && !targets.length) throw new Error("请选择或填写朋友圈联系人");
+        // 联系人不落节点：执行时读机器上「微信协议助手-通讯录」确认过的那份
         const momentParams = { ...baseParams };
         [
           "group_invite_enabled",
@@ -1215,7 +1213,7 @@
           content: "H5 工作流：朋友圈点赞评论",
           payload: {
             action: "native_wechat_moments_engage",
-            params: { ...momentParams, contact_wx_nos: targets, targets, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
+            params: { ...momentParams, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
           },
         };
       }
@@ -5390,12 +5388,9 @@ async function api(path, options = {}) {
       }
       if (isNativeWechatWorkflowKey(key)) {
         if (key === "native_wechat_moments_engage") {
-          const wxNos = workflowMomentSelectedValues("param");
           return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
-            contact_wx_nos: wxNos,
-            targets: wxNos,
             moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
-          }, { requireTargets: true });
+          });
         }
         return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
           targets: workSplitList(workflowParamValue("workflowParamNativeWechatTargets")),
@@ -5623,14 +5618,10 @@ async function api(path, options = {}) {
           reply_instruction: workflowParamValue("workflowNodeNativeWhatsappInstruction"),
         });
       } else if (nodeKey === "native_wechat_moments_engage") {
-        const wxNos = workflowMomentSelectedValues("node");
-        if (!wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
         plan = nativeWechatWorkflowPlan(nodeKey, note, {
-          contact_wx_nos: wxNos,
-          targets: wxNos,
           moment_action: workflowParamValue("workflowNodeMomentAction") || "like_comment",
           max_scrolls: 6,
-        }, { requireTargets: true });
+        });
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
         && douyinLookupAction === "precise_touch"
@@ -5835,7 +5826,6 @@ async function api(path, options = {}) {
       const actionPayload = action && action.plan && action.plan.payload && typeof action.plan.payload === "object" ? action.plan.payload : {};
       const actionParams = actionPayload.params && typeof actionPayload.params === "object" ? actionPayload.params : {};
       if ($("workflowActionMomentAction")) $("workflowActionMomentAction").value = actionParams.moment_action || "like_comment";
-      initializeWorkflowMomentPicker("action", Array.isArray(actionParams.contact_wx_nos) ? actionParams.contact_wx_nos : actionParams.targets);
       syncWorkflowActionModalFields();
       modal.classList.remove("hidden");
       if (workflowActionKind(action || {}) === "native_wechat_moments_engage") {
@@ -5879,14 +5869,11 @@ async function api(path, options = {}) {
       });
       if (duplicate) throw new Error(actionType === "publish" ? "这个平台已经有发布动作了" : "这个子动作已经添加过了");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
-      const wxNos = actionType === "native_wechat_moments_engage" ? workflowMomentSelectedValues("action") : [];
-      if (actionType === "native_wechat_moments_engage" && !wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
       const nextAction = workflowActionPayload(parentNode, {
         time,
         end_time: endTime,
         action_type: actionType,
         platform,
-        contact_wx_nos: wxNos,
         moment_action: (($("workflowActionMomentAction") && $("workflowActionMomentAction").value) || "like_comment").trim(),
       }, existing);
       const children = currentChildren
@@ -6545,13 +6532,9 @@ async function api(path, options = {}) {
         });
       }
       if (type === "native_wechat_moments_engage") {
-        const wxNos = Array.isArray(formData.contact_wx_nos)
-          ? formData.contact_wx_nos.map((value) => String(value || "").trim()).filter(Boolean)
-          : (Array.isArray(source.contact_wx_nos) ? source.contact_wx_nos : source.targets || []);
+        // 联系人不落节点：执行时读机器上确认过的那份
         return nativeWechatWorkflowPlan("native_wechat_moments_engage", "微信朋友圈点赞评论", {
           ...source,
-          contact_wx_nos: wxNos,
-          targets: wxNos,
           moment_action: formData.moment_action || source.moment_action || "like_comment",
           max_scrolls: Number(source.max_scrolls || 6),
         });
@@ -6881,7 +6864,6 @@ async function api(path, options = {}) {
       if (String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage") {
         setFieldValue("workflowParamNativeWechatMomentAction", params.moment_action || "like_comment");
         setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
-        initializeWorkflowMomentPicker("param", Array.isArray(params.contact_wx_nos) ? params.contact_wx_nos : params.targets);
         return;
       }
       if (isIpContentCapability(capabilityId)) {

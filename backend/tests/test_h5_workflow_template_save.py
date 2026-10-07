@@ -795,30 +795,25 @@ def test_workflow_day_dialog_and_template_drawer_stay_above_page_content():
     assert "20260803-workflow-dialog-keyboard-v2" in html
 
 
-def test_moments_workflow_node_selects_paginated_contacts_by_wechat_id():
+def test_moments_workflow_node_does_not_keep_contacts():
+    """朋友圈互动联系人不在节点里选：到 Online微信协议助手-通讯录确认，节点只下发任务。"""
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
-    styles = (ROOT / "h5_static" / "h5-app.css").read_text(encoding="utf-8")
 
+    # 字段还在（只是提示），但不再有选择器 / 不再存名单
     assert 'id="workflowNodeMomentField"' in html
     assert 'id="workflowActionMomentField"' in html
-    assert 'id="workflowNodeMomentPrev"' in html
-    assert 'id="workflowNodeMomentNext"' in html
-    assert 'function workflowMomentContacts(scope = "param")' in script
-    assert "if (isNativeWechatWorkflowKey(key)) return false;" in script
-    assert "async function refreshWorkflowMomentContactSource()" in script
-    assert 'renderWorkflowMomentPicker("param")' in script
-    assert 'workflowActionMomentAction") && $("workflowActionMomentAction").value' in script
-    assert 'remark: "已保存的微信号"' in script
-    assert "const pageSize = 20;" in script
-    assert "contact_wx_nos: wxNos" in script
-    assert "targets: wxNos" in script
-    assert 'throw new Error("请选择至少一个朋友圈联系人")' in script
-    assert 'workflowParamNativeWechatMomentField' in script
-    assert 'workflowParamNativeWechatMomentContacts' in script
-    assert 'workflowMomentSelectedValues("param")' in script
-    assert 'String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage"' in script
-    assert ".workflow-moment-list" in styles
+    assert 'id="workflowNodeMomentPrev"' not in html
+    assert 'id="workflowActionMomentPrev"' not in html
+    assert "确认为朋友圈互动联系人" in html
+    assert "contact_wx_nos: wxNos" not in script
+    assert "targets: wxNos" not in script
+    assert 'throw new Error("请选择至少一个朋友圈联系人")' not in script
+    assert 'initializeWorkflowMomentPicker("param"' not in script
+    assert 'initializeWorkflowMomentPicker("action"' not in script
+    # 互动动作仍然保留
+    assert '$("workflowNodeMomentAction")' in script or "workflowNodeMomentAction" in script
+    assert "workflowActionMomentAction" in script
 
 
 def test_sales_activation_context_is_resolved_for_the_device_slot(db_session, test_user, monkeypatch):
