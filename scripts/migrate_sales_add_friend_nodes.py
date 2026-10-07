@@ -140,12 +140,22 @@ def main() -> int:
             nodes = copy.deepcopy(r.nodes or [])
             have = {str(n.get("id") or "") for n in nodes if isinstance(n, dict)}
             missing = [i for i in catalog_ids if i not in have]
-            if not missing or not set(missing) <= donor_id_set:
+            add_missing = bool(missing) and set(missing) <= donor_id_set
+            changed = False
+            # 已经存在的「系统模板带过来的」加好友节点：参数对齐 Online
+            # （补 source_mode / max_targets，清掉空的 targets）；用户自己加的节点不碰。
+            for node in nodes:
+                if str(node.get("id") or "") in donor_id_set and _is_level1_add_friend(node):
+                    if _ensure_params(node):
+                        changed = True
+            if add_missing:
+                nodes.extend(copy.deepcopy(n) for n in fresh if str(n.get("id") or "") not in have)
+                nodes.sort(key=lambda n: str(n.get("time") or ""))
+                changed = True
+            if not changed:
                 continue
-            nodes.extend(copy.deepcopy(n) for n in fresh if str(n.get("id") or "") not in have)
-            nodes.sort(key=lambda n: str(n.get("time") or ""))
             backup[str(r.id)] = r.nodes
-            touched.append(("nodes", r.id, r.owner_user_id))
+            touched.append(("nodes" if add_missing else "params", r.id, r.owner_user_id))
             if args.apply:
                 r.nodes = nodes
 
