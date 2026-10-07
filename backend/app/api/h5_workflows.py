@@ -1311,6 +1311,8 @@ def _template_language(requirements: dict[str, Any], template: Optional[IPConten
         64,
     )
     lowered = raw.lower()
+    if lowered in {"zh-tw", "zh-hant", "繁體中文", "繁体中文", "traditional chinese"}:
+        return "zh-TW"
     if lowered in {"zh", "zh-cn", "中文", "简体中文", "chinese"}:
         return "zh-CN"
     if lowered in {"en", "en-us", "english", "英文", "英语"}:

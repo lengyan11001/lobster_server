@@ -182,6 +182,11 @@ _WECHAT_REPLY_LANGUAGE_ALIASES = {
     "chinese": "zh-CN",
     "中文": "zh-CN",
     "简体中文": "zh-CN",
+    "zh-tw": "zh-TW",
+    "zh-hant": "zh-TW",
+    "繁體中文": "zh-TW",
+    "繁体中文": "zh-TW",
+    "traditional chinese": "zh-TW",
     "en-us": "en",
     "en-gb": "en",
     "english": "en",
@@ -196,7 +201,7 @@ _WECHAT_REPLY_LANGUAGE_ALIASES = {
     "韩文": "ko",
     "韩语": "ko",
 }
-_WECHAT_REPLY_LANGUAGES = {"zh-CN", "en", "ja", "ko", "th", "vi", "id", "ms", "es", "pt", "fr", "de", "ru", "ar"}
+_WECHAT_REPLY_LANGUAGES = {"zh-CN", "zh-TW", "en", "ja", "ko", "th", "vi", "id", "ms", "es", "pt", "fr", "de", "ru", "ar"}
 
 
 def _normalize_wechat_reply_language(value: Any) -> str:
