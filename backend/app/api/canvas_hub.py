@@ -732,11 +732,15 @@ def repair_canvas_record_kinds(db: Session, *, user_id: int = 0, limit: int = 50
     """把「kind 与产物类型不一致」的画布内容记录修正（视频被记成 image 等）。返回修正条数。"""
     from ..models import UserContentRecord
 
-    query = db.query(UserContentRecord)
+    # 只动画布记录！2026-10-08 事故：这里漏了 source 过滤，把 online_ppt / online_wechat_article
+    # 的 kind 一并改写成了 image（已恢复数据）。以后任何修复函数都必须限定 source。
+    query = db.query(UserContentRecord).filter(UserContentRecord.source == "canvas")
     if user_id:
         query = query.filter(UserContentRecord.user_id == int(user_id))
     fixed = 0
     for row in query.order_by(UserContentRecord.id.desc()).limit(max(1, int(limit))).all():
+        if str(row.kind or "") not in ("image", "video"):
+            continue
         url = str(row.file_url or row.cover_url or "")
         if not url:
             continue
