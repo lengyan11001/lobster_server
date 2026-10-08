@@ -1,0 +1,13 @@
+<!-- 复制到 App 的 Info.plist（<dict> 内），蓝牙扫描必填 -->
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>用于连接录音设备并同步录音到 AI 秘书</string>
+<key>NSBluetoothPeripheralUsageDescription</key>
+<string>用于连接录音设备并同步录音到 AI 秘书</string>
+<!-- 录音后上传前如需本地缓存（可选） -->
+<key>NSMicrophoneUsageDescription</key>
+<string>用于录音设备本地试听与转写</string>
+<!-- 若 H5 走 http 调试（正式必须 https） -->
+<key>NSAppTransportSecurity</key>
+<dict>
+  <key>NSAllowsArbitraryLoads</key><true/>
+</dict>

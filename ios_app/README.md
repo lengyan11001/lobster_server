@@ -85,3 +85,21 @@ npm run ios:open
 ```
 
 正式构建前必须修改 `capacitor.config.ts` 中的 `appId` 和 `appName`，并设置真实 HTTPS 服务地址。当前这份壳包含网页充值、第三方 OAuth 和账号功能，不能不经调整就直接提交 App Store。
+
+## iOS 录音设备（AI 秘书 → 连接设备 → 同步音频）
+
+安卓端这套能力由 Android 宿主 App 的 `@JavascriptInterface` 提供，iOS 一直没有，所以 H5 会提示「请在最新版安卓 APK 中使用录音设备功能」。
+
+现在仓库里已经带上 iOS 侧实现与 H5 侧兼容改动：
+
+- 原生实现（WKWebView 桥 + AIREC BLE + 上传）：`ios_app/native/LobsterRecorder/`（见该目录 README.md）
+- H5 侧：`h5_static/h5-app.js` 的 `recorderNative()` 已同时接受 `window.LobsterIOS`，并把 4 处「安卓 APK」文案改为「必火 App」
+
+集成方式（WKWebView 工程，例如 `lobster_ios`）：
+
+```swift
+LobsterRecorderBridge.shared.baseURL = "https://h5.bhzn.top"
+LobsterRecorderBridge.shared.attach(webView: webView)   // 创建 WKWebView 之后调用一次
+```
+
+需要的文件与 Info.plist 权限见 `ios_app/native/LobsterRecorder/README.md`。

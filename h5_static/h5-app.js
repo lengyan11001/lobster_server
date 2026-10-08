@@ -16662,7 +16662,8 @@ async function api(path, options = {}) {
     }
 
     function recorderNative() {
-      return window.LobsterAndroid && typeof window.LobsterAndroid.startRecorderScan === "function" ? window.LobsterAndroid : null;
+      const bridge = window.LobsterIOS || window.LobsterAndroid;
+      return bridge && typeof bridge.startRecorderScan === "function" ? bridge : null;
     }
 
     function recorderStatusLabel(status) {
@@ -17130,7 +17131,7 @@ async function api(path, options = {}) {
       const native = recorderNative();
       const status = $("recorderDeviceStatus");
       if (!native) {
-        if (status) status.textContent = "请在最新版安卓 APK 中使用录音设备功能";
+        if (status) status.textContent = "请在必火 App 中使用录音设备功能";
         renderRecorderDeviceState({ connected: false, recording: false, paused: false, duration: 0, name: "" });
       } else {
         syncRecorderNativeAuth();
@@ -17241,7 +17242,7 @@ async function api(path, options = {}) {
 
     async function refreshLatestRecorderFiles() {
       const native = recorderNative();
-      if (!native) return toast("请在最新版安卓 APK 中连接录音设备");
+      if (!native) return toast("请在必火 App 中连接录音设备");
       const value = readRecorderNativeState() || state.recorderDeviceState;
       if (!value.connected) return toast("请先连接录音设备；已同步录音仍可在当前列表查看");
       if (value.recording) {
@@ -28629,7 +28630,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     });
     if ($("recorderConnectBtn")) $("recorderConnectBtn").addEventListener("click", () => {
       const native = recorderNative();
-      if (!native) return toast("请在最新版安卓 APK 中连接录音设备");
+      if (!native) return toast("请在必火 App 中连接录音设备");
       syncRecorderNativeAuth();
       native.startRecorderScan();
     });
@@ -28775,7 +28776,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       }
       if (!button) return;
       const native = recorderNative();
-      if (!native) return toast("请在最新版安卓 APK 中下载录音");
+      if (!native) return toast("请在必火 App 中下载录音");
       if (state.recorderSyncActive) return toast("当前录音同步完成后再选择下一条");
       state.recorderSyncActive = true;
       if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `正在准备同步 ${button.dataset.recorderDownload || "录音"}，请保持页面亮屏…`;
