@@ -3053,6 +3053,38 @@ def _copy_survey_for_user(db: Session, source: Optional[IPContentProfileSurvey],
     return int(row.id)
 
 
+def _copy_survey_for_template_copy(
+    db: Session, source_template: Optional[IPContentScheduleTemplate], user_id: int
+) -> Optional[int]:
+    """复制模板时是否连同「资料调查」一起复制。
+
+    系统模板是官方共享内容，其中的资料调查属于原作者的个人资料，
+    不能复制给其他用户；用户「带入」后用自己的资料调查。
+    """
+    if source_template is None:
+        return None
+    if bool(getattr(source_template, "is_system", False)):
+        return None
+    return _copy_survey_for_user(db, _survey_for_template(db, source_template), user_id)
+
+
+def _requirements_for_template_copy(
+    source_template: Optional[IPContentScheduleTemplate], fallback: Any = None
+) -> dict[str, Any]:
+    """复制模板时拿到的要求文案。
+
+    系统模板里的人设（资料调查字段）属于原作者个人资料，不带给其他用户。
+    """
+    req: dict[str, Any] = {}
+    if source_template is not None and isinstance(source_template.requirements, dict):
+        req = dict(source_template.requirements)
+        if bool(getattr(source_template, "is_system", False)):
+            req = _strip_personal_profile_requirements(req)
+    if isinstance(fallback, dict):
+        req.update(fallback)
+    return req
+
+
 def _rows_ordered_by_ids(rows: list[Any], ids: list[int]) -> list[Any]:
     by_id = {int(getattr(row, "id", 0) or 0): row for row in rows}
     return [by_id[item_id] for item_id in ids if item_id in by_id]
@@ -3580,6 +3612,24 @@ def _granted_template_matching_refs(
             continue
         return source
     return None
+
+
+def _template_copy_meta(source: IPContentScheduleTemplate, base_meta: Any = None) -> dict[str, Any]:
+    """复制模板时生成副本的 meta。
+
+    副本是一条新记录，不能把原模板的「当前启用模板」指针
+    以及资料调查引用带过来。
+    """
+    meta = dict(base_meta) if isinstance(base_meta, dict) else {}
+    meta.pop("current_template_id", None)
+    meta.pop("survey_id", None)
+    meta.update({
+        "source": "user_copy",
+        "copied_from_template_id": int(source.id),
+        "copied_from_owner_user_id": int(source.user_id),
+        "activated": False,
+    })
+    return meta
 
 
 def _copy_template_name(db: Session, user_id: int, source_name: str, requested_name: str = "") -> str:
@@ -6136,7 +6186,7 @@ def copy_schedule_template(
         int(current_user.id),
         installation_id or "template-copy",
     )
-    copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source), int(current_user.id))
+    copied_survey_id = _copy_survey_for_template_copy(db, source, int(current_user.id))
     requested_name = body.name if body is not None else ""
     row = IPContentScheduleTemplate(
         user_id=int(current_user.id),
@@ -6146,13 +6196,8 @@ def copy_schedule_template(
         memory_doc_ids=memory_doc_ids,
         memory_docs=memory_docs,
         survey_id=copied_survey_id,
-        requirements=_jsonable(source.requirements or {}),
-        meta=_jsonable({
-            **(source.meta or {}),
-            "source": "user_copy",
-            "copied_from_template_id": int(source.id),
-            "copied_from_owner_user_id": int(source.user_id),
-        }),
+        requirements=_jsonable(_requirements_for_template_copy(source)),
+        meta=_jsonable(_template_copy_meta(source, source.meta)),
         status="active",
     )
     db.add(row)
@@ -6380,8 +6425,8 @@ def save_schedule_template(
             int(current_user.id),
             "template-save",
         )
-        requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
-        copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id))
+        requirements = _requirements_for_template_copy(source_template, body.requirements)
+        copied_survey_id = _copy_survey_for_template_copy(db, source_template, int(current_user.id))
         meta = {
             **(body.meta or {}),
             "source": "user_copy",
@@ -6401,8 +6446,8 @@ def save_schedule_template(
             keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
                 db, source_template, int(current_user.id), "template-save"
             )
-            requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
-            copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id))
+            requirements = _requirements_for_template_copy(source_template, body.requirements)
+            copied_survey_id = _copy_survey_for_template_copy(db, source_template, int(current_user.id))
             meta = {
                 **(body.meta or {}),
                 "source": "user_copy",
@@ -6476,8 +6521,8 @@ def update_schedule_template(
                 competitor_ids=competitor_ids,
                 memory_doc_ids=memory_doc_ids,
                 memory_docs=memory_docs,
-                survey_id=_copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id)),
-                requirements=_jsonable({**(source_template.requirements or {}), **(body.requirements or {})}),
+                survey_id=_copy_survey_for_template_copy(db, source_template, int(current_user.id)),
+                requirements=_jsonable(_requirements_for_template_copy(source_template, body.requirements)),
                 meta=_jsonable({
                     **(body.meta or {}),
                     "source": "user_copy",
