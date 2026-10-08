@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, Set
@@ -26,6 +27,8 @@ from ..models import (
     UserInstallation,
 )
 from .brand_context import scoped_installation_id, user_brand_mark
+
+logger = logging.getLogger(__name__)
 
 _INSTALLATION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{8,128}$")
 _ACTIVE_STATUSES = {"pending", "processing"}
@@ -172,10 +175,31 @@ def migrate_installation_slot_references(
         for row in db.query(model).filter(getattr(model, user_field) == user_id).all():
             if str(getattr(row, field, "") or "").strip() not in old_ids:
                 continue
+            # 2026-10-08：目标槽位可能已经有同一 (user_id, installation_id) 的记录，
+            # 直接改写会撞唯一约束（线上 /api/installation-id/bind 曾因此 500）。
+            conflict = (
+                db.query(model)
+                .filter(
+                    getattr(model, user_field) == user_id,
+                    getattr(model, field) == new,
+                    model.id != row.id,
+                )
+                .first()
+            )
+            if conflict is not None:
+                db.delete(row)
+                merged_key = stat_key + "_merged"
+                stats[merged_key] = int(stats.get(merged_key) or 0) + 1
+                continue
             setattr(row, field, new)
             if hasattr(row, "updated_at"):
                 row.updated_at = now
             stats[stat_key] += 1
+        try:
+            db.flush()
+        except Exception as exc:  # noqa: BLE001 单表冲突不要拖垮整次绑定
+            logger.warning("[installation-slot] %s 槽位改写冲突，已回滚该批: %s", stat_key, exc)
+            db.rollback()
 
     stats["presence"] = int(
         db.query(H5ChatDevicePresence)
