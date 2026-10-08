@@ -19,6 +19,7 @@ from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..db import get_db
 from ..models import User
@@ -31,6 +32,7 @@ from ..shop_models import (
     ShopOrder,
     ShopOrderItem,
     ShopProduct,
+    ShopProductSubmission,
     ShopReferral,
     ShopReferralClick,
 )
@@ -273,6 +275,7 @@ def merchant_update(body: MerchantUpdateReq, current_user: User = Depends(get_cu
 @cms_router.get("/api/shop-cms/products", summary="商品列表")
 def cms_products(
     status: str = "",
+    keyword: str = "",
     page: int = 1,
     size: int = 20,
     current_user: User = Depends(get_current_user),
@@ -282,6 +285,12 @@ def cms_products(
     query = db.query(ShopProduct).filter(ShopProduct.merchant_id == merchant.id)
     if status:
         query = query.filter(ShopProduct.status == status)
+    text = str(keyword or "").strip()
+    if text:
+        like = f"%{text}%"
+        query = query.filter(
+            ShopProduct.title.ilike(like) | ShopProduct.spu.ilike(like) | ShopProduct.keywords.ilike(like)
+        )
     total = query.count()
     rows = query.order_by(ShopProduct.id.desc()).offset(max(0, (page - 1) * size)).limit(min(size, 100)).all()
     return {"ok": True, "total": total, "items": [_product_payload(row, merchant) for row in rows]}
@@ -667,3 +676,441 @@ def order_create(
         "commission_blocked_reason": "" if commission_cents > 0 or promoter_id is None else reason,
         "status": order.status,
     }
+
+# ────────────────────────── 素材投稿（Online 用户 → 商家商品） ──────────────────────────
+
+SUBMISSION_STATUSES = ("new", "used", "rejected")
+
+
+def _masked_phone(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 7 and text.isdigit():
+        return text[:3] + "****" + text[-4:]
+    if len(text) > 4:
+        return text[:2] + "***" + text[-2:]
+    return text
+
+
+def _submission_public_url(row: "ShopProductSubmission", request: Optional[Request]) -> str:
+    """给商家/投稿人一个可访问地址：优先公开源地址，否则现签一个素材文件地址。"""
+    url = str(row.url or "").strip()
+    needs_fresh = (not url.startswith(("http://", "https://"))) or ("token=" in url) or ("42.194.209.150" in url)
+    if needs_fresh and row.asset_id and request is not None:
+        try:
+            from .assets import build_asset_file_url
+
+            fresh = build_asset_file_url(request, str(row.asset_id))
+            if fresh:
+                return fresh
+        except Exception:
+            pass
+    return url
+
+
+def _submission_payload(
+    row: "ShopProductSubmission",
+    *,
+    request: Optional[Request] = None,
+    product: Optional[ShopProduct] = None,
+    merchant: Optional[ShopMerchant] = None,
+    submitter: Optional[User] = None,
+) -> Dict[str, Any]:
+    url = _submission_public_url(row, request)
+    data: Dict[str, Any] = {
+        "id": int(row.id),
+        "product_id": int(row.product_id),
+        "merchant_id": int(row.merchant_id),
+        "asset_id": row.asset_id or "",
+        "media_type": row.media_type or "",
+        "title": row.title or "",
+        "url": url,
+        "thumb_url": (row.thumb_url or url) if str(row.media_type or "") != "video" else (row.thumb_url or ""),
+        "note": row.note or "",
+        "status": row.status or "new",
+        "source": row.source or "",
+        "used_mode": row.used_mode or "",
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+        "used_at": row.used_at.isoformat() if row.used_at else None,
+    }
+    if product is not None:
+        data["product"] = {
+            "id": int(product.id),
+            "title": product.title or "",
+            "cover_url": product.cover_url or "",
+            "price_cents": int(product.price_cents or 0),
+            "status": product.status or "",
+        }
+    if merchant is not None:
+        data["merchant"] = {
+            "id": int(merchant.id),
+            "slug": merchant.slug or "",
+            "company_name": merchant.company_name or "",
+            "logo_url": merchant.logo_url or "",
+        }
+    if submitter is not None:
+        data["submitter"] = {
+            "user_id": int(submitter.id),
+            "name": str(getattr(submitter, "name", "") or getattr(submitter, "nickname", "") or ""),
+            "phone": _masked_phone(str(getattr(submitter, "phone", "") or getattr(submitter, "username", "") or "")),
+        }
+    return data
+
+
+def _product_materials(product: ShopProduct) -> List[Dict[str, Any]]:
+    """商品上「商家自己上传的素材」：图集 + 详情图 + 商家采纳的投稿素材。"""
+    media = product.media or {}
+    out: List[Dict[str, Any]] = []
+
+    def add(url: Any, title: str, kind: str) -> None:
+        text = str(url or "").strip()
+        if not text:
+            return
+        if any(row["url"] == text for row in out):
+            return
+        out.append({"url": text, "title": title, "kind": kind})
+
+    add(product.cover_url, "商品主图", "cover")
+    for index, url in enumerate(media.get("gallery") or []):
+        add(url, "图集 %d" % (index + 1), "gallery")
+    for index, url in enumerate(media.get("detail_images") or []):
+        add(url, "详情图 %d" % (index + 1), "detail")
+    for row in media.get("materials") or []:
+        if isinstance(row, dict):
+            add(row.get("url"), str(row.get("title") or "投稿素材"), "submission")
+        else:
+            add(row, "投稿素材", "submission")
+    return out
+
+
+class SubmissionItemReq(BaseModel):
+    asset_id: str = Field("", max_length=64)
+    url: str = Field("", max_length=1024)
+    thumb_url: str = Field("", max_length=1024)
+    media_type: str = Field("", max_length=24)
+    title: str = Field("", max_length=200)
+
+
+class SubmissionCreateReq(BaseModel):
+    product_id: int
+    note: str = Field("", max_length=300)
+    source: str = Field("online_submit", max_length=24)
+    items: List[SubmissionItemReq] = Field(default_factory=list)
+
+
+def _submission_rows_query(db: Session, **filters: Any):
+    return db.query(ShopProductSubmission).filter(**filters) if filters else db.query(ShopProductSubmission)
+
+
+@router.post("/api/shop/submissions", summary="给商家商品投稿素材")
+def create_submissions(
+    body: SubmissionCreateReq,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    product = (
+        db.query(ShopProduct)
+        .filter(ShopProduct.id == int(body.product_id), ShopProduct.status == ON_SALE)
+        .first()
+    )
+    if product is None:
+        raise HTTPException(status_code=404, detail="商品不存在或已下架")
+    items: List[SubmissionItemReq] = []
+    seen: set = set()
+    for item in body.items:
+        url = str(item.url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            continue
+        key = (url, str(item.asset_id or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+    if not items:
+        raise HTTPException(status_code=400, detail="请先选择要投递的素材")
+    if len(items) > 20:
+        raise HTTPException(status_code=400, detail="一次最多投递 20 个素材")
+
+    created = 0
+    rows: List[ShopProductSubmission] = []
+    for item in items:
+        url = str(item.url or "").strip()
+        row = (
+            db.query(ShopProductSubmission)
+            .filter(
+                ShopProductSubmission.product_id == int(product.id),
+                ShopProductSubmission.submitter_user_id == int(current_user.id),
+                ShopProductSubmission.url == url,
+            )
+            .first()
+        )
+        if row is None:
+            row = ShopProductSubmission(
+                product_id=int(product.id),
+                merchant_id=int(product.merchant_id),
+                submitter_user_id=int(current_user.id),
+                source=str(body.source or "online_submit")[:24],
+                asset_id=str(item.asset_id or "")[:64],
+                media_type=str(item.media_type or "")[:24],
+                title=str(item.title or "")[:200],
+                url=url,
+                thumb_url=str(item.thumb_url or "")[:1024],
+                note=str(body.note or "")[:300],
+                status="new",
+            )
+            db.add(row)
+            created += 1
+        else:
+            row.asset_id = str(item.asset_id or row.asset_id or "")[:64]
+            row.media_type = str(item.media_type or row.media_type or "")[:24]
+            row.title = str(item.title or row.title or "")[:200]
+            row.thumb_url = str(item.thumb_url or row.thumb_url or "")[:1024]
+            if body.note:
+                row.note = str(body.note)[:300]
+            if str(row.status or "") == "rejected":
+                row.status = "new"
+        rows.append(row)
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "ok": True,
+        "created": created,
+        "total": len(rows),
+        "product": _submission_payload(rows[0], request=request, product=product)["product"],
+        "items": [_submission_payload(row, request=request) for row in rows],
+    }
+
+
+@router.get("/api/shop/submissions/mine", summary="我的投稿列表")
+def my_submissions(
+    request: Request,
+    page: int = 1,
+    size: int = 20,
+    product_id: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    query = db.query(ShopProductSubmission).filter(
+        ShopProductSubmission.submitter_user_id == int(current_user.id)
+    )
+    if int(product_id or 0) > 0:
+        query = query.filter(ShopProductSubmission.product_id == int(product_id))
+    total = query.count()
+    rows = (
+        query.order_by(ShopProductSubmission.created_at.desc(), ShopProductSubmission.id.desc())
+        .offset(max(0, (max(1, int(page)) - 1) * int(size)))
+        .limit(max(1, min(int(size), 100)))
+        .all()
+    )
+    products: Dict[int, ShopProduct] = {}
+    merchants: Dict[int, ShopMerchant] = {}
+    if rows:
+        product_ids = {int(row.product_id) for row in rows}
+        for product in db.query(ShopProduct).filter(ShopProduct.id.in_(product_ids)).all():
+            products[int(product.id)] = product
+        merchant_ids = {int(row.merchant_id) for row in rows}
+        for merchant in db.query(ShopMerchant).filter(ShopMerchant.id.in_(merchant_ids)).all():
+            merchants[int(merchant.id)] = merchant
+    return {
+        "ok": True,
+        "total": total,
+        "page": max(1, int(page)),
+        "size": max(1, min(int(size), 100)),
+        "items": [
+            _submission_payload(
+                row,
+                request=request,
+                product=products.get(int(row.product_id)),
+                merchant=merchants.get(int(row.merchant_id)),
+            )
+            for row in rows
+        ],
+    }
+
+
+@router.get("/api/shop/submissions/product/{product_id}", summary="投稿商品详情（含商家素材与我的投稿）")
+def submission_product_detail(
+    product_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    product = db.query(ShopProduct).filter(ShopProduct.id == int(product_id)).first()
+    if product is None:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    merchant = db.query(ShopMerchant).filter(ShopMerchant.id == product.merchant_id).first()
+    mine = (
+        db.query(ShopProductSubmission)
+        .filter(
+            ShopProductSubmission.product_id == int(product.id),
+            ShopProductSubmission.submitter_user_id == int(current_user.id),
+        )
+        .order_by(ShopProductSubmission.created_at.desc(), ShopProductSubmission.id.desc())
+        .all()
+    )
+    return {
+        "ok": True,
+        "product": _product_payload(product, merchant),
+        "materials": _product_materials(product),
+        "my_submissions": [_submission_payload(row, request=request) for row in mine],
+    }
+
+
+class SubmissionUseReq(BaseModel):
+    mode: str = Field("attach", max_length=16)  # attach=放进商品素材 / download=只下载
+    note: str = Field("", max_length=300)
+
+
+@cms_router.get("/api/shop-cms/submissions", summary="商家：按商品/关键词查看投稿素材")
+def cms_submissions(
+    request: Request,
+    product_id: int = 0,
+    keyword: str = "",
+    status: str = "",
+    page: int = 1,
+    size: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    merchant = _merchant_of(db, current_user)
+    query = db.query(ShopProductSubmission).filter(ShopProductSubmission.merchant_id == int(merchant.id))
+    if int(product_id or 0) > 0:
+        query = query.filter(ShopProductSubmission.product_id == int(product_id))
+    if str(status or "") in SUBMISSION_STATUSES:
+        query = query.filter(ShopProductSubmission.status == str(status))
+    text = str(keyword or "").strip()
+    if text:
+        like = f"%{text}%"
+        product_ids = [
+            int(row_id)
+            for (row_id,) in db.query(ShopProduct.id)
+            .filter(
+                ShopProduct.merchant_id == int(merchant.id),
+                ShopProduct.title.ilike(like) | ShopProduct.spu.ilike(like) | ShopProduct.keywords.ilike(like),
+            )
+            .all()
+        ]
+        query = query.filter(
+            ShopProductSubmission.product_id.in_(product_ids or [-1])
+            | ShopProductSubmission.title.ilike(like)
+        )
+    total = query.count()
+    rows = (
+        query.order_by(ShopProductSubmission.created_at.desc(), ShopProductSubmission.id.desc())
+        .offset(max(0, (max(1, int(page)) - 1) * int(size)))
+        .limit(max(1, min(int(size), 100)))
+        .all()
+    )
+    products: Dict[int, ShopProduct] = {}
+    submitters: Dict[int, User] = {}
+    if rows:
+        for product in db.query(ShopProduct).filter(ShopProduct.id.in_({int(r.product_id) for r in rows})).all():
+            products[int(product.id)] = product
+        for user in db.query(User).filter(User.id.in_({int(r.submitter_user_id) for r in rows})).all():
+            submitters[int(user.id)] = user
+    return {
+        "ok": True,
+        "total": total,
+        "page": max(1, int(page)),
+        "size": max(1, min(int(size), 100)),
+        "items": [
+            _submission_payload(
+                row,
+                request=request,
+                product=products.get(int(row.product_id)),
+                submitter=submitters.get(int(row.submitter_user_id)),
+            )
+            for row in rows
+        ],
+    }
+
+
+@cms_router.post("/api/shop-cms/submissions/{submission_id}/use", summary="商家：使用投稿素材（下载 / 加入商品素材）")
+def cms_use_submission(
+    submission_id: int,
+    body: SubmissionUseReq,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    merchant = _merchant_of(db, current_user)
+    row = (
+        db.query(ShopProductSubmission)
+        .filter(
+            ShopProductSubmission.id == int(submission_id),
+            ShopProductSubmission.merchant_id == int(merchant.id),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="投稿记录不存在")
+    url = _submission_public_url(row, request)
+    mode = str(body.mode or "attach")[:16]
+    row.used_at = datetime.utcnow()
+    if mode == "download":
+        row.status = "used"
+        row.used_mode = "download"
+        db.commit()
+        db.refresh(row)
+        return {"ok": True, "mode": "download", "url": url, "item": _submission_payload(row, request=request)}
+    product = (
+        db.query(ShopProduct)
+        .filter(ShopProduct.id == int(row.product_id), ShopProduct.merchant_id == int(merchant.id))
+        .first()
+    )
+    if product is None:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    media = dict(product.media or {})
+    materials = media.get("materials")
+    materials = list(materials) if isinstance(materials, list) else []
+    if not any(isinstance(x, dict) and str(x.get("url") or "") == url for x in materials):
+        materials.insert(0, {
+            "url": url,
+            "title": str(row.title or row.media_type or "投稿素材")[:200],
+            "media_type": row.media_type or "",
+            "submission_id": int(row.id),
+            "submitter_user_id": int(row.submitter_user_id),
+            "added_at": datetime.utcnow().isoformat(),
+        })
+    media["materials"] = materials[:200]
+    product.media = media
+    flag_modified(product, "media")
+    row.status = "used"
+    row.used_mode = "attach"
+    db.commit()
+    db.refresh(row)
+    db.refresh(product)
+    return {
+        "ok": True,
+        "mode": "attach",
+        "url": url,
+        "item": _submission_payload(row, request=request),
+        "product": _product_payload(product, merchant),
+    }
+
+
+@cms_router.post("/api/shop-cms/submissions/{submission_id}/reject", summary="商家：忽略投稿素材")
+def cms_reject_submission(
+    submission_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    merchant = _merchant_of(db, current_user)
+    row = (
+        db.query(ShopProductSubmission)
+        .filter(
+            ShopProductSubmission.id == int(submission_id),
+            ShopProductSubmission.merchant_id == int(merchant.id),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="投稿记录不存在")
+    row.status = "rejected"
+    row.used_mode = ""
+    row.used_at = None
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _submission_payload(row)}
+

@@ -220,3 +220,32 @@ class ShopPayoutAccount(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ShopProductSubmission(Base):
+    """投稿素材（2026-10-08）：Online 用户把素材库/内容记录的素材投给商家的某个商品。"""
+
+    __tablename__ = "shop_product_submissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("shop_products.id"), index=True)
+    merchant_id: Mapped[int] = mapped_column(Integer, ForeignKey("shop_merchants.id"), index=True)
+    submitter_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    source: Mapped[str] = mapped_column(String(24), default="online_submit")  # online_submit/online_content
+    asset_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    media_type: Mapped[str] = mapped_column(String(24), default="")
+    title: Mapped[str] = mapped_column(String(200), default="")
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    thumb_url: Mapped[str] = mapped_column(String(1024), default="")
+    note: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(16), default="new", index=True)  # new/used/rejected
+    used_mode: Mapped[str] = mapped_column(String(16), default="")  # attach/download
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    __table_args__ = (
+        Index("ix_shop_submissions_product_status", "product_id", "status"),
+        Index("ix_shop_submissions_user_created", "submitter_user_id", "created_at"),
+        UniqueConstraint("product_id", "submitter_user_id", "url", name="uq_shop_submission_product_user_url"),
+    )

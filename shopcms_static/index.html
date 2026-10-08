@@ -86,7 +86,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
     });
   }
-  var state = { view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], authMode: 'login', authNotice: '' };
+  var state = { submissions: [], subProduct: 0, subStatus: '', subKeyword: '', view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], authMode: 'login', authNotice: '' };
 
   function loginView() {
     if (state.authMode === 'register') {
@@ -247,6 +247,51 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '</tbody></table><div class="hint">订单状态推进到 paid/shipped/completed 后佣金才从 pending 进入 confirmed/settled（当前状态机由后续版本补齐）。</div></div>';
   }
 
+  function submissionsView() {
+    var productOptions = ['<option value="0">全部商品</option>'].concat((state.products || []).map(function (p) {
+      return '<option value="' + p.id + '"' + (Number(state.subProduct) === Number(p.id) ? ' selected' : '') + '>' + esc(p.title || ('#' + p.id)) + '</option>';
+    })).join('');
+    var rows = (state.submissions || []).map(function (it) {
+      var statusText = { new: '待处理', used: '已使用', rejected: '已忽略' }[it.status] || it.status;
+      var thumb = it.thumb_url || it.url || '';
+      var isImage = String(it.media_type || '') === 'image' || /\.(png|jpe?g|webp|gif)$/i.test(String(it.url || ''));
+      return '<tr><td>' + (thumb
+          ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + (isImage
+            ? '<img src="' + esc(thumb) + '" style="width:64px;height:64px;object-fit:cover;border-radius:6px" alt="">'
+            : '<span class="muted">视频</span>') + '</a>'
+          : '<span class="muted">-</span>') + '</td>'
+        + '<td>' + esc(it.title || '-') + '<div class="muted">' + esc(it.media_type || '') + '</div></td>'
+        + '<td>' + esc((it.product || {}).title || ('#' + it.product_id)) + '</td>'
+        + '<td>' + esc(((it.submitter || {}).phone) || '') + '</td>'
+        + '<td class="muted">' + esc(String(it.created_at || '').replace('T', ' ').slice(0, 19)) + '</td>'
+        + '<td>' + esc(statusText) + '</td>'
+        + '<td><button class="btn mini" data-sub-use="' + it.id + '" type="button">使用</button> '
+        + '<button class="btn mini ghost" data-sub-download="' + it.id + '" type="button">下载</button> '
+        + '<button class="btn mini ghost" data-sub-reject="' + it.id + '" type="button">忽略</button></td></tr>';
+    }).join('');
+    return '<div class="panel"><h3>素材投稿</h3>'
+      + '<div class="row">'
+      + '<div><label>按商品搜</label><input id="sub-keyword" value="' + esc(state.subKeyword || '') + '" placeholder="商品名 / SPU / 关键词"></div>'
+      + '<div><label>商品</label><select id="sub-product">' + productOptions + '</select></div>'
+      + '<div><label>状态</label><select id="sub-status">'
+      + [['', '全部'], ['new', '待处理'], ['used', '已使用'], ['rejected', '已忽略']].map(function (s) {
+          return '<option value="' + s[0] + '"' + (state.subStatus === s[0] ? ' selected' : '') + '>' + s[1] + '</option>';
+        }).join('') + '</select></div>'
+      + '<div><button class="btn" id="sub-search" type="button">查询</button></div>'
+      + '</div>'
+      + '<table><thead><tr><th>素材</th><th>标题</th><th>商品</th><th>投稿人</th><th>时间</th><th>状态</th><th>操作</th></tr></thead><tbody>'
+      + (rows || '<tr><td colspan="7" class="muted">暂无投稿素材</td></tr>') + '</tbody></table>'
+      + '<div class="hint">「使用」= 放进这个商品的素材里（详情/素材都能看到）；「下载」= 只保存到本机；「忽略」= 标记不用。</div>'
+      + '</div>';
+  }
+
+  function loadSubmissions() {
+    var qs = '/api/shop-cms/submissions?size=100'
+      + '&product_id=' + Number(state.subProduct || 0)
+      + '&status=' + encodeURIComponent(state.subStatus || '')
+      + '&keyword=' + encodeURIComponent(state.subKeyword || '');
+    return jfetch(qs).then(function (d) { state.submissions = d.items || []; });
+  }
   function settingsView() {
     var m = state.me || {};
     return [
@@ -270,8 +315,9 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function render() {
     var app = $('#app');
     if (!token()) { app.innerHTML = loginView(); bindLogin(); return; }
-    var tabs = [['overview', '概览'], ['products', '商品'], ['orders', '订单'], ['commissions', '佣金'], ['settings', '设置']];
-    var body = state.view === 'products' ? productsView()
+    var tabs = [['overview', '概览'], ['products', '商品'], ['submissions', '素材投稿'], ['orders', '订单'], ['commissions', '佣金'], ['settings', '设置']];
+    var body = state.view === 'submissions' ? submissionsView()
+      : state.view === 'products' ? productsView()
       : state.view === 'orders' ? '<div class="panel"><h3>订单</h3>' + ordersTable(state.orders) + '</div>'
         : state.view === 'commissions' ? commissionsView()
           : state.view === 'settings' ? settingsView() : overviewView();
@@ -439,7 +485,11 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 
   function bindApp() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) {
-      b.addEventListener('click', function () { state.view = b.getAttribute('data-view'); state.editing = null; state.msg = ''; render(); });
+      b.addEventListener('click', function () {
+        state.view = b.getAttribute('data-view'); state.editing = null; state.msg = '';
+        if (state.view === 'submissions') { loadSubmissions().then(render).catch(function (e) { state.msg = '加载失败：' + e.message; render(); }); return; }
+        render();
+      });
     });
     var lo = $('#logout');
     if (lo) lo.addEventListener('click', function () { setToken(''); state.me = null; render(); });
@@ -450,6 +500,46 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       render();
     });
     bindProductForm();
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-use]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-sub-use'));
+        b.disabled = true;
+        jfetch('/api/shop-cms/submissions/' + id + '/use', { method: 'POST', body: JSON.stringify({ mode: 'attach' }) })
+          .then(function () { state.msg = '投稿素材已放进商品素材'; return Promise.all([loadSubmissions(), jfetch('/api/shop-cms/products?size=100').then(function (d) { state.products = d.items || []; })]); })
+          .then(render)
+          .catch(function (e) { b.disabled = false; state.msg = '使用失败：' + e.message; render(); });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-download]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-sub-download'));
+        var row = (state.submissions || []).filter(function (x) { return Number(x.id) === id; })[0];
+        if (!row) return;
+        if (row.url) window.open(row.url, '_blank', 'noopener');
+        jfetch('/api/shop-cms/submissions/' + id + '/use', { method: 'POST', body: JSON.stringify({ mode: 'download' }) })
+          .then(function () { state.msg = '已标记为已下载'; return loadSubmissions(); })
+          .then(render)
+          .catch(function (e) { state.msg = '标记失败：' + e.message; render(); });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-reject]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-sub-reject'));
+        b.disabled = true;
+        jfetch('/api/shop-cms/submissions/' + id + '/reject', { method: 'POST' })
+          .then(function () { state.msg = '已忽略这条投稿'; return loadSubmissions(); })
+          .then(render)
+          .catch(function (e) { b.disabled = false; state.msg = '忽略失败：' + e.message; render(); });
+      });
+    });
+    var subSearch = $('#sub-search');
+    if (subSearch) subSearch.addEventListener('click', function () {
+      var kw = $('#sub-keyword'); var prod = $('#sub-product'); var st = $('#sub-status');
+      state.subKeyword = kw ? kw.value.trim() : '';
+      state.subProduct = prod ? Number(prod.value || 0) : 0;
+      state.subStatus = st ? st.value : '';
+      loadSubmissions().then(render).catch(function (e) { state.msg = '加载失败：' + e.message; render(); });
+    });
     var cp = $('#cancel-product');
     if (cp) cp.addEventListener('click', function () { state.editing = null; render(); });
     Array.prototype.forEach.call(document.querySelectorAll('[data-edit]'), function (b) {
