@@ -196,9 +196,14 @@ def device_report(
         {"d": device_id, "i": int(m["id"])},
     )
     db.commit()
+    # 绑定成功时下发长期设备 token（只返回这一次，库里只存 hash）
+    from .device_ai import issue_device_token
+
+    device_token = issue_device_token(db, device_id)
     logger.info("[device] bound uid=%s device=%s name=%s from=%s", user_id, device_id, name, _client_ip(request))
     return {
         "ok": True,
+        "device_token": device_token,
         "device_id": device_id,
         "name": name,
         "user_id": user_id,
