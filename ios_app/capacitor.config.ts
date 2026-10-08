@@ -1,10 +1,12 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
-const configuredUrl = process.env.OPENMIND_APP_URL?.trim();
+const configuredUrl = (
+    process.env.LOBSTER_APP_URL || process.env.OPENMIND_APP_URL
+)?.trim();
 
 const config: CapacitorConfig = {
-    appId: "com.openmind.app",
-    appName: "OpenMind",
+    appId: "com.bihuo.lobsterios",
+    appName: "必火AI员工",
     webDir: "h5/dist",
     loggingBehavior: "production",
 };
@@ -15,7 +17,7 @@ if (configuredUrl) {
     try {
         parsedUrl = new URL(configuredUrl);
     } catch {
-        throw new Error(`OPENMIND_APP_URL is not a valid URL: ${configuredUrl}`);
+        throw new Error(`LOBSTER_APP_URL is not a valid URL: ${configuredUrl}`);
     }
 
     config.server = {

@@ -1,8 +1,8 @@
 {
-  "name": "openmind-ios-shell",
+  "name": "lobster-ios-shell",
   "private": true,
   "version": "0.1.0",
-  "description": "Capacitor iOS shell for the OpenMind H5 application",
+  "description": "Capacitor iOS shell for the Bihuo/Lobster H5 application",
   "scripts": {
     "h5:dev": "npm --prefix h5 run dev",
     "h5:build": "npm --prefix h5 run build",

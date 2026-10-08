@@ -1,67 +1,87 @@
-# OpenMind iOS App
+# 必火智能 iOS App 说明
 
-这是 OpenMind H5 的 Capacitor iOS 壳。它复用现有 Go 服务端和三套 H5，但会把主站前端复制到 `mobile/h5` 单独维护，不碰原始 `web/default`。
+## 先说明两个 iOS 工程
 
-- `/`：主控制台
-- `/workbench-app`：聊天、图片、视频和工作流
-- `/canvas-app`：无限画布和素材编辑
+仓库里的 `ios_app/` 是之前从 `openmindapi/mobile` 迁入的 Capacitor H5 壳，目录结构如下：
 
-## 前置条件
+- `ios_app/h5`：独立的 H5 副本
+- `ios_app/ios/App`：Capacitor 生成的 Xcode 工程
+- `ios_app/capacitor.config.ts`：App 名称、Bundle ID 和 H5 地址配置
 
-- macOS
-- Xcode（不是只安装 Command Line Tools）
-- Node.js 22 或更高版本
-- 一个已经部署并启用 HTTPS 的 OpenMind 服务地址
+它目前仍保留 OpenMind H5 的部分品牌和配置，属于源码迁移版，不能直接当作已经完成的“必火智能正式发布包”。正式发布前需要确认 App 名称、图标、Bundle ID、服务地址、登录、支付和苹果审核要求。
 
-## H5 副本
+必火现有的原生 Swift 工程在本机另一个目录：
 
-`mobile/h5` 是从 `web/default` 复制出来的独立前端目录。后续只改这里，原始 H5 保持不动。
-
-## 初始化
-
-```bash
-cd mobile
-npm install
-npm run h5:install
-OPENMIND_APP_URL=https://your-domain.example npm run ios:add
+```text
+/Users/jianji/Documents/Codex/2026-06-02/windows-mac/lobster_launcher/lobster_ios
 ```
 
-`ios:add` 只需要执行一次。之后如果已经存在 `mobile/ios`，不要重复执行。
+这个工程使用 `WKWebView` 加载必火 H5，当前更接近必火 App 的实际工程。
 
-## 打开 Xcode
+## 打开必火原生工程
 
 ```bash
-cd mobile
+cd /Users/jianji/Documents/Codex/2026-06-02/windows-mac/lobster_launcher/lobster_ios
+open -a "/Users/jianji/Downloads/Xcode-beta.app" LobsterIOS.xcodeproj
+```
+
+命令行构建使用本机 Xcode：
+
+```bash
+DEVELOPER_DIR="/Users/jianji/Downloads/Xcode-beta.app/Contents/Developer" \
+xcodebuild -project LobsterIOS.xcodeproj -scheme LobsterIOS \
+-sdk iphonesimulator -configuration Debug \
+-derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+```
+
+## 当前已有的安装包
+
+目前没有生成可安装到真实 iPhone 或上传 App Store 的 `.ipa`。
+
+本机目前找到的只有模拟器 App：
+
+```text
+/Users/jianji/Documents/Codex/2026-06-02/windows-mac/lobster_launcher/lobster_ios/build/Build/Products/Debug-iphonesimulator/LobsterIOS.app
+```
+
+这个 `.app` 只能用于 iOS Simulator，不能直接发给用户安装，也不能上传 App Store。
+
+## 生成正式 IPA
+
+正式包需要 Apple Developer 账号、签名证书、Provisioning Profile，以及 Xcode 中配置好的 Team 和 Bundle ID。
+
+先归档：
+
+```bash
+cd /Users/jianji/Documents/Codex/2026-06-02/windows-mac/lobster_launcher/lobster_ios
+./scripts/archive_release.sh
+```
+
+归档完成后导出：
+
+```bash
+./scripts/export_app_store.sh
+```
+
+成功后通常会在下面目录生成 IPA 或导出文件：
+
+```text
+/Users/jianji/Documents/Codex/2026-06-02/windows-mac/lobster_launcher/lobster_ios/build/export
+```
+
+也可以在 Xcode 中选择 `Product > Archive`，再通过 Organizer 上传 TestFlight 或 App Store Connect。
+
+## Capacitor 壳的构建方式
+
+如果后续确认要继续使用 `ios_app/` 这份 Capacitor 工程，先进入目录：
+
+```bash
+cd /Users/jianji/Documents/Codex/2026-06-02/windows-mac/lobster_launcher/lobster_server/ios_app
+npm install
+npm run h5:install
 npm run h5:build
-OPENMIND_APP_URL=https://your-domain.example npm run cap:sync
+npm run cap:sync
 npm run ios:open
 ```
 
-在 Xcode 中：
-
-1. 选择 `App` target 和你的 Apple Development Team。
-2. 把 Bundle Identifier 改成自己的反向域名，例如 `com.example.openmind`。
-3. 在 `Signing & Capabilities` 中确认自动签名。
-4. 选择模拟器或已连接的 iPhone，点击 Run。
-
-## 直接运行
-
-```bash
-cd mobile
-npm run h5:build
-OPENMIND_APP_URL=https://your-domain.example npm run ios:run
-```
-
-开发阶段可以使用 HTTP，但 iOS 真机和正式发布应使用 HTTPS。`OPENMIND_APP_URL` 不应包含 `/workbench-app` 或 `/canvas-app`，默认打开主控制台，其他入口由 H5 内部导航进入。
-
-## 当前边界
-
-这个版本是可运行的 H5 壳，不等于可以直接提交 App Store。项目当前包含网页充值/订阅、第三方 OAuth、文件上传下载和流式请求，正式上架前需要分别处理：
-
-- 数字额度和订阅的 Apple In-App Purchase 方案
-- Sign in with Apple（如果继续提供第三方登录）
-- 账号删除、隐私政策、隐私清单和数据用途说明
-- 外部支付、OAuth 回调、文件分享在 WKWebView 中的原生处理
-- AI 生成内容的举报、过滤和审核流程
-
-内部使用、企业签名或 TestFlight 验证可以先使用这个壳测试实际 H5 体验；面向 App Store 的版本建议再增加原生账户、任务、分享和购买流程。
+正式构建前必须修改 `capacitor.config.ts` 中的 `appId` 和 `appName`，并设置真实 HTTPS 服务地址。当前这份壳包含网页充值、第三方 OAuth 和账号功能，不能不经调整就直接提交 App Store。
