@@ -255,18 +255,20 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       var statusText = { new: '待处理', used: '已使用', rejected: '已忽略' }[it.status] || it.status;
       var thumb = it.thumb_url || it.url || '';
       var isImage = String(it.media_type || '') === 'image' || /\.(png|jpe?g|webp|gif)$/i.test(String(it.url || ''));
-      return '<tr><td>' + (thumb
-          ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + (isImage
-            ? '<img src="' + esc(thumb) + '" style="width:64px;height:64px;object-fit:cover;border-radius:6px" alt="">'
-            : '<span class="muted">视频</span>') + '</a>'
+      var preview = it.preview_url || '';
+      return '<tr><td>' + (preview
+          ? '<a href="' + esc(preview) + '" target="_blank" rel="noopener" title="带水印预览，采纳后才能下载原素材">' + (isImage
+            ? '<img src="' + esc(preview) + '" style="width:64px;height:64px;object-fit:cover;border-radius:6px" alt="">'
+            : '<span class="muted">视频（看首帧）</span>') + '</a>'
           : '<span class="muted">-</span>') + '</td>'
         + '<td>' + esc(it.title || '-') + '<div class="muted">' + esc(it.media_type || '') + '</div></td>'
         + '<td>' + esc((it.product || {}).title || ('#' + it.product_id)) + '</td>'
         + '<td>' + esc(((it.submitter || {}).phone) || '') + '</td>'
         + '<td class="muted">' + esc(String(it.created_at || '').replace('T', ' ').slice(0, 19)) + '</td>'
-        + '<td>' + esc(statusText) + '</td>'
-        + '<td><button class="btn mini" data-sub-use="' + it.id + '" type="button">使用</button> '
-        + '<button class="btn mini ghost" data-sub-download="' + it.id + '" type="button">下载</button> '
+        + '<td>' + esc(statusText) + (it.accepted ? '<div class="muted">-' + Number(it.price_credits || 0) + ' 积分</div>' : '<div class="muted">采纳 -' + Number(it.price_credits || 0) + '</div>') + '</td>'
+        + '<td><button class="btn mini" data-sub-accept="' + it.id + '" type="button"' + (it.accepted ? ' disabled' : '') + '>'
+        + (it.accepted ? '已采纳' : '采纳（-' + Number(it.price_credits || 0) + ' 积分）') + '</button> '
+        + '<button class="btn mini ghost" data-sub-download="' + it.id + '" type="button"' + (it.accepted ? '' : ' disabled title="采纳后才能下载原素材"') + '>下载</button> '
         + '<button class="btn mini ghost" data-sub-reject="' + it.id + '" type="button">忽略</button></td></tr>';
     }).join('');
     return '<div class="panel"><h3>素材投稿</h3>'
@@ -281,7 +283,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       + '</div>'
       + '<table><thead><tr><th>素材</th><th>标题</th><th>商品</th><th>投稿人</th><th>时间</th><th>状态</th><th>操作</th></tr></thead><tbody>'
       + (rows || '<tr><td colspan="7" class="muted">暂无投稿素材</td></tr>') + '</tbody></table>'
-      + '<div class="hint">「使用」= 放进这个商品的素材里（详情/素材都能看到）；「下载」= 只保存到本机；「忽略」= 标记不用。</div>'
+      + '<div class="hint">未采纳时只能看带水印预览，下载不了；点「采纳」才会从你的积分里扣钱（图片 100 / 视频 300），并把同样积分给投稿人，素材同时进商品素材；采纳后才能下载原素材。</div>'
       + '</div>';
   }
 
@@ -326,6 +328,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     }).join('') + '<button class="tab" id="logout" type="button">退出登录</button></div>' +
       (state.msg ? '<div class="panel" style="border-color:var(--brand)">' + esc(state.msg) + '</div>' : '') + body;
     $('#who').textContent = state.me ? (state.me.company_name + ' · ' + state.me.slug) : '';
+    if (state.me) { $('#who').textContent += ' · 积分 ' + Number(state.credits || 0); }
     bindApp();
   }
 
@@ -337,6 +340,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       jfetch('/api/shop-cms/commissions/summary')
     ]).then(function (r) {
       state.me = r[0].merchant;
+      state.credits = r[0].credits || 0;
       state.products = r[1].items || [];
       state.orders = r[2].items || [];
       state.summary = r[3].by_status || {};
@@ -500,26 +504,25 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       render();
     });
     bindProductForm();
-    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-use]'), function (b) {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-accept]'), function (b) {
       b.addEventListener('click', function () {
-        var id = Number(b.getAttribute('data-sub-use'));
+        var id = Number(b.getAttribute('data-sub-accept'));
         b.disabled = true;
-        jfetch('/api/shop-cms/submissions/' + id + '/use', { method: 'POST', body: JSON.stringify({ mode: 'attach' }) })
-          .then(function () { state.msg = '投稿素材已放进商品素材'; return Promise.all([loadSubmissions(), jfetch('/api/shop-cms/products?size=100').then(function (d) { state.products = d.items || []; })]); })
+        jfetch('/api/shop-cms/submissions/' + id + '/accept', { method: 'POST', body: JSON.stringify({}) })
+          .then(function (d) { state.msg = '已采纳：扣 ' + Number(d.charged_credits || 0) + ' 积分（余额 ' + Number(d.credits_balance || 0) + '），素材已进商品素材'; return jfetch('/api/shop-cms/merchants/me').then(function (m) { state.credits = m.credits || 0; state.me = m.merchant; }); })
+          .then(function () { return Promise.all([loadSubmissions(), jfetch('/api/shop-cms/products?size=100').then(function (d) { state.products = d.items || []; })]); })
           .then(render)
-          .catch(function (e) { b.disabled = false; state.msg = '使用失败：' + e.message; render(); });
+          .catch(function (e) { b.disabled = false; state.msg = '采纳失败：' + e.message; render(); });
       });
     });
     Array.prototype.forEach.call(document.querySelectorAll('[data-sub-download]'), function (b) {
       b.addEventListener('click', function () {
         var id = Number(b.getAttribute('data-sub-download'));
-        var row = (state.submissions || []).filter(function (x) { return Number(x.id) === id; })[0];
-        if (!row) return;
-        if (row.url) window.open(row.url, '_blank', 'noopener');
-        jfetch('/api/shop-cms/submissions/' + id + '/use', { method: 'POST', body: JSON.stringify({ mode: 'download' }) })
-          .then(function () { state.msg = '已标记为已下载'; return loadSubmissions(); })
+        b.disabled = true;
+        jfetch('/api/shop-cms/submissions/' + id + '/download')
+          .then(function (d) { if (d.url) window.open(d.url, '_blank', 'noopener'); state.msg = '已打开原素材下载'; return loadSubmissions(); })
           .then(render)
-          .catch(function (e) { state.msg = '标记失败：' + e.message; render(); });
+          .catch(function (e) { b.disabled = false; state.msg = '下载失败：' + e.message; render(); });
       });
     });
     Array.prototype.forEach.call(document.querySelectorAll('[data-sub-reject]'), function (b) {

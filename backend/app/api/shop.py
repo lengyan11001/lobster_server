@@ -8,13 +8,19 @@
 from __future__ import annotations
 
 import html
+import os
 import secrets
 import time
+from decimal import Decimal
 from datetime import datetime
+import subprocess
+import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -24,6 +30,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from ..db import get_db
 from ..models import User
 from ..services import shop_commission as sc
+from ..services import shop_submission_billing as ssb
+from ..services.credits_amount import credits_json_float
 from ..services.shop_theme import resolve_theme, theme_css_vars
 from ..services.shop_merchant_status import shop_merchant_blocked_reason
 from ..shop_models import (
@@ -236,6 +244,7 @@ def merchant_me(current_user: User = Depends(get_current_user), db: Session = De
     merchant = _merchant_of(db, current_user)
     return {
         "ok": True,
+        "credits": credits_json_float(ssb.balance_of(current_user)),
         "merchant": {
             "id": merchant.id,
             "slug": merchant.slug,
@@ -714,8 +723,12 @@ def _submission_payload(
     product: Optional[ShopProduct] = None,
     merchant: Optional[ShopMerchant] = None,
     submitter: Optional[User] = None,
+    expose_original: bool = True,
 ) -> Dict[str, Any]:
     url = _submission_public_url(row, request)
+    accepted = bool(getattr(row, "accepted_at", None))
+    price = int(row.price_credits or 0) or int(ssb.price_credits(row.media_type))
+    preview_url = "" if expose_original else ("/api/shop-cms/submissions/%d/preview" % int(row.id))
     data: Dict[str, Any] = {
         "id": int(row.id),
         "product_id": int(row.product_id),
@@ -723,8 +736,14 @@ def _submission_payload(
         "asset_id": row.asset_id or "",
         "media_type": row.media_type or "",
         "title": row.title or "",
-        "url": url,
-        "thumb_url": (row.thumb_url or url) if str(row.media_type or "") != "video" else (row.thumb_url or ""),
+        "url": url if (expose_original or accepted) else "",
+        "thumb_url": (preview_url if not expose_original else (
+            (row.thumb_url or url) if str(row.media_type or "") != "video" else (row.thumb_url or "")
+        )),
+        "preview_url": preview_url,
+        "accepted": accepted,
+        "price_credits": price,
+        "accepted_at": row.accepted_at.isoformat() if getattr(row, "accepted_at", None) else None,
         "note": row.note or "",
         "status": row.status or "new",
         "source": row.source or "",
@@ -1020,21 +1039,90 @@ def cms_submissions(
                 request=request,
                 product=products.get(int(row.product_id)),
                 submitter=submitters.get(int(row.submitter_user_id)),
+                expose_original=False,
             )
             for row in rows
         ],
     }
 
 
-@cms_router.post("/api/shop-cms/submissions/{submission_id}/use", summary="商家：使用投稿素材（下载 / 加入商品素材）")
-def cms_use_submission(
-    submission_id: int,
-    body: SubmissionUseReq,
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    merchant = _merchant_of(db, current_user)
+def _submission_preview_target(row: "ShopProductSubmission") -> Path:
+    folder = Path(tempfile.gettempdir()) / "shop_submission_previews"
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = (row.updated_at or row.created_at or datetime.utcnow()).strftime("%Y%m%d%H%M%S")
+    return folder / ("submission_%d_%s.jpg" % (int(row.id), stamp))
+
+
+def _watermarked_preview(img: Any) -> Any:
+    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
+
+    img = img.convert("RGB")
+    if img.width > 720:
+        img = img.resize((720, max(1, int(img.height * 720 / img.width))))
+    overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    try:
+        font = ImageFont.load_default(size=max(13, img.width // 26))
+    except Exception:  # noqa: BLE001
+        font = ImageFont.load_default()
+    text = "投稿预览 · 未采纳"
+    step_x = max(150, img.width // 2)
+    step_y = max(70, img.height // 4)
+    for y in range(0, img.height + step_y, step_y):
+        for x in range(-step_x // 2, img.width + step_x, step_x):
+            draw.text((x, y), text, font=font, fill=(255, 255, 255, 130))
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+
+def _build_submission_preview(row: "ShopProductSubmission") -> Path:
+    """生成带水印的预览图（图片缩放；视频取首帧），只给商家「看」，不给原文件。"""
+    from io import BytesIO
+
+    from PIL import Image  # noqa: PLC0415
+
+    src = str(row.url or "").strip()
+    if not src.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="这条投稿没有可预览的地址")
+    target = _submission_preview_target(row)
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    media = str(row.media_type or "").lower()
+    if "video" in media:
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        tmp.close()
+        try:
+            from .assets import _find_asset_ffmpeg  # noqa: PLC0415
+
+            ffmpeg = _find_asset_ffmpeg()
+            subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-i", src, "-frames:v", "1", "-vf", "scale=720:-2", tmp.name],
+                timeout=90,
+                check=True,
+            )
+            img = Image.open(tmp.name)
+            img.load()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail="视频预览生成失败，请稍后重试") from exc
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:  # noqa: BLE001
+                pass
+    else:
+        try:
+            req = urllib.request.Request(src, headers={"User-Agent": "lobster-preview/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+                data = resp.read(30 * 1024 * 1024)
+            img = Image.open(BytesIO(data))
+            img.load()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail="素材预览生成失败，请稍后重试") from exc
+    out = _watermarked_preview(img)
+    out.save(target, "JPEG", quality=82)
+    return target
+
+
+def _merchant_submission(db: Session, merchant: "ShopMerchant", submission_id: int) -> "ShopProductSubmission":
     row = (
         db.query(ShopProductSubmission)
         .filter(
@@ -1045,15 +1133,10 @@ def cms_use_submission(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="投稿记录不存在")
-    url = _submission_public_url(row, request)
-    mode = str(body.mode or "attach")[:16]
-    row.used_at = datetime.utcnow()
-    if mode == "download":
-        row.status = "used"
-        row.used_mode = "download"
-        db.commit()
-        db.refresh(row)
-        return {"ok": True, "mode": "download", "url": url, "item": _submission_payload(row, request=request)}
+    return row
+
+
+def _attach_submission_material(db: Session, merchant: "ShopMerchant", row: "ShopProductSubmission", request: Request) -> "ShopProduct":
     product = (
         db.query(ShopProduct)
         .filter(ShopProduct.id == int(row.product_id), ShopProduct.merchant_id == int(merchant.id))
@@ -1061,6 +1144,7 @@ def cms_use_submission(
     )
     if product is None:
         raise HTTPException(status_code=404, detail="商品不存在")
+    url = _submission_public_url(row, request)
     media = dict(product.media or {})
     materials = media.get("materials")
     materials = list(materials) if isinstance(materials, list) else []
@@ -1076,18 +1160,126 @@ def cms_use_submission(
     media["materials"] = materials[:200]
     product.media = media
     flag_modified(product, "media")
+    return product
+
+
+def _accept_submission(db: Session, merchant: "ShopMerchant", row: "ShopProductSubmission", request: Request,
+                       current_user: User) -> Dict[str, Any]:
+    """采纳：商家扣积分、投稿人加积分、素材进商品素材；同一条只扣一次。"""
+    product = _attach_submission_material(db, merchant, row, request)
+    already = bool(getattr(row, "accepted_at", None))
+    charged = Decimal("0")
+    # 扣费必须落在当前请求的 session 上（跨 session 的 User 对象不会被提交）
+    payer = db.query(User).filter(User.id == int(getattr(current_user, "id", 0) or 0)).first() or current_user
+    if not already:
+        price = ssb.price_credits(row.media_type)
+        ssb.ensure_balance(payer, price)
+        charged = ssb.charge(
+            db, payer, price,
+            ref_id=str(int(row.id)),
+            description="采纳投稿素材 #%d（%s）" % (int(row.id), product.title or ""),
+        )
+        submitter = db.query(User).filter(User.id == int(row.submitter_user_id)).first()
+        if submitter is not None:
+            ssb.reward(
+                db, submitter, price,
+                ref_id=str(int(row.id)),
+                description="投稿素材被采纳 #%d（%s）" % (int(row.id), product.title or ""),
+            )
+        row.price_credits = int(price)
+        row.accepted_at = datetime.utcnow()
+        row.accepted_by_user_id = int(getattr(current_user, "id", 0) or 0)
     row.status = "used"
-    row.used_mode = "attach"
+    row.used_mode = "accept"
+    row.used_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
     db.refresh(product)
     return {
         "ok": True,
-        "mode": "attach",
-        "url": url,
-        "item": _submission_payload(row, request=request),
+        "already_accepted": already,
+        "charged_credits": credits_json_float(charged),
+        "price_credits": int(row.price_credits or 0),
+        "credits_balance": credits_json_float(ssb.balance_of(payer)),
+        "item": _submission_payload(row, request=request, expose_original=True),
         "product": _product_payload(product, merchant),
     }
+
+
+class SubmissionAcceptReq(BaseModel):
+    note: str = Field("", max_length=300)
+
+
+@cms_router.post("/api/shop-cms/submissions/{submission_id}/accept", summary="采纳投稿素材（扣商家积分、给投稿人加积分）")
+def cms_accept_submission(
+    submission_id: int,
+    request: Request,
+    body: Optional[SubmissionAcceptReq] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    merchant = _merchant_of(db, current_user)
+    row = _merchant_submission(db, merchant, submission_id)
+    return _accept_submission(db, merchant, row, request, current_user)
+
+
+@cms_router.post("/api/shop-cms/submissions/{submission_id}/use", summary="采纳（旧入口，等价 accept）")
+def cms_use_submission(
+    submission_id: int,
+    body: SubmissionUseReq,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    merchant = _merchant_of(db, current_user)
+    row = _merchant_submission(db, merchant, submission_id)
+    if str(body.mode or "attach") == "download":
+        if not bool(getattr(row, "accepted_at", None)):
+            raise HTTPException(status_code=403, detail="采纳后才能下载原素材")
+        row.used_at = datetime.utcnow()
+        row.used_mode = "download"
+        db.commit()
+        db.refresh(row)
+        return {"ok": True, "mode": "download", "url": _submission_public_url(row, request),
+                "item": _submission_payload(row, request=request, expose_original=True)}
+    result = _accept_submission(db, merchant, row, request, current_user)
+    result["mode"] = "attach"
+    return result
+
+
+@cms_router.get("/api/shop-cms/submissions/{submission_id}/download", summary="下载投稿原素材（采纳后）")
+def cms_download_submission(
+    submission_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    merchant = _merchant_of(db, current_user)
+    row = _merchant_submission(db, merchant, submission_id)
+    if not bool(getattr(row, "accepted_at", None)):
+        raise HTTPException(status_code=403, detail="采纳后才能下载原素材")
+    url = _submission_public_url(row, request)
+    if not url:
+        raise HTTPException(status_code=404, detail="素材地址不可用")
+    return {"ok": True, "url": url, "title": row.title or "", "media_type": row.media_type or ""}
+
+
+@cms_router.get("/api/shop-cms/submissions/{submission_id}/preview", summary="预览投稿素材（带水印，不提供原文件）")
+def cms_submission_preview(
+    submission_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    merchant = _merchant_of(db, current_user)
+    row = _merchant_submission(db, merchant, submission_id)
+    path = _build_submission_preview(row)
+    return Response(content=path.read_bytes(), media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/shop/submissions/pricing", summary="投稿被采纳能拿多少积分")
+def submissions_pricing() -> Dict[str, Any]:
+    return {"ok": True, "credits": ssb.pricing_table()}
 
 
 @cms_router.post("/api/shop-cms/submissions/{submission_id}/reject", summary="商家：忽略投稿素材")

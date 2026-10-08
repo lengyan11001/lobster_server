@@ -241,6 +241,10 @@ class ShopProductSubmission(Base):
     status: Mapped[str] = mapped_column(String(16), default="new", index=True)  # new/used/rejected
     used_mode: Mapped[str] = mapped_column(String(16), default="")  # attach/download
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # 采纳计费（2026-10-08）：采纳时从商家积分扣、给投稿人加；图片/视频暂定 100/300
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    accepted_by_user_id: Mapped[int] = mapped_column(Integer, default=0)
+    price_credits: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 

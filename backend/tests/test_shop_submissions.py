@@ -10,13 +10,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import get_db
-from app.models import Base, User
+from app.models import Base, CreditLedger, User
 from app.shop_models import ShopMerchant, ShopProduct, ShopProductSubmission
 from app.api import shop as shop_api
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 Base.metadata.create_all(bind=engine, tables=[
-    User.__table__, ShopMerchant.__table__, ShopProduct.__table__, ShopProductSubmission.__table__,
+    User.__table__, CreditLedger.__table__, ShopMerchant.__table__, ShopProduct.__table__,
+    ShopProductSubmission.__table__,
 ])
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -122,7 +123,10 @@ def test_submission_flow():
     # 5) 使用（下载）
     sid = sub_ids[0]
     r = client.post("/api/shop-cms/submissions/%d/use" % sid, json={"mode": "download"})
-    print("POST use(download):", r.status_code, r.json().get("mode"), r.json().get("url"), "status=", r.json()["item"]["status"])
+    print("POST use(download) before accept:", r.status_code, r.json().get("detail"))
+    assert r.status_code == 403
+    r = client.post("/api/shop-cms/submissions/%d/accept" % sid)
+    print("POST accept:", r.status_code, r.json().get("charged_credits"), "status=", r.json()["item"]["status"])
     assert r.status_code == 200 and r.json()["item"]["status"] == "used"
 
     # 6) 使用（放进商品素材）
@@ -135,7 +139,7 @@ def test_submission_flow():
     s = SessionLocal()
     prod = s.query(ShopProduct).filter(ShopProduct.id == pid).first()
     print("DB product.media.materials:", [(m["url"], m.get("submission_id")) for m in (prod.media or {}).get("materials") or []])
-    assert len((prod.media or {}).get("materials") or []) == 1
+    assert len((prod.media or {}).get("materials") or []) == 2  # 采纳时附件 + 后面 use(attach) 的素材
 
     # 7) 商家自己看商品详情时，采纳的投稿素材也在 materials 里
     as_user(uid_submitter)
