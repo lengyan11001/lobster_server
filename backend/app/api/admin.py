@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Query, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
@@ -1450,6 +1450,7 @@ def _admin_template_payload(row: IPContentScheduleTemplate, owner: Optional[User
         "memory_doc_ids": _admin_clean_doc_ids(row.memory_doc_ids or [], 50),
         "requirements": row.requirements or {},
         "status": row.status,
+        "is_system": bool(getattr(row, "is_system", False)),
         "granted_user_ids": grants or [],
         "meta": row.meta or {},
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -1643,6 +1644,7 @@ def admin_delete_ip_competitor(
 def admin_list_ip_templates(
     owner_user_id: Optional[int] = None,
     q: str = "",
+    scope: str = "",
     page: int = 1,
     page_size: int = 20,
     ctx: AdminContext = Depends(_verify_admin_token),
@@ -1651,6 +1653,11 @@ def admin_list_ip_templates(
     page = max(1, int(page or 1))
     page_size = min(max(int(page_size or 20), 1), 100)
     query = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.status == "active")
+    scope_norm = str(scope or "").strip().lower()
+    if scope_norm == "system":
+        query = query.filter(IPContentScheduleTemplate.is_system.is_(True))
+    elif scope_norm == "user":
+        query = query.filter(IPContentScheduleTemplate.is_system.is_(False))
     if ctx.role == "agent":
         query = query.filter(IPContentScheduleTemplate.user_id == int(ctx.user_id or 0))
     elif owner_user_id:
@@ -1694,6 +1701,99 @@ def admin_list_ip_templates(
             "has_next": page * page_size < total,
         },
     }
+
+
+class AdminTemplateSystemBody(BaseModel):
+    enabled: bool = True
+
+
+def _template_export_text(db: Session, row: IPContentScheduleTemplate) -> str:
+    """把模板导出成可读的 txt（含要求文案 + 关联资料名称）。"""
+    req = row.requirements or {}
+    def _names(model, ids, label_field: str = "name") -> list[str]:
+        cleaned = [int(x) for x in (ids or []) if str(x).strip().isdigit()]
+        if not cleaned:
+            return []
+        rows = db.query(model).filter(model.id.in_(cleaned)).all()
+        out = []
+        for item in rows:
+            label = str(getattr(item, label_field, "") or "")
+            if not label:
+                label = str(getattr(item, "title", "") or "")
+            if not label:
+                label = "#%s" % getattr(item, "id", "")
+            out.append(label)
+        return out
+
+    doc_names = []
+    for doc in (row.memory_doc_ids or []):
+        doc_names.append(str(doc))
+    lines = [
+        "模板名称：%s" % (row.name or ""),
+        "模板类型：%s" % ("系统模板" if bool(getattr(row, "is_system", False)) else "用户模板"),
+        "模板ID：%s" % row.id,
+        "",
+        "【口播要求】",
+        str(req.get("oral") or req.get("ip_oral") or req.get("industry_oral") or "").strip() or "（未填写）",
+        "",
+        "【朋友圈文案要求】",
+        str(req.get("moments") or "").strip() or "（未填写）",
+        "",
+        "【出图要求】",
+        str(req.get("image") or "").strip() or "（未填写）",
+        "",
+        "【关联关键词】",
+        "、".join(_names(IPContentKeyword, row.keyword_ids)) or "（无）",
+        "",
+        "【关联同行账号】",
+        "、".join(_names(ContentCompetitorAccount, row.competitor_ids)) or "（无）",
+        "",
+        "【关联记忆文件】",
+        "、".join(doc_names) or "（无）",
+        "",
+        "更新时间：%s" % (row.updated_at.isoformat() if row.updated_at else ""),
+    ]
+    return "\r\n".join(lines)
+
+
+def _template_export_response(text: str, name: str) -> "Response":
+    from urllib.parse import quote
+    body = ("\ufeff" + text).encode("utf-8")
+    filename = quote("%s.txt" % (name or "template"))
+    return Response(content=body, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''%s" % filename})
+
+
+@router.post("/admin/api/ip-content/templates/{template_id}/system")
+def admin_set_ip_template_system(
+    template_id: int,
+    body: AdminTemplateSystemBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """把模板加入系统模板（用户端教程可见、可下载）或取消。"""
+    row = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.id == template_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="模板不存在")
+    _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    row.is_system = bool(body.enabled)
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _admin_template_payload(row)}
+
+
+@router.get("/admin/api/ip-content/templates/{template_id}/download")
+def admin_download_ip_template(
+    template_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.id == template_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="模板不存在")
+    _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    return _template_export_response(_template_export_text(db, row), row.name)
 
 
 @router.get("/admin/api/ip-content/templates/{template_id}/grant-users")

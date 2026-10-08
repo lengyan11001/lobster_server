@@ -600,6 +600,8 @@ class IPContentScheduleTemplate(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # 2026-10-08：系统模板（管理后台「添加到系统模板」）——所有用户可见/可下载，用户端的教程页会展示
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     # Empty keeps account-level rows (legacy data and H5 without a selected
     # device) shared by every slot; a non-empty value binds the row to one
     # installation slot so two devices never overwrite each other's default.

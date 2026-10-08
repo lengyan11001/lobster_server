@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -7316,3 +7317,100 @@ async def generate_moments_candidates(
         task_label="朋友圈文案",
     )
     return {"ok": True, "task": "moments_candidate", "sync_results": sync_results, **generated}
+
+def _system_template_export_text(db: Session, row: IPContentScheduleTemplate) -> str:
+    """系统模板导出成可读 txt（用户端下载）。"""
+    req = row.requirements or {}
+
+    def _names(model, ids, label_field: str = "name") -> list[str]:
+        cleaned = [int(x) for x in (ids or []) if str(x).strip().isdigit()]
+        if not cleaned:
+            return []
+        out = []
+        for item in db.query(model).filter(model.id.in_(cleaned)).all():
+            label = str(getattr(item, label_field, "") or "")
+            if not label:
+                label = str(getattr(item, "title", "") or "")
+            if not label:
+                label = "#%s" % getattr(item, "id", "")
+            out.append(label)
+        return out
+
+    lines = [
+        "模板名称：%s" % (row.name or ""),
+        "",
+        "【口播要求】",
+        str(req.get("oral") or req.get("ip_oral") or req.get("industry_oral") or "").strip() or "（未填写）",
+        "",
+        "【朋友圈文案要求】",
+        str(req.get("moments") or "").strip() or "（未填写）",
+        "",
+        "【出图要求】",
+        str(req.get("image") or "").strip() or "（未填写）",
+        "",
+        "【关联关键词】",
+        "、".join(_names(IPContentKeyword, row.keyword_ids)) or "（无）",
+        "",
+        "【关联同行账号】",
+        "、".join(_names(ContentCompetitorAccount, row.competitor_ids)) or "（无）",
+        "",
+        "更新时间：%s" % (row.updated_at.isoformat() if row.updated_at else ""),
+    ]
+    return "\r\n".join(lines)
+
+
+@router.get("/api/ip-content/system-templates", summary="系统模板列表（所有用户可见）")
+def list_system_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.status == "active",
+            IPContentScheduleTemplate.is_system.is_(True),
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    items = []
+    for row in rows:
+        req = row.requirements or {}
+        items.append({
+            "id": int(row.id),
+            "name": row.name or "",
+            "oral": str(req.get("oral") or req.get("ip_oral") or req.get("industry_oral") or ""),
+            "moments": str(req.get("moments") or ""),
+            "image": str(req.get("image") or ""),
+            "keyword_count": len(row.keyword_ids or []),
+            "competitor_count": len(row.competitor_ids or []),
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "download_url": "/api/ip-content/system-templates/%d/download" % int(row.id),
+        })
+    return {"items": items}
+
+
+@router.get("/api/ip-content/system-templates/{template_id}/download", summary="下载系统模板文件")
+def download_system_template(
+    template_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from urllib.parse import quote
+
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.id == template_id,
+            IPContentScheduleTemplate.status == "active",
+            IPContentScheduleTemplate.is_system.is_(True),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    text = _system_template_export_text(db, row)
+    body = ("\ufeff" + text).encode("utf-8")
+    filename = quote("%s.txt" % (row.name or "system-template"))
+    return Response(content=body, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''%s" % filename})
