@@ -2313,9 +2313,10 @@ let userTikhubRecordOffset = 0;
 let agentPage = 1;
 let templatePage = 1;
 let templateRows = [];
+let templateRowMap = {};
 let selectedTemplateId = null;
 let selectedTemplateOwnerId = 0;
-let currentTemplateTab = 'template';
+let currentTemplateTab = 'user';
 let templateOptions = { keywords: [], competitors: [], memory_docs: [] };
 let templateGrantTemplateId = 0;
 let templateGrantPage = 1;
@@ -3747,6 +3748,7 @@ function renderTemplatesTable(items, page, scope) {
   }
   let html = '<div class="template-saved-grid">';
   items.forEach(function(row) {
+    templateRowMap[Number(row.id)] = row;
     const grants = row.granted_user_ids || [];
     const isSys = !!row.is_system;
     html += '<article class="template-saved-card">'
@@ -3786,8 +3788,15 @@ function renderTemplatesTable(items, page, scope) {
 }
 
 function openTemplateEditModal(id) {
-  resetTemplateForm();
-  if (id) editTemplateConfig(id);
+  resetTemplateFormFields();
+  if (id) {
+    editTemplateConfig(id);
+  } else {
+    selectedTemplateId = null;
+    selectedTemplateOwnerId = isAgent() ? (MY_USER_ID || 0) : 0;
+    updateTemplateEditState();
+    loadTemplateOptionsForOwner();
+  }
   const modal = document.getElementById('templateEditModal');
   if (modal) modal.classList.add('show');
 }
@@ -3972,8 +3981,16 @@ async function deleteTemplateMemory(docId) {
 }
 
 async function editTemplateConfig(id) {
-  const row = templateRows.find(function(item) { return Number(item.id) === Number(id); });
-  if (!row) return;
+  let row = templateRowMap[Number(id)] || templateRows.find(function(item) { return Number(item.id) === Number(id); });
+  if (!row) {
+    // 当前 tab 的列表里没有这条（比如在「系统模板」tab 点用户模板的编辑）：补拉一次再填
+    try {
+      const data = await api('/admin/api/ip-content/templates?page=1&page_size=100&scope=' + encodeURIComponent(templateScope()));
+      (data.items || []).forEach(function(it) { templateRowMap[Number(it.id)] = it; });
+      row = templateRowMap[Number(id)];
+    } catch(e) {}
+  }
+  if (!row) { toast('没有找到这个模板，请刷新列表后重试', 'error'); return; }
   selectedTemplateId = Number(row.id);
   selectedTemplateOwnerId = parseInt(row.owner_user_id || 0, 10) || 0;
   document.getElementById('templateEditId').value = String(row.id);
@@ -3988,7 +4005,7 @@ async function editTemplateConfig(id) {
   if (modal) modal.classList.add('show');
 }
 
-function resetTemplateForm() {
+function resetTemplateFormFields() {
   selectedTemplateId = null;
   selectedTemplateOwnerId = isAgent() ? (MY_USER_ID || 0) : 0;
   ['templateEditId','templateNameInput','templateOralReq','templateMomentsReq','templateImageReq'].forEach(function(id) {
@@ -3997,8 +4014,11 @@ function resetTemplateForm() {
   });
   document.querySelectorAll('[data-template-keyword],[data-template-competitor],[data-template-memory]').forEach(function(el) { el.checked = false; });
   updateTemplateEditState();
+}
+
+function resetTemplateForm() {
+  resetTemplateFormFields();
   loadTemplateOptionsForOwner();
-  setTemplateTab('template');
 }
 
 function updateTemplateEditState() {
@@ -4046,7 +4066,7 @@ async function saveTemplateConfig() {
       updateTemplateEditState();
     }
     toast('模板已保存');
-    await loadTemplates(templatePage || 1);
+    await loadTemplates(templatePage || 1, templateScope());
   } catch(e) {
     toast(e.message, 'error');
   }
@@ -4058,7 +4078,7 @@ async function deleteTemplateConfig(id) {
     await api('/admin/api/ip-content/templates/' + id, { method: 'DELETE' });
     toast('模板已删除');
     if (selectedTemplateId === Number(id)) resetTemplateForm();
-    await loadTemplates(templatePage || 1);
+    await loadTemplates(templatePage || 1, templateScope());
   } catch(e) {
     toast(e.message, 'error');
   }
@@ -4156,7 +4176,7 @@ async function saveTemplateGrantUsers() {
     });
     toast('关联已保存');
     closeTemplateGrantModal();
-    await loadTemplates(templatePage || 1);
+    await loadTemplates(templatePage || 1, templateScope());
   } catch(e) {
     toast(e.message, 'error');
   }
