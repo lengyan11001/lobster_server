@@ -46,6 +46,7 @@ from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_voice import router as h5_voice_router
 from .api.h5_recorder import router as h5_recorder_router
 from .api.hifly_assets import router as hifly_assets_router
+from .api.device_bind import router as device_bind_router
 from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.shanjian_digital_human import router as shanjian_digital_human_router
 from .api.provider_balances import router as provider_balances_router
@@ -1778,6 +1779,7 @@ def create_app() -> FastAPI:
     app.include_router(h5_voice_router, prefix="")
     app.include_router(h5_recorder_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
+    app.include_router(device_bind_router, prefix="")
     app.include_router(shanjian_smart_clip_router, prefix="")
     app.include_router(shanjian_digital_human_router, prefix="")
     app.include_router(provider_balances_router, prefix="")

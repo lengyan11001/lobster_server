@@ -1,0 +1,263 @@
+# -*- coding: utf-8 -*-
+"""设备绑定（扫码配网）接口。
+
+- POST /api/device/bind-ticket    App 用当前登录态换一次性绑定票据
+- POST /api/device/report         设备凭票据回报 device_id/name（建立绑定关系）
+- GET  /api/device/bind/status     查询绑定状态（支持 ticket 或 device_id）
+- GET  /api/device/list            App 查看自己绑定的设备
+"""
+from __future__ import annotations
+
+import json
+import logging
+import secrets
+import time
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from ..db import get_db
+from .auth import get_current_user
+from ..models import User
+
+router = APIRouter(prefix="/api/device", tags=["device-bind"])
+logger = logging.getLogger("device.bind")
+
+TICKET_TTL_SECONDS = 300  # 一次性票据 5 分钟
+
+_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS device_bind_tickets (
+        id SERIAL PRIMARY KEY,
+        ticket VARCHAR(64) UNIQUE NOT NULL,
+        user_id INTEGER NOT NULL,
+        brand VARCHAR(32) DEFAULT '',
+        api_base_url TEXT DEFAULT '',
+        expires_at BIGINT NOT NULL,
+        used_at TIMESTAMP NULL,
+        device_id VARCHAR(128) DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bound_devices (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        device_id VARCHAR(128) UNIQUE NOT NULL,
+        name VARCHAR(160) DEFAULT '',
+        protocol_version INTEGER DEFAULT 1,
+        bind_status VARCHAR(16) DEFAULT 'bound',
+        api_base_url TEXT DEFAULT '',
+        last_ip VARCHAR(64) DEFAULT '',
+        meta TEXT DEFAULT '',
+        bound_at TIMESTAMP DEFAULT NOW(),
+        last_seen_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )
+    """,
+)
+
+_tables_ready = False
+
+
+def ensure_tables(db: Session) -> None:
+    global _tables_ready
+    if _tables_ready:
+        return
+    for ddl in _DDL:
+        db.execute(text(ddl))
+    db.commit()
+    _tables_ready = True
+
+
+def _now() -> float:
+    return time.time()
+
+
+def _brand_of(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    return str(request.headers.get("X-Lobster-Brand") or "").strip().lower()
+
+
+def _client_ip(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    fwd = str(request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if fwd:
+        return fwd
+    return str(getattr(request.client, "host", "") or "")
+
+
+def _api_base(request: Optional[Request], override: str = "") -> str:
+    value = str(override or "").strip().rstrip("/")
+    if value:
+        return value
+    if request is None:
+        return ""
+    return str(request.base_url).rstrip("/")
+
+
+class BindTicketIn(BaseModel):
+    api_base_url: str = ""
+
+
+class DeviceReportIn(BaseModel):
+    ticket: str
+    device_id: str
+    name: str = ""
+    protocol_version: int = 1
+    api_base_url: str = ""
+    meta: Dict[str, Any] = {}
+
+
+@router.post("/bind-ticket", summary="App：换一次性设备绑定票据")
+def create_bind_ticket(
+    request: Request,
+    body: Optional[BindTicketIn] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ensure_tables(db)
+    ticket = "bt_" + secrets.token_urlsafe(24)
+    expires_at = int(_now()) + TICKET_TTL_SECONDS
+    api_base = _api_base(request, (body.api_base_url if body else "") or "")
+    db.execute(
+        text(
+            "INSERT INTO device_bind_tickets (ticket, user_id, brand, api_base_url, expires_at)"
+            " VALUES (:t, :u, :b, :a, :e)"
+        ),
+        {"t": ticket, "u": int(current_user.id), "b": _brand_of(request), "a": api_base, "e": expires_at},
+    )
+    db.commit()
+    logger.info("[device] bind-ticket issued uid=%s expires_at=%s", current_user.id, expires_at)
+    return {
+        "ok": True,
+        "ticket": ticket,
+        "expires_at": expires_at,
+        "expires_in": TICKET_TTL_SECONDS,
+        "api_base_url": api_base,
+    }
+
+
+@router.post("/report", summary="设备：凭票据回报并建立绑定")
+def device_report(
+    body: DeviceReportIn,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ensure_tables(db)
+    ticket = str(body.ticket or "").strip()
+    device_id = str(body.device_id or "").strip()
+    if not ticket or not device_id:
+        raise HTTPException(status_code=400, detail="缺少 ticket 或 device_id")
+    row = db.execute(
+        text("SELECT id, user_id, api_base_url, expires_at, used_at FROM device_bind_tickets WHERE ticket = :t"),
+        {"t": ticket},
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="票据不存在")
+    m = dict(row._mapping)
+    if int(m["expires_at"] or 0) < int(_now()):
+        raise HTTPException(status_code=410, detail="票据已过期，请重新扫码")
+    user_id = int(m["user_id"])
+    api_base = str(body.api_base_url or m.get("api_base_url") or "").rstrip("/")
+    name = str(body.name or "")
+    protocol_version = int(body.protocol_version or 1)
+    db.execute(
+        text(
+            """
+            INSERT INTO bound_devices (user_id, device_id, name, protocol_version, bind_status,
+                                       api_base_url, last_ip, meta, bound_at, last_seen_at, updated_at)
+            VALUES (:u, :d, :n, :pv, 'bound', :a, :ip, :meta, NOW(), NOW(), NOW())
+            ON CONFLICT (device_id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                name = EXCLUDED.name,
+                protocol_version = EXCLUDED.protocol_version,
+                bind_status = 'bound',
+                api_base_url = EXCLUDED.api_base_url,
+                last_ip = EXCLUDED.last_ip,
+                meta = EXCLUDED.meta,
+                last_seen_at = NOW(),
+                updated_at = NOW()
+            """
+        ),
+        {
+            "u": user_id, "d": device_id, "n": name, "pv": protocol_version, "a": api_base,
+            "ip": _client_ip(request), "meta": json.dumps(body.meta or {}, ensure_ascii=False)[:4000],
+        },
+    )
+    db.execute(
+        text("UPDATE device_bind_tickets SET used_at = NOW(), device_id = :d WHERE id = :i"),
+        {"d": device_id, "i": int(m["id"])},
+    )
+    db.commit()
+    logger.info("[device] bound uid=%s device=%s name=%s from=%s", user_id, device_id, name, _client_ip(request))
+    return {
+        "ok": True,
+        "device_id": device_id,
+        "name": name,
+        "user_id": user_id,
+        "bind_status": "bound",
+        "protocol_version": protocol_version,
+        "api_base_url": api_base,
+    }
+
+
+@router.get("/bind/status", summary="查询绑定状态（ticket 或 device_id）")
+def bind_status(
+    ticket: str = Query("", description="绑定票据（设备/App 绑定后立即查询用）"),
+    device_id: str = Query("", description="设备号"),
+    db: Session = Depends(get_db),
+):
+    ensure_tables(db)
+    ticket = str(ticket or "").strip()
+    device_id = str(device_id or "").strip()
+    if ticket:
+        row = db.execute(
+            text("SELECT device_id, user_id, expires_at, used_at FROM device_bind_tickets WHERE ticket = :t"),
+            {"t": ticket},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="票据不存在")
+        m = dict(row._mapping)
+        device_id = str(m.get("device_id") or "").strip()
+        if not device_id:
+            expired = int(m["expires_at"] or 0) < int(_now())
+            return {"device_id": "", "name": "", "bind_status": "expired" if expired else "waiting",
+                    "protocol_version": 0}
+    if not device_id:
+        raise HTTPException(status_code=400, detail="缺少 ticket 或 device_id")
+    dev = db.execute(
+        text("SELECT device_id, name, bind_status, protocol_version FROM bound_devices WHERE device_id = :d"),
+        {"d": device_id},
+    ).fetchone()
+    if not dev:
+        return {"device_id": device_id, "name": "", "bind_status": "waiting", "protocol_version": 0}
+    d = dict(dev._mapping)
+    return {
+        "device_id": d["device_id"],
+        "name": d.get("name") or "",
+        "bind_status": d.get("bind_status") or "bound",
+        "protocol_version": int(d.get("protocol_version") or 1),
+    }
+
+
+@router.get("/list", summary="App：我绑定的设备列表")
+def list_devices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ensure_tables(db)
+    rows = db.execute(
+        text(
+            "SELECT device_id, name, protocol_version, bind_status, api_base_url, last_ip,"
+            " bound_at, last_seen_at FROM bound_devices WHERE user_id = :u ORDER BY last_seen_at DESC"
+        ),
+        {"u": int(current_user.id)},
+    ).fetchall()
+    return {"ok": True, "items": [dict(r._mapping) for r in rows]}
