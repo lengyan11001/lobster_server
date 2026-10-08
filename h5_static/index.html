@@ -11,9 +11,12 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2-20260807-detail-pages-v2-20260808-competitor-search-v1-20260814-live-executor-modal-v1-20260814-wechat-checkbox-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-camera-voice-v4-cover-recording-20260819-workflow-delete-employee-v1-20260819-global-device-context-v1" />
-  <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-drag-v2" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20261001-chat-duty-mode-v1" />
+  <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260905-idea-samples-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260926-img-slim-v1" />
+  <link rel="stylesheet" href="/h5-static/rich-content.css?v=20260910-rich-content-v1" />
+  <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
+  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261001-clean-service-reply-v5" />
 </head>
 <body>
   <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
@@ -63,13 +66,13 @@
         timer = window.setTimeout(function () {
           var alreadyReloaded = false;
           try { alreadyReloaded = window.sessionStorage.getItem(bootReloadKey) === "1"; } catch (_) {}
+          // Keep the marker for diagnostics, but never force a second navigation
+          // on iOS standalone cold starts.
           if (isIos && isStandalone && !alreadyReloaded) {
             try { window.sessionStorage.setItem(bootReloadKey, "1"); } catch (_) {}
-            reloadPage();
-            return;
           }
-          show("页面加载时间较长，请刷新后重试。");
-        }, 7000);
+          show("页面加载时间较长，请检查网络后手动刷新。");
+        }, 12000);
       }
       window.__h5RecoveryGuard = { arm: arm, ready: hide, show: show };
       armColdBoot();
@@ -88,7 +91,7 @@
   </script>
   <main class="shell">
     <header class="topbar" id="topbar">
-      <button class="back-btn top-back hidden" type="button" id="topBackBtn" aria-label="返回首页">‹</button>
+      <button class="back-btn top-back hidden" type="button" id="topBackBtn" aria-label="返回首页">←</button>
       <div class="brand">
         <div class="logo"><img id="h5BrandLogo" src="__H5_BRAND_ICON_32__" width="32" height="32" alt=""></div>
         <div class="brand-title">
@@ -179,6 +182,9 @@
             <button class="designer-home-gallery" id="homeHeroUploadBtn" type="button" aria-label="设置首页图片" title="设置首页图片">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4.6-4.6a2 2 0 0 1 2.8 0L15 16l1.6-1.6a2 2 0 0 1 2.8 0L21 16M6 4h12a2 2 0 0 1 2 2v12H4V6a2 2 0 0 1 2-2zm9 3.5h.01"/></svg>
             </button>
+            <button class="designer-home-gallery douyin-information-desk-launcher hidden" id="openDouyinInformationDeskBtn" type="button" aria-label="抖音平台信息台" title="抖音平台信息台">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3M3 19h18"/></svg>
+            </button>
             <input class="hidden" id="homeHeroFileInput" type="file" accept="image/*">
           </div>
 
@@ -267,7 +273,7 @@
             <div class="secretary-avatar-stage" aria-hidden="true">
               <div class="secretary-orbit orbit-a"></div>
               <div class="secretary-orbit orbit-b"></div>
-              <img class="secretary-cockpit-img" src="/h5-static/h5-secretary-cockpit.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
+              <img class="secretary-cockpit-img" src="/h5-static/h5-secretary-cockpit.jpg?v=20260926-img-slim-v1" alt="" loading="lazy">
             </div>
           </div>
           <div class="secretary-metrics" id="secretaryMetrics"></div>
@@ -754,6 +760,13 @@
                       </button>
                     </div>
                   </div>
+                  <div class="composer-duty-wrap">
+                    <span class="composer-duty-label">范围</span>
+                    <select id="h5ChatDutyMode" aria-label="AI 调度助手处理范围" title="工作=照现在这样；客服=只处理客服问题">
+                      <option value="work" selected>工作</option>
+                      <option value="service">客服</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="composer-toolbar-right">
                   <span class="composer-model">5.6 Sol</span>
@@ -869,6 +882,21 @@
             </div>
             <div class="setting-row">
               <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"></path></svg>
+              </span>
+              <div>
+                <strong>界面语言</strong>
+                <div class="hint">选择后同步到当前账号的所有设备</div>
+              </div>
+              <div class="profile-language-controls">
+                <select id="profileLanguageSelect" aria-label="界面语言">
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">English</option>
+                </select>
+              </div>
+            </div>
+            <div class="setting-row">
+              <span class="profile-setting-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M15 9.5a4 4 0 0 1 0 5M18 7a7 7 0 0 1 0 10"></path></svg>
               </span>
               <div>
@@ -907,7 +935,59 @@
                 <button class="ghost" type="button" id="installIosWebclipBtn">添加到桌面</button>
               </div>
             </div>
+            <div class="setting-row">
+              <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.2-2.9 7.8-7 9-4.1-1.2-7-4.8-7-9V6l7-3Z"></path><path d="M9.5 12.2l1.8 1.8 3.4-3.6"></path></svg>
+              </span>
+              <div>
+                <strong>账号安全</strong>
+                <div class="hint">修改密码 / 更换手机号</div>
+              </div>
+              <button class="ghost" type="button" id="accountSecurityEntryBtn">管理</button>
+            </div>
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
+          </div>
+          <style>
+            .account-security-panel .as-form { display: grid; gap: .4rem; margin: .6rem 0 .9rem; }
+            .account-security-panel .as-form label { font-size: .82rem; font-weight: 700; color: #334155; }
+            .account-security-panel .as-form input { border: 1px solid #d7dee8; border-radius: 10px; padding: .55rem .65rem; font-size: .95rem; background: #fbfdff; width: 100%; box-sizing: border-box; }
+            .account-security-panel .as-inline { display: flex; gap: .5rem; align-items: center; }
+            .account-security-panel .as-inline input { flex: 1 1 auto; }
+            .account-security-panel .as-msg { margin-top: .4rem; }
+            .account-security-panel .as-msg.ok { color: #0b6f5e; }
+            .account-security-panel .as-msg.err { color: #b32b2b; }
+          </style>
+          <div class="panel settings account-security-panel hidden" id="accountSecurityPanel">
+            <div class="setting-row">
+              <div>
+                <strong>账号安全</strong>
+                <div class="hint" id="accountSecurityCurrent">当前账号：--</div>
+              </div>
+              <button class="ghost" type="button" id="accountSecurityCloseBtn">收起</button>
+            </div>
+            <div class="as-form">
+              <label for="asOldPassword">当前密码</label>
+              <input type="password" id="asOldPassword" autocomplete="current-password" placeholder="请输入当前密码" />
+              <label for="asNewPassword">新密码</label>
+              <input type="password" id="asNewPassword" autocomplete="new-password" placeholder="6～128 位" />
+              <label for="asConfirmPassword">确认新密码</label>
+              <input type="password" id="asConfirmPassword" autocomplete="new-password" placeholder="再次输入新密码" />
+              <button class="primary" type="button" id="asChangePasswordBtn">保存新密码</button>
+            </div>
+            <div class="as-form">
+              <label for="asPhonePassword">当前密码</label>
+              <input type="password" id="asPhonePassword" autocomplete="current-password" placeholder="请输入当前密码" />
+              <label for="asNewPhone">新手机号</label>
+              <input type="tel" id="asNewPhone" inputmode="numeric" maxlength="11" placeholder="11 位手机号" />
+              <label for="asPhoneCode">短信验证码</label>
+              <div class="as-inline">
+                <input type="text" id="asPhoneCode" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+                <button class="ghost" type="button" id="asSendPhoneCodeBtn">获取验证码</button>
+              </div>
+              <button class="primary" type="button" id="asChangePhoneBtn">确认换绑</button>
+              <div class="hint">换绑后新号即登录账号，老号释放；设备槽位/素材/任务/积分按账号 ID 保留；品牌固定代理号不允许自助换绑。</div>
+            </div>
+            <div class="hint as-msg" id="asMsg"></div>
           </div>
           <div class="panel settings profile-business-menu">
             <button class="profile-entry ai-assistant-profile-entry" type="button" data-tab-target="messages">
@@ -1113,6 +1193,7 @@
             </div>
             <div class="recorder-detail-actions">
               <button type="button" class="ghost hidden" id="recorderFaqBtn">生成百问百答</button>
+              <button type="button" class="ghost hidden" id="recorderCustomerBtn">关联客户</button>
               <span class="recorder-detail-status" id="recorderDetailStatus">处理中</span>
             </div>
           </header>
@@ -1284,7 +1365,17 @@
                   </div>
                   <span id="personalSurveyCompletionText">已填写 0/14</span>
                 </div>
+                <label class="personal-survey-name-field" for="personalSurveyName">
+                  <span>资料名称</span>
+                  <input id="personalSurveyName" type="text" maxlength="160" value="默认资料" placeholder="例如：默认资料、餐饮项目资料">
+                  <small>仅用于区分不同资料，不会作为人设姓名写入生成内容。</small>
+                </label>
                 <div id="personalSurveyQuestionList" class="personal-survey-list"></div>
+                <div class="personal-list-page-head">
+                  <strong>已保存的资料调查</strong>
+                  <button type="button" id="personalNewSurveyBtn">新增记录</button>
+                </div>
+                <div class="personal-list" id="personalSurveyList"></div>
                 <div class="personal-survey-actions">
                   <button type="button" id="personalSaveProfileBtn">保存资料调查</button>
                 </div>
@@ -1317,6 +1408,7 @@
                 </select>
                 <input id="personalCompetitorKey" type="text" placeholder="输入昵称或抖音号">
                 <button type="button" id="personalAddCompetitorBtn">搜索账号</button>
+                <button type="button" id="personalAddCompetitorByChannelIdBtn" hidden>按照视频号公开 ID 添加</button>
               </div>
               <div class="personal-competitor-results" id="personalCompetitorSearchResults"></div>
               <div class="personal-list" id="personalCompetitorList"></div>
@@ -1372,7 +1464,10 @@
               <h2 id="personalMemoryDetailTitle">记忆文件</h2>
               <div class="hint" id="personalMemoryDetailSubtitle">正在读取内容</div>
             </div>
-            <button class="ghost" type="button" id="personalMemoryDetailCopyBtn">复制</button>
+            <div class="detail-actions">
+              <button class="ghost" type="button" id="personalMemoryDetailDownloadBtn">下载</button>
+              <button class="ghost" type="button" id="personalMemoryDetailCopyBtn">复制</button>
+            </div>
           </div>
           <pre class="personal-memory-detail-content" id="personalMemoryPreview">点击列表中的记忆文件查看内容。</pre>
         </div>
@@ -1708,36 +1803,66 @@
               <span>命中拉群规则后立即执行</span>
             </label>
           </div>
+          <div class="field full hidden" id="workflowNodeNativeWhatsappField">
+            <label>WhatsApp 参数</label>
+            <label for="workflowNodeNativeWhatsappAccountId">账号标识</label>
+            <input id="workflowNodeNativeWhatsappAccountId" type="text" value="desktop-whatsapp-default" readonly>
+            <label for="workflowNodeNativeWhatsappInterval">消息轮询间隔（秒）</label>
+            <input id="workflowNodeNativeWhatsappInterval" type="number" min="1" max="300" step="1" value="15">
+            <label for="workflowNodeNativeWhatsappTakeoverMinutes">接管时长（分钟）</label>
+            <input id="workflowNodeNativeWhatsappTakeoverMinutes" type="number" min="1" max="1440" step="1" value="30">
+            <label for="workflowNodeNativeWhatsappMaxUnread">每轮最多会话数</label>
+            <input id="workflowNodeNativeWhatsappMaxUnread" type="number" min="1" max="100" step="1" value="50">
+            <label for="workflowNodeNativeWhatsappInstruction">回复要求</label>
+            <textarea id="workflowNodeNativeWhatsappInstruction" rows="3" placeholder="可选：回复语气、业务边界和语言要求"></textarea>
+          </div>
           <div class="field full hidden" id="workflowNodeDouyinCollectionField">
-            <label for="workflowNodeDouyinKeyword">精准获客参数</label>
-            <textarea id="workflowNodeDouyinKeyword" rows="3" placeholder="采集关键词，例如：深圳装修、口腔种植、母婴门店"></textarea>
+            <div class="field full" id="workflowNodeDouyinKeywordField">
+              <label for="workflowNodeDouyinKeyword">精准获客参数</label>
+              <textarea id="workflowNodeDouyinKeyword" rows="3" placeholder="留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"></textarea>
+            </div>
+            <div class="field full hidden" id="workflowNodeDouyinAiKeywordField">
+              <label>AI 选词设置（精准获客AI）</label>
+              <label class="subtle" for="workflowNodeDouyinAiKeywordCount">每轮关键词数量</label>
+              <input id="workflowNodeDouyinAiKeywordCount" type="number" min="1" max="8" step="1" value="3">
+              <label class="subtle" for="workflowNodeDouyinAiKeywordAvoidDays">关键词去重天数（这几天用过的词不再用）</label>
+              <input id="workflowNodeDouyinAiKeywordAvoidDays" type="number" min="1" max="60" step="1" value="7">
+              <label class="subtle" for="workflowNodeDouyinAiKeywordPublishDays">只搜最近多少天发布的新视频</label>
+              <input id="workflowNodeDouyinAiKeywordPublishDays" type="number" min="1" max="180" step="1" value="7">
+            </div>
             <label for="workflowNodeDouyinRegions">地区</label>
             <input id="workflowNodeDouyinRegions" type="text" value="全国" placeholder="全国，或用逗号分隔多个城市">
             <label for="workflowNodeDouyinMaxResults">搜索数量</label>
             <input id="workflowNodeDouyinMaxResults" type="number" min="10" max="100" step="1" value="50">
             <label for="workflowNodeDouyinMode">搜索方式</label>
             <select id="workflowNodeDouyinMode"><option value="script">浏览器脚本</option><option value="api">接口模式</option></select>
-            <label>采集后继续执行（可多选）</label>
-            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupReplyComments" type="checkbox" checked><span>回复客户评论</span></label>
-            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupMentionComment" type="checkbox" checked><span>评论并@客户</span></label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinReplyPreciseComments" type="checkbox"><span>筛选后立即回复精准客户评论</span></label>
+            <label for="workflowNodeDouyinReplyCommentMode">回复模式</label>
+            <select id="workflowNodeDouyinReplyCommentMode"><option value="">不启用回复（默认）</option><option value="fixed">固定文案</option><option value="ai">AI 按客户评论生成</option><option value="rewrite">AI 同方向改编</option></select>
+            <div class="field full hidden" id="workflowNodeDouyinReplyCommentFixedField">
+              <label for="workflowNodeDouyinReplyCommentText">固定回复文案</label>
+              <textarea id="workflowNodeDouyinReplyCommentText" rows="2" placeholder="固定模式使用"></textarea>
+            </div>
+            <div class="field full hidden" id="workflowNodeDouyinReplyCommentAiField">
+              <label for="workflowNodeDouyinReplyCommentPrompt">回复要求</label>
+              <textarea id="workflowNodeDouyinReplyCommentPrompt" rows="2" placeholder="AI 模式：回复方向和约束"></textarea>
+            </div>
+            <div class="field full hidden" id="workflowNodeDouyinReplyCommentRewriteField">
+              <label for="workflowNodeDouyinReplyCommentSeedText">改编基准文案</label>
+              <textarea id="workflowNodeDouyinReplyCommentSeedText" rows="2" placeholder="改编模式使用"></textarea>
+            </div>
+          </div>
+          <div class="field full hidden" id="workflowNodeDouyinTouchField">
+            <label for="workflowNodeDouyinTouchMaxUsers">精准用户触达参数</label>
+            <input id="workflowNodeDouyinTouchMaxUsers" type="number" min="1" max="200" step="1" value="20">
+            <label>触达动作（按顺序执行）</label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupFollowComment" type="checkbox" checked><span>关注并评论</span></label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupMentionComment" type="checkbox" checked><span>评论并@客户</span></label>
             <label class="task-checkbox"><input id="workflowNodeDouyinFollowupDirectMessage" type="checkbox" checked><span>主动私信</span></label>
           </div>
           <div class="field full hidden" id="workflowNodeMomentField">
-            <label for="workflowNodeMomentSearch">朋友圈联系人（按微信号保存，可多选）</label>
-            <details class="workflow-moment-dropdown">
-              <summary id="workflowNodeMomentTrigger">选择通讯录联系人</summary>
-              <div class="workflow-moment-picker">
-                <input id="workflowNodeMomentSearch" type="search" placeholder="搜索昵称、备注或微信号">
-                <div class="workflow-moment-list" id="workflowNodeMomentContacts"></div>
-                <div class="workflow-moment-footer">
-                  <button class="ghost" id="workflowNodeMomentPrev" type="button">上一页</button>
-                  <span id="workflowNodeMomentPage">1 / 1</span>
-                  <button class="ghost" id="workflowNodeMomentNext" type="button">下一页</button>
-                </div>
-                <div class="workflow-moment-summary" id="workflowNodeMomentSummary"></div>
-              </div>
-            </details>
+            <label>朋友圈互动联系人</label>
+            <div class="workflow-moment-summary" id="workflowNodeMomentSummary">联系人不在这里选：到 Online 客户端「微信协议助手 → 通讯录」勾选后点「确认为朋友圈互动联系人」；节点只下发任务，名单按机器上的账号存。</div>
             <label for="workflowNodeMomentAction">互动动作</label>
             <select id="workflowNodeMomentAction">
               <option value="like_comment">点赞并评论</option>
@@ -1793,20 +1918,8 @@
             </select>
           </div>
           <div class="field full hidden" id="workflowActionMomentField">
-            <label for="workflowActionMomentSearch">朋友圈联系人（按微信号保存，可多选）</label>
-            <details class="workflow-moment-dropdown">
-              <summary id="workflowActionMomentTrigger">选择通讯录联系人</summary>
-              <div class="workflow-moment-picker">
-                <input id="workflowActionMomentSearch" type="search" placeholder="搜索昵称、备注或微信号">
-                <div class="workflow-moment-list" id="workflowActionMomentContacts"></div>
-                <div class="workflow-moment-footer">
-                  <button class="ghost" id="workflowActionMomentPrev" type="button">上一页</button>
-                  <span id="workflowActionMomentPage">1 / 1</span>
-                  <button class="ghost" id="workflowActionMomentNext" type="button">下一页</button>
-                </div>
-                <div class="workflow-moment-summary" id="workflowActionMomentSummary"></div>
-              </div>
-            </details>
+            <label>朋友圈互动联系人</label>
+            <div class="workflow-moment-summary" id="workflowActionMomentSummary">联系人不在这里选：到 Online 客户端「微信协议助手 → 通讯录」勾选后点「确认为朋友圈互动联系人」；节点只下发任务，名单按机器上的账号存。</div>
             <label for="workflowActionMomentAction">互动动作</label>
             <select id="workflowActionMomentAction">
               <option value="like_comment">点赞并评论</option>
@@ -1846,12 +1959,51 @@
             </div>
           </div>
           <div class="field full">
+            <label for="assetLibraryUploadGroup">分组（可选）</label>
+            <input id="assetLibraryUploadGroup" type="text" list="assetLibraryUploadGroupOptions" placeholder="例如：春季产品图" autocomplete="off">
+            <datalist id="assetLibraryUploadGroupOptions"></datalist>
+          </div>
+          <div class="field full">
+            <label for="assetLibraryUploadTags">标签（可选）</label>
+            <input id="assetLibraryUploadTags" type="text" placeholder="多个标签用逗号分隔" autocomplete="off">
+          </div>
+          <div class="field full">
             <div class="asset-upload-status" id="assetLibraryUploadStatus"></div>
           </div>
         </div>
         <div class="work-dispatch-actions">
           <button class="ghost" type="button" id="assetUploadCancel">取消</button>
           <button type="submit" id="assetLibraryUploadBtn">上传入库</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="employee-modal upload-dialog hidden" id="assetEditModal" role="dialog" aria-modal="true" aria-labelledby="assetEditTitle">
+    <button class="employee-modal-backdrop" type="button" id="assetEditBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover asset-action-popover">
+      <button class="employee-popover-close" type="button" id="assetEditClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">编</div>
+        <div class="employee-popover-title">
+          <strong id="assetEditTitle">编辑素材</strong>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="assetEditForm">
+        <div class="work-dispatch-fields">
+          <div class="field full">
+            <label for="assetEditGroup">分组（可选）</label>
+            <input id="assetEditGroup" type="text" list="assetEditGroupOptions" placeholder="留空表示清空分组" autocomplete="off">
+            <datalist id="assetEditGroupOptions"></datalist>
+          </div>
+          <div class="field full">
+            <label for="assetEditTags">标签（可选）</label>
+            <input id="assetEditTags" type="text" placeholder="多个标签用逗号分隔，留空表示清空" autocomplete="off">
+          </div>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="assetEditCancel">取消</button>
+          <button type="submit" id="assetEditSave">保存</button>
         </div>
       </form>
     </div>
@@ -2062,7 +2214,7 @@
                 <span>录音</span>
               </button>
             </div>
-            <small class="asset-field-hint">可上传 MP3/M4A/WAV，或录制 3-30 秒清晰人声。</small>
+            <small class="asset-field-hint">可上传 MP3/M4A/WAV，大小不超过 10MB，或录制 3-30 秒清晰人声。</small>
             <div class="asset-voice-record-state" id="assetVoiceRecordState">尚未录音</div>
             <audio class="asset-voice-record-preview hidden" id="assetVoiceRecordPreview" controls preload="metadata"></audio>
           </div>
@@ -2125,6 +2277,7 @@
           <label for="personalTemplateLanguage">语种</label>
           <select id="personalTemplateLanguage">
             <option value="zh-CN">简体中文</option>
+            <option value="zh-TW">繁體中文</option>
             <option value="en">English</option>
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
@@ -2140,6 +2293,10 @@
             <option value="ar">العربية</option>
           </select>
         </div>
+        <div class="personal-field">
+          <label for="personalTemplateSurvey">资料调查记录</label>
+          <select id="personalTemplateSurvey"><option value="">不关联</option></select>
+        </div>
         <div class="personal-field personal-digital-human-field">
           <div class="personal-digital-human-field-head">
             <div>
@@ -2150,11 +2307,64 @@
           </div>
           <div id="personalDigitalHumanTemplateSummary"></div>
         </div>
+        <div class="personal-field">
+          <label for="personalDigitalHumanAssetGroups">数字人素材分组</label>
+          <select id="personalDigitalHumanAssetGroups" multiple size="5" style="min-height:108px;width:100%"></select>
+          <small>非必选，可多选。不选则按现在的模板素材混剪。</small>
+        </div>
+        <section class="personal-template-resource-group personal-digital-human-resources-group">
+          <div class="personal-template-resource-head">
+            <strong>关联数字人形象 / 分身</strong>
+            <div class="personal-template-resource-actions">
+              <span>已选 <b id="personalDigitalHumanAvatarCount">0</b></span>
+              <button class="ghost" type="button" id="personalDigitalHumanAvatarChooseBtn">选择</button>
+            </div>
+          </div>
+          <div class="personal-template-choice-grid" id="personalDigitalHumanAvatarList"></div>
+        </section>
+        <section class="personal-template-resource-group personal-digital-human-resources-group">
+          <div class="personal-template-resource-head">
+            <strong>关联声音</strong>
+            <div class="personal-template-resource-actions">
+              <span>已选 <b id="personalDigitalHumanVoiceCount">0</b></span>
+              <button class="ghost" type="button" id="personalDigitalHumanVoiceChooseBtn">选择</button>
+            </div>
+          </div>
+          <div class="personal-template-choice-grid" id="personalDigitalHumanVoiceList"></div>
+        </section>
         <div class="personal-list" id="personalTemplateList"></div>
         <div class="work-dispatch-actions">
           <button class="ghost" type="button" id="personalTemplateCancel">取消</button>
           <button type="button" id="personalSaveDefaultBtn">保存模板</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="employee-modal personal-digital-resource-modal hidden" id="personalDigitalHumanResourceModal" role="dialog" aria-modal="true" aria-labelledby="personalDigitalHumanResourceTitle">
+    <button class="employee-modal-backdrop" type="button" id="personalDigitalHumanResourceBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover personal-digital-resource-picker">
+      <button class="employee-popover-close" type="button" id="personalDigitalHumanResourceClose" aria-label="关闭">×</button>
+      <div class="personal-digital-resource-picker-head">
+        <div>
+          <strong id="personalDigitalHumanResourceTitle">选择数字人资源</strong>
+          <span id="personalDigitalHumanResourceStats">共 0 个，已选 0 个</span>
+        </div>
+      </div>
+      <div class="personal-digital-resource-tabs" id="personalDigitalHumanResourceTabs">
+        <button type="button" data-personal-resource-kind="avatar">形象 / 分身</button>
+        <button type="button" data-personal-resource-kind="voice">声音</button>
+      </div>
+      <div class="personal-digital-resource-search">
+        <input id="personalDigitalHumanResourceSearch" type="search" placeholder="搜索名称、编号或来源" autocomplete="off">
+        <button class="ghost" type="button" id="personalDigitalHumanResourceSelectAll">全选搜索结果</button>
+      </div>
+      <div class="personal-digital-resource-list" id="personalDigitalHumanResourcePickerList"></div>
+      <div class="personal-digital-resource-pager" id="personalDigitalHumanResourcePager"></div>
+      <div class="work-dispatch-actions personal-digital-resource-picker-actions">
+        <button class="ghost danger-text" type="button" id="personalDigitalHumanResourceClear">清空当前类型</button>
+        <button class="ghost" type="button" id="personalDigitalHumanResourceCancel">取消</button>
+        <button type="button" id="personalDigitalHumanResourceConfirm">确认选择</button>
       </div>
     </div>
   </div>
@@ -2470,6 +2680,53 @@
     </div>
   </div>
 
+  <div class="task-success-dialog douyin-information-desk-dialog hidden" id="douyinInformationDeskDialog" role="dialog" aria-modal="true" aria-labelledby="douyinInformationDeskTitle" aria-hidden="true">
+    <button class="task-success-backdrop" type="button" id="douyinInformationDeskBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel douyin-information-desk-panel">
+      <div class="douyin-information-desk-head">
+        <div>
+          <div class="task-success-kicker">DOUYIN PULSE</div>
+          <h3 id="douyinInformationDeskTitle">抖音平台信息台</h3>
+          <p id="douyinInformationDeskFetchedAt">正在读取服务器快照...</p>
+        </div>
+        <button class="ghost douyin-information-desk-close" type="button" id="douyinInformationDeskCloseBtn" aria-label="关闭">关闭</button>
+      </div>
+      <div class="douyin-information-desk-search">
+        <input type="search" id="douyinInformationDeskSearchInput" placeholder="输入关键词，搜你关注的榜单（例：火锅 探店）" />
+        <button type="button" class="ghost" id="douyinInformationDeskSearchBtn">搜索</button>
+        <button type="button" class="ghost hidden" id="douyinInformationDeskSearchClear">清除</button>
+      </div>
+      <div class="douyin-information-desk-tabs" id="douyinInformationDeskTabs" aria-label="数据分类"></div>
+      <div class="douyin-information-desk-content" id="douyinInformationDeskContent">
+        <div class="douyin-information-desk-empty">正在加载...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="task-success-dialog douyin-information-desk-dialog hidden" id="douyinImitationDialog" role="dialog" aria-modal="true" aria-labelledby="douyinImitationTitle" aria-hidden="true">
+    <button class="task-success-backdrop" type="button" id="douyinImitationBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel douyin-information-desk-panel">
+      <div class="douyin-information-desk-head">
+        <div>
+          <div class="task-success-kicker">SAME STYLE</div>
+          <h3 id="douyinImitationTitle">做同款（换人）</h3>
+          <p id="douyinImitationSub">拿榜单这条原视频，把视频里的人换成你图中的人（约 1-3 分钟）</p>
+        </div>
+        <button class="ghost douyin-information-desk-close" type="button" id="douyinImitationCloseBtn" aria-label="关闭">关闭</button>
+      </div>
+      <div class="douyin-imitation-body">
+        <div class="douyin-imitation-field" id="douyinImitationNote">原视频取榜单这条作品，把视频里的人换成你图中的人</div>
+        <label class="douyin-imitation-field"><span>你的照片（必选：单人、五官清晰、无遮挡）</span><input type="file" id="douyinImitationFile" /></label>
+        <label class="douyin-imitation-field"><span>提示词（可改，例如「把衣服换成图里的衣服」）</span><textarea id="douyinImitationPrompt" rows="2"></textarea></label>
+        <div class="douyin-imitation-actions">
+          <button type="button" id="douyinImitationSubmit">开始生成</button>
+          <span id="douyinImitationStatus" class="douyin-imitation-status"></span>
+        </div>
+        <div id="douyinImitationResult" class="douyin-imitation-result"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="personalTemplateHelpDialog" role="dialog" aria-modal="true" aria-labelledby="personalTemplateHelpTitle">
     <button class="task-success-backdrop" type="button" id="personalTemplateHelpBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel help-panel">
@@ -2527,6 +2784,24 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="recorderCustomerModal" role="dialog" aria-modal="true" aria-labelledby="recorderCustomerTitle" aria-hidden="true">
+    <button class="employee-modal-backdrop" type="button" id="recorderCustomerBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover" style="max-width:620px">
+      <button class="employee-popover-close" type="button" id="recorderCustomerClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">客</div>
+        <div class="employee-popover-title"><strong id="recorderCustomerTitle">关联客户</strong><span>将这次录音作为一条沟通记录保存到客户名下</span></div>
+      </div>
+      <form id="recorderCustomerForm" class="work-dispatch-form">
+        <div class="work-dispatch-fields">
+          <div class="field full"><label for="recorderCustomerSelect">选择客户</label><select id="recorderCustomerSelect" required><option value="">加载中...</option></select></div>
+          <div class="field full"><label for="recorderCustomerNote">沟通备注（可选）</label><textarea id="recorderCustomerNote" rows="3" placeholder="可补充本次沟通的背景或下一步"></textarea></div>
+        </div>
+        <div class="work-dispatch-actions"><button class="ghost" type="button" id="recorderCustomerCancel">取消</button><button type="submit">保存关联</button></div>
+      </form>
+    </div>
+  </div>
+
   <div class="global-action-loading hidden" id="globalActionLoading" role="dialog" aria-modal="true" aria-labelledby="globalActionLoadingTitle" aria-describedby="globalActionLoadingDetail" aria-hidden="true">
     <div class="global-action-loading-backdrop" aria-hidden="true"></div>
     <div class="global-action-loading-panel" id="globalActionLoadingPanel" tabindex="-1">
@@ -2540,7 +2815,28 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1-20260810-workflow-system-slots-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-system-task-chat-v1-20260810-camera-voice-v5-controls-20260810-ios-library-v1-20260814-live-executor-video-v2-20260814-wechat-group-switch-v1-20260814-agent-memory-v1-20260814-content-publish-modal-v1-20260814-douyin-private-v1-20260818-device-alias-v1-20260819-h5-workflow-config-v2-20260819-global-device-context-v1"></script>
-  <script src="/h5-static/task-center.js?v=20260821-task-center-drag-v2"></script>
+  <script>
+    // Paint a lightweight authenticated shell before the large application
+    // bundle downloads. Real user/device data is still fetched by h5-app.js.
+    (function () {
+      try {
+        var brand = (document.documentElement.dataset.brand || "bihuo").toLowerCase();
+        var token = localStorage.getItem("lobster_h5_token:" + brand) || (brand === "bihuo" ? localStorage.getItem("lobster_h5_token") : "");
+        var cached = localStorage.getItem("lobster_h5_user:" + brand);
+        if (token && cached) {
+          var login = document.getElementById("loginPanel");
+          var app = document.getElementById("appPanel");
+          if (login) login.classList.add("hidden");
+          if (app) app.classList.remove("hidden");
+          document.body.classList.add("h5-shell-early");
+        }
+      } catch (_) {}
+    })();
+  </script>
+
+  <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
+  <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
+  <script src="/h5-static/h5-app.js?v=20261001-clean-service-reply-v5"></script>
+  <script src="/h5-static/task-center.js?v=20260831-auth-gated-v1"></script>
 </body>
 </html>

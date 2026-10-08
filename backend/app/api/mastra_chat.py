@@ -52,6 +52,8 @@ from .h5_chat import (
     _collect_server_publish_accounts,
     _serialize_message,
 )
+from ..services.customer_service_faq import build_service_context, strip_customer_service_faq
+from ..services.work_mode_brief import maybe_attach_brief, strip_work_brief
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .publish import SUPPORTED_PLATFORMS
@@ -71,6 +73,7 @@ class MastraAttachment(BaseModel):
 
 class MastraMessageCreate(BaseModel):
     content: str = Field(default="", max_length=8000)
+    duty_mode: str = Field(default="", max_length=16)
     installation_id: Optional[str] = Field(default=None, max_length=128)
     session_id: str = Field(default="", max_length=64)
     attachments: List[MastraAttachment] = Field(default_factory=list, max_length=8)
@@ -936,6 +939,28 @@ def _cancel_root_message(
     return True
 
 
+def _recent_chat_text(db: Session, user_id: int, session_id: str, limit: int = 6) -> str:
+    """最近几轮对话（剥掉知识库注入块），给检索 LLM 理解追问用。"""
+    if not session_id:
+        return ""
+    rows = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.user_id == int(user_id), H5ChatMessage.session_id == str(session_id))
+        .order_by(H5ChatMessage.created_at.desc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    parts: List[str] = []
+    for row in reversed(rows):
+        question = strip_customer_service_faq(row.content or "").strip()
+        answer = (row.reply_text or "").strip()
+        if question:
+            parts.append("用户：" + question[:300])
+        if answer:
+            parts.append("助手：" + answer[:300])
+    return "\n".join(parts[-8:])
+
+
 @router.post("/api/mastra-chat/messages", summary="创建 AI 调度会话消息")
 def create_mastra_message(
     body: MastraMessageCreate,
@@ -946,12 +971,82 @@ def create_mastra_message(
     owner = online_user_for_mobile_user(db, current_user)
     session = _ensure_chat_session(db, owner.id, body.session_id)
     content = (body.content or "").strip()
+    # 工作模式：先把「简要目录」（可用能力 + 我的记忆文件）预取注入，省掉它先调工具问目录的那一轮
+    if content and (body.duty_mode or "").strip().lower() != "service":
+        content = maybe_attach_brief(content, db, owner.id, str(body.installation_id or ""))
+    # 客服模式：两段式给知识（先让检索 LLM 看目录挑章节，再只发相关章节；失败退回关键词）
+    if (body.duty_mode or "").strip().lower() == "service" and content:
+        content = build_service_context(
+            content,
+            history_text=_recent_chat_text(db, owner.id, session.id),
+            auth_header=request.headers.get("authorization", ""),
+        )
     attachments = _normalize_attachments(db, owner.id, body.attachments)
     if not content and not attachments:
         raise HTTPException(status_code=400, detail="消息和素材不能同时为空")
     queue_mode = (body.queue_mode or "normal").strip().lower()
     if queue_mode not in ("normal", "steer"):
         raise HTTPException(status_code=400, detail="queue_mode 必须是 normal 或 steer")
+    # User confirmed via the card and then typed a confirmation again: while the same
+    # session already has an executing / just-finished approval, answer with a notice
+    # instead of dispatching a second generation (this shipped two images in the past).
+    _confirm_words = (
+        "\u786e\u8ba4",
+        "\u786e\u8ba4\u6267\u884c",
+        "\u5f00\u59cb\u6267\u884c",
+        "\u6267\u884c\u5427",
+        "\u597d\u7684\u6267\u884c",
+        "ok",
+    )
+    if content and len(content) <= 12 and any(word in content.lower() for word in _confirm_words):
+        recent_approval = (
+            db.query(H5ChatApproval)
+            .filter(
+                H5ChatApproval.user_id == owner.id,
+                H5ChatApproval.session_id == session.id,
+                H5ChatApproval.status.in_(("executing", "completed")),
+            )
+            .order_by(H5ChatApproval.updated_at.desc())
+            .first()
+        )
+        if (
+            recent_approval is not None
+            and recent_approval.updated_at is not None
+            and (datetime.utcnow() - recent_approval.updated_at).total_seconds() <= 120
+        ):
+            skip_now = datetime.utcnow()
+            skip_row = H5ChatMessage(
+                id=uuid.uuid4().hex,
+                user_id=owner.id,
+                session_id=session.id,
+                installation_id=_selected_installation(request, body.installation_id),
+                parent_message_id=None,
+                mode="mastra",
+                queue_mode="normal",
+                queue_priority=0,
+                content=content,
+                attachments=None,
+                status="completed",
+                reply_text=(
+                    "\u5df2\u5728\u6267\u884c\uff0c\u65e0\u9700\u518d\u6b21\u786e\u8ba4\u3002"
+                    "\u53ef\u4ee5\u7b49\u5b83\u8dd1\u5b8c\uff0c\u6216\u70b9\u300c\u53d6\u6d88\u300d\u540e\u91cd\u65b0\u4e0b\u8fbe\u3002"
+                ),
+                created_at=skip_now,
+                updated_at=skip_now,
+                finished_at=skip_now,
+            )
+            db.add(skip_row)
+            session.last_message_at = skip_now
+            session.updated_at = skip_now
+            _add_event(
+                db,
+                skip_row,
+                "final",
+                {"reply_text": skip_row.reply_text, "skipped_duplicate_confirmation": True},
+            )
+            db.commit()
+            db.refresh(skip_row)
+            return {"ok": True, "message": _serialize_message(skip_row), "events": []}
     target = None
     if queue_mode == "steer":
         target_id = (body.target_message_id or "").strip()
@@ -1141,6 +1236,124 @@ def cancel_mastra_message(
         "ok": True,
         "deduplicated": not changed,
         "side_effects_may_continue": running_children or side_effects_may_continue,
+        "message": _serialize_message(row),
+    }
+
+
+@router.post("/api/mastra-chat/tasks/{message_id}/cancel", summary="取消后台任务（进度卡上的「取消任务」）")
+def cancel_mastra_background_task(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """真停：会话消息 + 待确认单 + 未结束的子任务与运行记录；进度卡标成"已取消"并且不再复活。
+
+    已经提交到上游的生成任务（图片/视频）没有取消接口，只能停止跟踪并在文案里说明。
+    """
+    from ..services.mastra_task_card import latest_task_card, upsert_task_card
+    from ..services.mastra_task_watch import _push_notice
+
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _root_mastra_message(db, owner.id, message_id)
+    now = datetime.utcnow()
+    changed = _cancel_root_message(db, row, reason="已取消后台任务")
+
+    children = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.user_id == owner.id,
+            H5ChatMessage.parent_message_id == row.id,
+            H5ChatMessage.status.in_(("pending", "processing")),
+        )
+        .all()
+    )
+    child_ids = [child.id for child in children]
+    for child in children:
+        child.status = "cancelled"
+        child.reply_text = "已取消"
+        child.finished_at = now
+        child.updated_at = now
+        _add_event(db, child, "cancelled", {"text": "用户已取消后台任务"})
+
+    cancelled_runs: List[str] = []
+    started_runs = 0
+    if child_ids:
+        runs = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.user_id == owner.id,
+                ScheduledTaskRun.h5_message_id.in_(child_ids),
+                ScheduledTaskRun.status.in_(("pending", "processing")),
+            )
+            .all()
+        )
+        for run in runs:
+            if str(run.status) == "processing":
+                started_runs += 1
+            run.status = "cancelled"
+            run.error = "用户已取消"
+            run.finished_at = now
+            run.updated_at = now
+            cancelled_runs.append(str(run.id))
+
+    card = latest_task_card(db, row.id) or {}
+    items = []
+    for raw in card.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        # 已经跑完/失败的子任务保留原状态，只把还在跑/排队的标成已取消
+        if str(raw.get("status") or "") in {"done", "failed"}:
+            items.append(dict(raw))
+        else:
+            items.append({**raw, "status": "cancelled", "status_label": "已取消"})
+    if not items:
+        items = [
+            {
+                "key": "task",
+                "title": str(card.get("title") or row.content or "后台任务")[:80],
+                "status": "cancelled",
+                "status_label": "已取消",
+                "text": "已取消",
+                "artifacts": list(card.get("artifacts") or []),
+            }
+        ]
+    tail = "已经跑完的部分保留在上面的结果里。" if cancelled_runs else ""
+    if started_runs:
+        tail += "已提交给上游的生成任务可能仍在跑完，结果会保留在内容记录里。"
+    upsert_task_card(
+        db,
+        message_id=row.id,
+        user_id=owner.id,
+        status="cancelled",
+        title=str(card.get("title") or "后台任务"),
+        text=("已取消。" + tail).strip(),
+        artifacts=card.get("artifacts") or [],
+        items=items,
+        cancellable=False,
+        cancel_reason="用户取消",
+        source="cancel",
+        force=True,
+    )
+    db.commit()
+    try:
+        _push_notice(
+            db,
+            user_id=owner.id,
+            installation_id=str(row.installation_id or ""),
+            text=f"「{str(card.get('title') or '后台任务')}」已按你的操作取消。",
+            root_message_id=row.id,
+            key=f"cancel:{row.id}",
+        )
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.warning("[mastra_chat] 取消通知写入失败 message=%s", row.id, exc_info=True)
+    db.refresh(row)
+    return {
+        "ok": True,
+        "deduplicated": not changed and not cancelled_runs,
+        "cancelled_runs": cancelled_runs,
+        "side_effects_may_continue": bool(started_runs),
+        "card": latest_task_card(db, row.id),
         "message": _serialize_message(row),
     }
 
@@ -1510,6 +1723,19 @@ def decide_task_approval(
             parent.claimed_at = None
             parent.claimed_by_installation_id = None
             _add_event(db, parent, "queued", {"text": "已确认执行，正在开始任务", "approval_id": approval.id})
+        # 后台任务进度卡：确认即出现，之后由看护循环按真实状态更新（可以离开页面）
+        from ..services.mastra_task_card import upsert_task_card
+
+        upsert_task_card(
+            db,
+            message_id=parent.id,
+            user_id=owner.id,
+            status="queued",
+            title=str(approval.task or "后台任务"),
+            text="已确认，任务已转入后台执行，可以离开页面；完成后我会在这里更新并通知你。",
+            source="approval",
+            force=True,
+        )
     elif decision in {"reject", "rejected", "cancel"}:
         approval.status = "rejected"
         parent.status = "completed"

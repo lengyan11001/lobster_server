@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import os
 import re
 import time
@@ -14,7 +15,7 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -24,18 +25,45 @@ from sqlalchemy.orm.exc import StaleDataError
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
 from .auth import access_token_claims, create_access_token, get_current_user
 from .mobile_identity import online_user_for_mobile_user
+from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
-from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
+from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
+from .comfly_proxy import (
+    _execute_image_generation_request,
+    _extract_image_result_urls,
+    _save_generated_images_best_effort_by_user_id,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _SOURCE_META_KEY = "__lobster_ip_content_meta"
 _SOURCE_USAGE_KEY = "__lobster_ip_content_usage"
 _RETRY_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+# The sutui proxy gives each provider up to 180 seconds before moving to the
+# next route. Keep the caller timeout above that budget so provider timeout
+# fallback can complete instead of being cancelled by this wrapper first.
+_LLM_PROXY_PROVIDER_TIMEOUT_SECONDS = 180.0
+_LLM_PROXY_TIMEOUT_GRACE_SECONDS = 30.0
+_LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS = (
+    _LLM_PROXY_PROVIDER_TIMEOUT_SECONDS + _LLM_PROXY_TIMEOUT_GRACE_SECONDS
+)
+_LLM_DEFAULT_CALL_TIMEOUT_SECONDS = 420.0
+# 单次生成文案的整链总预算（三次重试共享）。单次 420s × 3 会到 21 分钟，再叠加
+# sutui 代理内部的候选降级，调用方（工作流节点 / 工作台）往往先超时，文案白生成。
+# 默认 1500s：足够覆盖"两跳 DeepSeek 官方直连各 420s + 一跳 gpt-5.6-sol"，
+# 到点则返回结构化错误，不把调用方拖死。
+try:
+    _LLM_TOTAL_BUDGET_SECONDS = float(os.environ.get("IP_CONTENT_LLM_TOTAL_BUDGET_SECONDS") or 1500.0)
+except (TypeError, ValueError):
+    _LLM_TOTAL_BUDGET_SECONDS = 1500.0
+if _LLM_TOTAL_BUDGET_SECONDS <= 0:
+    _LLM_TOTAL_BUDGET_SECONDS = 1500.0
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 
 
@@ -128,6 +156,20 @@ def _retryable_http_exception(exc: HTTPException) -> bool:
     return status in _RETRY_HTTP_STATUSES or _is_retryable_detail(exc.detail)
 
 
+def _tikhub_transport_charge_uncertain(exc: BaseException) -> bool:
+    """Whether TiKHub may have accepted a request before the client failed.
+
+    A connect/pool timeout or connect error happens before an HTTP request is
+    sent, so it is safe to leave the request uncharged.  Read/write timeouts,
+    remote protocol errors and other transport failures can happen after the
+    provider accepted the request; TiKHub documents that these may still be
+    billed even when no response reaches us.  Those attempts are therefore
+    settled conservatively and marked for reconciliation.
+    """
+
+    return not isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError))
+
+
 def _sync_error_result(*, source: str, row: Any, exc: Exception, attempts: int) -> dict[str, Any]:
     return {
         "ok": False,
@@ -204,6 +246,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "method": "POST",
         "path": "/api/v1/douyin/search/fetch_user_search_v2",
         "allowed_body": {"keyword", "cursor"},
+    },
+    "douyin_search_user": {
+        "platform": "douyin",
+        "source_type": "user_search",
+        "method": "POST",
+        "path": "/api/v1/douyin/search/fetch_user_search",
+        "allowed_body": {"keyword", "cursor", "douyin_user_fans", "douyin_user_type", "search_id"},
     },
     "douyin_user_posts": {
         "platform": "douyin",
@@ -293,177 +342,90 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "platform": "linkedin",
         "source_type": "user_profile",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_profile",
-        "allowed_params": {
-            "username",
-            "include_follower_and_connection",
-            "include_experiences",
-            "include_skills",
-            "include_certifications",
-            "include_publications",
-            "include_educations",
-            "include_volunteers",
-            "include_honors",
-            "include_interests",
-            "include_bio",
-        },
+        "path": "/api/v1/linkedin/web_v2/get_user_profile",
+        "allowed_params": {"url"},
     },
     "linkedin_user_posts": {
         "platform": "linkedin",
         "source_type": "user_post",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_posts",
-        "allowed_params": {"urn", "page", "pagination_token"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "posts"},
     },
     "linkedin_user_comments": {
         "platform": "linkedin",
         "source_type": "user_comment",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_comments",
-        "allowed_params": {"urn", "page", "pagination_token"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "comments"},
     },
     "linkedin_user_reactions": {
         "platform": "linkedin",
         "source_type": "user_reaction",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_reactions",
-        "allowed_params": {"urn", "page", "pagination_token"},
-    },
-    "linkedin_user_contact_info": {
-        "platform": "linkedin",
-        "source_type": "user_contact",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_contact",
-        "allowed_params": {"username"},
-    },
-    "linkedin_user_follow_count": {
-        "platform": "linkedin",
-        "source_type": "user_follow_count",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_follower_and_connection",
-        "allowed_params": {"username"},
-    },
-    "linkedin_user_experiences": {
-        "platform": "linkedin",
-        "source_type": "user_experience",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_experience",
-        "allowed_params": {"urn", "page"},
-    },
-    "linkedin_user_skills": {
-        "platform": "linkedin",
-        "source_type": "user_skill",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_skills",
-        "allowed_params": {"urn", "page"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "reactions"},
     },
     "linkedin_user_recent_activity": {
         "platform": "linkedin",
         "source_type": "user_recent_activity",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_posts",
-        "allowed_params": {"urn", "page", "pagination_token"},
-    },
-    "linkedin_user_about": {
-        "platform": "linkedin",
-        "source_type": "user_about",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_user_about",
-        "allowed_params": {"urn"},
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"url", "type", "start", "pagination_token"},
+        "default_params": {"type": "posts"},
     },
     "linkedin_company_profile": {
         "platform": "linkedin",
         "source_type": "company_profile",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_profile",
-        "allowed_params": {"company", "company_id"},
-    },
-    "linkedin_company_employees": {
-        "platform": "linkedin",
-        "source_type": "company_employee",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_people",
-        "allowed_params": {"company_id", "page"},
+        "path": "/api/v1/linkedin/web_v2/get_company_profile",
+        "allowed_params": {"url"},
     },
     "linkedin_company_posts": {
         "platform": "linkedin",
         "source_type": "company_post",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_posts",
-        "allowed_params": {"company_id", "page", "sort_by"},
+        "path": "/api/v1/linkedin/web_v2/get_company_posts",
+        "allowed_params": {"url", "start", "pagination_token", "sort_by"},
     },
     "linkedin_company_jobs": {
         "platform": "linkedin",
         "source_type": "company_job",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_company_jobs",
+        "path": "/api/v1/linkedin/web_v2/search_jobs",
         "allowed_params": {
-            "company_id",
-            "page",
+            "keywords",
+            "geo_code",
+            "experience_levels",
+            "company_ids",
+            "title_ids",
+            "onsite_remotes",
+            "functions",
+            "industries",
+            "job_types",
             "sort_by",
             "date_posted",
-            "experience_level",
-            "remote",
-            "job_type",
             "easy_apply",
             "under_10_applicants",
-            "fair_chance_employer",
+            "start",
         },
-    },
-    "linkedin_search_users": {
-        "platform": "linkedin",
-        "source_type": "user_search",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/search_people",
-        "allowed_params": {
-            "name",
-            "first_name",
-            "last_name",
-            "title",
-            "company",
-            "school",
-            "page",
-            "geocode_location",
-            "current_company",
-            "profile_language",
-            "industry",
-            "service_category",
-        },
-    },
-    "linkedin_search_posts": {
-        "platform": "linkedin",
-        "source_type": "search_post",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/search_posts",
-        "allowed_params": {"keyword", "page", "date_posted", "sort_by", "from_member", "from_company", "content_type"},
-    },
-    "linkedin_hashtag_feed": {
-        "platform": "linkedin",
-        "source_type": "hashtag_feed",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/search_posts",
-        "allowed_params": {"keyword", "page", "date_posted", "sort_by", "from_member", "from_company", "content_type"},
     },
     "linkedin_post_detail": {
         "platform": "linkedin",
         "source_type": "post_detail",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_post_detail",
-        "allowed_params": {"post_id"},
+        "path": "/api/v1/linkedin/web_v2/get_post_detail",
+        "allowed_params": {"url"},
     },
     "linkedin_post_comments": {
         "platform": "linkedin",
         "source_type": "post_comment",
         "method": "GET",
-        "path": "/api/v1/linkedin/web/get_post_comments",
-        "allowed_params": {"post_id", "page", "sort_order", "post_type"},
-    },
-    "linkedin_post_reactions": {
-        "platform": "linkedin",
-        "source_type": "post_reaction",
-        "method": "GET",
-        "path": "/api/v1/linkedin/web/get_post_reactions",
-        "allowed_params": {"post_id", "page", "type"},
+        "path": "/api/v1/linkedin/web_v2/get_post_comments",
+        "allowed_params": {"urn", "sort_by", "page", "pagination_token", "share_urn"},
     },
     "reddit_search": {
         "platform": "reddit",
@@ -589,6 +551,13 @@ class CompetitorCreateBody(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class CompetitorByChannelIdBody(BaseModel):
+    """Request body for adding a WeChat Channels account by its public ID."""
+
+    channel_id: str = Field("", max_length=200)
+    industry_tags: str = ""
+
+
 class CompetitorSyncBody(BaseModel):
     count: int = Field(20, ge=1, le=50)
     last_buffer: str = ""
@@ -640,6 +609,17 @@ class ScheduleTemplateBody(BaseModel):
     competitor_ids: list[int] = Field(default_factory=list)
     memory_doc_ids: list[str] = Field(default_factory=list)
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
+    survey_id: Optional[int] = None
+    requirements: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduleTemplateCopyBody(BaseModel):
+    name: str = Field("", max_length=160)
+
+
+class ProfileSurveyBody(BaseModel):
+    name: str = Field("", max_length=160)
     requirements: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -763,6 +743,13 @@ def _is_oral_task(task: str) -> bool:
     return (task or "").strip().lower() in {"task1_industry", "task1_ip", "industry_hot_oral", "professional_ip_oral"}
 
 
+# The studio is split into two entries (IP 口播文案 / 朋友圈图文). Each entry must
+# only ever list its own drafts, so the list endpoint filters by this mode group
+# instead of returning every task the user ever generated.
+_ORAL_DRAFT_TASKS: tuple[str, ...] = ("industry_hot_oral", "professional_ip_oral", "task1_industry", "task1_ip")
+_MOMENTS_DRAFT_TASKS: tuple[str, ...] = ("moments_candidate", "task2_moments")
+
+
 def _is_wechat_channels_finder_username(value: str) -> bool:
     text = (value or "").strip()
     return bool(text) and (text.startswith("v2_") or "@finder" in text)
@@ -856,6 +843,52 @@ def _wechat_channels_account_from_username(username: str) -> dict[str, Any]:
         "raw_index": 0,
         "raw": {"username": clean_username, "source": "direct_username"},
     }
+
+
+def _wechat_channels_channel_id_candidate(payload: Any, channel_id: str) -> Optional[dict[str, Any]]:
+    """Extract the resolved finder account without falling back to account search."""
+    users, _ = _normalize_wechat_channels_users_from_payload(payload or {}, limit=1)
+    if users:
+        candidate = dict(users[0])
+        candidate["channel_id"] = channel_id
+        candidate["source"] = "channel_id"
+        return candidate
+
+    # Some TiKHub responses return the username as a scalar rather than a
+    # candidate object. Only accept a finder username in this fallback.
+    def find_username(node: Any, depth: int = 0) -> str:
+        if depth > 8:
+            return ""
+        if isinstance(node, str):
+            value = _clean_text(node, 191)
+            return value if _is_wechat_channels_finder_username(value) else ""
+        if isinstance(node, list):
+            for value in node:
+                found = find_username(value, depth + 1)
+                if found:
+                    return found
+            return ""
+        if not isinstance(node, dict):
+            return ""
+        for key in ("username", "finder_username", "finderUserName", "finderUsername", "user_name", "userName"):
+            value = node.get(key)
+            if isinstance(value, str):
+                clean = _clean_text(value, 191)
+                if _is_wechat_channels_finder_username(clean):
+                    return clean
+        for value in node.values():
+            found = find_username(value, depth + 1)
+            if found:
+                return found
+        return ""
+
+    username = find_username(payload)
+    if not username:
+        return None
+    candidate = _wechat_channels_account_from_username(username)
+    candidate["channel_id"] = channel_id
+    candidate["source"] = "channel_id"
+    return candidate
 
 
 _MOMENTS_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
@@ -958,11 +991,13 @@ def _tikhub_api_key() -> str:
 
 
 def _query_price(query_type: str) -> Decimal:
-    raw = getattr(settings, "tikhub_query_unit_credits", 1.0)
+    spec = _ENDPOINTS.get(query_type) or {}
     try:
-        return quantize_credits(Decimal(str(raw)))
-    except Exception:
-        return quantize_credits(1)
+        return tikhub_query_price(query_type, endpoint_path=str(spec.get("path") or ""), require_known=True)
+    except ValueError as exc:
+        # Never call a newly added/unknown endpoint at the legacy one-credit
+        # price: fail closed until its TiKHub catalog price is configured.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _internal_api_base() -> str:
@@ -1454,6 +1489,9 @@ def _public_url(raw: Any) -> str:
             "object_desc.media.0.url",
             "object_desc.media.0.video_url",
             "object_desc.media.0.full_url",
+            "objectDesc.media.0.url",
+            "objectDesc.media.0.videoUrl",
+            "objectDesc.media.0.fullUrl",
             "share_info.share_url",
             "aweme_info.share_url",
             "aweme_info.share_info.share_url",
@@ -1497,6 +1535,10 @@ def _cover_url(raw: Any) -> str:
             "object_desc.media.0.thumb_url",
             "object_desc.media.0.thumbUrl",
             "object_desc.media.0.url",
+            "objectDesc.media.0.coverUrl",
+            "objectDesc.media.0.thumbUrl",
+            "objectDesc.media.0.fullCoverUrl",
+            "objectDesc.media.0.url",
             "contact.cover_img_url",
             "video.cover.url_list.0",
             "aweme_info.video.cover.url_list.0",
@@ -1597,6 +1639,19 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         value = stats.get(key) if key in stats else source.get(key)
         if value not in (None, ""):
             out[key] = value
+    # WeChat Channels V2 returns counters in camelCase.  Keep the API output
+    # stable by normalizing those fields to the existing snake_case names.
+    for source_key, output_key in (
+        ("readCount", "read_count"),
+        ("likeCount", "like_count"),
+        ("commentCount", "comment_count"),
+        ("forwardCount", "forward_count"),
+        ("favCount", "fav_count"),
+        ("followCount", "follow_count"),
+    ):
+        value = stats.get(source_key) if source_key in stats else source.get(source_key)
+        if output_key not in out and value not in (None, ""):
+            out[output_key] = value
     return out
 
 
@@ -1638,6 +1693,104 @@ def _source_used_for(row: TikHubSourceItem, task: str = "") -> bool:
     if not task_key:
         return bool(usage)
     return any(str(item.get("task") or "") == task_key for item in usage)
+
+
+# ── 素材去重策略（直接写死在代码里，不再用环境变量）──
+_SOURCE_COOLDOWN_DAYS = 7      # 同一素材 + 同一任务被用过之后，N 天内不再被选中
+_SOURCE_TTL_DAYS = 14          # 入库超过 N 天的素材退出选材池（只归档，不再端给模型）
+_SOURCE_BATCH_LIMIT = 16       # 每批参考素材条数上限（原先 40/24，素材消耗是产出的 8 倍）
+_CROSS_RUN_DEDUP_DAYS = 7      # 跨轮选题去重窗口：让模型避开最近 N 天写过的标题
+
+
+def _source_cooldown_days() -> int:
+    return _SOURCE_COOLDOWN_DAYS
+
+
+def _source_ttl_days() -> int:
+    return _SOURCE_TTL_DAYS
+
+
+def _source_limit(default: int) -> int:
+    """每批参考素材条数：不超过 _SOURCE_BATCH_LIMIT。"""
+    try:
+        return max(4, min(int(default), _SOURCE_BATCH_LIMIT))
+    except (TypeError, ValueError):
+        return _SOURCE_BATCH_LIMIT
+
+
+def _cross_run_dedup_days() -> int:
+    return _CROSS_RUN_DEDUP_DAYS
+
+
+def _source_used_recently(row: TikHubSourceItem, task: str = "", *, days: int = 0) -> bool:
+    """该素材在冷却期内是否已被同一 task 用过；days<=0 时取环境默认。"""
+    window = days if days > 0 else _source_cooldown_days()
+    task_key = (task or "").strip()
+    cutoff = _utcnow() - timedelta(days=window)
+    for item in _source_usage(row):
+        item_task = str(item.get("task") or "")
+        if task_key and item_task != task_key:
+            continue
+        if not task_key and not item_task:
+            continue
+        raw_ts = str(item.get("used_at") or "").strip()
+        if window <= 0 or not raw_ts:
+            return True
+        try:
+            used_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return True
+        if used_at >= cutoff:
+            return True
+    return False
+
+
+def _source_within_ttl(row: TikHubSourceItem, *, days: int = 0) -> bool:
+    """素材是否还在有效期内（按入库时间 created_at 判断）。"""
+    window = days if days > 0 else _source_ttl_days()
+    if window <= 0:
+        return True
+    created = row.created_at or row.updated_at
+    if created is None:
+        return True
+    return created >= _utcnow() - timedelta(days=window)
+
+
+def _recent_draft_titles(db: Session, user_id: int, task: str, *, limit: int = 30) -> list[str]:
+    """近 N 天该账号该任务已生成过的标题，用于让模型换角度。"""
+    days = _cross_run_dedup_days()
+    if days <= 0 or not task:
+        return []
+    since = _utcnow() - timedelta(days=days)
+    try:
+        rows = (
+            db.query(IPContentDraftRecord.title)
+            .filter(
+                IPContentDraftRecord.user_id == int(user_id),
+                IPContentDraftRecord.task == task,
+                IPContentDraftRecord.created_at >= since,
+            )
+            .order_by(IPContentDraftRecord.id.desc())
+            .limit(max(1, int(limit)))
+            .all()
+        )
+    except Exception:
+        # 去重只是锦上添花：查库失败不能让生成挂掉（也兼容测试替身 session）。
+        logging.getLogger(__name__).warning("ip-content recent draft titles lookup failed", exc_info=True)
+        return []
+    out: list[str] = []
+    for row in rows:
+        title = _clean_long_text(row[0] if not isinstance(row, str) else row, 120)
+        if title and title not in out:
+            out.append(title)
+    return out
+
+
+def _cross_run_dedup_note(db: Session, user_id: int, task: str) -> str:
+    titles = _recent_draft_titles(db, user_id, task)
+    if not titles:
+        return ""
+    return "\n\n近期已写过以下选题，请务必避开或换一个完全不同的角度（不要换汤不换药）：" + "；".join(titles)
 
 
 def _merge_source_raw(raw_value: Any, meta: Optional[dict[str, Any]] = None, usage: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
@@ -1918,6 +2071,8 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "keyword",
             "name",
             "object_desc.description",
+            "objectDesc.description",
+            "objectDesc.flowCardDesc.description",
             "aweme_info.desc",
             "aweme_info.caption",
             "full_text",
@@ -1932,7 +2087,20 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ],
     )
     title = _normalize_wechat_channels_video_title(title) or title
-    description = _first(field_item, ["description", "public_description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
+    description = _first(
+        field_item,
+        [
+            "description",
+            "public_description",
+            "desc",
+            "summary",
+            "challenge_name",
+            "object_desc.description",
+            "objectDesc.description",
+            "objectDesc.flowCardDesc.description",
+            "aweme_info.desc",
+        ],
+    )
     if not description:
         description = _first(field_item, ["full_text", "text", "body", "selftext", "legacy.full_text", "legacy.description", "public_description"])
     item_key = _first(
@@ -2055,18 +2223,21 @@ def _query_log_payload(row: TikHubQueryLog, *, include_raw: bool = False, items:
 
 
 def _query_log_summary_payload(row: TikHubQueryLog) -> dict[str, Any]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
     return {
         "id": row.id,
         "user_id": row.user_id,
         "query_id": row.query_id,
         "platform": row.platform,
         "query_type": row.query_type,
+        "endpoint": row.endpoint,
         "status": row.status,
         "success": bool(row.success),
         "http_status": row.http_status,
         "tikhub_code": row.tikhub_code,
         "tikhub_request_id": row.tikhub_request_id or "",
         "credits_charged": credits_json_float(row.credits_charged or 0),
+        "pricing": meta.get("pricing") if isinstance(meta.get("pricing"), dict) else {},
         "latency_ms": row.latency_ms,
         "result_count": int(row.result_count or 0),
         "error_message": (row.error_message or "")[:240],
@@ -2122,7 +2293,18 @@ def _normalize_douyin_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
     if not user:
         nested = _lookup(item, "data.user_info")
         user = nested if isinstance(nested, dict) else item
-
+    # The currently available Douyin search endpoint wraps each user in a
+    # JSON string at dynamic_patch.raw_data.
+    if not _first(user, ["sec_uid", "sec_user_id", "secUid"]):
+        raw_data = _first(item, ["dynamic_patch.raw_data", "raw_data"])
+        if isinstance(raw_data, str) and raw_data.strip():
+            try:
+                parsed_raw_data = json.loads(raw_data)
+            except (TypeError, ValueError):
+                parsed_raw_data = {}
+            parsed_user = parsed_raw_data.get("user_info") if isinstance(parsed_raw_data, dict) else None
+            if isinstance(parsed_user, dict):
+                user = parsed_user
     sec_uid = _first(user, ["sec_uid", "sec_user_id", "secUid", "user_id"])
     if not sec_uid:
         sec_uid = _first(item, ["sec_uid", "sec_user_id", "user_id", "user_info.sec_uid", "data.user_info.sec_uid"])
@@ -2194,7 +2376,7 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
         user = item.get("user") if isinstance(item.get("user"), dict) else {}
     if not user:
         nested_data = item.get("data") if isinstance(item.get("data"), dict) else {}
-        if _first(nested_data, ["username", "finder_username", "finderUserName", "user_name"]):
+        if _first(nested_data, ["username", "finder_username", "finderUserName", "finderUsername", "user_name", "userName"]):
             user = nested_data
     if not user:
         nested = _lookup(item, "data.finder_info")
@@ -2206,7 +2388,9 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
             "username",
             "finder_username",
             "finderUserName",
+            "finderUsername",
             "user_name",
+            "userName",
             "jumpInfo.userName",
             "noticeParam.finderUsername",
             "openid",
@@ -2221,7 +2405,9 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
                 "username",
                 "finder_username",
                 "finderUserName",
+                "finderUsername",
                 "user_name",
+                "userName",
                 "jumpInfo.userName",
                 "noticeParam.finderUsername",
                 "data.username",
@@ -2383,6 +2569,7 @@ async def _call_tikhub(query_type: str, params: dict[str, Any], body: dict[str, 
     spec = _ENDPOINTS.get(query_type)
     if not spec:
         raise HTTPException(status_code=400, detail=f"不支持的 TikHub 查询类型：{query_type}")
+    request_params = {**(spec.get("default_params") or {}), **params}
     url = _tikhub_api_base() + spec["path"]
     headers = {
         "Authorization": f"Bearer {_tikhub_api_key()}",
@@ -2394,7 +2581,7 @@ async def _call_tikhub(query_type: str, params: dict[str, Any], body: dict[str, 
         if spec["method"] == "POST":
             resp = await client.post(url, headers={**headers, "Content-Type": "application/json"}, json=body)
         else:
-            resp = await client.get(url, headers=headers, params=params)
+            resp = await client.get(url, headers=headers, params=request_params)
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
         payload = resp.json()
@@ -2417,6 +2604,11 @@ async def _execute_query_with_retry(
 ) -> dict[str, Any]:
     last_result: dict[str, Any] = {}
     attempts = max(1, int(attempts or 1))
+    retry_http_statuses = set(_RETRY_HTTP_STATUSES)
+    if query_type.startswith("linkedin_"):
+        # LinkedIn Web V2 is backed by a limited resource pool. TikHub's
+        # documentation explicitly calls out transient HTTP 400 responses.
+        retry_http_statuses.add(400)
     for idx in range(attempts):
         try:
             last_result = await _execute_query(
@@ -2443,7 +2635,7 @@ async def _execute_query_with_retry(
             return last_result
         query = last_result.get("query") if isinstance(last_result.get("query"), dict) else {}
         error_message = query.get("error_message") or last_result.get("error_message") or ""
-        if int(query.get("http_status") or 0) not in _RETRY_HTTP_STATUSES and not _is_retryable_detail(error_message):
+        if int(query.get("http_status") or 0) not in retry_http_statuses and not _is_retryable_detail(error_message):
             return last_result
         if idx < attempts - 1:
             await asyncio.sleep(0.8 * (idx + 1))
@@ -2465,6 +2657,8 @@ async def _execute_query(
     if not spec:
         raise HTTPException(status_code=400, detail=f"不支持的 TikHub 查询类型：{query_type}")
     clean_params = _clean_mapping(params, set(spec.get("allowed_params") or set()))
+    default_params = _clean_mapping(spec.get("default_params") or {}, set(spec.get("allowed_params") or set()))
+    clean_params = {**default_params, **clean_params}
     clean_body = _clean_mapping(body, set(spec.get("allowed_body") or set()))
     price = _query_price(query_type)
     balance = user_balance_decimal(current_user)
@@ -2486,6 +2680,10 @@ async def _execute_query(
         credits_charged=quantize_credits(0),
         meta=meta or {},
     )
+    log.meta = {
+        **(meta or {}),
+        "pricing": tikhub_price_breakdown(query_type, str(spec.get("path") or "")),
+    }
     db.add(log)
     db.flush()
     # Persist the pending audit row, then release the connection while TikHub
@@ -2496,6 +2694,49 @@ async def _execute_query(
         http_status, payload, headers, latency_ms = await _call_tikhub(query_type, clean_params, clean_body)
     except HTTPException:
         raise
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        # A response timeout/transport reset can mean TiKHub accepted and
+        # billed the request even though the client saw no response.  Charge
+        # that attempt conservatively and expose the uncertainty in the audit
+        # row; connect/pool failures are known pre-send failures and remain
+        # uncharged.  Retry attempts get their own query_id/ledger entry, so
+        # every provider attempt is accounted for independently.
+        billing_uncertain = _tikhub_transport_charge_uncertain(exc)
+        log.status = "billing_uncertain" if billing_uncertain else "error"
+        log.error_message = str(exc)[:2000]
+        log.meta = {
+            **(log.meta or {}),
+            "billing_uncertain": billing_uncertain,
+            "provider_charge_unknown": billing_uncertain,
+            "transport_exception": type(exc).__name__,
+        }
+        if billing_uncertain and price > 0:
+            balance_after = quantize_credits(balance - price)
+            current_user.credits = balance_after
+            log.credits_charged = price
+            append_credit_ledger(
+                db,
+                current_user.id,
+                -price,
+                "unit_deduct",
+                balance_after,
+                description=f"TiKHub 请求结果未知，按可能已扣费结算：{query_type}",
+                ref_type="tikhub_query_uncertain",
+                ref_id=query_id,
+                meta={
+                    "source": "tikhub",
+                    "query_type": query_type,
+                    "platform": spec["platform"],
+                    "endpoint": spec["path"],
+                    "deduct_credits": credits_json_float(price),
+                    "billing_uncertain": True,
+                    "provider_charge_unknown": True,
+                    "transport_exception": type(exc).__name__,
+                    "pricing": tikhub_price_breakdown(query_type, str(spec.get("path") or "")),
+                },
+            )
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"TikHub 查询失败：{str(exc)[:200]}") from exc
     except Exception as exc:
         log.status = "error"
         log.error_message = str(exc)[:2000]
@@ -2671,6 +2912,56 @@ def _memory_doc_ids_from_docs(docs: Any, limit: int = 30) -> list[str]:
     return _clean_memory_doc_ids(raw_ids, limit)
 
 
+def _canonical_template_memory_selection(
+    db: Session,
+    owner_user_ids: Any,
+    memory_doc_ids: Any,
+    memory_docs: Any,
+    *,
+    limit: int = 50,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Remove deleted memory references without dropping legacy inline docs."""
+    docs = [item for item in (memory_docs if isinstance(memory_docs, list) else []) if isinstance(item, dict)]
+    candidate_ids = _clean_memory_doc_ids(memory_doc_ids, limit) or _memory_doc_ids_from_docs(docs, limit)
+    if not candidate_ids:
+        return [], []
+
+    owners: set[int] = set()
+    raw_owners = owner_user_ids if isinstance(owner_user_ids, (list, tuple, set)) else [owner_user_ids]
+    for raw in raw_owners:
+        try:
+            owner_id = int(raw or 0)
+        except Exception:
+            continue
+        if owner_id >= 0:
+            owners.add(owner_id)
+
+    rows = (
+        db.query(OpenClawMemoryDocument.doc_id, OpenClawMemoryDocument.target_user_id, OpenClawMemoryDocument.status)
+        .filter(OpenClawMemoryDocument.doc_id.in_(candidate_ids))
+        .all()
+    )
+    known_ids = {str(doc_id or "").strip() for doc_id, _target_user_id, _status in rows}
+    active_ids = {
+        str(doc_id or "").strip()
+        for doc_id, target_user_id, status in rows
+        if str(status or "").strip().lower() == "active" and int(target_user_id or 0) in owners
+    }
+    inline_ids = set(_memory_doc_ids_from_docs(docs, limit))
+    # Authorized/system templates may carry self-contained legacy memories
+    # without a cloud document row. A real deleted row must never be revived
+    # merely because an old inline snapshot is still present.
+    valid_ids = active_ids | (inline_ids - known_ids)
+    canonical_ids = [doc_id for doc_id in candidate_ids if doc_id in valid_ids]
+    canonical_set = set(canonical_ids)
+    canonical_docs = []
+    for doc in docs:
+        doc_ids = _memory_doc_ids_from_docs([doc], 1)
+        if doc_ids and doc_ids[0] in canonical_set:
+            canonical_docs.append(doc)
+    return canonical_ids, canonical_docs
+
+
 def _template_payload(
     row: IPContentScheduleTemplate,
     *,
@@ -2692,6 +2983,7 @@ def _template_payload(
         "competitor_ids": _clean_int_ids(row.competitor_ids, 50),
         "memory_doc_ids": memory_doc_ids,
         "memory_docs": memory_docs,
+        "survey_id": int(getattr(row, "survey_id", 0) or 0) or None,
         "requirements": row.requirements or {},
         "status": row.status,
         "source": source,
@@ -2707,17 +2999,75 @@ def _template_payload(
     return payload
 
 
+def _profile_survey_payload(row: Optional[IPContentProfileSurvey]) -> Optional[dict[str, Any]]:
+    if row is None:
+        return None
+    return {
+        "id": int(row.id),
+        "user_id": int(row.user_id),
+        "name": row.name or "资料调查",
+        "requirements": row.requirements or {},
+        "status": row.status,
+        "meta": row.meta or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _survey_for_template(db: Session, row: IPContentScheduleTemplate) -> Optional[IPContentProfileSurvey]:
+    if not getattr(row, "survey_id", None):
+        return None
+    return db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == int(getattr(row, "survey_id", 0)),
+        IPContentProfileSurvey.user_id == int(row.user_id),
+        IPContentProfileSurvey.status == "active",
+    ).first()
+
+
+def _owned_survey(db: Session, user_id: int, survey_id: Any) -> Optional[IPContentProfileSurvey]:
+    try:
+        sid = int(survey_id or 0)
+    except Exception:
+        sid = 0
+    if sid <= 0:
+        return None
+    return db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == sid,
+        IPContentProfileSurvey.user_id == int(user_id),
+        IPContentProfileSurvey.status == "active",
+    ).first()
+
+
+def _copy_survey_for_user(db: Session, source: Optional[IPContentProfileSurvey], user_id: int) -> Optional[int]:
+    if source is None:
+        return None
+    row = IPContentProfileSurvey(
+        user_id=int(user_id),
+        name=source.name or "资料调查",
+        requirements=_jsonable(source.requirements or {}),
+        meta={**(source.meta or {}), "copied_from_survey_id": int(source.id)},
+    )
+    db.add(row)
+    db.flush()
+    return int(row.id)
+
+
 def _rows_ordered_by_ids(rows: list[Any], ids: list[int]) -> list[Any]:
     by_id = {int(getattr(row, "id", 0) or 0): row for row in rows}
     return [by_id[item_id] for item_id in ids if item_id in by_id]
 
 
-def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
-    keyword_ids = _clean_int_ids(row.keyword_ids, 50)
-    competitor_ids = _clean_int_ids(row.competitor_ids, 50)
+def _template_resource_rows_for_ids(
+    db: Session,
+    user_id: int,
+    keyword_ids: Any,
+    competitor_ids: Any,
+) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
+    keyword_ids = _clean_int_ids(keyword_ids, 50)
+    competitor_ids = _clean_int_ids(competitor_ids, 50)
     keywords = (
         db.query(IPContentKeyword)
-        .filter(IPContentKeyword.user_id == row.user_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
+        .filter(IPContentKeyword.user_id == int(user_id), IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
         .all()
         if keyword_ids
         else []
@@ -2725,7 +3075,7 @@ def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tupl
     competitors = (
         db.query(ContentCompetitorAccount)
         .filter(
-            ContentCompetitorAccount.user_id == row.user_id,
+            ContentCompetitorAccount.user_id == int(user_id),
             ContentCompetitorAccount.status == "active",
             ContentCompetitorAccount.id.in_(competitor_ids),
         )
@@ -2734,6 +3084,10 @@ def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tupl
         else []
     )
     return _rows_ordered_by_ids(keywords, keyword_ids), _rows_ordered_by_ids(competitors, competitor_ids)
+
+
+def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
+    return _template_resource_rows_for_ids(db, int(row.user_id), row.keyword_ids, row.competitor_ids)
 
 
 def _template_payload_with_resources(
@@ -2745,7 +3099,25 @@ def _template_payload_with_resources(
     grants: Optional[list[int]] = None,
 ) -> dict[str, Any]:
     keywords, competitors = _template_resource_rows(db, row)
-    return _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
+    payload = _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
+    survey = _survey_for_template(db, row)
+    payload["survey"] = _profile_survey_payload(survey)
+    if survey is not None:
+        # Keep the template's non-profile generation settings, while its
+        # linked survey supplies the current persona at read/run time.
+        payload["requirements"] = {
+            **(row.requirements or {}),
+            **(survey.requirements or {}),
+        }
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(row.user_id),
+        payload.get("memory_doc_ids"),
+        payload.get("memory_docs"),
+    )
+    payload["memory_doc_ids"] = memory_doc_ids
+    payload["memory_docs"] = memory_docs
+    return payload
 
 
 def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
@@ -2757,6 +3129,8 @@ def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate])
             "competitor_ids": [],
             "memory_doc_ids": [],
             "memory_docs": [],
+            "survey_id": None,
+            "survey": None,
             "requirements": {},
             "status": "empty",
             "meta": {"source": "personal_settings", "is_personal_default": True},
@@ -2770,27 +3144,269 @@ def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate])
     return payload
 
 
+def _personal_default_resource_overrides(
+    row: IPContentScheduleTemplate,
+    reference: IPContentScheduleTemplate,
+) -> dict[str, bool]:
+    """Return resource fields explicitly customized on the personal row.
+
+    New clients persist this marker when the complete selection is saved.  For
+    older rows, a difference from the selected source is treated as an
+    override so a refresh cannot silently restore the source template's full
+    resource set.
+    """
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    marker = meta.get("template_resource_overrides")
+    if isinstance(marker, dict):
+        return {
+            "keyword_ids": bool(marker.get("keyword_ids")),
+            "competitor_ids": bool(marker.get("competitor_ids")),
+            "memory_doc_ids": bool(marker.get("memory_doc_ids")),
+        }
+    return {
+        "keyword_ids": _clean_int_ids(row.keyword_ids, 50) != _clean_int_ids(reference.keyword_ids, 50),
+        "competitor_ids": _clean_int_ids(row.competitor_ids, 50) != _clean_int_ids(reference.competitor_ids, 50),
+        "memory_doc_ids": _clean_memory_doc_ids(row.memory_doc_ids, 50) != _clean_memory_doc_ids(reference.memory_doc_ids, 50),
+    }
+
+
 def _personal_default_template_payload_with_resources(db: Session, row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
     payload = _personal_default_template_payload(row)
     if row is None:
         return payload
+    survey = _survey_for_template(db, row)
+    payload["survey"] = _profile_survey_payload(survey)
+    payload["survey_id"] = int(getattr(row, "survey_id", 0) or 0) or None
+    if survey is not None:
+        payload["requirements"] = {**(survey.requirements or {}), **_personal_profile_fields(row.requirements)}
     reference = _granted_template_for_user(db, int(row.user_id), _current_template_id_from_meta(row.meta)) or row
+    overrides = _personal_default_resource_overrides(row, reference)
     if int(reference.id or 0) != int(row.id or 0):
-        if not payload.get("keyword_ids"):
-            payload["keyword_ids"] = _clean_int_ids(reference.keyword_ids, 50)
-        if not payload.get("competitor_ids"):
-            payload["competitor_ids"] = _clean_int_ids(reference.competitor_ids, 50)
-        if not payload.get("memory_doc_ids"):
-            payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
-        if not payload.get("memory_docs"):
-            payload["memory_docs"] = reference.memory_docs or []
-        payload["requirements"] = {**(reference.requirements or {}), **(payload.get("requirements") or {})}
-    keywords, competitors = _template_resource_rows(db, reference)
+        # A selected template remains live for fields the user did not
+        # customize. Explicitly unchecked resources stay on the personal row.
+        payload["keyword_ids"] = (
+            _clean_int_ids(row.keyword_ids, 50)
+            if overrides["keyword_ids"]
+            else _clean_int_ids(reference.keyword_ids, 50)
+        )
+        payload["competitor_ids"] = (
+            _clean_int_ids(row.competitor_ids, 50)
+            if overrides["competitor_ids"]
+            else _clean_int_ids(reference.competitor_ids, 50)
+        )
+        payload["memory_doc_ids"] = (
+            _clean_memory_doc_ids(row.memory_doc_ids, 50)
+            if overrides["memory_doc_ids"]
+            else (_clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50))
+        )
+        payload["memory_docs"] = row.memory_docs or [] if overrides["memory_doc_ids"] else (reference.memory_docs or [])
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        requirement_overrides = meta.get("template_requirement_overrides") if isinstance(meta.get("template_requirement_overrides"), dict) else {}
+        ref_survey = _survey_for_template(db, reference)
+        if ref_survey is not None:
+            # The selected template's survey is the authoritative persona.
+            # Never overlay an old personal-row profile snapshot on it.
+            payload["survey_id"] = int(ref_survey.id)
+            payload["survey"] = _profile_survey_payload(ref_survey)
+            payload["requirements"] = {
+                **(reference.requirements or {}),
+                **(ref_survey.requirements or {}),
+                **requirement_overrides,
+            }
+        else:
+            payload["survey_id"] = None
+            payload["survey"] = None
+            payload["requirements"] = {
+                **(reference.requirements or {}),
+                **requirement_overrides,
+                **_personal_profile_fields(row.requirements),
+            }
+    if row is not None:
+        payload["requirements"] = _enrich_personal_profile_requirements_with_assets(
+            db, int(row.user_id), payload.get("requirements")
+        )
+    keyword_owner = row if overrides["keyword_ids"] else reference
+    competitor_owner = row if overrides["competitor_ids"] else reference
+    memory_owner = row if overrides["memory_doc_ids"] else reference
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(memory_owner.user_id),
+        payload.get("memory_doc_ids"),
+        payload.get("memory_docs"),
+    )
+    payload["memory_doc_ids"] = memory_doc_ids
+    payload["memory_docs"] = memory_docs
+    keyword_rows, _ = _template_resource_rows_for_ids(db, int(keyword_owner.user_id), payload.get("keyword_ids"), [])
+    _, competitor_rows = _template_resource_rows_for_ids(db, int(competitor_owner.user_id), [], payload.get("competitor_ids"))
     keyword_id_set = set(_clean_int_ids(payload.get("keyword_ids"), 50))
     competitor_id_set = set(_clean_int_ids(payload.get("competitor_ids"), 50))
-    payload["keywords"] = [_keyword_payload(item) for item in keywords if int(item.id) in keyword_id_set]
-    payload["competitors"] = [_competitor_payload(item) for item in competitors if int(item.id) in competitor_id_set]
+    payload["keywords"] = [_keyword_payload(item) for item in keyword_rows if int(item.id) in keyword_id_set]
+    payload["competitors"] = [_competitor_payload(item) for item in competitor_rows if int(item.id) in competitor_id_set]
     return payload
+
+
+def _profile_photo_values(container: Any) -> tuple[str, str]:
+    if not isinstance(container, dict):
+        return "", ""
+    asset_id = ""
+    for key in ("profile_photo_asset_id", "photo_asset_id", "portrait_asset_id", "image_asset_id"):
+        value = str(container.get(key) or "").strip()
+        if value and not value.lower().startswith(("http://", "https://")):
+            asset_id = value
+            break
+    url = ""
+    for key in ("profile_photo_url", "photo_url", "portrait_url", "image_url"):
+        value = str(container.get(key) or "").strip()
+        if value.lower().startswith(("http://", "https://")):
+            url = value
+            break
+    return asset_id, url
+
+
+def _is_profile_photo_url(value: Any) -> bool:
+    url = str(value or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        return False
+    lowered = url.lower()
+    return not any(host in lowered for host in ("localhost", "127.0.0.1", "0.0.0.0"))
+
+
+def _profile_photo_filename(url: str, asset_id: str) -> str:
+    raw = str(url or "").split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    name = raw.rsplit("/", 1)[-1].strip()
+    if "." not in name:
+        name = f"profile-photo-{asset_id}.jpg"
+    return name[:255]
+
+
+def _enrich_personal_profile_requirements_with_assets(
+    db: Session, user_id: int, requirements: Any
+) -> dict[str, Any]:
+    """Return profile requirements with a durable server URL for saved photos.
+
+    Online may have stored a local asset ID while its cloud mirror is being
+    registered. Once the server row exists, exposing its public URL lets both
+    H5 and Online restore the preview without probing the other machine.
+    """
+    req = dict(requirements or {}) if isinstance(requirements, dict) else {}
+    containers = [req]
+    for key in ("basic_profile", "profile"):
+        value = req.get(key)
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        asset_id, current_url = _profile_photo_values(container)
+        if not asset_id and not _is_profile_photo_url(current_url):
+            continue
+        row = None
+        if asset_id:
+            row = (
+                db.query(Asset)
+                .filter(Asset.asset_id == asset_id, Asset.user_id == int(user_id))
+                .first()
+            )
+        # Online keeps its local asset ID while the server stores the
+        # canonical row under a separate ID. The sync endpoint records that
+        # local ID in source_asset_id/client_asset_id, so resolve that alias
+        # before falling back to the URL.
+        if row is None and asset_id:
+            row = (
+                db.query(Asset)
+                .filter(
+                    Asset.user_id == int(user_id),
+                    or_(
+                        Asset.meta["source_asset_id"].as_string() == asset_id,
+                        Asset.meta["client_asset_id"].as_string() == asset_id,
+                    ),
+                )
+                .order_by(Asset.id.desc())
+                .first()
+            )
+        if row is None and _is_profile_photo_url(current_url):
+            row = (
+                db.query(Asset)
+                .filter(Asset.user_id == int(user_id), Asset.source_url == current_url)
+                .first()
+            )
+        source_url = str(row.source_url or "").strip() if row else ""
+        public_url = source_url if _is_profile_photo_url(source_url) else current_url
+        if public_url:
+            container["profile_photo_url"] = public_url
+        if row is not None:
+            container["profile_photo_asset_id"] = str(row.asset_id)
+    return req
+
+
+def _ensure_personal_profile_photo_assets(
+    db: Session, user_id: int, requirements: Any
+) -> dict[str, Any]:
+    """Bind a local-client photo ID to a durable server asset row when possible."""
+    req = dict(requirements or {}) if isinstance(requirements, dict) else {}
+    containers = [req]
+    for key in ("basic_profile", "profile"):
+        value = req.get(key)
+        if isinstance(value, dict):
+            containers.append(value)
+    for container in containers:
+        asset_id, photo_url = _profile_photo_values(container)
+        if not asset_id and not _is_profile_photo_url(photo_url):
+            continue
+        row = None
+        if asset_id:
+            row = (
+                db.query(Asset)
+                .filter(Asset.asset_id == asset_id, Asset.user_id == int(user_id))
+                .first()
+            )
+        if row is None and asset_id:
+            row = (
+                db.query(Asset)
+                .filter(
+                    Asset.user_id == int(user_id),
+                    or_(
+                        Asset.meta["source_asset_id"].as_string() == asset_id,
+                        Asset.meta["client_asset_id"].as_string() == asset_id,
+                    ),
+                )
+                .order_by(Asset.id.desc())
+                .first()
+            )
+        if row is None and _is_profile_photo_url(photo_url):
+            row = (
+                db.query(Asset)
+                .filter(Asset.user_id == int(user_id), Asset.source_url == photo_url)
+                .first()
+            )
+        if row is None and not _is_profile_photo_url(photo_url):
+            continue
+        if row is None:
+            canonical_id = uuid.uuid4().hex[:12]
+            row = Asset(
+                asset_id=canonical_id,
+                user_id=int(user_id),
+                filename=_profile_photo_filename(photo_url, canonical_id),
+                media_type="image",
+                file_size=0,
+                source_url=photo_url,
+                meta={
+                    "asset_origin": "user_upload",
+                    "profile_photo": True,
+                    "source_asset_id": asset_id[:80] if asset_id else "",
+                    "registered_from": "personal_profile_save",
+                },
+            )
+            db.add(row)
+            db.flush()
+        elif not str(row.source_url or "").strip():
+            row.source_url = photo_url
+            meta = dict(row.meta or {})
+            meta["profile_photo"] = True
+            meta.setdefault("asset_origin", "user_upload")
+            row.meta = meta
+        canonical_id = str(row.asset_id)
+        container["profile_photo_asset_id"] = canonical_id
+        container["profile_photo_url"] = str(row.source_url or photo_url)
+    return req
 
 
 _PERSONAL_PROFILE_REQUIREMENT_KEYS = {
@@ -2841,6 +3457,20 @@ def _personal_profile_fields(requirements: Any) -> dict[str, Any]:
     return out
 
 
+def _personal_profile_has_values(requirements: Any) -> bool:
+    """Return whether a profile payload contains any user-entered value."""
+    for value in _personal_profile_fields(requirements).values():
+        if isinstance(value, dict):
+            if any(str(item or "").strip() for item in value.values()):
+                return True
+        elif isinstance(value, (list, tuple, set)):
+            if any(str(item or "").strip() for item in value):
+                return True
+        elif str(value or "").strip():
+            return True
+    return False
+
+
 def _allows_personal_profile_update(meta: Any) -> bool:
     source = ""
     if isinstance(meta, dict):
@@ -2850,7 +3480,13 @@ def _allows_personal_profile_update(meta: Any) -> bool:
 
 def _personal_default_requirements_for_save(incoming: Any, existing: Any, meta: Any) -> dict[str, Any]:
     if _allows_personal_profile_update(meta):
-        return dict(incoming or {}) if isinstance(incoming, dict) else {}
+        req = dict(incoming or {}) if isinstance(incoming, dict) else {}
+        # Older clients can submit an empty hidden form while the page is
+        # still restoring the saved profile. Never let that race erase a
+        # previously saved profile; an explicit per-field edit still wins.
+        if not _personal_profile_has_values(req) and _personal_profile_has_values(existing):
+            req.update(_personal_profile_fields(existing))
+        return req
     req = _strip_personal_profile_requirements(incoming)
     req.update(_personal_profile_fields(existing))
     return req
@@ -2915,6 +3551,163 @@ def _granted_template_for_user(db: Session, user_id: int, template_id: Any) -> O
     return row if grant else None
 
 
+def _granted_template_matching_refs(
+    db: Session,
+    user_id: int,
+    keyword_ids: list[int],
+    competitor_ids: list[int],
+) -> Optional[IPContentScheduleTemplate]:
+    """Recover the selected authorized source when an old client omitted its ID."""
+    grants = db.query(H5AgentTemplateGrant).filter(
+        H5AgentTemplateGrant.target_user_id == user_id,
+        H5AgentTemplateGrant.status == "active",
+    ).all()
+    requested_keywords = set(_clean_int_ids(keyword_ids, 50))
+    requested_competitors = set(_clean_int_ids(competitor_ids, 50))
+    for grant in grants:
+        source = db.query(IPContentScheduleTemplate).filter(
+            IPContentScheduleTemplate.id == grant.template_id,
+            IPContentScheduleTemplate.user_id == grant.owner_user_id,
+            IPContentScheduleTemplate.status == "active",
+        ).first()
+        if source is None or not requested_keywords.issubset(set(_clean_int_ids(source.keyword_ids, 50))):
+            continue
+        if not requested_competitors.issubset(set(_clean_int_ids(source.competitor_ids, 50))):
+            continue
+        return source
+    return None
+
+
+def _copy_template_name(db: Session, user_id: int, source_name: str, requested_name: str = "") -> str:
+    base = _clean_text(requested_name, 160) or f"{_clean_text(source_name, 140) or 'IP template'} (copy)"
+    candidate = base
+    index = 2
+    while db.query(IPContentScheduleTemplate.id).filter(
+        IPContentScheduleTemplate.user_id == user_id,
+        IPContentScheduleTemplate.name == candidate,
+    ).first() is not None:
+        suffix = f" (copy {index})"
+        candidate = f"{base[:160 - len(suffix)]}{suffix}"
+        index += 1
+    return candidate
+
+
+def _copy_template_resources(
+    db: Session,
+    source: IPContentScheduleTemplate,
+    target_user_id: int,
+    installation_id: str,
+) -> tuple[list[int], list[int], list[str], list[dict[str, Any]]]:
+    """Clone a granted template's resources into the target user's namespace."""
+    source_keyword_ids = _clean_int_ids(source.keyword_ids, 50)
+    source_competitor_ids = _clean_int_ids(source.competitor_ids, 50)
+    source_doc_ids = _clean_memory_doc_ids(source.memory_doc_ids, 50) or _memory_doc_ids_from_docs(source.memory_docs or [], 50)
+
+    source_keywords = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == source.user_id, IPContentKeyword.id.in_(source_keyword_ids))
+        .all()
+        if source_keyword_ids else []
+    )
+    keyword_map: dict[int, int] = {}
+    for item in _rows_ordered_by_ids(source_keywords, source_keyword_ids):
+        existing = db.query(IPContentKeyword).filter(
+            IPContentKeyword.user_id == target_user_id,
+            IPContentKeyword.keyword == item.keyword,
+        ).first()
+        if existing is None:
+            existing = IPContentKeyword(
+                user_id=target_user_id,
+                keyword=item.keyword,
+                display_name=item.display_name or item.keyword,
+                status="active",
+                meta={**(item.meta or {}), "copied_from_keyword_id": item.id},
+            )
+            db.add(existing)
+            db.flush()
+        keyword_map[int(item.id)] = int(existing.id)
+
+    source_competitors = (
+        db.query(ContentCompetitorAccount)
+        .filter(ContentCompetitorAccount.user_id == source.user_id, ContentCompetitorAccount.id.in_(source_competitor_ids))
+        .all()
+        if source_competitor_ids else []
+    )
+    competitor_map: dict[int, int] = {}
+    for item in _rows_ordered_by_ids(source_competitors, source_competitor_ids):
+        existing = db.query(ContentCompetitorAccount).filter(
+            ContentCompetitorAccount.user_id == target_user_id,
+            ContentCompetitorAccount.platform == item.platform,
+            ContentCompetitorAccount.account_key == item.account_key,
+        ).first()
+        if existing is None:
+            existing = ContentCompetitorAccount(
+                user_id=target_user_id,
+                platform=item.platform,
+                display_name=item.display_name or item.account_key,
+                account_key=item.account_key,
+                homepage_url=item.homepage_url,
+                industry_tags=item.industry_tags,
+                status="active",
+                meta={**(item.meta or {}), "copied_from_competitor_id": item.id},
+            )
+            db.add(existing)
+            db.flush()
+        competitor_map[int(item.id)] = int(existing.id)
+
+    source_docs = {
+        str(row.doc_id): row
+        for row in db.query(OpenClawMemoryDocument).filter(
+            OpenClawMemoryDocument.target_user_id == source.user_id,
+            OpenClawMemoryDocument.doc_id.in_(source_doc_ids),
+            OpenClawMemoryDocument.status == "active",
+        ).all()
+    } if source_doc_ids else {}
+    inline_docs = {
+        str((item or {}).get("id") or (item or {}).get("doc_id") or ""): item
+        for item in (source.memory_docs or [])
+        if isinstance(item, dict)
+    }
+    copied_doc_ids: list[str] = []
+    copied_docs: list[dict[str, Any]] = []
+    for doc_id in source_doc_ids:
+        source_doc = source_docs.get(str(doc_id))
+        inline = inline_docs.get(str(doc_id)) or {}
+        content = str((source_doc.content_text if source_doc else inline.get("content") or inline.get("content_text") or inline.get("text") or "") or "")
+        title = _clean_text((source_doc.title if source_doc else inline.get("title") or inline.get("name") or "memory"), 160) or "memory"
+        filename = _clean_text((source_doc.filename if source_doc else inline.get("filename") or title), 255) or title
+        if not content.strip():
+            continue
+        new_id = f"tplcopy_{uuid.uuid4().hex}"
+        source_meta = source_doc.meta if source_doc else (inline.get("meta") if isinstance(inline.get("meta"), dict) else {})
+        new_doc = OpenClawMemoryDocument(
+            doc_id=new_id,
+            target_user_id=target_user_id,
+            installation_id=installation_id or "template-copy",
+            origin="user",
+            uploader_user_id=target_user_id,
+            uploader_role="user",
+            title=title,
+            filename=filename,
+            notes=(source_doc.notes if source_doc else inline.get("notes") or "") or "",
+            content_text=content,
+            size=len(content.encode("utf-8", "ignore")),
+            sha256=hashlib.sha256(content.encode("utf-8", "ignore")).hexdigest(),
+            status="active",
+            meta={**(source_meta or {}), "copied_from_doc_id": str(doc_id)},
+        )
+        db.add(new_doc)
+        copied_doc_ids.append(new_id)
+        copied_docs.append({"id": new_id, "title": title, "filename": filename, "content": content, "meta": new_doc.meta or {}})
+    db.flush()
+    return (
+        [keyword_map[item_id] for item_id in source_keyword_ids if item_id in keyword_map],
+        [competitor_map[item_id] for item_id in source_competitor_ids if item_id in competitor_map],
+        copied_doc_ids,
+        copied_docs,
+    )
+
+
 def _current_template_id_from_meta(meta: Any) -> int:
     if not isinstance(meta, dict):
         return 0
@@ -2965,6 +3758,252 @@ def _personal_default_template_reference(
     return template
 
 
+def _personal_default_row_for_slot(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+    *,
+    active_only: bool = True,
+    fallback_to_account: bool = True,
+) -> Optional[IPContentScheduleTemplate]:
+    """Return the personal-default row that belongs to one installation slot.
+
+    口径（2026-09-19 明确）：**每个槽位只认自己的配置行**。
+    - 传了 installation_id：只精确匹配该槽位的行；查不到就返回 None（宁可让任务报
+      "请在当前设备的模板里配置人设/形象/声音"，也不借用别的槽位或账号级的配置）。
+    - 没传 installation_id：返回账号级的行（仅供账号级页面使用）。
+    """
+    slot = _clean_text(installation_id, 128)
+
+    def _query(slot_id: str) -> Optional[IPContentScheduleTemplate]:
+        query = db.query(IPContentScheduleTemplate).filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.installation_id == slot_id,
+        )
+        if active_only:
+            query = query.filter(IPContentScheduleTemplate.status == "active")
+        return query.order_by(
+            IPContentScheduleTemplate.updated_at.desc(),
+            IPContentScheduleTemplate.id.desc(),
+        ).first()
+
+    if slot:
+        # 绝不回落账号级、绝不借用其它槽位的行（否则会出现"诺诺的设备用了阿迪的
+        # 人设/形象/声音"这种串台）。
+        return _query(slot)
+    return _query("")
+
+
+def _personal_default_has_digital_human(row: Optional[IPContentScheduleTemplate]) -> bool:
+    """该默认行是否配置过数字人形象/声音。"""
+    if row is None:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if meta.get("digital_human_template") or meta.get("digital_human_template_configured"):
+        return True
+    resources = meta.get("digital_human_resources")
+    if isinstance(resources, dict) and (resources.get("avatars") or resources.get("voices")):
+        return True
+    return False
+
+
+def _personal_default_row_with_digital_human(
+    db: Session,
+    user_id: int,
+    *,
+    exclude_id: int = 0,
+) -> Optional[IPContentScheduleTemplate]:
+    """该用户最近一条配置过数字人的默认行（用于账号级空壳的兜底）。"""
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    for candidate in rows:
+        if exclude_id and int(candidate.id) == int(exclude_id):
+            continue
+        if _personal_default_has_digital_human(candidate):
+            return candidate
+    return None
+
+
+def _current_personal_template_for_execution(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+) -> Optional[IPContentScheduleTemplate]:
+    """Resolve the template selected in Personal Settings at execution time.
+
+    Workflow tasks are long-lived definitions. They must not pin the template
+    or its resource IDs from the day they were activated. Returning the
+    personal row when no explicit selection exists preserves the legacy
+    personal-default behaviour while still making the selected template live.
+    """
+    personal = _personal_default_row_for_slot(db, int(user_id), installation_id)
+    if personal is None:
+        return None
+    selected = _granted_template_for_user(
+        db,
+        int(user_id),
+        _current_template_id_from_meta(personal.meta),
+    )
+    return selected or personal
+
+
+def _payload_installation_id(payload: Any) -> str:
+    """Installation slot recorded in a task/run payload, or "" when unknown."""
+    data = payload if isinstance(payload, dict) else {}
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    return _clean_text(context.get("installation_id") or data.get("installation_id"), 128)
+
+
+def _use_current_personal_template_options(
+    db: Session,
+    user_id: int,
+    options: Any,
+    installation_id: str = "",
+) -> dict[str, Any]:
+    """Replace stale template snapshots with the currently selected template.
+
+    Counts, task selection and sync options belong to the workflow node and
+    are retained. Template-owned fields are resolved from the latest personal
+    row (including explicit empty overrides) so the runner never falls back to
+    an activation-time snapshot.
+    """
+    out = dict(options) if isinstance(options, dict) else {}
+    personal = _personal_default_row_for_slot(db, int(user_id), installation_id)
+    template = _current_personal_template_for_execution(db, int(user_id), installation_id)
+    if personal is None or template is None:
+        # A live workflow must fail closed when the current IP template was
+        # removed or is no longer accessible; never revive its old snapshot.
+        out["template_id"] = None
+        out["keyword_ids"] = []
+        out["competitor_ids"] = []
+        out["memory_doc_ids"] = []
+        out["memory_docs"] = []
+        out["requirements"] = {}
+        out["template_source"] = "personal_current"
+        return out
+    effective = _personal_default_template_payload_with_resources(db, personal)
+    effective_memory_doc_ids = [
+        str(value or "").strip()
+        for value in (effective.get("memory_doc_ids") if isinstance(effective.get("memory_doc_ids"), list) else [])
+        if str(value or "").strip()
+    ]
+    effective_memory_docs = list(effective.get("memory_docs") or []) if isinstance(effective.get("memory_docs"), list) else []
+    if effective_memory_doc_ids and not effective_memory_docs:
+        numeric_ids = [int(value) for value in effective_memory_doc_ids if value.isdigit()]
+        rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(
+                OpenClawMemoryDocument.target_user_id.in_({int(user_id), int(template.user_id)}),
+                OpenClawMemoryDocument.status == "active",
+                OpenClawMemoryDocument.id.in_(numeric_ids),
+            )
+            .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
+            .limit(12)
+            .all()
+            if numeric_ids
+            else []
+        )
+        effective_memory_docs = [
+            {
+                "id": row.id,
+                "title": row.title,
+                "doc_type": row.doc_type,
+                "content": (row.content or "")[:4000],
+            }
+            for row in rows
+        ]
+    out["template_id"] = int(template.id)
+    # Keep the effective IDs/docs in the run options. The live source marker
+    # below tells the runner not to fall back to the selected row when a field
+    # is intentionally empty.
+    out["keyword_ids"] = list(effective.get("keyword_ids") or [])
+    out["competitor_ids"] = list(effective.get("competitor_ids") or [])
+    out["memory_doc_ids"] = effective_memory_doc_ids
+    out["memory_docs"] = effective_memory_docs
+    out["requirements"] = dict(effective.get("requirements") or {})
+    marker = personal.meta if isinstance(personal.meta, dict) else {}
+    resource_overrides = marker.get("template_resource_overrides") if isinstance(marker.get("template_resource_overrides"), dict) else {}
+    if not resource_overrides:
+        # Older rows predate the explicit marker; preserve their historical
+        # difference-from-source behavior when choosing resource ownership.
+        resource_overrides = _personal_default_resource_overrides(personal, template)
+    # These internal owner hints allow granted resources and user overrides to
+    # be validated against the correct account without exposing snapshot data.
+    out["_keyword_owner_user_id"] = int(user_id) if resource_overrides.get("keyword_ids") else int(template.user_id)
+    out["_competitor_owner_user_id"] = int(user_id) if resource_overrides.get("competitor_ids") else int(template.user_id)
+    out["template_source"] = "personal_current"
+    return out
+
+
+def _refresh_personal_workflow_ip_daily_payloads(
+    db: Session,
+    user_id: int,
+) -> int:
+    """Mark active workflow IP-daily definitions as live-template tasks.
+
+    Existing tasks/runs created before this change may contain a complete
+    template snapshot. Remove those fields from pending definitions/runs so
+    they cannot be shown or executed as stale data. Finished history remains
+    untouched.
+    """
+    task_rows = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == int(user_id),
+            ScheduledTask.task_kind == "ip_content_daily",
+            ScheduledTask.created_by_role == "workflow",
+            ScheduledTask.status.in_(["active", "paused"]),
+        )
+        .all()
+    )
+    task_ids: list[int] = []
+    changed = 0
+    for task in task_rows:
+        payload = dict(task.payload) if isinstance(task.payload, dict) else {}
+        payload = _use_current_personal_template_options(
+            db,
+            int(user_id),
+            payload,
+            installation_id=_payload_installation_id(payload),
+        )
+        if payload != (task.payload or {}):
+            task.payload = _jsonable(payload)
+            task.updated_at = _utcnow()
+            changed += 1
+        task_ids.append(int(task.id))
+    if task_ids:
+        pending_runs = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.user_id == int(user_id),
+                ScheduledTaskRun.task_id.in_(task_ids),
+                ScheduledTaskRun.status == "pending",
+            )
+            .all()
+        )
+        for run in pending_runs:
+            refreshed = _use_current_personal_template_options(
+                db,
+                int(user_id),
+                run.payload or {},
+                installation_id=_payload_installation_id(run.payload or {}),
+            )
+            if refreshed != (run.payload or {}):
+                run.payload = _jsonable(refreshed)
+                run.updated_at = _utcnow()
+                changed += 1
+    return changed
+
+
 def _remove_template_reference(db: Session, user_id: int, field: str, reference_id: int) -> int:
     if field not in {"keyword_ids", "competitor_ids"}:
         raise ValueError(f"unsupported template reference field: {field}")
@@ -2999,6 +4038,265 @@ def _requirements_text(requirements: dict[str, Any], *keys: str) -> str:
 def _server_bearer_for_user(user: User) -> str:
     token = create_access_token(access_token_claims(user), expires_delta=timedelta(minutes=30))
     return f"Bearer {token}"
+
+
+def _workflow_moment_image_prompts(record: IPContentDraftRecord) -> list[str]:
+    """Return exactly three stable prompts for the workflow's first Moments row."""
+    meta = record.meta if isinstance(record.meta, dict) else {}
+    raw = meta.get("image_prompts") if isinstance(meta.get("image_prompts"), list) else []
+    prompts = [
+        _clean_long_text(value, 1800)
+        for value in raw
+        if _clean_long_text(value, 1800)
+    ][:3]
+    base = _clean_long_text(record.image_prompt or record.content or record.title or "朋友圈配图", 1800)
+    if not prompts:
+        prompts = [base]
+    while len(prompts) < 3:
+        variant = len(prompts) + 1
+        prompts.append(
+            f"{base}\n这是同一条朋友圈内容的第 {variant} 张配图，请更换构图、主体动作和景别，保持主题一致，不要出现文字、水印或二维码。"
+        )
+    return prompts[:3]
+
+
+def _workflow_moment_reference_urls(record: IPContentDraftRecord) -> list[str]:
+    meta = record.meta if isinstance(record.meta, dict) else {}
+    raw = meta.get("reference_image_urls") if isinstance(meta.get("reference_image_urls"), list) else []
+    return _extract_reference_image_urls(raw, limit=8)
+
+
+async def _generate_workflow_first_moment_images(
+    *,
+    db: Session,
+    current_user: User,
+    record: IPContentDraftRecord,
+    run_id: str,
+    progress: ScheduleProgress = None,
+) -> dict[str, Any]:
+    """Generate and persist three images for the first Moments draft in a workflow.
+
+    The normal workbench keeps image generation manual.  Workflow execution is
+    the one intentional exception: it needs durable public URLs/asset IDs
+    before the child publish node is allowed to claim the run.  Existing
+    images are reused so recovery never charges or generates the same image a
+    second time.
+    """
+    meta = dict(record.meta or {}) if isinstance(record.meta, dict) else {}
+    existing = meta.get("images") if isinstance(meta.get("images"), list) else []
+    existing_by_index: dict[int, dict[str, Any]] = {}
+    for item in existing:
+        if not isinstance(item, dict):
+            continue
+        url = _clean_long_text(item.get("image_url") or item.get("url"), 4096)
+        if not url:
+            continue
+        try:
+            image_index = int(item.get("index") or 0)
+        except (TypeError, ValueError):
+            image_index = 0
+        if 1 <= image_index <= 3:
+            existing_by_index[image_index] = dict(item)
+    if record.image_url and 1 not in existing_by_index:
+        existing_by_index[1] = {
+            "image_url": _clean_long_text(record.image_url, 4096),
+            "image_asset_id": _clean_text(record.image_asset_id, 128),
+            "image_prompt": _clean_long_text(record.image_prompt, 1800),
+            "index": 1,
+        }
+
+    prompts = _workflow_moment_image_prompts(record)
+    references = _workflow_moment_reference_urls(record)
+    image_model = (
+        os.environ.get("IP_CONTENT_STUDIO_IMAGE_MODEL")
+        or os.environ.get("COMFLY_WORKFLOW_IMAGE_MODEL")
+        or "openai/gpt-image-2"
+    ).strip() or "openai/gpt-image-2"
+    batch_id = _clean_text(meta.get("image_batch_id"), 96) or f"workflow_moment_img_{uuid.uuid4().hex[:12]}"
+    images: list[dict[str, Any]] = [existing_by_index[index] for index in sorted(existing_by_index)]
+    errors: list[dict[str, Any]] = []
+
+    # Do not hold an old read transaction while waiting for upstream image
+    # providers.  The image persistence helper uses its own short-lived DB
+    # session, then we write the draft record below.
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    def persist_image_progress() -> None:
+        """Checkpoint generated images so a worker restart can resume safely."""
+        current_images = [existing_by_index[item_index] for item_index in sorted(existing_by_index)]
+        complete_now = len(current_images) >= 3
+        meta["images"] = current_images[:3]
+        meta["image_prompts"] = prompts
+        meta["image_batch_id"] = batch_id
+        meta["image_status"] = "completed" if complete_now else ("partial" if current_images else "failed")
+        meta["image_progress"] = f"{len(current_images)}/3"
+        meta["image_complete"] = complete_now
+        meta["image_errors"] = errors[:3]
+        meta["image_updated_at"] = _utcnow().isoformat()
+        record.meta = dict(meta)
+        first = current_images[0] if current_images else {}
+        record.image_url = _clean_long_text(first.get("image_url"), 4096) or None
+        record.image_asset_id = _clean_text(first.get("image_asset_id"), 128) or None
+        record.image_prompt = _clean_long_text(prompts[0], 2000) or record.image_prompt
+        record.selected = True
+        record.updated_at = _utcnow()
+        db.add(record)
+        try:
+            db.commit()
+            db.refresh(record)
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "[ip-content] workflow Moments image checkpoint failed user_id=%s record_id=%s",
+                current_user.id,
+                record.record_id,
+                exc_info=True,
+            )
+
+    for index, prompt in enumerate(prompts, start=1):
+        if index in existing_by_index:
+            continue
+        _emit_schedule_progress(
+            progress,
+            "moments_image_start",
+            f"正在生成朋友圈第 {index}/3 张图片",
+            {"record_id": record.record_id, "index": index, "batch_id": batch_id},
+        )
+        body: dict[str, Any] = {
+            "model": image_model,
+            "prompt": prompt,
+            "n": 1,
+            "size": "1024x1024",
+            "image_size": "1024x1024",
+        }
+        if references:
+            # Keep the same reference-image semantics as the manual workbench;
+            # the image proxy will route this through its edit/fallback chain.
+            body["image_urls"] = references[:8]
+        try:
+            response = await _execute_image_generation_request(
+                request_user_id=int(current_user.id),
+                billing_user_id=int(current_user.id),
+                model=image_model,
+                body=body,
+                persist_assets=False,
+            )
+            raw_urls = _extract_image_result_urls(response if isinstance(response, dict) else {})
+            saved_assets = await _save_generated_images_best_effort_by_user_id(
+                int(current_user.id),
+                response_payload=response if isinstance(response, dict) else {},
+                prompt=prompt,
+                model=image_model,
+                limit=1,
+                exclude_urls=references,
+            )
+            asset = saved_assets[0] if saved_assets else {}
+            url = _clean_long_text(asset.get("source_url") or asset.get("url") or (raw_urls[0] if raw_urls else ""), 4096)
+            if not url:
+                raise RuntimeError("图片生成成功但没有可发布的公网链接")
+            item = {
+                "image_url": url,
+                "image_asset_id": _clean_text(asset.get("asset_id") or "", 128),
+                "image_prompt": prompt,
+                "generated_prompt": prompt,
+                "index": index,
+                "created_at": _utcnow().isoformat(),
+                "batch_id": batch_id,
+                "reference_image_urls": references,
+            }
+            existing_by_index[index] = item
+            images = [existing_by_index[item_index] for item_index in sorted(existing_by_index)]
+            # Checkpoint every successful image.  If the client/server worker
+            # restarts while producing image 2 or 3, the next run reuses the
+            # already persisted image instead of charging and generating it
+            # again.
+            persist_image_progress()
+            _emit_schedule_progress(
+                progress,
+                "moments_image_done",
+                f"朋友圈第 {index}/3 张图片已生成",
+                {
+                    "record_id": record.record_id,
+                    "index": index,
+                    "batch_id": batch_id,
+                    "image_asset_id": item.get("image_asset_id") or "",
+                },
+            )
+        except Exception as exc:
+            error_text = _clean_long_text(getattr(exc, "detail", None) or str(exc), 800)
+            errors.append({"index": index, "error": error_text or "图片生成失败"})
+            logger.warning(
+                "[ip-content] workflow Moments image failed user_id=%s record_id=%s index=%s error=%s",
+                current_user.id,
+                record.record_id,
+                index,
+                error_text,
+            )
+
+    images = [existing_by_index[item_index] for item_index in sorted(existing_by_index)]
+    complete = len(images) >= 3
+    meta["images"] = images[:3]
+    meta["image_prompts"] = prompts
+    meta["image_batch_id"] = batch_id
+    meta["image_batch_created_at"] = _utcnow().isoformat()
+    meta["image_status"] = "completed" if complete else ("partial" if images else "failed")
+    meta["image_progress"] = f"{len(images)}/3"
+    meta["image_complete"] = complete
+    meta["image_errors"] = errors[:3]
+    meta["image_updated_at"] = _utcnow().isoformat()
+    record.meta = meta
+    first_image = images[0] if images else {}
+    record.image_url = _clean_long_text(first_image.get("image_url"), 4096) or None
+    record.image_asset_id = _clean_text(first_image.get("image_asset_id"), 128) or None
+    record.image_prompt = _clean_long_text(prompts[0], 2000) or record.image_prompt
+    record.selected = True
+    record.updated_at = _utcnow()
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    image_urls = [
+        _clean_long_text(item.get("image_url"), 4096)
+        for item in images[:3]
+        if _clean_long_text(item.get("image_url"), 4096)
+    ]
+    image_asset_ids = [
+        _clean_text(item.get("image_asset_id"), 128)
+        for item in images[:3]
+        if _clean_text(item.get("image_asset_id"), 128)
+    ]
+    publish_draft = {
+        "status": "ready" if complete else ("partial" if image_urls else "failed"),
+        "platform": "wechat_moments",
+        "media_type": "image_text",
+        "title": "",
+        "content": _clean_long_text(record.content, 8000),
+        "description": _clean_long_text(record.content, 8000),
+        "asset_id": image_asset_ids[0] if image_asset_ids else "",
+        "source_url": image_urls[0] if image_urls else "",
+        "url": image_urls[0] if image_urls else "",
+        "image_urls": image_urls,
+        "image_asset_ids": image_asset_ids,
+        "source_record_id": record.record_id,
+        "source_task": "moments_candidate",
+        "image_complete": complete,
+        "image_progress": f"{len(images)}/3",
+        "image_errors": errors[:3],
+    }
+    return {
+        "batch_id": batch_id,
+        "record_id": record.record_id,
+        "image_model": image_model,
+        "image_count": len(images),
+        "image_complete": complete,
+        "image_urls": image_urls,
+        "image_asset_ids": image_asset_ids,
+        "errors": errors[:3],
+        "publish_draft": publish_draft,
+    }
 
 
 async def _sync_keyword_row(
@@ -3137,6 +4435,10 @@ def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int
         source_name = str(meta.get("source") or "")
         if source_name and source_name not in {"keyword_sync", "keyword_video_sync", "keyword_sync_fallback"}:
             continue
+        if not _source_within_ttl(row):
+            continue  # 超过有效期的旧素材退出选材池
+        if _source_used_recently(row, task):
+            continue  # 冷却期内（默认 7 天）同一任务不再选用这条素材
         bucket_id = keyword_id or fallback_bucket
         bucket = buckets.setdefault(bucket_id, {"fresh": [], "reused": []})
         if _source_used_for(row, task):
@@ -3200,6 +4502,10 @@ def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: li
             continue
         source_name = str(meta.get("source") or "")
         if source_name and source_name != "competitor_sync":
+            continue
+        if not _source_within_ttl(row):
+            continue
+        if _source_used_recently(row, task):
             continue
         if _source_used_for(row, task):
             continue
@@ -3275,18 +4581,83 @@ def _competitor_seed_briefs(competitors: list[ContentCompetitorAccount]) -> list
     return briefs
 
 
+def _llm_upstream_failure_payload(
+    *,
+    status_code: int,
+    detail: Any,
+    attempts: int,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    raw = _clean_long_text(detail, 2000) or f"HTTP {status_code}"
+    lowered = raw.lower()
+    reason_code = "upstream_error"
+    title = "LLM 上游本次调用失败"
+    retryable = status_code in _RETRY_HTTP_STATUSES or _is_retryable_detail(raw)
+    upstream_available: Any = "unknown"
+    advice = "可以稍后重试；如果持续失败，请联系管理员检查上游线路。"
+    if status_code in {524, 504} or "timeout" in lowered or "timed out" in lowered:
+        reason_code = "upstream_timeout"
+        title = "LLM 上游响应超时"
+        retryable = True
+        upstream_available = "unknown"
+        advice = "上游连接已建立但本次生成超过读取窗口，建议稍后重试，或减少单批生成条数/缩短资料。"
+    elif status_code == 429 or "too many requests" in lowered or "rate limit" in lowered:
+        reason_code = "upstream_rate_limited"
+        title = "LLM 上游限流"
+        retryable = True
+        upstream_available = "limited"
+        advice = "上游还在，但当前被限流，建议等待后重试。"
+    elif status_code in {401, 403} or "invalid api key" in lowered or "unauthorized" in lowered:
+        reason_code = "upstream_auth_failed"
+        title = "LLM 上游鉴权不可用"
+        retryable = False
+        upstream_available = False
+        advice = "需要管理员检查上游 Key、Token 池或线路权限。"
+    elif status_code == 402 or "insufficient" in lowered or "quota" in lowered or "balance" in lowered or "余额" in raw:
+        reason_code = "upstream_quota_exhausted"
+        title = "LLM 上游余额或额度不足"
+        retryable = False
+        upstream_available = False
+        advice = "需要管理员补充上游额度或切换可用模型。"
+    elif 400 <= status_code < 500 and status_code not in _RETRY_HTTP_STATUSES:
+        reason_code = "request_rejected"
+        title = "LLM 请求被上游拒绝"
+        retryable = False
+        upstream_available = True
+        advice = "上游能访问，但本次请求参数/内容被拒绝，需要检查提示词、模型或请求体。"
+    message = f"{title}：{raw}"
+    return {
+        "message": message,
+        "error": raw,
+        "error_type": "llm_upstream",
+        "upstream_check": {
+            "provider": "sutui-chat",
+            "available": upstream_available,
+            "retryable": retryable,
+            "reason_code": reason_code,
+            "http_status": int(status_code or 0),
+            "attempts": max(1, int(attempts or 1)),
+            "timeout_seconds": float(timeout_seconds or 0),
+            "advice": advice,
+        },
+    }
+
+
 async def _post_llm_with_retry(
     *,
     payload: dict[str, Any],
     headers: dict[str, str],
     attempts: int = 3,
-    timeout_seconds: float = 150.0,
+    timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     attempts = max(1, int(attempts or 1))
     try:
-        timeout_value = max(10.0, float(timeout_seconds or 150.0))
+        timeout_value = max(
+            _LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS,
+            float(timeout_seconds or _LLM_DEFAULT_CALL_TIMEOUT_SECONDS),
+        )
     except (TypeError, ValueError):
-        timeout_value = 150.0
+        timeout_value = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS
     timeout = httpx.Timeout(
         timeout_value,
         connect=min(15.0, timeout_value),
@@ -3295,9 +4666,35 @@ async def _post_llm_with_retry(
         pool=10.0,
     )
     last_detail = ""
+    deadline = asyncio.get_running_loop().time() + _LLM_TOTAL_BUDGET_SECONDS
     for idx in range(attempts):
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 1.0:
+            logger.warning(
+                "[ip-content] llm total budget exhausted after %s/%s attempts detail=%s",
+                idx,
+                attempts,
+                last_detail[:300],
+            )
+            raise HTTPException(
+                status_code=504,
+                detail=_llm_upstream_failure_payload(
+                    status_code=504,
+                    detail=last_detail or "上游模型排队超时（已达本次生成的总等待上限）",
+                    attempts=attempts,
+                    timeout_seconds=timeout_value,
+                ),
+            )
+        attempt_timeout_value = min(timeout_value, remaining)
+        attempt_timeout = httpx.Timeout(
+            attempt_timeout_value,
+            connect=min(15.0, attempt_timeout_value),
+            read=attempt_timeout_value,
+            write=min(30.0, attempt_timeout_value),
+            pool=10.0,
+        )
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=attempt_timeout, trust_env=False) as client:
                 resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
             try:
                 data = resp.json() if resp.content else {}
@@ -3306,7 +4703,24 @@ async def _post_llm_with_retry(
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_detail = str(exc)
             if idx >= attempts - 1:
-                raise HTTPException(status_code=502, detail=f"文案生成失败：{last_detail}") from exc
+                error_status = 504 if isinstance(exc, httpx.TimeoutException) else 502
+                raise HTTPException(
+                    status_code=error_status,
+                    detail=_llm_upstream_failure_payload(
+                        status_code=error_status,
+                        detail=last_detail,
+                        attempts=attempts,
+                        timeout_seconds=timeout_value,
+                    ),
+                ) from exc
+            logger.warning(
+                "[ip-content] sutui request failed, retrying for provider fallback "
+                "attempt=%s/%s timeout=%s error=%s",
+                idx + 1,
+                attempts,
+                isinstance(exc, httpx.TimeoutException),
+                last_detail[:500],
+            )
             await asyncio.sleep(_retry_delay(idx))
             continue
         if resp.status_code < 400:
@@ -3314,11 +4728,35 @@ async def _post_llm_with_retry(
         detail = _response_message(data) or _clean_long_text(data, 800) or f"HTTP {resp.status_code}"
         last_detail = detail
         if resp.status_code not in _RETRY_HTTP_STATUSES and not _is_retryable_detail(detail):
-            raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=_llm_upstream_failure_payload(
+                    status_code=resp.status_code,
+                    detail=detail,
+                    attempts=attempts,
+                    timeout_seconds=timeout_value,
+                ),
+            )
         if idx >= attempts - 1:
-            raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=_llm_upstream_failure_payload(
+                    status_code=resp.status_code,
+                    detail=detail,
+                    attempts=attempts,
+                    timeout_seconds=timeout_value,
+                ),
+            )
         await asyncio.sleep(_retry_delay(idx))
-    raise HTTPException(status_code=502, detail=f"文案生成失败：{last_detail or '上游无响应'}")
+    raise HTTPException(
+        status_code=502,
+        detail=_llm_upstream_failure_payload(
+            status_code=502,
+            detail=last_detail or "上游无响应",
+            attempts=attempts,
+            timeout_seconds=timeout_value,
+        ),
+    )
 
 
 async def _call_ip_content_llm(
@@ -3335,7 +4773,7 @@ async def _call_ip_content_llm(
     extra_requirements: str,
     fallback_sources: Optional[list[dict[str, Any]]] = None,
     llm_attempts: int = 3,
-    llm_timeout_seconds: float = 150.0,
+    llm_timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 5), 20))
     fallback_sources = fallback_sources or []
@@ -3628,7 +5066,7 @@ async def _generate_and_save_ip_content_records(
     group_id: str = "",
     batch_size: Optional[int] = None,
     llm_attempts: int = 3,
-    llm_timeout_seconds: float = 150.0,
+    llm_timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
     progress: ScheduleProgress = None,
     task_label: str = "",
     reference_image_urls: Optional[list[str]] = None,
@@ -3637,7 +5075,7 @@ async def _generate_and_save_ip_content_records(
     clean_group_id = _clean_group_id(group_id) or uuid.uuid4().hex
     clean_label = task_label or {
         "industry_hot_oral": "行业热门口播文案",
-        "professional_ip_oral": "IP 日更口播文案",
+        "professional_ip_oral": "专业 IP 口播文案",
         "moments_candidate": "朋友圈文案",
     }.get(record_task, record_task)
     clean_batch_size = batch_size if batch_size is not None else target_count
@@ -3675,6 +5113,7 @@ async def _generate_and_save_ip_content_records(
     all_drafts: list[dict[str, Any]] = []
     source_items: list[dict[str, Any]] = [_item_payload(row) for row in rows]
     requirements_text = _draft_requirements(task_key, platform, target_count)
+    cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
     clean_reference_image_urls = _extract_reference_image_urls(reference_image_urls or [], limit=8)
@@ -3731,7 +5170,7 @@ async def _generate_and_save_ip_content_records(
             _clean_long_text((draft.get("title") or draft.get("body") or "") if isinstance(draft, dict) else "", 120)
             for draft in all_drafts[-10:]
         ]
-        batch_extra = extra_requirements
+        batch_extra = (str(extra_requirements or "") + cross_run_note).strip()
         if total_batches > 1:
             batch_extra = (
                 f"{extra_requirements}\n\n"
@@ -3839,9 +5278,14 @@ async def _generate_and_save_ip_content_records(
             except Exception:
                 pass
             detail = getattr(exc, "detail", None) or str(exc)
-            if isinstance(detail, (dict, list)):
-                detail = json.dumps(detail, ensure_ascii=False)
-            error_text = _clean_long_text(detail, 1000) or f"{clean_label}第 {batch_index}/{total_batches} 批生成失败"
+            detail_payload = detail if isinstance(detail, dict) else {}
+            if isinstance(detail, dict):
+                detail_text = detail.get("message") or detail.get("detail") or detail.get("error") or json.dumps(detail, ensure_ascii=False)
+            elif isinstance(detail, list):
+                detail_text = json.dumps(detail, ensure_ascii=False)
+            else:
+                detail_text = str(detail)
+            error_text = _clean_long_text(detail_text, 1000) or f"{clean_label}第 {batch_index}/{total_batches} 批生成失败"
             batch_error = {
                 "index": batch_index,
                 "status": "failed",
@@ -3849,6 +5293,10 @@ async def _generate_and_save_ip_content_records(
                 "records": [_draft_record_payload(row) for row in batch_records],
                 "error": error_text,
             }
+            if detail_payload.get("error_type"):
+                batch_error["error_type"] = detail_payload.get("error_type")
+            if isinstance(detail_payload.get("upstream_check"), dict):
+                batch_error["upstream_check"] = detail_payload.get("upstream_check")
             failed_batches.append(batch_error)
             batch_payloads.append(batch_error)
             _emit_schedule_progress(
@@ -3889,7 +5337,15 @@ async def _generate_and_save_ip_content_records(
                 "group_id": clean_group_id,
             },
         )
-        raise HTTPException(status_code=502, detail=error_message)
+        failure_detail: dict[str, Any] = {
+            "message": error_message,
+            "error": first_error,
+            "error_type": failed_batches[0].get("error_type") if failed_batches else "",
+            "failed_batches": failed_batches,
+        }
+        if failed_batches and isinstance(failed_batches[0].get("upstream_check"), dict):
+            failure_detail["upstream_check"] = failed_batches[0].get("upstream_check")
+        raise HTTPException(status_code=502, detail=failure_detail)
     _emit_schedule_progress(
         progress,
         "generate_done",
@@ -3925,6 +5381,24 @@ async def _generate_and_save_ip_content_records(
     }
 
 
+def _moments_image_generation_note(
+    *,
+    workflow_node_execution: bool,
+    auto_moments: bool,
+    image_count: int,
+    image_complete: bool,
+) -> str:
+    """配图情况写实话：没生成出来就不能说「已自动生成 3 张」（线上假成功过）。"""
+    if not auto_moments:
+        return "朋友圈图片请在执行详情或朋友圈图文工作台手动触发。"
+    if image_count > 0 and image_complete:
+        return f"朋友圈首条文案已自动生成 {image_count} 张配图，可由下级节点发布到朋友圈。"
+    if image_count > 0:
+        return f"朋友圈配图已生成 {image_count} 张但尚未完成（image_complete=false），发布前请在朋友圈图文工作台确认。"
+    return "朋友圈配图本次没有生成成功（image_count=0），请重试生成或在朋友圈图文工作台手动触发。"
+
+
+
 async def run_ip_content_daily_scheduled(
     *,
     db: Session,
@@ -3933,7 +5407,36 @@ async def run_ip_content_daily_scheduled(
     run_id: str = "",
     progress: ScheduleProgress = None,
 ) -> dict[str, Any]:
-    opts = ScheduledDailyRunOptions(**(options or {}))
+    runtime_options = dict(options or {})
+    # Workflow nodes are the only IP-daily execution path that automatically
+    # materializes Moments images.  Manual/scheduled studio runs retain the
+    # existing manual image-generation behavior.
+    h5_context = runtime_options.get("h5_context") if isinstance(runtime_options.get("h5_context"), dict) else {}
+    workflow_node_execution = bool(
+        runtime_options.pop("_workflow_node_execution", False)
+        # Inline system workflows use template_id=0, so the key/node markers
+        # are the authoritative signal that this is a workflow invocation.
+        or h5_context.get("workflow_template_id")
+        or h5_context.get("workflow_template_key")
+        or h5_context.get("workflow_node_id")
+    )
+    live_personal_template = str(runtime_options.get("template_source") or "").strip().lower() == "personal_current"
+    # Workflow/device runs carry the slot in their context so the per-device
+    # personal default is resolved instead of the account-level one.
+    personal_installation_id = _clean_text(
+        h5_context.get("installation_id") or runtime_options.get("installation_id"),
+        128,
+    )
+    if live_personal_template:
+        runtime_options = _use_current_personal_template_options(
+            db,
+            int(current_user.id),
+            runtime_options,
+            installation_id=personal_installation_id,
+        )
+    live_keyword_owner_id = runtime_options.pop("_keyword_owner_user_id", None)
+    live_competitor_owner_id = runtime_options.pop("_competitor_owner_user_id", None)
+    opts = ScheduledDailyRunOptions(**runtime_options)
     selected_tasks = _clean_scheduled_daily_tasks(opts.tasks) or list(_SCHEDULED_DAILY_TASKS)
     _emit_schedule_progress(
         progress,
@@ -3976,24 +5479,42 @@ async def run_ip_content_daily_scheduled(
                 template = None
         if template is None:
             raise HTTPException(status_code=404, detail="IP 日更模板不存在")
-        template_payload = _template_payload(template)
-        if not keyword_ids:
+        template_payload = _template_payload_with_resources(db, template)
+        if not keyword_ids and not live_personal_template:
             keyword_ids = _clean_int_ids(template.keyword_ids, 50)
-        template_keyword_ids, _ = _filter_template_refs_for_owner(db, int(template.user_id), keyword_ids, [])
+        if live_keyword_owner_id:
+            keyword_owner_user_id = int(live_keyword_owner_id)
+        template_keyword_ids, _ = _filter_template_refs_for_owner(db, keyword_owner_user_id, keyword_ids, [])
         if template_keyword_ids:
             keyword_ids = template_keyword_ids
-            keyword_owner_user_id = int(template.user_id)
-        if not competitor_ids:
+            if not live_keyword_owner_id:
+                keyword_owner_user_id = int(template.user_id)
+        if not competitor_ids and not live_personal_template:
             competitor_ids = _clean_int_ids(template.competitor_ids, 50)
-        _, template_competitor_ids = _filter_template_refs_for_owner(db, int(template.user_id), [], competitor_ids)
+        if live_competitor_owner_id:
+            competitor_owner_user_id = int(live_competitor_owner_id)
+        _, template_competitor_ids = _filter_template_refs_for_owner(db, competitor_owner_user_id, [], competitor_ids)
         if template_competitor_ids:
             competitor_ids = template_competitor_ids
-            competitor_owner_user_id = int(template.user_id)
-        merged_requirements = dict(template.requirements or {})
+            if not live_competitor_owner_id:
+                competitor_owner_user_id = int(template.user_id)
+        # Read the linked survey now, not from a workflow/task snapshot.
+        merged_requirements = dict(template_payload.get("requirements") or {})
         merged_requirements.update({k: v for k, v in requirements.items() if _clean_long_text(v, 1)})
         requirements = merged_requirements
-        if not memory_docs_raw:
+        if not memory_docs_raw and not live_personal_template:
             memory_docs_raw = list(template.memory_docs or [])
+
+    if live_personal_template:
+        # Report the same effective current-personal view that fed execution;
+        # do not expose the selected template's stale resource snapshot.
+        live_personal_row = _personal_default_row_for_slot(
+            db,
+            int(current_user.id),
+            personal_installation_id,
+        )
+        if live_personal_row is not None:
+            template_payload = _personal_default_template_payload_with_resources(db, live_personal_row)
 
     keyword_ids, _ = _validate_template_refs(db, keyword_owner_user_id, keyword_ids, [])
     _, competitor_ids = _validate_template_refs(db, competitor_owner_user_id, [], competitor_ids)
@@ -4031,12 +5552,12 @@ async def run_ip_content_daily_scheduled(
             "reference_image_count": len(template_reference_image_urls),
         },
     )
-    scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 1, minimum=1, maximum=3)
+    scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 2, minimum=1, maximum=3)
     scheduled_llm_timeout_seconds = _env_float(
         "IP_CONTENT_STUDIO_SCHEDULE_LLM_TIMEOUT_SEC",
-        120.0,
-        minimum=30.0,
-        maximum=300.0,
+        _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
+        minimum=_LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS,
+        maximum=900.0,
     )
     sync_results: list[dict[str, Any]] = []
     if opts.sync_before:
@@ -4109,6 +5630,7 @@ async def run_ip_content_daily_scheduled(
 
     auth_token = _server_bearer_for_user(current_user)
     generated_groups: list[dict[str, Any]] = []
+    workflow_publish_draft: dict[str, Any] = {}
 
     async def generate_group(
         *,
@@ -4122,9 +5644,10 @@ async def run_ip_content_daily_scheduled(
         batch_size: Optional[int] = None,
         reference_image_urls: Optional[list[str]] = None,
     ) -> None:
+        nonlocal workflow_publish_draft
         task_label = {
             "industry_hot_oral": "行业热门口播文案",
-            "professional_ip_oral": "IP 日更口播文案",
+        "professional_ip_oral": "专业 IP 口播文案",
             "moments_candidate": "朋友圈文案",
         }.get(record_task, record_task)
         generated = await _generate_and_save_ip_content_records(
@@ -4148,42 +5671,80 @@ async def run_ip_content_daily_scheduled(
             task_label=task_label,
             reference_image_urls=reference_image_urls,
         )
-        generated_groups.append(
-            {
-                "status": generated.get("status") or "completed",
-                "task": record_task,
-                "group_id": generated.get("group_id") or "",
-                "count": int(generated.get("count") or 0),
-                "target_count": int(generated.get("target_count") or count or 0),
-                "batch_count": int(generated.get("batch_count") or 1),
-                "completed_batches": int(generated.get("completed_batches") or 0),
-                "failed_count": int(generated.get("failed_count") or 0),
-                "failed_batches": generated.get("failed_batches") or [],
-                "requirements": generated.get("requirements") or "",
-                "records": generated.get("records") or [],
-                "source_items": generated.get("source_items") or [],
-                "reference_image_urls": generated.get("reference_image_urls") or [],
-                "batches": generated.get("batches") or [],
-            }
-        )
+        group_payload: dict[str, Any] = {
+            "status": generated.get("status") or "completed",
+            "task": record_task,
+            "group_id": generated.get("group_id") or "",
+            "count": int(generated.get("count") or 0),
+            "target_count": int(generated.get("target_count") or count or 0),
+            "batch_count": int(generated.get("batch_count") or 1),
+            "completed_batches": int(generated.get("completed_batches") or 0),
+            "failed_count": int(generated.get("failed_count") or 0),
+            "failed_batches": generated.get("failed_batches") or [],
+            "requirements": generated.get("requirements") or "",
+            "records": generated.get("records") or [],
+            "source_items": generated.get("source_items") or [],
+            "reference_image_urls": generated.get("reference_image_urls") or [],
+            "batches": generated.get("batches") or [],
+        }
+        if workflow_node_execution and record_task == "moments_candidate" and generated.get("records"):
+            raw_first_record = (generated.get("records") or [None])[0]
+            first_record_id = (
+                str(raw_first_record.get("record_id") or "").strip()
+                if isinstance(raw_first_record, dict)
+                else ""
+            )
+            first_record = (
+                db.query(IPContentDraftRecord)
+                .filter(
+                    IPContentDraftRecord.user_id == current_user.id,
+                    IPContentDraftRecord.record_id == first_record_id,
+                )
+                .first()
+                if first_record_id
+                else None
+            )
+            if first_record is not None:
+                image_generation = await _generate_workflow_first_moment_images(
+                    db=db,
+                    current_user=current_user,
+                    record=first_record,
+                    run_id=run_id,
+                    progress=progress,
+                )
+                refreshed_first = _draft_record_payload(first_record)
+                records_payload = list(group_payload.get("records") or [])
+                if records_payload:
+                    records_payload[0] = refreshed_first
+                group_payload["records"] = records_payload
+                group_payload["image_generation"] = image_generation
+                group_payload["publish_draft"] = image_generation.get("publish_draft") or {}
+                workflow_publish_draft = dict(image_generation.get("publish_draft") or {})
+            else:
+                group_payload["image_generation"] = {
+                    "image_count": 0,
+                    "image_complete": False,
+                    "errors": [{"error": "朋友圈首条生成记录不存在"}],
+                }
+        generated_groups.append(group_payload)
 
     industry_rows = (
-        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=40)
+        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=_source_limit(40))
         if "industry_hot_oral" in selected_tasks
         else []
     )
     ip_rows = (
-        _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=40)
+        _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=_source_limit(40))
         if "professional_ip_oral" in selected_tasks
         else []
     )
     moment_rows = (
-        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=24)
+        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=_source_limit(24))
         if "moments_candidate" in selected_tasks
         else []
     )
     if "moments_candidate" in selected_tasks:
-        moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=24))
+        moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=_source_limit(24)))
     seen: set[int] = set()
     moment_rows = [row for row in moment_rows if not (row.id in seen or seen.add(row.id))][:40]
     keyword_fallback_sources = _keyword_seed_briefs(keywords)
@@ -4249,9 +5810,23 @@ async def run_ip_content_daily_scheduled(
         "sync_results": sync_results,
         "groups": generated_groups,
         "records_by_task": records_by_task,
+        # 兜底：groups[0] 里已经生成的配图草稿要能顶上来（旧数据也能发布正确的图）
+        "publish_draft": workflow_publish_draft or next(
+            (dict(group.get("publish_draft") or {}) for group in generated_groups if group.get("publish_draft")),
+            {},
+        ),
         "image_generation": {
-            "manual": True,
-            "note": "朋友圈图片不由定时任务自动生成；请在执行详情或 IP 日更工作台手动触发。",
+            "manual": not workflow_node_execution,
+            "automatic": workflow_node_execution and "moments_candidate" in selected_tasks,
+            "selected_record": workflow_publish_draft.get("source_record_id") if workflow_publish_draft else "",
+            "image_count": len(workflow_publish_draft.get("image_urls") or []) if workflow_publish_draft else 0,
+            "image_complete": bool(workflow_publish_draft.get("image_complete")) if workflow_publish_draft else False,
+            "note": _moments_image_generation_note(
+                workflow_node_execution=workflow_node_execution,
+                auto_moments=bool(workflow_node_execution and "moments_candidate" in selected_tasks),
+                image_count=len(workflow_publish_draft.get("image_urls") or []) if workflow_publish_draft else 0,
+                image_complete=bool(workflow_publish_draft.get("image_complete")) if workflow_publish_draft else False,
+            ),
         },
     }
 
@@ -4306,6 +5881,7 @@ def list_my_tikhub_records(
                 TikHubQueryLog.query_id,
                 TikHubQueryLog.platform,
                 TikHubQueryLog.query_type,
+                TikHubQueryLog.endpoint,
                 TikHubQueryLog.status,
                 TikHubQueryLog.success,
                 TikHubQueryLog.http_status,
@@ -4315,6 +5891,7 @@ def list_my_tikhub_records(
                 TikHubQueryLog.latency_ms,
                 TikHubQueryLog.result_count,
                 TikHubQueryLog.error_message,
+                TikHubQueryLog.meta,
                 TikHubQueryLog.created_at,
                 TikHubQueryLog.updated_at,
             )
@@ -4409,6 +5986,80 @@ def list_competitors(
     return {"items": [_competitor_payload(row) for row in rows]}
 
 
+@router.get("/api/ip-content/profile-surveys", summary="资料调查记录列表")
+def list_profile_surveys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(IPContentProfileSurvey)
+        .filter(IPContentProfileSurvey.user_id == current_user.id, IPContentProfileSurvey.status == "active")
+        .order_by(IPContentProfileSurvey.updated_at.desc(), IPContentProfileSurvey.id.desc())
+        .all()
+    )
+    return {"items": [_profile_survey_payload(row) for row in rows]}
+
+
+@router.post("/api/ip-content/profile-surveys", summary="新增资料调查记录")
+def create_profile_survey(
+    body: ProfileSurveyBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = IPContentProfileSurvey(
+        user_id=int(current_user.id),
+        name=_clean_text(body.name, 160) or "资料调查",
+        requirements=_jsonable(body.requirements or {}),
+        meta=_jsonable(body.meta or {}),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _profile_survey_payload(row)}
+
+
+@router.patch("/api/ip-content/profile-surveys/{survey_id}", summary="更新资料调查记录")
+def update_profile_survey(
+    survey_id: int,
+    body: ProfileSurveyBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == survey_id,
+        IPContentProfileSurvey.user_id == current_user.id,
+        IPContentProfileSurvey.status == "active",
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="资料调查记录不存在")
+    row.name = _clean_text(body.name, 160) or row.name or "资料调查"
+    row.requirements = _jsonable(body.requirements or {})
+    row.meta = _jsonable(body.meta or {})
+    row.updated_at = _utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _profile_survey_payload(row)}
+
+
+@router.delete("/api/ip-content/profile-surveys/{survey_id}", summary="删除资料调查记录")
+def delete_profile_survey(
+    survey_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentProfileSurvey).filter(
+        IPContentProfileSurvey.id == survey_id,
+        IPContentProfileSurvey.user_id == current_user.id,
+        IPContentProfileSurvey.status == "active",
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="资料调查记录不存在")
+    row.status = "deleted"
+    row.updated_at = _utcnow()
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/api/ip-content/schedule-templates", summary="IP 日更定时任务模板列表")
 def list_schedule_templates(
     current_user: User = Depends(get_current_user),
@@ -4463,84 +6114,240 @@ def list_schedule_templates(
     return {"items": items}
 
 
-@router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")
-def get_personal_default_ip_content_config(
+@router.post("/api/ip-content/schedule-templates/{template_id}/copy", summary="复制 IP 日更模板为个人副本")
+def copy_schedule_template(
+    template_id: int,
+    request: Request,
+    body: Optional[ScheduleTemplateCopyBody] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == current_user.id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
+    source = _granted_template_for_user(db, int(current_user.id), template_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="模板不存在或未授权")
+    installation_id = optional_installation_id_from_request(request) if request is not None else None
+    keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+        db,
+        source,
+        int(current_user.id),
+        installation_id or "template-copy",
     )
+    copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source), int(current_user.id))
+    requested_name = body.name if body is not None else ""
+    row = IPContentScheduleTemplate(
+        user_id=int(current_user.id),
+        name=_copy_template_name(db, int(current_user.id), source.name, requested_name),
+        keyword_ids=keyword_ids,
+        competitor_ids=competitor_ids,
+        memory_doc_ids=memory_doc_ids,
+        memory_docs=memory_docs,
+        survey_id=copied_survey_id,
+        requirements=_jsonable(source.requirements or {}),
+        meta=_jsonable({
+            **(source.meta or {}),
+            "source": "user_copy",
+            "copied_from_template_id": int(source.id),
+            "copied_from_owner_user_id": int(source.user_id),
+        }),
+        status="active",
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="复制模板失败，请重试")
+    db.refresh(row)
+    return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
+
+
+@router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")
+def get_personal_default_ip_content_config(
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Personal defaults are per installation slot: a device that never saved
+    # its own default keeps showing the shared account-level row.
+    row = _personal_default_row_for_slot(db, current_user.id, x_installation_id)
     return {"ok": True, "item": _personal_default_template_payload_with_resources(db, row)}
 
 
 @router.put("/api/ip-content/personal-default", summary="保存用户个人默认 IP 日更配置")
 def save_personal_default_ip_content_config(
     body: ScheduleTemplateBody,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    slot = _clean_text(x_installation_id, 128)
     template_ref = _personal_default_template_reference(db, current_user, body)
+    body_fields = getattr(body, "model_fields_set", None)
+    if body_fields is None:
+        body_fields = getattr(body, "__fields_set__", set())
+    # The current Online client always sends the complete selection and marks
+    # it explicitly. Missing fields from older clients retain the source
+    # template for backwards compatibility; an explicit empty list clears it.
+    complete_selection = bool((body.meta or {}).get("resource_selection_complete") is True)
+    keyword_selection_sent = complete_selection or "keyword_ids" in body_fields
+    competitor_selection_sent = complete_selection or "competitor_ids" in body_fields
+    memory_id_selection_sent = complete_selection or "memory_doc_ids" in body_fields
+    memory_doc_selection_sent = complete_selection or "memory_docs" in body_fields
+    legacy_silent_save = (
+        not complete_selection
+        and _clean_text((body.meta or {}).get("source"), 80) == "h5_personal_settings"
+        and not body.keyword_ids
+        and not body.competitor_ids
+        and not body.memory_doc_ids
+        and not body.memory_docs
+    )
+    if legacy_silent_save:
+        keyword_selection_sent = False
+        competitor_selection_sent = False
+        memory_id_selection_sent = False
+        memory_doc_selection_sent = False
     if template_ref is not None:
-        keyword_ids, competitor_ids = _filter_template_refs_for_owner(db, int(template_ref.user_id), body.keyword_ids, body.competitor_ids)
-        if not keyword_ids:
-            keyword_ids, _ = _filter_template_refs_for_owner(db, int(template_ref.user_id), template_ref.keyword_ids, [])
-        if not competitor_ids:
-            _, competitor_ids = _filter_template_refs_for_owner(db, int(template_ref.user_id), [], template_ref.competitor_ids)
+        keyword_ids, competitor_ids = _filter_template_refs_for_owner(
+            db,
+            int(template_ref.user_id),
+            body.keyword_ids if keyword_selection_sent else template_ref.keyword_ids,
+            body.competitor_ids if competitor_selection_sent else template_ref.competitor_ids,
+        )
     else:
         keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
-    incoming_memory_docs = body.memory_docs
-    incoming_memory_doc_ids = body.memory_doc_ids
+    incoming_memory_docs = body.memory_docs if memory_doc_selection_sent else []
+    incoming_memory_doc_ids = body.memory_doc_ids if memory_id_selection_sent else []
     if template_ref is not None:
-        if not incoming_memory_docs:
+        if not memory_doc_selection_sent:
             incoming_memory_docs = list(template_ref.memory_docs or [])
-        if not incoming_memory_doc_ids:
+        if not memory_id_selection_sent:
             incoming_memory_doc_ids = list(template_ref.memory_doc_ids or [])
     memory_docs = _memory_payload_from_docs(incoming_memory_docs, content_limit=3200)
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == current_user.id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-        )
-        .order_by(IPContentScheduleTemplate.id.desc())
-        .first()
+    incoming_memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        [int(current_user.id), int(template_ref.user_id)] if template_ref is not None else int(current_user.id),
+        incoming_memory_doc_ids,
+        memory_docs,
+    )
+    # Never fall back to the account-level row on save: writing from a device
+    # must create/update only that device's slot row so the other devices keep
+    # their own default.
+    row = _personal_default_row_for_slot(
+        db,
+        current_user.id,
+        slot,
+        active_only=False,
+        fallback_to_account=False,
     )
     if row is None:
         row = IPContentScheduleTemplate(
             user_id=current_user.id,
+            installation_id=slot,
             name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
         )
         db.add(row)
+    survey_selection_sent = "survey_id" in body_fields
+    # A selected template's relationship is authoritative and remains live.
+    requested_survey_id = template_ref.survey_id if template_ref is not None else body.survey_id
+    if requested_survey_id is not None:
+        survey = _owned_survey(db, int(current_user.id), requested_survey_id)
+        if survey is None:
+            raise HTTPException(status_code=400, detail="资料调查记录不存在")
+        row.survey_id = int(survey.id)
+    elif template_ref is not None or survey_selection_sent:
+        row.survey_id = None
+    elif _allows_personal_profile_update(body.meta) and _personal_profile_has_values(body.requirements):
+        # Keep old clients working: a profile save creates a reusable record.
+        survey = IPContentProfileSurvey(
+            user_id=int(current_user.id),
+            name=_clean_text((body.meta or {}).get("survey_name"), 160) or "资料调查",
+            requirements=_jsonable(body.requirements or {}),
+            meta={"source": "personal_settings"},
+        )
+        db.add(survey)
+        db.flush()
+        row.survey_id = int(survey.id)
     existing_requirements = row.requirements if row is not None else {}
+    existing_meta = row.meta if row is not None and isinstance(row.meta, dict) else {}
     incoming_requirements = body.requirements
+    template_requirement_overrides: dict[str, Any] = {}
     if template_ref is not None:
-        template_requirements = dict(template_ref.requirements or {})
-        if isinstance(incoming_requirements, dict) and incoming_requirements:
-            incoming_requirements = {**template_requirements, **incoming_requirements}
-        elif isinstance(existing_requirements, dict) and existing_requirements:
-            incoming_requirements = {**template_requirements, **existing_requirements}
+        source_requirements = dict(template_ref.requirements or {})
+        incoming_profile = _personal_profile_fields(body.requirements)
+        if not _personal_profile_has_values(incoming_profile):
+            # 老客户端在"切换/保存模板"时不会带资料调查字段（客户端会先把
+            # profile 字段剥掉）。这种请求不能把设备默认行上的人设抹掉，
+            # 否则行会变成"只剩骨架"的空壳：界面上看着配好了，启动却报
+            # "IP人设定位-资料调查：… 全缺失"。
+            incoming_profile = _personal_profile_fields(existing_requirements)
+        incoming_non_profile = _strip_personal_profile_requirements(body.requirements)
+        source = _clean_text((body.meta or {}).get("source"), 80)
+        if not incoming_non_profile:
+            # A silent save (for example after adding a keyword or memory)
+            # carries no template edits. Preserve intentional overrides
+            # instead of interpreting the empty request as "clear".
+            previous = existing_meta.get("template_requirement_overrides")
+            template_requirement_overrides = dict(previous) if isinstance(previous, dict) else {}
         else:
-            incoming_requirements = template_requirements
+            # Do not persist the source template snapshot in the personal row.
+            # Only values that genuinely differ from the current template are
+            # explicit local overrides; later source edits then flow through.
+            template_requirement_overrides = {
+                key: value
+                for key, value in incoming_non_profile.items()
+                if source_requirements.get(key) != value
+            }
+        # Keep profile fields on the personal row even when the selected
+        # template is live. Only non-profile fields are treated as template
+        # overrides so saving the survey cannot discard the profile.
+        incoming_requirements = {**template_requirement_overrides, **incoming_profile}
+    if not _personal_profile_has_values(_personal_profile_fields(incoming_requirements)):
+        # 兜底：任何"没带资料调查字段"的保存（老客户端、只切模板、只加关键词）
+        # 都不允许把设备默认行上的人设抹成空壳。删除人设要走资料调查那条明确路径。
+        existing_profile = _personal_profile_fields(existing_requirements)
+        if _personal_profile_has_values(existing_profile):
+            incoming_requirements = {**incoming_requirements, **existing_profile}
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
-    row.memory_doc_ids = _clean_memory_doc_ids(incoming_memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_doc_ids = (
+        _clean_memory_doc_ids(incoming_memory_doc_ids, 50)
+        if memory_id_selection_sent
+        else _memory_doc_ids_from_docs(memory_docs, 50)
+    )
     row.memory_docs = memory_docs
-    row.requirements = _jsonable(_personal_default_requirements_for_save(incoming_requirements, existing_requirements, body.meta))
+    normalized_requirements = _personal_default_requirements_for_save(
+        incoming_requirements, existing_requirements, body.meta
+    )
+    # A profile photo may originate from Online's local asset store. Bind its
+    # public URL to a durable server asset before committing the profile so a
+    # refresh or a later same-city bestseller run never loses the reference.
+    normalized_requirements = _ensure_personal_profile_photo_assets(
+        db, int(current_user.id), normalized_requirements
+    )
+    row.requirements = _jsonable(normalized_requirements)
     meta = {**(body.meta or {}), "source": "personal_settings", "is_personal_default": True}
+    if row.survey_id:
+        meta["survey_id"] = int(row.survey_id)
     if template_ref is not None:
         meta["current_template_id"] = int(template_ref.id)
         meta["source_template_owner_user_id"] = int(template_ref.user_id)
+        source_memory_ids = _clean_memory_doc_ids(template_ref.memory_doc_ids, 50)
+        meta["template_resource_overrides"] = {
+            "keyword_ids": bool(keyword_selection_sent and keyword_ids != _clean_int_ids(template_ref.keyword_ids, 50)),
+            "competitor_ids": bool(competitor_selection_sent and competitor_ids != _clean_int_ids(template_ref.competitor_ids, 50)),
+            "memory_doc_ids": bool(memory_id_selection_sent and _clean_memory_doc_ids(incoming_memory_doc_ids, 50) != source_memory_ids),
+        }
+        if template_requirement_overrides:
+            meta["template_requirement_overrides"] = _jsonable(template_requirement_overrides)
+        else:
+            meta.pop("template_requirement_overrides", None)
     row.meta = _jsonable(meta)
     row.status = "active"
     row.updated_at = _utcnow()
+    # Existing workflow tasks must stop carrying the old template snapshot as
+    # soon as settings are saved. Their next run resolves the current
+    # template again, while completed history remains immutable.
+    _refresh_personal_workflow_ip_daily_payloads(db, int(current_user.id))
     try:
         db.commit()
     except IntegrityError:
@@ -4559,17 +6366,70 @@ def save_schedule_template(
     name = _clean_text(body.name, 160)
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
-    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
-    memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    source_template = _granted_template_for_user(db, int(current_user.id), _current_template_id_from_meta(body.meta))
+    live_granted_source = source_template is not None and int(source_template.user_id) != int(current_user.id)
+    copied_survey_id = None
+    if live_granted_source:
+        keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+            db,
+            source_template,
+            int(current_user.id),
+            "template-save",
+        )
+        requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
+        copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id))
+        meta = {
+            **(body.meta or {}),
+            "source": "user_copy",
+            "copied_from_template_id": int(source_template.id),
+            "copied_from_owner_user_id": int(source_template.user_id),
+        }
+        meta.pop("current_template_id", None)
+    else:
+        try:
+            keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+        except HTTPException:
+            source_template = _granted_template_matching_refs(
+                db, int(current_user.id), body.keyword_ids, body.competitor_ids
+            )
+            if source_template is None:
+                raise
+            keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+                db, source_template, int(current_user.id), "template-save"
+            )
+            requirements = {**(source_template.requirements or {}), **(body.requirements or {})}
+            copied_survey_id = _copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id))
+            meta = {
+                **(body.meta or {}),
+                "source": "user_copy",
+                "copied_from_template_id": int(source_template.id),
+                "copied_from_owner_user_id": int(source_template.user_id),
+            }
+            meta.pop("current_template_id", None)
+        else:
+            memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+            memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+            requirements = _strip_personal_profile_requirements(body.requirements)
+            meta = body.meta or {}
+        if body.survey_id:
+            if _owned_survey(db, int(current_user.id), body.survey_id) is None:
+                raise HTTPException(status_code=400, detail="资料调查记录不存在")
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(current_user.id),
+        memory_doc_ids,
+        memory_docs,
+    )
     row = IPContentScheduleTemplate(
         user_id=current_user.id,
         name=name,
         keyword_ids=keyword_ids,
         competitor_ids=competitor_ids,
-        memory_doc_ids=_clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50),
+        memory_doc_ids=memory_doc_ids,
         memory_docs=memory_docs,
-        requirements=_jsonable(_strip_personal_profile_requirements(body.requirements)),
-        meta=_jsonable(body.meta or {}),
+        survey_id=copied_survey_id if copied_survey_id is not None else (body.survey_id if body.survey_id else None),
+        requirements=_jsonable(requirements),
+        meta=_jsonable(meta),
     )
     db.add(row)
     try:
@@ -4578,7 +6438,7 @@ def save_schedule_template(
         db.rollback()
         raise HTTPException(status_code=409, detail="同名模板已经存在")
     db.refresh(row)
-    return {"ok": True, "item": _template_payload(row)}
+    return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
 
 
 @router.patch("/api/ip-content/schedule-templates/{template_id}", summary="更新 IP 日更定时任务模板")
@@ -4594,17 +6454,68 @@ def update_schedule_template(
         .first()
     )
     if row is None:
+        # A stale editor can still submit the source ID after an agent template
+        # was selected. Treat that request as "save a personal copy" instead
+        # of validating the agent's resource IDs against the child account.
+        source_template = _granted_template_for_user(db, int(current_user.id), template_id)
+        if source_template is not None and int(source_template.user_id) != int(current_user.id):
+            name = _clean_text(body.name, 160)
+            if not name:
+                raise HTTPException(status_code=400, detail="请填写模板名称")
+            keyword_ids, competitor_ids, memory_doc_ids, memory_docs = _copy_template_resources(
+                db, source_template, int(current_user.id), "template-save"
+            )
+            row = IPContentScheduleTemplate(
+                user_id=current_user.id,
+                name=name,
+                keyword_ids=keyword_ids,
+                competitor_ids=competitor_ids,
+                memory_doc_ids=memory_doc_ids,
+                memory_docs=memory_docs,
+                survey_id=_copy_survey_for_user(db, _survey_for_template(db, source_template), int(current_user.id)),
+                requirements=_jsonable({**(source_template.requirements or {}), **(body.requirements or {})}),
+                meta=_jsonable({
+                    **(body.meta or {}),
+                    "source": "user_copy",
+                    "copied_from_template_id": int(source_template.id),
+                    "copied_from_owner_user_id": int(source_template.user_id),
+                }),
+            )
+            db.add(row)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="同名模板已经存在")
+            db.refresh(row)
+            return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
         raise HTTPException(status_code=404, detail="模板不存在")
     name = _clean_text(body.name, 160)
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
     keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
     memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    memory_doc_ids, memory_docs = _canonical_template_memory_selection(
+        db,
+        int(current_user.id),
+        body.memory_doc_ids,
+        memory_docs,
+    )
     row.name = name
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
-    row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_doc_ids = memory_doc_ids
     row.memory_docs = memory_docs
+    body_fields = getattr(body, "model_fields_set", None)
+    if body_fields is None:
+        body_fields = getattr(body, "__fields_set__", set())
+    if "survey_id" in body_fields and body.survey_id is not None:
+        survey = _owned_survey(db, int(current_user.id), body.survey_id)
+        if survey is None:
+            raise HTTPException(status_code=400, detail="资料调查记录不存在")
+        row.survey_id = int(survey.id)
+    elif "survey_id" in body_fields:
+        row.survey_id = None
     row.requirements = _jsonable(_strip_personal_profile_requirements(body.requirements))
     row.meta = _jsonable(body.meta or {})
     row.status = "active"
@@ -4615,7 +6526,7 @@ def update_schedule_template(
         db.rollback()
         raise HTTPException(status_code=409, detail="同名模板已经存在")
     db.refresh(row)
-    return {"ok": True, "item": _template_payload(row)}
+    return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
 
 
 @router.delete("/api/ip-content/schedule-templates/{template_id}", summary="删除 IP 日更定时任务模板")
@@ -4634,17 +6545,20 @@ def delete_schedule_template(
     row.status = "deleted"
     row.updated_at = _utcnow()
 
-    personal_default = (
+    # Every slot keeps its own personal-default row, so drop the deleted
+    # template reference from all of them.
+    personal_defaults = (
         db.query(IPContentScheduleTemplate)
         .filter(
             IPContentScheduleTemplate.user_id == current_user.id,
             IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
             IPContentScheduleTemplate.status == "active",
         )
-        .order_by(IPContentScheduleTemplate.id.desc())
-        .first()
+        .all()
     )
-    if personal_default is not None and personal_default.id != row.id:
+    for personal_default in personal_defaults:
+        if personal_default.id == row.id:
+            continue
         default_meta = dict(personal_default.meta or {})
         if str(default_meta.get("current_template_id") or "") == str(row.id):
             default_meta.pop("current_template_id", None)
@@ -4673,14 +6587,24 @@ async def search_douyin_users(
     keyword = _clean_text(q, 80)
     if not keyword:
         raise HTTPException(status_code=400, detail="请填写抖音昵称或抖音号")
-    result = await _execute_query(
+    # TikHub's V2 route currently returns upstream HTTP 400. The documented
+    # non-V2 Douyin search route still works and returns sec_uid for syncing
+    # the selected competitor's posts.
+    result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
-        query_type="douyin_search_user_v2",
+        query_type="douyin_search_user",
         params={},
-        body={"keyword": keyword, "cursor": 0},
+        body={
+            "keyword": keyword,
+            "cursor": 0,
+            "douyin_user_fans": "",
+            "douyin_user_type": "",
+            "search_id": "",
+        },
         save_items=False,
-        meta={"source": "competitor_user_search", "keyword": keyword},
+        meta={"source": "competitor_user_search", "keyword": keyword, "provider": "douyin_search_user"},
+        attempts=2,
         include_raw_response=True,
     )
     users, raw_count = _normalize_douyin_users_from_payload(result.get("raw_response") or {})
@@ -4781,6 +6705,91 @@ async def search_wechat_channels_users(
         "ok": True,
         "items": [],
         "raw_item_count": raw_count,
+        "query": result.get("query") or {},
+        "balance_after": result.get("balance_after"),
+    }
+
+
+@router.post("/api/ip-content/wechat-channels/competitors/by-channel-id", summary="按照视频号公开 ID 添加同行账号")
+async def add_competitor_by_channel_id(
+    body: CompetitorByChannelIdBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    channel_id = _clean_text(body.channel_id, 200)
+    if not _is_wechat_channels_channel_id(channel_id):
+        raise HTTPException(status_code=400, detail="请填写有效的视频号公开 ID（sph 开头）")
+
+    # This endpoint intentionally calls only the ID conversion API. It must
+    # never perform nickname/keyword account search as a fallback.
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_channel_id_to_username_v2",
+        params={},
+        body={"channel_id": channel_id, "raw": False},
+        save_items=False,
+        meta={"source": "competitor_channel_id_add", "channel_id": channel_id},
+        attempts=2,
+        include_raw_response=True,
+    )
+    if not result.get("ok"):
+        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+        detail = query.get("error_message") or "视频号公开 ID 解析失败"
+        raise HTTPException(status_code=502, detail=f"视频号公开 ID 解析失败：{detail}")
+
+    candidate = _wechat_channels_channel_id_candidate(result.get("raw_response") or {}, channel_id)
+    if not candidate:
+        raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
+    account_key = _clean_text(candidate.get("username") or candidate.get("finder_username"), 191)
+    if not _is_wechat_channels_finder_username(account_key):
+        raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
+
+    meta = dict(candidate.get("raw") or {}) if isinstance(candidate.get("raw"), dict) else {}
+    meta.update(
+        {
+            "source": "competitor_channel_id_add",
+            "channel_id": channel_id,
+            "username": account_key,
+            "finder_username": account_key,
+        }
+    )
+    existing = (
+        db.query(ContentCompetitorAccount)
+        .filter(
+            ContentCompetitorAccount.user_id == current_user.id,
+            ContentCompetitorAccount.platform == "wechat_channels",
+            ContentCompetitorAccount.account_key == account_key,
+        )
+        .first()
+    )
+    if existing is not None:
+        return {
+            "ok": True,
+            "item": _competitor_payload(existing),
+            "channel_id": channel_id,
+            "finder_username": account_key,
+            "already_exists": True,
+            "query": result.get("query") or {},
+            "balance_after": result.get("balance_after"),
+        }
+    created = add_competitor(
+        CompetitorCreateBody(
+            platform="wechat_channels",
+            account_key=account_key,
+            display_name=_clean_text(candidate.get("display_name") or account_key, 255),
+            homepage_url=_clean_long_text(candidate.get("homepage_url"), 4096),
+            industry_tags=body.industry_tags,
+            meta=meta,
+        ),
+        current_user=current_user,
+        db=db,
+    )
+    return {
+        "ok": True,
+        "item": created["item"],
+        "channel_id": channel_id,
+        "finder_username": account_key,
         "query": result.get("query") or {},
         "balance_after": result.get("balance_after"),
     }
@@ -5051,6 +7060,7 @@ async def sync_keyword(
 @router.get("/api/ip-content/draft-records", summary="List IP content AI draft records")
 def list_draft_records(
     task: str = "",
+    mode: str = "",
     limit: int = Query(80, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -5059,6 +7069,10 @@ def list_draft_records(
     query = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id)
     if task.strip():
         query = query.filter(IPContentDraftRecord.task == task.strip())
+    elif mode.strip().lower() == "oral":
+        query = query.filter(IPContentDraftRecord.task.in_(_ORAL_DRAFT_TASKS))
+    elif mode.strip().lower() == "moments":
+        query = query.filter(IPContentDraftRecord.task.in_(_MOMENTS_DRAFT_TASKS))
     total = query.with_entities(func.count(IPContentDraftRecord.id)).scalar() or 0
     rows = query.order_by(IPContentDraftRecord.created_at.desc(), IPContentDraftRecord.id.desc()).offset(offset).limit(limit).all()
     return {
@@ -5191,7 +7205,7 @@ async def generate_industry_hot_oral(
                 sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
-    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=40)
+    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _generate_and_save_ip_content_records(
         db=db,
@@ -5229,7 +7243,7 @@ async def generate_professional_ip_oral(
                 sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
-    rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=40)
+    rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _generate_and_save_ip_content_records(
         db=db,
@@ -5243,7 +7257,7 @@ async def generate_professional_ip_oral(
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
-        task_label="IP 日更口播文案",
+        task_label="专业 IP 口播文案",
     )
     return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}
 
@@ -5276,8 +7290,8 @@ async def generate_moments_candidates(
                 sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
-    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="moments_candidate", limit=24)
-    rows.extend(_select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="moments_candidate", limit=24))
+    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="moments_candidate", limit=_source_limit(24))
+    rows.extend(_select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="moments_candidate", limit=_source_limit(24)))
     seen: set[int] = set()
     rows = [row for row in rows if not (row.id in seen or seen.add(row.id))][:40]
     memories = _memory_payload_from_docs(body.memory_docs)

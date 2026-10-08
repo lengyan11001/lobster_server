@@ -125,22 +125,13 @@ def test_xai_video_body_maps_duration_and_first_image():
     }
 
 
-def test_xai_video_is_first_provider_for_grok_family():
+def test_grok_family_runs_openmind_first_and_wan30_last():
+    """用户口径（2026-09-30）：openmind 优先，wan3.0(DashScope) 放最后调度。"""
     policy = _video_provider_policy("xai/grok-imagine-video-1.5/image-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
-    assert policy["providers"][0] == {
-        "channel": "xai",
-        "model": "grok-imagine-video-1.5",
-        "base_url": "/api/comfly-proxy",
-    }
     assert policy["providers"] == [
-        {
-            "channel": "xai",
-            "model": "grok-imagine-video-1.5",
-            "base_url": "/api/comfly-proxy",
-        },
         {
             "channel": "openmind",
             "model": "grok-video-3",
@@ -148,24 +139,80 @@ def test_xai_video_is_first_provider_for_grok_family():
         },
         {
             "channel": "comfly",
-            "model": "grok-video-3",
+            "model": "grok-imagine-video-1.5",
+            "base_url": "/api/comfly-proxy",
+        },
+        {
+            "channel": "xai",
+            "model": "grok-imagine-video-1.5",
+            "base_url": "/api/comfly-proxy",
+        },
+        {
+            "channel": "dashscope",
+            "model": "wan3.0-video",
             "base_url": "/api/comfly-proxy",
         },
     ]
 
 
-def test_veo_family_falls_back_to_xai_direct_only():
+def test_wan30_inclusion_switch(monkeypatch):
+    """VIDEO_POLICY_WAN30_POSITION=off 时不带万相3.0；默认带上但排在最后（openmind 优先）。"""
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "last")
+    providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
+    assert providers[-1] == {
+        "channel": "dashscope",
+        "model": "wan3.0-video",
+        "base_url": "/api/comfly-proxy",
+    }
+
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "off")
+    providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
+    assert all(item["channel"] != "dashscope" for item in providers)
+
+    monkeypatch.delenv("VIDEO_POLICY_WAN30_POSITION", raising=False)
+    providers = _video_provider_policy("grok-imagine-video-1.5", "comfly")["providers"]
+    assert providers[0]["channel"] == "openmind"
+    assert providers[-1]["channel"] == "dashscope"
+
+
+def test_video_provider_global_order_openmind_first_wan_seedance_last(monkeypatch):
+    """全局调度顺序：openmind 优先；wan3.0(dashscope) 与 seedance 通道放最后。"""
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "first")
+
+    grok = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "seedance_tvc")
+    channels = [item["channel"] for item in grok["providers"]]
+    assert channels[0] == "openmind"
+    assert channels[-1] == "dashscope"
+
+    seedance20 = _video_provider_policy("seedance2.0-900", "")
+    channels20 = [item["channel"] for item in seedance20["providers"]]
+    assert channels20[0] == "openmind"
+    assert channels20[-1] == "seedance"
+
+    unknown = _video_provider_policy("some-unknown-video-model", "")
+    channels_unknown = [item["channel"] for item in unknown["providers"]]
+    assert channels_unknown[0] == "openmind"
+    assert channels_unknown[-1] == "seedance"
+
+
+def test_veo_family_uses_openmind_never_yunwu():
     policy = _video_provider_policy("apiz/veo3.1/text-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "veo31"
     assert policy["providers"] == [
         {
-            "channel": "xai",
-            "model": "grok-imagine-video-1.5",
+            "channel": "openmind",
+            "model": "veo3.1",
             "base_url": "/api/comfly-proxy",
-        }
+        },
+        {
+            "channel": "comfly",
+            "model": "veo3.1-fast",
+            "base_url": "/api/comfly-proxy",
+        },
     ]
+    assert all(item["channel"] != "yunwu" for item in policy["providers"])
 
 
 def test_seedance25_uses_xing_provider():
@@ -200,8 +247,9 @@ def test_xai_video_model_has_billable_pricing_entry():
     entry = pricing["models"]["grok-imagine-video-1.5"]
 
     assert entry["price_type"] == "per_call"
-    assert entry["price_per_unit"] == 80
-    assert entry["api_format"] == "xai_official"
+    assert entry["price_per_unit"] == 160
+    assert entry["api_format"] == "comfyui_grok"
+    assert entry["token_group"] == "comfyui_video"
 
 
 def test_interrupted_image_download_payload_detection():
@@ -432,3 +480,36 @@ def test_openmind_video_poll_uses_cached_tos_url_without_queue(monkeypatch):
     assert result["video"]["url"] == tos_url
     assert result["video"]["source_url"] == source_url
     assert queued == []
+
+
+def test_local_bestseller_video_policy_skips_expensive_wan30(monkeypatch):
+    """同城爆款单段视频固定 OpenMind(160)，不能插 wan3.0(1200)，否则用户余额不足直接失败。"""
+    monkeypatch.setenv("VIDEO_POLICY_WAN30_POSITION", "first")
+
+    policy = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "local_bestseller")
+    assert policy["model_family"] == "grok"
+    assert [item["channel"] for item in policy["providers"]] == ["openmind", "comfly"]
+    assert policy["providers"][0]["model"] == "grok-video-3"
+    assert all(item["model"] != "wan3.0-video" for item in policy["providers"])
+
+    # 其它功能（分镜台批量）仍然保留 wan3.0 兜底
+    other = _video_provider_policy("grok-imagine-video-1.5-preview", "openmind", "seedance_tvc")
+    assert any(item["channel"] == "dashscope" for item in other["providers"])
+    assert [item["channel"] for item in other["providers"]][-1] == "dashscope"
+
+
+def test_yingmeng_1_0_never_routes_to_yunwu():
+    """影梦 1.0（yunwu-veo3.1-plus）已停用 yunwu：任何入口都只能拿到 OpenMind / comfly。"""
+    for model, channel_name in (
+        ("yunwu-veo3.1-plus", "yunwu"),
+        ("veo3.1", "yunwu"),
+        ("veo3.1", "openmind"),
+        ("veo3.1", ""),
+    ):
+        policy = _video_provider_policy(model, channel_name)
+        assert policy["model_family"] == "veo31", (model, channel_name)
+        assert [item["channel"] for item in policy["providers"]] == ["openmind", "comfly"], (model, channel_name)
+
+    h5 = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    assert 'return { model: "veo3.1", channel: "openmind" };' in h5
+    assert 'return { model: "veo3.1", channel: "yunwu" };' not in h5

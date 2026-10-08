@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import uuid
+
 import asyncio
 import html
 import logging
@@ -13,11 +15,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Query, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -26,17 +28,38 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
-from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
+from ..models import H5WorkflowTemplate, AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
-from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
+from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES, RETIRED_PACKAGE_IDS
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _remote_support_service_request(method: str, path: str, *, admin_token: str, json_body: Optional[dict] = None) -> dict:
+    base = str(getattr(settings, "remote_support_service_url", "http://127.0.0.1:38080") or "").rstrip("/")
+    key = str(getattr(settings, "remote_support_service_key", "") or "").strip()
+    if not key:
+        raise HTTPException(status_code=503, detail="远程支持服务密钥未配置")
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.request(
+                method,
+                f"{base}{path}",
+                headers={"Authorization": f"Bearer {admin_token}", "X-Remote-Service-Key": key},
+                json=json_body,
+            )
+        data = response.json() if response.content else {}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"远程支持服务不可用: {exc}") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=data.get("error") or data.get("detail") or "远程支持请求失败")
+    return data
 
 ADMIN_TOKEN_PREFIX = "lobster-admin-"
 AGENT_TOKEN_PREFIX = "lobster-agent-"
@@ -63,12 +86,16 @@ def _admin_enabled() -> bool:
 def _verify_admin_token(
     x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
     x_lobster_brand: Optional[str] = Header(None, alias="X-Lobster-Brand"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> AdminContext:
     """解析管理后台 token，返回角色上下文。支持管理员 token 和代理商 JWT token。"""
-    if not x_admin_token or not x_admin_token.strip():
-        raise HTTPException(status_code=401, detail="缺少管理凭证")
-    token = x_admin_token.strip()
+    token = (x_admin_token or "").strip()
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        # 兼容 Authorization: Bearer <token>（与页面里其他接口一致）
+        token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少管理凭证，请重新登录管理后台")
     brand_mark = str(resolve_brand_mark_candidates(x_lobster_brand))
     brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
     if brand_row is None and brand_mark not in BUILTIN_BRANDS:
@@ -89,19 +116,20 @@ def _verify_admin_token(
         try:
             payload = jwt.decode(jwt_token, settings.secret_key, algorithms=[_JWT_ALGORITHM])
             user_id = int(payload.get("sub", 0))
-            if payload.get("scope") != "agent_admin":
+            scope = payload.get("scope")
+            if scope not in {"agent_admin", "admin_user"}:
                 raise HTTPException(status_code=401, detail="凭证无效")
             token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
         except (JWTError, ValueError, TypeError):
             raise HTTPException(status_code=401, detail="代理商凭证无效或已过期")
         user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.is_agent:
-            raise HTTPException(status_code=401, detail="代理商账号无效或已被取消代理资格")
+        if not user or (scope == "agent_admin" and not user.is_agent) or (scope == "admin_user" and str(user.role or "").strip().lower() != "admin"):
+            raise HTTPException(status_code=401, detail="管理账号无效或权限已被取消")
         if token_brand != brand_mark or user_brand_mark(user) != brand_mark:
             raise HTTPException(status_code=403, detail="代理商登录品牌不一致")
         if brand_row is not None and not bool(brand_row.enabled):
             raise HTTPException(status_code=403, detail="当前品牌未启用")
-        return AdminContext(role="agent", user_id=user_id, brand_mark=brand_mark)
+        return AdminContext(role="admin" if scope == "admin_user" else "agent", user_id=user_id, brand_mark=brand_mark)
 
     raise HTTPException(status_code=401, detail="凭证格式无效")
 
@@ -139,10 +167,21 @@ def _agent_level(user: Optional[User]) -> int:
 
 def _agent_visible_user_ids(db: Session, agent_user_id: int) -> list[int]:
     """代理商可见用户：自己的直属下级，以及直属二级代理名下的下级。"""
+    agent = db.query(User).filter(User.id == agent_user_id).first()
+    if is_brand_fixed_agent(agent):
+        # OEM fixed agents do not need to claim each user. Keep the result
+        # scoped to the agent's brand and exclude the operator itself because
+        # callers add it explicitly when they need the management list.
+        return [
+            uid
+            for (uid,) in db.query(User.id)
+            .filter(User.brand_mark == user_brand_mark(agent), User.id != agent_user_id)
+            .order_by(User.id)
+            .all()
+        ]
     direct_ids = _agent_sub_user_ids(db, agent_user_id)
     if not direct_ids:
         return []
-    agent = db.query(User).filter(User.id == agent_user_id).first()
     if _agent_level(agent) == 2:
         return direct_ids
     second_agent_ids = [
@@ -212,6 +251,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
         "parent_user_id": u.parent_user_id,
+        "admin_remark": (getattr(u, "admin_remark", "") or "").strip(),
         "brand_mark": user_brand_mark(u),
         "is_overseas_user": bool(getattr(u, "is_overseas_user", False)),
         "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
@@ -248,7 +288,109 @@ def _capability_source_label(source: Optional[str]) -> str:
     return text or "unknown"
 
 
+def _admin_customer_owner_ids(db: Session, ctx: AdminContext) -> list[int]:
+    if ctx.role == "admin":
+        # Admin tokens are not tied to a User row; reserve owner id 0 for them.
+        return [0, *[uid for (uid,) in db.query(User.id).all()]]
+    # Customers created from the agent console belong to the logged-in agent.
+    return list(dict.fromkeys([int(ctx.user_id or 0), *_agent_visible_user_ids(db, int(ctx.user_id or 0))]))
+
+
+def _admin_customer_query(db: Session, ctx: AdminContext):
+    """Customers owned by the operator's scope plus active grants to the operator."""
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    query = db.query(Customer).filter(Customer.owner_user_id.in_(owner_ids))
+    if ctx.role != "admin" and ctx.user_id:
+        granted_ids = db.query(CustomerAuthorization.customer_id).filter(
+            CustomerAuthorization.grantee_user_id == int(ctx.user_id),
+            CustomerAuthorization.status == "active",
+        )
+        query = db.query(Customer).filter(or_(Customer.owner_user_id.in_(owner_ids), Customer.id.in_(granted_ids)))
+    return query
+
+
+def _admin_customer_row(db: Session, ctx: AdminContext, customer_id: int) -> Customer:
+    row = _admin_customer_query(db, ctx).filter(Customer.id == customer_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    return row
+
+
+def _admin_customer_payload(row: Customer, owner: User | None, communications_count: int = 0, *, access_type: str = "owner", brand_name: str | None = None) -> dict:
+    from .customer_management import _customer_payload
+
+    payload = _customer_payload(row, owner=owner)
+    payload["communications_count"] = communications_count
+    payload["access_type"] = access_type
+    payload["owner_brand_mark"] = user_brand_mark(owner) if owner else ""
+    payload["owner_brand_name"] = brand_name or payload["owner_brand_mark"] or ("admin" if int(row.owner_user_id or 0) == 0 else "")
+    return payload
+
+
+class CustomerAuthorizationBody(BaseModel):
+    grantee_user_id: int
+
+
+class AdminCustomerBody(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    company: str = Field(default="", max_length=255)
+    position: str = Field(default="", max_length=160)
+    phone: str = Field(default="", max_length=64)
+    email: str = Field(default="", max_length=255)
+    source: str = Field(default="", max_length=64)
+    tags: list[str] = Field(default_factory=list, max_length=30)
+    status: str = Field(default="active", max_length=32)
+    notes: str = Field(default="", max_length=10000)
+
+
+class AdminCommunicationBody(BaseModel):
+    communication_type: str = Field(default="note", max_length=32)
+    occurred_at: datetime | None = None
+    content: str = Field(default="", max_length=50000)
+    summary: str = Field(default="", max_length=10000)
+    recording_id: int | None = None
+
+
+def _admin_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))[:30]
+
+
+def _admin_recording_payload(row: RecorderAudioRecord) -> dict:
+    return {
+        "id": row.id,
+        "name": row.display_name or row.file_name,
+        "summary": row.summary_text or "",
+        "status": row.status,
+        "recorded_at": row.recorded_at.isoformat() if row.recorded_at else row.created_at.isoformat(),
+    }
+
+
+def admin_frontend_build() -> str:
+    """管理后台这一版前端的构建标识（部署后一定会变，页面据此自动刷新）。"""
+    from ..services.deploy_build import deploy_build_id
+
+    return deploy_build_id()
+
+
 # ── 页面 ──
+
+@router.get("/admin/imitation-records", include_in_schema=False)
+def admin_imitation_records_page() -> "HTMLResponse":
+    """跟创生成记录（管理后台）：列表 + 详情（爆款提示词 / 我们请求上游的 / 上游返回的）。
+
+    2026-10-05：用户澄清 manage.bhzn.top 是「项目管理」，管理后台是 bhzn.top/admin，
+    所以这个页面跟着 admin.html 一起放在 backend/app/static/ 下，走 /admin 前缀。
+    """
+    from fastapi.responses import HTMLResponse
+
+    html_path = Path(__file__).resolve().parent.parent / "static" / "imitation-records.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="跟创生成记录页面未找到")
+    return HTMLResponse(html_path.read_text(encoding="utf-8"),
+                        headers={"Cache-Control": "no-store, must-revalidate"})
+
 
 @router.get("/admin", include_in_schema=False)
 @router.get("/admin/", include_in_schema=False)
@@ -269,6 +411,8 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
         "__ADMIN_BRAND_ICON_32__": icon_32,
         "__ADMIN_BRAND_ICON_64__": icon_64,
         "__ADMIN_BRAND_CONSOLE__": console_title,
+        # 前端构建标识：换了版本页面自己刷新（缓存自愈）
+        "__ADMIN_BUILD__": admin_frontend_build(),
     }
     for placeholder, value in replacements.items():
         content = content.replace(placeholder, html.escape(value, quote=True))
@@ -280,13 +424,19 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
         },
     )
 
+@router.get("/admin/api/build", include_in_schema=False)
+def admin_build() -> dict:
+    """前端版本探针：页面用它判断自己是不是旧版，旧版自动刷新（不用人工清缓存）。"""
+    return {"build": admin_frontend_build()}
+
+
 @router.get("/admin/static/{filename}", include_in_schema=False)
 def admin_static(filename: str):
     static_dir = Path(__file__).resolve().parent.parent / "static"
     fp = static_dir / filename
     if not fp.exists() or not fp.is_file():
         raise HTTPException(status_code=404)
-    return FileResponse(fp)
+    return FileResponse(fp, headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"})
 
 
 # ── API ──
@@ -335,6 +485,30 @@ def admin_login(
             if not sms_ok:
                 raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
         password_ok = bool(user and user.is_agent and password and verify_password(password, user.hashed_password))
+        admin_password_ok = bool(user and str(getattr(user, "role", "") or "").strip().lower() == "admin" and password and verify_password(password, user.hashed_password))
+        if user and str(getattr(user, "role", "") or "").strip().lower() == "admin" and (admin_password_ok or sms_ok):
+            admin_jwt = jwt.encode(
+                {
+                    "sub": str(user.id),
+                    "scope": "admin_user",
+                    "brand_mark": brand_mark,
+                    "exp": datetime.utcnow() + timedelta(days=7),
+                },
+                settings.secret_key,
+                algorithm=_JWT_ALGORITHM,
+            )
+            token = AGENT_TOKEN_PREFIX + admin_jwt
+            display = unscoped_account_email(user.email).replace("@sms.lobster.local", "")
+            return {
+                "ok": True,
+                "token": token,
+                "role": "admin",
+                "user_id": user.id,
+                "display_name": display,
+                "agent_level": _agent_level(user),
+                "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+                "brand_mark": brand_mark,
+            }
         if user and user.is_agent and (password_ok or sms_ok):
             agent_jwt = jwt.encode(
                 {
@@ -517,6 +691,138 @@ def admin_user_detail(
     }
 
 
+@router.get("/admin/api/remote-support/devices", summary="管理员查看已开启远程支持的 Online 设备")
+def admin_remote_support_devices(
+    ctx: AdminContext = Depends(_require_admin),
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    db: Session = Depends(get_db),
+):
+    """Read remote-support state from the main Online heartbeat table.
+
+    This deliberately does not contact the standalone ToDesk service.  Only
+    devices that explicitly reported ``remote_support_enabled`` are returned.
+    """
+    now = datetime.utcnow()
+    if x_admin_token:
+        try:
+            remote = _remote_support_service_request("GET", "/api/remote-admin/devices", admin_token=x_admin_token)
+            return {"devices": remote.get("devices") or [], "count": len(remote.get("devices") or []), "updated_at": remote.get("updatedAt"), "public_url": str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")}
+        except HTTPException as exc:
+            if exc.status_code not in {503, 404}:
+                raise
+    rows = db.query(RemoteSupportDeviceAuthorization).order_by(RemoteSupportDeviceAuthorization.updated_at.desc()).limit(1000).all()
+    devices = []
+    for authorization in rows:
+        presence = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.installation_id == (authorization.installation_id or "")).order_by(H5ChatDevicePresence.last_seen_at.desc()).first() if authorization.installation_id else None
+        payload = presence.account_payload if presence and isinstance(presence.account_payload, dict) else {}
+        remote_support = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
+        devices.append({
+            "id": authorization.id,
+            "device_id": authorization.device_id,
+            "installation_id": authorization.installation_id or (presence.installation_id if presence else ""),
+            "device_name": authorization.label or (presence.display_name if presence else authorization.device_id),
+            "enabled": bool(authorization.enabled),
+            "online": bool(presence and is_device_online(presence.last_seen_at, now=now)),
+            "last_seen_at": presence.last_seen_at.isoformat() if presence and presence.last_seen_at else None,
+            "remote_support": remote_support,
+        })
+    return {"devices": devices, "count": len(devices), "public_url": str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")}
+
+
+@router.get("/admin/api/remote-support/controller-auth")
+def admin_remote_support_controller_auth(
+    x_remote_service_key: Optional[str] = Header(None, alias="X-Remote-Service-Key"),
+    ctx: AdminContext = Depends(_require_admin),
+):
+    expected = str(getattr(settings, "remote_support_service_key", "") or "").strip()
+    if not expected or x_remote_service_key != expected:
+        raise HTTPException(status_code=401, detail="remote_service_unauthorized")
+    return {"ok": True, "admin": True, "user_id": "lobster-main-admin"}
+
+
+class RemoteSupportAuthorizationBody(BaseModel):
+    device_id: str
+    verification_code: Optional[str] = None
+    installation_id: Optional[str] = None
+    label: Optional[str] = None
+    enabled: bool = True
+    monitorAlways: Optional[bool] = None
+
+
+@router.post("/admin/api/remote-support/devices")
+def admin_add_remote_support_device(
+    body: RemoteSupportAuthorizationBody,
+    ctx: AdminContext = Depends(_require_admin),
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    db: Session = Depends(get_db),
+):
+    remote_result = None
+    if x_admin_token:
+        remote_result = _remote_support_service_request("POST", "/api/remote-admin/devices", admin_token=x_admin_token, json_body={
+            "deviceId": body.device_id,
+            "verificationCode": body.verification_code or "",
+            "label": body.label or "",
+            "monitorAlways": bool(body.monitorAlways),
+        })
+    device_id = body.device_id.strip().upper()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id_required")
+    row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id).first()
+    if row is None:
+        row = RemoteSupportDeviceAuthorization(device_id=device_id)
+        db.add(row)
+    row.installation_id = (body.installation_id or "").strip() or None
+    row.label = (body.label or "").strip()[:255] or None
+    row.enabled = bool(body.enabled)
+    db.commit()
+    if remote_result is not None:
+        remote_result.setdefault("device_id", device_id)
+        remote_result.setdefault("enabled", row.enabled)
+        return remote_result
+    return {"ok": True, "device_id": device_id, "enabled": row.enabled}
+
+
+@router.patch("/admin/api/remote-support/devices/{device_id}")
+def admin_update_remote_support_device(device_id: str, body: RemoteSupportAuthorizationBody, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
+    remote_result = None
+    if x_admin_token:
+        patch_body = {"label": body.label or ""}
+        if body.monitorAlways is not None:
+            patch_body["monitorAlways"] = bool(body.monitorAlways)
+        remote_result = _remote_support_service_request("PATCH", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token, json_body=patch_body)
+    row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="remote_device_not_found")
+    row.label = (body.label or "").strip()[:255] or None
+    row.enabled = bool(body.enabled)
+    db.commit()
+    return remote_result or {"ok": True, "device_id": row.device_id, "enabled": row.enabled}
+
+
+@router.delete("/admin/api/remote-support/devices/{device_id}")
+def admin_delete_remote_support_device(device_id: str, ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), db: Session = Depends(get_db)):
+    remote_result = None
+    if x_admin_token:
+        remote_result = _remote_support_service_request("DELETE", f"/api/remote-admin/devices/{device_id.strip().upper()}", admin_token=x_admin_token)
+    row = db.query(RemoteSupportDeviceAuthorization).filter(RemoteSupportDeviceAuthorization.device_id == device_id.strip().upper()).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="remote_device_not_found")
+    db.delete(row)
+    db.commit()
+    return remote_result or {"ok": True}
+
+
+@router.post("/admin/api/remote-support/controller-session")
+def admin_remote_support_controller_session(ctx: AdminContext = Depends(_require_admin), x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token")):
+    if not x_admin_token:
+        raise HTTPException(status_code=401, detail="missing_admin_token")
+    result = _remote_support_service_request("POST", "/api/remote-admin/controller-session", admin_token=x_admin_token, json_body={})
+    public_url = str(getattr(settings, "remote_support_public_url", "") or "").rstrip("/")
+    if public_url:
+        result["public_url"] = public_url
+    return result
+
+
 class AddCreditsBody(BaseModel):
     user_id: int
     amount: float
@@ -648,13 +954,18 @@ class SetUserLlmModelBody(BaseModel):
     model: str = ""
 
 
+class SetUserAdminRemarkBody(BaseModel):
+    user_id: int
+    remark: str = Field(default="", max_length=500)
+
+
 @router.post("/admin/api/reset-password")
 def admin_reset_password(
     body: ResetPasswordBody,
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    """管理员重置指定用户的登录密码。密码规则与注册一致（6~128 位）。"""
+    """管理员或代理商重置其有权管理用户的登录密码。"""
     _assert_can_manage_user(db, ctx, body.user_id)
     pwd = (body.new_password or "").strip()
     if len(pwd) < 6:
@@ -667,12 +978,251 @@ def admin_reset_password(
     from .auth import get_password_hash
 
     user.hashed_password = get_password_hash(pwd)
+    user.password_version = int(getattr(user, "password_version", 0) or 0) + 1  # 重置密码也踢掉旧会话
     user.password_initialized = True
     db.add(user)
     db.commit()
     db.refresh(user)
     logger.info("[admin/reset-password] user_id=%s email=%s ok", user.id, user.email)
     return {"ok": True, "user_id": user.id, "email": user.email}
+
+
+@router.get("/admin/api/customers")
+def admin_list_customers(
+    page: int = 1,
+    page_size: int = 20,
+    q: str = "",
+    owner_user_id: int | None = None,
+    status: str = "",
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    page = max(1, min(int(page or 1), 100000))
+    page_size = max(1, min(int(page_size or 20), 100))
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    query = _admin_customer_query(db, ctx)
+    if owner_user_id is not None:
+        if int(owner_user_id) not in owner_ids:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        query = query.filter(Customer.owner_user_id == int(owner_user_id))
+    text_value = str(q or "").strip()
+    if text_value:
+        like = f"%{text_value}%"
+        query = query.filter(or_(Customer.name.ilike(like), Customer.company.ilike(like), Customer.phone.ilike(like), Customer.email.ilike(like)))
+    base_query = query
+    if str(status or "").strip():
+        query = query.filter(Customer.status == str(status).strip())
+    total = query.count()
+    stats_total = base_query.count()
+    status_rows = base_query.with_entities(Customer.status, func.count(Customer.id)).group_by(Customer.status).all()
+    oem_rows = base_query.outerjoin(User, User.id == Customer.owner_user_id).with_entities(Customer.owner_user_id, User.brand_mark, func.count(Customer.id)).group_by(Customer.owner_user_id, User.brand_mark).all()
+    rows = query.order_by(Customer.updated_at.desc(), Customer.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    owner_map = {u.id: u for u in db.query(User).filter(User.id.in_([r.owner_user_id for r in rows])).all()} if rows else {}
+    counts = {cid: count for cid, count in db.query(CustomerCommunication.customer_id, func.count(CustomerCommunication.id)).filter(CustomerCommunication.customer_id.in_([r.id for r in rows])).group_by(CustomerCommunication.customer_id).all()} if rows else {}
+    brand_rows = db.query(BrandConfig).all()
+    brand_names = {r.mark: r.display_name for r in brand_rows}
+    brand_names.update({mark: str(config.get("display_name") or mark) for mark, config in BUILTIN_BRANDS.items()})
+    grant_ids = set()
+    if ctx.role != "admin" and ctx.user_id and rows:
+        grant_ids = {cid for (cid,) in db.query(CustomerAuthorization.customer_id).filter(CustomerAuthorization.grantee_user_id == int(ctx.user_id), CustomerAuthorization.status == "active", CustomerAuthorization.customer_id.in_([r.id for r in rows])).all()}
+    items = []
+    for row in rows:
+        owner = owner_map.get(row.owner_user_id)
+        mark = user_brand_mark(owner) if owner else ("admin" if int(row.owner_user_id or 0) == 0 else "")
+        items.append(_admin_customer_payload(row, owner, counts.get(row.id, 0), access_type="authorized" if row.id in grant_ids and row.owner_user_id != int(ctx.user_id or 0) else "owner", brand_name=brand_names.get(mark, mark)))
+    by_oem = {}
+    for owner_id, mark, count in oem_rows:
+        key = str(mark or ("admin" if int(owner_id or 0) == 0 else "unknown"))
+        by_oem[key] = by_oem.get(key, 0) + int(count or 0)
+    return {"items": items, "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total, "stats": {"total": stats_total, "filtered_total": total, "by_status": {str(key or "unknown"): int(value or 0) for key, value in status_rows}, "by_oem": by_oem}}
+
+
+@router.get("/admin/api/customers/{customer_id}/authorizations")
+def admin_list_customer_authorizations(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    rows = db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == customer.id, CustomerAuthorization.status == "active").order_by(CustomerAuthorization.created_at.desc()).all()
+    users = {u.id: u for u in db.query(User).filter(User.id.in_([r.grantee_user_id for r in rows])).all()} if rows else {}
+    return {"items": [{"id": row.id, "customer_id": row.customer_id, "grantee_user_id": row.grantee_user_id, "grantee": _user_public_payload(users[row.grantee_user_id]) if row.grantee_user_id in users else None, "created_at": row.created_at.isoformat() if row.created_at else None} for row in rows]}
+
+
+@router.post("/admin/api/customers/{customer_id}/authorizations")
+def admin_grant_customer(customer_id: int, body: CustomerAuthorizationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    owner_ids = _admin_customer_owner_ids(db, ctx)
+    if ctx.role != "admin" and customer.owner_user_id not in owner_ids:
+        raise HTTPException(status_code=403, detail="只有客户所属用户可以授权")
+    target = db.query(User).filter(User.id == int(body.grantee_user_id)).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="被授权用户不存在")
+    owner = db.query(User).filter(User.id == customer.owner_user_id).first()
+    owner_mark = user_brand_mark(owner) if owner else ctx.brand_mark
+    if user_brand_mark(target) != owner_mark:
+        raise HTTPException(status_code=403, detail="只能授权给同一 OEM 下的用户")
+    if int(target.id) == int(customer.owner_user_id):
+        raise HTTPException(status_code=400, detail="客户所属用户无需重复授权")
+    row = db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == customer.id, CustomerAuthorization.grantee_user_id == target.id).first()
+    if row is None:
+        row = CustomerAuthorization(customer_id=customer.id, owner_user_id=customer.owner_user_id, grantee_user_id=target.id, status="active")
+        db.add(row)
+    else:
+        row.owner_user_id = customer.owner_user_id
+        row.status = "active"
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "authorization": {"id": row.id, "customer_id": row.customer_id, "grantee_user_id": row.grantee_user_id, "grantee": _user_public_payload(target), "created_at": row.created_at.isoformat() if row.created_at else None}}
+
+
+@router.delete("/admin/api/customers/{customer_id}/authorizations/{grantee_user_id}")
+def admin_revoke_customer(customer_id: int, grantee_user_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    if ctx.role != "admin" and customer.owner_user_id not in _admin_customer_owner_ids(db, ctx):
+        raise HTTPException(status_code=403, detail="只有客户所属用户可以取消授权")
+    row = db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == customer.id, CustomerAuthorization.grantee_user_id == int(grantee_user_id), CustomerAuthorization.status == "active").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="授权记录不存在")
+    row.status = "revoked"
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/customers")
+def admin_create_customer(body: AdminCustomerBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    owner_user_id = int(ctx.user_id or 0)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="客户姓名不能为空")
+    from .customer_management import _clean_tags
+    row = Customer(owner_user_id=owner_user_id, name=name, company=body.company.strip(), position=body.position.strip(), phone=body.phone.strip(), email=body.email.strip(), source=body.source.strip(), tags=_clean_tags(body.tags), status=body.status.strip() or "active", notes=body.notes.strip())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    owner = db.query(User).filter(User.id == row.owner_user_id).first()
+    return {"ok": True, "customer": _admin_customer_payload(row, owner)}
+
+
+@router.patch("/admin/api/customers/{customer_id}")
+def admin_update_customer(customer_id: int, body: AdminCustomerBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = _admin_customer_row(db, ctx, customer_id)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="客户姓名不能为空")
+    from .customer_management import _clean_tags
+    row.name = name
+    row.company = body.company.strip()
+    row.position = body.position.strip()
+    row.phone = body.phone.strip()
+    row.email = body.email.strip()
+    row.source = body.source.strip()
+    row.tags = _clean_tags(body.tags)
+    row.status = body.status.strip() or "active"
+    row.notes = body.notes.strip()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "customer": _admin_customer_payload(row, db.query(User).filter(User.id == row.owner_user_id).first())}
+
+
+@router.delete("/admin/api/customers/{customer_id}")
+def admin_delete_customer(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = _admin_customer_row(db, ctx, customer_id)
+    if ctx.role != "admin" and row.owner_user_id not in _admin_customer_owner_ids(db, ctx):
+        raise HTTPException(status_code=403, detail="Authorized users cannot delete the source customer")
+    db.query(CustomerAuthorization).filter(CustomerAuthorization.customer_id == row.id).delete(synchronize_session=False)
+    db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/customers/{customer_id}/communications")
+def admin_create_communication(customer_id: int, body: AdminCommunicationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    recording = None
+    if body.recording_id is not None:
+        recording = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == body.recording_id, RecorderAudioRecord.user_id == customer.owner_user_id).first()
+        if not recording:
+            raise HTTPException(status_code=404, detail="录音不存在或不属于客户所属用户")
+    row = CustomerCommunication(customer_id=customer.id, owner_user_id=customer.owner_user_id, communication_type=body.communication_type.strip() or "note", occurred_at=body.occurred_at or datetime.utcnow(), content=body.content.strip(), summary=body.summary.strip() or (recording.summary_text.strip() if recording else ""), recording_id=recording.id if recording else None)
+    customer.last_contact_at = row.occurred_at
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "communication": _admin_communication_payload(row, recording)}
+
+
+def _admin_communication_payload(row: CustomerCommunication, recording: RecorderAudioRecord | None = None) -> dict:
+    return {
+        "id": row.id,
+        "customer_id": row.customer_id,
+        "owner_user_id": row.owner_user_id,
+        "communication_type": row.communication_type,
+        "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+        "content": row.content or "",
+        "summary": row.summary or "",
+        "recording_id": row.recording_id,
+        "recording": _admin_recording_payload(recording) if recording else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.patch("/admin/api/customer-communications/{communication_id}")
+def admin_update_communication(communication_id: int, body: AdminCommunicationBody, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="沟通记录不存在")
+    customer = _admin_customer_row(db, ctx, row.customer_id)
+    recording = None
+    if body.recording_id is not None:
+        recording = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == body.recording_id, RecorderAudioRecord.user_id == customer.owner_user_id).first()
+        if not recording:
+            raise HTTPException(status_code=404, detail="录音不存在或不属于客户所属用户")
+    row.communication_type = body.communication_type.strip() or "note"
+    row.occurred_at = body.occurred_at or row.occurred_at or datetime.utcnow()
+    row.content = body.content.strip()
+    row.summary = body.summary.strip() or (recording.summary_text.strip() if recording else "")
+    row.recording_id = recording.id if recording else None
+    customer.last_contact_at = row.occurred_at
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "communication": _admin_communication_payload(row, recording)}
+
+
+@router.delete("/admin/api/customer-communications/{communication_id}")
+def admin_delete_communication(communication_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = db.query(CustomerCommunication).filter(CustomerCommunication.id == communication_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="沟通记录不存在")
+    customer = _admin_customer_row(db, ctx, row.customer_id)
+    db.delete(row)
+    db.flush()
+    from .customer_management import _refresh_last_contact
+    _refresh_last_contact(db, customer)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/admin/api/customers/{customer_id}/recordings")
+def admin_customer_recordings(customer_id: int, page: int = 1, page_size: int = 20, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    customer = _admin_customer_row(db, ctx, customer_id)
+    query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == customer.owner_user_id, RecorderAudioRecord.status == "completed")
+    total = query.count()
+    rows = query.order_by(RecorderAudioRecord.recorded_at.desc().nullslast(), RecorderAudioRecord.created_at.desc()).offset((max(1, page) - 1) * min(max(1, page_size), 100)).limit(min(max(1, page_size), 100)).all()
+    return {"items": [_admin_recording_payload(row) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
+
+
+@router.get("/admin/api/customers/{customer_id}")
+def admin_customer_detail(customer_id: int, ctx: AdminContext = Depends(_verify_admin_token), db: Session = Depends(get_db)):
+    row = _admin_customer_row(db, ctx, customer_id)
+    owner = db.query(User).filter(User.id == row.owner_user_id).first()
+    communications = db.query(CustomerCommunication).filter(CustomerCommunication.customer_id == row.id).order_by(CustomerCommunication.occurred_at.desc(), CustomerCommunication.id.desc()).all()
+    recording_ids = [c.recording_id for c in communications if c.recording_id]
+    recordings = {r.id: r for r in db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id.in_(recording_ids), RecorderAudioRecord.user_id == row.owner_user_id).all()} if recording_ids else {}
+    from .customer_management import _communication_payload
+    is_granted = bool(ctx.role != "admin" and ctx.user_id and row.owner_user_id != int(ctx.user_id) and db.query(CustomerAuthorization.id).filter(CustomerAuthorization.customer_id == row.id, CustomerAuthorization.grantee_user_id == int(ctx.user_id), CustomerAuthorization.status == "active").first())
+    brand_mark = user_brand_mark(owner) if owner else ("admin" if int(row.owner_user_id or 0) == 0 else "")
+    brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first() if brand_mark else None
+    brand_name = (brand_row.display_name if brand_row else None) or str((BUILTIN_BRANDS.get(brand_mark) or {}).get("display_name") or brand_mark)
+    return {"customer": _admin_customer_payload(row, owner, len(communications), access_type="authorized" if is_granted else "owner", brand_name=brand_name), "communications": [_communication_payload(item, recordings.get(item.recording_id)) for item in communications]}
 
 
 @router.post("/admin/api/user-llm-model")
@@ -700,6 +1250,25 @@ def admin_set_user_llm_model(
         user.email,
         model or "-",
     )
+    return {"ok": True, "user": _user_public_payload(user)}
+
+
+@router.post("/admin/api/user-remark")
+def admin_set_user_remark(
+    body: SetUserAdminRemarkBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """Create or replace the short operator remark for a managed user."""
+    _assert_can_manage_user(db, ctx, body.user_id, allow_agent_self=True)
+    user = db.query(User).filter(User.id == body.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.admin_remark = (body.remark or "").strip()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    logger.info("[admin/user-remark] user_id=%s remark_present=%s", user.id, bool(user.admin_remark))
     return {"ok": True, "user": _user_public_payload(user)}
 
 
@@ -1172,10 +1741,16 @@ def admin_ip_template_grant_users(
     if term:
         like = f"%{term}%"
         conds = [User.email.ilike(like)]
+        # Phone accounts are numeric strings too.  Only add the ID branch
+        # when the value fits the database's INTEGER range; otherwise a
+        # PostgreSQL comparison against users.id raises integer-out-of-range
+        # before the email match can be evaluated.
         if term.isdigit():
             try:
-                conds.append(User.id == int(term))
-            except Exception:
+                id_value = int(term)
+                if 0 < id_value <= 2_147_483_647:
+                    conds.append(User.id == id_value)
+            except (TypeError, ValueError, OverflowError):
                 pass
         query = query.filter(or_(*conds))
 
@@ -1367,8 +1942,9 @@ def admin_get_user_skill_visibility(
         for k, v in packages.items()
     ]
     feature_pkg_by_id = {str(pkg.get("id") or ""): dict(pkg) for pkg in FEATURE_FLAG_PACKAGES}
-    all_pkgs = [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES] + [
+    all_pkgs = [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES if str(pkg.get("id") or "") not in RETIRED_PACKAGE_IDS] + [
         pkg for pkg in all_pkgs if pkg["id"] not in feature_pkg_by_id
+        and pkg["id"] not in RETIRED_PACKAGE_IDS
     ]
     return {
         "user_id": user_id,
@@ -1404,7 +1980,7 @@ def admin_update_user_skill_visibility(
     added, removed, unlocked_added, unlocked_removed = [], [], [], []
     for pkg_id in body.add:
         pkg_id = pkg_id.strip()
-        if not pkg_id:
+        if not pkg_id or pkg_id in RETIRED_PACKAGE_IDS:
             continue
         exists = db.query(UserSkillVisibility).filter(
             UserSkillVisibility.user_id == user_id,
@@ -1423,6 +1999,10 @@ def admin_update_user_skill_visibility(
         ).first()
         if row:
             db.delete(row)
+            removed.append(pkg_id)
+        elif pkg_id in {str(item.get("id") or "").strip() for item in FEATURE_FLAG_PACKAGES}:
+            # Keep permission removal idempotent and report the requested
+            # feature as removed even when an older account had no row yet.
             removed.append(pkg_id)
     for pkg_id in body.unlock_add:
         pkg_id = pkg_id.strip()
@@ -1454,6 +2034,452 @@ def admin_update_user_skill_visibility(
         "unlocked_added": unlocked_added,
         "unlocked_removed": unlocked_removed,
     }
+
+
+# ── 系统模板工作流（仅 admin 可看可改） ──
+
+_SYSTEM_WORKFLOW_LABELS = {
+    "system_sales": "销售全流程员工",
+    "system_short_video_wechat": "短视频+微信员工",
+    "system_douyin_leads": "抖音获客员工",
+}
+
+
+def _system_workflow_key_labels(db: Session) -> Dict[str, str]:
+    """内置 3 个系统模板 + 目录里所有已存在的 system_custom_* 模板。"""
+    labels: Dict[str, str] = dict(_SYSTEM_WORKFLOW_LABELS)
+    try:
+        rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(H5WorkflowTemplate.owner_user_id == 0, H5WorkflowTemplate.status == "active")
+            .all()
+        )
+        for row in rows:
+            meta = row.meta if isinstance(row.meta, dict) else {}
+            if str(meta.get("source") or "") != "system_catalog":
+                continue
+            key = str(meta.get("system_template_key") or "").strip()
+            if key:
+                # 后台改过名字就以库里的名字为准，硬编码文案只做兜底
+                db_name = str(row.name or "").strip()
+                if db_name:
+                    labels[key] = db_name
+                else:
+                    labels.setdefault(key, key)
+    except Exception:
+        logger.warning("system workflow catalog scan failed", exc_info=True)
+    return labels
+
+
+def _require_system_workflow_admin(ctx: "AdminContext") -> None:
+    if str(getattr(ctx, "role", "") or "").strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可管理系统模板工作流")
+
+
+def _system_workflow_nodes_summary(nodes: Any, limit: int = 80) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict):
+            continue
+        out.append(
+            {
+                "time": str(node.get("time") or ""),
+                "end_time": str(node.get("end_time") or ""),
+                "label": str(node.get("ability_label") or node.get("label") or node.get("note") or ""),
+                "key": str(node.get("ability_key") or node.get("key") or ""),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _system_workflow_rows(db: Session, key: str) -> tuple:
+    """Return (系统模板本体, 直接启用它的用户镜像列表)。"""
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    rows = db.query(H5WorkflowTemplate).filter(H5WorkflowTemplate.status == "active").all()
+    catalog = None
+    mirrors = []
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("system_template_key") or "").strip() != key:
+            continue
+        source = str(meta.get("source") or "").strip()
+        if int(row.owner_user_id or 0) == _SYSTEM_WORKFLOW_OWNER_ID and source == _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            catalog = row
+        elif int(row.owner_user_id or 0) != _SYSTEM_WORKFLOW_OWNER_ID and source == "system_mirror":
+            # 复制出去自己改过的模板在复制时已经去掉 system_template_key，不会命中这里。
+            mirrors.append(row)
+    return catalog, mirrors
+
+
+def _system_workflow_summary(db: Session, key: str) -> Dict[str, Any]:
+    from .scheduled_tasks import sort_workflow_nodes_by_time
+
+    catalog, mirrors = _system_workflow_rows(db, key)
+    nodes = sort_workflow_nodes_by_time(catalog.nodes) if catalog is not None else []
+    db_name = str(getattr(catalog, "name", "") or "").strip() if catalog is not None else ""
+    return {
+        "key": key,
+        "name": db_name or _system_workflow_key_labels(db).get(key, key),
+        "template_id": int(catalog.id) if catalog is not None else None,
+        "nodes": nodes,
+        "node_count": len(nodes),
+        "updated_at": catalog.updated_at.isoformat() if catalog is not None and catalog.updated_at else "",
+        "direct_user_count": len({int(row.owner_user_id or 0) for row in mirrors}),
+        "mirror_count": len(mirrors),
+    }
+
+
+# H5 里系统模板的硬编码默认名（h5_static/h5-app.js）：后台改名后这些镜像也要跟着改，
+# 否则 H5/客户端「启用中」还显示旧名字。
+_LEGACY_SYSTEM_MIRROR_NAMES: Dict[str, tuple] = {
+    "system_sales": ("销售24小时员工",),
+    "system_short_video_wechat": ("短视频+微信员工",),
+    "system_douyin_leads": ("抖音获客员工",),
+}
+
+
+class SystemWorkflowBody(BaseModel):
+    nodes: list[dict] = []
+    confirm: bool = False
+    # 后台编辑时一起提交的名字：以前没带这个名字，导致「改名字不生效」
+    name: str = ""
+
+
+class SystemWorkflowOrderBody(BaseModel):
+    order: int = 0  # 目标名次（从 1 开始）
+
+
+class SystemWorkflowCreateBody(BaseModel):
+    name: str = ""
+    nodes: list[dict] = []
+    published: bool = False
+
+
+class SystemWorkflowStatusBody(BaseModel):
+    published: bool = True
+
+
+def _system_catalog_row(db: Session, key: str):
+    """按 key 取系统模板本体（不区分上架/下架）。"""
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    rows = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+            H5WorkflowTemplate.status == "active",
+        )
+        .all()
+    )
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            continue
+        if str(meta.get("system_template_key") or "").strip() == key:
+            return row
+    return None
+
+
+def _clear_workflow_template_cache() -> None:
+    try:
+        from .h5_workflows import _WORKFLOW_TEMPLATE_CACHE
+
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+    except Exception:
+        pass
+
+
+def _system_workflow_catalog_items(db: Session) -> List[Dict[str, Any]]:
+    """目录里的全部系统模板（含新增的），带上下架状态。"""
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import (
+        _SYSTEM_WORKFLOW_CATALOG_SOURCE,
+        _SYSTEM_WORKFLOW_OWNER_ID,
+        system_catalog_display_key,
+    )
+
+    rows = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+            H5WorkflowTemplate.status == "active",
+        )
+        .order_by(H5WorkflowTemplate.id.asc())
+        .all()
+    )
+    # 顺序：后台排过序的按 system_order，老的按 id 兜底（与 H5 同一套规则）
+    rows = sorted(rows, key=system_catalog_display_key)
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            continue
+        key = str(meta.get("system_template_key") or "").strip()
+        if not key:
+            continue
+        from .scheduled_tasks import sort_workflow_nodes_by_time
+
+        # 编辑器按开始时间展示（库里老数据顺序乱了也能看对）
+        nodes = sort_workflow_nodes_by_time(row.nodes)
+        mirrors = _system_workflow_rows(db, key)[1]
+        items.append(
+            {
+                "key": key,
+                "name": str(row.name or _system_workflow_key_labels(db).get(key, key)),
+                "is_builtin": key in _SYSTEM_WORKFLOW_LABELS,
+                "published": meta.get("system_published") is not False,
+                "template_id": int(row.id),
+                "nodes": nodes,
+                "node_count": len(nodes),
+                "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+                "direct_user_count": len({int(item.owner_user_id or 0) for item in mirrors}),
+                "mirror_count": len(mirrors),
+            }
+        )
+    return items
+
+
+@router.post("/admin/api/system-workflows", summary="新建系统模板工作流（仅管理员）")
+def admin_create_system_workflow(
+    body: SystemWorkflowCreateBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    from ..models import H5WorkflowTemplate
+    from .h5_workflows import _SYSTEM_WORKFLOW_CATALOG_SOURCE, _SYSTEM_WORKFLOW_OWNER_ID
+
+    name = str(body.name or "").strip()[:160]
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写系统模板名称")
+    # 管理后台编辑器可能把抖音节点提交成 client_workflow + action=douyin_leads
+    # （2026-09-20 排查）：入库前统一归一到客户端认的 task_kind=douyin_leads。
+    from .scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    key = f"system_custom_{uuid.uuid4().hex[:8]}"
+    row = H5WorkflowTemplate(
+        owner_user_id=_SYSTEM_WORKFLOW_OWNER_ID,
+        installation_id="",
+        name=name,
+        nodes=nodes,
+        status="active",
+        meta={
+            "source": _SYSTEM_WORKFLOW_CATALOG_SOURCE,
+            "system_template_key": key,
+            # 新建默认下架：确认没问题再上架，避免刚建好就出现在用户端。
+            "system_published": bool(body.published),
+        },
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    _clear_workflow_template_cache()
+    return {"ok": True, "key": key, "template_id": int(row.id), "published": bool(body.published)}
+
+
+@router.post("/admin/api/system-workflows/{key}/status", summary="系统模板上下架（仅管理员）")
+def admin_set_system_workflow_status(
+    key: str,
+    body: SystemWorkflowStatusBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    row = _system_catalog_row(db, key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    meta = dict(row.meta or {})
+    meta["system_published"] = bool(body.published)
+    row.meta = meta
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    # 下架/上架只影响"用户端还能不能拿到这条系统模板"，客户端不需要改动。
+    _clear_workflow_template_cache()
+    return {"ok": True, "key": key, "published": bool(body.published)}
+
+
+def _system_workflow_signature(node: Dict[str, Any]) -> str:
+    return "|".join(
+        (
+            str(node.get("time") or ""),
+            str(node.get("ability_key") or node.get("key") or ""),
+            str(node.get("ability_label") or node.get("label") or ""),
+        )
+    )
+
+
+def _system_workflow_diff(old_nodes: Any, new_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    import json as _json
+
+    old_list = [node for node in (old_nodes if isinstance(old_nodes, list) else []) if isinstance(node, dict)]
+    old_map = {_system_workflow_signature(node): node for node in old_list}
+    new_map = {_system_workflow_signature(node): node for node in new_nodes}
+
+    def brief(node: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "time": str(node.get("time") or ""),
+            "label": str(node.get("ability_label") or node.get("label") or node.get("note") or ""),
+            "key": str(node.get("ability_key") or node.get("key") or ""),
+        }
+
+    changed = [
+        brief(new_map[sig])
+        for sig in new_map
+        if sig in old_map
+        and _json.dumps(old_map[sig], sort_keys=True, ensure_ascii=False)
+        != _json.dumps(new_map[sig], sort_keys=True, ensure_ascii=False)
+    ]
+    return {
+        "old_node_count": len(old_list),
+        "new_node_count": len(new_nodes),
+        "added": [brief(new_map[sig]) for sig in new_map if sig not in old_map][:60],
+        "removed": [brief(old_map[sig]) for sig in old_map if sig not in new_map][:60],
+        "changed": changed[:60],
+    }
+
+
+@router.get("/admin/api/system-workflows", summary="系统模板工作流列表（仅管理员）")
+def admin_list_system_workflows(
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    return {"ok": True, "items": _system_workflow_catalog_items(db)}
+
+
+@router.post("/admin/api/system-workflows/{key}/draft", summary="系统模板工作流草稿与变更摘要（仅管理员）")
+def admin_draft_system_workflow(
+    key: str,
+    body: SystemWorkflowBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    if key not in _system_workflow_key_labels(db):
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    # 草稿预览和真正保存用同一份归一后的节点，diff 才不会骗人。
+    from .scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    catalog, mirrors = _system_workflow_rows(db, key)
+    old_nodes = list(catalog.nodes or []) if catalog is not None else []
+    return {
+        "ok": True,
+        "key": key,
+        "name": _system_workflow_key_labels(db).get(key, key),
+        "template_id": int(catalog.id) if catalog is not None else None,
+        "diff": _system_workflow_diff(old_nodes, nodes),
+        "new_nodes": _system_workflow_nodes_summary(nodes),
+        "mirror_count": len(mirrors),
+        "direct_user_count": len({int(row.owner_user_id or 0) for row in mirrors}),
+    }
+
+
+@router.post("/admin/api/system-workflows/{key}/publish", summary="系统模板工作流确认生效并同步（仅管理员）")
+def admin_publish_system_workflow(
+    key: str,
+    body: SystemWorkflowBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    if key not in _system_workflow_key_labels(db):
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="需要二次确认后才会生效")
+    # 同 admin_create_system_workflow：确认发布前把抖音节点归一，别再把
+    # client_workflow + action=douyin_leads 同步进正文和所有镜像模板。
+    from .scheduled_tasks import normalize_workflow_nodes_for_save
+
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    catalog, mirrors = _system_workflow_rows(db, key)
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="系统模板本体不存在")
+    now = datetime.utcnow()
+    old_name = str(catalog.name or "").strip()
+    new_name = str(getattr(body, "name", "") or "").strip()[:160]
+    catalog.nodes = nodes
+    if new_name:
+        # 以前这里不落 body.name，后台改名字就一直不生效
+        catalog.name = new_name
+    logger.info("[admin] 系统模板 %s 保存：名字 %r -> %r，节点 %d 个",
+                key, old_name, new_name or "(前端未提交名字)", len(nodes))
+    catalog.updated_at = now
+    synced_users = set()
+    for row in mirrors:
+        # 只覆盖"直接启用系统模板"的镜像；复制过的副本没有 system_template_key。
+        row.nodes = nodes
+        allowed_mirror_names = {"", old_name, *_LEGACY_SYSTEM_MIRROR_NAMES.get(key, ())}
+        if new_name and str(row.name or "").strip() in allowed_mirror_names:
+            # 镜像还顶着旧名字/默认名（或没名字）才跟着改；用户自己改过名字的不动
+            row.name = new_name
+        row.updated_at = now
+        synced_users.add(int(row.owner_user_id or 0))
+    db.commit()
+    try:
+        from .h5_workflows import _WORKFLOW_TEMPLATE_CACHE
+
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "key": key,
+        "name": str(catalog.name or "").strip() or _system_workflow_key_labels(db).get(key, key),
+        "node_count": len(nodes),
+        "mirror_count": len(mirrors),
+        "synced_users": len(synced_users),
+    }
+
+
+@router.post("/admin/api/system-workflows/{key}/order", summary="调整系统模板顺序（仅管理员）")
+def admin_set_system_workflow_order(
+    key: str,
+    body: SystemWorkflowOrderBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    '''把某个系统模板挪到指定名次：按后台列表顺序重排，H5 也按同一顺序展示。
+
+    顺序写在 catalog 行的 meta["system_order"]（10/20/30…），不影响节点、镜像和复制。
+    '''
+    _require_system_workflow_admin(ctx)
+    key = str(key or "").strip()
+    items = _system_workflow_catalog_items(db)
+    keys = [str(item["key"]) for item in items]
+    if key not in keys:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    try:
+        target = int(body.order) - 1
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="顺序参数不合法") from None
+    target = max(0, min(len(keys) - 1, target))
+    keys.insert(target, keys.pop(keys.index(key)))
+    for position, item_key in enumerate(keys, start=1):
+        row = _system_catalog_row(db, item_key)
+        if row is None:
+            continue
+        meta = dict(row.meta or {})
+        meta["system_order"] = position * 10
+        row.meta = meta
+    db.commit()
+    _clear_workflow_template_cache()
+    return {"ok": True, "key": key, "order": target + 1, "keys": keys}
 
 
 # ── 数据统计 ──
@@ -2783,3 +3809,364 @@ def admin_juhe_retry_friend_batch(
     db.commit()
     background_tasks.add_task(_juhe_process_friend_batch, batch.id)
     return {"ok": True, "batch": _juhe_batch_payload(batch)}
+
+
+# ────────────────────────── 商家审核（商家后台 shopcms） ──────────────────────────
+
+class ShopMerchantStatusBody(BaseModel):
+    status: str = Field(..., min_length=1, max_length=16)
+
+
+@router.get("/admin/api/shop-merchants", summary="商家列表（分页 + 查询）")
+def admin_shop_merchants(
+    q: str = "",
+    status: str = "",
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """平台管理员看全部开店商家：商品 / 订单 / 佣金 + 分页 + 关键词搜索。"""
+    from ..services import shop_merchant_admin as sma
+
+    return sma.list_shop_merchants(db, q=q, status=status, page=page, size=size)
+
+
+@router.get("/admin/api/shop-merchants/{merchant_id}", summary="商家详情")
+def admin_shop_merchant_detail(
+    merchant_id: int,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..services import shop_merchant_admin as sma
+
+    try:
+        return sma.shop_merchant_detail(db, merchant_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="商家不存在")
+
+
+@router.patch("/admin/api/shop-merchants/{merchant_id}", summary="商家状态（审核通过 / 停用 / 驳回）")
+def admin_update_shop_merchant_status(
+    merchant_id: int,
+    body: ShopMerchantStatusBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..services import shop_merchant_admin as sma
+
+    try:
+        result = sma.set_shop_merchant_status(db, merchant_id, body.status)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="商家不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    logger.info("[admin] shop merchant %s status -> %s", merchant_id, body.status)
+    return result
+
+
+# ── 可调度设备（系统设备）：管理后台按槽位号维护，H5 用户可在「我的」里选用 ──
+
+class DispatchDeviceBody(BaseModel):
+    slot: str = ""
+    installation_id: str = ""
+    name: str = ""
+    note: str = ""
+
+
+class DispatchDevicePatchBody(BaseModel):
+    name: Optional[str] = None
+    note: Optional[str] = None
+    status: Optional[str] = None
+
+
+def _dispatch_device_payload(db: Session, row) -> dict:
+    from ..models import H5ChatDevicePresence
+
+    now = datetime.utcnow()
+    presence = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.installation_id == row.installation_id)
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .first()
+    )
+    last_seen = getattr(presence, "last_seen_at", None)
+    return {
+        "id": int(row.id),
+        "installation_id": row.installation_id,
+        "name": row.name or "",
+        "note": row.note or "",
+        "status": row.status or "enabled",
+        "online": bool(presence is not None and is_device_online(last_seen, now=now)),
+        "last_seen_at": last_seen.isoformat() if last_seen else "",
+        "owner_user_id": int(getattr(presence, "user_id", 0) or 0) or None if presence is not None else None,
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
+@router.get("/admin/api/dispatch-devices", summary="可调度设备列表（分页 + 搜索）")
+def admin_list_dispatch_devices(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    q: str = Query("", max_length=128),
+    status_filter: str = Query("", alias="status", max_length=16),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+
+    query = db.query(DispatchDevice)
+    keyword = (q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        query = query.filter(
+            or_(
+                DispatchDevice.installation_id.ilike(like),
+                DispatchDevice.name.ilike(like),
+                DispatchDevice.note.ilike(like),
+            )
+        )
+    wanted_status = (status_filter or "").strip().lower()
+    if wanted_status in {"enabled", "disabled"}:
+        query = query.filter(DispatchDevice.status == wanted_status)
+    total = query.count()
+    rows = (
+        query.order_by(DispatchDevice.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    items = [_dispatch_device_payload(db, row) for row in rows]
+    return {
+        "ok": True,
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+@router.post("/admin/api/dispatch-devices", summary="按槽位号添加可调度设备")
+def admin_create_dispatch_device(
+    body: DispatchDeviceBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+    from ..services import dispatch_devices as dispatch_devices_service
+
+    slot = dispatch_devices_service.normalize_slot(body.slot or body.installation_id)
+    if not slot:
+        raise HTTPException(status_code=400, detail="缺少槽位号")
+    exists = (
+        db.query(DispatchDevice)
+        .filter(DispatchDevice.installation_id == slot)
+        .first()
+    )
+    if exists is not None:
+        raise HTTPException(status_code=409, detail="该槽位号已在可调度设备列表中")
+    row = DispatchDevice(
+        installation_id=slot,
+        name=(body.name or "").strip()[:128],
+        note=(body.note or "").strip()[:255],
+        created_by=int(getattr(ctx, "user_id", 0) or 0) or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info("[admin] dispatch device added slot=%s by=%s", slot, getattr(ctx, "user_id", None))
+    return {"ok": True, "device": _dispatch_device_payload(db, row)}
+
+
+@router.patch("/admin/api/dispatch-devices/{device_id}", summary="修改可调度设备（名称/备注/启用状态）")
+def admin_update_dispatch_device(
+    device_id: int,
+    body: DispatchDevicePatchBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+
+    row = db.query(DispatchDevice).filter(DispatchDevice.id == int(device_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    if body.name is not None:
+        row.name = (body.name or "").strip()[:128]
+    if body.note is not None:
+        row.note = (body.note or "").strip()[:255]
+    if body.status is not None:
+        wanted = (body.status or "").strip().lower()
+        if wanted not in {"enabled", "disabled"}:
+            raise HTTPException(status_code=400, detail="状态只能是 enabled / disabled")
+        row.status = wanted
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "device": _dispatch_device_payload(db, row)}
+
+
+@router.delete("/admin/api/dispatch-devices/{device_id}", summary="删除可调度设备")
+def admin_delete_dispatch_device(
+    device_id: int,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..models import DispatchDevice
+
+    row = db.query(DispatchDevice).filter(DispatchDevice.id == int(device_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": int(device_id)}
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-05：跟创（抖音信息台做同款）生成记录 —— 管理后台（bhzn.top/admin）
+# 列表 + 详情：爆款提示词 / 我们请求上游的原文 / 上游返回的原文
+# ---------------------------------------------------------------------------
+
+def _imitation_record_brief(row: Any, email: str = "") -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "user_email": email,
+        "task_id": row.task_id,
+        "item_id": row.item_id,
+        "title": row.title,
+        "source_desc": row.source_desc,
+        "model": row.model,
+        "provider": row.provider,
+        "status": row.status,
+        "progress": row.progress,
+        "video_url": row.video_url,
+        "stored_url": getattr(row, "stored_url", "") or "",
+        "fail_reason": row.fail_reason,
+        "billable_seconds": int(row.billable_seconds or 0),
+        "credits_charged": float(row.credits_charged or 0),
+        "credits_refunded": float(row.credits_refunded or 0),
+        "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None,
+    }
+
+
+@router.get("/admin/api/wechat-shared-contacts", summary="上报微信号（管理后台页面用）")
+@router.get("/api/admin/wechat-shared-contacts", summary="上报微信号列表（抖音私信接管上报）")
+def admin_list_wechat_shared_contacts(
+    user_id: int = Query(0, ge=0),
+    kind: str = Query("", max_length=24),
+    q: str = Query("", max_length=64, description="用户邮箱 / 号码 / 客户名 / 会话"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """管理后台「上报微信号」：抖音私信接管提取到的客户联系方式（加好友联系池）。
+
+    数据来自 wechat_contact_reports：抖音私信接管识别到客户发来的微信号/手机号后上报，
+    后续由个微接管领走添加好友（status: pending → added / failed）。
+    """
+    from ..models import WechatContactReport
+
+    keyword = str(q or "").strip()
+    like = f"%{keyword}%" if keyword else ""
+    query = db.query(WechatContactReport)
+    if user_id > 0:
+        query = query.filter(WechatContactReport.user_id == int(user_id))
+    if kind.strip():
+        query = query.filter(WechatContactReport.kind == kind.strip().lower())
+    if keyword:
+        email_ids = [row_id for (row_id,) in db.query(User.id).filter(User.email.ilike(like)).all()] or [-1]
+        query = query.filter(or_(
+            WechatContactReport.value.ilike(like),
+            WechatContactReport.source_username.ilike(like),
+            WechatContactReport.source_conversation.ilike(like),
+            WechatContactReport.user_id.in_(email_ids),
+        ))
+    total = query.count()
+    rows = (query.order_by(WechatContactReport.id.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+    user_ids = {int(row.user_id) for row in rows}
+    owners: Dict[int, str] = {}
+    if user_ids:
+        for uid, email in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all():
+            owners[int(uid)] = email or ""
+    return {"ok": True, "total": int(total), "page": page, "page_size": page_size,
+            "items": [{
+                "id": row.id,
+                "user_id": int(row.user_id),
+                "user_email": owners.get(int(row.user_id), ""),
+                "platform": row.platform or "douyin",
+                "contact_name": row.source_username or row.source_conversation or "",
+                "kind": row.kind or "mobile",
+                "value": row.value or "",
+                "status": row.status or "",
+                "evidence": row.source_conversation or "",
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            } for row in rows]}
+
+
+@router.get("/api/admin/imitation-records", summary="跟创生成记录列表")
+def admin_list_imitation_records(
+    user_id: int = Query(0, ge=0),
+    status: str = Query("", max_length=16),
+    q: str = Query("", max_length=64, description="上游任务号 / 用户邮箱 / 提示词"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    from ..models import DouyinImitationTask
+
+    query = db.query(DouyinImitationTask)
+    if user_id > 0:
+        query = query.filter(DouyinImitationTask.user_id == int(user_id))
+    if status.strip():
+        query = query.filter(DouyinImitationTask.status == status.strip().upper())
+    keyword = str(q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        email_ids = [row_id for (row_id,) in db.query(User.id).filter(User.email.ilike(like)).all()] or [-1]
+        query = query.filter(or_(
+            DouyinImitationTask.task_id.ilike(like),
+            DouyinImitationTask.prompt.ilike(like),
+            DouyinImitationTask.source_desc.ilike(like),
+            DouyinImitationTask.title.ilike(like),
+            DouyinImitationTask.user_id.in_(email_ids),
+        ))
+    total = query.count()
+    rows = (query.order_by(DouyinImitationTask.id.desc())
+            .offset((page - 1) * page_size).limit(page_size).all())
+    user_ids = {int(row.user_id) for row in rows}
+    emails: Dict[int, str] = {}
+    if user_ids:
+        for uid, email in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all():
+            emails[int(uid)] = email or ""
+    return {"ok": True, "total": int(total), "page": page, "page_size": page_size,
+            "items": [_imitation_record_brief(row, emails.get(int(row.user_id), "")) for row in rows]}
+
+
+@router.get("/api/admin/imitation-records/{record_id}", summary="跟创生成记录详情（含上游请求/返回原文）")
+def admin_get_imitation_record(
+    record_id: int,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    from ..models import DouyinImitationTask
+
+    row = db.query(DouyinImitationTask).filter(DouyinImitationTask.id == int(record_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    user = db.query(User).filter(User.id == int(row.user_id)).first()
+    detail = _imitation_record_brief(row, (user.email if user else "") or "")
+    detail.update({
+        "prompt": row.prompt,
+        "image_url": row.image_url,
+        "source_video_url": row.source_video_url,
+        "upstream_request": row.upstream_request or "",
+        "upstream_response": row.upstream_response or "",
+        "asset_id": row.asset_id or "",
+    })
+    return {"ok": True, "record": detail,
+            "user": {"id": int(row.user_id), "email": (user.email if user else "") or ""}}

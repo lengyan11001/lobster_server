@@ -1,7 +1,8 @@
+import asyncio
 import json
 from decimal import Decimal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from backend.app.api import comfly_proxy
@@ -461,3 +462,81 @@ def test_image_edit_pending_same_fingerprint_without_client_request_id_does_not_
 
     assert response.status_code == 409
     assert captured == {"pre_deducts": 0, "upstream_calls": 0}
+
+
+def test_generation_with_reference_image_routes_to_edit(monkeypatch):
+    """垫图（generations 带 image 字段）必须改走 edits，不能当纯文本出图。"""
+    captured = {}
+
+    async def _fake_download(url):
+        captured["download_url"] = url
+        return b"ref-bytes", "image/png", ".png"
+
+    async def _fake_edit_request(**kwargs):
+        captured["edit"] = kwargs
+        return {"data": [{"url": "https://example.com/edited.png"}]}
+
+    async def _forbidden_generation(*_args, **_kwargs):
+        raise AssertionError("should not call the text-to-image channel when a reference image is present")
+
+    monkeypatch.setattr(comfly_proxy, "_download_image_bytes", _fake_download)
+    monkeypatch.setattr(comfly_proxy, "_execute_image_edit_request", _fake_edit_request)
+    monkeypatch.setattr(comfly_proxy, "_require_model_entry", _forbidden_generation)
+    monkeypatch.setattr(comfly_proxy, "_audit", lambda *_args, **_kwargs: None)
+
+    result = asyncio.run(
+        comfly_proxy._execute_image_generation_request(
+            request_user_id=142,
+            billing_user_id=142,
+            model="gpt-image-2",
+            body={"model": "gpt-image-2", "prompt": "生成宣传海报", "image_url": "https://tos.example/ref.png", "n": 1},
+        )
+    )
+
+    assert result == {"data": [{"url": "https://example.com/edited.png"}]}
+    assert captured["download_url"] == "https://tos.example/ref.png"
+    edit = captured["edit"]
+    assert edit["model"] == "gpt-image-2"
+    assert edit["data"]["prompt"] == "生成宣传海报"
+    assert edit["data"]["response_format"] == "url"
+    assert "image_url" not in edit["data"]
+    assert edit["buffered_files"][0][0] == "image"
+    assert edit["buffered_files"][0][2] == b"ref-bytes"
+
+
+def test_generation_without_reference_keeps_text_to_image(monkeypatch):
+    """没垫图时不能误转到 edits。"""
+    called = {"edit": 0}
+
+    async def _fake_edit_request(**_kwargs):
+        called["edit"] += 1
+        return {}
+
+    monkeypatch.setattr(comfly_proxy, "_execute_image_edit_request", _fake_edit_request)
+    monkeypatch.setattr(comfly_proxy, "_require_model_entry", lambda model: {"comfly_model": model})
+    monkeypatch.setattr(comfly_proxy, "_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        comfly_proxy,
+        "_image_generation_model_attempts_for_user",
+        lambda *_args, **_kwargs: ["gpt-image-2"],
+    )
+    # 通道不可用 → 循环跳过后抛出"全部失败"；关键是这路经不能走到 edits
+    monkeypatch.setattr(comfly_proxy, "_body_for_upstream_model", lambda body, *_args, **_kwargs: dict(body))
+    monkeypatch.setattr(comfly_proxy, "_image_generation_provider_label", lambda *_args, **_kwargs: "openmindapi")
+    monkeypatch.setattr(comfly_proxy, "_image_generation_channel_available", lambda *_args, **_kwargs: False)
+
+    try:
+        asyncio.run(
+            comfly_proxy._execute_image_generation_request(
+                request_user_id=142,
+                billing_user_id=142,
+                model="gpt-image-2",
+                body={"model": "gpt-image-2", "prompt": "no ref", "n": 1},
+            )
+        )
+        routed = False
+    except HTTPException:
+        routed = True
+
+    assert called["edit"] == 0
+    assert routed is True

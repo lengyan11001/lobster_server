@@ -17,9 +17,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     password_initialized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    password_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """改密码/被管理员重置密码时 +1；token 里带 pv，校验时不一致即失效（踢掉所有旧会话）。"""
     credits: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("99999.0000"), nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     preferred_model: Mapped[str] = mapped_column(String(128), default="openclaw", nullable=False)
+    language: Mapped[str] = mapped_column(String(16), default="zh-CN", nullable=False)
     llm_model_override: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     """速推登录后下发的 token，用于调用速推统一接口。"""
     sutui_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -37,6 +40,8 @@ class User(Base):
     agent_openclaw_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_task_dispatch_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # Short operator-facing label shown in the admin user list.
+    admin_remark: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -277,6 +282,32 @@ class DataMigrationMarker(Base):
     applied_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DouyinPlatformSnapshot(Base):
+    """Daily TikHub public-platform snapshot, without user-specific raw payloads."""
+
+    __tablename__ = "douyin_platform_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", name="uq_douyin_platform_snapshot_date"),
+        Index("ix_douyin_platform_snapshots_fetched_at", "fetched_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    snapshot_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running", index=True)
+    summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sections: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    endpoint_status: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class TikHubQueryLog(Base):
     """Server-side TikHub proxy audit log: request, response snapshot, and billing."""
 
@@ -442,6 +473,84 @@ class IPContentDraftRecord(Base):
     )
 
 
+class IPContentProfileSurvey(Base):
+    """Reusable personal-IP survey record for a specific persona."""
+
+    __tablename__ = "ip_content_profile_surveys"
+    __table_args__ = (
+        Index("ix_ip_content_profile_surveys_user_status", "user_id", "status"),
+        Index("ix_ip_content_profile_surveys_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False, default="资料调查")
+    requirements: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MomentsCoachMaterial(Base):
+    """Verified real-life material used by the WeChat Moments sales coach."""
+
+    __tablename__ = "moments_coach_materials"
+    __table_args__ = (
+        Index("ix_moments_coach_materials_user_created", "user_id", "created_at"),
+        Index("ix_moments_coach_materials_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(180), default="", nullable=False)
+    happened: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    customer_problem: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    customer_question: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    desired_result: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    current_change: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    image_urls: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MomentsCoachPlan(Base):
+    """A saved seven-day Moments publishing plan."""
+
+    __tablename__ = "moments_coach_plans"
+    __table_args__ = (Index("ix_moments_coach_plans_user_created", "user_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(180), default="朋友圈一周排期", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="draft", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MomentsCoachPlanItem(Base):
+    """One scheduled copy in a Moments coach plan."""
+
+    __tablename__ = "moments_coach_plan_items"
+    __table_args__ = (Index("ix_moments_coach_plan_items_plan_date", "plan_id", "publish_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plan_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    draft_record_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    circle_type: Mapped[str] = mapped_column(String(32), default="生活圈", nullable=False)
+    publish_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="planned", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class UserContentRecord(Base):
     """Content created by the desktop client and shared with H5."""
 
@@ -479,17 +588,28 @@ class IPContentScheduleTemplate(Base):
 
     __tablename__ = "ip_content_schedule_templates"
     __table_args__ = (
-        UniqueConstraint("user_id", "name", name="uq_ip_content_schedule_template_user_name"),
+        UniqueConstraint(
+            "user_id",
+            "installation_id",
+            "name",
+            name="uq_ip_content_schedule_template_user_slot_name",
+        ),
         Index("ix_ip_content_schedule_templates_user_status", "user_id", "status"),
+        Index("ix_ip_content_schedule_templates_user_slot_status", "user_id", "installation_id", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # Empty keeps account-level rows (legacy data and H5 without a selected
+    # device) shared by every slot; a non-empty value binds the row to one
+    # installation slot so two devices never overwrite each other's default.
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     keyword_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     competitor_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     memory_doc_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     memory_docs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    survey_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     requirements: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
     meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -899,6 +1019,11 @@ class RechargeOrder(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)  # pending, paid, cancelled
     out_trade_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     payment_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # 创建订单时锁定 OEM，回调/查询时据此选择对应富友商户密钥。
+    brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    # OEM inventory reservation for brand-funded recharge (currently Hikong).
+    agent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    agent_reserved_credits: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     # 审计：微信回调中的实付金额(分)、微信交易号，用于校验与对账
@@ -957,6 +1082,38 @@ class UserMachineIdentity(Base):
     machine_instance_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class UserDeviceLabel(Base):
+    """设备备注（界面上显示的设备名）按「机器身份」保存，槽位 ID 变了也还在。
+
+    以前设备名只写在 h5_chat_device_presence.display_name 上，键是 installation_id：
+    客户端一旦换槽位（换账号登录、换品牌、OTA 后拿到新的签名槽位、机器身份文件重建），
+    新槽位那行是空的，界面上就退回默认名字（local-online）。
+    这里把备注挂到 machine_instance_id（拿不到机器身份时退化为 slot:<installation_id>），
+    换槽位后自动套回同一台机器，并保留 last_installation_id 便于追溯与「沿用建议」。
+    """
+
+    __tablename__ = "user_device_labels"
+    __table_args__ = (
+        UniqueConstraint("user_id", "label_key", name="uq_user_device_label"),
+        Index("ix_user_device_label_user_slot", "user_id", "last_installation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    """machine_instance_id；拿不到机器身份时是 slot:<installation_id>。"""
+    label_key: Mapped[str] = mapped_column(String(192), nullable=False, index=True)
+    machine_instance_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    """最近一次套用这个备注的槽位，用于「这台机器现在在哪个槽位」与沿用建议。"""
+    last_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    """manual=人工改的；auto=系统从旧槽位/历史沿用过来的。"""
+    source: Mapped[str] = mapped_column(String(16), default="manual", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -1105,6 +1262,21 @@ class H5ChatDevicePresence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class RemoteSupportDeviceAuthorization(Base):
+    """Explicit administrator allow-list for remote-support devices."""
+
+    __tablename__ = "remote_support_device_authorizations"
+    __table_args__ = (UniqueConstraint("device_id", name="uq_remote_support_authorized_device"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class H5MountedAccountDefault(Base):
     """Default mounted account/device picked from H5 for publish and lead tasks."""
 
@@ -1236,6 +1408,8 @@ class WechatInteractionOutcome(Base):
     account_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
     contact_key: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
     contact_name: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    # 渠道：wechat（个微）/ whatsapp（桌面 WhatsApp）——两边共用同一套回写与学习
+    channel: Mapped[str] = mapped_column(String(16), default="wechat", server_default="wechat", nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(24), default="completed", nullable=False, index=True)
     category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
@@ -1247,6 +1421,40 @@ class WechatInteractionOutcome(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     happened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WechatContactReport(Base):
+    """账号级微信联系方式池：抖音私信接管上报，同账号的任意机器都能领取加好友。
+
+    数据跟着账号（user_id + 品牌）走，不绑设备：A 机器的抖音私信接管识别到客户
+    发来的手机号后上报，B 机器（同账号）跑个微自动加好友时领取并提交本机加好友。
+    """
+
+    __tablename__ = "wechat_contact_reports"
+    __table_args__ = (
+        UniqueConstraint("user_id", "brand_mark", "platform", "value", name="uq_wechat_contact_report_owner"),
+        Index("ix_wechat_contact_report_pickup", "user_id", "brand_mark", "platform", "status", "id"),
+        Index("ix_wechat_contact_report_user_time", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    brand_mark: Mapped[str] = mapped_column(String(32), default="", server_default="", nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), default="douyin", server_default="douyin", nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), default="mobile", server_default="mobile", nullable=False)
+    source_username: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    source_conversation: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    source_account: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    reported_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending", nullable=False, index=True)
+    claimed_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    claim_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    added_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class H5HomePreference(Base):
@@ -1292,7 +1500,7 @@ class ScheduledTask(Base):
     created_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_by_role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
-    task_kind: Mapped[str] = mapped_column(String(32), default="openclaw_message", nullable=False, index=True)
+    task_kind: Mapped[str] = mapped_column(String(32), default="chat_message", nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     schedule_type: Mapped[str] = mapped_column(String(16), default="once", nullable=False, index=True)
@@ -1325,7 +1533,7 @@ class ScheduledTaskRun(Base):
     installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     claimed_by_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
-    task_kind: Mapped[str] = mapped_column(String(32), default="openclaw_message", nullable=False, index=True)
+    task_kind: Mapped[str] = mapped_column(String(32), default="chat_message", nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
@@ -1442,12 +1650,17 @@ class H5WorkflowActivation(Base):
 
 
 class InstallationSignupBonusClaim(Base):
-    """在线独立认证：每个 installation_id 仅首名注册用户可获得新人积分（防同机多号刷分）。"""
+    """Online registration bonus claim, unique per phone number and OEM."""
 
     __tablename__ = "installation_signup_bonus_claims"
+    __table_args__ = (
+        UniqueConstraint("phone", "brand_mark", name="uq_installation_signup_bonus_claim_phone_brand"),
+    )
 
     installation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -1801,6 +2014,74 @@ class RecorderAudioRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class Customer(Base):
+    """Customer managed by one Lobster user; agents can view their descendants' customers."""
+
+    __tablename__ = "customers"
+    __table_args__ = (
+        Index("ix_customers_owner_updated", "owner_user_id", "updated_at"),
+        Index("ix_customers_owner_phone", "owner_user_id", "phone"),
+        Index("ix_customers_owner_status", "owner_user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    company: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    position: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    phone: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    email: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    source: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    last_contact_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CustomerAuthorization(Base):
+    """A grant allowing another user to operate on a customer's record."""
+
+    __tablename__ = "customer_authorizations"
+    __table_args__ = (
+        UniqueConstraint("customer_id", "grantee_user_id", name="uq_customer_authorization_customer_grantee"),
+        Index("ix_customer_authorizations_grantee_status", "grantee_user_id", "status"),
+        Index("ix_customer_authorizations_customer_status", "customer_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    customer_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    grantee_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CustomerCommunication(Base):
+    """A dated customer touchpoint, optionally linked to a recorder transcript."""
+
+    __tablename__ = "customer_communications"
+    __table_args__ = (
+        Index("ix_customer_comms_customer_occurred", "customer_id", "occurred_at"),
+        Index("ix_customer_comms_owner_occurred", "owner_user_id", "occurred_at"),
+        Index("ix_customer_comms_recording", "recording_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    customer_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    communication_type: Mapped[str] = mapped_column(String(32), default="note", nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    recording_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class ShanjianDigitalHumanVideoTask(Base):
     __tablename__ = "shanjian_digital_human_video_tasks"
     __table_args__ = (
@@ -1934,3 +2215,157 @@ class SutuiReconciliationRun(Base):
     diff: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")
     detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class PublishMetricSample(Base):
+    """发布数据（播放量）：抖音 / 视频号作品的最新计数快照（每个客户端上报键一行）。
+
+    客户端（个人发布中心所在机器）每天 02:00（北京时间）采集本机已发布作品的播放量，
+    以 sample_key = sha256(installation_id|platform|item_id|北京日期)[:48] 为幂等键上报；
+    云端按 (user_id, sample_key) UPSERT 最新值，重复上报不产生重复行。
+    朋友圈（朋友圈视频）本轮不采集，platform 只接受 douyin / wechat_channels。
+    """
+
+    __tablename__ = "publish_metrics"
+    __table_args__ = (
+        UniqueConstraint("user_id", "sample_key", name="uq_publish_metrics_user_sample"),
+        Index("ix_publish_metrics_user_platform_day", "user_id", "platform", "sampled_day"),
+        Index("ix_publish_metrics_user_item", "user_id", "platform", "item_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    """上报客户端标识（X-Installation-Id 或请求体 installation_id），用于区分多台机器。"""
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    item_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    """客户端本地发布账号 ID 与昵称（云端 publish_accounts 是另一套，这里仅做展示与分组）。"""
+    account_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    account_nickname: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    views: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    likes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    shares: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    favorites: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """客户端采样时刻（裸 UTC）与对应北京日期（YYYY-MM-DD，曲线按此自然日聚合）。"""
+    sampled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    sampled_day: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    sample_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="daily_0200", nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    reported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    report_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class PublishMetricEvent(Base):
+    """发布数据（播放量）时间序列：每个作品每个北京自然日一行，供曲线与环比。
+
+    与 PublishMetricSample 的区别：Sample 只保留「最新值」（看板当前数），Event 保留按日轨迹
+    （曲线 / 增长量 / 环比）。同一 (user_id, sample_key) 重复上报只更新当日数值，不追加重复行。
+    """
+
+    __tablename__ = "publish_metric_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "sample_key", name="uq_publish_metric_events_user_sample"),
+        Index("ix_publish_metric_events_user_platform_day", "user_id", "platform", "sampled_day"),
+        Index("ix_publish_metric_events_user_item", "user_id", "platform", "item_id", "sampled_day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    account_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    account_nickname: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    views: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    likes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    shares: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    favorites: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sampled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    sampled_day: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    sample_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class DouyinImitationTask(Base):
+    """抖音信息台「做同款（换人）」任务记录。
+
+    以前任务号只在前端内存里，用户一搜索/切 tab 就找不回自己的成片，
+    这里按用户落库，信息台可以列出「生成历史」再点回去看。
+    """
+
+    __tablename__ = "douyin_imitation_task"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_douyin_imitation_task_id"),
+        Index("ix_douyin_imitation_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    source_desc: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    model: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 管理后台「生成记录」要看：我们请求上游的原文 + 上游返回的原文
+    upstream_request: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    upstream_response: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="RUNNING", nullable=False)
+    progress: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    video_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    image_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    source_video_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    fail_reason: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    billable_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    stored_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    credits_charged: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
+    credits_refunded: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class DispatchDevice(Base):
+    """可调度设备：管理后台按槽位号维护，H5 用户可以在「我的」里选用。"""
+
+    __tablename__ = "dispatch_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    note: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="enabled", nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class UserDeviceSelection(Base):
+    """H5 用户当前选中的设备：own=自己的在线设备，system=后台配置的可调度设备。"""
+
+    __tablename__ = "user_device_selections"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    source: Mapped[str] = mapped_column(String(16), default="own", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )

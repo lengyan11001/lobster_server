@@ -1238,4 +1238,4 @@ def test_old_h5_run_poll_defaults_to_compact_response():
 
     assert _run_list_uses_compact_response(h5_request, None) is True
     assert _run_list_uses_compact_response(h5_request, False) is False
-    assert _run_list_uses_compact_response(online_request, None) is False
+    assert _run_list_uses_compact_response(online_request, None) is True

@@ -13,7 +13,12 @@ from sqlalchemy.exc import IntegrityError
 
 from ..core.config import settings
 from ..models import InstallationSignupBonusClaim, User, UserInstallation
-from ..services.brand_context import scoped_installation_id, user_brand_mark
+from ..services.brand_context import (
+    normalize_brand_mark,
+    phone_from_account_email,
+    scoped_installation_id,
+    user_brand_mark,
+)
 
 INSTALLATION_ID_HEADER = "X-Installation-Id"
 MAX_USER_INSTALLATIONS = 100
@@ -106,22 +111,32 @@ def ensure_installation_slot(db: Session, user_id: int, installation_id: str) ->
     db.commit()
 
 
-def apply_installation_signup_bonus_for_new_user(db: Session, user, installation_id: Optional[str]) -> None:
-    """在线独立认证：user 已 flush 有 id、credits 预置为满额新人分。按 installation_id 写入领取记录；缺 id 或该设备已领过则积分为 0。"""
+def apply_installation_signup_bonus_for_new_user(
+    db: Session,
+    user: User,
+    installation_id: Optional[str] = None,
+    *,
+    phone: Optional[str] = None,
+    brand_mark: Optional[str] = None,
+) -> None:
+    """Apply the one-time registration bonus for a phone number within one OEM."""
     from decimal import Decimal
 
     if not installation_slots_enabled():
         return
-    raw = (installation_id or "").strip()
-    if not raw:
+    mobile = (phone or phone_from_account_email(user.email) or "").strip()
+    if not re.fullmatch(r"1[3-9]\d{9}", mobile):
         user.credits = Decimal("0")
         return
+    mark = normalize_brand_mark(brand_mark or user_brand_mark(user), strict=False)
     try:
         with db.begin_nested():
             db.add(
                 InstallationSignupBonusClaim(
-                    installation_id=raw,
+                    installation_id=f"phone:{mark}:{mobile}",
                     user_id=user.id,
+                    phone=mobile,
+                    brand_mark=mark,
                     created_at=datetime.utcnow(),
                 )
             )

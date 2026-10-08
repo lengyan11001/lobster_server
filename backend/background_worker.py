@@ -42,6 +42,10 @@ from backend.app.core.config import settings
 from backend.app.services.ip_content_schedule_runner import ip_content_schedule_background_loop
 from backend.app.services.h5_chat_retention import h5_chat_retention_background_loop
 from backend.app.services.mastra_chat_runner import mastra_chat_background_loop
+from backend.app.services.generation_reconciler import (
+    generation_reconcile_loop,
+    is_generation_reconcile_enabled,
+)
 from backend.app.services.meta_social_schedule_runner import meta_social_schedule_background_loop
 from backend.app.services.provider_balance_monitor import (
     is_provider_balance_monitor_enabled,
@@ -57,6 +61,13 @@ from backend.app.services.sutui_llm_probe import (
     sutui_llm_probe_loop_forever,
 )
 from backend.app.services.sutui_reconcile import is_sutui_reconcile_enabled, sutui_reconcile_loop_forever
+from backend.app.services.douyin_platform_information_desk import (
+    douyin_platform_information_desk_background_loop,
+)
+from backend.app.services.mastra_task_watch import (
+    is_mastra_task_watch_enabled,
+    mastra_task_watch_loop_forever,
+)
 
 logger = logging.getLogger("backend.background_worker")
 
@@ -90,6 +101,27 @@ def _enabled_from_env(name: str, default: bool = True) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+async def shanjian_video_task_refresh_loop(interval_seconds: float = 180.0) -> None:
+    """客户端关页面后不再轮询：后台定时把生成中的数字人口播视频状态补到最新（含计费结算）。"""
+    from backend.app.api.shanjian_digital_human import refresh_stale_video_tasks
+    from backend.app.db import SessionLocal
+
+    while True:
+        db = SessionLocal()
+        try:
+            refreshed = await refresh_stale_video_tasks(db, limit=20, min_age_minutes=5)
+            if refreshed:
+                logger.info("[background] shanjian video task refreshed=%s", refreshed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[background] shanjian video task refresh failed: %s", str(exc)[:200])
+        finally:
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(max(60.0, float(interval_seconds)))
+
+
 def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
     factories: List[tuple[str, Callable[[], Awaitable[None]]]] = []
     if _enabled_from_env("LOBSTER_BACKGROUND_SUTUI_LLM_PROBE_ENABLED", True) and is_sutui_llm_probe_enabled_for_this_instance():
@@ -115,6 +147,11 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
     if _enabled_from_env("LOBSTER_MASTRA_CHAT_ENABLED", True):
         factories.append(("mastra_chat", mastra_chat_background_loop))
         factories.append(("h5_chat_retention", h5_chat_retention_background_loop))
+        # 长任务看护：Online 子任务 / 服务器生成任务做完后主动推回会话（2026-09-20）
+        if is_mastra_task_watch_enabled():
+            factories.append(("mastra_task_watch", mastra_task_watch_loop_forever))
+        else:
+            logger.info("[background] 长任务看护未启用")
     else:
         logger.info("[background] AI 调度会话未启用")
 
@@ -122,6 +159,20 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("provider_balance_monitor", provider_balance_monitor_loop_forever))
     else:
         logger.info("[background] provider balance monitor disabled")
+
+    if _enabled_from_env("LOBSTER_BACKGROUND_GENERATION_RECONCILE_ENABLED", True) and is_generation_reconcile_enabled():
+        # 生成任务对账补偿（2026-10-05）：已预扣但前端没轮询到的任务，后台分批去上游对账
+        import os as _os
+
+        _reconcile_interval = float(_os.environ.get("GENERATION_RECONCILE_INTERVAL_SECONDS") or 60)
+        factories.append(("generation_reconcile", lambda: generation_reconcile_loop(_reconcile_interval)))
+    else:
+        logger.info("[background] 生成任务对账补偿未启用")
+
+    if _enabled_from_env("LOBSTER_BACKGROUND_SHANJIAN_VIDEO_REFRESH_ENABLED", True):
+        factories.append(("shanjian_video_task_refresh", lambda: shanjian_video_task_refresh_loop(180.0)))
+    else:
+        logger.info("[background] 数字人视频状态后台刷新未启用")
 
     if _enabled_from_env("LOBSTER_BACKGROUND_RUNTIME_MONITOR_ENABLED", True) and is_runtime_monitor_enabled():
         factories.append(("runtime_monitor", runtime_monitor_loop_forever))
@@ -131,6 +182,10 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("runtime_state_maintenance", runtime_state_maintenance_loop))
     else:
         logger.info("[background] runtime state maintenance disabled")
+    if _enabled_from_env("LOBSTER_BACKGROUND_DOUYIN_INFORMATION_DESK_ENABLED", True):
+        factories.append(("douyin_platform_information_desk", douyin_platform_information_desk_background_loop))
+    else:
+        logger.info("[background] douyin platform information desk disabled")
     return factories
 
 

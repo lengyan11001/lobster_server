@@ -25,13 +25,42 @@ BILLING_ENTRY_ID = "billing_entry"
 SYS_CONFIG_ENTRY_ID = "sys_config_entry"
 LOGS_ENTRY_ID = "logs_entry"
 PERSONAL_SETTINGS_ENTRY_ID = "personal_settings_entry"
+AI_SECRETARY_ENTRY_ID = "ai_secretary_entry"
 AGENT_ENTRY_ID = "agent_entry"
+MY_AI_EMPLOYEES_ENTRY_ID = "my_ai_employees_entry"
+AI_MARKETING_ENTRY_ID = "ai_marketing_entry"
+PRIVATE_DOMAIN_ENTRY_ID = "private_domain_entry"
+OVERSEAS_PLATFORM_ENTRY_ID = "overseas_platform_entry"
+TUTORIAL_ENTRY_ID = "tutorial_entry"
+CANVAS_STUDIO_ENTRY_ID = "canvas_studio_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
+# 视频复刻（Hypit）开关：默认不开，需要时在管理后台按用户/代理商授权。
+HYPIT_VIDEO_REPLICATION_SKILL_ID = "hypit_video_replication_skill"
 MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
+IP_CONTENT_ORAL_SKILL_ID = "ip_content_oral_skill"
+IP_CONTENT_MOMENTS_SKILL_ID = "ip_content_moments_skill"
+DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID = "douyin_platform_information_desk"
+DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY = "douyin_platform_information_desk_access"
+LIEPIN_RECRUIT_SKILL_ID = "liepin_recruit_skill"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
 HOMEPAGE_ENTRY_SEEDED_MARKER = "__homepage_entry_permissions_seeded_v1"
+RETIRED_PACKAGE_IDS = frozenset({
+    "production_records_entry",
+    "openclaw_weixin_channel",
+    "openclaw_memory_skill",
+    "browser_use_skill",
+    "computer_use_skill",
+    "media_edit_skill",
+    "ecommerce_publish_skill",
+    # Compatibility alias for the former combined IP daily package. The
+    # split packages below are the only new permissions/store entries.
+    "ip_content_daily_skill",
+    # 智能视频 2.5（bihuo_25_video_skill / 管理后台「数字人2.5入口」）：已废弃，
+    # 技能商店、管理后台权限列表和功能开关都不再出现。
+    "bihuo_25_video_skill",
+})
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     HOME_AI_CHAT_ENTRY_ID,
     H5_CHAT_ENTRY_ID,
@@ -39,17 +68,36 @@ HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
     PUBLISH_CENTER_ENTRY_ID,
     ASSET_LIBRARY_ENTRY_ID,
     SCHEDULED_TASKS_ENTRY_ID,
-    PRODUCTION_RECORDS_ENTRY_ID,
     BILLING_ENTRY_ID,
     SYS_CONFIG_ENTRY_ID,
     LOGS_ENTRY_ID,
     PERSONAL_SETTINGS_ENTRY_ID,
     AGENT_ENTRY_ID,
+    MY_AI_EMPLOYEES_ENTRY_ID,
+    AI_MARKETING_ENTRY_ID,
+    TUTORIAL_ENTRY_ID,
     LOCAL_BESTSELLER_SKILL_ID,
-    VIRAL_VIDEO_REMIX_SKILL_ID,
 )
 
 FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
+    {
+        "id": LIEPIN_RECRUIT_SKILL_ID,
+        "name": "猎聘招聘",
+        "store_visibility": "技能权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 11,
+        "feature_key": LIEPIN_RECRUIT_SKILL_ID,
+    },
+    {
+        "id": DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
+        "name": "抖音平台信息台",
+        "store_visibility": "管理权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
+    },
     {
         "id": DOUYIN_LEADS_FEATURE_ID,
         "name": "抖音获客入口",
@@ -94,6 +142,24 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": OPENAI_OFFICIAL_IMAGE_CHANNEL_ACCESS_KEY,
+    },
+    {
+        "id": IP_CONTENT_ORAL_SKILL_ID,
+        "name": "IP口播文案",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": IP_CONTENT_ORAL_SKILL_ID,
+    },
+    {
+        "id": IP_CONTENT_MOMENTS_SKILL_ID,
+        "name": "朋友圈图文",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": IP_CONTENT_MOMENTS_SKILL_ID,
     },
     {
         "id": HOME_AI_CHAT_ENTRY_ID,
@@ -195,6 +261,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "feature_key": PERSONAL_SETTINGS_ENTRY_ID,
     },
     {
+        "id": AI_SECRETARY_ENTRY_ID,
+        "name": "AI秘书入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": AI_SECRETARY_ENTRY_ID,
+    },
+    {
         "id": AGENT_ENTRY_ID,
         "name": "首页：AI 执行台入口",
         "store_visibility": "入口权限",
@@ -202,6 +277,60 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": AGENT_ENTRY_ID,
+    },
+    {
+        "id": MY_AI_EMPLOYEES_ENTRY_ID,
+        "name": "我的 AI 员工",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": MY_AI_EMPLOYEES_ENTRY_ID,
+    },
+    {
+        "id": AI_MARKETING_ENTRY_ID,
+        "name": "AI 营销创作",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": AI_MARKETING_ENTRY_ID,
+    },
+    {
+        "id": PRIVATE_DOMAIN_ENTRY_ID,
+        "name": "私域销冠",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": PRIVATE_DOMAIN_ENTRY_ID,
+    },
+    {
+        "id": OVERSEAS_PLATFORM_ENTRY_ID,
+        "name": "海外平台",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": OVERSEAS_PLATFORM_ENTRY_ID,
+    },
+    {
+        "id": TUTORIAL_ENTRY_ID,
+        "name": "教程入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": TUTORIAL_ENTRY_ID,
+    },
+    {
+        "id": CANVAS_STUDIO_ENTRY_ID,
+        "name": "灵感画布入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": CANVAS_STUDIO_ENTRY_ID,
     },
     {
         "id": LOCAL_BESTSELLER_SKILL_ID,
@@ -231,8 +360,17 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "feature_key": MULTI_CLIP_MIXER_SKILL_ID,
     },
     {
+        "id": HYPIT_VIDEO_REPLICATION_SKILL_ID,
+        "name": "视频复刻入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": HYPIT_VIDEO_REPLICATION_SKILL_ID,
+    },
+    {
         "id": BIHUO_25_VIDEO_SKILL_ID,
-        "name": "必火2.5入口",
+        "name": "数字人2.5入口",
         "store_visibility": "入口权限",
         "unlock_price_yuan": None,
         "unlock_price_credits": None,
@@ -285,13 +423,23 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
         return {HOMEPAGE_FEATURE_GATES_MARKER: True}
 
     try:
-        from ..api.skills import _default_visible_packages_for_request, _user_has_custom_visibility
+        from ..api.skills import _default_visible_packages_for_request, _user_has_custom_visibility, _user_visible_package_ids
         from ..models import User
 
         user = db.query(User).filter(User.id == int(user_id)).first()
         has_custom = _user_has_custom_visibility(db, int(user_id))
-        if user is not None and not has_custom:
-            visible = set(_default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False))))
+        if user is not None:
+            # Reuse the skill-store visibility resolver so the split IP
+            # permissions are migrated for existing custom-visibility users
+            # before auth/me feature gates are evaluated.
+            visible = _user_visible_package_ids(
+                db,
+                user,
+                is_overseas_client=bool(getattr(user, "is_overseas_user", False)),
+            )
+            if not has_custom:
+                from ..api.skills import _expand_group_visibility
+                visible = _expand_group_visibility(set(visible))
         else:
             visible = {
                 row[0]
@@ -308,6 +456,14 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             .all()
         }
 
+    user_role = ""
+    try:
+        user_role = str(getattr(user, "role", "") or "").strip().lower()
+    except Exception:
+        pass
+    if user_role == "admin":
+        visible.update({DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID, DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY})
+
     flags: dict[str, bool] = {HOMEPAGE_FEATURE_GATES_MARKER: True}
     for package in FEATURE_FLAG_PACKAGES:
         package_id = str(package.get("id") or "").strip()
@@ -316,9 +472,11 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             flags.setdefault(package_id, False)
         if feature_key:
             flags.setdefault(feature_key, False)
+    for package_id in RETIRED_PACKAGE_IDS:
+        flags.setdefault(package_id, False)
     for package_id in visible:
         key = str(package_id or "").strip()
-        if not key:
+        if not key or key in RETIRED_PACKAGE_IDS:
             continue
         flags[key] = True
         alias = FEATURE_FLAG_PACKAGE_ALIASES.get(key)

@@ -23,6 +23,10 @@ router = APIRouter()
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _OVERSEAS_CLIENT_HEADER = "x-lobster-client-overseas"
 BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
+# Keep this separate from the original homepage seed marker. Older accounts
+# may already have v1 while still missing the employee defaults added later.
+_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v3"
+_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER = "__personal_whatsapp_assistant_visibility_seeded_v1"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -57,38 +61,16 @@ DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
     "skill_store_entry",
     "publish_center_entry",
     "asset_library_entry",
+    "global_trade_leads_skill",
     "scheduled_tasks_entry",
-    "production_records_entry",
     "billing_entry",
     "sys_config_entry",
     "logs_entry",
     "personal_settings_entry",
     "agent_entry",
-    "sutui_mcp",
-    "xiaohongshu_publish",
-    "douyin_publish",
-    "toutiao_publish",
-    "openclaw_weixin_channel",
-    "media_edit_skill",
-    "cutcli_template_studio",
-    "comfly_ecommerce_detail_skill",
-    "hifly_digital_human_skill",
-    "comfly_veo_skill",
-    "comfly_seedance_tvc_skill",
-    "goal_video_pipeline_skill",
-    "ip_content_daily_skill",
-    "linkedin_mining_skill",
-    "reddit_leads",
-    "x_leads",
-    "tiktok_leads",
-    "wecom_reply",
-    "juhe_wechat_skill",
-    "create_video_pipeline_skill",
-    "wewrite_official_account_skill",
-    "create_ppt_skill",
-    "local_bestseller_skill",
-    "viral_video_remix_skill",
-    "multi_clip_mixer_skill",
+    "my_ai_employees_entry",
+    "ai_marketing_entry",
+    "tutorial_entry",
 )
 
 
@@ -98,35 +80,60 @@ DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
     "skill_store_entry",
     "publish_center_entry",
     "asset_library_entry",
+    "global_trade_leads_skill",
     "scheduled_tasks_entry",
-    "production_records_entry",
     "billing_entry",
     "sys_config_entry",
     "logs_entry",
     "personal_settings_entry",
     "agent_entry",
-    "sutui_mcp",
-    "youtube_publish",
-    "twilio_whatsapp",
-    "openclaw_memory_skill",
-    "comfly_ecommerce_detail_skill",
-    "hifly_digital_human_skill",
-    "cutcli_template_studio",
-    "comfly_veo_skill",
-    "comfly_seedance_tvc_skill",
-    "goal_video_pipeline_skill",
-    "ip_content_daily_skill",
-    "reddit_leads",
-    "x_leads",
-    "tiktok_leads",
-    "wecom_reply",
-    "juhe_wechat_skill",
-    "create_ppt_skill",
-    "create_video_pipeline_skill",
-    "local_bestseller_skill",
-    "viral_video_remix_skill",
-    "multi_clip_mixer_skill",
+    "my_ai_employees_entry",
+    "ai_marketing_entry",
+    "tutorial_entry",
 )
+
+REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
+    "production_records_entry",
+    "openclaw_weixin_channel",
+    "openclaw_memory_skill",
+    "browser_use_skill",
+    "computer_use_skill",
+    "media_edit_skill",
+    "ecommerce_publish_skill",
+    "ip_content_daily_skill",
+    # 智能视频 2.5：已废弃，不再展示、也不可安装/解锁。
+    "bihuo_25_video_skill",
+})
+
+DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
+    "my_ai_employees_entry": (
+        "local_bestseller_skill",
+        "personal_whatsapp_assistant",
+    ),
+    "ai_marketing_entry": (
+        "comfly_ecommerce_detail_skill",
+        "hifly_digital_human_skill",
+        "comfly_veo_skill",
+        "comfly_seedance_tvc_skill",
+        "goal_video_pipeline_skill",
+        "ip_content_oral_skill",
+        "ip_content_moments_skill",
+        "wewrite_official_account_skill",
+        "viral_video_remix_skill",
+        "create_video_pipeline_skill",
+        "create_ppt_skill",
+        "multi_clip_mixer_skill",
+    ),
+}
+
+
+def _expand_group_visibility(package_ids: set) -> set:
+    expanded = {str(item) for item in package_ids if str(item).strip()}
+    for group_id, children in DEFAULT_GROUP_PACKAGE_EXPANSIONS.items():
+        if group_id in expanded:
+            expanded.update(children)
+    expanded.difference_update(REMOVED_DEFAULT_PACKAGE_IDS)
+    return expanded
 
 
 def _default_visible_packages_for_request(is_overseas_client: bool) -> tuple[str, ...]:
@@ -154,7 +161,7 @@ def _ensure_user_visibility_seeded(db: Session, user: User) -> None:
     """
     if _user_has_custom_visibility(db, user.id):
         return
-    baseline = _default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))
+    baseline = _expand_group_visibility(set(_default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))))
     for pkg_id in baseline:
         db.add(UserSkillVisibility(user_id=user.id, package_id=pkg_id))
     db.commit()
@@ -167,9 +174,58 @@ def _user_visible_package_ids(
     is_overseas_client: bool,
 ) -> set:
     if not _user_has_custom_visibility(db, user.id):
-        return set(_default_visible_packages_for_request(is_overseas_client))
-    rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user.id).all()
-    return {r[0] for r in rows}
+        return _expand_group_visibility(set(_default_visible_packages_for_request(is_overseas_client)))
+    rows = {
+        str(row[0] or "").strip()
+        for row in db.query(UserSkillVisibility.package_id)
+        .filter(UserSkillVisibility.user_id == user.id)
+        .all()
+        if str(row[0] or "").strip()
+    }
+    # Older accounts already had visibility rows, so they bypassed the runtime
+    # defaults and missed the newly defined AI employee/sales/marketing entries.
+    # Materialize the current baseline once; subsequent admin removals remain
+    # authoritative because the migration marker prevents reseeding.
+    if _DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER not in rows:
+        baseline = _expand_group_visibility(
+            set(_default_visible_packages_for_request(is_overseas_client))
+        )
+        missing = baseline.difference(rows)
+        for package_id in sorted(missing):
+            db.add(UserSkillVisibility(user_id=user.id, package_id=package_id))
+        db.add(
+            UserSkillVisibility(
+                user_id=user.id,
+                package_id=_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER,
+            )
+        )
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        rows.update(baseline)
+        rows.add(_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER)
+    if _PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER not in rows:
+        if "personal_whatsapp_assistant" not in rows:
+            db.add(
+                UserSkillVisibility(
+                    user_id=user.id,
+                    package_id="personal_whatsapp_assistant",
+                )
+            )
+        db.add(
+            UserSkillVisibility(
+                user_id=user.id,
+                package_id=_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER,
+            )
+        )
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        rows.add("personal_whatsapp_assistant")
+        rows.add(_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER)
+    return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 
 def _pkg_store_visibility(pkg: dict) -> str:
@@ -309,6 +365,8 @@ def list_store(
     ) if not is_admin else None
     out = []
     for pkg_id, pkg in packages.items():
+        if pkg_id in REMOVED_DEFAULT_PACKAGE_IDS:
+            continue
         if pkg.get("show_in_store") is False:
             continue
         if not is_admin and visible is not None and pkg_id not in visible:
@@ -377,7 +435,9 @@ def user_allowed_capability_ids(
     is_admin = _skill_store_admin(current_user)
     if is_admin:
         cap_ids = []
-        for pkg in packages.values():
+        for pkg_id, pkg in packages.items():
+            if pkg_id in REMOVED_DEFAULT_PACKAGE_IDS:
+                continue
             cap_ids.extend((pkg.get("capabilities") or {}).keys())
         return {"is_admin": True, "capability_ids": sorted(set(cap_ids))}
     visible = _user_visible_package_ids(
@@ -528,6 +588,8 @@ def install_skill(
     package = packages.get(body.package_id)
     if not package:
         raise HTTPException(status_code=404, detail=f"技能包 {body.package_id} 不存在")
+    if body.package_id in REMOVED_DEFAULT_PACKAGE_IDS:
+        raise HTTPException(status_code=410, detail="该技能已退役")
     if package.get("status") == "coming_soon":
         raise HTTPException(status_code=400, detail="该技能包即将推出，暂不可安装")
     if _pkg_store_visibility(package) == "debug" and not _skill_store_admin(current_user):

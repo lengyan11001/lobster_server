@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import random
+
 import asyncio
 import copy
+import ipaddress
+import logging
 import os
 import uuid
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, update
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_, update
+from sqlalchemy.orm import Session, defer
 
 from ..db import get_db
 from ..models import (
@@ -40,7 +45,16 @@ from ..models import (
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user, get_current_user_id_from_token, request_auth_session_id
-from .ip_content_studio import _draft_record_payload, run_ip_content_daily_scheduled
+from .ip_content_studio import (
+    _current_template_id_from_meta,
+    _draft_record_payload,
+    _granted_template_for_user,
+    _personal_default_row_for_slot,
+    _personal_default_template_payload_with_resources,
+    _personal_profile_fields,
+    _use_current_personal_template_options,
+    run_ip_content_daily_scheduled,
+)
 from .lead_collection_templates import run_lead_collection_templates_scheduled
 from .linkedin_mining import (
     create_linkedin_mining_job_from_payload,
@@ -55,6 +69,7 @@ from .social_leads import (
 from .wechat_channels_transcript import run_wechat_channels_transcript_payload_to_completion
 from .installation_slots import ensure_installation_slot, installation_slot_id_for_user
 from .mobile_identity import online_user_for_mobile_user
+from ..services import dispatch_devices
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import ensure_system_task_session
@@ -62,7 +77,27 @@ from ..services.installation_slot_ownership import assert_installation_slot_owne
 
 router = APIRouter()
 
-_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
+
+def _from_marketing_page(request) -> bool:
+    """这次提交是不是从 AI 营销创作页面（含二级菜单）发出的。
+
+    1) H5 显式标记头 X-H5-AI-Marketing: 1
+    2) 兜底：Referer / Origin 指向 AI营销创作页面（路由里带 marketing / 营销）
+    """
+    try:
+        for name in ("x-h5-ai-marketing", "x-ai-marketing"):
+            value = str(request.headers.get(name) or "").strip().lower()
+            if value in ("1", "true", "yes", "marketing", "ai_marketing", "ai-marketing"):
+                return True
+        ref = (str(request.headers.get("referer") or "") + " " + str(request.headers.get("origin") or "")).lower()
+        return any(k in ref for k in ("ai-marketing", "ai_marketing", "/marketing", "marketing/", "营销"))
+    except Exception:
+        return False
+
+
+logger = logging.getLogger(__name__)
+
+_TASK_KINDS = {"chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
 _SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _RECURRING_SCHEDULE_TYPES = {"interval", "daily_times"}
@@ -77,6 +112,7 @@ _DISABLED_SCHEDULED_CAPABILITIES = {"create.video.pipeline", "create.ppt.pipelin
 _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
 _RUN_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
+_DEFAULT_PENDING_EXPIRY_SECONDS = 300
 _pending_empty_cache: Dict[str, float] = {}
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
@@ -84,6 +120,9 @@ _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
 _SERIAL_CLIENT_WORKFLOW_ACTIONS = {
     "native_wechat_poll",
     "native_wechat_moments_engage",
+    # Sends drive the same WeChat window as the takeover; never run them in
+    # parallel with another WeChat UI action.
+    "native_wechat_send_message",
 }
 _NATIVE_WECHAT_RUNTIME_SETTING_KEYS = (
     "memory_doc_ids",
@@ -104,6 +143,29 @@ _WECHAT_CHANNELS_PLATFORMS = {"wechat_channels", "channels", "sph"}
 
 
 _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
+
+# 数字人节点口播来源：行业热门口播（默认）/ 专业 IP 口播
+_SHANJIAN_SCRIPT_SOURCES = {"ip_daily_industry_hot_oral", "ip_daily_professional_ip_oral"}
+_SHANJIAN_DEFAULT_SCRIPT_SOURCE = "ip_daily_industry_hot_oral"
+
+def _normalize_shanjian_script_sources(params: Dict[str, Any]) -> List[str]:
+    """数字人节点口播来源（多选）归一：保留合法值，顺便给旧客户端写入单值。"""
+    raw = params.get("script_sources")
+    values: List[str] = []
+    if isinstance(raw, list):
+        values = [_h5_dh_clean_text(item, 64) for item in raw]
+    elif str(raw or "").strip():
+        values = [_h5_dh_clean_text(raw, 64)]
+    legacy = _h5_dh_clean_text(params.get("script_source"), 64)
+    if legacy:
+        values.append(legacy)
+    ordered = list(dict.fromkeys([value for value in values if value in _SHANJIAN_SCRIPT_SOURCES]))
+    if not ordered:
+        ordered = [_SHANJIAN_DEFAULT_SCRIPT_SOURCE]
+    params["script_sources"] = ordered
+    # 多选时每次随机取一种（对齐界面文案「都选则每次随机一种」）；单选/默认值保持原样。
+    params["script_source"] = random.choice(ordered) if len(ordered) > 1 else ordered[0]
+    return ordered
 _SHANJIAN_DIGITAL_HUMAN_ACTION = "shanjian_digital_human_video"
 _DIGITAL_HUMAN_PROVIDER_LEGACY = "hifly_legacy"
 _DIGITAL_HUMAN_PROVIDER_V2 = "shanjian_v2"
@@ -152,17 +214,12 @@ def _h5_dh_provider() -> str:
     return _DIGITAL_HUMAN_PROVIDER_V2
 
 
-def _h5_dh_personal_default_template(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
-    return (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == user_id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+def _h5_dh_personal_default_template(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+) -> Optional[IPContentScheduleTemplate]:
+    return _personal_default_row_for_slot(db, int(user_id), installation_id)
 
 
 def _h5_dh_current_template(
@@ -301,50 +358,52 @@ def _h5_dh_template_language(requirements: Dict[str, Any], template: Optional[IP
     return raw or "zh-CN"
 
 
-def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
-    personal = _h5_dh_personal_default_template(db, user_id)
+def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") -> Dict[str, Any]:
+    personal = _h5_dh_personal_default_template(db, user_id, installation_id)
     current_template = _h5_dh_current_template(db, user_id, personal)
     reference_template = current_template or personal
     reference_owner_id = int(reference_template.user_id) if reference_template else int(user_id)
-    requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
-    if current_template and isinstance(current_template.requirements, dict):
-        merged = dict(requirements)
-        merged.update(current_template.requirements)
-        requirements = merged
-    keyword_ids = _h5_dh_clean_id_list(reference_template.keyword_ids if reference_template else [])
-    competitor_ids = _h5_dh_clean_id_list(reference_template.competitor_ids if reference_template else [])
-    keywords = (
-        db.query(IPContentKeyword)
-        .filter(IPContentKeyword.user_id == reference_owner_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
-        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
-        .all()
-        if keyword_ids
-        else []
-    )
-    competitors = (
-        db.query(ContentCompetitorAccount)
-        .filter(
-            ContentCompetitorAccount.user_id == reference_owner_id,
-            ContentCompetitorAccount.status == "active",
-            ContentCompetitorAccount.id.in_(competitor_ids),
+    # Resolve the effective personal row on every invocation.  The personal
+    # row carries explicit resource overrides while its selected template is
+    # still a live reference; neither the workflow activation nor an older
+    # task payload is authoritative here.
+    effective = _personal_default_template_payload_with_resources(db, personal)
+    requirements = effective.get("requirements") if isinstance(effective.get("requirements"), dict) else {}
+    keyword_ids = _h5_dh_clean_id_list(effective.get("keyword_ids"), 100)
+    competitor_ids = _h5_dh_clean_id_list(effective.get("competitor_ids"), 100)
+    keyword_rows = effective.get("keywords") if isinstance(effective.get("keywords"), list) else []
+    competitor_rows = effective.get("competitors") if isinstance(effective.get("competitors"), list) else []
+    keyword_texts = [
+        _h5_dh_clean_text(
+            item.get("display_name") or item.get("keyword") or item.get("name")
+            if isinstance(item, dict)
+            else item,
+            120,
         )
-        .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
-        .all()
-        if competitor_ids
-        else []
-    )
+        for item in keyword_rows
+    ]
+    competitor_texts = [
+        _h5_dh_clean_text(
+            item.get("display_name") or item.get("account_name") or item.get("account_id") or item.get("name")
+            if isinstance(item, dict)
+            else item,
+            160,
+        )
+        for item in competitor_rows
+    ]
     memory_doc_ids = [
         str(x or "").strip()
-        for x in ((reference_template.memory_doc_ids if reference_template else []) or [])
+        for x in (effective.get("memory_doc_ids") if isinstance(effective.get("memory_doc_ids"), list) else [])
         if str(x or "").strip()
     ]
-    memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
+    memory_docs = effective.get("memory_docs") if isinstance(effective.get("memory_docs"), list) else []
     if memory_doc_ids and not memory_docs:
-        doc_ids = [int(x) for x in memory_doc_ids if str(x).isdigit()]
+        doc_ids = [int(value) for value in memory_doc_ids if str(value).isdigit()]
+        owner_ids = {int(user_id), int(reference_owner_id)}
         rows = (
             db.query(OpenClawMemoryDocument)
             .filter(
-                OpenClawMemoryDocument.target_user_id == reference_owner_id,
+                OpenClawMemoryDocument.target_user_id.in_(owner_ids),
                 OpenClawMemoryDocument.status == "active",
                 OpenClawMemoryDocument.id.in_(doc_ids),
             )
@@ -363,21 +422,141 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
             }
             for row in rows
         ]
-    keyword_texts = [_h5_dh_clean_text(row.display_name or row.keyword, 120) for row in keywords]
+    current_meta = current_template.meta if current_template and isinstance(current_template.meta, dict) else {}
+    personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    template_value, template_configured = _h5_dh_selected_meta_value(
+        current_meta,
+        "digital_human_template",
+        "digital_human_template_configured",
+    )
+    if not template_configured:
+        template_value = personal_meta.get("digital_human_template")
+    resources_value, resources_configured = _h5_dh_selected_meta_value(
+        current_meta,
+        "digital_human_resources",
+        "digital_human_resources_configured",
+    )
+    if not resources_configured:
+        resources_value = personal_meta.get("digital_human_resources")
+    digital_human_resources = _h5_dh_normalize_resources(resources_value)
+    digital_human_template = template_value if isinstance(template_value, dict) else {}
+    virtualman_candidates = [
+        item for item in digital_human_resources["avatars"]
+        if item.get("virtualman_id")
+    ]
+    voice_candidates = list(digital_human_resources["voices"])
+    virtualman_id = _h5_dh_clean_text(
+        (virtualman_candidates[0] if virtualman_candidates else {}).get("virtualman_id"),
+        128,
+    )
+    voice = _h5_dh_clean_text(
+        (voice_candidates[0] if voice_candidates else {}).get("voice"),
+        128,
+    )
     return {
         "requirements": requirements,
         "keyword_ids": keyword_ids,
         "keywords": keyword_texts,
         "keyword_texts": keyword_texts,
-        "competitors": [
-            _h5_dh_clean_text(row.display_name or row.account_name or row.account_id, 160)
-            for row in competitors
-        ],
+        "competitor_ids": competitor_ids,
+        "competitors": competitor_texts,
         "memory_doc_ids": memory_doc_ids,
         "memory_docs": memory_docs,
         "language": _h5_dh_template_language(requirements, reference_template),
         "target_language": _h5_dh_template_language(requirements, reference_template),
+        "digital_human_template": digital_human_template,
+        "digital_human_resources": digital_human_resources,
+        "digital_human_template_configured": bool(template_configured or template_value is not None),
+        "digital_human_resources_configured": bool(resources_configured or resources_value is not None),
+        "virtualman_candidates": virtualman_candidates,
+        "virtualman_id": virtualman_id,
+        "voice_candidates": voice_candidates,
+        "voice": voice,
     }
+
+
+def _h5_dh_selected_meta_value(
+    meta: dict[str, Any],
+    key: str,
+    configured_key: str,
+) -> tuple[Any, bool]:
+    """Read a selected digital-human value, preserving explicit clears."""
+    if key not in meta:
+        return None, False
+    value = meta.get(key)
+    if value is None or meta.get(configured_key) is True:
+        return value, True
+    if isinstance(value, dict):
+        if any(
+            value.get(name)
+            for name in ("avatars", "voices", "style_id", "styleId", "template_id", "templateId", "id")
+        ):
+            return value, True
+        return value, False
+    return value, bool(value)
+
+
+def _h5_dh_normalize_resources(value: Any) -> Dict[str, List[Dict[str, Any]]]:
+    """Normalize the current template's selected avatar/voice allow-list."""
+    raw = value if isinstance(value, dict) else {}
+    allowed_statuses = {
+        "succeed", "success", "completed", "complete", "done", "ready", "published", "active",
+    }
+    avatars: List[Dict[str, Any]] = []
+    seen_avatars: set[str] = set()
+    for item in raw.get("avatars") if isinstance(raw.get("avatars"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _h5_dh_clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in allowed_statuses:
+            continue
+        provider = _h5_dh_clean_text(item.get("provider") or item.get("source"), 32).lower()
+        virtualman_id = _h5_dh_clean_text(item.get("virtualman_id") or item.get("virtualmanId"), 128)
+        avatar_id = _h5_dh_clean_text(item.get("avatar") or item.get("avatar_id") or item.get("avatarId"), 128)
+        if provider in {"shanjian", "shanjian_v2", "digital_human"} and not virtualman_id:
+            virtualman_id = avatar_id
+        identifier = virtualman_id if provider in {"shanjian", "shanjian_v2", "digital_human"} else (avatar_id or virtualman_id)
+        if not identifier:
+            continue
+        key = f"{provider}:{identifier}"
+        if key in seen_avatars:
+            continue
+        seen_avatars.add(key)
+        avatars.append(
+            {
+                "provider": provider or ("shanjian" if virtualman_id else "hifly"),
+                "virtualman_id": virtualman_id,
+                "avatar": avatar_id,
+                "profile_id": _h5_dh_clean_id_list([item.get("profile_id") or item.get("source_record_id") or item.get("id")], 1)[0]
+                if _h5_dh_clean_id_list([item.get("profile_id") or item.get("source_record_id") or item.get("id")], 1)
+                else 0,
+                "title": _h5_dh_clean_text(item.get("title") or item.get("name"), 128),
+                "cover_url": _h5_dh_clean_text(item.get("cover_url") or item.get("coverUrl") or item.get("image_url"), 1000),
+            }
+        )
+    voices: List[Dict[str, Any]] = []
+    seen_voices: set[str] = set()
+    for item in raw.get("voices") if isinstance(raw.get("voices"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _h5_dh_clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in allowed_statuses:
+            continue
+        voice = _h5_dh_clean_text(item.get("voice") or item.get("voice_id") or item.get("speaker_id") or item.get("speakerId"), 128)
+        if not voice or voice in seen_voices:
+            continue
+        seen_voices.add(voice)
+        voices.append(
+            {
+                "provider": _h5_dh_clean_text(item.get("provider") or item.get("source"), 32) or "hifly",
+                "voice": voice,
+                "title": _h5_dh_clean_text(item.get("title") or item.get("name"), 128),
+                "source_record_id": _h5_dh_clean_id_list([item.get("source_record_id") or item.get("id")], 1)[0]
+                if _h5_dh_clean_id_list([item.get("source_record_id") or item.get("id")], 1)
+                else 0,
+            }
+        )
+    return {"avatars": avatars, "voices": voices}
 
 
 def _enrich_linkedin_mining_keywords(
@@ -394,7 +573,7 @@ def _enrich_linkedin_mining_keywords(
     uses_placeholder = not current or all(item.lower() in _LINKEDIN_PLACEHOLDER_KEYWORDS for item in current)
     if not uses_placeholder:
         return payload
-    context = _h5_dh_context_params(db, target_user_id)
+    context = _h5_dh_context_params(db, target_user_id, _slot_from_payload(payload))
     keywords = [
         _h5_dh_clean_text(item, 120)
         for item in (context.get("keyword_texts") if isinstance(context.get("keyword_texts"), list) else [])
@@ -433,10 +612,11 @@ def _maybe_convert_h5_digital_human_task(
     if "h5" not in context_hint.lower() and "数字人" not in context_hint:
         return task_kind, payload
     inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    strip_avatar_keys = _h5_dh_provider() == _DIGITAL_HUMAN_PROVIDER_V2
     params = {
         key: value
         for key, value in dict(inner).items()
-        if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
+        if key not in ({"avatar", "avatar_id", "st_show", "aigc_flag"} if strip_avatar_keys else {"st_show", "aigc_flag"})
     }
     placeholder_texts = {
         "数字人口播",
@@ -457,23 +637,38 @@ def _maybe_convert_h5_digital_human_task(
     )
     params.setdefault("sales_node_label", label)
     params.setdefault("task_title", label)
-    context_params = _h5_dh_context_params(db, target_user_id)
+    context_params = _h5_dh_context_params(db, target_user_id, _slot_from_payload(h5_context))
     for key, value in context_params.items():
         if value and not params.get(key):
             params[key] = value
-    params["script_source"] = "ip_daily_industry_hot_oral"
+    # Legacy H5 capability requests may not carry the selected avatar list.
+    # Resolve the current available assets once during conversion so the
+    # resulting workflow still has a valid initial candidate.
+    if _h5_dh_provider() == _DIGITAL_HUMAN_PROVIDER_V2:
+        if not params.get("virtualman_candidates"):
+            available_virtualmans = _h5_dh_available_virtualmans(db, target_user_id)
+            if available_virtualmans:
+                params["virtualman_candidates"] = available_virtualmans
+        if not params.get("virtualman_candidates") and not params.get("virtualman_id"):
+            latest_virtualman = _h5_dh_latest_virtualman(db, target_user_id)
+            if latest_virtualman:
+                params["virtualman_id"] = latest_virtualman
+    _normalize_shanjian_script_sources(params)
     if _h5_dh_provider() != _DIGITAL_HUMAN_PROVIDER_V2:
         legacy_payload = dict(payload)
         legacy_payload["payload"] = params
         return task_kind, legacy_payload
     requested_virtualman_id = _h5_dh_clean_text(params.get("virtualman_id"), 128)
-    virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
-    virtualman_candidates = _h5_dh_available_virtualmans(db, target_user_id)
-    voice = _h5_dh_resolve_voice(
-        db,
-        target_user_id,
-        params.get("speaker_id") or params.get("voice"),
+    template_virtualman_candidates = params.get("virtualman_candidates") if isinstance(params.get("virtualman_candidates"), list) else []
+    virtualman_candidates = template_virtualman_candidates
+    virtualman_id = requested_virtualman_id or _h5_dh_clean_text(
+        (virtualman_candidates[0] if virtualman_candidates and isinstance(virtualman_candidates[0], dict) else {}).get("virtualman_id"),
+        128,
     )
+    voice_candidates = params.get("voice_candidates") if isinstance(params.get("voice_candidates"), list) else []
+    voice = _h5_dh_clean_text(params.get("speaker_id") or params.get("voice"), 128)
+    if not voice and voice_candidates and isinstance(voice_candidates[0], dict):
+        voice = _h5_dh_clean_text(voice_candidates[0].get("voice") or voice_candidates[0].get("speaker_id"), 128)
     if requested_virtualman_id:
         params["virtualman_selection_mode"] = "fixed"
     elif virtualman_candidates:
@@ -511,12 +706,200 @@ def _normalize_sales_digital_human_run_payload(
     if _h5_dh_clean_text(source.get("action"), 128) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
         return source
     params = source.get("params") if isinstance(source.get("params"), dict) else {}
-    if _h5_dh_clean_text(params.get("script_source"), 128) != "ip_daily_industry_hot_oral":
+    if not _normalize_shanjian_script_sources(dict(params)):
         return source
     normalized_params = dict(params)
     normalized_params.pop("prompt", None)
     source["params"] = normalized_params
     return source
+
+
+# ── 抖音获客任务类型归一（2026-09-20）──────────────────────────────────────────
+# 背景：H5 编辑器把抖音节点的 plan 存成 task_kind=client_workflow + action=douyin_leads，
+# 而客户端只认顶层 task_kind=douyin_leads（子动作放 payload.action），09-16 起 851 个任务
+# 全部报「暂不支持的客户端工作流：douyin_leads」（涉及 14 个账号）。这里在下发/展示前归一，
+# 历史坏数据不逐条改也能立刻恢复；新数据在保存/组装时也会归一。
+_DOUYIN_LEADS_KIND = "douyin_leads"
+_DOUYIN_SALES_ACTIONS = (
+    "search_collect",
+    "account_nurture",
+    "self_comment_monitor",
+    "precise_touch",
+    "reply_comments",
+    "mention_comment",
+    "follow_comment",
+    "direct_message",
+    "stranger_message",
+)
+def douyin_action_from_text(value: Any) -> str:
+    """节点标签 → 抖音子动作。
+
+    与客户端 `_scheduled_douyin_sales_action_from_text()` 和
+    `h5_workflows._sales_action_from_note()` 保持同一优先级：同样的标签在
+    服务端和客户端必须推断出同一个动作，否则子动作参数（采集/触达）会错配。
+    """
+    text = str(value or "").strip()
+    if "我的评论区" in text or "抖音我的评论区" in text:
+        return "self_comment_monitor"
+    if "精准用户触达" in text or "精准触达" in text:
+        return "precise_touch"
+    if "养号" in text:
+        return "account_nurture"
+    if "发布后采集" in text or "关键词抓取" in text:
+        return "search_collect"
+    if "回复" in text and "评论" in text:
+        return "reply_comments"
+    if "@精准" in text or "评论并@" in text or "自己评论区接管" in text:
+        return "mention_comment"
+    if "关注" in text and "评论" in text:
+        return "follow_comment"
+    if "主动私信" in text or "私信10" in text:
+        return "direct_message"
+    if "私信接管" in text or "私信引流" in text:
+        return "stranger_message"
+    return "search_collect"
+
+
+def douyin_action_from_hints(payload: Any, label: Any = None) -> str:
+    """从 params.sales_action / 节点标签推断抖音子动作。
+
+    `label` 是工作流节点自己的标签（admin.html 的节点只有 node.ability_label /
+    plan.title，不会写进 payload），保存/组装节点时把它传进来。
+    """
+    data = payload if isinstance(payload, dict) else {}
+    params = data.get("params") if isinstance(data.get("params"), dict) else {}
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    for raw in (params.get("sales_action"), params.get("douyin_action"), data.get("action")):
+        value = str(raw or "").strip().lower()
+        if value in _DOUYIN_SALES_ACTIONS:
+            return value
+    candidates = (
+        context.get("ability_label"),
+        context.get("workflow_node_label"),
+        context.get("sales_node_label"),
+        data.get("title"),
+        data.get("content"),
+        params.get("sales_node_label"),
+        params.get("node_label"),
+        params.get("note"),
+        label,
+    )
+    for candidate in candidates:
+        action = douyin_action_from_text(candidate)
+        if action != "search_collect":
+            # 先按标签还原具体动作；都不匹配才落到默认的采集。
+            return action
+    return "search_collect"
+
+
+def is_mislabeled_douyin_task(task_kind: Any, payload: Any) -> bool:
+    """是否属于「抖音动作被写成客户端工作流动作」的历史坏数据。"""
+    kind = str(task_kind or "").strip().lower()
+    if kind != "client_workflow":
+        return False
+    data = payload if isinstance(payload, dict) else {}
+    action = str(data.get("action") or "").strip().lower()
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    ability = str(context.get("ability_key") or "").strip().lower()
+    if action == _DOUYIN_LEADS_KIND:
+        return True
+    return ability == _DOUYIN_LEADS_KIND and action in {_DOUYIN_LEADS_KIND, "douyin_leads_access", ""}
+
+
+def normalize_douyin_task_kind(task_kind: Any, payload: Any, label: Any = None) -> "tuple":
+    """抖音获客任务归一：返回 (task_kind, payload, changed)。
+
+    只动被写坏的那种（client_workflow + action/ability = douyin_leads），正常数据原样返回。
+    `label` 传节点标签时，子动作优先按节点标签推断（编辑器存的 payload 里没有标签）。
+    """
+    data = dict(payload) if isinstance(payload, dict) else {}
+    if not is_mislabeled_douyin_task(task_kind, data):
+        return str(task_kind or "").strip().lower(), data, False
+    params = dict(data.get("params") if isinstance(data.get("params"), dict) else {})
+    action = douyin_action_from_hints(data, label=label)
+    params["sales_action"] = action
+    data["action"] = action
+    data["params"] = params
+    # 与 h5_workflows._workflow_node_task_spec() 对 douyin_leads 的处理保持一致：
+    # H5 工作流触发的抖音动作都是一次性动作，不能变成常驻监控。
+    data.setdefault("h5_task_source", "workflow")
+    data.setdefault("h5_one_shot", True)
+    data.setdefault("douyin_execution_mode", "one_shot")
+    return _DOUYIN_LEADS_KIND, data, True
+
+
+def douyin_node_label(node: Any) -> str:
+    """工作流节点的标签（编辑器只把标签放在 node/plan 上，payload 里没有）。"""
+    if not isinstance(node, dict):
+        return ""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    for candidate in (
+        node.get("ability_label"),
+        node.get("label"),
+        node.get("note"),
+        plan.get("title"),
+        plan.get("content"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def workflow_node_time_key(node: Any) -> tuple:
+    """按「节点设置的开始时间」排序用（HH:MM / HH：MM）；没时间或写错的排最后。"""
+    payload = node if isinstance(node, dict) else {}
+    raw = str(payload.get("time") or "").strip()
+    match = re.match(r"^(\d{1,2})\s*[:：]\s*(\d{1,2})", raw)
+    if match:
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return (0, hour * 60 + minute)
+    return (1, 0)
+
+
+def sort_workflow_nodes_by_time(nodes: Any) -> list:
+    """按开始时间排好序的新列表（稳定排序：同一时间保持原相对顺序）。"""
+    return sorted([node for node in (nodes or []) if isinstance(node, dict)], key=workflow_node_time_key)
+
+
+def normalize_workflow_nodes_for_save(nodes: Any) -> "tuple":
+    """保存工作流模板前：递归把节点 plan 里写错的抖音 kind 归一。
+
+    返回 (nodes, fixed_count)。管理后台（admin.html/admin.py）、H5、系统模板三条保存路径
+    都走这里，保证「抖音节点存进库的就是 task_kind=douyin_leads」。
+    """
+
+    def _fix(items: Any) -> int:
+        fixed = 0
+        if isinstance(items, dict):
+            items = [items]
+        for node in items or []:
+            if not isinstance(node, dict):
+                continue
+            plan = node.get("plan") if isinstance(node.get("plan"), dict) else None
+            if plan is not None:
+                kind = str(plan.get("task_kind") or "").strip().lower()
+                payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+                new_kind, new_payload, changed = normalize_douyin_task_kind(
+                    kind, payload, label=douyin_node_label(node)
+                )
+                if changed:
+                    plan["task_kind"] = new_kind
+                    plan["payload"] = new_payload
+                    fixed += 1
+            fixed += _fix(node.get("actions"))
+            fixed += _fix(node.get("children"))
+            # 新增的节点按开始时间插到该在的位置，而不是永远排在最后
+            for child_key in ("actions", "children"):
+                children = node.get(child_key)
+                if isinstance(children, list):
+                    children.sort(key=workflow_node_time_key)
+        return fixed
+
+    cleaned = [dict(node) for node in (nodes or []) if isinstance(node, dict)]
+    cleaned.sort(key=workflow_node_time_key)
+    return cleaned, _fix(cleaned)
 
 
 def _enrich_digital_human_voice_payload(
@@ -529,11 +912,16 @@ def _enrich_digital_human_voice_payload(
     if _h5_dh_clean_text(source.get("action"), 128) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
         return source
     params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
-    voice = _h5_dh_resolve_voice(
-        db,
-        target_user_id,
-        params.get("speaker_id") or params.get("voice"),
-    )
+    voice = _h5_dh_clean_text(params.get("speaker_id") or params.get("voice"), 128)
+    if not voice:
+        candidates = params.get("voice_candidates") if isinstance(params.get("voice_candidates"), list) else []
+        if candidates and isinstance(candidates[0], dict):
+            voice = _h5_dh_clean_text(candidates[0].get("voice") or candidates[0].get("speaker_id"), 128)
+    if "voice_candidates" not in params:
+        # Validate even a non-empty requested voice. Deleted/disabled assets
+        # must never remain in a task payload and should fall back to the
+        # latest active voice (or be removed when none exists).
+        voice = _h5_dh_resolve_voice(db, target_user_id, voice)
     if voice:
         params["voice"] = voice
         params["speaker_id"] = voice
@@ -592,7 +980,7 @@ def _creative_candidate_group(meta: Optional[dict]) -> str:
 class ScheduledTaskCreate(BaseModel):
     user_id: Optional[int] = None
     title: str = Field("", max_length=160)
-    task_kind: str = "openclaw_message"
+    task_kind: str = "chat_message"
     content: str = Field("", max_length=12000)
     payload: Dict[str, Any] = Field(default_factory=dict)
     schedule_type: str = "once"
@@ -657,18 +1045,23 @@ def _first_profile_text(*values: Any, limit: int = 300) -> str:
     return ""
 
 
-def _personal_default_requirements(db: Session, user_id: int) -> Dict[str, Any]:
-    row = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == user_id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
-    return row.requirements if row and isinstance(row.requirements, dict) else {}
+def _slot_from_payload(payload: Any, *fallbacks: str) -> str:
+    """Installation slot recorded in a task payload, else the given fallbacks."""
+    data = payload if isinstance(payload, dict) else {}
+    context = data.get("h5_context") if isinstance(data.get("h5_context"), dict) else {}
+    for value in (context.get("installation_id"), data.get("installation_id"), *fallbacks):
+        text = str(value or "").strip()
+        if text:
+            return text[:128]
+    return ""
+
+
+def _personal_default_requirements(db: Session, user_id: int, installation_id: str = "") -> Dict[str, Any]:
+    row = _personal_default_row_for_slot(db, int(user_id), installation_id)
+    if row is None:
+        return {}
+    effective = _personal_default_template_payload_with_resources(db, row)
+    return dict(effective.get("requirements") or {})
 
 
 def _local_bestseller_profile_from_persona(requirements: Dict[str, Any]) -> Dict[str, str]:
@@ -737,6 +1130,31 @@ def _missing_local_bestseller_profile_fields(profile: Dict[str, Any]) -> List[st
     return missing
 
 
+def _is_public_upstream_url(value: Any) -> bool:
+    url = _clean_profile_text(value, 2000)
+    if not url.lower().startswith(("http://", "https://")):
+        return False
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        path = (parsed.path or "").lower()
+        if not hostname or hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+            return False
+        if "bhzn.top" in hostname or "42.194.209.150" in hostname:
+            return False
+        if path.startswith("/api/assets/file/") or path.startswith("/api/assets/temp/"):
+            return False
+        try:
+            address = ipaddress.ip_address(hostname)
+            if not address.is_global:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 def _server_asset_public_url(db: Session, *, user_id: int, asset_id: Any) -> str:
     clean_asset_id = _clean_profile_text(asset_id, 64)
     if not clean_asset_id:
@@ -747,7 +1165,7 @@ def _server_asset_public_url(db: Session, *, user_id: int, asset_id: Any) -> str
         .first()
     )
     source_url = _clean_profile_text(row[0] if row else "", 2000)
-    return source_url if source_url.lower().startswith(("http://", "https://")) else ""
+    return source_url if _is_public_upstream_url(source_url) else ""
 
 
 def _enrich_local_bestseller_workflow_payload(
@@ -764,7 +1182,11 @@ def _enrich_local_bestseller_workflow_payload(
     out["action"] = "local_bestseller_daily_video"
     params = out.get("params") if isinstance(out.get("params"), dict) else {}
     params = dict(params)
-    persona_profile = _local_bestseller_profile_from_persona(_personal_default_requirements(db, target_user_id))
+    # 人设必须按"当前运行的槽位"取：漏传槽位会落到账号级行（本项目账号级行是"阿迪老师007"），
+    # 于是诺诺的设备长出阿迪的脸。槽位内没有配置就退化为空人设（由客户端校验报错），不再借用账号级。
+    persona_profile = _local_bestseller_profile_from_persona(
+        _personal_default_requirements(db, target_user_id, _slot_from_payload(payload))
+    )
     existing_profile = params.get("profile") if isinstance(params.get("profile"), dict) else {}
     explicit_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
     profile_override = params.get("profile_override") is True
@@ -776,18 +1198,22 @@ def _enrich_local_bestseller_workflow_payload(
         # One-off H5 tasks may intentionally override selected persona fields while inheriting the rest.
         merged_profile = dict(persona_profile)
         merged_profile.update(explicit_profile)
-        if _clean_profile_text(explicit_profile.get("photo_url"), 2000).lower().startswith(("http://", "https://")):
+        if _is_public_upstream_url(explicit_profile.get("photo_url")):
             merged_profile.pop("photo_asset_id", None)
     else:
         # Employee workflows always follow the current IP persona; old templates may carry stale placeholders.
         merged_profile = dict(explicit_profile)
         merged_profile.update(persona_profile)
+    direct_photo_url = _clean_profile_text(merged_profile.get("photo_url"), 2000)
+    if direct_photo_url and not _is_public_upstream_url(direct_photo_url):
+        # Preview/signature URLs are for the UI only. Keep the asset ID so Online can resolve a real public source_url.
+        merged_profile.pop("photo_url", None)
     photo_asset_id = _clean_profile_text(merged_profile.get("photo_asset_id"), 64)
     if photo_asset_id:
         server_photo_url = _server_asset_public_url(db, user_id=target_user_id, asset_id=photo_asset_id)
         if server_photo_url:
             merged_profile["photo_url"] = server_photo_url
-        if _clean_profile_text(merged_profile.get("photo_url"), 2000).lower().startswith(("http://", "https://")):
+        if _is_public_upstream_url(merged_profile.get("photo_url")):
             # Older online clients try every supplied asset ID against their local database.
             # Keep the server ID as metadata and send only the public URL in the execution profile.
             params["profile_photo_source_asset_id"] = photo_asset_id
@@ -815,6 +1241,7 @@ def _enrich_native_wechat_workflow_payload(
     *,
     payload: Dict[str, Any],
     target_user_id: int,
+    force_saved_config: bool = False,
 ) -> Dict[str, Any]:
     if _clean_profile_text(payload.get("action"), 80) != "native_wechat_poll":
         return payload
@@ -833,7 +1260,7 @@ def _enrich_native_wechat_workflow_payload(
         if key not in saved:
             continue
         current = params.get(key)
-        if current not in (None, "", [], {}):
+        if not force_saved_config and current not in (None, "", [], {}):
             continue
         params[key] = copy.deepcopy(saved[key])
     if pref and not _clean_profile_text(params.get("account_id"), 128):
@@ -846,6 +1273,308 @@ def _enrich_native_wechat_workflow_payload(
         params["group_invite_rule_status"] = "configured" if has_rules else "pending_rules"
     out["params"] = params
     return out
+
+
+_LIVE_PERSONAL_TEMPLATE_TASK_KINDS = {"client_workflow", "capability"}
+_LIVE_PERSONAL_TEMPLATE_ACTIONS = {
+    "local_bestseller_plan",
+    "local_bestseller_scene_batch",
+    "local_bestseller_daily_video",
+    "shanjian_digital_human_video",
+    "native_wechat_poll",
+}
+
+
+def _workflow_uses_live_personal_template(task_kind: str, payload: Dict[str, Any]) -> bool:
+    if task_kind not in _LIVE_PERSONAL_TEMPLATE_TASK_KINDS:
+        return False
+    context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    action = _clean_profile_text(payload.get("action"), 80).lower()
+    capability_id = _clean_profile_text(payload.get("capability_id"), 128).lower()
+    return bool(
+        str(payload.get("template_source") or "").strip().lower() == "personal_current"
+        or str(context.get("template_source") or "").strip().lower() == "personal_current"
+        or str(context.get("workflow_template_id") or "").strip()
+        or action in _LIVE_PERSONAL_TEMPLATE_ACTIONS and str(context.get("workflow_node_id") or "").strip()
+        or capability_id == _HIFLY_TTS_CAPABILITY_ID and str(context.get("workflow_node_id") or "").strip()
+    )
+
+
+def _live_personal_template_validation(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Return the server's current-template decision for a live workflow.
+
+    The client receives the effective resources and this decision together at
+    claim time. It must not infer template completeness from an old task
+    snapshot or from its local asset database.
+    """
+    source = payload if isinstance(payload, dict) else {}
+    if not _workflow_uses_live_personal_template(task_kind, source):
+        return None
+
+    action = _clean_profile_text(source.get("action"), 80).lower()
+    capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
+    context = _h5_dh_context_params(db, int(target_user_id), _slot_from_payload(source))
+    missing: List[str] = []
+
+    if action in _LOCAL_BESTSELLER_ACTIONS:
+        params = source.get("params") if isinstance(source.get("params"), dict) else {}
+        profile_source = _clean_profile_text(params.get("profile_source"), 32).lower()
+        if params.get("profile_override") or profile_source == "custom":
+            # A one-off custom profile is not owned by the personal template.
+            return {"checked": True, "ok": True, "missing": [], "message": ""}
+        requirements = context.get("requirements") if isinstance(context.get("requirements"), dict) else {}
+        profile = _local_bestseller_profile_from_persona(requirements)
+        missing.extend(_missing_local_bestseller_profile_fields(profile))
+        if missing:
+            message = "Current personal template is incomplete: " + ", ".join(dict.fromkeys(missing))
+        else:
+            message = ""
+        return {
+            "checked": True,
+            "ok": not missing,
+            "missing": list(dict.fromkeys(missing)),
+            "message": message,
+        }
+
+    if action == _SHANJIAN_DIGITAL_HUMAN_ACTION or capability_id == _HIFLY_TTS_CAPABILITY_ID:
+        resources = context.get("digital_human_resources")
+        resources = resources if isinstance(resources, dict) else {}
+        avatars = resources.get("avatars") if isinstance(resources.get("avatars"), list) else []
+        voices = resources.get("voices") if isinstance(resources.get("voices"), list) else []
+        template = context.get("digital_human_template")
+        template_id = ""
+        if isinstance(template, dict):
+            template_id = _h5_dh_clean_text(
+                template.get("style_id")
+                or template.get("styleId")
+                or template.get("template_id")
+                or template.get("templateId")
+                or template.get("id"),
+                128,
+            )
+        if not template_id:
+            missing.append("digital human editing template")
+        if not any(
+            _h5_dh_clean_text(item.get("virtualman_id") or item.get("avatar"), 128)
+            for item in avatars
+            if isinstance(item, dict)
+        ):
+            missing.append("digital human avatar")
+        # Capability tasks keep the provider request under ``payload``;
+        # converted client-workflow tasks use ``params``. Inspect the shape
+        # that will actually be sent so audio-driven requests do not require
+        # an unrelated voice asset.
+        source_params = (
+            source.get("payload")
+            if capability_id == _HIFLY_TTS_CAPABILITY_ID and isinstance(source.get("payload"), dict)
+            else source.get("params")
+            if isinstance(source.get("params"), dict)
+            else {}
+        )
+        audio_mode = (
+            _h5_dh_clean_text(source_params.get("drive_mode"), 32).lower() == "audio"
+            or bool(source_params.get("audio_url") or source_params.get("audio_asset_id"))
+        )
+        if not audio_mode and not any(
+            _h5_dh_clean_text(item.get("voice") or item.get("speaker_id"), 128)
+            for item in voices
+            if isinstance(item, dict)
+        ):
+            missing.append("voice asset")
+        message = "Current personal template is incomplete: " + ", ".join(dict.fromkeys(missing)) if missing else ""
+        return {
+            "checked": True,
+            "ok": not missing,
+            "missing": list(dict.fromkeys(missing)),
+            "message": message,
+        }
+
+    return {"checked": True, "ok": True, "missing": [], "message": ""}
+
+
+def _attach_live_personal_template_validation(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Dict[str, Any]:
+    source = dict(payload or {})
+    validation = _live_personal_template_validation(
+        db,
+        task_kind=task_kind,
+        payload=source,
+        target_user_id=target_user_id,
+    )
+    if validation is None:
+        source.pop("template_validation", None)
+    else:
+        source["template_validation"] = validation
+    return source
+
+
+def _refresh_live_personal_template_payload(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Overlay only template-owned fields from the latest saved IP settings.
+
+    Workflow payloads are durable scheduling records, not configuration
+    snapshots. This function runs immediately before enqueue/claim/execution;
+    node action, timing and quantity fields stay untouched.
+    """
+    source = dict(payload or {})
+    if not _workflow_uses_live_personal_template(task_kind, source):
+        source.pop("template_validation", None)
+        return source
+    action = _clean_profile_text(source.get("action"), 80).lower()
+    capability_id = _clean_profile_text(source.get("capability_id"), 128).lower()
+    personal_slot = _slot_from_payload(source)
+    personal = _h5_dh_personal_default_template(db, int(target_user_id), personal_slot)
+    # A live workflow must not fall back to the activation snapshot when the
+    # current personal template was removed or is temporarily unavailable.
+    # Resolve an empty server context so stale template-owned fields are
+    # cleared and the normal server-side validation can report the omission.
+    context_params = _h5_dh_context_params(db, int(target_user_id), personal_slot)
+    if personal is None and task_kind == "client_workflow" and action in _LOCAL_BESTSELLER_ACTIONS:
+        params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
+        if not params.get("profile_override") and _clean_profile_text(params.get("profile_source"), 32).lower() != "custom":
+            params.pop("profile", None)
+        source["params"] = params
+        return _attach_live_personal_template_validation(
+            db,
+            task_kind=task_kind,
+            payload=source,
+            target_user_id=target_user_id,
+        )
+    if task_kind == "capability" and capability_id == _HIFLY_TTS_CAPABILITY_ID:
+        inner = dict(source.get("payload") if isinstance(source.get("payload"), dict) else {})
+        for key in (
+            "requirements",
+            "keyword_ids",
+            "keywords",
+            "keyword_texts",
+            "competitors",
+            "memory_doc_ids",
+            "memory_docs",
+            "language",
+            "target_language",
+        ):
+            if key in context_params:
+                inner[key] = copy.deepcopy(context_params[key])
+        avatars = context_params.get("digital_human_resources", {}).get("avatars", [])
+        if isinstance(avatars, list) and avatars:
+            avatar = _h5_dh_clean_text(avatars[0].get("avatar") or avatars[0].get("virtualman_id"), 128)
+            if avatar:
+                inner["avatar"] = avatar
+        else:
+            inner.pop("avatar", None)
+            inner.pop("avatar_id", None)
+        voice = _h5_dh_clean_text(context_params.get("voice"), 128)
+        if voice:
+            inner["voice"] = voice
+        else:
+            inner.pop("voice", None)
+            inner.pop("speaker_id", None)
+        source["payload"] = inner
+        return _attach_live_personal_template_validation(
+            db,
+            task_kind=task_kind,
+            payload=source,
+            target_user_id=target_user_id,
+        )
+    if task_kind == "client_workflow":
+        params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
+        if action in _LOCAL_BESTSELLER_ACTIONS:
+            # The normal sales workflow follows the current IP persona. A
+            # custom one-off profile remains an intentional node override.
+            if not params.get("profile_override") and _clean_profile_text(params.get("profile_source"), 32).lower() != "custom":
+                params.pop("profile", None)
+            # Claim-time refresh is also used when a run was created before
+            # the current template was saved. Rebuild the live profile here;
+            # otherwise older Online clients receive an empty profile and
+            # reject an otherwise valid server-side template.
+            source["params"] = params
+            source = _enrich_local_bestseller_workflow_payload(
+                db,
+                payload=source,
+                target_user_id=target_user_id,
+                now=now or datetime.utcnow(),
+            )
+            return _attach_live_personal_template_validation(
+                db,
+                task_kind=task_kind,
+                payload=source,
+                target_user_id=target_user_id,
+            )
+        elif action == "native_wechat_poll":
+            # Template language/memory and the mounted account's current
+            # takeover settings must replace activation-time values.
+            for key in ("language", "target_language", "memory_doc_ids"):
+                if key in context_params:
+                    params[key] = copy.deepcopy(context_params[key])
+            source["params"] = params
+            source = _enrich_native_wechat_workflow_payload(
+                db,
+                payload=source,
+                target_user_id=int(target_user_id),
+            )
+            return _attach_live_personal_template_validation(
+                db,
+                task_kind=task_kind,
+                payload=source,
+                target_user_id=target_user_id,
+            )
+        elif action == "shanjian_digital_human_video":
+            # All inputs used to build the script/TTS request come from the
+            # latest template. Explicit node controls such as title, speed,
+            # polling and rotation slot are retained.
+            for key in (
+                "requirements",
+                "keyword_ids",
+                "keywords",
+                "keyword_texts",
+                "competitors",
+                "memory_doc_ids",
+                "memory_docs",
+                "language",
+                "target_language",
+            ):
+                if key in context_params:
+                    params[key] = copy.deepcopy(context_params[key])
+            candidates = context_params.get("virtualman_candidates")
+            voice_candidates = context_params.get("voice_candidates")
+            params["virtualman_candidates"] = copy.deepcopy(candidates if isinstance(candidates, list) else [])
+            params["voice_candidates"] = copy.deepcopy(voice_candidates if isinstance(voice_candidates, list) else [])
+            params["virtualman_selection_mode"] = "daily_sequence" if params["virtualman_candidates"] else "fixed"
+            params["voice_selection_mode"] = "daily_sequence" if params["voice_candidates"] else "fixed"
+            params.pop("virtualman_id", None)
+            params.pop("voice", None)
+            params.pop("speaker_id", None)
+            if params["virtualman_candidates"]:
+                params["virtualman_id"] = _h5_dh_clean_text(context_params.get("virtualman_id"), 128)
+            if params["voice_candidates"]:
+                voice = _h5_dh_clean_text(context_params.get("voice"), 128)
+                if voice:
+                    params["voice"] = voice
+                    params["speaker_id"] = voice
+        source["params"] = params
+    return _attach_live_personal_template_validation(
+        db,
+        task_kind=task_kind,
+        payload=source,
+        target_user_id=target_user_id,
+    )
 
 
 def _digital_human_sequence_slot(
@@ -1053,6 +1782,140 @@ def _workflow_node_deadline_for_run(run: ScheduledTaskRun) -> Optional[datetime]
     )
 
 
+def _workflow_node_window_duration(payload: Any) -> Optional[timedelta]:
+    """Return the configured node window length, including overnight windows."""
+    source = payload if isinstance(payload, dict) else {}
+    context = source.get("h5_context")
+    if not isinstance(context, dict):
+        return None
+    start_match = _DAILY_TIME_RE.match(str(context.get("workflow_node_time") or "").strip())
+    end_match = _DAILY_TIME_RE.match(str(context.get("workflow_node_end_time") or "").strip())
+    if not start_match or not end_match:
+        return None
+    start_minutes = int(start_match.group(1)) * 60 + int(start_match.group(2))
+    end_minutes = int(end_match.group(1)) * 60 + int(end_match.group(2))
+    duration_minutes = end_minutes - start_minutes
+    if duration_minutes < 0:
+        duration_minutes += 24 * 60
+    return timedelta(minutes=duration_minutes)
+
+
+def _without_heavy_run_columns(query):
+    """Skip lead dumps and transcripts while matching a workflow node.
+
+    Client polls call this on every scheduled-task list. Loading result_payload
+    for hundreds of unrelated runs makes psycopg decode JSON while holding the GIL.
+    Once that allocation pushes the H5 process over systemd MemoryHigh, the kernel
+    parks the thread in mem_cgroup_handle_over_high and the event loop never runs again.
+    """
+    return query.options(
+        defer(ScheduledTaskRun.result_payload),
+        defer(ScheduledTaskRun.result_text),
+        defer(ScheduledTaskRun.content),
+        defer(ScheduledTaskRun.error),
+    )
+
+
+def _workflow_parent_finished_at(
+    db: Session,
+    task: ScheduledTask,
+    *,
+    scheduled_at: datetime,
+    installation_id: str = "",
+) -> Optional[datetime]:
+    """Find the completed parent run that supplied this child node's material."""
+    source_mode, parent_node_id, template_id = _workflow_task_context(task)
+    if source_mode != "parent_latest_run" or not parent_node_id:
+        return None
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    schedule_cfg = _schedule_config_from_payload(payload)
+    try:
+        timezone_offset = int(
+            schedule_cfg.get("timezone_offset_minutes")
+            if schedule_cfg.get("timezone_offset_minutes") is not None
+            else 480
+        )
+    except (TypeError, ValueError):
+        timezone_offset = 480
+    timezone_offset = max(-720, min(840, timezone_offset))
+    target_local_date = (
+        scheduled_at + timedelta(minutes=timezone_offset)
+    ).date()
+
+    # The parent may be a server-side IP content run; workflow context is the
+    # authoritative relationship, not the run's task_kind.
+    query = _without_heavy_run_columns(db.query(ScheduledTaskRun)).filter(
+        ScheduledTaskRun.user_id == task.user_id,
+        ScheduledTaskRun.status == "completed",
+    )
+    if installation_id:
+        ids = {str(installation_id).strip()}
+        try:
+            scoped_id = installation_slot_id_for_user(db, task.user_id, str(installation_id).strip())
+        except Exception:
+            scoped_id = ""
+        if scoped_id:
+            ids.add(str(scoped_id).strip())
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id.in_(tuple(ids)),
+                ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+                ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
+            )
+        )
+
+    for run in query.order_by(ScheduledTaskRun.finished_at.desc(), ScheduledTaskRun.created_at.desc()).limit(500).all():
+        run_payload = run.payload if isinstance(run.payload, dict) else {}
+        run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else {}
+        run_params = run_payload.get("params") if isinstance(run_payload.get("params"), dict) else {}
+        if not run_context and isinstance(run_params.get("h5_context"), dict):
+            run_context = run_params["h5_context"]
+        if str(run_context.get("workflow_node_id") or "").strip() != parent_node_id:
+            continue
+        if template_id and str(run_context.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        if _workflow_run_local_date(run, timezone_offset) != target_local_date:
+            continue
+        if not _workflow_result_has_publishable_material(run.result_payload):
+            continue
+        finished_at = (
+            _parse_utc_datetime(run.finished_at)
+            or _parse_utc_datetime((run.progress or {}).get("completed_at") if isinstance(run.progress, dict) else None)
+            or _parse_utc_datetime(run.updated_at)
+        )
+        if finished_at is not None:
+            return finished_at
+    return None
+
+
+def _workflow_effective_deadline(
+    db: Session,
+    task: ScheduledTask,
+    *,
+    scheduled_at: datetime,
+    installation_id: str = "",
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Return deadline plus parent completion anchor for a scheduled occurrence."""
+    payload = _materialize_workflow_node_window(task.payload or {}, scheduled_at=scheduled_at)
+    deadline = _workflow_node_deadline_utc(payload, reference_at=scheduled_at)
+    if deadline is None:
+        return None, None
+    parent_finished_at = _workflow_parent_finished_at(
+        db,
+        task,
+        scheduled_at=scheduled_at,
+        installation_id=installation_id,
+    )
+    duration = _workflow_node_window_duration(payload)
+    if parent_finished_at is None or duration is None:
+        return deadline, None
+    # Preserve the original window when the parent finished early; if it ran
+    # long, carry the child's full configured window forward from that actual
+    # completion time instead of expiring it at the original fixed end time.
+    shifted_deadline = parent_finished_at + duration
+    return max(deadline, shifted_deadline), parent_finished_at
+
+
 def _materialize_workflow_node_window(
     payload: Dict[str, Any],
     *,
@@ -1108,6 +1971,147 @@ def _header_client_process_id(request: Request) -> str:
     ).strip()[:128]
 
 
+def _header_previous_client_exit_reason(request: Request) -> str:
+    """退出原因由重启后的客户端补报（上一轮进程被 /F 强杀，写不了自己）。"""
+    return (
+        request.headers.get("X-Previous-Client-Exit-Reason")
+        or request.headers.get("x-previous-client-exit-reason")
+        or ""
+    ).strip().lower()[:32]
+
+
+def _active_run_for_installation(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+    statuses: Optional[set[str]] = None,
+) -> Optional[ScheduledTaskRun]:
+    """Return the newest unfinished client run for one device slot."""
+    raw_id = str(installation_id or "").strip()
+    if not raw_id:
+        return None
+    scoped_id = installation_slot_id_for_user(db, user_id, raw_id)
+    ids = {raw_id}
+    if scoped_id:
+        ids.add(scoped_id)
+    filters = [
+        ScheduledTaskRun.installation_id.in_(tuple(ids)),
+        ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+    ]
+    return (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status.in_(tuple(statuses or _RUNNING_STATUSES)),
+            or_(*filters),
+        )
+        .order_by(ScheduledTaskRun.updated_at.desc(), ScheduledTaskRun.created_at.desc())
+        .first()
+    )
+
+
+def _active_publish_for_installation(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+) -> Optional[ScheduledTaskRun]:
+    """Return a publish follow-up currently being handled by one device."""
+    raw_id = str(installation_id or "").strip()
+    if not raw_id:
+        return None
+    scoped_id = installation_slot_id_for_user(db, user_id, raw_id)
+    ids = {raw_id}
+    if scoped_id:
+        ids.add(scoped_id)
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status == "completed",
+            or_(
+                ScheduledTaskRun.installation_id.in_(tuple(ids)),
+                ScheduledTaskRun.claimed_by_installation_id.in_(tuple(ids)),
+            ),
+        )
+        .order_by(ScheduledTaskRun.updated_at.desc(), ScheduledTaskRun.finished_at.desc())
+        .limit(200)
+        .all()
+    )
+    for row in rows:
+        draft = _publish_draft_from_payload(_run_result_payload(row))
+        if str(draft.get("status") or "").strip().lower() != "processing":
+            continue
+        claimed = str(draft.get("claimed_by_installation_id") or "").strip()
+        if not claimed or claimed in ids:
+            return row
+    return None
+
+
+def _installation_has_active_work(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+) -> bool:
+    return (
+        _active_run_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+            statuses={"processing", "running", "claimed", "queued", "waiting"},
+        )
+        is not None
+        or _active_publish_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+        )
+        is not None
+    )
+
+
+def _installation_has_unclaimed_work(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+) -> bool:
+    """Include an existing pending run before materializing another one."""
+    return _installation_has_active_work(
+        db,
+        user_id=user_id,
+        installation_id=installation_id,
+    ) or (
+        _active_run_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+            statuses={"pending"},
+        )
+        is not None
+    )
+
+
+def _assert_installations_available(
+    db: Session,
+    *,
+    user_id: int,
+    installation_ids: List[str],
+) -> None:
+    for installation_id in _clean_installation_ids(installation_ids):
+        if _active_run_for_installation(
+            db,
+            user_id=user_id,
+            installation_id=installation_id,
+        ) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="当前设备已有任务在进行中，请完成后再下发其他任务",
+            )
+
+
 def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
     if not installation_id:
         return
@@ -1160,6 +2164,52 @@ def _clear_pending_empty_for_target(kind: str, user_id: int, installation_id: Op
         _clear_pending_empty(_pending_cache_key(kind, user_id, ""))
 
 
+def _system_dispatch_task_ids(db: Session, user_id: int) -> list:
+    """该账号下目标为哨兵「system」的任务 id（= 系统调度任务）。"""
+    sys_ids: list = []
+    try:
+        rows = (
+            db.query(ScheduledTask.id, ScheduledTask.target_installation_ids)
+            .filter(ScheduledTask.user_id == int(user_id))
+            .all()
+        )
+        for tid, targets in rows:
+            values = targets if isinstance(targets, list) else []
+            if any(str(v).strip() == dispatch_devices.SYSTEM_SELECTION for v in values):
+                sys_ids.append(tid)
+    except Exception:
+        return []
+    return sys_ids
+
+
+def _resolve_system_device_targets(db: Session, installation_ids, *, now: Optional[datetime] = None):
+    """把目标里的哨兵「system」解析成当前空闲的可调度设备。
+
+    解析不到空闲设备时保留哨兵（= 排队等下个空闲），不报错。
+    """
+    cleaned = _clean_installation_ids(installation_ids)
+    if not cleaned:
+        return cleaned
+    if not any(str(x).strip() == dispatch_devices.SYSTEM_SELECTION for x in cleaned):
+        return cleaned
+    idle = ""
+    try:
+        idle = dispatch_devices.pick_idle_system_device(db, now=now)
+    except Exception:
+        idle = ""
+    out = []
+    for slot in cleaned:
+        if str(slot).strip() == dispatch_devices.SYSTEM_SELECTION:
+            if idle:
+                if idle not in out:
+                    out.append(idle)
+            else:
+                out.append(dispatch_devices.SYSTEM_SELECTION)
+        elif slot not in out:
+            out.append(slot)
+    return out
+
+
 def _clean_installation_ids(values: Optional[List[str]]) -> List[str]:
     seen: set[str] = set()
     out: List[str] = []
@@ -1175,7 +2225,10 @@ def _clean_installation_ids(values: Optional[List[str]]) -> List[str]:
 
 
 def _normalize_task_kind(value: str) -> str:
-    kind = (value or "openclaw_message").strip().lower()
+    kind = (value or "chat_message").strip().lower()
+    if kind == "openclaw_message":
+        # Compatibility for old Online/H5 builds. The old executor is retired.
+        kind = "chat_message"
     if kind not in _TASK_KINDS:
         raise HTTPException(status_code=400, detail="不支持的任务类型")
     return kind
@@ -1281,6 +2334,17 @@ def _normalize_schedule_type(value: str) -> str:
     return schedule_type
 
 
+def _ip_content_kind_label(payload: Any) -> str:
+    data = payload if isinstance(payload, dict) else {}
+    tasks = [str(item or "").strip() for item in (data.get("tasks") if isinstance(data.get("tasks"), list) else [])]
+    tasks = [item for item in tasks if item]
+    if len(tasks) == 1 and tasks[0] == "moments_candidate":
+        return "朋友圈图文"
+    if tasks and all(item in {"industry_hot_oral", "professional_ip_oral"} for item in tasks):
+        return "IP口播文案"
+    return "IP日更文案"
+
+
 def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
     title = (body.title or "").strip()
     if title:
@@ -1288,7 +2352,7 @@ def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
     if task_kind == "lead_collection_templates":
         return "线索采集模板定时任务"
     if task_kind == "ip_content_daily":
-        return "IP日更文案"
+        return _ip_content_kind_label(body.payload or {})
     if task_kind == "capability":
         cid = str((body.payload or {}).get("capability_id") or "").strip()
         return f"调用能力 {cid}"[:160] if cid else "能力调用任务"
@@ -1296,18 +2360,19 @@ def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
 
 
 def _serialize_task(row: ScheduledTask) -> Dict[str, Any]:
+    task_kind, payload, _douyin_fixed = normalize_douyin_task_kind(row.task_kind, row.payload or {})
     return {
         "id": row.id,
         "user_id": row.user_id,
         "created_by_user_id": row.created_by_user_id,
         "created_by_role": row.created_by_role,
         "title": row.title,
-        "task_kind": row.task_kind,
+        "task_kind": task_kind,
         "content": row.content,
-        "payload": row.payload or {},
+        "payload": payload,
         "schedule_type": row.schedule_type,
         "interval_seconds": row.interval_seconds,
-        "schedule_config": _schedule_config_from_payload(row.payload or {}),
+        "schedule_config": _schedule_config_from_payload(payload),
         "schedule_label": _task_schedule_label(row),
         "installation_ids": row.target_installation_ids or [],
         "status": row.status,
@@ -1321,8 +2386,259 @@ def _serialize_task(row: ScheduledTask) -> Dict[str, Any]:
     }
 
 
+def _scheduled_task_dedup_title(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())[:160]
+
+
+def _scheduled_task_dedup_action(payload: Dict[str, Any]) -> str:
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    return str(
+        payload.get("action")
+        or params.get("action")
+        or params.get("sales_action")
+        or ""
+    ).strip().lower()
+
+
+def _scheduled_task_dedup_context(payload: Dict[str, Any]) -> str:
+    ctx = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    if not ctx:
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        ctx = params.get("h5_context") if isinstance(params.get("h5_context"), dict) else {}
+    if not ctx:
+        return "-"
+    return "|".join(
+        str(ctx.get(key) or "").strip()
+        for key in ("workflow_template_id", "workflow_node_id", "node_id", "ability_key", "capability_id")
+    ) or "-"
+
+
+def _scheduled_task_dedup_schedule_token(
+    *,
+    schedule_type: str,
+    interval_seconds: Optional[int],
+    payload: Dict[str, Any],
+) -> str:
+    stype = str(schedule_type or "").strip().lower()
+    if stype == "interval":
+        return f"interval:{max(60, int(interval_seconds or 3600))}"
+    if stype == "daily_times":
+        cfg = _schedule_config_from_payload(payload)
+        times = _normalize_daily_times(cfg.get("daily_times") or payload.get("daily_times") or [])
+        return "daily_times:" + ",".join(times)
+    return stype
+
+
+def _scheduled_task_dedup_key(
+    *,
+    task_kind: str,
+    title: Any,
+    payload: Any,
+    schedule_type: str,
+    interval_seconds: Optional[int],
+    installation_ids: Any,
+) -> str:
+    kind = str(task_kind or "").strip().lower()
+    stype = str(schedule_type or "").strip().lower()
+    if kind != "douyin_leads" or stype not in _RECURRING_SCHEDULE_TYPES:
+        return ""
+    data = payload if isinstance(payload, dict) else {}
+    action = _scheduled_task_dedup_action(data)
+    if not action:
+        return ""
+    targets = ",".join(sorted(_clean_installation_ids(installation_ids)))
+    schedule = _scheduled_task_dedup_schedule_token(
+        schedule_type=stype,
+        interval_seconds=interval_seconds,
+        payload=data,
+    )
+    return "|".join(
+        [
+            kind,
+            _scheduled_task_dedup_title(title),
+            action,
+            _scheduled_task_dedup_context(data),
+            schedule,
+            targets,
+        ]
+    )
+
+
+def _find_duplicate_active_recurring_task(
+    db: Session,
+    *,
+    target_user_id: int,
+    task_kind: str,
+    title: str,
+    payload: Dict[str, Any],
+    schedule_type: str,
+    interval_seconds: Optional[int],
+    installation_ids: List[str],
+) -> Optional[ScheduledTask]:
+    dedup_key = _scheduled_task_dedup_key(
+        task_kind=task_kind,
+        title=title,
+        payload=payload,
+        schedule_type=schedule_type,
+        interval_seconds=interval_seconds,
+        installation_ids=installation_ids,
+    )
+    if not dedup_key:
+        return None
+    rows = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == target_user_id,
+            ScheduledTask.task_kind == task_kind,
+            ScheduledTask.status == "active",
+            ScheduledTask.schedule_type == schedule_type,
+        )
+        .order_by(ScheduledTask.created_at.desc(), ScheduledTask.id.desc())
+        .limit(100)
+        .all()
+    )
+    for row in rows:
+        if _scheduled_task_dedup_key(
+            task_kind=row.task_kind,
+            title=row.title,
+            payload=row.payload or {},
+            schedule_type=row.schedule_type,
+            interval_seconds=row.interval_seconds,
+            installation_ids=row.target_installation_ids or [],
+        ) == dedup_key:
+            return row
+    return None
+
+
+# skipped = 客户端已处理但目标不可达（例如对方关闭了私信）：不算失败，也不进
+# 「重试未启动的 N 个」。词表与客户端 targets_detail 的 state 保持一致。
+_TARGET_DIGEST_STATES = ("started", "succeeded", "failed", "skipped", "not_started")
+
+
+def _target_detail_rows(result_payload: Any) -> List[Dict[str, Any]]:
+    """客户端逐目标明细；兼容被 mcp_result 包了一层的旧结果。"""
+    result = result_payload if isinstance(result_payload, dict) else {}
+    detail = result.get("targets_detail")
+    if not isinstance(detail, list) or not detail:
+        mcp = result.get("mcp_result")
+        detail = mcp.get("targets_detail") if isinstance(mcp, dict) else None
+    if not isinstance(detail, list):
+        return []
+    return [row for row in detail if isinstance(row, dict)]
+
+
+def _run_targets_digest(row: ScheduledTaskRun, *, compact: bool = False) -> Dict[str, Any]:
+    """节点执行情况：逐目标状态汇总 + 失败原因按原文聚合。
+
+    任务中心据此渲染统计行（「主要原因：抖音账号不在线 ×12」）与点击后的
+    详情抽屉（每个目标/动作走到哪、为什么失败、哪些还没启动可以重试）。
+
+    明细来自客户端上报的 ``result_payload.targets_detail``；没有明细的节点
+    （老客户端或未产生目标的节点）退回用 run 自身的失败信息给出一条原因，
+    保证任何节点都能显示「为什么」。
+    """
+    detail = _target_detail_rows(row.result_payload)
+    summary = {"selected": len(detail), "total": len(detail)}
+    for state in _TARGET_DIGEST_STATES:
+        summary[state] = 0
+    reasons: Dict[str, Dict[str, Any]] = {}
+    not_started_targets: List[str] = []
+
+    for entry in detail:
+        state = str(entry.get("state") or "").strip().lower()
+        if state not in {"selected", "started", "succeeded", "failed", "skipped", "not_started"}:
+            state = "not_started"
+        if state == "selected":
+            state = "not_started"
+        if state == "started":
+            summary["started"] += 1
+        elif state == "succeeded":
+            summary["succeeded"] += 1
+            summary["started"] += 1
+        elif state == "failed":
+            summary["failed"] += 1
+            summary["started"] += 1
+        elif state == "skipped":
+            summary["skipped"] += 1
+            summary["started"] += 1
+        else:
+            summary["not_started"] += 1
+            name = str(entry.get("target") or "").strip()
+            if name and name not in not_started_targets:
+                not_started_targets.append(name)
+        if state != "failed":
+            continue
+        text = (
+            str(entry.get("reason") or "").strip()
+            or str(entry.get("error_code") or "").strip()
+            or "未记录失败原因"
+        )
+        bucket = reasons.setdefault(
+            text,
+            {
+                "code": str(entry.get("error_code") or "").strip(),
+                "text": text,
+                "count": 0,
+                "action": str(entry.get("action") or "").strip(),
+                "action_label": str(entry.get("action_label") or "").strip(),
+                "sample": [],
+                "at": "",
+            },
+        )
+        bucket["count"] += 1
+        target = str(entry.get("target") or "").strip()
+        if target and target not in bucket["sample"]:
+            bucket["sample"].append(target)
+        if not bucket["at"]:
+            bucket["at"] = str(entry.get("at") or "").strip()
+
+    source = "targets" if detail else "none"
+    if not detail:
+        status = str(row.status or "").strip().lower()
+        progress = row.progress if isinstance(row.progress, dict) else {}
+        code = str(progress.get("error_code") or "").strip()
+        text = str(row.error or "").strip() or code
+        if text and status in {"failed", "cancelled"}:
+            source = "run"
+            summary["failed"] = 1
+            summary["selected"] = 1
+            summary["total"] = 1
+            reasons[text] = {
+                "code": code,
+                "text": text,
+                "count": 1,
+                "action": "",
+                "action_label": "",
+                "sample": [],
+                "at": _iso(row.finished_at),
+            }
+
+    ordered = sorted(reasons.values(), key=lambda item: (-int(item["count"]), item["text"]))
+    limit = 5 if compact else 20
+    sample_limit = 2 if compact else 5
+    trimmed: List[Dict[str, Any]] = []
+    for bucket in ordered[:limit]:
+        item = dict(bucket)
+        item["sample"] = item["sample"][:sample_limit]
+        trimmed.append(item)
+    retry_targets = not_started_targets if not compact else not_started_targets[:20]
+    top = trimmed[0] if trimmed else None
+    return {
+        "source": source,
+        "summary": summary,
+        "reasons": trimmed,
+        "reason_count": len(ordered),
+        "not_started_targets": retry_targets,
+        "retry_not_started": len(not_started_targets),
+        "top_reason": (f"{top['text']} ×{top['count']}" if top else ""),
+    }
+
+
 def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
-    payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
+    # 抖音获客任务的历史坏 kind（client_workflow + action=douyin_leads）在下发前归一，
+    # 老客户端也能拿到正确的 task_kind=douyin_leads + 子动作。
+    task_kind, normalized_payload, _douyin_fixed = normalize_douyin_task_kind(row.task_kind, row.payload or {})
+    payload = _normalize_sales_digital_human_run_payload(task_kind, normalized_payload)
     return {
         "id": row.id,
         "task_id": row.task_id,
@@ -1332,7 +2648,7 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "installation_id": row.installation_id,
         "claimed_by_installation_id": row.claimed_by_installation_id,
         "title": row.title,
-        "task_kind": row.task_kind,
+        "task_kind": task_kind,
         "content": row.content,
         "payload": payload,
         "status": row.status,
@@ -1341,6 +2657,8 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "result_text": row.result_text,
         "result_payload": row.result_payload or {},
         "error": row.error,
+        # 节点执行情况：统计行 + 点击后的目标/动作明细与失败原因。
+        "targets_digest": _run_targets_digest(row),
         "h5_message_id": row.h5_message_id,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
@@ -1569,8 +2887,66 @@ def _enrich_run_with_creative_video(db: Session, row: ScheduledTaskRun, data: Di
     return data
 
 
+def _bounded_compact_text(value: Any, limit: int) -> str:
+    if isinstance(value, str):
+        return value[:limit]
+    if isinstance(value, (bool, int, float)):
+        return str(value)[:limit]
+    return ""
+
+
 def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
     payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
+    raw_result = row.result_payload if isinstance(row.result_payload, dict) else {}
+
+    # Keep list/poll responses bounded while retaining the small bits of state
+    # that the Online run cards use for publish/resume actions. The full result
+    # remains available from GET /runs/{run_id}.
+    compact_result: Dict[str, Any] = {}
+    draft = raw_result.get("publish_draft")
+    if isinstance(draft, dict):
+        draft_summary: Dict[str, Any] = {
+            "status": str(draft.get("status") or "ready")[:32],
+        }
+        for key in ("run_id", "error"):
+            value = draft.get(key)
+            text = _bounded_compact_text(value, 512)
+            if text:
+                draft_summary[key] = text
+        compact_result["publish_draft"] = draft_summary
+    for key in ("resume_available", "video_status", "image_status"):
+        value = raw_result.get(key)
+        if isinstance(value, (bool, int, float, str)):
+            compact_result[key] = value
+    media_urls = raw_result.get("media_urls")
+    if isinstance(media_urls, list):
+        compact_result["media_urls"] = [
+            text
+            for value in media_urls[:8]
+            for text in [_bounded_compact_text(value, 2048)]
+            if text.strip()
+        ]
+    refs = raw_result.get("result_refs")
+    if isinstance(refs, dict):
+        urls = refs.get("urls")
+        if isinstance(urls, list):
+            compact_result["result_refs"] = {
+                "urls": [
+                    text
+                    for value in urls[:8]
+                    for text in [_bounded_compact_text(value, 2048)]
+                    if text.strip()
+                ]
+            }
+    mcp = raw_result.get("mcp_result")
+    if isinstance(mcp, dict):
+        mcp_summary = {
+            key: mcp[key]
+            for key in ("resume_available", "status")
+            if isinstance(mcp.get(key), (bool, int, float, str))
+        }
+        if mcp_summary:
+            compact_result["mcp_result"] = mcp_summary
     return {
         "id": row.id,
         "task_id": row.task_id,
@@ -1579,10 +2955,16 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
         "claimed_by_installation_id": row.claimed_by_installation_id,
         "title": row.title,
         "task_kind": row.task_kind,
+        "content": _bounded_compact_text(row.content, 500),
         "payload": payload,
         "status": row.status,
         "progress": row.progress or {},
-        "error": row.error,
+        "result_text": _bounded_compact_text(row.result_text, 2000),
+        "result_payload": compact_result,
+        "error": _bounded_compact_text(row.error, 2000),
+        # 统计行要显示「主要原因」与「重试未启动的 N 个」，列表响应也带上
+        # （已裁剪：原因最多 5 条、样例 2 个、未启动目标 20 个）。
+        "targets_digest": _run_targets_digest(row, compact=True),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
         "claimed_at": _iso(row.claimed_at),
@@ -1594,11 +2976,10 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
 def _run_list_uses_compact_response(request: Request, explicit: Optional[bool]) -> bool:
     if explicit is not None:
         return bool(explicit)
-    source = " ".join(
-        str(request.headers.get(name) or "").strip().lower()
-        for name in ("origin", "referer")
-    )
-    return "h5.bhzn.top" in source or "/h5" in source
+    # List views only need summaries and can request one run's full payload
+    # from the detail endpoint. Defaulting old clients to the compact shape
+    # prevents large nested workflow results from being encoded on every poll.
+    return True
 
 
 def _is_server_side_task(task_or_run: Any) -> bool:
@@ -1610,7 +2991,7 @@ def _task_display_kind(row: Any) -> str:
     if kind == "lead_collection_templates":
         return "线索采集模板"
     if kind == "ip_content_daily":
-        return "IP日更文案"
+        return _ip_content_kind_label(getattr(row, "payload", None) or {})
     return ""
 
 
@@ -2159,7 +3540,27 @@ def _serial_client_run_is_blocked(
     return q.first() is not None
 
 
-_LONG_RUNNING_CLIENT_ACTIONS = {"native_wechat_poll"}
+_LONG_RUNNING_CLIENT_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_moments_engage",
+    # The client waits up to 15 minutes for a multi-target send task.
+    "native_wechat_send_message",
+}
+
+
+def _client_processing_timeout_minutes(row: ScheduledTaskRun) -> int:
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    kind = str(row.task_kind or "").strip().lower()
+    action = str(payload.get("action") or "").strip().lower()
+    if action in _LONG_RUNNING_CLIENT_ACTIONS:
+        return 45
+    if kind == "douyin_leads" and action == "precise_touch":
+        return 45
+    if kind == "douyin_leads":
+        return 30
+    if kind == "client_workflow" and (action == "publish_content" or action.startswith("publish_")):
+        return 30
+    return 20
 
 
 def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> bool:
@@ -2167,10 +3568,95 @@ def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> boo
     if claimed_at is None:
         return False
     last_activity = max(value for value in (claimed_at, row.updated_at) if value is not None)
-    payload = row.payload if isinstance(row.payload, dict) else {}
-    action = str(payload.get("action") or "").strip().lower()
-    timeout_minutes = 45 if action in _LONG_RUNNING_CLIENT_ACTIONS else 10
+    timeout_minutes = _client_processing_timeout_minutes(row)
     return last_activity < now - timedelta(minutes=timeout_minutes)
+
+
+def _client_run_device_heartbeat_grace_seconds() -> int:
+    try:
+        value = int(os.environ.get("LOBSTER_CLIENT_RUN_DEVICE_HEARTBEAT_GRACE_SECONDS") or "150")
+    except (TypeError, ValueError):
+        value = 150
+    return max(90, min(900, value))
+
+
+def _client_run_online_hard_timeout_seconds() -> int:
+    """Maximum unreported runtime while the owning Online process is still alive.
+
+    Precise Douyin touch may legitimately take close to six hours, so this is
+    deliberately longer than the ordinary stale-progress timeout. It is only
+    used after the device heartbeat has proved that the client itself remains
+    online; offline clients continue to use the normal short timeout.
+    """
+    try:
+        value = int(os.environ.get("LOBSTER_CLIENT_RUN_ONLINE_HARD_TIMEOUT_SECONDS") or "28800")
+    except (TypeError, ValueError):
+        value = 28800
+    return max(3600, min(24 * 60 * 60, value))
+
+
+def _client_run_has_fresh_device_heartbeat(db: Session, row: ScheduledTaskRun, now: datetime) -> bool:
+    installation_id = str(row.claimed_by_installation_id or row.installation_id or "").strip()
+    if not installation_id:
+        return False
+    seen_at = (
+        db.query(H5ChatDevicePresence.last_seen_at)
+        .filter(
+            H5ChatDevicePresence.user_id == row.user_id,
+            H5ChatDevicePresence.installation_id == installation_id,
+        )
+        .scalar()
+    )
+    if not seen_at:
+        return False
+    return (now - seen_at).total_seconds() <= _client_run_device_heartbeat_grace_seconds()
+
+
+def _client_run_is_within_online_grace(db: Session, row: ScheduledTaskRun, now: datetime) -> bool:
+    """Keep a running task alive during temporary progress-report outages."""
+    if not _client_run_has_fresh_device_heartbeat(db, row, now):
+        return False
+    started_at = row.claimed_at or row.started_at or row.created_at or row.updated_at
+    if started_at is None:
+        return False
+    elapsed_seconds = max(0.0, (now - started_at).total_seconds())
+    hard_timeout_seconds = _client_run_online_hard_timeout_seconds()
+    if elapsed_seconds < hard_timeout_seconds:
+        logger.warning(
+            "scheduled task heartbeat grace run_id=%s user_id=%s installation_id=%s elapsed_seconds=%s hard_timeout_seconds=%s",
+            row.id,
+            row.user_id,
+            row.claimed_by_installation_id or row.installation_id or "",
+            int(elapsed_seconds),
+            hard_timeout_seconds,
+        )
+        return True
+    logger.warning(
+        "scheduled task online hard timeout run_id=%s user_id=%s installation_id=%s elapsed_seconds=%s hard_timeout_seconds=%s",
+        row.id,
+        row.user_id,
+        row.claimed_by_installation_id or row.installation_id or "",
+        int(elapsed_seconds),
+        hard_timeout_seconds,
+    )
+    return False
+
+
+# 客户端「自己停的」退出原因：桌面端关窗 / OTA 更新重启 / 看门狗拉起后端 /
+# 清理残留后端 / 正常退出。与客户端 client_exit_marker 保持同步。
+_CLEAN_EXIT_REASONS = frozenset(
+    {
+        "clean",
+        "shutdown",
+        "restart",
+        "user_closed",
+        "update_restart",
+        "watchdog_kill",
+        "startup_cleanup",
+        "launcher_exit",
+    }
+)
+_CRASH_EXIT_REASONS = frozenset({"crash", "crashed", "abnormal", "exception"})
 
 
 def _fail_previous_client_runs(
@@ -2180,12 +3666,21 @@ def _fail_previous_client_runs(
     installation_id: str,
     client_process_id: str,
     now: datetime,
+    reported_exit_reason: str = "",
 ) -> int:
     """Close runs owned by an earlier online process before claiming new work."""
     process_id = str(client_process_id or "").strip()
     install_id = str(installation_id or "").strip()
     if not process_id or not install_id:
         return 0
+    # 同一台机器既可能以「机器号」上报、也可能以「槽位号」领取任务，
+    # 两个 id 都要覆盖，否则机器号上卡死的 processing 运行永远清不掉（队列被堵死）。
+    slot_id = ""
+    try:
+        slot_id = str(installation_slot_id_for_user(db, user_id, install_id) or "").strip()
+    except Exception:  # noqa: BLE001
+        slot_id = ""
+    id_candidates = {value for value in (install_id, slot_id) if value}
     rows = (
         db.query(ScheduledTaskRun)
         .filter(
@@ -2193,8 +3688,8 @@ def _fail_previous_client_runs(
             ScheduledTaskRun.status == "processing",
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
             or_(
-                ScheduledTaskRun.installation_id == install_id,
-                ScheduledTaskRun.claimed_by_installation_id == install_id,
+                ScheduledTaskRun.installation_id.in_(id_candidates),
+                ScheduledTaskRun.claimed_by_installation_id.in_(id_candidates),
             ),
         )
         .with_for_update(skip_locked=True)
@@ -2202,11 +3697,28 @@ def _fail_previous_client_runs(
         .all()
     )
     interrupted = 0
-    message = "客户端已重启，上一轮任务已中断"
     for row in rows:
         progress = row.progress if isinstance(row.progress, dict) else {}
         if str(progress.get("client_process_id") or "").strip() == process_id:
             continue
+        # 上一轮进程是被正常关掉、崩了、还是心跳丢失，用客户端上报的退出标记区分；
+        # 没有标记时不能断言"客户端已重启"，按"进程更换/未收到正常退出"记录。
+        previous_process_id = str(progress.get("client_process_id") or "").strip()
+        exit_reason = str(progress.get("client_exit_reason") or "").strip().lower()
+        if not exit_reason:
+            # The previous process was force-killed (``taskkill /F``), so it had
+            # no chance to record its own reason.  The restarted client reports
+            # it once, on the first claim after the restart.
+            exit_reason = str(reported_exit_reason or "").strip().lower()
+        if exit_reason in _CLEAN_EXIT_REASONS:
+            error_code = "client_restart_clean"
+            message = "客户端已正常重启，上一轮任务已中断"
+        elif exit_reason in _CRASH_EXIT_REASONS:
+            error_code = "client_crashed"
+            message = "客户端异常退出，上一轮任务已中断"
+        else:
+            error_code = "client_gone_unknown"
+            message = "客户端进程已更换（未收到正常退出标记），上一轮任务已中断"
         row.status = "failed"
         row.error = message
         row.finished_at = now
@@ -2214,9 +3726,12 @@ def _fail_previous_client_runs(
         row.progress = _merge_run_progress(
             row,
             {
-                "stage": "client_restarted",
+                "stage": error_code,
                 "text": message,
-                "reason": "client_process_restarted",
+                "reason": error_code,
+                "error_code": error_code,
+                "previous_client_process_id": previous_process_id,
+                "client_exit_reason": exit_reason,
                 "failed_at": now.isoformat(),
                 "client_process_id": process_id,
             },
@@ -2231,7 +3746,7 @@ def _fail_previous_client_runs(
             row.h5_message_id,
             row.user_id,
             "error",
-            {"error": message, "reason": "client_process_restarted"},
+            {"error": message, "reason": error_code, "error_code": error_code},
         )
         interrupted += 1
     return interrupted
@@ -2239,13 +3754,48 @@ def _fail_previous_client_runs(
 
 def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Dict[str, Any]:
     run_payload = task.payload or {}
+    if task.task_kind == "ip_content_daily":
+        payload = run_payload if isinstance(run_payload, dict) else {}
+        context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+        if (
+            str(payload.get("template_source") or "").strip().lower() == "personal_current"
+            or str(task.created_by_role or "").strip().lower() == "workflow"
+            or bool(context.get("workflow_template_id"))
+        ):
+            # Workflow IP-daily nodes are live references. Keep node-specific
+            # counts/tasks, but discard any activation-time template snapshot.
+            targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
+            run_payload = _use_current_personal_template_options(
+                db,
+                int(task.user_id),
+                dict(payload),
+                installation_id=_slot_from_payload(
+                    payload,
+                    targets[0] if len(targets) == 1 else "",
+                ),
+            )
     if task.task_kind == "linkedin_mining":
         run_payload = _enrich_linkedin_mining_keywords(
             db,
             payload=dict(run_payload),
             target_user_id=task.user_id,
         )
+    if task.task_kind == "capability":
+        run_payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task.task_kind,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+            now=now,
+        )
     if task.task_kind == "client_workflow":
+        run_payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task.task_kind,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+            now=now,
+        )
         run_payload = _normalize_sales_digital_human_run_payload(task.task_kind, dict(run_payload))
         run_payload = _enrich_local_bestseller_workflow_payload(
             db,
@@ -2349,16 +3899,23 @@ def _create_run_for_target(
 ) -> ScheduledTaskRun:
     run_payload = _run_payload_for_task(db, task, now)
     run_payload = _materialize_workflow_node_window(run_payload, scheduled_at=scheduled_at or now)
-    existing = _pending_run_for_recurring_target(db, task, installation_id)
-    if existing is not None:
-        return _refresh_pending_recurring_run(
-            db,
-            run=existing,
-            task=task,
-            installation_id=installation_id,
-            run_payload=run_payload,
-            now=now,
-        )
+    effective_deadline, parent_finished_at = _workflow_effective_deadline(
+        db,
+        task,
+        scheduled_at=scheduled_at or now,
+        installation_id=installation_id or "",
+    )
+    if effective_deadline is not None:
+        run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else None
+        if isinstance(run_context, dict):
+            run_context["workflow_node_deadline_at"] = effective_deadline.isoformat()
+            if parent_finished_at is not None:
+                run_context["workflow_node_effective_start_at"] = parent_finished_at.isoformat()
+                run_context["workflow_node_deadline_source"] = "parent_finished_at"
+            run_payload["h5_context"] = run_context
+    # Every due occurrence gets its own run.  Recurring runs are consumed in
+    # creation order by the installation poller, so refreshing an existing
+    # pending row here would silently drop occurrences while a device is busy.
 
     run_id = uuid.uuid4().hex
     message_id = f"task_{run_id}"[:64]
@@ -2374,7 +3931,10 @@ def _create_run_for_target(
         content=task.content,
         payload=run_payload,
         status="pending",
-        progress={"queued_at": now.isoformat()},
+        progress={
+            "queued_at": now.isoformat(),
+            "scheduled_at": (scheduled_at or now).isoformat(),
+        },
         h5_message_id=message_id,
         created_at=now,
         updated_at=now,
@@ -2437,44 +3997,15 @@ def _expire_workflow_node_run(
     *,
     now: datetime,
 ) -> bool:
-    """Cancel a workflow-owned local run once its scheduled node window has ended."""
-    if str(run.status or "").strip().lower() not in {"pending", "processing"}:
-        return False
-    deadline = _workflow_node_deadline_for_run(run)
-    if deadline is None or deadline > now:
-        return False
-    message = "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
-    run.status = "cancelled"
-    run.error = message
-    run.finished_at = now
-    run.updated_at = now
-    run.progress = _merge_run_progress(
-        run,
-        {
-            "stage": "workflow_node_deadline_expired",
-            "text": message,
-            "reason": "workflow_node_deadline_expired",
-            "deadline_at": deadline.isoformat(),
-            "cancelled_at": now.isoformat(),
-        },
-    )
-    task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
-    if task:
-        task.last_error = message
-        task.updated_at = now
-    _sync_h5_message_from_run(db, run, now)
-    _add_h5_event(
-        db,
-        run.h5_message_id,
-        run.user_id,
-        "cancelled",
-        {
-            "reason": "workflow_node_deadline_expired",
-            "deadline_at": deadline.isoformat(),
-            "text": message,
-        },
-    )
-    return True
+    """Keep queued/running workflow runs alive until the client finishes them.
+
+    The node window controls when a task becomes due, but it is not an
+    execution timeout.  A slow task must not be cancelled when the next node
+    time arrives; the installation poller already guarantees FIFO delivery.
+    The function remains as a compatibility hook for callers that used to
+    expire runs at polling/reporting boundaries.
+    """
+    return False
 
 
 def _expire_workflow_node_runs(
@@ -2485,57 +4016,111 @@ def _expire_workflow_node_runs(
     installation_id: str = "",
     limit: int = 500,
 ) -> int:
-    """Expire workflow node runs independently of client heartbeats or task serialisation."""
-    now = now or datetime.utcnow()
-    if now.tzinfo is not None:
-        now = now.astimezone(timezone.utc).replace(tzinfo=None)
-    query = (
-        db.query(ScheduledTaskRun)
-        .filter(
-            ScheduledTaskRun.status.in_(["pending", "processing"]),
-            ScheduledTaskRun.created_by_role == "workflow",
-        )
-    )
-    if user_id is not None:
-        query = query.filter(ScheduledTaskRun.user_id == user_id)
-    target = str(installation_id or "").strip()
-    if target:
-        query = query.filter(
-            or_(
-                ScheduledTaskRun.installation_id.is_(None),
-                ScheduledTaskRun.installation_id == target,
-                ScheduledTaskRun.claimed_by_installation_id == target,
-            )
-        )
-    query = (
-        query.order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
-        .with_for_update(skip_locked=True)
-        .limit(max(1, min(int(limit or 1), 2000)))
-    )
-    expired = 0
-    for run in query.all():
-        if _expire_workflow_node_run(db, run, now=now):
-            expired += 1
-    return expired
+    """Compatibility hook; workflow runs are never expired by node windows."""
+    return 0
 
 
 def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
-    if task.schedule_type == "daily_times":
-        configured = str(os.environ.get("LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS") or "").strip()
-        try:
-            return max(300, min(7200, int(float(configured or 1800))))
-        except (TypeError, ValueError):
-            return 1800
-    configured = str(os.environ.get("LOBSTER_CLIENT_RECURRING_PENDING_MAX_AGE_SECONDS") or "").strip()
-    if configured:
-        try:
-            return max(300, min(86400, int(float(configured))))
-        except (TypeError, ValueError):
-            pass
+    # 一次性任务如果一次都没跑过（设备忙/离线、排队中），不要因为"迟到"被静默丢掉；
+    # 保留 24h 排队等待领取，否则用户点下发以后工作历史里什么都没有。
+    if str(getattr(task, "schedule_type", "") or "").strip() == "once" and int(getattr(task, "run_count", 0) or 0) == 0:
+        return 86400
+    env_name = (
+        "LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS"
+        if task.schedule_type == "daily_times"
+        else "LOBSTER_CLIENT_RECURRING_PENDING_MAX_AGE_SECONDS"
+    )
+    configured = str(os.environ.get(env_name) or "").strip()
+    try:
+        return max(60, min(86400, int(float(configured or _DEFAULT_PENDING_EXPIRY_SECONDS))))
+    except (TypeError, ValueError):
+        return _DEFAULT_PENDING_EXPIRY_SECONDS
+
+
+def _scheduled_occurrence_deadline(
+    db: Session,
+    task: ScheduledTask,
+    scheduled_at: datetime,
+    *,
+    installation_id: str = "",
+) -> Optional[datetime]:
+    """Resolve a trigger deadline, carrying dependent nodes after parent work."""
+    deadline, _ = _workflow_effective_deadline(
+        db,
+        task,
+        scheduled_at=scheduled_at,
+        installation_id=installation_id,
+    )
+    return deadline
+
+
+def _scheduled_occurrence_expired(
+    db: Session,
+    task: ScheduledTask,
+    scheduled_at: datetime,
+    now: datetime,
+    *,
+    installation_id: str = "",
+) -> bool:
+    deadline = _scheduled_occurrence_deadline(
+        db,
+        task,
+        scheduled_at,
+        installation_id=installation_id,
+    )
+    if deadline is not None:
+        return deadline <= now
+    return (now - scheduled_at).total_seconds() > _recurring_pending_max_age_seconds(task)
+
+
+def _advance_task_after_expired_occurrence(
+    task: ScheduledTask,
+    scheduled_at: datetime,
+    now: datetime,
+) -> None:
+    """Move a recurring definition past all missed occurrences without runs."""
     if task.schedule_type == "interval":
         interval = max(60, int(task.interval_seconds or 3600))
-        return max(900, min(21600, interval * 3))
-    return 21600
+        elapsed = max(0.0, (now - scheduled_at).total_seconds())
+        occurrences_to_advance = int(elapsed // interval) + 1
+        task.next_run_at = scheduled_at + timedelta(seconds=occurrences_to_advance * interval)
+    elif task.schedule_type == "daily_times":
+        cfg = _schedule_config_from_payload(task.payload or {})
+        times = _normalize_daily_times(cfg.get("daily_times") or [])
+        offset = int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480)
+        task.next_run_at = _compute_next_daily_time(
+            now_utc=now,
+            daily_times=times,
+            timezone_offset_minutes=offset,
+        )
+    else:
+        task.next_run_at = None
+        task.status = "completed"
+        return
+    task.updated_at = now
+
+
+def _expire_pending_recurring_run(
+    db: Session,
+    run: ScheduledTaskRun,
+    task: ScheduledTask,
+    *,
+    now: datetime,
+) -> bool:
+    if str(run.status or "").strip().lower() != "pending":
+        return False
+    progress = run.progress if isinstance(run.progress, dict) else {}
+    scheduled_at = _parse_utc_datetime(progress.get("scheduled_at")) or run.created_at or now
+    if not _scheduled_occurrence_expired(db, task, scheduled_at, now, installation_id=run.installation_id or ""):
+        return False
+    _skip_pending_recurring_run(
+        db,
+        run,
+        now=now,
+        reason="expired_before_execution",
+        message="任务到达时已超过有效执行时间，本轮已过期。",
+    )
+    return True
 
 
 def _skip_pending_recurring_run(
@@ -2548,7 +4133,18 @@ def _skip_pending_recurring_run(
     superseded_by_run_id: str = "",
 ) -> None:
     run.status = "cancelled"
-    run.error = message
+    # A missed window is an intentional scheduler skip, not an execution
+    # failure. Keep the reason in the result/progress payload so it remains
+    # visible without poisoning failure counters or error cards.
+    run.error = None
+    run.result_text = message
+    existing_result = run.result_payload if isinstance(run.result_payload, dict) else {}
+    run.result_payload = {
+        **existing_result,
+        "skipped": True,
+        "skip_reason": reason,
+        "skip_message": message,
+    }
     run.progress = _merge_run_progress(
         run,
         {
@@ -2578,15 +4174,6 @@ def _coalesce_recurring_pending_runs(
     installation_id: str,
     now: datetime,
 ) -> int:
-    online_installation_ids = {
-        str(row.installation_id or "")
-        for row in (
-            db.query(H5ChatDevicePresence)
-            .filter(H5ChatDevicePresence.user_id == user_id)
-            .all()
-        )
-        if str(row.installation_id or "") and is_device_online(row.last_seen_at, now=now)
-    }
     query = (
         db.query(ScheduledTaskRun, ScheduledTask)
         .join(ScheduledTask, ScheduledTask.id == ScheduledTaskRun.task_id)
@@ -2594,7 +4181,7 @@ def _coalesce_recurring_pending_runs(
             ScheduledTaskRun.user_id == user_id,
             ScheduledTaskRun.status == "pending",
             ScheduledTask.status == "active",
-            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES)),
+            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES) + ["once"]),
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
         )
     )
@@ -2607,54 +4194,19 @@ def _coalesce_recurring_pending_runs(
         )
     else:
         query = query.filter(ScheduledTaskRun.installation_id.is_(None))
-    pairs = (
-        query.order_by(
-            ScheduledTaskRun.task_id.asc(),
-            ScheduledTaskRun.installation_id.asc(),
-            ScheduledTaskRun.created_at.desc(),
-            ScheduledTaskRun.id.desc(),
-        )
+    expired = 0
+    for run, task in (
+        query.order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
         .with_for_update(of=ScheduledTaskRun, skip_locked=True)
         .limit(1000)
         .all()
-    )
-    newest_by_target: Dict[tuple[int, str], ScheduledTaskRun] = {}
-    skipped = 0
-    for run, task in pairs:
-        key = (int(task.id), str(run.installation_id or ""))
-        newest = newest_by_target.get(key)
-        if newest is not None:
-            _skip_pending_recurring_run(
-                db,
-                run,
-                now=now,
-                reason="superseded_recurring_run",
-                message="设备离线期间的旧计划已由最新一轮替代，未重复执行。",
-                superseded_by_run_id=newest.id,
-            )
-            skipped += 1
-            continue
-        newest_by_target[key] = run
-        cutoff = now - timedelta(seconds=_recurring_pending_max_age_seconds(task))
-        if run.created_at < cutoff:
-            target_is_online = bool(run.installation_id and str(run.installation_id) in online_installation_ids)
-            _skip_pending_recurring_run(
-                db,
-                run,
-                now=now,
-                reason="expired_recurring_run_while_busy" if target_is_online else "expired_recurring_run",
-                message=(
-                    "设备在线但正在执行其他任务，本轮计划在队列中超过有效时间，已自动跳过。"
-                    if target_is_online
-                    else "设备离线期间未执行，该计划已过有效时间并自动跳过。"
-                ),
-            )
-            skipped += 1
-    return skipped
+    ):
+        if _expire_pending_recurring_run(db, run, task, now=now):
+            expired += 1
+    return expired
 
 
 def _cleanup_recurring_pending_backlog(db: Session, now: Optional[datetime] = None) -> int:
-    """Apply the normal per-device coalescing rules even while clients are offline."""
     now = now or datetime.utcnow()
     pairs = (
         db.query(ScheduledTaskRun.user_id, ScheduledTaskRun.installation_id)
@@ -2662,22 +4214,22 @@ def _cleanup_recurring_pending_backlog(db: Session, now: Optional[datetime] = No
         .filter(
             ScheduledTaskRun.status == "pending",
             ScheduledTask.status == "active",
-            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES)),
+            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES) + ["once"]),
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
         )
         .distinct()
         .limit(1000)
         .all()
     )
-    skipped = 0
-    for user_id, installation_id in pairs:
-        skipped += _coalesce_recurring_pending_runs(
+    return sum(
+        _coalesce_recurring_pending_runs(
             db,
             user_id=int(user_id),
             installation_id=str(installation_id or ""),
             now=now,
         )
-    return skipped
+        for user_id, installation_id in pairs
+    )
 
 
 def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> int:
@@ -2703,7 +4255,10 @@ def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> 
         .limit(200)
         .all()
     )
+    failed = 0
     for row in rows:
+        if _client_run_is_within_online_grace(db, row, now):
+            continue
         message = "客户端长时间未上报执行进度，本轮已自动结束；请确认设备在线后重新执行。"
         row.status = "failed"
         row.error = message
@@ -2730,7 +4285,8 @@ def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> 
             "error",
             {"error": message, "reason": "client_progress_timeout"},
         )
-    return len(rows)
+        failed += 1
+    return failed
 
 
 def _run_async_blocking(coro: Any) -> Any:
@@ -2812,7 +4368,6 @@ def _execute_server_side_run(
     if _expire_workflow_node_run(db, run, now=now):
         db.commit()
         return
-    deadline = _workflow_node_deadline_for_run(run)
     user = db.query(User).filter(User.id == run.user_id).first()
     if user is None:
         run.status = "failed"
@@ -2846,26 +4401,42 @@ def _execute_server_side_run(
     db.flush()
     db.commit()
     timeout_seconds = _server_side_timeout_seconds(run.task_kind)
-    if deadline is not None:
-        remaining_seconds = (deadline - datetime.utcnow()).total_seconds()
-        if remaining_seconds <= 0:
-            db.refresh(run)
-            if _expire_workflow_node_run(db, run, now=datetime.utcnow()):
-                db.commit()
-            return
-        timeout_seconds = min(timeout_seconds, max(0.1, remaining_seconds))
 
     def progress(stage: str, text: str, extra: Optional[Dict[str, Any]] = None) -> None:
-        progress_now = datetime.utcnow()
-        if deadline is not None and _expire_workflow_node_run(db, run, now=progress_now):
-            db.commit()
-            return
         _set_server_side_run_progress(db, run, stage=stage, text=text, extra=extra)
 
     try:
         payload = run.payload if isinstance(run.payload, dict) else {}
         if run.task_kind == "ip_content_daily":
-            progress("start", "服务器开始执行 IP 日更文案", {"timeout_seconds": timeout_seconds})
+            run_context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+            if (
+                str(payload.get("template_source") or "").strip().lower() == "personal_current"
+                or str(run.created_by_role or "").strip().lower() == "workflow"
+                or bool(run_context.get("workflow_template_id"))
+            ):
+                payload = _use_current_personal_template_options(
+                    db,
+                    int(run.user_id),
+                    payload,
+                    installation_id=_slot_from_payload(payload, str(run.installation_id or "")),
+                )
+                run.payload = payload
+                run.updated_at = now
+                db.flush()
+            # Let the IP content runner distinguish a workflow node from a
+            # manually scheduled studio run.  This marker is consumed only by
+            # the Moments image materializer and does not alter other options.
+            if isinstance(payload, dict) and isinstance(run_context, dict) and (
+                run_context.get("workflow_template_id")
+                or run_context.get("workflow_template_key")
+                or run_context.get("workflow_node_id")
+            ):
+                payload = dict(payload)
+                payload["_workflow_node_execution"] = True
+                run.payload = payload
+        if run.task_kind == "ip_content_daily":
+            ip_label = _ip_content_kind_label(payload)
+            progress("start", f"服务器开始执行 {ip_label}", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
                 asyncio.wait_for(
                     run_ip_content_daily_scheduled(
@@ -2878,7 +4449,12 @@ def _execute_server_side_run(
                     timeout=timeout_seconds,
                 )
             )
-            result_text = "IP日更文案已生成，朋友圈图片请在详情里手动触发。"
+            image_generation = result.get("image_generation") if isinstance(result, dict) else {}
+            if isinstance(image_generation, dict) and image_generation.get("automatic"):
+                image_count = int(image_generation.get("image_count") or 0)
+                result_text = f"{ip_label}已生成，首条朋友圈图文已自动生成 {image_count}/3 张配图。"
+            else:
+                result_text = f"{ip_label}已生成，朋友圈图片请在详情里手动触发。"
         elif run.task_kind == "lead_collection_templates":
             progress("start", "服务器开始执行线索采集模板", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
@@ -2964,9 +4540,6 @@ def _execute_server_side_run(
             return
         finished = datetime.utcnow()
         db.refresh(run)
-        if _expire_workflow_node_run(db, run, now=finished):
-            db.commit()
-            return
         if str(run.status or "").strip().lower() in _FINAL_STATUSES:
             return
         failed_count = int(result.get("failed_count") or 0) if isinstance(result, dict) else 0
@@ -3039,7 +4612,23 @@ def _execute_server_side_run(
         if str(run.status or "").strip().lower() in _FINAL_STATUSES:
             return
         run.status = "failed"
-        run.error = str(exc.detail or exc)
+        detail_payload = exc.detail if isinstance(exc.detail, dict) else {}
+        run.error = str(
+            detail_payload.get("message")
+            or detail_payload.get("detail")
+            or detail_payload.get("error")
+            or exc.detail
+            or exc
+        )
+        if run.task_kind == "ip_content_daily":
+            run.result_payload = {
+                "ok": False,
+                "ip_content_daily": True,
+                "error": run.error,
+                "failure": detail_payload,
+                "failed_batches": detail_payload.get("failed_batches") if isinstance(detail_payload.get("failed_batches"), list) else [],
+                "upstream_check": detail_payload.get("upstream_check") if isinstance(detail_payload.get("upstream_check"), dict) else {},
+            }
         run.progress = _merge_run_progress(
             run,
             {
@@ -3047,6 +4636,7 @@ def _execute_server_side_run(
                 "server_side": True,
                 "stage": "failed",
                 "text": run.error,
+                **({"upstream_check": detail_payload.get("upstream_check")} if isinstance(detail_payload.get("upstream_check"), dict) else {}),
             },
         )
         run.finished_at = failed
@@ -3183,7 +4773,7 @@ def _enqueue_task(
         task.last_error = f"定时任务能力已下线：{disabled_capability}"
         task.updated_at = now
         return []
-    targets = _clean_installation_ids(task.target_installation_ids or [])
+    targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
     if _is_server_side_task(task):
         targets = [""]
     if not targets:
@@ -3214,6 +4804,22 @@ def _enqueue_task(
     return runs
 
 
+def _advance_duplicate_recurring_task(task: ScheduledTask, now: datetime) -> None:
+    if task.schedule_type == "interval":
+        interval = max(60, int(task.interval_seconds or 3600))
+        task.next_run_at = now + timedelta(seconds=interval)
+    elif task.schedule_type == "daily_times":
+        cfg = _schedule_config_from_payload(task.payload or {})
+        times = _normalize_daily_times(cfg.get("daily_times") or [])
+        offset = int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480)
+        task.next_run_at = _compute_next_daily_time(
+            now_utc=now,
+            daily_times=times,
+            timezone_offset_minutes=offset,
+        )
+    task.updated_at = now
+
+
 def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetime) -> Optional[ScheduledTask]:
     result = db.execute(
         update(ScheduledTask)
@@ -3230,8 +4836,243 @@ def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetim
     return db.query(ScheduledTask).filter(ScheduledTask.id == task.id).first()
 
 
-def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
+_WORKFLOW_MATERIAL_ID_KEYS = {
+    "video_asset_id",
+    "final_video_asset_id",
+    "image_asset_id",
+    "image_asset_ids",
+    "final_image_asset_id",
+    "asset_id",
+    "final_asset_id",
+}
+_WORKFLOW_MATERIAL_URL_KEYS = {
+    "video_url",
+    "video_uri",
+    "image_url",
+    "image_urls",
+    "url",
+    "public_url",
+}
+_WORKFLOW_MATERIAL_CONTAINER_KEYS = {
+    "assets",
+    "saved_assets",
+    "result_refs",
+    "outputs",
+    "output",
+    "item",
+    "video_result",
+    "image_result",
+    "local_result",
+    "generated",
+}
+_WORKFLOW_MATERIAL_SKIP_KEYS = {
+    "params",
+    "input_refs",
+    "request",
+    "prompt",
+    "requirements",
+    "h5_context",
+    "template",
+    "digital_human_template",
+    "digital_human_resources",
+    "avatars",
+}
+
+
+def _workflow_result_has_publishable_material(value: Any) -> bool:
+    """Match the material references consumed by the client publish resolver."""
+    if isinstance(value, dict):
+        image_generation = value.get("image_generation")
+        if (
+            isinstance(image_generation, dict)
+            and bool(image_generation.get("automatic"))
+            and not bool(image_generation.get("image_complete"))
+        ):
+            return False
+        publish_draft = value.get("publish_draft")
+        if (
+            isinstance(publish_draft, dict)
+            and str(publish_draft.get("source_task") or "").strip() == "moments_candidate"
+            and publish_draft.get("image_complete") is False
+        ):
+            return False
+        for key, item in value.items():
+            normalized_key = str(key or "").strip().lower()
+            if normalized_key in _WORKFLOW_MATERIAL_SKIP_KEYS:
+                continue
+            if normalized_key in _WORKFLOW_MATERIAL_ID_KEYS or normalized_key in _WORKFLOW_MATERIAL_URL_KEYS:
+                if isinstance(item, (str, int, float)) and str(item).strip():
+                    return True
+                if isinstance(item, list) and any(str(entry or "").strip() for entry in item):
+                    return True
+            if (
+                normalized_key in _WORKFLOW_MATERIAL_CONTAINER_KEYS
+                or isinstance(item, (dict, list))
+            ) and _workflow_result_has_publishable_material(item):
+                return True
+    elif isinstance(value, list):
+        return any(_workflow_result_has_publishable_material(item) for item in value)
+    return False
+
+
+def _workflow_task_context(task: ScheduledTask) -> tuple[str, str, str]:
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    if not context and isinstance(params.get("h5_context"), dict):
+        context = params["h5_context"]
+    source_mode = str(params.get("source_mode") or payload.get("source_mode") or "").strip().lower()
+    parent_node_id = str(
+        context.get("workflow_parent_node_id")
+        or params.get("source_workflow_node_id")
+        or payload.get("source_workflow_node_id")
+        or ""
+    ).strip()
+    template_id = str(context.get("workflow_template_id") or "").strip()
+    return source_mode, parent_node_id, template_id
+
+
+def _workflow_run_local_date(run: ScheduledTaskRun, timezone_offset_minutes: int):
+    progress = run.progress if isinstance(run.progress, dict) else {}
+    anchor = _parse_utc_datetime(progress.get("scheduled_at")) or run.created_at
+    if anchor is None:
+        return None
+    return (anchor + timedelta(minutes=timezone_offset_minutes)).date()
+
+
+def _workflow_dependency_state(
+    db: Session,
+    task: ScheduledTask,
+    *,
+    scheduled_at: datetime,
+    now: datetime,
+    installation_id: str,
+) -> str:
+    """Return ready, waiting, or skip for a parent_latest_run child task."""
+    source_mode, parent_node_id, template_id = _workflow_task_context(task)
+    if source_mode != "parent_latest_run" or not parent_node_id:
+        return "ready"
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    schedule_cfg = _schedule_config_from_payload(payload)
+    try:
+        timezone_offset = int(schedule_cfg.get("timezone_offset_minutes") if schedule_cfg.get("timezone_offset_minutes") is not None else 480)
+    except (TypeError, ValueError):
+        timezone_offset = 480
+    timezone_offset = max(-720, min(840, timezone_offset))
+    target_local_date = (scheduled_at + timedelta(minutes=timezone_offset)).date()
+
+    # Server-side IP content nodes (including 朋友圈图文) are valid workflow
+    # parents just like client_workflow nodes. Match by workflow context below
+    # instead of excluding them by task_kind.
+    query = _without_heavy_run_columns(db.query(ScheduledTaskRun)).filter(
+        ScheduledTaskRun.user_id == task.user_id,
+        ScheduledTaskRun.status.in_(tuple(_RUNNING_STATUSES | _FINAL_STATUSES)),
+    )
+    if installation_id:
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id == installation_id,
+                ScheduledTaskRun.claimed_by_installation_id == installation_id,
+                ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
+            )
+        )
+    parent_runs: list[ScheduledTaskRun] = []
+    for run in query.order_by(ScheduledTaskRun.created_at.desc()).limit(500).all():
+        run_payload = run.payload if isinstance(run.payload, dict) else {}
+        run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else {}
+        run_params = run_payload.get("params") if isinstance(run_payload.get("params"), dict) else {}
+        if not run_context and isinstance(run_params.get("h5_context"), dict):
+            run_context = run_params["h5_context"]
+        if str(run_context.get("workflow_node_id") or "").strip() != parent_node_id:
+            continue
+        if template_id and str(run_context.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        if _workflow_run_local_date(run, timezone_offset) != target_local_date:
+            continue
+        parent_runs.append(run)
+
+    completed_with_material = any(
+        str(run.status or "").strip().lower() == "completed"
+        and _workflow_result_has_publishable_material(run.result_payload)
+        for run in parent_runs
+    )
+    if completed_with_material:
+        return "ready"
+    if any(str(run.status or "").strip().lower() in _RUNNING_STATUSES - {"pending"} for run in parent_runs):
+        return "waiting"
+    if any(str(run.status or "").strip().lower() == "pending" for run in parent_runs):
+        return "waiting"
+
+    # No run for this date means the parent either missed its window or has
+    # not reached it yet. A parent scheduled after the child is a malformed
+    # workflow and is skipped for this occurrence instead of generating a
+    # client-side "no publishable material" failure.
+    parent_tasks = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == task.user_id,
+            ScheduledTask.status == "active",
+        )
+        .order_by(ScheduledTask.id.asc())
+        .limit(500)
+        .all()
+    )
+    parent_task = None
+    for candidate in parent_tasks:
+        candidate_payload = candidate.payload if isinstance(candidate.payload, dict) else {}
+        candidate_context = candidate_payload.get("h5_context") if isinstance(candidate_payload.get("h5_context"), dict) else {}
+        candidate_params = candidate_payload.get("params") if isinstance(candidate_payload.get("params"), dict) else {}
+        if not candidate_context and isinstance(candidate_params.get("h5_context"), dict):
+            candidate_context = candidate_params["h5_context"]
+        if str(candidate_context.get("workflow_node_id") or "").strip() != parent_node_id:
+            continue
+        if template_id and str(candidate_context.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        targets = _resolve_system_device_targets(db, candidate.target_installation_ids or [])
+        if installation_id and targets and installation_id not in targets:
+            continue
+        parent_task = candidate
+        break
+    if parent_task is None:
+        return "skip"
+
+    parent_cfg = _schedule_config_from_payload(parent_task.payload if isinstance(parent_task.payload, dict) else {})
+    parent_times = _normalize_daily_times(parent_cfg.get("daily_times") or []) if parent_task.schedule_type == "daily_times" else []
+    if parent_times:
+        parent_expected = None
+        for item in parent_times:
+            hour, minute = [int(value) for value in item.split(":", 1)]
+            local_expected = datetime(
+                target_local_date.year,
+                target_local_date.month,
+                target_local_date.day,
+                hour,
+                minute,
+            )
+            candidate_expected = local_expected - timedelta(minutes=timezone_offset)
+            if parent_expected is None or candidate_expected < parent_expected:
+                parent_expected = candidate_expected
+        if parent_expected is not None and parent_expected > now:
+            return "skip"
+    if str(parent_task.status or "").strip().lower() != "active":
+        return "skip"
+    if parent_task.next_run_at is None or parent_task.next_run_at <= now:
+        return "waiting"
+    return "skip"
+
+
+def _enqueue_due_tasks(
+    db: Session,
+    user_id: Optional[int] = None,
+    installation_id: Optional[str] = None,
+) -> int:
     now = datetime.utcnow()
+    target_installation = str(installation_id or "").strip()
+    target_busy = bool(
+        target_installation
+        and user_id is not None
+        and _installation_has_unclaimed_work(db, user_id=user_id, installation_id=target_installation)
+    )
     q = db.query(ScheduledTask).filter(
         ScheduledTask.status == "active",
         ScheduledTask.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
@@ -3241,16 +5082,77 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     )
     if user_id is not None:
         q = q.filter(ScheduledTask.user_id == user_id)
+    # Only materialize one client task per poll.  The next task is selected
+    # after the current run reaches a final state.
     q = q.order_by(ScheduledTask.next_run_at.asc(), ScheduledTask.id.asc()).limit(50).with_for_update(skip_locked=True)
     count = 0
+    expired_count = 0
+    skipped_duplicates = 0
+    seen_recurring_keys: set[str] = set()
     for candidate in q.all():
-        scheduled_at = candidate.next_run_at
-        task = _reserve_due_task_for_enqueue(db, candidate, now)
-        if not task:
+        is_once = str(candidate.schedule_type or "").strip() == "once"
+        if target_installation and not _is_server_side_task(candidate):
+            targets = _resolve_system_device_targets(db, candidate.target_installation_ids or [])
+            if targets and target_installation not in targets:
+                continue
+            # once 任务即使设备正忙也先排进队列（设备侧串行领取），
+            # 否则新下发的任务永远不会生成 run，前端看起来就是"创建失败"。
+            if target_busy and not is_once:
+                continue
+        if not target_installation and not _is_server_side_task(candidate):
+            targets = _resolve_system_device_targets(db, candidate.target_installation_ids or [])
+            if not is_once and any(
+                _installation_has_unclaimed_work(db, user_id=candidate.user_id, installation_id=target)
+                for target in targets
+            ):
+                continue
+        dedup_key = _scheduled_task_dedup_key(
+            task_kind=candidate.task_kind,
+            title=candidate.title,
+            payload=candidate.payload or {},
+            schedule_type=candidate.schedule_type,
+            interval_seconds=candidate.interval_seconds,
+            installation_ids=candidate.target_installation_ids or [],
+        )
+        if dedup_key and dedup_key in seen_recurring_keys:
+            _advance_duplicate_recurring_task(candidate, now)
+            skipped_duplicates += 1
             continue
-        _enqueue_task(db, task, now, scheduled_at=scheduled_at)
+        if dedup_key:
+            seen_recurring_keys.add(dedup_key)
+        scheduled_at = candidate.next_run_at
+        if scheduled_at is None:
+            continue
+        dependency_state = _workflow_dependency_state(
+            db,
+            candidate,
+            scheduled_at=scheduled_at,
+            now=now,
+            installation_id=target_installation,
+        )
+        if dependency_state == "waiting":
+            continue
+        if dependency_state == "skip":
+            _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
+            expired_count += 1
+            continue
+        if _scheduled_occurrence_expired(
+            db,
+            candidate,
+            scheduled_at,
+            now,
+            installation_id=target_installation,
+        ):
+            _advance_task_after_expired_occurrence(candidate, scheduled_at, now)
+            expired_count += 1
+            continue
+        reserved = _reserve_due_task_for_enqueue(db, candidate, now)
+        if not reserved:
+            continue
+        _enqueue_task(db, reserved, now, scheduled_at=scheduled_at)
         count += 1
-    if count:
+        break
+    if count or skipped_duplicates or expired_count:
         db.commit()
     return count
 
@@ -3371,6 +5273,47 @@ def _delete_run_row(db: Session, row: ScheduledTaskRun) -> None:
     db.delete(row)
 
 
+def _hydrate_workflow_task_payload(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """落库前的 payload 实时覆盖（启动工作流与节点「演示」共用同一份逻辑）。
+
+    工作流 payload 是排程记录，不是配置快照：模板资源（关键词/同行账号/记忆文件/
+    人设/数字人素材）在执行前按当前槽位的个人模板实时覆盖。演示必须走同一步，
+    否则演示看到的参数和真正执行的不是一套。
+    """
+    if task_kind == "capability":
+        payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task_kind,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+            now=now,
+        )
+    if task_kind == "client_workflow":
+        payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=task_kind,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+            now=now,
+        )
+        payload = _enrich_local_bestseller_workflow_payload(
+            db, payload=dict(payload), target_user_id=target_user_id, now=now
+        )
+        payload = _enrich_native_wechat_workflow_payload(
+            db,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+        )
+    return payload
+
+
 def _create_task_row(
     db: Session,
     body: ScheduledTaskCreate,
@@ -3395,7 +5338,7 @@ def _create_task_row(
             payload=dict(payload),
             target_user_id=target_user_id,
         )
-    if task_kind in {"openclaw_message", "chat_message"} and not content:
+    if task_kind == "chat_message" and not content:
         raise HTTPException(status_code=400, detail="消息内容不能为空")
     if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
         raise HTTPException(status_code=400, detail="能力调用任务需要 payload.capability_id")
@@ -3408,7 +5351,28 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail=f"定时任务能力已下线：{disabled_capability}")
     if task_kind == "ip_content_daily":
         payload = dict(payload)
-        if not int(payload.get("template_id") or 0) and not payload.get("keyword_ids") and not payload.get("competitor_ids") and not payload.get("memory_docs"):
+        context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+        # 启动工作流用 role=workflow，执行时再取当前模板。
+        # 节点演示是普通用户建的一次性任务，demo-plan 只把同样的标记放进 h5_context，
+        # 自编朋友圈节点的 payload 里没有关键词/同行/记忆。不认这个标记就会在套用
+        # 当前模板之前报「需要选择模板、关键词、同行账号或记忆资料」，模板上已经
+        # 关联的同行根本看不见。
+        live_template = (
+            str(created_by_role or "").strip().lower() == "workflow"
+            or str(payload.get("template_source") or "").strip().lower() == "personal_current"
+            or str(context.get("template_source") or "").strip().lower() == "personal_current"
+            or bool(context.get("workflow_template_id"))
+            or bool(str(context.get("workflow_node_id") or "").strip())
+        )
+        if live_template:
+            payload["template_source"] = "personal_current"
+        if (
+            str(payload.get("template_source") or "").strip().lower() != "personal_current"
+            and not int(payload.get("template_id") or 0)
+            and not payload.get("keyword_ids")
+            and not payload.get("competitor_ids")
+            and not payload.get("memory_docs")
+        ):
             raise HTTPException(status_code=400, detail="IP日更文案任务需要选择模板、关键词、同行账号或记忆资料")
     if task_kind == "lead_collection_templates":
         payload = dict(payload)
@@ -3445,13 +5409,13 @@ def _create_task_row(
         _normalize_goal_video_task_payload(payload)
     interval_seconds = None
     now = datetime.utcnow()
-    if task_kind == "client_workflow":
-        payload = _enrich_local_bestseller_workflow_payload(db, payload=dict(payload), target_user_id=target_user_id, now=now)
-        payload = _enrich_native_wechat_workflow_payload(
-            db,
-            payload=dict(payload),
-            target_user_id=target_user_id,
-        )
+    payload = _hydrate_workflow_task_payload(
+        db,
+        task_kind=task_kind,
+        payload=payload,
+        target_user_id=target_user_id,
+        now=now,
+    )
     tz_offset = int(body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480)
     start_at_utc = None if schedule_type == "daily_times" else _parse_client_datetime(body.start_at, tz_offset)
     schedule_config: Dict[str, Any] = {
@@ -3473,17 +5437,43 @@ def _create_task_row(
         )
     payload = dict(payload)
     payload["schedule_config"] = schedule_config
+    # 任务保留哨兵「system」= 这是系统调度任务（运行期再解析成具体空闲设备）
+    installation_ids = _clean_installation_ids(body.installation_ids)
+    title = _task_title(body, task_kind)
+    duplicate = _find_duplicate_active_recurring_task(
+        db,
+        target_user_id=target_user_id,
+        task_kind=task_kind,
+        title=title,
+        payload=payload,
+        schedule_type=schedule_type,
+        interval_seconds=interval_seconds,
+        installation_ids=installation_ids,
+    )
+    if duplicate is not None:
+        duplicate.title = title
+        duplicate.content = content
+        duplicate.payload = payload
+        duplicate.interval_seconds = interval_seconds
+        duplicate.target_installation_ids = installation_ids
+        duplicate.status = "active"
+        duplicate.updated_at = now
+        if duplicate.next_run_at is None:
+            duplicate.next_run_at = next_run_at
+        db.commit()
+        db.refresh(duplicate)
+        return duplicate
     task = ScheduledTask(
         user_id=target_user_id,
         created_by_user_id=created_by_user_id,
         created_by_role=created_by_role,
-        title=_task_title(body, task_kind),
+        title=title,
         task_kind=task_kind,
         content=content,
         payload=payload,
         schedule_type=schedule_type,
         interval_seconds=interval_seconds,
-        target_installation_ids=_clean_installation_ids(body.installation_ids),
+        target_installation_ids=installation_ids,
         status="active",
         next_run_at=next_run_at,
         created_at=now,
@@ -3492,7 +5482,22 @@ def _create_task_row(
     db.add(task)
     db.flush()
     if not _is_server_side_task(task) and task.next_run_at and task.next_run_at <= now:
-        _enqueue_task(db, task, now)
+        targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
+        busy = any(
+            _installation_has_unclaimed_work(
+                db,
+                user_id=target_user_id,
+                installation_id=target,
+            )
+            for target in targets
+        )
+        # once 任务总是排进队列（设备串行领取）；周期任务仍然忙时跳过，等下一次自然到点
+        if not busy or schedule_type == "once":
+            _enqueue_task(db, task, now)
+            # The database session deliberately uses autoflush=False. Flush
+            # here so subsequent task definitions in the same activation see
+            # this pending run and do not materialize a second one.
+            db.flush()
     db.commit()
     db.refresh(task)
     return task
@@ -3506,16 +5511,29 @@ def create_scheduled_task(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    dispatch_devices.assert_marketing_only_allowed(
+        db, owner_user.id, "scheduled_task_create",
+        " ".join(str(x or "") for x in (getattr(body, "app_name", ""), getattr(body, "task_kind", ""),
+                                        getattr(body, "skill_key", ""))),
+    )
     requested_kind = _normalize_task_kind(body.task_kind)
     xi = _header_installation_id(request)
     if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:
         raise HTTPException(status_code=400, detail="missing current installation id")
     if xi:
+        # Serialize execution at claim time, while allowing multiple task
+        # definitions/runs to wait in the installation's FIFO queue.
         ensure_installation_slot(
             db,
             owner_user.id,
             installation_slot_id_for_user(db, owner_user.id, xi),
         )
+        slot_id = installation_slot_id_for_user(db, owner_user.id, xi)
+        if slot_id:
+            db.query(UserInstallation).filter(
+                UserInstallation.user_id == owner_user.id,
+                UserInstallation.installation_id == slot_id,
+            ).with_for_update().first()
     if requested_kind in _SERVER_SIDE_TASK_KINDS:
         body.installation_ids = []
     else:
@@ -3755,7 +5773,24 @@ def run_scheduled_task_now(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _assert_user_task_access(task.user_id, current_user, owner_user)
-    runs = _enqueue_task(db, task, datetime.utcnow())
+    now = datetime.utcnow()
+    targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
+    if (
+        not _is_server_side_task(task)
+        and str(task.schedule_type or "").strip() != "once"
+        and any(
+            _installation_has_unclaimed_work(db, user_id=owner_user.id, installation_id=target)
+            for target in targets
+        )
+    ):
+        # Keep the definition due for the next idle poll. No run row is
+        # created while the installation is occupied.
+        task.status = "active"
+        task.next_run_at = now
+        task.updated_at = now
+        db.commit()
+        return {"ok": True, "runs": []}
+    runs = _enqueue_task(db, task, now)
     if task.schedule_type in {"interval", "daily_times"} and task.status != "cancelled":
         task.status = "active"
     db.commit()
@@ -3771,14 +5806,23 @@ def list_scheduled_task_runs(
     date: str = Query("", max_length=10),
     timezone_offset_minutes: int = Query(480, ge=-720, le=840),
     installation_id: str = Query("", max_length=128),
+    active_only: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    _enqueue_due_tasks(db, owner_user.id)
+    _enqueue_due_tasks(db, owner_user.id, _header_installation_id(request))
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
     selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
-    if selected_installation_id:
+    system_task_ids = _system_dispatch_task_ids(db, owner_user.id)
+    if selected_installation_id == "system":
+        # 选了「系统设备」：只看系统调度的任务（由系统派给空闲设备执行的）
+        if system_task_ids:
+            query = query.filter(ScheduledTaskRun.task_id.in_(system_task_ids))
+        else:
+            query = query.filter(ScheduledTaskRun.id.is_(None))
+    elif selected_installation_id:
+        # 选了具体槽位：只看这个槽位的任务，且排除系统调度来的（两者不混）
         query = query.filter(
             or_(
                 ScheduledTaskRun.installation_id == selected_installation_id,
@@ -3786,6 +5830,12 @@ def list_scheduled_task_runs(
                 ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
             )
         )
+        if system_task_ids:
+            query = query.filter(~ScheduledTaskRun.task_id.in_(system_task_ids))
+    # Keep direct Python callers (whose omitted Query default is a Query
+    # object) equivalent to the HTTP default of false.
+    if active_only is True:
+        query = query.filter(ScheduledTaskRun.status.in_(tuple(_RUNNING_STATUSES)))
     date_key = (date or "").strip()
     if date_key:
         try:
@@ -3890,22 +5940,21 @@ def pending_scheduled_task_runs(
             installation_id=xi,
             client_process_id=client_process_id,
             now=now,
+            reported_exit_reason=_header_previous_client_exit_reason(request),
         )
         if interrupted:
             db.commit()
-    expired_before_poll = _expire_workflow_node_runs(
+    # A physical installation executes exactly one client task at a time.
+    # Do not materialize another run while it is busy.  The next poll after a
+    # final state will enqueue and claim exactly one currently-valid task.
+    if _installation_has_active_work(
         db,
-        now,
         user_id=current_user_id,
         installation_id=xi,
-    )
-    if expired_before_poll:
-        db.commit()
-    # Always materialize newly due runs before honoring a recent empty-result
-    # cache. Otherwise a node that becomes due immediately after an empty poll
-    # can wait for the cache TTL before the client is even allowed to see it.
-    _enqueue_due_tasks(db, current_user_id)
-
+    ):
+        return {"ok": True, "items": []}
+    _enqueue_due_tasks(db, current_user_id, xi)
+    _expire_workflow_node_runs(db, now, user_id=current_user_id, installation_id=xi)
     pending_key = _pending_cache_key("run", current_user_id, xi)
     if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
@@ -3927,24 +5976,33 @@ def pending_scheduled_task_runs(
     )
     if skipped_pending or expired_after_enqueue:
         db.flush()
-    stale_cutoff = now - timedelta(minutes=10)
+    stale_cutoff = now - timedelta(minutes=20)
+    hard_cutoff = now - timedelta(seconds=_client_run_online_hard_timeout_seconds())
     stale_rows = (
         db.query(ScheduledTaskRun)
+        .options(defer(ScheduledTaskRun.progress), defer(ScheduledTaskRun.result_payload))
         .filter(
             ScheduledTaskRun.user_id == current_user_id,
             ScheduledTaskRun.status == "processing",
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
             ScheduledTaskRun.claimed_at.isnot(None),
-            ScheduledTaskRun.claimed_at < stale_cutoff,
-            ScheduledTaskRun.updated_at < stale_cutoff,
+            or_(
+                and_(ScheduledTaskRun.claimed_at < stale_cutoff, ScheduledTaskRun.updated_at < stale_cutoff),
+                ScheduledTaskRun.claimed_at < hard_cutoff,
+            ),
         )
         .order_by(ScheduledTaskRun.claimed_at.asc())
         .limit(100)
         .all()
     )
     for row in stale_rows:
-        if not _client_processing_run_is_stale(row, now):
-            continue
+        # 超过硬超时（默认 8h）就不再给"设备还活着"的宽限，直接收掉，避免队列被永久堵死
+        hard_expired = bool(row.claimed_at and row.claimed_at < hard_cutoff)
+        if not hard_expired:
+            if not _client_processing_run_is_stale(row, now):
+                continue
+            if _client_run_is_within_online_grace(db, row, now):
+                continue
         row.status = "failed"
         row.error = "客户端长时间未上报进度，本轮任务已结束"
         row.finished_at = now
@@ -3967,6 +6025,10 @@ def pending_scheduled_task_runs(
 
     candidates = (
         db.query(ScheduledTaskRun)
+        # Claim scanning only needs the identity/workflow columns: loading the
+        # progress and result_payload JSON of every candidate made each poll worth
+        # tens of MB of RSS (2026-09-14 hang). They stay lazy for the claimed row.
+        .options(defer(ScheduledTaskRun.progress), defer(ScheduledTaskRun.result_payload))
         .with_for_update(skip_locked=True)
         .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "pending")
         .filter(ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)))
@@ -4001,6 +6063,19 @@ def pending_scheduled_task_runs(
         )
         if not row:
             continue
+        # A pending run may have been materialized before the user changed
+        # Personal Settings. Resolve the live template at the exact claim
+        # boundary so the client never receives an activation-time snapshot.
+        live_payload = _refresh_live_personal_template_payload(
+            db,
+            task_kind=row.task_kind,
+            payload=dict(row.payload or {}),
+            target_user_id=row.user_id,
+            now=now,
+        )
+        if live_payload != (row.payload or {}):
+            row.payload = live_payload
+            row.updated_at = now
         refreshed_payload = _enrich_digital_human_voice_payload(
             db,
             payload=dict(row.payload or {}),
@@ -4020,6 +6095,9 @@ def pending_scheduled_task_runs(
         rows.append(row)
         if serial_key:
             claimed_serial_keys.add(serial_key)
+        # Never hand one device more than one run per poll. The next run is
+        # picked up only after this one reaches a final state.
+        break
     db.commit()
     if rows:
         _clear_pending_empty(pending_key)
@@ -4135,6 +6213,19 @@ def pending_scheduled_publish_requests(
         claim_if_unowned=True,
         auth_session_id=request_auth_session_id(request),
     )
+    if _active_run_for_installation(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        statuses={"pending", "processing", "running", "claimed", "queued", "waiting"},
+    ) is not None:
+        return {"ok": True, "items": []}
+    if _active_publish_for_installation(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+    ) is not None:
+        return {"ok": True, "items": []}
     pending_key = _pending_cache_key("publish", current_user_id, xi)
     if _pending_empty_recent(pending_key, _PUBLISH_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
@@ -4143,10 +6234,13 @@ def pending_scheduled_publish_requests(
     now = datetime.utcnow()
     rows = (
         db.query(ScheduledTaskRun)
+        # The publish scan reads result_payload for its draft marker, but the big
+        # task payload is not needed here at all.
+        .options(defer(ScheduledTaskRun.payload), defer(ScheduledTaskRun.progress))
         .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "completed")
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.finished_at.asc(), ScheduledTaskRun.created_at.asc())
-        .limit(200)
+        .limit(60)
         .all()
     )
     picked: List[ScheduledTaskRun] = []
@@ -4170,6 +6264,39 @@ def pending_scheduled_publish_requests(
     else:
         _mark_pending_empty(pending_key, _PUBLISH_PENDING_EMPTY_CACHE_SECONDS)
     return {"ok": True, "items": [_serialize_run(r) for r in picked]}
+
+
+def _workflow_deadline_fallback_text(event_payload: Dict[str, Any]) -> str:
+    """Node-end text for a client build that does not send its own wording.
+
+    The private-WeChat takeover node is time-bounded on purpose, so its normal end
+    should read as a finished takeover report instead of a bare stop notice.
+    """
+    takeover = event_payload.get("takeover") if isinstance(event_payload.get("takeover"), dict) else {}
+    if not takeover:
+        return "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
+
+    def _count(key: str) -> int:
+        try:
+            return int(takeover.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    rounds = _count("completed_rounds")
+    headline = "个微私信接管正常收工：节点时间已到，后续节点继续执行。"
+    if rounds <= 0:
+        body = "接管已启动，但本节点时间内未完成一轮巡检"
+    else:
+        duration = str(takeover.get("duration_label") or "").strip() or "未记录"
+        body = (
+            f"已巡检 {rounds} 轮，耗时 {duration}；"
+            f"自动回复 {_count('replied')} 个会话；跳过 {_count('skipped')} 个；失败 {_count('failed')} 个；"
+            f"新好友申请：检查 {_count('friend_requests_checked')} 个、"
+            f"已同意 {_count('friend_requests_accepted')} 个、失败 {_count('friend_requests_failed')} 个"
+        )
+        if _count("group_invite_candidates"):
+            body += f"；疑似加群线索 {_count('group_invite_candidates')} 个会话"
+    return f"{headline}\n\n接管实况\n- {body}"
 
 
 def _run_for_user(db: Session, run_id: str, user_id: int) -> ScheduledTaskRun:
@@ -4218,6 +6345,55 @@ def submit_scheduled_task_event(
     if _expire_workflow_node_run(db, row, now=now):
         db.commit()
         raise HTTPException(status_code=409, detail=row.error or "节点时间已结束，任务已取消")
+    # A local client reports the absolute workflow-node cutoff explicitly.
+    # Persist that terminal state here so a worker that stopped at the
+    # boundary cannot remain ``processing`` forever when the compatibility
+    # expiry hook is disabled for FIFO scheduling.
+    event_payload = body.payload if isinstance(body.payload, dict) else {}
+    deadline_reason = str(event_payload.get("reason") or "").strip().lower()
+    if (
+        str(body.type or "").strip().lower() == "cancelled"
+        and deadline_reason == "workflow_node_deadline_expired"
+        and str(row.status or "").strip().lower() not in _FINAL_STATUSES
+    ):
+        message = str(event_payload.get("text") or "").strip() or _workflow_deadline_fallback_text(event_payload)
+        row.status = "cancelled"
+        row.error = None
+        row.result_text = message
+        existing_result = row.result_payload if isinstance(row.result_payload, dict) else {}
+        row.result_payload = {
+            **existing_result,
+            **{
+                key: value
+                for key, value in event_payload.items()
+                if key not in {"text", "reason"}
+            },
+            "skipped": True,
+            "skip_reason": "workflow_node_deadline_expired",
+            "skip_message": message,
+            "deadline_at": event_payload.get("deadline_at"),
+        }
+        row.finished_at = now
+        row.updated_at = now
+        row.progress = _merge_run_progress(
+            row,
+            {
+                **event_payload,
+                "stage": "workflow_node_deadline_expired",
+                "text": message,
+                "reason": "workflow_node_deadline_expired",
+                "cancelled_at": now.isoformat(),
+            },
+        )
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task:
+            task.last_error = None
+            task.updated_at = now
+        _sync_h5_message_from_run(db, row, now)
+        _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", event_payload)
+        db.commit()
+        return {"ok": True, "status": row.status, "cancelled": True}
+
     progress = dict(body.payload or {})
     client_process_id = _header_client_process_id(request)
     if client_process_id:

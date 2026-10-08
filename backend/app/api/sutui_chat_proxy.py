@@ -1,14 +1,20 @@
 """鉴权后统一使用服务器赞助/管理端速推 Token 池，转发 OpenAI 兼容 chat/completions 至 api.xskill.ai。"""
 from __future__ import annotations
 
+import base64
+import asyncio
 import json
 import logging
+import mimetypes
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -26,6 +32,7 @@ from ..models import BillingIdempotency, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.daily_credit_limit import assert_daily_limit_allows
+from ..services import model_reply_profiles as _model_profiles
 from ..services.model_usage_monitor import log_model_usage_event
 from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_audit, log_xskill_http
 from ..services.sutui_pricing import (
@@ -37,6 +44,7 @@ from ..services.sutui_pricing import (
     extract_upstream_billing_snapshot,
     extract_upstream_reported_credits,
     fetch_model_pricing,
+    yyapi_usage_billing,
 )
 from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 from .auth import get_current_user
@@ -105,16 +113,129 @@ def _get_direct_client(provider: str, timeout: float = 30.0) -> httpx.AsyncClien
     return c
 
 
+_DEEPSEEK_OMITTED_TOOL_RESULT = "（该工具结果已省略，请基于其余已知信息继续。）"
+
+
+def _normalize_deepseek_messages(
+    url: str,
+    body: Dict[str, Any],
+    *,
+    stream: bool = False,
+) -> int:
+    """发往 DeepSeek 官方直连前的报文整形（只修"我们自己发错"的部分）。
+
+    DeepSeek /chat/completions 的校验比 OpenAI 严，2026-09-20 实测会拒的形状：
+      - `messages[N]: missing field content` / `content should be a string or a list`
+      - `role: unknown variant developer`（OpenAI 新风格的 developer 角色）
+      - `stream_options should be set along with stream = true`（非流式带了 stream_options）
+      - `Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`
+      - `An assistant message with 'tool_calls' must be followed by tool messages ...`
+    后两类正是编排上下文被裁剪（ToolCallFilter / 历史压缩）后最容易出现的形态。
+    这些都会让整跳 422，候选链掉到更慢的通道；这里逐条整形并在日志里报数。
+    """
+    if "api.deepseek.com" not in str(url or ""):
+        return 0
+    if not isinstance(body, dict):
+        return 0
+    fixed = 0
+
+    if not stream and "stream_options" in body:
+        body.pop("stream_options", None)
+        fixed += 1
+
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return fixed
+
+    cleaned: List[Dict[str, Any]] = []
+    pending_tool_ids: List[str] = []
+
+    def flush_pending() -> None:
+        """assistant.tool_calls 缺 tool 结果时补一条占位结果，避免整跳被拒。"""
+        nonlocal fixed
+        for call_id in pending_tool_ids:
+            cleaned.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": _DEEPSEEK_OMITTED_TOOL_RESULT,
+                }
+            )
+            fixed += 1
+        pending_tool_ids.clear()
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+
+        # developer 是 OpenAI 新写法，DeepSeek 只认 system/user/assistant/tool
+        if role == "developer":
+            message = {**message, "role": "system"}
+            role = "system"
+            fixed += 1
+
+        if role == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            if not call_id or call_id not in pending_tool_ids:
+                # 孤立 tool 消息（前面的 tool_calls 已被裁剪掉）：丢掉，否则整跳 400
+                fixed += 1
+                continue
+            pending_tool_ids.remove(call_id)
+        elif pending_tool_ids:
+            # DeepSeek 要求 tool 结果紧跟对应的 assistant.tool_calls；
+            # 一旦出现别的角色，就说明这批结果已经缺失，先补占位再继续。
+            flush_pending()
+
+        if role == "assistant":
+            tool_calls = message.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                for call in tool_calls:
+                    if isinstance(call, dict):
+                        call_id = str(call.get("id") or "").strip()
+                        if call_id:
+                            pending_tool_ids.append(call_id)
+
+        content = message.get("content")
+        if isinstance(content, dict):
+            message = {**message, "content": json.dumps(content, ensure_ascii=False)}
+            fixed += 1
+        elif content is None:
+            if "content" not in message:
+                message = {**message, "content": None}
+                fixed += 1
+            if role in {"tool", "user", "system"}:
+                message = {**message, "content": message.get("content") or ""}
+                fixed += 1
+        elif not isinstance(content, (str, list)):
+            message = {**message, "content": str(content)}
+            fixed += 1
+
+        cleaned.append(message)
+
+    flush_pending()
+    body["messages"] = cleaned
+    if fixed:
+        logger.info("[deepseek-normalize] 整形 DeepSeek 请求 %d 处（messages=%d）", fixed, len(cleaned))
+    return fixed
+
+
 async def _post_chat_upstream(
     client: httpx.AsyncClient,
     url: str,
     *,
     body: Dict[str, Any],
     headers: Dict[str, str],
+    timeout: Optional[float] = None,
 ) -> httpx.Response:
+    _normalize_deepseek_messages(url, body, stream=False)
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat upstream admitted waited_ms=%s", lease.waited_ms)
+        # 显式带上这一跳的超时：client 对象是按 provider 缓存的，创建之后它会一直沿用
+        # 第一次的 timeout，逐跳参数会被悄悄忽略。
+        if timeout:
+            return await client.post(url, json=body, headers=headers, timeout=httpx.Timeout(timeout))
         return await client.post(url, json=body, headers=headers)
 
 
@@ -125,23 +246,126 @@ async def _stream_chat_upstream(
     *,
     body: Dict[str, Any],
     headers: Dict[str, str],
+    timeout: Optional[float] = None,
 ):
+    _normalize_deepseek_messages(url, body, stream=True)
     async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
         if lease.waited_ms:
             logger.info("sutui chat stream admitted waited_ms=%s", lease.waited_ms)
-        async with client.stream("POST", url, json=body, headers=headers) as response:
+        stream_timeout = httpx.Timeout(timeout) if timeout else None
+        async with client.stream("POST", url, json=body, headers=headers, timeout=stream_timeout) as response:
             yield response
 
 
 def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
     """If a model has a direct API key configured, return route info; else None."""
     mid = (model or "").strip()
-    if mid in ("deepseek-chat", "deepseek-reasoner"):
+    change2pro_key = (
+        getattr(settings, "change2pro_api_key", None)
+        or os.environ.get("CHANGE2PRO_API_KEY")
+        or ""
+    ).strip()
+    change2pro_model = (
+        getattr(settings, "change2pro_chat_model", None)
+        or os.environ.get("CHANGE2PRO_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    change2pro_model = _strip_provider_prefix(change2pro_model)
+    if change2pro_key and mid == change2pro_model:
+        base = (
+            getattr(settings, "change2pro_api_base", None)
+            or os.environ.get("CHANGE2PRO_API_BASE")
+            or "https://api.change2pro.com"
+        ).rstrip("/")
+        return {"api_base": base, "api_key": change2pro_key, "provider": "change2pro"}
+    yyapi_key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    yyapi_model = (
+        getattr(settings, "yyapi_chat_model", None)
+        or os.environ.get("YYAPI_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    yyapi_model = _strip_provider_prefix(yyapi_model)
+    if yyapi_key and mid == yyapi_model:
+        base = (
+            getattr(settings, "yyapi_api_base", None)
+            or os.environ.get("YYAPI_API_BASE")
+            or "https://www.yyapi.cloud"
+        ).rstrip("/")
+        return {"api_base": base, "api_key": yyapi_key, "provider": "yyapi"}
+    if mid in ("deepseek-flash", "deepseek-chat", "deepseek-reasoner"):
         key = (getattr(settings, "deepseek_api_key", None) or "").strip()
         if key:
             base = (getattr(settings, "deepseek_api_base", None) or "https://api.deepseek.com").rstrip("/")
             return {"api_base": base, "api_key": key, "provider": "deepseek"}
     return None
+
+
+def _yyapi_chat_configured() -> bool:
+    """Whether a YYAPI direct route is configured.
+
+    YYAPI is the first route in the normal fallback chain.  The legacy
+    Callers use this endpoint without selecting a provider, and a failed
+    YYAPI request must be allowed to continue to the remaining candidates.
+    """
+    key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    return bool(key)
+
+
+def _deepseek_chat_configured() -> bool:
+    key = (getattr(settings, "deepseek_api_key", None) or os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    return bool(key)
+
+
+def _change2pro_chat_configured() -> bool:
+    key = (
+        getattr(settings, "change2pro_api_key", None)
+        or os.environ.get("CHANGE2PRO_API_KEY")
+        or ""
+    ).strip()
+    return bool(key)
+
+
+def _change2pro_chat_model_id() -> str:
+    raw = (
+        getattr(settings, "change2pro_chat_model", None)
+        or os.environ.get("CHANGE2PRO_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    return _strip_provider_prefix(raw) or "gpt-5.6-sol"
+
+
+def _change2pro_direct_route(model: str = "") -> Optional[Dict[str, str]]:
+    target = _change2pro_chat_model_id()
+    route = _get_direct_route((model or target).strip() or target)
+    if route and route.get("provider") == "change2pro":
+        return route
+    return None
+
+
+def _yyapi_chat_model_id() -> str:
+    raw = (
+        getattr(settings, "yyapi_chat_model", None)
+        or os.environ.get("YYAPI_CHAT_MODEL")
+        or "gpt-5.6-sol"
+    ).strip()
+    return _strip_provider_prefix(raw) or "gpt-5.6-sol"
+
+
+def _yyapi_direct_route(model: str = "") -> Optional[Dict[str, str]]:
+    """Return the configured YYAPI route without exposing its secret to callers."""
+    target = _yyapi_chat_model_id()
+    requested = (model or target).strip() or target
+    if requested != target:
+        return None
+    key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
+    if not key:
+        return None
+    base = (
+        getattr(settings, "yyapi_api_base", None)
+        or os.environ.get("YYAPI_API_BASE")
+        or "https://www.yyapi.cloud"
+    ).rstrip("/")
+    return {"api_base": base, "api_key": key, "provider": "yyapi"}
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +456,49 @@ _SLIM_SYS_MSG_MAX_CHARS = 16000   # system messages get a much higher limit to p
 _SLIM_TOOL_DESC_MAX = 120         # max chars for tool-level description
 _SLIM_PROP_DESC_MAX = 40          # max chars for property-level description; 0 to strip all
 _BASE64_RE = __import__("re").compile(r"data:[^;]{0,60};base64,[A-Za-z0-9+/=]{200,}")
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+_CHAT_IMAGE_MAX_BYTES = _positive_int_env("SUTUI_CHAT_IMAGE_MAX_BYTES", 10 * 1024 * 1024)
+_CHAT_IMAGE_MAX_TOTAL_BYTES = _positive_int_env("SUTUI_CHAT_IMAGE_MAX_TOTAL_BYTES", 32 * 1024 * 1024)
+_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS = _positive_float_env("SUTUI_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS", 45.0)
+
+# ---------------------------------------------------------------------------
+# 每跳/整链预算
+#
+# 以前声明在 attempts 里的 timeout 只是 httpx 的“空闲读超时”，既不是这一跳的墙钟
+# 上限，也会因为 _get_direct_client/_get_xskill_client 按 provider 缓存 client 而失效
+# —— 2026-09-15 02:30/04:30 数字人口播视频节点的前置文案就是这样：第一跳
+# deepseek-flash(官方直连) 被 DeepSeek 排队压住，声明 180s 的它实打实等了 900s
+# （上游自己的排队上限）才 fallback，第二跳 deepseek-chat 又等满 900s。
+#
+# 现在的原则是“结果优先”：单跳给足时间（直连本身允许 420s，上游 900s 排队上限之内
+# 只要它开始处理就能拿到结果），但不允许无限等；整条链有一个总预算，超预算时会带
+# 着已完成的信息返回结构化错误，而不是把调用方拖死。
+_CHAT_DIRECT_ATTEMPT_TIMEOUT_SECONDS = _positive_float_env(
+    "SUTUI_CHAT_DIRECT_ATTEMPT_TIMEOUT_SECONDS", 420.0
+)
+_CHAT_XSKILL_ATTEMPT_TIMEOUT_SECONDS = _positive_float_env(
+    "SUTUI_CHAT_XSKILL_ATTEMPT_TIMEOUT_SECONDS", 240.0
+)
+# 1200s 的来由：两跳官方直连各 420s（840s）+ 一跳 change2pro/yyapi（正常 10~30s，
+# 上限 420s）都能塞进来，保证 DeepSeek 排队时文案仍然能由 gpt-5.6-sol 出出来。
+_CHAT_CHAIN_BUDGET_SECONDS = _positive_float_env("SUTUI_CHAT_CHAIN_BUDGET_SECONDS", 1200.0)
 
 
 _TOOLS_BLACKLIST = frozenset({
@@ -399,6 +666,166 @@ def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS) -> dict:
         if new_parts != c:
             return {**m, "content": new_parts}
     return m
+
+
+class _ChatImagePreparationError(ValueError):
+    """A user-supplied image could not be prepared for the vision provider."""
+
+    def __init__(self, message: str, *, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _image_mime_type(content_type: str, url: str, header: bytes) -> str:
+    """Resolve a safe image MIME type from the response, URL, or file signature."""
+    candidate = str(content_type or "").split(";", 1)[0].strip().lower()
+    if candidate.startswith("image/"):
+        return candidate
+
+    guessed, _ = mimetypes.guess_type(urlsplit(url).path)
+    if guessed and guessed.startswith("image/"):
+        return guessed
+
+    data = bytes(header or b"")
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+async def _download_chat_image_as_data_uri(
+    client: httpx.AsyncClient,
+    source_url: str,
+) -> Tuple[str, int, str]:
+    """Download one remote image and return a transient data URI."""
+    parsed = urlsplit(source_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise _ChatImagePreparationError("图片地址必须是 http/https URL", status_code=422)
+
+    try:
+        async with client.stream(
+            "GET",
+            source_url,
+            headers={"Accept": "image/*,application/octet-stream;q=0.8", "Accept-Encoding": "identity"},
+        ) as response:
+            if response.status_code >= 400:
+                raise _ChatImagePreparationError(
+                    f"图片下载失败（HTTP {response.status_code}）",
+                    status_code=502,
+                )
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > _CHAT_IMAGE_MAX_BYTES:
+                        raise _ChatImagePreparationError(
+                            f"图片超过 {_CHAT_IMAGE_MAX_BYTES // (1024 * 1024)} MB 限制",
+                            status_code=413,
+                        )
+                except ValueError:
+                    pass
+
+            chunks: List[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _CHAT_IMAGE_MAX_BYTES:
+                    raise _ChatImagePreparationError(
+                        f"图片超过 {_CHAT_IMAGE_MAX_BYTES // (1024 * 1024)} MB 限制",
+                        status_code=413,
+                    )
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+            mime = _image_mime_type(
+                response.headers.get("content-type", ""),
+                str(response.url) or source_url,
+                raw[:64],
+            )
+    except _ChatImagePreparationError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise _ChatImagePreparationError("图片下载超时，请稍后重试", status_code=504) from exc
+    except httpx.HTTPError as exc:
+        raise _ChatImagePreparationError(f"图片下载失败：{str(exc)[:240]}", status_code=502) from exc
+
+    if not raw:
+        raise _ChatImagePreparationError("图片下载结果为空", status_code=502)
+    if not mime:
+        raise _ChatImagePreparationError("下载内容不是可识别的图片", status_code=422)
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}", len(raw), mime
+
+
+async def _prepare_multimodal_images(body: Dict[str, Any], trace_id: str = "") -> Dict[str, int]:
+    """Replace remote image URLs in OpenAI messages with transient base64 data URIs."""
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return {"images": 0, "bytes": 0}
+
+    targets: List[Tuple[Dict[str, Any], Dict[str, Any], str]] = []
+    for message in messages:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            continue
+        for part in message["content"]:
+            if not isinstance(part, dict) or part.get("type") not in {"image_url", "image"}:
+                continue
+            ref = part.get("image_url") if part.get("type") == "image_url" else part.get("image")
+            if isinstance(ref, dict):
+                source_url = str(ref.get("url") or "").strip()
+            else:
+                source_url = str(ref or "").strip()
+            if source_url.startswith("data:image/"):
+                continue
+            if source_url:
+                targets.append((part, ref if isinstance(ref, dict) else {}, source_url))
+
+    if not targets:
+        return {"images": 0, "bytes": 0}
+
+    total_bytes = 0
+    prepared = 0
+    timeout = httpx.Timeout(
+        connect=min(10.0, _CHAT_IMAGE_FETCH_TIMEOUT_SECONDS),
+        read=_CHAT_IMAGE_FETCH_TIMEOUT_SECONDS,
+        write=10.0,
+        pool=10.0,
+    )
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=True,
+        trust_env=False,
+        limits=httpx.Limits(max_connections=8, max_keepalive_connections=4, keepalive_expiry=30),
+    ) as client:
+        for part, ref, source_url in targets:
+            data_uri, size, _mime = await _download_chat_image_as_data_uri(client, source_url)
+            total_bytes += size
+            if total_bytes > _CHAT_IMAGE_MAX_TOTAL_BYTES:
+                raise _ChatImagePreparationError(
+                    f"本轮图片总大小超过 {_CHAT_IMAGE_MAX_TOTAL_BYTES // (1024 * 1024)} MB 限制",
+                    status_code=413,
+                )
+            if part.get("type") == "image_url":
+                replacement = dict(ref)
+                replacement["url"] = data_uri
+                part["image_url"] = replacement
+            else:
+                part["image"] = data_uri
+            prepared += 1
+
+    logger.info(
+        "[chat-image] trace_id=%s prepared_images=%s downloaded_bytes=%s max_image_bytes=%s",
+        trace_id or "-",
+        prepared,
+        total_bytes,
+        _CHAT_IMAGE_MAX_BYTES,
+    )
+    return {"images": prepared, "bytes": total_bytes}
 
 
 _LOBSTER_SYSTEM_HINT_BASE = (
@@ -689,6 +1116,60 @@ _XSKILL_V3_MODEL_MAP: Dict[str, str] = {
 }
 _XSKILL_V3_CREDITS_PER_USD = 400
 
+# Server-owned second route for both text and image requests.  The APIZ
+# catalog advertises this model as text+image -> text; unlike DeepSeek Chat it
+# can safely receive the base64 image parts prepared above.
+_MULTIMODAL_FALLBACK_MODEL = "apiz/seed-2.0-mini"
+_PRIMARY_DEEPSEEK_MODEL = "deepseek-flash"
+_TEXT_FALLBACK_MODEL = "deepseek-chat"
+
+# DeepSeek 官方直连覆盖的 model id。这些 id 只走 direct:deepseek：
+# xskill 的 deepseek 通道（deepseek/deepseek-v3.2 @xskill-v3、deepseek-chat @xskill）
+# 已下线，不再作为候补——线上它们持续返回 "No available fal accounts"(503)，
+# 只会让整条候选链白耗一跳。
+_DEEPSEEK_DIRECT_MODEL_IDS = frozenset({
+    "deepseek-flash",
+    "deepseek-chat",
+    "deepseek-reasoner",
+})
+
+
+def _is_deepseek_model_id(model: str) -> bool:
+    mid = (model or "").strip().lower()
+    if not mid:
+        return False
+    return mid in _DEEPSEEK_DIRECT_MODEL_IDS or mid.startswith("deepseek/")
+
+
+def _request_has_multimodal_images(body: Any) -> bool:
+    """Return whether an OpenAI chat body contains an image content part."""
+    if not isinstance(body, dict):
+        return False
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in {"image_url", "image"}:
+                return True
+    return False
+
+
+def _is_text_only_deepseek_model(model: str) -> bool:
+    """Identify the built-in DeepSeek text routes that cannot accept images."""
+    mid = (model or "").strip().lower()
+    return mid in {
+        "deepseek-chat",
+        "deepseek-reasoner",
+        "deepseek/deepseek-chat",
+        "deepseek/deepseek-reasoner",
+    } or mid.startswith("deepseek/deepseek-v3")
+
 
 def _get_v3_route(model: str, token: str) -> Optional[Dict[str, Any]]:
     """Return v3 attempt dict if model has a v3 mapping, else None."""
@@ -744,9 +1225,9 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 
 
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
-    """主→备模型顺序：默认主模型 → openai/gpt-5.6-sol → deepseek-chat。"""
+    """Parse optional extra fallbacks after the server-owned model order."""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["openai/gpt-5.6-terra", "deepseek-chat"]
+    default = [_MULTIMODAL_FALLBACK_MODEL, _TEXT_FALLBACK_MODEL]
     if not raw:
         return default
     try:
@@ -792,6 +1273,7 @@ def _sutui_chat_model_candidates(
     initial_model: str,
     *,
     has_tools: bool = False,
+    has_images: bool = False,
     required_fallbacks: Optional[List[str]] = None,
     fallback_chain: Optional[List[str]] = None,
 ) -> List[str]:
@@ -803,27 +1285,55 @@ def _sutui_chat_model_candidates(
     out: List[str] = []
     init = (initial_model or "").strip()
 
-    if init and init not in seen:
-        seen.add(init)
-        out.append(init)
+    # Provider order is server-owned.  Callers may send any legacy model id;
+    # that id is only a later fallback and never determines the provider.
+    change2pro_model = _change2pro_chat_model_id() if _change2pro_chat_configured() else ""
+    yyapi_model = _yyapi_chat_model_id() if _yyapi_chat_configured() else ""
+
+    def add(mid: str) -> None:
+        model = (mid or "").strip()
+        if model and model not in seen:
+            seen.add(model)
+            out.append(model)
+
+    # DeepSeek V4.1 Flash is the primary direct route for both text and vision.
+    # The official ``deepseek-flash`` endpoint supports image_url content, tool
+    # calls, JSON output, and thinking/non-thinking modes. Legacy DeepSeek Chat
+    # remains a text-only fallback for callers and older jobs.
+    if _deepseek_chat_configured():
+        add(_PRIMARY_DEEPSEEK_MODEL)
+    if not has_images:
+        add(_TEXT_FALLBACK_MODEL)
+    if change2pro_model:
+        add(change2pro_model)
+    if yyapi_model:
+        add(yyapi_model)
+    if not has_images:
+        add(_MULTIMODAL_FALLBACK_MODEL)
+    if init and not (has_images and _is_text_only_deepseek_model(init)):
+        add(init)
     configured_chain = (
         list(fallback_chain)
         if fallback_chain is not None
         else _parse_sutui_chat_fallback_chain_env()
     )
     configured_chain.extend(required_fallbacks or [])
-    configured_chain.append("deepseek-chat")
     for fb in configured_chain:
-        m = _remap_model_id_for_sutui(fb)
-        if m and m not in seen:
-            seen.add(m)
-            out.append(m)
+        mapped = _remap_model_id_for_sutui(fb)
+        if has_images and _is_text_only_deepseek_model(mapped):
+            continue
+        add(mapped)
     if not out:
         return [init] if init else []
     disabled = _disabled_sutui_chat_models()
     if disabled:
         before_disabled = list(out)
-        out = [m for m in out if m not in disabled]
+        # ``gpt-5.6-sol`` is disabled on the xskill route by default, but the
+        # same id is the configured YYAPI model and must remain available.
+        out = [
+            m for m in out
+            if m not in disabled or m in {yyapi_model, change2pro_model}
+        ]
         skipped_disabled = set(before_disabled) - set(out)
         if skipped_disabled:
             logger.info("[sutui-chat] skipping disabled chat models: %s", skipped_disabled)
@@ -832,7 +1342,7 @@ def _sutui_chat_model_candidates(
         if out:
             logger.info("[circuit-breaker] all candidates tripped, using first: %s", out[0])
             return [out[0]]
-        fallback = "deepseek-chat"
+        fallback = _MULTIMODAL_FALLBACK_MODEL if has_images else _TEXT_FALLBACK_MODEL
         logger.warning("[sutui-chat] all candidates disabled, using emergency fallback: %s", fallback)
         return [fallback]
     if len(filtered) < len(out):
@@ -851,8 +1361,8 @@ def _sutui_chat_attempts_for_models(
     *,
     forced_model_override: bool = False,
 ) -> List[Dict[str, Any]]:
-    direct_timeout = 180.0
-    xskill_timeout = 180.0
+    direct_timeout = _CHAT_DIRECT_ATTEMPT_TIMEOUT_SECONDS
+    xskill_timeout = _CHAT_XSKILL_ATTEMPT_TIMEOUT_SECONDS
     attempts: List[Dict[str, Any]] = []
     if forced_model_override:
         forced_model = (model_candidates[0] if model_candidates else "").strip()
@@ -878,8 +1388,36 @@ def _sutui_chat_attempts_for_models(
                 "timeout": direct_timeout,
                 "is_direct": True,
             })
+            if dr.get("provider") == "change2pro":
+                # Change2Pro and YYAPI intentionally use the same model id;
+                # preserve YYAPI as the next direct fallback instead of
+                # losing it during candidate de-duplication.
+                yyapi = _yyapi_direct_route(mid)
+                if yyapi:
+                    attempts.append({
+                        "model": mid,
+                        "api_base": yyapi["api_base"],
+                        "api_key": yyapi["api_key"],
+                        "provider": "direct:yyapi",
+                        "timeout": direct_timeout,
+                        "is_direct": True,
+                    })
+                continue
+            if dr.get("provider") == "yyapi":
+                # Do not duplicate the YYAPI model through xskill.  The next
+                # model candidate is the actual fallback route.
+                continue
+            if dr.get("provider") == "deepseek":
+                # 官方直连覆盖的 id：直连失败后直接进入下一个候选，不叠加 xskill 的
+                # deepseek 通道（xskill 侧依赖 fal 账号池，只会多耗一跳并报
+                # "No available fal accounts"）。
+                continue
+        if _is_deepseek_model_id(mid):
+            # DeepSeek 的 id 只认官方直连（上面的 direct:deepseek）。没有直连 key 的
+            # 环境直接跳过这个候选，不再退到 xskill 的 deepseek 通道。
+            continue
         v3 = _get_v3_route(mid, token)
-        if v3:
+        if v3 and token:
             attempts.append({
                 "model": v3["model"],
                 "api_base": v3["api_base"],
@@ -890,14 +1428,15 @@ def _sutui_chat_attempts_for_models(
                 "endpoint_prefix": v3["endpoint_prefix"],
                 "v1_model": mid,
             })
-        attempts.append({
-            "model": mid,
-            "api_base": _api_base(),
-            "api_key": token,
-            "provider": "xskill",
-            "timeout": xskill_timeout,
-            "is_direct": False,
-        })
+        if token:
+            attempts.append({
+                "model": mid,
+                "api_base": _api_base(),
+                "api_key": token,
+                "provider": "xskill",
+                "timeout": xskill_timeout,
+                "is_direct": False,
+            })
     return attempts
 
 
@@ -936,58 +1475,69 @@ _FAKE_TOOL_CALL_RE = __import__("re").compile(
 )
 
 
-def _response_has_fake_tool_text(data: Any) -> bool:
-    """Detect deepseek-style fake tool calls embedded in text content."""
+def _model_profile(model_id: Any):
+    """??????????????default ? = ??????"""
+    return _model_profiles.profile_for(str(model_id or ""))
+
+
+def _request_tool_names(body: Any) -> Tuple[str, ...]:
+    """Tools declared by this request: the key signal for spotting fake calls."""
+    data = body if isinstance(body, dict) else {}
+    tools = data.get("tools")
+    names: List[str] = []
+    if isinstance(tools, list):
+        for item in tools:
+            if not isinstance(item, dict):
+                continue
+            fn = item.get("function") if isinstance(item.get("function"), dict) else item
+            name = str((fn or {}).get("name") or "").strip()
+            if name:
+                names.append(name)
+    return tuple(names)
+
+
+def _response_has_fake_tool_text(
+    data: Any,
+    profile: Any = None,
+    tool_names: Tuple[str, ...] = (),
+) -> bool:
+    """Detect fake tool calls written as text (structural, any wrapper)."""
     if not isinstance(data, dict):
         return False
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         return False
+    prof = profile or _model_profiles.profile_for("")
     msg = (choices[0] if isinstance(choices[0], dict) else {}).get("message", {})
     content = msg.get("content") if isinstance(msg, dict) else None
-    if isinstance(content, str) and _FAKE_TOOL_CALL_RE.search(content):
-        return True
-    return False
+    return _model_profiles.fake_tool_hit(content, prof, tool_names)
 
 
-_DSML_BLOCK_RE = __import__("re").compile(
-    r"<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>[\s\S]*?"
-    r"(?:<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>|$)",
-)
-
-
-def _strip_fake_tool_text_from_response(data: Any) -> bool:
-    """Strip DSML / fake tool call markup from content in-place. Returns True if cleaned."""
-    if not isinstance(data, dict):
+def _strip_fake_tool_text_from_response(
+    data: Any,
+    profile: Any = None,
+    tool_names: Tuple[str, ...] = (),
+) -> bool:
+    """Strip fake tool calls written as text; returns True when cleaned."""
+    prof = profile or _model_profiles.profile_for("")
+    if not _model_profiles.apply_to_completion(data, prof, tool_names):
         return False
-    choices = data.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return False
-    msg = (choices[0] if isinstance(choices[0], dict) else {}).get("message")
-    if not isinstance(msg, dict):
-        return False
-    content = msg.get("content")
-    if not isinstance(content, str):
-        return False
-    if not _FAKE_TOOL_CALL_RE.search(content):
-        return False
-    cleaned = _DSML_BLOCK_RE.sub("", content).strip()
-    if not cleaned:
-        cleaned = "好的，我来为您总结一下已获取的信息。"
-    if cleaned != content:
-        msg["content"] = cleaned
-        logger.warning("[dsml-clean] stripped fake tool markup from response content (%d→%d chars)",
-                       len(content), len(cleaned))
-        return True
-    return False
+    logger.warning("[fake-tool-clean] profile=%s stripped fake tool markup from response", prof.id)
+    return True
 
 
-_MAX_TOOL_CALL_ROUNDS = 4
+def _enforce_max_tool_call_rounds(body: Dict[str, Any], trace_id: str, profile: Any = None) -> bool:
+    """????????????????? tools?????????
 
-
-def _enforce_max_tool_call_rounds(body: Dict[str, Any], trace_id: str) -> bool:
-    """If conversation already has >= _MAX_TOOL_CALL_ROUNDS tool call round-trips,
-    remove tools to force a text-only response. Returns True if tools were stripped."""
+    ??????????0 = ???????????????
+    """
+    prof = profile or _model_profiles.profile_for("")
+    try:
+        limit = int(getattr(prof, "strip_tools_after_rounds", 4) or 0)
+    except (TypeError, ValueError):
+        limit = 4
+    if limit <= 0:
+        return False
     tools = body.get("tools")
     if not isinstance(tools, list) or not tools:
         return False
@@ -998,21 +1548,30 @@ def _enforce_max_tool_call_rounds(body: Dict[str, Any], trace_id: str) -> bool:
     for m in msgs:
         if isinstance(m, dict) and (m.get("role") or "").strip().lower() == "tool":
             rounds += 1
-    if rounds < _MAX_TOOL_CALL_ROUNDS:
+    if rounds < limit:
         return False
     body.pop("tools", None)
     body.pop("tool_choice", None)
     logger.warning(
-        "[chat_trace] trace_id=%s enforce_max_tool_rounds: %d tool rounds detected (max=%d), "
-        "stripped tools to force text response",
-        trace_id, rounds, _MAX_TOOL_CALL_ROUNDS,
+        "[chat_trace] trace_id=%s enforce_max_tool_rounds: %d tool rounds detected "
+        "(max=%d profile=%s), stripped tools to force text response",
+        trace_id, rounds, limit, prof.id,
     )
     return True
 
 
-def _openai_completion_missing_tool_calls(data: Any, request_body: Dict[str, Any]) -> bool:
-    """请求中传了 tools 且 tool_choice 非 none，但响应不含 tool_calls——模型未遵从 tool 指令，值得换模型重试。
-    包括检测 deepseek 在文本中伪造工具调用标记的情况。"""
+def _openai_completion_missing_tool_calls(
+    data: Any,
+    request_body: Dict[str, Any],
+    profile: Any = None,
+) -> bool:
+    """???? tools ????? tool_calls????????????? ????????
+
+    ?????????? retry_when_tools_ignored ???
+    """
+    prof = profile or _model_profiles.profile_for("")
+    if not getattr(prof, "retry_when_tools_ignored", True):
+        return False
     if not isinstance(request_body, dict):
         return False
     tools = request_body.get("tools")
@@ -1029,7 +1588,7 @@ def _openai_completion_missing_tool_calls(data: Any, request_body: Dict[str, Any
     msg = choices[0].get("message") if isinstance(choices[0], dict) else None
     if not isinstance(msg, dict):
         return False
-    if _response_has_fake_tool_text(data):
+    if _response_has_fake_tool_text(data, prof):
         return True
     tcs = msg.get("tool_calls")
     if isinstance(tcs, list) and len(tcs) > 0:
@@ -1037,12 +1596,62 @@ def _openai_completion_missing_tool_calls(data: Any, request_body: Dict[str, Any
     return True
 
 
+def _sse_delta_bytes(text: str) -> bytes:
+    payload = {"choices": [{"index": 0, "delta": {"content": text}}]}
+    return ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+
+
+def _guard_sse_event(event: bytes, guard: Any) -> bytes:
+    """?????????????????????????"""
+    if guard is None or not getattr(guard, "enabled", False):
+        return event + b"\n\n"
+    text = event.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    if not stripped.startswith("data:"):
+        return event + b"\n\n"
+    payload = stripped[5:].strip()
+    if not payload or payload == "[DONE]":
+        return event + b"\n\n"
+    try:
+        obj = json.loads(payload)
+    except json.JSONDecodeError:
+        return event + b"\n\n"
+    if not isinstance(obj, dict):
+        return event + b"\n\n"
+    changed = False
+    choices = obj.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            if getattr(guard.profile, "strip_reasoning_content", False):
+                for key in ("reasoning_content", "reasoning", "thinking"):
+                    if delta.get(key):
+                        delta.pop(key, None)
+                        changed = True
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                new_content = guard.feed(content)
+                if new_content != content:
+                    delta["content"] = new_content
+                    changed = True
+    if not changed:
+        return event + b"\n\n"
+    return ("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode("utf-8")
+
+
 def _sutui_chat_abort_model_fallback(http_status: int, data: Any) -> bool:
-    """此类结果换模型无意义，直接结束尝试。"""
+    """此类结果换模型无意义，直接结束尝试。
+
+    2026-10-05：402 以前也直接中断候选链 —— 结果只要**用户级偏好模型**在上游拿不到（xskill 对
+    某些模型返回 402 Payment Required），整条链就断在这里，用户端表现为"微信接管突然不回消息"。
+    现在 402 只在确实是托管池余额/额度错误（_xskill_upstream_pool_quota_error）时才中断，
+    否则继续换下一个候选模型（默认链里还有 deepseek-chat 这类可用模型）。
+    """
     if http_status == 401:
-        return True
-    # xskill chat 上游 402 多为托管池预扣/余额问题，换模型通常仍走同一 Token
-    if http_status == 402:
         return True
     if isinstance(data, dict) and _xskill_upstream_pool_quota_error(data):
         return True
@@ -1116,6 +1725,10 @@ def _should_deduct_credits() -> bool:
 _SUTUI_CHAT_MIN_CHARGE_CREDITS = quantize_credits(Decimal("10"))
 _CHAT_TURN_PRE_DEDUCT_ENDPOINT = "chat_turn"
 _CHAT_TURN_CHARGE_CREDITS = _SUTUI_CHAT_MIN_CHARGE_CREDITS
+
+
+def _yyapi_pricing_enabled() -> bool:
+    return _yyapi_chat_configured()
 
 
 class ChatTurnPreDeductIn(BaseModel):
@@ -1238,6 +1851,20 @@ def charge_chat_turn_once(
             "charged": False,
             "credits_charged": 0,
             "billing_skipped": "no_user_deduct",
+        }
+        _store_chat_turn_idempotency(db, current_user.id, tid, payload)
+        return payload
+
+    # YYAPI is settled after the response supplies token usage. Register the
+    # turn for idempotency, but skip the legacy flat-10 pre-charge.
+    if _yyapi_pricing_enabled():
+        payload = {
+            "ok": True,
+            "turn_id": tid,
+            "charged": True,
+            "credits_charged": 0,
+            "pricing_deferred": True,
+            "billing_rule": "yyapi_usage_customer_0.40",
         }
         _store_chat_turn_idempotency(db, current_user.id, tid, payload)
         return payload
@@ -1458,8 +2085,18 @@ def _credits_for_sutui_chat(
     response_body: Optional[Dict[str, Any]] = None,
     *,
     is_direct_api: bool = False,
+    provider: Optional[str] = None,
 ) -> Tuple[Decimal, str]:
     """LLM 实扣：v3 cost → 直连官方定价 → 上游显式价字段 → docs 定价+usage → usage×fallback。"""
+    # YYAPI pricing applies only when YYAPI actually won.  A request may have
+    # started at YYAPI and completed on DeepSeek/xskill after fallback.
+    provider_name = (provider or "").strip().lower()
+    is_yyapi_route = provider_name in {"yyapi", "direct:yyapi"}
+    if is_yyapi_route and _yyapi_pricing_enabled():
+        yyapi = yyapi_usage_billing(usage)
+        if yyapi and yyapi["customer_credits"] > 0:
+            return quantize_credits(yyapi["customer_credits"]), "yyapi_usage_customer_0.40"
+
     if usage and isinstance(usage, dict):
         v3_cost = usage.get("cost")
         if isinstance(v3_cost, (int, float)) and v3_cost > 0:
@@ -1525,6 +2162,7 @@ def _apply_chat_deduct(
     billing_recon: Optional[Dict[str, Any]] = None,
     trace_id: Optional[str] = None,
     is_direct_api: bool = False,
+    provider: Optional[str] = None,
     apply_min_charge: bool = True,
     billing_mode: str = "standard",
 ) -> None:
@@ -1541,7 +2179,13 @@ def _apply_chat_deduct(
     reported_raw = None
     if response_body and isinstance(response_body, dict):
         reported_raw = extract_upstream_reported_credits(response_body)
-    credits, billing_src = _credits_for_sutui_chat(model, usage, response_body, is_direct_api=is_direct_api)
+    credits, billing_src = _credits_for_sutui_chat(
+        model,
+        usage,
+        response_body,
+        is_direct_api=is_direct_api,
+        provider=provider,
+    )
     raw_computed_credits = credits
     if apply_min_charge and credits < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
         credits = _SUTUI_CHAT_MIN_CHARGE_CREDITS
@@ -1592,7 +2236,18 @@ def _apply_chat_deduct(
         "billing_mode": billing_mode,
         "trace_id": tid,
         "billing_src": billing_src,
+        "provider": provider or ("direct" if is_direct_api else "xskill"),
     }
+    if (provider or "").strip().lower() in {"yyapi", "direct:yyapi"} and _yyapi_pricing_enabled():
+        yyapi = yyapi_usage_billing(usage)
+        if yyapi:
+            meta_chat.update({
+                "yyapi_list_price_yuan": float(yyapi["list_price_yuan"]),
+                "yyapi_upstream_cost_yuan": float(yyapi["upstream_cost_yuan"]),
+                "yyapi_customer_charge_yuan": float(yyapi["customer_charge_yuan"]),
+                "yyapi_upstream_multiplier": float(getattr(settings, "yyapi_upstream_multiplier", 0.23)),
+                "yyapi_customer_multiplier": float(getattr(settings, "yyapi_customer_multiplier", 0.4)),
+            })
     if billing_recon:
         meta_chat = {**meta_chat, **billing_recon}
     append_credit_ledger(
@@ -1652,7 +2307,21 @@ async def sutui_chat_completions(
 
     openclaw_skill_request = _is_openclaw_skill_model_alias((body.get("model") or "").strip())
     _remap_sutui_chat_model(body)
-    llm_model_override = _user_llm_model_override(current_user)
+    image_understand_internal = (
+        request.headers.get("X-Lobster-Image-Understand")
+        or request.headers.get("x-lobster-image-understand")
+        or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    # Image understanding has an explicit provider-owned route.  Do not let a
+    # per-user chat preference silently replace YYAPI gpt-5.6-sol here.
+    if image_understand_internal:
+        body["model"] = "gpt-5.6-sol"
+    llm_model_override = "" if image_understand_internal else _user_llm_model_override(current_user)
+    if llm_model_override and llm_model_override in _disabled_sutui_chat_models():
+        # 偏好模型在上游被禁用/不可用：不要拿它去撞 402，直接回落默认模型
+        logger.info("[sutui-chat] 用户偏好模型不可用，回落默认 user_id=%s ignored=%s",
+                    current_user.id, llm_model_override)
+        llm_model_override = ""
     if llm_model_override:
         original_model = (body.get("model") or "").strip()
         body["model"] = llm_model_override
@@ -1664,29 +2333,31 @@ async def sutui_chat_completions(
             True,
         )
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
+    # Keep the audit request URL-only, then prepare remote images for the
+    # provider.  This prevents large base64 payloads from entering logs while
+    # ensuring every provider receives the same self-contained image input.
+    out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
+    try:
+        await _prepare_multimodal_images(body, trace_id=trace_id)
+    except _ChatImagePreparationError as exc:
+        logger.warning(
+            "[chat-image] trace_id=%s preparation_failed status=%s error=%s",
+            trace_id,
+            exc.status_code,
+            str(exc),
+        )
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     _enforce_single_search_models_tool_call(body, trace_id)
-    _enforce_max_tool_call_rounds(body, trace_id)
+    # 每个模型自己的工具轮数上限（档案里配置），互不影响。
+    _enforce_max_tool_call_rounds(body, trace_id, _model_profile(body.get("model")))
 
     bm = brand_mark_for_jwt_claim(getattr(current_user, "brand_mark", None))
-    token, sutui_pool = await next_sutui_server_token_with_pool(brand_mark=bm)
-    if not token:
-        raise HTTPException(
-            status_code=503,
-            detail=f"服务器未配置共享速推 Token 池（pool={sutui_pool or 'none'}）",
-        )
-    chat_billing_recon = sutui_token_recon_meta(token, sutui_pool)
-
     stream = bool(body.get("stream"))
-    url = f"{_api_base()}/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-    }
-
     model_id = (body.get("model") or "").strip()
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
+    _req_tool_names = _request_tool_names(body)
+    _req_has_images = _request_has_multimodal_images(body)
     force_exact_model = False
     preferred_model_fallback_chain = (
         ["openai/gpt-5.6-terra", "deepseek-chat"]
@@ -1696,9 +2367,17 @@ async def sutui_chat_completions(
     model_candidates = [model_id] if force_exact_model else _sutui_chat_model_candidates(
         model_id,
         has_tools=_req_has_tools,
+        has_images=_req_has_images,
         required_fallbacks=["deepseek-chat"] if mastra_chat_profile else None,
         fallback_chain=preferred_model_fallback_chain,
     )
+
+    # Always resolve a Sutui token for possible xskill candidates.  Direct
+    # YYAPI/DeepSeek routes do not require it, so a missing token must not
+    # prevent those providers from being attempted.
+    token, sutui_pool = await next_sutui_server_token_with_pool(brand_mark=bm)
+    chat_billing_recon = sutui_token_recon_meta(token, sutui_pool)
+    url = f"{_api_base()}/v1/chat/completions"
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
     _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
@@ -1718,12 +2397,13 @@ async def sutui_chat_completions(
         force_exact_model,
     )
     logger.info(
-        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s forced_override=%s",
+        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s has_images=%s forced_override=%s",
         trace_id,
         bm,
         model_id or "-",
         sutui_pool or "-",
         model_candidates,
+        _req_has_images,
         force_exact_model,
     )
 
@@ -1732,21 +2412,28 @@ async def sutui_chat_completions(
         current_user,
         model_id,
         body,
-        apply_min_charge=not (openclaw_internal_llm or chat_turn_precharged),
+        apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
     )
 
     user_bal_str = "-"
     if _should_deduct_credits():
         db.refresh(current_user)
         user_bal_str = str(user_balance_decimal(current_user))
-    out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
-
     # Default: direct -> xskill-v3 -> xskill-v1. Override: one exact xskill route, no fallback.
     attempts = _sutui_chat_attempts_for_models(
         model_candidates,
         token,
         forced_model_override=force_exact_model,
     )
+    if not attempts:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"未配置可用的 LLM 通道：YYAPI/DeepSeek 未配置有效密钥，"
+                f"且共享速推 Token 池为空（pool={sutui_pool or 'none'}）"
+            ),
+        )
+    url = f"{attempts[0]['api_base']}{attempts[0].get('endpoint_prefix', '/v1')}/chat/completions"
     logger.info(
         "[chat_trace] trace_id=%s attempts=%s",
         trace_id,
@@ -1763,6 +2450,7 @@ async def sutui_chat_completions(
         last_connect_error: Optional[Exception] = None
         last_timeout_error: Optional[Exception] = None
 
+        _chain_deadline = asyncio.get_running_loop().time() + _CHAT_CHAIN_BUDGET_SECONDS
         for attempt_idx, att in enumerate(attempts):
             mid_try = att["model"]
             _epfx = att.get("endpoint_prefix", "/v1")
@@ -1776,13 +2464,52 @@ async def sutui_chat_completions(
             _saved_model = body.get("model")
             body["model"] = mid_try
 
+            # 这一跳的墙钟上限：httpx 的 timeout 只是“空闲读超时”，上游在排队期间
+            # 保持连接时它永远不会触发（DeepSeek 官方就是这么把请求压到 900s 的）。
+            # 同时整条链还有总预算，避免 5 跳串行把调用方拖死。
+            _loop = asyncio.get_running_loop()
+            _chain_left = _chain_deadline - _loop.time() if _chain_deadline else None
+            if _chain_left is not None and _chain_left <= 1.0:
+                logger.warning(
+                    "[chat_trace] trace_id=%s chain_budget_exhausted after %s attempts (budget=%ss)",
+                    trace_id, attempt_idx, int(_CHAT_CHAIN_BUDGET_SECONDS),
+                )
+                break
+            hop_timeout = float(att["timeout"])
+            if _chain_left is not None:
+                hop_timeout = min(hop_timeout, _chain_left)
+
             if att_is_direct:
                 client = _get_direct_client(att["provider"], timeout=att["timeout"])
             else:
                 client = _get_xskill_client(timeout=att["timeout"])
 
             try:
-                r = await _post_chat_upstream(client, att_url, body=body, headers=att_headers)
+                r = await asyncio.wait_for(
+                    _post_chat_upstream(
+                        client,
+                        att_url,
+                        body=body,
+                        headers=att_headers,
+                        timeout=hop_timeout,
+                    ),
+                    timeout=hop_timeout + 5.0,
+                )
+            except asyncio.TimeoutError as e:
+                # 墙钟到点：这一跳作废，记熔断并进入下一候选（不吞掉整条链）。
+                _record_model_timeout(f"{mid_try}@{att['provider']}")
+                last_timeout_error = e
+                logger.warning(
+                    "[sutui-chat] 上游超时(墙钟) attempt=%s model=%s provider=%s timeout=%.0fs trace_id=%s",
+                    attempt_idx, mid_try, att["provider"], hop_timeout, trace_id,
+                )
+                body["model"] = _saved_model if _saved_model is not None else body.get("model")
+                if attempt_idx < len(attempts) - 1:
+                    continue
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"LLM 上游响应超时（{hop_timeout:.0f}s，模型 {mid_try}）"[:2000],
+                )
             except httpx.ConnectError as e:
                 last_connect_error = e
                 logger.warning(
@@ -1820,13 +2547,15 @@ async def sutui_chat_completions(
                 break
 
             if _openai_nonstream_completion_usable(data, r.status_code):
-                if _openai_completion_missing_tool_calls(data, body):
+                _attempt_profile = _model_profile(mid_try)
+                if _openai_completion_missing_tool_calls(data, body, _attempt_profile):
                     _forced_ok = False
                     if not body.get("_tool_forced"):
                         logger.info(
                             "[chat_trace] trace_id=%s tool_calls_missing model=%s provider=%s "
                             "→ retry tool_choice=required (fake_text=%s)",
-                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data),
+                            trace_id, mid_try, att["provider"],
+                            _response_has_fake_tool_text(data, _attempt_profile, _req_tool_names),
                         )
                         body["tool_choice"] = "required"
                         body["_tool_forced"] = True
@@ -1842,7 +2571,7 @@ async def sutui_chat_completions(
                             body.pop("_tool_forced", None)
                             body["tool_choice"] = "auto"
                         if d2 and _openai_nonstream_completion_usable(d2, getattr(r2, "status_code", 0)):
-                            if not _openai_completion_missing_tool_calls(d2, body):
+                            if not _openai_completion_missing_tool_calls(d2, body, _attempt_profile):
                                 data = d2
                                 r = r2
                                 _forced_ok = True
@@ -1854,7 +2583,8 @@ async def sutui_chat_completions(
                         logger.warning(
                             "[chat_trace] trace_id=%s tool_calls_missing model=%s provider=%s after forced retry, "
                             "fallback to next (fake_text=%s)",
-                            trace_id, mid_try, att["provider"], _response_has_fake_tool_text(data),
+                            trace_id, mid_try, att["provider"],
+                            _response_has_fake_tool_text(data, _attempt_profile, _req_tool_names),
                         )
                         if attempt_idx < len(attempts) - 1:
                             continue
@@ -1953,7 +2683,7 @@ async def sutui_chat_completions(
                 body,
                 usage_raw if isinstance(usage_raw, dict) else None,
             )
-            if chat_turn_precharged:
+            if chat_turn_precharged and not _yyapi_pricing_enabled():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat_deduct result=skipped reason=chat_turn_precharged "
                     "turn_id=%s model=%s",
@@ -1971,7 +2701,8 @@ async def sutui_chat_completions(
                     billing_recon=chat_billing_recon,
                     trace_id=trace_id,
                     is_direct_api=winning_is_direct,
-                    apply_min_charge=not openclaw_internal_llm,
+                    provider=winning_provider,
+                    apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
                     billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                 )
         else:
@@ -1984,7 +2715,11 @@ async def sutui_chat_completions(
 
         out = data
         if isinstance(out, dict) and r.status_code == 200:
-            _strip_fake_tool_text_from_response(out)
+            _strip_fake_tool_text_from_response(
+                out,
+                _model_profile(winning_model or mid_try),
+                _req_tool_names,
+            )
         resp_status = r.status_code
         if r.status_code in (402, 403):
             out = _normalize_upstream_xskill_pool_errors_for_client(data)
@@ -2001,6 +2736,7 @@ async def sutui_chat_completions(
     billing_user_id = int(current_user.id)
     billing_model_holder: List[str] = [model_id]
     billing_is_direct_holder: List[bool] = [False]
+    billing_provider_holder: List[str] = [""]
 
     async def gen() -> AsyncIterator[bytes]:
         line_buf = bytearray()
@@ -2102,6 +2838,7 @@ async def sutui_chat_completions(
 
                             billing_model_holder[0] = mid_try
                             billing_is_direct_holder[0] = att_is_direct
+                            billing_provider_holder[0] = att["provider"]
                             logger.info(
                                 "[chat_trace] trace_id=%s stream_started http=200 model=%s provider=%s",
                                 trace_id, mid_try or "-", att["provider"],
@@ -2143,6 +2880,9 @@ async def sutui_chat_completions(
                                     "http_status": 200,
                                 },
                             )
+                            # 只有档案声明了流式清理的模型才走 guard；默认模型零改动。
+                            stream_guard = _model_profiles.guard_for(mid_try, _req_tool_names)
+                            guard_pending = bytearray()
                             async for chunk in resp.aiter_bytes():
                                 before_event_count = stream_event_count
                                 line_buf.extend(chunk)
@@ -2178,7 +2918,17 @@ async def sutui_chat_completions(
                                         or u.get("total_tokens") is not None
                                     ):
                                         last_usage = u
-                                if stream_event_count > 0 and stream_error_payload is None:
+                                if stream_guard.enabled:
+                                    guard_pending.extend(chunk)
+                                    if stream_event_count > 0 and stream_error_payload is None:
+                                        guard_events = bytes(guard_pending).split(b"\n\n")
+                                        guard_pending = bytearray(guard_events.pop())
+                                        guarded_out = bytearray()
+                                        for guard_event in guard_events:
+                                            guarded_out += _guard_sse_event(guard_event, stream_guard)
+                                        if guarded_out:
+                                            yield bytes(guarded_out)
+                                elif stream_event_count > 0 and stream_error_payload is None:
                                     for pending_chunk in pending_stream_chunks:
                                         yield pending_chunk
                                     pending_stream_chunks.clear()
@@ -2228,6 +2978,18 @@ async def sutui_chat_completions(
                                     continue
                                 yield _stream_upstream_error_sse_bytes(502, empty_stream_error)
                                 return
+                            if stream_guard.enabled:
+                                guard_tail = bytes(guard_pending).strip()
+                                guard_tail_text = (
+                                    stream_guard.feed(guard_tail.decode("utf-8", errors="replace"))
+                                    if guard_tail
+                                    else ""
+                                )
+                                guard_tail_text += stream_guard.flush()
+                                if guard_tail_text:
+                                    yield _sse_delta_bytes(guard_tail_text)
+                                elif stream_guard.dropped:
+                                    yield _sse_delta_bytes(stream_guard.profile.fake_tool_fallback_text)
                             stream_completed_ok = True
                             _record_model_success(f"{mid_try}@{att['provider']}")
                             break
@@ -2271,7 +3033,7 @@ async def sutui_chat_completions(
                     yield f"data: {err}\n\n".encode("utf-8")
         finally:
             bill_model = billing_model_holder[0]
-            if chat_turn_precharged:
+            if chat_turn_precharged and not _yyapi_pricing_enabled():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped reason=chat_turn_precharged "
                     "turn_id=%s model=%s",
@@ -2313,7 +3075,8 @@ async def sutui_chat_completions(
                         billing_recon=chat_billing_recon,
                         trace_id=trace_id,
                         is_direct_api=billing_is_direct_holder[0],
-                        apply_min_charge=not openclaw_internal_llm,
+                        provider=billing_provider_holder[0],
+                        apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
                         billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                     )
             except HTTPException as exc:

@@ -29,6 +29,7 @@ from ..models import (
 from ..core.config import settings
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
+from ..services.sms_channel import resolve_aliyun_sms_channel
 from ..services.brand_context import (
     DEFAULT_BRAND_MARK,
     ensure_brand_enabled,
@@ -42,7 +43,7 @@ from ..services.device_presence import is_device_online
 from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash, initialize_phone_default_password
 from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _sms_challenge_target, _verify_sms_challenge
 from .auth import _get_wechat_access_token
-from .installation_slots import parse_installation_id_strict
+from .installation_slots import apply_installation_signup_bonus_for_new_user, parse_installation_id_strict
 from .mobile_identity import (
     is_wechat_session_user,
     latest_mobile_binding,
@@ -148,6 +149,7 @@ def _get_or_create_phone_user(db: Session, mobile: str, brand_mark: str) -> tupl
     )
     db.add(user)
     db.flush()
+    apply_installation_signup_bonus_for_new_user(db, user, phone=mobile, brand_mark=brand_mark)
     for pkg_id in _DEFAULT_PHONE_UNLOCK_PACKAGES:
         db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
     db.flush()
@@ -346,16 +348,18 @@ def _resolve_bind_phone(body: MobileBindRequest, db: Session, brand_mark: str) -
     return _normalize_cn_mobile(plain), verified
 
 
-def _sms_channel_ready() -> tuple[bool, bool]:
-    aliyun_ak = (getattr(settings, "aliyun_sms_access_key_id", None) or "").strip()
-    aliyun_sk = (getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip()
+def _sms_channel_ready(brand_mark: str = DEFAULT_BRAND_MARK) -> tuple[bool, bool]:
+    aliyun = resolve_aliyun_sms_channel(brand_mark, settings)
+    aliyun_ak = aliyun.access_key_id
+    aliyun_sk = aliyun.access_key_secret
     ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
     ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
-    return bool(aliyun_ak and aliyun_sk), bool(ihuyi_acc and ihuyi_pwd)
+    return aliyun.ready, bool(ihuyi_acc and ihuyi_pwd) and not aliyun.brand_specific
 
 
 def _send_mobile_sms_code(db: Session, mobile: str, brand_mark: str = DEFAULT_BRAND_MARK) -> None:
-    use_aliyun, use_ihuyi = _sms_channel_ready()
+    aliyun = resolve_aliyun_sms_channel(brand_mark, settings)
+    use_aliyun, use_ihuyi = _sms_channel_ready(brand_mark)
     if not use_aliyun and not use_ihuyi:
         raise HTTPException(status_code=503, detail="未配置短信通道")
     _check_and_update_sms_send_limit(db, mobile)
@@ -370,10 +374,10 @@ def _send_mobile_sms_code(db: Session, mobile: str, brand_mark: str = DEFAULT_BR
     try:
         if use_aliyun:
             _aliyun_send(
-                access_key_id=(getattr(settings, "aliyun_sms_access_key_id", None) or "").strip(),
-                access_key_secret=(getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip(),
-                sign_name=getattr(settings, "aliyun_sms_sign_name", "深圳市必火智能信息技术"),
-                template_code=getattr(settings, "aliyun_sms_template_code", "SMS_333406023"),
+                access_key_id=aliyun.access_key_id,
+                access_key_secret=aliyun.access_key_secret,
+                sign_name=aliyun.sign_name,
+                template_code=aliyun.template_code,
                 mobile=mobile,
                 code=code,
             )

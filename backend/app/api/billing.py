@@ -4,8 +4,10 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
+import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from io import BytesIO
@@ -25,6 +27,7 @@ from ..services.credits_amount import (
     credits_json_float_signed,
     ledger_display_delta,
     quantize_credits,
+    user_balance_decimal,
 )
 from ..services.daily_credit_limit import daily_limit_status, set_user_daily_limit
 from ..services.fuiou_pay import (
@@ -34,6 +37,7 @@ from ..services.fuiou_pay import (
     gen_order_no as fuiou_gen_order_no,
     parse_notify as fuiou_parse_notify,
 )
+from ..services.brand_context import BRAND_FIXED_AGENT_PHONES, PHONE_EMAIL_SUFFIX, user_brand_mark, user_for_account
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +81,288 @@ def _public_credit_history_description(entry_type: str, delta: Any = None) -> st
     return "积分变动"
 
 
+_CAPABILITY_LABEL_CACHE: Dict[str, str] = {}
+
+
+def _capability_catalog_labels() -> Dict[str, str]:
+    """读取 mcp/capability_catalog.json 的能力短名（首次调用缓存）。"""
+    global _CAPABILITY_LABEL_CACHE
+    if _CAPABILITY_LABEL_CACHE:
+        return _CAPABILITY_LABEL_CACHE
+    labels: Dict[str, str] = {}
+    root = Path(__file__).resolve().parent.parent.parent.parent
+    for name in ("capability_catalog.json", "capability_catalog.local.json"):
+        path = root / "mcp" / name
+        try:
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            description = ""
+            if isinstance(value, dict):
+                description = str(value.get("description") or "")
+            elif isinstance(value, str):
+                description = value
+            short = _short_capability_label(description) or ""
+            if key and short:
+                labels[str(key)] = short
+    _CAPABILITY_LABEL_CACHE = labels
+    return labels
+
+
+_BRAND_TOKEN_PATTERN = re.compile(
+    "|".join(
+        (
+            # 上游平台/渠道品牌
+            "速推", "必火", "海康", "鲸海", "comfly", "new-?api", "newapi", "apiz", "fal\\.ai",
+            "replicate", "openrouter", "siliconflow", "硅基流动", "together",
+            # 模型/产品品牌（中英）
+            "openai", "chatgpt", "gpt[\\w.\\-]*", "veo[\\w.\\-]*", "seedance", "seedream", "grok",
+            "gemini", "claude", "anthropic", "deepseek", "kling", "可灵", "jimeng", "即梦", "doubao",
+            "豆包", "qwen", "通义", "glm", "智谱", "ernie", "文心", "hunyuan", "混元", "minimax",
+            "hailuo", "海螺", "midjourney", "flux", "sora", "runway", "pika", "luma", "nano-?banana",
+            "wan\\d*", "hifly", "spark", "星火", "阶跃", "kimi", "moonshot",
+        )
+    ),
+    re.IGNORECASE,
+)
+
+
+def _scrub_brand_tokens(text: str) -> str:
+    """去掉品牌/型号名，并收拾残留的分隔符与空括号。"""
+    value = str(text or "")
+    if not value:
+        return ""
+    value = _BRAND_TOKEN_PATTERN.sub(" ", value)
+    previous = None
+    while previous != value:  # 反复剥掉括号里的补充说明（可能嵌套）
+        previous = value
+        value = re.sub(r"[（(][^（()）]*[)）]", " ", value)
+    value = re.sub(r"[)）(（]", " ", value)  # 成对括号已剥掉，剩下的都是残渣
+    value = re.sub(r"\s*[+＋/·、,，]\s*(?=[)）]|$)", " ", value)
+    value = re.sub(r"[+＋/·、,，]{2,}", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    value = value.strip(" -–—·、,，/＋+()（）[]【】")
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def _generic_capability_label(capability_id: str, endpoint: str = "") -> str:
+    """品牌被清掉后的中性兜底名（只讲业务动作，不点名任何厂商）。"""
+    key = str(capability_id or "").strip().lower()
+    ep = str(endpoint or "").strip().lower()
+    pairs = (
+        ("image.generate", "图片生成"),
+        ("video.generate", "视频生成"),
+        ("image.understand", "图片理解"),
+        ("video.understand", "视频理解"),
+        ("task.get_result", "查询任务结果"),
+        ("media.edit", "素材剪辑"),
+        ("speak", "语音合成"),
+        ("publish", "内容发布"),
+        ("chat", "对话"),
+        ("pipeline", "生成流水线"),
+    )
+    for token, label in pairs:
+        if token in key:
+            return label
+    if ep in {"chat", "completion"}:
+        return "对话"
+    if ep == "image":
+        return "图片生成"
+    if ep == "video":
+        return "视频生成"
+    return "能力调用"
+
+def _short_capability_label(description: str) -> str:
+    """把能力目录的描述压成表格里能用的短名（取第一个句读之前）。"""
+    text = str(description or "").strip()
+    if not text:
+        return ""
+    for mark in ("：", ":", "。", "，", ",", "；", ";"):
+        index = text.find(mark)
+        if index > 0:
+            text = text[:index]
+            break
+    text = text.strip().strip("（(").strip()
+    text = _scrub_brand_tokens(text)
+    return text[:28]
+
+
+_BILLING_ENDPOINT_LABELS = {
+    "chat": "对话",
+    "image": "图片",
+    "video": "视频",
+    "audio": "语音",
+    "speech": "语音",
+    "tts": "语音",
+}
+
+
+_CAPABILITY_ORIGIN_LABELS = {
+    # 显式业务名：天然不带品牌/型号，新增能力若忘了登记会退回中性兜底
+    "image.generate": "图片生成",
+    "video.generate": "视频生成",
+    "image.understand": "图片理解",
+    "video.understand": "视频理解",
+    "task.get_result": "查询任务结果",
+    "media.edit": "素材剪辑",
+    "comfly.daihuo.pipeline": "爆款TVC 整包成片",
+    "comfly.daihuo": "爆款TVC 分步生成",
+    "comfly.seedance.tvc.pipeline": "一体化 TVC 成片",
+    "comfly.ecommerce.detail_pipeline": "电商详情页生成",
+    "comfly.chat": "对话补全",
+    "hifly.video.create_by_tts": "数字人口播",
+    "hifly.video.create_by_audio": "数字人音频驱动",
+    "create.video.pipeline": "创意成片",
+    "goal.video.pipeline": "目标成片流水线",
+    "ecommerce.publish": "电商商品发布",
+    "sutui.search_models": "模型检索",
+    "sutui.guide": "模型教程",
+    "sutui.account": "账户管理",
+    "sutui.parse_video": "视频链接解析",
+    "sutui.transfer_url": "媒体转存",
+    "sutui.speak": "语音合成",
+}
+
+
+def _public_credit_history_origin(
+    *,
+    entry_type: str,
+    ref_type: Any = None,
+    ref_id: Any = None,
+    meta: Any = None,
+) -> str:
+    """返回「这笔积分消耗在哪个功能上」的业务位置文案。
+
+    只讲业务位置：能力名（来自能力目录）/ 技能包 / 充值订单 / 管理操作。
+    供应商、模型名与价格细节一律不出现在这里。
+    """
+    et = str(entry_type or "").strip().lower()
+    ref_t = str(ref_type or "").strip().lower()
+    ref_i = str(ref_id or "").strip()
+    info = meta if isinstance(meta, dict) else {}
+    capability_id = str(info.get("capability_id") or "").strip()
+    if capability_id:
+        endpoint_raw = str(info.get("endpoint") or "").strip().lower()
+        endpoint = _BILLING_ENDPOINT_LABELS.get(endpoint_raw, "")
+        label = _CAPABILITY_ORIGIN_LABELS.get(capability_id) or _scrub_brand_tokens(
+            _capability_catalog_labels().get(capability_id) or ""
+        )
+        if len(label) < 2:
+            label = _generic_capability_label(capability_id, endpoint_raw)
+        # 名称里已经点明类型时不再重复加后缀（避免“对话 · 对话”）
+        if endpoint and endpoint not in label:
+            label = label + " · " + endpoint
+        return label
+    if ref_t == "recharge_order":
+        tail = ref_i[-8:] if len(ref_i) >= 8 else ref_i
+        return ("充值订单 " + tail) if tail else "充值订单"
+    if ref_t in {"skill_package", "skill"}:
+        return ("技能：" + ref_i) if ref_i else "技能"
+    if ref_t == "wan_role_task":
+        return "数字人视频任务"
+    if ref_t in {"manual", "admin"} or et in {"admin_deduct"}:
+        return "管理员调整"
+    if et == "recharge":
+        return "充值"
+    if et == "sutui_chat":
+        return "对话"
+    if et in {"agent_transfer_in", "agent_transfer_out"}:
+        return "代理商划转"
+    if ref_t:
+        return ref_t
+    if et in {"pre_deduct", "settle", "refund", "direct_charge", "unit_charge", "unit_deduct", "chat_turn"}:
+        return "能力调用"
+    return ""
+
+
 def _get_public_base_url() -> str:
     """支付回调等用。未配置 PUBLIC_BASE_URL 时用本机 IP:PORT。"""
     return get_effective_public_base_url()
+
+
+# Only Hikong uses its fixed-agent balance as recharge inventory. Jinghai
+# recharge orders use the configured Fuiou merchant directly and never depend
+# on the fixed agent's balance.
+_INVENTORY_BRANDS = {"hikong"}
+# Keep the legacy Jinghai label so an older order that still contains a
+# reservation can be described correctly if its reservation is released.
+_INVENTORY_BRAND_LABELS = {"hikong": "海康", "jinghai": "鲸海"}
+
+
+def _oem_inventory_agent(db: Session, brand_mark: str) -> Optional[User]:
+    phone = BRAND_FIXED_AGENT_PHONES.get(brand_mark)
+    if not phone:
+        return None
+    return user_for_account(db, f"{phone}{PHONE_EMAIL_SUFFIX}", brand_mark)
+
+
+def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[User]:
+    """Reserve credits from an OEM's fixed agent for a new recharge order.
+
+    The reservation is an immediate debit, so concurrent orders cannot spend the
+    same inventory. Returns the agent row or None for non-funded brands.
+    """
+    brand_mark = user_brand_mark(user)
+    if brand_mark not in _INVENTORY_BRANDS:
+        return None
+    agent = _oem_inventory_agent(db, brand_mark)
+    if not agent:
+        raise HTTPException(status_code=409, detail=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)}充值库存不足")
+    # Lock where supported (PostgreSQL); SQLite still serializes the enclosing
+    # write transaction for this short critical section.
+    try:
+        locked = db.query(User).filter(User.id == agent.id).with_for_update().first()
+        if locked:
+            agent = locked
+    except Exception:
+        pass
+    need = quantize_credits(credits)
+    balance = user_balance_decimal(agent)
+    if balance < need:
+        raise HTTPException(status_code=409, detail=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)}充值库存不足")
+    agent.credits = quantize_credits(balance - need)
+    append_credit_ledger(
+        db,
+        agent.id,
+        -need,
+        "pre_deduct",
+        agent.credits,
+        description=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)} OEM 充值库存预扣",
+        ref_type="recharge_order",
+        meta={"brand_mark": brand_mark, "inventory": True, "credits": float(need)},
+    )
+    return agent
+
+
+def _release_oem_inventory(db: Session, order: RechargeOrder) -> None:
+    reserved = quantize_credits(getattr(order, "agent_reserved_credits", None) or 0)
+    agent_id = getattr(order, "agent_user_id", None)
+    if not agent_id or reserved <= 0:
+        return
+    agent = db.query(User).filter(User.id == agent_id).with_for_update().first()
+    if not agent:
+        logger.error("[fuiou] OEM inventory agent missing id=%s order=%s", agent_id, order.out_trade_no)
+        return
+    agent.credits = quantize_credits(user_balance_decimal(agent) + reserved)
+    order_brand = getattr(order, "brand_mark", None) or ""
+    append_credit_ledger(
+        db,
+        agent.id,
+        reserved,
+        "refund",
+        agent.credits,
+        description=f"{_INVENTORY_BRAND_LABELS.get(order_brand, order_brand or 'OEM')}充值下单失败，退回库存预扣",
+        ref_type="recharge_order",
+        ref_id=order.out_trade_no,
+        meta={"brand_mark": getattr(order, "brand_mark", None), "inventory_release": True},
+    )
+    order.agent_reserved_credits = Decimal("0")
 
 
 def _agent_level(user: Optional[User]) -> int:
@@ -252,6 +535,9 @@ _DEFAULT_CREDIT_PACKAGES = [
     {"price_yuan": 500, "credits": 50000, "label": "500元 - 50000算力"},
     {"price_yuan": 1000, "credits": 100000, "label": "1000元 - 100000算力"},
 ]
+_CUSTOM_RECHARGE_CREDITS_PER_YUAN = 100
+_CUSTOM_RECHARGE_MIN_YUAN = 1
+_CUSTOM_RECHARGE_MAX_YUAN = 100000
 
 
 def _get_billing_pricing() -> dict[str, Any]:
@@ -459,6 +745,12 @@ def get_credit_history(
             "entry_type": r.entry_type or "",
             "amount": credits_json_float_signed(delta),
             "description": desc,
+            "origin": _public_credit_history_origin(
+                entry_type=r.entry_type or "",
+                ref_type=r.ref_type,
+                ref_id=r.ref_id,
+                meta=public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
+            ),
             "balance_after": credits_json_float(r.balance_after or 0),
             "out_trade_no": "",
         })
@@ -491,6 +783,12 @@ def get_credit_ledger(
                 "balance_after": credits_json_float(r.balance_after or 0),
                 "entry_type": r.entry_type,
                 "description": _public_credit_history_description(r.entry_type or "", ledger_display_delta(r)),
+                "origin": _public_credit_history_origin(
+                    entry_type=r.entry_type or "",
+                    ref_type=r.ref_type,
+                    ref_id=r.ref_id,
+                    meta=public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
+                ),
                 "ref_type": r.ref_type or "",
                 "ref_id": r.ref_id or "",
                 "meta": public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
@@ -520,6 +818,8 @@ def create_recharge_order(
         raise HTTPException(status_code=400, detail="当前未启用自有充值")
     pricing = _get_billing_pricing()
     packages = pricing.get("credit_packages", _DEFAULT_CREDIT_PACKAGES)
+    if body.package_index is not None and (body.price_yuan is not None or body.credits is not None):
+        raise HTTPException(status_code=400, detail="套餐和自定义金额不能同时提交")
     if body.package_index is not None:
         idx = int(body.package_index)
         if idx < 0 or idx >= len(packages):
@@ -537,8 +837,10 @@ def create_recharge_order(
         amount_yuan = int(body.price_yuan)
         amount_fen = 0
         credits = int(body.credits)
-        if amount_yuan <= 0 or credits <= 0:
-            raise HTTPException(status_code=400, detail="金额与积分须为正数")
+        if not (_CUSTOM_RECHARGE_MIN_YUAN <= amount_yuan <= _CUSTOM_RECHARGE_MAX_YUAN):
+            raise HTTPException(status_code=400, detail="自定义充值金额须为正数，且在 1～100000 元范围内")
+        if credits != amount_yuan * _CUSTOM_RECHARGE_CREDITS_PER_YUAN:
+            raise HTTPException(status_code=400, detail="自定义充值按 1 元 = 100 积分计算")
     else:
         raise HTTPException(status_code=400, detail="请选择套餐或指定 price_yuan + credits")
     out_trade_no = f"R{current_user.id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
@@ -576,6 +878,8 @@ class RechargeCompleteBody(BaseModel):
 def _calc_amount_from_body(body: "RechargeCreateBody", pricing: dict[str, Any]) -> tuple[int, int, int]:
     """从充值请求体推出 (amount_yuan, amount_fen, credits)。"""
     packages = pricing.get("credit_packages", _DEFAULT_CREDIT_PACKAGES)
+    if body.package_index is not None and (body.price_yuan is not None or body.credits is not None):
+        raise HTTPException(status_code=400, detail="套餐和自定义金额不能同时提交")
     if body.package_index is not None:
         idx = int(body.package_index)
         if idx < 0 or idx >= len(packages):
@@ -587,8 +891,10 @@ def _calc_amount_from_body(body: "RechargeCreateBody", pricing: dict[str, Any]) 
     if body.price_yuan is not None and body.credits is not None:
         amount_yuan = int(body.price_yuan)
         credits = int(body.credits)
-        if amount_yuan <= 0 or credits <= 0:
-            raise HTTPException(status_code=400, detail="金额与积分须为正数")
+        if not (_CUSTOM_RECHARGE_MIN_YUAN <= amount_yuan <= _CUSTOM_RECHARGE_MAX_YUAN):
+            raise HTTPException(status_code=400, detail="自定义充值金额须为正数，且在 1～100000 元范围内")
+        if credits != amount_yuan * _CUSTOM_RECHARGE_CREDITS_PER_YUAN:
+            raise HTTPException(status_code=400, detail="自定义充值按 1 元 = 100 积分计算")
         return amount_yuan, 0, credits
     raise HTTPException(status_code=400, detail="请选择套餐或指定 price_yuan + credits")
 
@@ -634,13 +940,15 @@ async def create_fuiou_recharge_order(
 ):
     if not _use_independent_recharge():
         raise HTTPException(status_code=400, detail="当前未启用自有充值")
-    if not fuiou_configured():
+    brand_mark = user_brand_mark(current_user)
+    if not fuiou_configured(brand_mark):
         raise HTTPException(status_code=400, detail="未配置富友支付（FUIOU_MCHNT_CD / FUIOU_MCHNT_KEY / FUIOU_PRECREATE_URL）")
     pricing = _get_billing_pricing()
     amount_yuan, amount_fen, credits = _calc_amount_from_body(body, pricing)
     total_fen = amount_fen if amount_fen else amount_yuan * 100
     order_type = _normalize_fuiou_order_type(body)
-    mchnt_order_no = fuiou_gen_order_no()
+    mchnt_order_no = fuiou_gen_order_no(brand_mark)
+    inventory_agent = _reserve_oem_inventory(db, current_user, credits)
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
@@ -649,6 +957,9 @@ async def create_fuiou_recharge_order(
         status="pending",
         out_trade_no=mchnt_order_no,
         payment_method=_fuiou_payment_method(order_type),
+        brand_mark=brand_mark,
+        agent_user_id=inventory_agent.id if inventory_agent else None,
+        agent_reserved_credits=quantize_credits(credits) if inventory_agent else None,
     )
     db.add(order)
     db.commit()
@@ -663,11 +974,20 @@ async def create_fuiou_recharge_order(
             notify_url=notify_url,
             goods_des=f"recharge {credits} credits",
             order_type=order_type,
+            brand_mark=brand_mark,
         )
     except Exception as e:
+        if inventory_agent:
+            _release_oem_inventory(db, order)
+            order.status = "cancelled"
+            db.commit()
         logger.exception("[fuiou] order pay failed: %s", e)
         raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
     if not result.get("ok"):
+        if inventory_agent:
+            _release_oem_inventory(db, order)
+            order.status = "cancelled"
+            db.commit()
         detail = result.get("result_msg") or "富友下单返回异常"
         logger.warning("[fuiou] order pay error: code=%s msg=%s", result.get("result_code"), detail)
         raise HTTPException(status_code=502, detail=detail)
@@ -696,6 +1016,8 @@ async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     ③ 已支付订单再次回调返回 "1" 不重复加积分（防重放）。
     富友要求：成功处理后返回字符串 "1"，最多回调 5 次，间隔 30 秒。
     """
+    # Keep the legacy guard for deployments that have no system merchant at
+    # all; the normal production setup retains it as the fallback merchant.
     if not fuiou_configured():
         logger.warning("[fuiou] notify: not configured")
         return PlainTextResponse("0", status_code=500)
@@ -706,9 +1028,6 @@ async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     except Exception:
         logger.warning("[fuiou] notify: invalid JSON")
         return PlainTextResponse("0", status_code=400)
-    ok, data = fuiou_parse_notify(data)
-    if not ok:
-        return PlainTextResponse("0", status_code=400)
     out_trade_no = (data.get("mchnt_order_no") or "").strip()
     if not out_trade_no:
         logger.warning("[fuiou] notify: missing mchnt_order_no")
@@ -717,6 +1036,11 @@ async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     if not order:
         logger.warning("[fuiou] notify: order not found mchnt_order_no=%s", out_trade_no)
         return PlainTextResponse("1")
+    # Resolve the signing key from the OEM captured on the order. Legacy orders
+    # have no brand_mark and intentionally use the existing system config.
+    ok, data = fuiou_parse_notify(data, getattr(order, "brand_mark", None))
+    if not ok:
+        return PlainTextResponse("0", status_code=400)
     if order.status == "paid":
         return PlainTextResponse("1")
     raw_amt = data.get("order_amt")
@@ -737,7 +1061,17 @@ async def fuiou_query_recharge_order(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not fuiou_configured():
+    out_trade_no = (out_trade_no or "").strip()
+    if not out_trade_no:
+        raise HTTPException(status_code=400, detail="out_trade_no is required")
+    order = db.query(RechargeOrder).filter(
+        RechargeOrder.out_trade_no == out_trade_no,
+        RechargeOrder.user_id == current_user.id,
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+    brand_mark = getattr(order, "brand_mark", None)
+    if not fuiou_configured(brand_mark):
         raise HTTPException(status_code=400, detail="未配置富友支付")
     out_trade_no = (out_trade_no or "").strip()
     if not out_trade_no:
@@ -757,6 +1091,7 @@ async def fuiou_query_recharge_order(
         result = await fuiou_order_query(
             mchnt_order_no=out_trade_no[:30],
             order_type=order_type,
+            brand_mark=brand_mark,
         )
     except Exception as e:
         logger.warning("[fuiou] query order failed: %s", e)

@@ -5,7 +5,7 @@ import json
 import re
 import secrets
 import socket
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -20,7 +20,10 @@ from .auth import get_current_user, request_auth_session_id
 from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
 from ..models import H5ChatDevicePresence, User, UserInstallation, UserMachineIdentity
 from ..services.brand_context import normalize_brand_mark, scoped_installation_id, user_brand_mark
-from ..services.installation_slot_ownership import claim_installation_slot
+from ..services.installation_slot_ownership import (
+    claim_installation_slot,
+    migrate_installation_slot_references,
+)
 
 router = APIRouter()
 
@@ -220,6 +223,68 @@ def _unique_signed_installation_id_for_user(
     raise HTTPException(status_code=503, detail="unable to allocate unique signed installation id")
 
 
+def _stale_single_slot_for_rebind(
+    db: Session,
+    *,
+    user_id: int,
+    current_installation_id: str,
+    now: datetime,
+) -> str:
+    """Return a sole long-unused slot for a reinstall recovery.
+
+    This is intentionally conservative: only one historical slot, no recent
+    heartbeat, and the incoming id must not already be registered.  Multiple
+    active devices therefore keep their independent slots.
+    """
+    current = _normalize_installation_id(current_installation_id)
+    if not current:
+        return ""
+    if db.query(UserInstallation.id).filter(
+        UserInstallation.user_id == user_id,
+        UserInstallation.installation_id == current,
+    ).first() is not None:
+        return ""
+    rows = (
+        db.query(UserInstallation)
+        .filter(UserInstallation.user_id == user_id)
+        .order_by(UserInstallation.last_seen_at.desc())
+        .all()
+    )
+    # A legacy account may have both raw and brand-scoped copies of the same
+    # slot. Treat those as one slot, but keep genuinely different devices
+    # independent.
+    groups: dict[str, list[UserInstallation]] = {}
+    for row in rows:
+        value = str(row.installation_id or "").strip()
+        base = value.split("--", 1)[-1] if value else ""
+        if base:
+            groups.setdefault(base, []).append(row)
+    if len(groups) != 1:
+        return ""
+    candidate = max(next(iter(groups.values())), key=lambda row: row.last_seen_at or datetime.min)
+    if not candidate.installation_id or candidate.installation_id == current:
+        return ""
+    seen = candidate.last_seen_at
+    if seen and (now - seen).total_seconds() < 24 * 3600:
+        return ""
+    candidate_ids = {str(row.installation_id or "").strip() for row in next(iter(groups.values()))}
+    candidate_ids.add(next(iter(groups.keys())))
+    recent_cutoff = now - timedelta(hours=2)
+    if db.query(H5ChatDevicePresence.id).filter(
+        H5ChatDevicePresence.user_id == user_id,
+        H5ChatDevicePresence.installation_id.in_(tuple(candidate_ids)),
+        H5ChatDevicePresence.last_seen_at >= recent_cutoff,
+    ).first() is not None:
+        return ""
+    value = str(candidate.installation_id or "").strip()
+    # UserInstallation stores non-default brands as ``brand--raw`` while the
+    # client and workflow rows keep the raw id. Return the raw portion here so
+    # all references converge on the same value.
+    if "--" in value:
+        value = value.split("--", 1)[1]
+    return _normalize_installation_id(value)
+
+
 def _read_server_tos_config_dict() -> Optional[Dict[str, Any]]:
     """Read server-side TOS_CONFIG for status checks; never return AK/SK to clients."""
     if not _CUSTOM_CONFIGS_FILE.exists():
@@ -359,6 +424,33 @@ def bind_unique_installation_id(
         .first()
     )
     current_is_signed = _is_signed_installation_id_for_user(current_installation_id, current_user.id)
+    # A copied installation can present a signed slot that is already active
+    # on another machine.  Only split it when that other machine is currently
+    # online; an offline/reinstalled client is allowed to retain its signed
+    # slot so OTA/restart does not unexpectedly move its data.
+    signed_slot_machine_conflict = False
+    if current_is_signed and has_machine_identity:
+        other_machine = (
+            db.query(UserMachineIdentity)
+            .filter(
+                UserMachineIdentity.user_id == current_user.id,
+                UserMachineIdentity.installation_id == current_installation_id,
+                UserMachineIdentity.machine_instance_id != machine_id,
+            )
+            .first()
+        )
+        if other_machine is not None:
+            online_cutoff = datetime.utcnow() - timedelta(seconds=120)
+            signed_slot_machine_conflict = bool(
+                db.query(H5ChatDevicePresence.id)
+                .filter(
+                    H5ChatDevicePresence.user_id == current_user.id,
+                    H5ChatDevicePresence.installation_id == current_installation_id,
+                    H5ChatDevicePresence.last_seen_at >= online_cutoff,
+                )
+                .first()
+            )
+    stale_slot = ""
     if body.force_new:
         installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, f"{machine_id}-{secrets.token_hex(8)}")
         duplicate_before = False
@@ -371,7 +463,7 @@ def bind_unique_installation_id(
         duplicate_before = False
         signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
         signature_reason = "known_machine"
-    elif current_is_signed:
+    elif current_is_signed and not signed_slot_machine_conflict:
         # A signed slot is the final effective slot. Keep it stable even if an
         # OTA repairs/recreates the local machine identity later.
         installation_id = current_installation_id
@@ -380,6 +472,23 @@ def bind_unique_installation_id(
         signature_reason = "already_signed"
     else:
         preferred_id = device_id if body.force_new or not current_installation_id else current_installation_id
+        # A pre-machine-identity client may have left one old slot behind.
+        # When the freshly installed client presents a new id, recover that
+        # sole long-unused slot so existing workflows keep receiving work.
+        if (
+            not body.force_new
+            and has_machine_identity
+            and current_installation_id
+            and device_id == current_installation_id
+        ):
+            stale_slot = _stale_single_slot_for_rebind(
+                db,
+                user_id=current_user.id,
+                current_installation_id=current_installation_id,
+                now=datetime.utcnow(),
+            )
+        if stale_slot:
+            preferred_id = stale_slot
         usage_before = _installation_id_usage(
             db,
             preferred_id,
@@ -388,6 +497,7 @@ def bind_unique_installation_id(
         )
         same_user_machine_conflict = bool(
             has_machine_identity
+            and not stale_slot
             and db.query(UserMachineIdentity)
             .filter(
                 UserMachineIdentity.user_id == current_user.id,
@@ -396,16 +506,42 @@ def bind_unique_installation_id(
             )
             .first()
         )
-        duplicate_before = bool(usage_before.get("taken") or same_user_machine_conflict)
+        duplicate_before = bool(
+            usage_before.get("taken")
+            or same_user_machine_conflict
+            or signed_slot_machine_conflict
+        )
         if duplicate_before:
             installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, machine_id)
             signed = True
-            signature_reason = "duplicate_machine" if same_user_machine_conflict and not usage_before.get("taken") else "duplicate"
+            signature_reason = (
+                "duplicate_machine"
+                if (same_user_machine_conflict or signed_slot_machine_conflict)
+                and not usage_before.get("taken")
+                else "duplicate"
+            )
         else:
             installation_id = preferred_id
             signed = False
             signature_reason = ""
-    replaced = current_installation_id if current_installation_id and current_installation_id != installation_id else ""
+    # Splitting a copied online slot is allocation, not migration.  Keep the
+    # original device's tasks/templates untouched.
+    replaced = (
+        current_installation_id
+        if current_installation_id
+        and current_installation_id != installation_id
+        and not signed_slot_machine_conflict
+        else ""
+    )
+
+    migrated = {}
+    if replaced:
+        migrated = migrate_installation_slot_references(
+            db,
+            user_id=current_user.id,
+            previous_installation_id=replaced,
+            installation_id=installation_id,
+        )
 
     scoped_id = scoped_installation_id(installation_id, brand_mark) or installation_id
     ensure_installation_slot(db, current_user.id, scoped_id)
@@ -417,6 +553,14 @@ def bind_unique_installation_id(
         auth_session_id=request_auth_session_id(request),
     )
     if known_machine is None:
+        if stale_slot:
+            # Retire the pre-reinstall machine mapping so the old installation
+            # cannot reclaim this slot when it comes back online later.
+            db.query(UserMachineIdentity).filter(
+                UserMachineIdentity.user_id == current_user.id,
+                UserMachineIdentity.installation_id == installation_id,
+                UserMachineIdentity.machine_instance_id != machine_id,
+            ).delete(synchronize_session=False)
         known_machine = UserMachineIdentity(
             user_id=current_user.id,
             machine_instance_id=machine_id,
@@ -444,6 +588,7 @@ def bind_unique_installation_id(
         "replaced_installation_id": replaced,
         "signed": signed,
         "signature_reason": signature_reason,
+        "migrated": migrated,
         "duplicate": bool(duplicate_before or usage_after.get("taken")),
         "duplicate_user_count": len(usage_after.get("user_ids") or []),
         "presence_user_count": len(usage_after.get("presence_user_ids") or []),
@@ -464,6 +609,7 @@ def _get_lan_ip() -> str:
 
 class UpdateSettingsRequest(BaseModel):
     preferred_model: Optional[str] = None
+    language: Optional[str] = None
 
 
 @router.get("/api/settings", summary="获取用户设置")
@@ -473,7 +619,10 @@ def get_settings(current_user: User = Depends(get_current_user)):
         preferred = "sutui"
     else:
         preferred = getattr(current_user, "preferred_model", "openclaw") or "openclaw"
-    return {"preferred_model": preferred}
+    return {
+        "preferred_model": preferred,
+        "language": str(getattr(current_user, "language", None) or "zh-CN"),
+    }
 
 
 @router.post("/api/settings", summary="更新用户设置")
@@ -484,8 +633,16 @@ def update_settings(
 ):
     if body.preferred_model is not None:
         current_user.preferred_model = body.preferred_model.strip() or "openclaw"
+    if body.language is not None:
+        language = body.language.strip()
+        if language not in {"zh-CN", "en-US"}:
+            raise HTTPException(status_code=400, detail="language must be zh-CN or en-US")
+        current_user.language = language
     db.commit()
-    return {"preferred_model": current_user.preferred_model}
+    return {
+        "preferred_model": current_user.preferred_model,
+        "language": str(getattr(current_user, "language", None) or "zh-CN"),
+    }
 
 
 @router.get("/api/settings/models", summary="可选模型列表（需登录）")

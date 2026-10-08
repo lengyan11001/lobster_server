@@ -1,6 +1,36 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-brand="__ADMIN_BRAND_MARK__">
 <head>
+<script id="admin-build-selfheal">/* 2026-10-01：部署后开着的老页面自动刷新，不需要人工清缓存 / Ctrl+F5。
+   页面带构建标识（__ADMIN_BUILD__），定时 + 切回前台时问 /admin/api/build，不一致就 reload。*/
+(function () {
+  // 注意：不要写成 window.__ADMIN_BUILD__ —— 服务端是整串替换 __ADMIN_BUILD__，
+  // 会把这个标识符也替换成 "560ec66e...-1791198321"，变成非法 JS（这一段以前一直没跑起来，
+  // 所以"部署后老页面自动刷新"一直没生效）。用方括号形式，替换后是合法字符串下标。
+  window['__ADMIN_BUILD__'] = "__ADMIN_BUILD__";
+  var current = window['__ADMIN_BUILD__'];
+  if (!current) return;
+  var checking = false;
+  function check() {
+    if (checking) return;
+    checking = true;
+    fetch('/admin/api/build?_=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        checking = false;
+        if (data && data.build && data.build !== current) {
+          console.warn('[admin] 检测到新版本 ' + data.build + '，自动刷新');
+          location.reload();
+        }
+      })
+      .catch(function () { checking = false; });
+  }
+  setInterval(check, 20000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+  window.addEventListener('focus', check);
+})();
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>__ADMIN_BRAND_TITLE__管理后台</title>
@@ -30,14 +60,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .sms-row .btn{width:auto;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
 .btn-primary{background:var(--primary);color:#fff;width:100%}
+.search-bar .btn-primary{width:auto}
 .btn-primary:hover{background:var(--primary-hover)}
 .btn-sm{padding:6px 14px;font-size:13px}
+.btn-compact{width:auto!important;padding:6px 12px;font-size:12px;border-radius:6px}
 .btn-success{background:var(--success);color:#fff}
 .btn-danger{background:var(--danger);color:#fff}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn-outline:hover{background:var(--bg)}
 .btn-agent{background:var(--agent-color);color:#fff}
 .btn-agent:hover{background:#d97706}
+.skill-visibility-tabs button{border:1px solid var(--border);background:var(--bg);color:var(--text-secondary);padding:7px 12px;border-radius:7px;cursor:pointer;font-size:12px}
+.skill-visibility-tabs button.active{border-color:var(--primary);background:var(--primary);color:#fff}
 .error-msg{color:var(--danger);font-size:13px;margin-top:8px;text-align:center}
 
 /* Dashboard */
@@ -110,6 +144,20 @@ tr:hover{background:var(--bg)}
 .tab:hover:not(.active){color:var(--text)}
 .detail-back{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:12px;display:inline-flex;align-items:center;gap:4px}
 .detail-back:hover{text-decoration:underline}
+.customer-detail-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:16px}
+.customer-detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.customer-detail-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.customer-detail-meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--text-secondary);font-size:13px;margin-top:8px}
+.customer-detail-notes{white-space:pre-wrap;word-break:break-word;line-height:1.7;font-size:13px;color:var(--text);margin-top:14px}
+.customer-communications-card h3{margin-bottom:0}
+.communication-item{padding:16px 0;border-top:1px solid var(--border)}
+.communication-item:first-child{border-top:0}
+.communication-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.communication-content,.communication-summary{white-space:pre-wrap;word-break:break-word;line-height:1.7;font-size:13px;margin-top:9px}
+.communication-summary{color:var(--text-secondary);max-height:7.2em;overflow:hidden;position:relative}
+.communication-summary.expanded{max-height:none}
+.communication-expand{border:0;background:none;color:var(--primary);font-size:12px;padding:4px 0;cursor:pointer}
+.communication-recording{margin-top:9px;padding:9px 11px;background:var(--bg);border-radius:6px;font-size:12px;word-break:break-word}
 .user-detail-tabs{display:flex;gap:4px;margin-bottom:14px;background:var(--bg);padding:4px;border-radius:8px;overflow-x:auto}
 .user-detail-tab{border:0;background:transparent;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
 .user-detail-tab.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
@@ -121,6 +169,7 @@ tr:hover{background:var(--bg)}
 .modal-card{background:var(--card);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);padding:24px;width:100%;max-width:380px}
 .modal-card h3{font-size:16px;margin-bottom:6px;color:var(--text)}
 .modal-card .modal-sub{font-size:12px;color:var(--text-secondary);margin-bottom:16px}
+.modal-card .modal-owner-note{font-size:12px;color:var(--text-secondary);background:var(--bg);border-radius:6px;padding:7px 10px;margin:0 0 14px}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .modal-card .form-group input[type="password"]{width:100%}
 /* Agent claim bar */
@@ -129,6 +178,12 @@ tr:hover{background:var(--bg)}
 .claim-bar input:focus{outline:none;border-color:var(--agent-color)}
 .agent-banner{padding:12px 24px;background:var(--agent-bg);border-bottom:1px solid #fde68a;font-size:13px;color:#92400e;text-align:center}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.user-remark-wrap{display:inline-flex;vertical-align:middle;margin-left:6px;max-width:180px}
+.user-remark{border:0;background:transparent;padding:2px 5px;border-radius:4px;cursor:pointer;font:inherit;font-size:12px;line-height:1.4;text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-remark-empty{color:var(--primary);border:1px dashed var(--primary);}
+.user-remark-empty:hover{background:#eef2ff}
+.user-remark-filled{color:var(--text-secondary);background:#f1f5f9}
+.user-remark-filled:hover{color:var(--primary);background:#eef2ff}
 .agent-action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .agent-action-row select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:180px;background:#fff}
 .juhe-admin-grid{display:grid;grid-template-columns:minmax(320px,.78fr) minmax(520px,1.22fr);gap:16px;align-items:start}
@@ -144,6 +199,187 @@ tr:hover{background:var(--bg)}
 .juhe-admin-note{font-size:12px;line-height:1.6;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;margin-bottom:12px}
 .juhe-admin-result{border:1px solid var(--border);border-radius:10px;background:#fff;padding:12px;min-height:120px;max-height:520px;overflow:auto}
 .juhe-admin-result pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text-secondary)}
+
+/* Remote support admin cards and embedded controller */
+.remote-device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:14px}
+.remote-device-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.remote-device-form input{height:32px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;font-size:12px;min-width:0;width:180px}
+.remote-device-form input.remote-code-input{width:110px}
+.remote-device-form .btn{height:32px;padding:6px 10px;font-size:12px}
+.remote-support-tabs{display:flex;gap:4px;margin:-4px 0 18px;background:var(--bg);padding:4px;border-radius:8px;border:1px solid var(--border)}
+.remote-support-tab{border:0;background:transparent;padding:9px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;color:var(--text-secondary)}
+.remote-support-tab.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
+.remote-support-view[hidden]{display:none}
+.remote-support-toolbar{display:flex;gap:8px;align-items:center;flex-shrink:0}
+.remote-support-note{font-size:12px;color:var(--text-secondary);margin:6px 0 0}
+.remote-wall-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.remote-wall-frame{height:760px}
+.remote-device-modal[hidden]{display:none}
+.remote-device-modal{position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;padding:20px}
+.remote-device-modal-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.48)}
+.remote-device-modal-card{position:relative;width:min(440px,100%);background:var(--card);border-radius:12px;box-shadow:0 18px 60px rgba(15,23,42,.24);padding:20px}
+.remote-device-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.remote-device-modal-head h3{margin:0;font-size:16px}
+.remote-device-modal-close{border:0;background:transparent;color:var(--text-secondary);font-size:24px;line-height:1;cursor:pointer;padding:2px 6px}
+.remote-device-modal-body{display:grid;gap:12px}
+.remote-device-modal-body label{display:grid;gap:6px;font-size:12px;color:var(--text-secondary)}
+.remote-device-modal-body input{height:36px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;color:var(--text)}
+.remote-device-modal-body input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,.12)}
+.remote-device-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+/* The embedded remote workspace is the single source of truth for device
+   cards.  Do not render a second admin-side card grid above the three stage
+   tabs shown by the workspace. */
+#pageRemoteSupport .remote-support-tabs,#pageRemoteSupport #remoteWallView{display:none!important}
+#pageRemoteSupport #remoteSupportTable{display:none!important}
+#pageRemoteSupport #remoteSupportControlPanel{display:block!important}
+.remote-device-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px;box-shadow:var(--shadow);min-width:0}
+.remote-device-card.is-active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,.12)}
+.remote-device-card-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.remote-device-title{display:grid;gap:4px;min-width:0}
+.remote-device-title strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-device-title code{font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-device-meta{display:grid;gap:4px;margin:10px 0;color:var(--text-secondary);font-size:12px;line-height:1.45}
+ .remote-device-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .remote-monitor-toggle{display:flex;align-items:center;gap:6px;margin:8px 0 10px;font-size:12px;color:var(--text-secondary);cursor:pointer}
+ .remote-monitor-toggle input{margin:0;accent-color:var(--primary)}
+ .remote-device-actions{display:flex;gap:6px}
+.remote-device-actions .btn{flex:1}
+.remote-control-panel{margin-top:16px;border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden}
+.remote-control-panel[hidden]{display:none}
+.remote-control-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.remote-control-panel-head strong{font-size:14px}
+.remote-control-panel-head span{display:block;font-size:11px;color:var(--text-secondary);margin-top:3px}
+/* system template card + modal editor */
+.sw-card{display:flex;gap:10px;align-items:center;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.sw-card-time{flex:0 0 60px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#245cff;color:#fff;border-radius:9px;padding:5px 0;font-size:12px;line-height:1.25}
+.sw-card-time b{font-size:13px}
+.sw-card-main{flex:1;min-width:0}
+.sw-card-title{font-size:13px;font-weight:600}
+.sw-card-sub{font-size:12px;color:var(--text-secondary);margin-top:2px;word-break:break-all}
+.sw-card-ops{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.sw-modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px}
+.sw-modal-mask.hidden{display:none}
+.sw-modal{background:#fff;border-radius:14px;width:min(760px,96vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(15,23,42,.25)}
+.sw-modal-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+.sw-modal-body{padding:14px 16px;overflow:auto}
+.sw-modal-foot{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+.sw-modal-grid{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.sw-f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)}
+.sw-grow{flex:1;min-width:190px}
+.sw-f[hidden]{display:none}
+.sw-p{padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px;color:inherit;background:#fff}
+.sw-wide{min-width:240px}
+.sw-card-ops .btn,.sw-modal-foot .btn,.sw-modal-head .btn{width:auto;padding:5px 10px;white-space:nowrap}
+.sw-modal-foot .btn.btn-primary{flex:0 0 auto;min-width:120px}
+.sw-f .sw-p{width:100%}
+#systemWorkflowCard .btn-primary{width:auto}
+#systemWorkflowCard .btn{white-space:nowrap}
+#systemWorkflowCard .run-media-toolbar > a, #systemWorkflowCard .run-media-toolbar > button, #systemWorkflowCard .run-media-toolbar .task-action-menu summary{width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(36,92,255,.12); border-radius: 9px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; text-align: center; text-decoration: none; font-size: 13px; font-weight: 700;}
+#systemWorkflowCard .run-media-toolbar .task-action-menu{width: 100%; min-width: 0;}
+#systemWorkflowCard .run-media-toolbar .task-action-menu:only-child{grid-column: 1 / -1;}
+#systemWorkflowCard .run-media-toolbar .task-action-list{right: 0; left: auto; min-width: 152px;}
+#systemWorkflowCard .task-action-menu{position: relative; flex: 0 0 auto;}
+#systemWorkflowCard .task-action-menu summary{display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 5px 12px; border: 1px solid rgba(36,92,255,.18); border-radius: 999px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; font-weight: 800; font-size: 12px; cursor: pointer; list-style: none; user-select: none;}
+#systemWorkflowCard .task-action-menu summary::-webkit-details-marker{display: none;}
+#systemWorkflowCard .task-action-menu[open] summary{background: linear-gradient(135deg, var(--blue), var(--cyan)); color: #fff;}
+#systemWorkflowCard .task-action-list{position: absolute; top: calc(100% + 8px); right: 0; z-index: 80; display: grid; gap: 4px; min-width: 132px; padding: 8px; border: 1px solid rgba(223,230,242,.95); border-radius: 14px; background: rgba(255,255,255,.98); box-shadow: 0 16px 34px rgba(23,35,61,.16);}
+#systemWorkflowCard .task-action-list button{width: 100%; padding: 8px 10px; border-radius: 10px; color: #17233d; background: transparent; box-shadow: none; text-align: left; font-size: 12px; font-weight: 700;}
+#systemWorkflowCard .task-action-list button:hover{background: rgba(36,92,255,.08); color: var(--blue);}
+#systemWorkflowCard .task-action-list .danger-text{color: #d9483b;}
+#systemWorkflowCard .task-detail-actions .task-action-list{left: 0; right: auto;}
+#systemWorkflowCard .run-media-toolbar > a, #systemWorkflowCard .run-media-toolbar > button, #systemWorkflowCard .run-media-toolbar .task-action-menu summary{padding-left: 6px; padding-right: 6px; font-size: 12px;}
+#systemWorkflowCard .workflow-head, #systemWorkflowCard .workflow-actions, #systemWorkflowCard .workflow-template-drawer-head, #systemWorkflowCard .workflow-grant-actions{display: flex; align-items: center; justify-content: space-between; gap: 10px;}
+#systemWorkflowCard .workflow-status-pill{display: inline-flex; align-items: center; justify-content: center; min-width: 46px; min-height: 24px; padding: 0 9px; color: #526071; border: 1px solid rgba(204,214,230,.9); border-radius: 999px; background: rgba(245,247,251,.96); font-size: 11px; font-weight: 950; white-space: nowrap; appearance: none;}
+#systemWorkflowCard button.workflow-status-pill{cursor: pointer;}
+#systemWorkflowCard .workflow-status-pill.is-running{color: #075e92; border-color: rgba(48,159,232,.32); background: rgba(224,244,255,.96);}
+#systemWorkflowCard .workflow-status-pill.is-completed{color: #08754f; border-color: rgba(37,185,124,.3); background: rgba(224,250,239,.96);}
+#systemWorkflowCard .workflow-status-pill.is-overdue, #systemWorkflowCard .workflow-status-pill.is-failed{color: #b33b30; border-color: rgba(244,112,93,.34); background: rgba(255,235,231,.96);}
+#systemWorkflowCard .workflow-status-pill.is-paused{color: #94620b; border-color: rgba(235,169,50,.34); background: rgba(255,246,218,.96);}
+#systemWorkflowCard .workflow-status-pill.is-paused.workflow-placeholder-pill{border-style: dashed; background: rgba(255,246,218,.82);}
+#systemWorkflowCard .workflow-status-pill.is-pending{color: #3157b7; border-color: rgba(72,111,226,.28); background: rgba(234,239,255,.96);}
+#systemWorkflowCard .workflow-editor-card, #systemWorkflowCard .workflow-template-drawer, #systemWorkflowCard .workflow-node-card{border: 1px solid rgba(223,230,242,.92); background: rgba(255,255,255,.9); box-shadow: 0 14px 30px rgba(25,49,94,.08);}
+#systemWorkflowCard .workflow-template-name label, #systemWorkflowCard .workflow-node-form label, #systemWorkflowCard .workflow-node-fields label{color: #17233d; font-size: 12px; font-weight: 900;}
+#systemWorkflowCard .workflow-node-form{display: grid; grid-template-columns: .52fr 1fr; gap: 10px; align-items: end;}
+#systemWorkflowCard .workflow-node-form .field{margin: 0;}
+#systemWorkflowCard .workflow-node-form .full, #systemWorkflowCard .workflow-node-form button{grid-column: 1 / -1;}
+#systemWorkflowCard .workflow-node-form textarea{min-height: 74px; resize: vertical;}
+#systemWorkflowCard .workflow-node-popover{max-height: min(82vh, 680px); overflow: auto;}
+#systemWorkflowCard .workflow-node-fields{grid-template-columns: .65fr 1fr; align-items: start;}
+#systemWorkflowCard .workflow-node-fields textarea{min-height: 96px; resize: vertical;}
+#systemWorkflowCard .workflow-timeline{display: grid; gap: 9px;}
+#systemWorkflowCard .workflow-empty{display: grid; place-items: center; min-height: 120px; color: #8a94a8; border-radius: 20px; border: 1px dashed rgba(138,148,168,.45); background: rgba(255,255,255,.54);}
+#systemWorkflowCard .workflow-node-card{display: grid; grid-template-columns: 56px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 9px; border-radius: 18px;}
+#systemWorkflowCard .workflow-node-card.is-placeholder{opacity: .72; border-style: dashed; background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(247,249,252,.92));}
+#systemWorkflowCard .workflow-node-card.is-placeholder .workflow-node-main span{display: block; margin-top: 4px; color: #94620b; font-size: 12px; font-weight: 850;}
+#systemWorkflowCard .workflow-action-card{margin-left: 28px; border: 1px solid rgba(36,92,255,.12); background: linear-gradient(135deg, rgba(36,92,255,.06), rgba(19,168,115,.05));}
+#systemWorkflowCard .workflow-node-time{display: grid; place-items: center; height: 44px; border-radius: 15px; color: #fff; background: linear-gradient(135deg, #245cff, #13a873); font-weight: 950; font-variant-numeric: tabular-nums;}
+#systemWorkflowCard .workflow-node-time.action{background: linear-gradient(135deg, #13a873, #08a7c6);}
+#systemWorkflowCard .workflow-node-main{min-width: 0; display: grid; gap: 0;}
+#systemWorkflowCard .workflow-node-main strong, #systemWorkflowCard .workflow-node-main span{overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+#systemWorkflowCard .workflow-node-main strong{color: #102036; font-size: 15px;}
+#systemWorkflowCard .workflow-node-main span{color: #6d7890; font-size: 12px;}
+#systemWorkflowCard .workflow-node-status{display: flex; justify-content: flex-end; min-width: max-content;}
+#systemWorkflowCard .workflow-node-actions{display: flex; align-items: center; gap: 0; flex-wrap: nowrap; justify-content: flex-end; min-width: max-content;}
+#systemWorkflowCard .workflow-node-actions span{padding: 4px 8px; border-radius: 999px; color: #6d7890; background: rgba(109,120,144,.1); font-size: 11px; font-weight: 900; white-space: nowrap;}
+#systemWorkflowCard .workflow-node-actions span.configured{color: #0f8f6f; background: rgba(16,169,145,.13);}
+#systemWorkflowCard .workflow-node-actions button{min-height: 30px; padding: 0 9px; border-radius: 999px; font-size: 12px;}
+#systemWorkflowCard .workflow-node-actions .danger-text{color: #b42318; background: rgba(180,35,24,.08);}
+#systemWorkflowCard .workflow-node-action-menu summary{min-height: 28px; padding: 4px 10px; font-size: 12px;}
+#systemWorkflowCard .workflow-node-action-menu .task-action-list{min-width: 112px; z-index: 120;}
+#systemWorkflowCard .workflow-node-card.task-menu-open, #systemWorkflowCard .workflow-timeline-entry.task-menu-open, #systemWorkflowCard .designer-workflow-group.task-menu-open{position: relative; z-index: 140; overflow: visible;}
+#systemWorkflowCard .workflow-node-card.task-menu-open .task-action-list{z-index: 160;}
+#systemWorkflowCard .workflow-timeline-entry{position: relative; z-index: 0;}
+#systemWorkflowCard .workflow-timeline-entry.task-menu-open > .workflow-node-card{position: relative; z-index: 160;}
+#systemWorkflowCard .workflow-timeline-entry.task-menu-open > .workflow-child-list{position: relative; z-index: 0;}
+#systemWorkflowCard .workflow-node-action-menu .task-action-list button{min-height: 0; width: 100%; padding: 8px 10px; border-radius: 10px; color: #17233d; background: transparent; text-align: left; font-size: 12px;}
+#systemWorkflowCard .workflow-node-action-menu .task-action-list .danger-text{color: #d9483b; background: transparent;}
+#systemWorkflowCard .workflow-actions{position: fixed; left: max(12px, calc((100vw - 420px) / 2 + 12px)); right: max(12px, calc((100vw - 420px) / 2 + 12px)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 87; padding: 10px; border-radius: 18px; background: rgba(255,255,255,.9); backdrop-filter: blur(12px); box-shadow: 0 12px 26px rgba(24,50,105,.12);}
+#systemWorkflowCard .workflow-actions button{flex: 1; min-height: 40px; padding: 0 10px;}
+#systemWorkflowCard .workflow-node-card{grid-template-columns: 54px minmax(0, 1fr) auto auto; gap: 7px;}
+#systemWorkflowCard .workflow-action-card{margin-left: 12px;}
+#systemWorkflowCard .workflow-param-dynamic, #systemWorkflowCard .workflow-node-card button{grid-column: 1 / -1;}
+#systemWorkflowCard .workflow-node-status, #systemWorkflowCard .workflow-node-actions, #systemWorkflowCard .workflow-node-action-menu .task-action-list button{grid-column: auto;}
+#systemWorkflowCard .workflow-head, #systemWorkflowCard .workflow-day-board, #systemWorkflowCard .workflow-editor-card, #systemWorkflowCard .workflow-template-drawer, #systemWorkflowCard .workflow-node-card{border: 1px solid rgba(255, 255, 255, .78); border-radius: 22px; background: rgba(255, 255, 255, .88); box-shadow: var(--shadow-card); backdrop-filter: blur(16px);}
+#systemWorkflowCard .workflow-timeline{gap: 10px;}
+#systemWorkflowCard .workflow-node-card{grid-template-columns: 58px minmax(0, 1fr) auto auto; padding: 10px; border-radius: 20px;}
+#systemWorkflowCard .workflow-node-time{height: 42px; border-radius: 14px; background: linear-gradient(135deg, #2563eb, #1d4ed8);}
+#systemWorkflowCard .workflow-action-card{margin-left: 30px; background: rgba(255, 255, 255, .76);}
+#systemWorkflowCard .workflow-actions{left: max(16px, calc((100vw - 430px) / 2 + 16px)); right: max(16px, calc((100vw - 430px) / 2 + 16px)); bottom: max(16px, env(safe-area-inset-bottom)); padding: 8px; border-radius: 28px; border: 1px solid rgba(255, 255, 255, .86); background: rgba(255, 255, 255, .94); box-shadow: 0 -8px 32px rgba(30, 58, 138, .10); backdrop-filter: blur(18px);}
+#systemWorkflowCard .workflow-actions button{min-height: 46px; border-radius: 22px;}
+#systemWorkflowCard .employee-popover, #systemWorkflowCard .work-dispatch-popover, #systemWorkflowCard .workflow-node-popover, #systemWorkflowCard .workflow-param-popover, #systemWorkflowCard .workflow-missing-popover, #systemWorkflowCard .asset-action-popover, #systemWorkflowCard .personal-template-popover, #systemWorkflowCard .personal-memory-popover{width: min(360px, calc(100vw - 34px)); border: 1px solid rgba(255, 255, 255, .78); border-radius: 28px; background: radial-gradient(circle at 88% 0%, rgba(191, 219, 254, .45), transparent 28%), rgba(255, 255, 255, .96); box-shadow: 0 28px 74px rgba(15, 23, 42, .24); backdrop-filter: blur(18px);}
+#systemWorkflowCard .workflow-node-card{grid-template-columns: 54px minmax(0, 1fr) auto;}
+#systemWorkflowCard .workflow-timeline.designer-workflow-groups{display: grid; gap: 14px;}
+#systemWorkflowCard .workflow-node-card.designer-workflow-node{position: relative; grid-template-columns: 54px minmax(0, 1fr) auto auto; gap: 7px; min-width: 0; padding: 10px; border: 1px solid rgba(226, 232, 240, .82); border-radius: 20px; background: rgba(255, 255, 255, .82); box-shadow: 0 6px 18px rgba(30, 58, 138, .05);}
+#systemWorkflowCard .workflow-node-card.designer-workflow-node::before{content: ""; position: absolute; left: -13px; top: 50%; width: 13px; border-top: 1px solid #cbd5e1;}
+#systemWorkflowCard .designer-workflow-node .workflow-node-time{height: 34px; border-radius: 11px; background: linear-gradient(145deg, #3b82f6, #2563eb); font-size: 13px;}
+#systemWorkflowCard .designer-workflow-node .workflow-node-main{cursor: pointer;}
+#systemWorkflowCard .designer-workflow-node .workflow-node-main strong{font-size: 13px;}
+#systemWorkflowCard .designer-workflow-node .workflow-node-main span{display: none;}
+#systemWorkflowCard .designer-workflow-action-node{margin-left: 18px;}
+#systemWorkflowCard .designer-workflow-action-node .workflow-node-time.action{color: #2563eb; border: 1px solid #dbeafe; background: #eff6ff;}
+#systemWorkflowCard .designer-workflow-node .workflow-status-pill, #systemWorkflowCard .designer-workflow-node .workflow-node-action-menu summary{min-height: 26px; padding: 4px 9px; border-radius: 999px; font-size: 11px;}
+#systemWorkflowCard .designer-workflow-node .workflow-node-action-menu summary{color: #2563eb; border: 0; background: #eff6ff;}
+#systemWorkflowCard .workflow-node-card.designer-workflow-node{grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 5px;}
+#systemWorkflowCard .designer-workflow-node .workflow-status-pill, #systemWorkflowCard .designer-workflow-node .workflow-node-action-menu summary{padding-left: 7px; padding-right: 7px;}
+.sw-card{display:block}
+#systemWorkflowCard .task-action-menu{position:relative}
+#systemWorkflowCard .task-action-list{position:static;top:auto;right:auto;left:auto;margin-top:6px;min-width:0;width:100%;z-index:auto;display:grid;gap:4px;padding:8px;border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 6px 18px rgba(23,35,61,.10)}
+#systemWorkflowCard .task-action-list button{width:100%;text-align:left;padding:8px 10px;border:0;border-radius:8px;background:transparent;color:inherit;font-size:13px;font-weight:600;cursor:pointer}
+#systemWorkflowCard .task-action-list button:hover{background:rgba(36,92,255,.08);color:#245cff}
+#systemWorkflowCard .task-action-list button.danger-text{color:#d9483b}
+#systemWorkflowCard .workflow-node-actions{align-items:flex-start;flex-wrap:wrap}
+#systemWorkflowCard .task-action-menu[open] .task-action-list{display:grid !important;opacity:1 !important;visibility:visible !important;transform:none !important;position:static !important;height:auto !important;max-height:none !important;overflow:visible !important}
+#systemWorkflowCard .task-action-menu:not([open]) .task-action-list{display:none !important}
+#systemWorkflowCard .task-action-list button{display:block !important;opacity:1 !important;visibility:visible !important}
+.sw-card-row{display:flex;gap:10px;align-items:center}
+.sw-children{margin:8px 0 0 72px;border-left:2px solid #e2e8f0;padding-left:10px}
+.sw-child{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0}
+.sw-child-time{color:#245cff;font-weight:600;min-width:42px}
+.sw-child-label{flex:1;min-width:0}
+.sw-children-actions{margin:6px 0 0 72px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.remote-support-frame{display:block;width:100%;height:680px;border:0;background:#f5f7fa}
+#pageRemoteSupport{padding:0;max-width:none}
+#pageRemoteSupport .remote-support-frame{height:calc(100vh - 86px);min-height:720px;border-radius:10px}
 
 /* Mobile responsive */
 @media(max-width:768px){
@@ -353,12 +589,18 @@ body{background:#edf2f7}
     <div class="nav-tabs" id="navTabs">
       <div class="nav-tab active" data-icon="首" data-nav="stats" onclick="switchNav('stats')">首页数据大盘</div>
       <div class="nav-tab" data-icon="用" data-nav="users" onclick="switchNav('users')">用户列表</div>
+      <div class="nav-tab" data-icon="客" data-nav="customers" onclick="switchNav('customers')">客户管理</div>
       <div class="nav-tab" data-icon="代" data-nav="agents" id="agentsNavTab" onclick="switchNav('agents')">代理商管理</div>
       <div class="nav-tab" data-icon="模" data-nav="templates" onclick="switchNav('templates')">模板配置</div>
+      <div class="nav-tab" data-icon="系" data-nav="systemWorkflows" onclick="switchNav('systemWorkflows')">系统模板</div>
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
       <div class="nav-tab" data-icon="数" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询记录</div>
+<div class="nav-tab" data-icon="微" data-nav="wechatContacts" id="wechatContactsNavTab" onclick="switchNav('wechatContacts')" style="display:none">上报微信号</div>
       <div class="nav-tab" data-icon="牌" data-nav="brands" id="brandsNavTab" onclick="switchNav('brands')">品牌管理</div>
+      <div class="nav-tab" data-icon="远" data-nav="remoteSupport" id="remoteSupportNavTab" onclick="switchNav('remoteSupport')" style="display:none">远程支持设备</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
+      <div class="nav-tab" data-icon="商" data-nav="merchants" id="merchantsNavTab" onclick="switchNav('merchants')" style="display:none">商家审核</div>
+      <div class="nav-tab" data-icon="备" data-nav="dispatchDevices" id="dispatchDevicesNavTab" onclick="switchNav('dispatchDevices')" style="display:none">可调度设备</div>
     </div>
   </aside>
   <main class="admin-main">
@@ -386,6 +628,10 @@ body{background:#edf2f7}
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">启用后该品牌的 H5、小程序和 Online 才能注册及登录。历史用户统一属于必火。</p>
       <div id="brandsTable"><div class="empty">加载中...</div></div>
     </div>
+  </div>
+
+  <div class="container" id="pageRemoteSupport" style="display:none">
+    <iframe id="remoteSupportFrame" class="remote-support-frame" title="远程设备控制台" allow="fullscreen; clipboard-read; clipboard-write" loading="lazy"></iframe>
   </div>
 
   <!-- Page: Users -->
@@ -457,7 +703,1093 @@ body{background:#edf2f7}
           <button class="btn btn-outline btn-sm" id="resetPwdBtn" onclick="openResetPassword()" style="margin-left:8px">重置密码</button>
         </div>
       </div>
-      <!-- admin-only: skill visibility -->
+<!-- admin-only: system workflow templates -->
+<div class="card" id="systemWorkflowCard" style="display:none">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+    <h3 style="margin:0">系统模板工作流</h3>
+    <button type="button" class="btn btn-primary btn-sm" id="swNewBtn">新增系统模板</button>
+  </div>
+  <p style="margin:6px 0 10px;color:var(--text-secondary);font-size:12px">
+    只有「上架」的系统模板用户端才能看到。编辑要二次确认才生效；保存后只同步「直接启用」该模板的用户，复制出去自己改过的不动。
+  </p>
+  <div id="swList"></div>
+  <div id="swEditor" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="swName" placeholder="系统模板名称" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;min-width:220px">
+      <label style="font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="swPublished"> 上架（用户可见）</label>
+      <button type="button" class="btn btn-sm" id="swDraftBtn">预览变更</button>
+      <button type="button" class="btn btn-primary btn-sm" id="swSaveBtn">确认生效</button>
+      <button type="button" class="btn btn-sm" id="swCancelBtn">取消</button>
+    </div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+      <b style="font-size:13px">工作节点</b>
+      <button type="button" class="btn btn-sm" id="swAddNode">添加节点</button>
+      <span style="color:var(--text-secondary);font-size:12px">按时间段配置，与 Online 员工工作流一致</span>
+    </div>
+    <div id="swNodes" style="margin-top:6px"></div>
+    <div id="swDiff" style="margin-top:8px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap"></div>
+  </div>
+</div>
+<script>
+(function () {
+  var items = [], rows = [], editKey = '', isNew = false, confirmed = false, loaded = false;
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function listEl() { return document.getElementById('swList'); }
+  function render() {
+    var host = listEl(); if (!host) return;
+    host.innerHTML = items.length ? items.map(function (it) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="flex:1;min-width:0"><b>' + esc(it.name) + '</b> <span style="color:var(--text-secondary);font-size:12px">' + esc(it.key) + '</span>' +
+        '<div style="color:var(--text-secondary);font-size:12px">' + it.node_count + ' 个节点 · 直接启用 ' + it.direct_user_count + ' 人 · 更新 ' + esc(String(it.updated_at || '').replace('T', ' ').slice(0, 16)) + '</div></div>' +
+        '<label style="font-size:12px"><input type="checkbox" ' + (it.published ? 'checked' : '') + ' onchange="swToggle(\'' + esc(it.key) + '\', this.checked)"> 上架</label>' +
+        '<button type="button" class="btn btn-sm" title="上移" onclick="swMove(\'' + esc(it.key) + '\', -1)">↑</button>' +
+        '<button type="button" class="btn btn-sm" title="下移" onclick="swMove(\'' + esc(it.key) + '\', 1)">↓</button>' +
+        '<button type="button" class="btn btn-sm" onclick="swEdit(\'' + esc(it.key) + '\')">编辑</button></div>';
+    }).join('') : '<div style="color:var(--text-secondary);font-size:12px">暂无系统模板</div>';
+  }
+  function load(force) {
+    if (!listEl()) return Promise.resolve();
+    return api('/admin/api/system-workflows').then(function (r) {
+      items = (r && r.items) || []; loaded = true; render();
+    }).catch(function (e) {
+      loaded = true;
+      var host = listEl();
+      var msg = (e && e.message) || String(e || '');
+      if (host) host.innerHTML = '<div style="color:var(--text-secondary);font-size:12px">' +
+        (/403|管理员/.test(msg) ? '仅管理员可用（当前账号没有系统模板工作流权限）' : '加载失败：' + esc(msg)) + '</div>';
+    });
+  }
+  window.swLoad = load;
+  window.swToggle = function (key, published) {
+    return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/status', { method: 'POST', body: JSON.stringify({ published: !!published }) })
+      .then(load).catch(function (e) { alert('上下架失败：' + (e && e.message || e)); return load(); });
+  };
+  window.swMove = function (key, delta) {
+    var idx = -1;
+    for (var i = 0; i < items.length; i++) if (items[i].key === key) idx = i;
+    if (idx < 0) return;
+    var target = idx + Number(delta || 0);
+    if (target < 0 || target >= items.length) return;
+    return api('/admin/api/system-workflows/' + encodeURIComponent(key) + '/order', { method: 'POST', body: JSON.stringify({ order: target + 1 }) })
+      .then(load).catch(function (e) { alert('调整顺序失败：' + (e && e.message || e)); return load(); });
+  };
+  window.swEdit = function (key) {
+    var it = null;
+    for (var i = 0; i < items.length; i++) if (items[i].key === key) it = items[i];
+    if (!it) return;
+    editKey = key; isNew = false; confirmed = false;
+    document.getElementById('swName').value = it.name || '';
+    document.getElementById('swPublished').checked = !!it.published;
+    rows = (it.nodes || []).map(toRow);
+    renderRows();
+    document.getElementById('swDiff').textContent = '';
+    document.getElementById('swEditor').style.display = '';
+  };
+  // 与 H5 同源：直接镜像 h5_static/h5-app.js 里 SALES_WORKFLOW_PRESET（+ 发布动作），
+  // 节点 key/名称/默认参数都照抄 H5，管理后台不再自己维护一份节点表。
+  var NODE_PRESETS =   [
+        {
+            "key": "douyin_leads",
+            "label": "抖音自动养号",
+            "note": "抖音自动养号",
+            "group": "抖音",
+            "params": {}
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音获客·关键词抓取精准客户",
+            "note": "抖音获客·关键词抓取精准客户",
+            "group": "抖音",
+            "params": {
+                "customer_scope": "current_collection_batch"
+            }
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音精准获客AI",
+            "note": "抖音精准获客AI",
+            "group": "抖音",
+            "params": {
+                "ai_keywords": true,
+                "ai_keyword_count": 3,
+                "ai_keyword_avoid_days": 7,
+                "ai_keyword_publish_days": 7,
+                "customer_scope": "current_collection_batch"
+            }
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音私信接管",
+            "note": "抖音私信接管",
+            "group": "抖音",
+            "params": {}
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音精准用户触达",
+            "note": "抖音精准用户触达",
+            "group": "抖音",
+            "params": {
+                "touch_actions": [
+                    "follow_comment"
+                ],
+                "customer_scope": "precise_pool",
+                "max_users": 20
+            }
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音我的评论区",
+            "note": "抖音我的评论区",
+            "group": "抖音",
+            "params": {}
+        },
+        {
+            "key": "douyin_leads",
+            "label": "抖音私信记忆接管",
+            "note": "读取抖音新私信，按记忆文件和会话上下文回复，不拉群、不引导加微信。",
+            "group": "抖音",
+            "params": {
+                "sales_action": "stranger_message",
+                "reply_mode": "ai_memory",
+                "memory_takeover": true,
+                "wechat_add_friend_targets_source": "douyin_private_message_phone"
+            }
+        },
+        {
+            "key": "native_wechat_poll",
+            "label": "微信私信接管",
+            "note": "微信私信接管",
+            "group": "个微",
+            "params": {
+                "group_invite_enabled": true,
+                "group_invite_rule_status": "pending_rules",
+                "trigger": "qualified_intent"
+            }
+        },
+        {
+            "key": "native_wechat_moments_engage",
+            "label": "微信朋友圈点赞评论",
+            "note": "微信朋友圈点赞评论",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "native_wechat_moments_engage",
+            "label": "微信朋友圈自己评论区接管",
+            "note": "微信朋友圈自己评论区接管",
+            "group": "个微",
+            "params": {
+                "moment_action": "comment"
+            }
+        },
+        {
+            "key": "native_wechat_moments_engage",
+            "label": "朋友圈点赞评论（微信）",
+            "note": "朋友圈点赞评论（微信）",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "native_wechat_add_friend",
+            "label": "个微自动加好友",
+            "note": "把目标手机号或微信号加入本机个人微信加好友队列。",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "native_whatsapp_poll",
+            "label": "个人 whatapp 助手",
+            "note": "接管 Windows 桌面版 WhatsApp，按轮次处理私聊消息。",
+            "group": "个微",
+            "params": {}
+        },
+        {
+            "key": "local_bestseller",
+            "label": "创作同城爆款视频",
+            "note": "创作一条同城爆款视频（用于发公域平台）",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "hifly.video.create_by_tts",
+            "label": "创作数字人口播视频",
+            "note": "创作一条数字人口播视频（用于发朋友圈）",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "comfly.seedance.tvc.pipeline",
+            "label": "创意分镜头视频",
+            "note": "按连续分镜规划视频，并生成完整成片。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "comfly.daihuo.pipeline",
+            "label": "爆款 TVC",
+            "note": "使用素材或产品图生成广告短片。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "viral_video_remix",
+            "label": "爆款复刻",
+            "note": "基于爆款结构复刻视频脚本和执行方案。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "image_composer_studio",
+            "label": "AI 设计图",
+            "note": "根据文案或产品资料生成海报、详情页和朋友圈配图。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "ip_content_oral",
+            "label": "IP 口播文案",
+            "note": "包含行业热门口播和专业热门 IP 口播。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "ip_content_moments",
+            "label": "朋友圈图文",
+            "note": "生成首条朋友圈图文并自动生成 3 张配图。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "wewrite.article.pipeline",
+            "label": "公众号文章",
+            "note": "根据主题生成公众号文章、配图和发布草稿。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "linkedin_leads",
+            "label": "LinkedIn 线索挖掘",
+            "note": "采集 LinkedIn 相关线索和账号资料。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "reddit_leads",
+            "label": "Reddit 线索采集",
+            "note": "采集社区帖子、评论并分析精准用户。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "x_leads",
+            "label": "X 线索采集",
+            "note": "采集账号内容、评论和潜在线索。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "tiktok_leads",
+            "label": "TikTok 线索采集",
+            "note": "采集账号作品、视频评论和潜在线索。",
+            "group": "AI营销",
+            "params": {}
+        },
+        {
+            "key": "publish_content",
+            "label": "发布到抖音",
+            "note": "沿用上级节点素材，配文案带标签发布",
+            "group": "发布",
+            "params": {
+                "platform": "douyin",
+                "source_mode": "parent_latest_run",
+                "media_type": "video"
+            }
+        },
+        {
+            "key": "publish_content",
+            "label": "发布到视频号",
+            "note": "沿用上级节点素材，配文案带标签发布",
+            "group": "发布",
+            "params": {
+                "platform": "wechat_channels",
+                "source_mode": "parent_latest_run",
+                "media_type": "video"
+            }
+        },
+        {
+            "key": "publish_content",
+            "label": "发布到朋友圈",
+            "note": "沿用上级节点素材，配文案带标签发布",
+            "group": "发布",
+            "params": {
+                "platform": "wechat_moments",
+                "source_mode": "parent_latest_run",
+                "media_type": "image_text"
+            }
+        }
+    ];
+  function presetAt(i) {
+    var idx = Number(i);
+    return (idx >= 0 && idx < NODE_PRESETS.length) ? NODE_PRESETS[idx] : null;
+  }
+  function presetByKeyLabel(key, label) {
+    var k = String(key || ''), l = String(label || '');
+    for (var i = 0; i < NODE_PRESETS.length; i++) {
+      if (NODE_PRESETS[i].key === k && (!l || NODE_PRESETS[i].label === l)) return i;
+    }
+    for (var j = 0; j < NODE_PRESETS.length; j++) {
+      if (NODE_PRESETS[j].key === k) return j;
+    }
+    return -1;
+  }
+  function rowLabel(r) {
+    var p = presetAt(r && r.preset);
+    return String((r && r.label) || (p && p.label) || (r && r.key) || '');
+  }
+  function rowGroup(r) {
+    var p = presetAt(r && r.preset);
+    return p ? p.group : '其他';
+  }
+  function rowKey(r) {
+    var p = presetAt(r && r.preset);
+    return p ? p.key : String((r && r.key) || '');
+  }
+  function typeLabelOf(r) { return rowLabel(r); }
+  function typeDefOf(row) { return { label: rowLabel(row) }; }
+  function typeOpts(row) {
+    var current = row ? String(row.preset) : '';
+    var groups = {};
+    NODE_PRESETS.forEach(function (p, i) {
+      if (!groups[p.group]) groups[p.group] = [];
+      groups[p.group].push([String(i), p.label]);
+    });
+    if (row && Number(row.preset) < 0 && row.key) {
+      groups['其他'] = [['-1', String(row.label || row.key)]];
+      current = '-1';
+    }
+    var names = ['AI营销', '个微', '抖音', '发布', '其他'].filter(function (name) { return groups[name] && groups[name].length; })
+      .concat(Object.keys(groups).filter(function (name) { return ['AI营销', '个微', '抖音', '发布', '其他'].indexOf(name) < 0; }));
+    return names.map(function (name) {
+      var opts = groups[name].map(function (pair) {
+        return '<option value="' + esc(pair[0]) + '"' + (pair[0] === current ? ' selected' : '') + '>' + esc(pair[1]) + '</option>';
+      }).join('');
+      return '<optgroup label="' + esc(name) + '">' + opts + '</optgroup>';
+    }).join('');
+  }
+  function toRow(node, index) {
+    var n = node && typeof node === 'object' ? node : {};
+    var payload = (n.plan && n.plan.payload) || {}, params = Object.assign({}, payload.params || {});
+    // 能力节点（数字人口播等）参数直接在 payload.payload 里：不合并这一层，
+    // H5/online 保存的节点在这里看不到已选参数。
+    if (String(payload.capability_id || '').trim() && payload.payload && typeof payload.payload === 'object') {
+      params = Object.assign({}, payload.payload, params);
+    }
+    var key = String(n.ability_key || n.key || '').trim();
+    var label = String(n.ability_label || n.label || '').trim();
+    var note = String(n.note || '').trim();
+    var children = [];
+    var rawChildren = Array.isArray(n.children) ? n.children : (Array.isArray(n.actions) ? n.actions : []);
+    rawChildren.forEach(function (c) {
+      if (!c || typeof c !== 'object') return;
+      if (c.is_action_node === false) return;
+      var cp = (c.plan && c.plan.payload) || {}, cparams = cp.params || {};
+      var platform = String(c.platform || cparams.platform || '').trim();
+      var childLabel = String(c.ability_label || c.note || '').trim();
+      if (!platform) {
+        if (childLabel.indexOf('视频号') >= 0) platform = 'wechat_channels';
+        else if (childLabel.indexOf('朋友圈') >= 0) platform = 'wechat_moments';
+        else platform = 'douyin';
+      }
+      children.push({
+        time: String(c.time || n.time || '09:00'),
+        end: String(c.end_time || ''),
+        platform: platform,
+        label: childLabel,
+        note: String(c.note || '')
+      });
+    });
+    return {
+      i: index,
+      id: String(n.id || ''),
+      time: String(n.time || '09:00'),
+      end: String(n.end_time || ''),
+      preset: presetByKeyLabel(key, label),
+      key: key,
+      label: label,
+      note: note,
+      params: params,
+      children: children
+    };
+  }
+  function boolOn(value) { return value === true || value === 'true'; }
+  // 「回复模式」联动显示，和 Online 节点弹窗一致
+  window.swSyncReplyFields = function () {
+    var mode = String((document.getElementById('swReplyMode') || {}).value || '').toLowerCase();
+    [['swReplyFixed', 'fixed'], ['swReplyAi', 'ai'], ['swReplyRewrite', 'rewrite']].forEach(function (pair) {
+      var host = document.getElementById(pair[0]);
+      if (host) host.hidden = (mode !== pair[1]);
+    });
+  };
+  function extraFields(r) {
+    var p = presetAt(r && r.preset);
+    if (!p) return '';
+    var params = Object.assign({}, p.params || {}, (r && r.params) || {});
+    function num(k, d) { return ' value="' + (params[k] == null ? d : params[k]) + '"'; }
+    var fields = [];
+    if (p.key === 'native_wechat_poll') {
+      // 和 Online 节点弹窗一致：本轮个人会话数量 + 自动拉群。
+      // 间隔秒 / 接管时长由节点的时间区间自动推导，Online 上没有这两个输入。
+      fields.push('<label class="sw-f">本轮个人会话数量<input class="sw-p sw-num" data-k="private_sessions_per_round"' + num('private_sessions_per_round', 100) + '></label>');
+      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="group_invite_enabled"' + (params.group_invite_enabled === true || params.group_invite_enabled === 'true' ? ' checked' : '') + '> 自动拉群：命中拉群规则后立即执行</span></label>');
+    }
+    if (p.key === 'hifly.video.create_by_tts') {
+      var oralPicked = Array.isArray(params.script_sources) && params.script_sources.length
+        ? params.script_sources.map(String)
+        : [String(params.script_source || 'ip_daily_industry_hot_oral')];
+      fields.push('<label class="sw-f">口播来源（可多选，都选则每次随机一种）<select class="sw-p" data-k="script_sources" multiple size="2">'
+        + '<option value="ip_daily_industry_hot_oral"' + (oralPicked.indexOf('ip_daily_industry_hot_oral') >= 0 ? ' selected' : '') + '>行业口播</option>'
+        + '<option value="ip_daily_professional_ip_oral"' + (oralPicked.indexOf('ip_daily_professional_ip_oral') >= 0 ? ' selected' : '') + '>IP 口播</option>'
+        + '</select></label>');
+    }
+    // 抖音采集节点：和 Online 的「精准获客参数」一一对应
+    var douyinCollection = p.key === 'douyin_leads' && (p.label.indexOf('关键词') >= 0 || p.label.indexOf('AI') >= 0);
+    var douyinAi = douyinCollection && p.label.indexOf('AI') >= 0;
+    if (douyinCollection) {
+      if (douyinAi) {
+        fields.push('<label class="sw-f">每轮关键词数量<input class="sw-p sw-num" data-k="ai_keyword_count" min="1" max="8"' + num('ai_keyword_count', 3) + '></label>');
+        fields.push('<label class="sw-f">关键词去重天数<input class="sw-p sw-num" data-k="ai_keyword_avoid_days" min="1" max="60"' + num('ai_keyword_avoid_days', 7) + '></label>');
+        fields.push('<label class="sw-f">只搜最近多少天发布的新视频<input class="sw-p sw-num" data-k="ai_keyword_publish_days" min="1" max="180"' + num('ai_keyword_publish_days', 7) + '></label>');
+      } else {
+        fields.push('<label class="sw-f sw-grow">采集关键词（可选，逗号或换行分隔；留空用设备已配关键词）<textarea class="sw-p" data-k="keyword" rows="2" style="min-height:56px;resize:vertical">' + esc(params.keyword || '') + '</textarea></label>');
+      }
+      fields.push('<label class="sw-f">地区<input class="sw-p" data-k="regions" value="' + esc(Array.isArray(params.regions) ? params.regions.join('、') : (params.regions || '全国')) + '"></label>');
+      fields.push('<label class="sw-f">搜索数量<input class="sw-p sw-num" data-k="max_results" min="10" max="100"' + num('max_results', 50) + '></label>');
+      var dmode = String(params.mode || '').trim().toLowerCase();
+      if (['script', 'api'].indexOf(dmode) < 0) dmode = 'script';
+      fields.push('<label class="sw-f">搜索方式<select class="sw-p" data-k="mode">'
+        + '<option value="script"' + (dmode === 'script' ? ' selected' : '') + '>浏览器脚本</option>'
+        + '<option value="api"' + (dmode === 'api' ? ' selected' : '') + '>接口模式</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="reply_precise_comments"' + (boolOn(params.reply_precise_comments) ? ' checked' : '') + '> 筛选后立即回复精准客户评论</span></label>');
+      var rmode = String(params.reply_comment_mode || '').trim().toLowerCase();
+      if (['fixed', 'ai', 'rewrite'].indexOf(rmode) < 0) rmode = '';
+      fields.push('<label class="sw-f">回复模式<select class="sw-p" id="swReplyMode" data-k="reply_comment_mode" onchange="swSyncReplyFields()">'
+        + '<option value=""' + (rmode === '' ? ' selected' : '') + '>不启用回复（默认）</option>'
+        + '<option value="fixed"' + (rmode === 'fixed' ? ' selected' : '') + '>固定文案</option>'
+        + '<option value="ai"' + (rmode === 'ai' ? ' selected' : '') + '>AI 按客户评论生成</option>'
+        + '<option value="rewrite"' + (rmode === 'rewrite' ? ' selected' : '') + '>AI 同方向改编</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f sw-grow" id="swReplyFixed"' + (rmode === 'fixed' ? '' : ' hidden') + '>固定回复文案<textarea class="sw-p" data-k="reply_comment_text" rows="2" style="min-height:56px;resize:vertical">' + esc(params.reply_comment_text || '') + '</textarea></label>');
+      fields.push('<label class="sw-f sw-grow" id="swReplyAi"' + (rmode === 'ai' ? '' : ' hidden') + '>回复要求<textarea class="sw-p" data-k="reply_comment_prompt" rows="2" style="min-height:56px;resize:vertical" placeholder="AI 模式：回复方向和约束">' + esc(params.reply_comment_prompt || '') + '</textarea></label>');
+      fields.push('<label class="sw-f sw-grow" id="swReplyRewrite"' + (rmode === 'rewrite' ? '' : ' hidden') + '>改编基准文案<textarea class="sw-p" data-k="reply_comment_seed_text" rows="2" style="min-height:56px;resize:vertical" placeholder="改编模式使用">' + esc(params.reply_comment_seed_text || '') + '</textarea></label>');
+    }
+    if (p.key === 'douyin_leads' && p.label.indexOf('触达') >= 0) {
+      fields.push('<label class="sw-f">每次触达数量<input class="sw-p sw-num" data-k="max_users" min="1" max="200"' + num('max_users', 20) + '></label>');
+      var touchPicked = Array.isArray(params.touch_actions) ? params.touch_actions.map(String) : ['follow_comment', 'mention_comment', 'direct_message'];
+      var TOUCH_ACTIONS = [['follow_comment', '关注并评论'], ['mention_comment', '评论并@客户'], ['direct_message', '主动私信']];
+      fields.push('<span class="sw-f" style="grid-column:1/-1">执行动作（可多选）' + TOUCH_ACTIONS.map(function (pair) {
+        return '<label style="font-weight:400;flex-direction:row;align-items:center"><input type="checkbox" data-multi="touch_actions" data-val="' + pair[0] + '"' + (touchPicked.indexOf(pair[0]) >= 0 ? ' checked' : '') + '> ' + pair[1] + '</label>';
+      }).join('') + '</span>');
+    }
+    if (p.key === 'native_wechat_add_friend') {
+      // 和 Online 节点弹窗完全一样：这里只配「方式」（目标来源）+ 每轮领取数量。
+      // 申请语 / 备注 / 标签 / 朋友权限这些在 Online 的个微设置里配，节点不重复存一份。
+      // 没存 source_mode 的按 ① 本机导入名单 显示（Online 也是这个口径）。
+      var addPool = String(params.source_mode || '').trim().toLowerCase() === 'server_reported_pool';
+      fields.push('<label class="sw-f">加好友目标来源<select class="sw-p" data-k="source_mode">'
+        + '<option value="server_reported_pool"' + (addPool ? ' selected' : '') + '>③ 服务端上报池（同账号跨机器共用）</option>'
+        + '<option value="local_import"' + (addPool ? '' : ' selected') + '>① 本机导入名单（节点自带名单）</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f">每轮领取数量<input class="sw-p sw-num" data-k="max_targets"' + num('max_targets', 50) + '></label>');
+    }
+    // 抖音私信接管 / 记忆接管：识别到手机号后是「本机直接加」还是「上报到账号级池子」。
+    // 不勾选（默认）= 上报池子，由「个微自动加好友（来源=③服务端上报池）」的节点去加。
+    if (p.key === 'douyin_leads' && (p.label.indexOf('私信接管') >= 0 || p.label.indexOf('记忆接管') >= 0)) {
+      // 和 Online 节点弹窗一致：回复策略 + 识别到手机号后是否本机加好友
+      var addFriendOn = params.wechat_add_friend_enabled === true || params.wechat_add_friend_enabled === 'true';
+      var replyMode = String(params.reply_mode || '').trim().toLowerCase();
+      if (['fixed', 'ai_lead', 'ai_memory'].indexOf(replyMode) < 0) {
+        replyMode = p.label.indexOf('记忆接管') >= 0 ? 'ai_memory' : 'fixed';
+      }
+      fields.push('<label class="sw-f">抖音私信回复策略<select class="sw-p" data-k="reply_mode">'
+        + '<option value="fixed"' + (replyMode === 'fixed' ? ' selected' : '') + '>固定话术</option>'
+        + '<option value="ai_lead"' + (replyMode === 'ai_lead' ? ' selected' : '') + '>AI 引导加绿泡泡</option>'
+        + '<option value="ai_memory"' + (replyMode === 'ai_memory' ? ' selected' : '') + '>AI 记忆接管（按记忆文件回复）</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="wechat_add_friend_enabled"' + (addFriendOn ? ' checked' : '') + '> 识别到手机号后直接在本机加微信好友</span></label>');
+      fields.push('<span style="font-size:12px;color:var(--text-secondary)">不勾选：识别到的号码上报到账号级池子，由「个微自动加好友（来源=③服务端上报池）」的节点去加。</span>');
+    }
+    if (p.key === 'native_wechat_moments_engage') {
+      var act = String(params.moment_action || 'like_comment');
+      fields.push('<label class="sw-f">动作<select class="sw-p" data-k="moment_action">' +
+        '<option value="like_comment"' + (act === 'like_comment' ? ' selected' : '') + '>点赞并评论</option>' +
+        '<option value="like"' + (act === 'like' ? ' selected' : '') + '>只点赞</option>' +
+        '<option value="comment"' + (act === 'comment' ? ' selected' : '') + '>只评论</option>' +
+        '</select></label>');
+    }
+    return fields.join('');
+  }
+  function typeLabelOf(r) {
+    return rowLabel(r);
+  }
+  function nodeParamSummary(r) {
+    var p = r.params || {}, parts = [];
+    if (p.keyword) parts.push('关键词：' + p.keyword);
+    if (p.regions) parts.push('地区：' + (Array.isArray(p.regions) ? p.regions.join('/') : p.regions));
+    if (p.max_results !== undefined && p.max_results !== '') parts.push('数量：' + p.max_results);
+    if (p.max_users !== undefined && p.max_users !== '') parts.push('触达：' + p.max_users);
+    if (p.private_sessions_per_round) parts.push('单轮会话 ' + p.private_sessions_per_round);
+    if (p.group_invite_enabled === true) parts.push('自动拉群');
+    if (p.script) parts.push('口播：' + String(p.script).slice(0, 24));
+    if (p.moment_action) parts.push('动作：' + p.moment_action);
+    if (p.source_mode === 'server_reported_pool') parts.push('加好友：服务端上报池');
+    else if (p.source_mode === 'local_import') parts.push('加好友：本机名单');
+    if (p.max_targets) parts.push('每轮 ' + p.max_targets);
+    if (p.wechat_add_friend_enabled === true) parts.push('私信加好友：开');
+    return parts.join(' · ');
+  }
+  function platformLabel(platform) {
+    return platform === 'wechat_channels' ? '发布到视频号' : (platform === 'wechat_moments' ? '发布到朋友圈' : '发布到抖音');
+  }
+  function swTimeKey(r) {
+    var m = /^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})/.exec(String((r && r.time) || ''));
+    if (m) {
+      var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+      if (h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return h * 60 + mi;
+    }
+    return 9999;
+  }
+  function renderRows() {
+    var host = document.getElementById('swNodes'); if (!host) return;
+    // 2026-10-01：编辑器里也按「节点设置的开始时间」排——新加的节点插到该在的位置，
+    // 不再永远显示在最后（稳定排序：同一时间保持原相对顺序）。
+    rows.sort(function (a, b) { return swTimeKey(a) - swTimeKey(b); });
+    rows.forEach(function (r, idx) { r.i = idx; });
+    host.className = 'workflow-time-list';
+    if (!rows.length) {
+      host.innerHTML = '<div class="workflow-empty">还没有节点，点「添加节点」开始配置</div>';
+      host.onclick = null;
+      return;
+    }
+    var nodeHtml = function (r, idx) {
+      var children = Array.isArray(r.children) ? r.children.slice() : [];
+      children.sort(function (a, b) { return swTimeKey(a) - swTimeKey(b); });
+      // 排完写回，保证「点第几个下级」编辑的索引和显示顺序一致（以前显示排了、索引还是旧的）
+      if (Array.isArray(r.children)) r.children = children;
+      var collapsed = r.collapsed === true;
+      var childHtml = children.map(function (c, ci) {
+        return '<div class="workflow-node-card workflow-action-card workflow-time-node">' +
+          '<div class="workflow-node-time action">' + esc(c.time || '--:--') + (c.end ? '<br><small>' + esc(c.end) + '</small>' : '') + '</div>' +
+          '<div class="workflow-node-main" data-sw-act="edit-child" data-child-index="' + ci + '">' +
+          '<strong>' + esc(c.label || platformLabel(c.platform)) + '</strong><span>使用上级节点输出素材</span></div>' +
+          '<div class="workflow-node-actions"><details class="task-action-menu workflow-node-action-menu">' +
+          '<summary>操作</summary><div class="task-action-list">' +
+          '<button type="button" data-sw-act="edit-child" data-child-index="' + ci + '">编辑动作</button>' +
+          '<button class="danger-text" type="button" data-sw-act="del-child" data-child-index="' + ci + '">删除</button>' +
+          '</div></details></div></div>';
+      }).join('');
+      return '<div class="workflow-timeline-entry' + (collapsed ? '' : ' is-expanded') + '">' +
+        '<div class="workflow-node-card workflow-time-node">' +
+        '<div class="workflow-node-time">' + esc(r.time || '--:--') + (r.end ? '<br><small>' + esc(r.end) + '</small>' : '') + '</div>' +
+        '<div class="workflow-node-main" data-sw-act="edit"><strong>' + esc(typeLabelOf(r) || r.label) + '</strong>' +
+        '<span>' + esc(rowGroup(r)) + (r.note ? ' · ' + esc(r.note) : '') + '</span></div>' +
+        '<div class="workflow-node-actions">' +
+        (children.length ? '<button class="workflow-child-toggle" type="button" data-sw-act="toggle-children"><span>下级 ' + children.length + '</span></button>' : '') +
+        '<details class="task-action-menu workflow-node-action-menu"><summary>操作</summary><div class="task-action-list">' +
+        '<button type="button" data-sw-act="edit">设置参数</button>' +
+        '<button type="button" data-sw-act="add-child">添加动作</button>' +
+        '<button type="button" data-sw-act="up"' + (idx === 0 ? ' disabled' : '') + '>上移</button>' +
+        '<button type="button" data-sw-act="down"' + (idx === rows.length - 1 ? ' disabled' : '') + '>下移</button>' +
+        '<button class="danger-text" type="button" data-sw-act="del">删除</button>' +
+        '</div></details></div></div>' +
+        (children.length ? '<div class="workflow-child-list' + (collapsed ? ' hidden' : '') + '">' + childHtml + '</div>' : '') +
+        '</div>';
+    };
+    host.innerHTML = rows.map(nodeHtml).join('');
+    Array.prototype.forEach.call(host.querySelectorAll('.task-action-menu'), function (menu) {
+      menu.addEventListener('toggle', function () {
+        var entry = menu.closest('.workflow-timeline-entry') || menu.closest('.workflow-node-card');
+        if (entry) entry.classList.toggle('task-menu-open', menu.open);
+      });
+    });
+    Array.prototype.forEach.call(host.querySelectorAll('[data-sw-act]'), function (el) {
+      el.addEventListener('click', function (evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        var entry = el.closest('.workflow-timeline-entry');
+        var entries = Array.prototype.slice.call(host.querySelectorAll('.workflow-timeline-entry'));
+        var index = entries.indexOf(entry);
+        if (index < 0) return;
+        var act = el.getAttribute('data-sw-act');
+        var childIndex = Number(el.getAttribute('data-child-index'));
+        if (act === 'del') { rows.splice(index, 1); renderRows(); return; }
+        if (act === 'up' && index > 0) { var t = rows[index]; rows[index] = rows[index - 1]; rows[index - 1] = t; renderRows(); return; }
+        if (act === 'down' && index < rows.length - 1) { var t2 = rows[index]; rows[index] = rows[index + 1]; rows[index + 1] = t2; renderRows(); return; }
+        if (act === 'toggle-children') { rows[index].collapsed = !(rows[index].collapsed === true); renderRows(); return; }
+        if (act === 'add-child') { openChildModal(index, -1); return; }
+        if (act === 'edit-child') { openChildModal(index, childIndex); return; }
+        if (act === 'del-child') {
+          var parent = rows[index];
+          if (parent && Array.isArray(parent.children) && childIndex >= 0) { parent.children.splice(childIndex, 1); renderRows(); }
+          return;
+        }
+        if (act === 'edit') openNodeModal(index);
+      });
+    });
+  }
+  // 节点标签 → 抖音获客子动作。必须与客户端 `_scheduled_douyin_sales_action_from_text()`
+  // 及服务端 `h5_workflows._sales_action_from_note()` 保持同一优先级，否则子动作会错配。
+  function salesDouyinAction(label, params) {
+    var explicit = String((params && params.sales_action) || '').toLowerCase();
+    if (explicit) return explicit;
+    var text = String(label || '');
+    if (text.indexOf('我的评论区') >= 0 || text.indexOf('抖音我的评论区') >= 0) return 'self_comment_monitor';
+    if (text.indexOf('精准用户触达') >= 0 || text.indexOf('精准触达') >= 0) return 'precise_touch';
+    if (text.indexOf('养号') >= 0) return 'account_nurture';
+    if (text.indexOf('发布后采集') >= 0 || text.indexOf('关键词抓取') >= 0) return 'search_collect';
+    if (text.indexOf('回复') >= 0 && text.indexOf('评论') >= 0) return 'reply_comments';
+    if (text.indexOf('@精准') >= 0 || text.indexOf('评论并@') >= 0 || text.indexOf('自己评论区接管') >= 0) return 'mention_comment';
+    if (text.indexOf('关注') >= 0 && text.indexOf('评论') >= 0) return 'follow_comment';
+    if (text.indexOf('主动私信') >= 0 || text.indexOf('私信10') >= 0) return 'direct_message';
+    if (text.indexOf('私信接管') >= 0 || text.indexOf('私信引流') >= 0) return 'stranger_message';
+    return 'search_collect';
+  }
+  function buildNode(r) {
+    var p = presetAt(r && r.preset);
+    var key = p ? p.key : String((r && r.key) || '');
+    var label = String((r && r.label) || (p && p.label) || key);
+    var note = String((r && r.note) || (p && p.note) || label);
+    var params = Object.assign({}, (p && p.params) || {}, (r && r.params) || {});
+    var kind = 'client_workflow', action = key;
+    if (key === 'douyin_leads') {
+      // 抖音获客节点：客户端只认顶层 task_kind=douyin_leads，子动作放在 payload.action。
+      // 旧版本这里写成 client_workflow + action=douyin_leads，2026-09-16 起 851 个任务
+      // 全部报「暂不支持的客户端工作流：douyin_leads」→ 保存前必须按同一套标签规则定子动作。
+      kind = 'douyin_leads';
+      action = salesDouyinAction(label, params);
+      params.sales_action = action;
+    } else if (key === 'publish_content') {
+      params.platform = params.platform || 'douyin';
+      params.source_mode = params.source_mode || 'parent_latest_run';
+      params.media_type = params.platform === 'wechat_moments' ? 'image_text' : 'video';
+    } else if (key === 'native_wechat_poll' || key === 'native_wechat_moments_engage' || key === 'native_wechat_add_friend') {
+      params.account_id = params.account_id || 'pc-wechat-default';
+    } else if (key === 'hifly.video.create_by_tts') {
+      action = 'shanjian_digital_human_video';
+      params.virtualman_selection_mode = params.virtualman_selection_mode || 'daily_round_robin';
+      var oralSources = Array.isArray(params.script_sources) ? params.script_sources.filter(Boolean) : [];
+      if (!oralSources.length) oralSources = [String(params.script_source || 'ip_daily_industry_hot_oral')];
+      params.script_sources = oralSources;
+      params.script_source = oralSources[0];
+      delete params.capability_id;
+    } else if (key === 'local_bestseller') {
+      action = 'local_bestseller_daily_video';
+      params.day_mode = params.day_mode || 'workflow_elapsed';
+      params.days = params.days || 30;
+    }
+    if (r && typeof r === 'object' && !r.id) {
+      r.id = 'wf_' + Math.random().toString(36).slice(2, 10);
+    }
+    var parentId = String((r && r.id) || '');
+    var children = (Array.isArray(r && r.children) ? r.children : []).map(function (c, index) {
+      var platform = String((c && c.platform) || 'douyin');
+      var childLabel = String((c && c.label) || '').trim() || platformLabel(platform);
+      return {
+        id: parentId + '_action_' + (index + 1),
+        time: String((c && c.time) || r.time || '09:00'),
+        end_time: String((c && c.end) || ''),
+        parent_node_id: parentId,
+        action_type: 'publish',
+        type: 'publish',
+        platform: platform,
+        ability_key: 'publish_content',
+        ability_label: childLabel,
+        department_id: 'sales',
+        department_name: '销售部',
+        note: String((c && c.note) || '') || (childLabel + '，配文案、带标签发布'),
+        is_action_node: true,
+        param_configured: true,
+        plan: {
+          title: childLabel,
+          task_kind: 'client_workflow',
+          content: 'H5 工作流动作：' + childLabel,
+          payload: {
+            action: 'publish_content',
+            params: {
+              source_mode: 'parent_latest_run',
+              source_workflow_node_id: parentId,
+              source_workflow_node_label: label,
+              platform: platform,
+              media_type: platform === 'wechat_moments' ? 'image_text' : 'video',
+              note: childLabel
+            }
+          }
+        }
+      };
+    });
+    return {
+      id: parentId,
+      time: r.time,
+      end_time: r.end,
+      time_range: r.time + (r.end ? '-' + r.end : ''),
+      ability_key: key,
+      ability_label: label,
+      note: note,
+      children: children,
+      plan: { title: label, task_kind: kind, content: note, payload: { action: action, params: params } }
+    };
+  }
+  function collectRows() { return rows.map(buildNode); }
+  var nodeModalIndex = -1;
+  function ensureNodeModal() {
+    var mask = document.getElementById('swNodeModal');
+    if (mask) return mask;
+    mask = document.createElement('div');
+    mask.id = 'swNodeModal';
+    mask.className = 'sw-modal-mask hidden';
+    mask.innerHTML = '<div class="sw-modal">' +
+      '<div class="sw-modal-head"><b>编辑工作节点</b><button type="button" class="btn btn-sm" data-sw-modal="close">关闭</button></div>' +
+      '<div class="sw-modal-body">' +
+      '<div class="sw-modal-grid">' +
+      '<label class="sw-f">开始时间<input class="sw-p" type="time" id="swModalTime"></label>' +
+      '<label class="sw-f">结束时间<input class="sw-p" type="time" id="swModalEndTime"></label>' +
+      '<label class="sw-f sw-grow">节点类型<select class="sw-p" id="swModalType"></select></label>' +
+      '<label class="sw-f sw-grow">节点名称<input class="sw-p" id="swModalLabel" placeholder="例如：创作同城爆款视频"></label>' +
+      '</div>' +
+      '<div class="sw-modal-grid" id="swModalExtra"></div>' +
+      '<label class="sw-f sw-grow">节点说明<input class="sw-p" id="swModalNote" placeholder="这一步让员工做什么"></label>' +
+      '</div>' +
+      '<div class="sw-modal-foot">' +
+      '<button type="button" class="btn btn-sm danger-text" data-sw-modal="delete">删除节点</button>' +
+      '<span style="flex:1"></span>' +
+      '<button type="button" class="btn btn-sm" data-sw-modal="cancel">取消</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-sw-modal="save">保存节点</button>' +
+      '</div></div>';
+    document.body.appendChild(mask);
+    mask.addEventListener('click', function (evt) {
+      var hit = evt.target.closest('[data-sw-modal]');
+      var act = hit ? hit.getAttribute('data-sw-modal') : (evt.target === mask ? 'close' : '');
+      if (act === 'close' || act === 'cancel') { mask.classList.add('hidden'); return; }
+      if (act === 'delete') { rows.splice(nodeModalIndex, 1); mask.classList.add('hidden'); renderRows(); return; }
+      if (act === 'save') { applyNodeModal(); }
+    });
+    document.getElementById('swModalType').addEventListener('change', function () {
+      var r = rows[nodeModalIndex]; if (!r) return;
+      var prev = presetAt(r.preset);
+      var nextIndex = Number(this.value);
+      var next = presetAt(nextIndex);
+      var labelEl = document.getElementById('swModalLabel');
+      var noteEl = document.getElementById('swModalNote');
+      if (next && labelEl) {
+        var currentLabel = String(labelEl.value || '').trim();
+        if (!currentLabel || (prev && currentLabel === prev.label)) labelEl.value = next.label;
+      }
+      if (next && noteEl) {
+        var currentNote = String(noteEl.value || '').trim();
+        if (!currentNote || (prev && currentNote === prev.note)) noteEl.value = next.note;
+      }
+      r.preset = nextIndex;
+      r.params = {};
+      fillNodeModalExtra();
+    });
+    return mask;
+  }
+  function fillNodeModalExtra() {
+    var r = rows[nodeModalIndex]; if (!r) return;
+    var extra = document.getElementById('swModalExtra');
+    if (!extra) return;
+    var type = document.getElementById('swModalType').value;
+    r.preset = Number(document.getElementById('swModalType').value);
+    extra.innerHTML = extraFields(r);
+    if (typeof window.swSyncReplyFields === 'function') window.swSyncReplyFields();
+  }
+  function openNodeModal(index) {
+    var r = rows[index]; if (!r) return;
+    nodeModalIndex = index;
+    ensureNodeModal();
+    document.getElementById('swModalTime').value = r.time || '09:00';
+    document.getElementById('swModalEndTime').value = r.end || '';
+    document.getElementById('swModalType').innerHTML = typeOpts(r);
+    document.getElementById('swModalLabel').value = r.label || '';
+    document.getElementById('swModalNote').value = r.note || '';
+    fillNodeModalExtra();
+    document.getElementById('swNodeModal').classList.remove('hidden');
+  }
+  function applyNodeModal() {
+    var r = rows[nodeModalIndex]; if (!r) return;
+    var previousPreset = Number(r.preset);
+    var previousLabel = rowLabel(r);
+    var picked = Number(document.getElementById('swModalType').value);
+    r.time = String((document.getElementById('swModalTime') || {}).value || '').trim() || '09:00';
+    r.end = String((document.getElementById('swModalEndTime') || {}).value || '').trim();
+    var labelInput = String((document.getElementById('swModalLabel') || {}).value || '').trim();
+    var noteInput = String((document.getElementById('swModalNote') || {}).value || '').trim();
+    r.preset = isNaN(picked) ? previousPreset : picked;
+    r.label = labelInput || (r.preset >= 0 ? presetAt(r.preset).label : previousLabel);
+    r.note = noteInput || (r.preset >= 0 ? presetAt(r.preset).note : r.note);
+    if (r.preset >= 0 && (labelInput === '' || labelInput === previousLabel)) r.label = presetAt(r.preset).label;
+    var extra = document.getElementById('swModalExtra');
+    if (extra) {
+      Array.prototype.forEach.call(extra.querySelectorAll('.sw-p'), function (inp) {
+        var k = inp.getAttribute('data-k');
+        if (!k) return;
+        if (inp.multiple) {
+          var pickedMulti = Array.prototype.map.call(inp.selectedOptions || [], function (opt) { return opt.value; });
+          if (k === 'script_sources' && !pickedMulti.length) pickedMulti = ['ip_daily_industry_hot_oral'];
+          r.params[k] = pickedMulti;
+          if (k === 'script_sources') r.params.script_source = pickedMulti[0];
+          return;
+        }
+        if (inp.type === 'checkbox') {
+          r.params[k] = !!inp.checked;
+          return;
+        }
+        var raw = String(inp.value || '').trim();
+        if (k === 'regions') {
+          r.params[k] = raw ? raw.split(/[\s，,、|]+/).map(function (x) { return x.trim(); }).filter(Boolean) : ['全国'];
+        } else if (String(inp.className || '').indexOf('sw-num') >= 0) {
+          r.params[k] = Number(raw || 0);
+        } else {
+          r.params[k] = raw;
+        }
+      });
+      // 多选 checkbox 组（抖音「执行动作」）单独收集成数组
+      var multiPicked = {};
+      Array.prototype.forEach.call(extra.querySelectorAll('input[type=checkbox][data-multi]'), function (inp) {
+        var mk = inp.getAttribute('data-multi');
+        if (!mk) return;
+        if (!multiPicked[mk]) multiPicked[mk] = [];
+        if (inp.checked) multiPicked[mk].push(inp.getAttribute('data-val'));
+      });
+      Object.keys(multiPicked).forEach(function (mk) { r.params[mk] = multiPicked[mk]; });
+    }
+    // 和 Online 节点弹窗一致：选①本机导入名单时不带来源/领取数量参数（只有③才带）。
+    if (r.params.source_mode === 'local_import') {
+      delete r.params.source_mode;
+      delete r.params.max_targets;
+    }
+    // 和 Online 的 saveNodeFromModal 保持一致：
+    // 数值范围夹紧、采集与触达参数互斥、回复参数只在启用时保留
+    function clampNum(value, lo, hi, dflt) {
+      var n = Number(value);
+      if (!isFinite(n)) n = dflt;
+      return Math.max(lo, Math.min(hi, Math.round(n)));
+    }
+    var savedPreset = presetAt(r.preset), savedLabel = String((savedPreset && savedPreset.label) || '');
+    if (savedPreset && savedPreset.key === 'douyin_leads') {
+      if (savedLabel.indexOf('触达') >= 0) {
+        ['keyword', 'keywords', 'query', 'search_keyword', 'regions', 'mode', 'max_results'].forEach(function (k) { delete r.params[k]; });
+        r.params.max_users = clampNum(r.params.max_users, 1, 200, 20);
+        // 和 Online 一样：全不勾就是 []（节点不做事），不替用户偷偷补默认动作
+        r.params.touch_actions = Array.isArray(r.params.touch_actions) ? r.params.touch_actions.filter(Boolean) : [];
+        r.params.customer_scope = 'precise_pool';
+      } else if (savedLabel.indexOf('关键词') >= 0 || savedLabel.indexOf('AI') >= 0) {
+        delete r.params.max_users;
+        delete r.params.touch_actions;
+        delete r.params.followup_actions;
+        r.params.max_results = clampNum(r.params.max_results, 10, 100, 50);
+        var pickedRegions = Array.isArray(r.params.regions) ? r.params.regions.filter(Boolean) : [];
+        r.params.regions = pickedRegions.length ? pickedRegions : ['全国'];
+        r.params.mode = String(r.params.mode || '').toLowerCase() === 'api' ? 'api' : 'script';
+        if (savedLabel.indexOf('AI') >= 0) {
+          r.params.ai_keywords = true;
+          r.params.ai_keyword_count = clampNum(r.params.ai_keyword_count, 1, 8, 3);
+          r.params.ai_keyword_avoid_days = clampNum(r.params.ai_keyword_avoid_days, 1, 60, 7);
+          r.params.ai_keyword_publish_days = clampNum(r.params.ai_keyword_publish_days, 1, 180, 7);
+          ['keyword', 'keywords', 'query', 'search_keyword'].forEach(function (k) { delete r.params[k]; });
+        } else {
+          ['ai_keywords', 'ai_keyword_count', 'ai_keyword_avoid_days', 'ai_keyword_publish_days'].forEach(function (k) { delete r.params[k]; });
+          if (!String(r.params.keyword || '').trim()) ['keyword', 'keywords', 'query', 'search_keyword'].forEach(function (k) { delete r.params[k]; });
+        }
+        var replyEnabled = boolOn(r.params.reply_precise_comments);
+        var replyMode = String(r.params.reply_comment_mode || '').toLowerCase();
+        var replyText = String(r.params.reply_comment_text || '').trim();
+        var replyPrompt = String(r.params.reply_comment_prompt || '').trim();
+        var replySeed = String(r.params.reply_comment_seed_text || '').trim();
+        ['reply_precise_comments', 'reply_comment_mode', 'reply_comment_text', 'reply_comment_prompt', 'reply_comment_seed_text', 'comment_mode', 'comment_text', 'comment_prompt', 'comment_seed_text'].forEach(function (k) { delete r.params[k]; });
+        if (replyEnabled) {
+          r.params.reply_precise_comments = true;
+          if (['fixed', 'ai', 'rewrite'].indexOf(replyMode) >= 0) r.params.reply_comment_mode = replyMode;
+          if (replyText) r.params.reply_comment_text = replyText;
+          if (replyPrompt) r.params.reply_comment_prompt = replyPrompt;
+          if (replySeed) r.params.reply_comment_seed_text = replySeed;
+        }
+        r.params.followup_actions = [];
+        r.params.customer_scope = 'current_collection_batch';
+      }
+    }
+    document.getElementById('swNodeModal').classList.add('hidden');
+    renderRows();
+  }
+
+  var childModalParent = -1, childModalIndex = -1;
+  function ensureChildModal() {
+    var mask = document.getElementById('swChildModal');
+    if (mask) return mask;
+    mask = document.createElement('div');
+    mask.id = 'swChildModal';
+    mask.className = 'sw-modal-mask hidden';
+    mask.innerHTML = '<div class="sw-modal" style="width:min(560px,96vw)">' +
+      '<div class="sw-modal-head"><b>下级节点（发布动作）</b><button type="button" class="btn btn-sm" data-sw-child="close">关闭</button></div>' +
+      '<div class="sw-modal-body">' +
+      '<div class="sw-modal-grid">' +
+      '<label class="sw-f">发布时间<input class="sw-p" type="time" id="swChildTime"></label>' +
+      '<label class="sw-f">结束时间<input class="sw-p" type="time" id="swChildEndTime"></label>' +
+      '<label class="sw-f sw-grow">发布到<select class="sw-p" id="swChildPlatform">' +
+      '<option value="douyin">发布到抖音</option><option value="wechat_channels">发布到视频号</option><option value="wechat_moments">发布到朋友圈</option>' +
+      '</select></label>' +
+      '<label class="sw-f sw-grow">动作名称<input class="sw-p" id="swChildLabel" placeholder="留空按平台自动命名"></label>' +
+      '</div>' +
+      '<label class="sw-f sw-grow">说明<input class="sw-p" id="swChildNote" placeholder="留空按平台默认说明"></label>' +
+      '</div>' +
+      '<div class="sw-modal-foot">' +
+      '<button type="button" class="btn btn-sm danger-text" data-sw-child="delete">删除</button>' +
+      '<span style="flex:1"></span>' +
+      '<button type="button" class="btn btn-sm" data-sw-child="cancel">取消</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-sw-child="save">保存</button>' +
+      '</div></div>';
+    document.body.appendChild(mask);
+    mask.addEventListener('click', function (evt) {
+      var hit = evt.target.closest('[data-sw-child]');
+      var act = hit ? hit.getAttribute('data-sw-child') : (evt.target === mask ? 'close' : '');
+      if (act === 'close' || act === 'cancel') { mask.classList.add('hidden'); return; }
+      if (act === 'delete') {
+        var parent = rows[childModalParent];
+        if (parent && Array.isArray(parent.children) && childModalIndex >= 0) parent.children.splice(childModalIndex, 1);
+        mask.classList.add('hidden');
+        renderRows();
+        return;
+      }
+      if (act === 'save') { applyChildModal(); }
+    });
+    document.getElementById('swChildPlatform').addEventListener('change', function () {
+      var labelEl = document.getElementById('swChildLabel');
+      if (labelEl && !String(labelEl.value || '').trim()) labelEl.value = platformLabel(this.value);
+    });
+    return mask;
+  }
+  function openChildModal(parentIndex, childIndex) {
+    var parent = rows[parentIndex]; if (!parent) return;
+    if (!Array.isArray(parent.children)) parent.children = [];
+    childModalParent = parentIndex;
+    childModalIndex = childIndex;
+    var child = parent.children[childIndex] || { time: parent.time || '09:00', end: '', platform: 'douyin', label: '', note: '' };
+    ensureChildModal();
+    document.getElementById('swChildTime').value = child.time || '09:00';
+    document.getElementById('swChildEndTime').value = child.end || '';
+    document.getElementById('swChildPlatform').value = child.platform || 'douyin';
+    document.getElementById('swChildLabel').value = child.label || '';
+    document.getElementById('swChildNote').value = child.note || '';
+    document.getElementById('swChildModal').classList.remove('hidden');
+  }
+  function applyChildModal() {
+    var parent = rows[childModalParent]; if (!parent) return;
+    if (!Array.isArray(parent.children)) parent.children = [];
+    var platform = String(document.getElementById('swChildPlatform').value || 'douyin');
+    var label = String(document.getElementById('swChildLabel').value || '').trim() || platformLabel(platform);
+    var child = {
+      time: String(document.getElementById('swChildTime').value || '').trim() || parent.time || '09:00',
+      end: String(document.getElementById('swChildEndTime').value || '').trim(),
+      platform: platform,
+      label: label,
+      note: String(document.getElementById('swChildNote').value || '').trim() || (label + '，配文案、带标签发布')
+    };
+    if (childModalIndex >= 0) parent.children[childModalIndex] = child;
+    else parent.children.push(child);
+    document.getElementById('swChildModal').classList.add('hidden');
+    renderRows();
+  }
+
+  function summary(diff) {
+    var lines = ['节点数：' + diff.old_node_count + ' → ' + diff.new_node_count];
+    if (diff.added && diff.added.length) lines.push('新增：' + diff.added.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
+    if (diff.removed && diff.removed.length) lines.push('删除：' + diff.removed.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
+    if (diff.changed && diff.changed.length) lines.push('修改：' + diff.changed.map(function (n) { return n.time + ' ' + n.label; }).join(' / '));
+    return lines.join('\n');
+  }
+  function bind(id, fn) { var el = document.getElementById(id); if (el) el.addEventListener('click', fn); }
+  bind('swNewBtn', function () {
+    editKey = ''; isNew = true; confirmed = false;
+    document.getElementById('swName').value = ''; document.getElementById('swPublished').checked = false;
+    var firstPreset = presetAt(0);
+    rows = [firstPreset ? { i: 0, time: '09:00', end: '', preset: 0, key: firstPreset.key, label: firstPreset.label, note: firstPreset.note, params: {}, children: [] } : toRow({}, 0)];
+    renderRows();
+    document.getElementById('swDiff').textContent = '';
+    document.getElementById('swSaveBtn').disabled = false; document.getElementById('swEditor').style.display = '';
+  });
+  bind('swAddNode', function () {
+    var first = presetAt(0);
+    var row = {
+      i: rows.length,
+      time: '09:00',
+      end: '',
+      preset: 0,
+      key: first ? first.key : '',
+      label: first ? first.label : '',
+      note: first ? first.note : '',
+      params: {}
+    };
+    rows.push(row);
+    renderRows();
+    // 排序后新节点的位置会变，必须按对象找它自己的下标，否则弹窗会开到别的节点上
+    var newIndex = rows.indexOf(row);
+    openNodeModal(newIndex >= 0 ? newIndex : rows.length - 1);
+  });
+  bind('swCancelBtn', function () { document.getElementById('swEditor').style.display = 'none'; editKey = ''; isNew = false; });
+  bind('swDraftBtn', function () {
+    var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
+    if (isNew) {
+      document.getElementById('swDiff').textContent = '新模板：' + nodes.length + ' 个节点，确认后创建' + (document.getElementById('swPublished').checked ? '（上架）' : '（下架）');
+      return;
+    }
+    api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/draft', { method: 'POST', body: JSON.stringify({ nodes: nodes }) })
+      .then(function (r) { document.getElementById('swDiff').textContent = summary(r.diff) + '\n将同步给直接启用该模板的 ' + r.direct_user_count + ' 个用户'; })
+      .catch(function (e) { document.getElementById('swDiff').textContent = '预览失败：' + (e && e.message || e); });
+  });
+  bind('swSaveBtn', function () {
+    var nodes = collectRows(); if (!nodes.length) { alert('至少要有一个节点'); return; }
+    var published = document.getElementById('swPublished').checked;
+    var saveButton = document.getElementById('swSaveBtn');
+    var restore = function () { if (saveButton) { saveButton.disabled = false; saveButton.textContent = '确认生效'; } };
+    // 2026-10-01 修：name 必须在 isNew 分支外读。
+    // 以前写成 var name = ... 只在「新建」分支里赋值，编辑走 publish 分支时 name 是 undefined，
+    // JSON.stringify 会把 undefined 字段直接丢掉 → 请求体里根本没有 name → 改名永远不生效。
+    var name = (document.getElementById('swName').value || '').trim();
+    if (!name) { alert('请先填写系统模板名称'); restore(); return; }
+    if (saveButton) { saveButton.disabled = true; saveButton.textContent = '保存中…'; }
+    if (isNew) {
+      api('/admin/api/system-workflows', { method: 'POST', body: JSON.stringify({ name: name, nodes: nodes, published: published }) })
+        .then(function () { document.getElementById('swEditor').style.display = 'none'; toast('系统模板已创建'); return load(true); })
+        .catch(function (e) { alert('创建失败：' + (e && e.message || e)); })
+        .then(restore);
+      return;
+    }
+    api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/publish', { method: 'POST', body: JSON.stringify({ name: name, nodes: nodes, confirm: true }) })
+      .then(function () { return api('/admin/api/system-workflows/' + encodeURIComponent(editKey) + '/status', { method: 'POST', body: JSON.stringify({ published: published }) }); })
+      .then(function () { document.getElementById('swEditor').style.display = 'none'; toast('系统模板已生效，直接启用它的用户已同步'); return load(true); })
+      .catch(function (e) { alert('保存失败：' + (e && e.message || e)); })
+      .then(restore);
+  });
+  function applyVisibility() {
+    var card = document.getElementById('systemWorkflowCard'); if (!card) return;
+    var host = document.getElementById('pageSystemWorkflows');
+    if (!host) {
+      var ref = document.getElementById('pageTemplates');
+      host = document.createElement('div'); host.id = 'pageSystemWorkflows';
+      if (ref) { host.className = ref.className; ref.parentNode.insertBefore(host, ref.nextSibling); }
+      else { document.body.appendChild(host); }
+      host.style.display = 'none';
+      var h = document.createElement('h1'); h.textContent = '系统模板工作流'; host.appendChild(h);
+      host.appendChild(card);
+    }
+    card.style.display = '';
+    if (!loaded) load();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyVisibility); else applyVisibility();
+})();
+</script>
+<!-- admin-only: skill visibility -->
       <div class="card" id="skillVisCard" style="display:none">
         <h3>可见技能</h3>
         <div id="skillVisibilitySection">
@@ -474,6 +1806,34 @@ body{background:#edf2f7}
         <h3>下级管理</h3>
         <div id="removeSubSection"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Page: Customers -->
+  <div class="container" id="pageCustomers" style="display:none">
+    <div id="customerListView">
+      <div class="admin-page-head">
+        <div><h1>客户管理</h1><p>维护客户资料，记录沟通历史，并关联录音摘要。</p></div>
+        <button class="btn btn-primary btn-compact" type="button" onclick="openCustomerEditor()">新增客户</button>
+      </div>
+      <div id="customerStats" class="stats-grid"></div>
+      <div class="card">
+        <div class="search-bar" style="margin-bottom:14px">
+          <input type="text" id="customerSearchInput" placeholder="搜索姓名、公司、电话或邮箱" onkeydown="if(event.key==='Enter')loadCustomers(1)">
+          <select id="customerStatusFilter" onchange="loadCustomers(1)"><option value="">全部状态</option><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select>
+          <button class="btn btn-primary btn-sm" type="button" onclick="loadCustomers(1)">查询</button>
+          <button class="btn btn-outline btn-sm" type="button" onclick="clearCustomerSearch()">清空</button>
+        </div>
+        <div id="customersTable"><div class="empty">加载中...</div></div>
+        <div class="pagination" id="customersPagination"></div>
+      </div>
+    </div>
+    <div id="customerDetailView" style="display:none">
+      <div class="admin-page-head">
+        <div><button class="detail-back" type="button" onclick="closeCustomerDetail()">← 返回客户列表</button><h1 id="customerDetailHeading">客户详情</h1><p>查看客户资料及沟通记录</p></div>
+      </div>
+      <div id="customerDetailPanel"></div>
+      <div class="pagination" id="customerCommunicationsPagination"></div>
     </div>
   </div>
 
@@ -697,6 +2057,78 @@ body{background:#edf2f7}
     </div>
   </div>
 
+  <!-- Page: 上报微信号（个微接管识别到的联系方式） -->
+  <div class="container" id="pageWechatContacts" style="display:none">
+    <div class="card">
+      <h3>上报微信号</h3>
+      <p style="color:#888;font-size:13px;margin:0 0 12px">抖音私信接管识别到的客户联系方式（微信号 / 手机号），进「加好友联系池」后由个微接管领取加好友。按用户账户查询：填用户 ID 或邮箱。</p>
+      <div class="search-bar" style="margin-bottom:14px">
+        <input type="text" id="wechatContactSearch" placeholder="用户ID / 用户邮箱 / 微信号 / 手机号 / 备注名" onkeydown="if(event.key==='Enter')loadWechatContacts(1)">
+        <select id="wechatContactKind" onchange="loadWechatContacts(1)" style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
+          <option value="">全部类型</option>
+          <option value="wechat_id">微信号</option>
+          <option value="mobile">手机号</option>
+          <option value="qq">QQ</option>
+          <option value="email">邮箱</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadWechatContacts(1)">查询</button>
+      </div>
+      <div id="wechatContactsTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="wechatContactsPagination"></div>
+    </div>
+  </div>
+
+  <!-- Page: Shop merchants（商家审核） -->
+  <div class="container" id="pageMerchants" style="display:none">
+    <div class="card">
+      <h3>店铺商家审核</h3>
+      <div id="merchantStats" class="stats-grid" style="margin-bottom:14px"></div>
+      <div class="search-bar" style="margin-bottom:14px">
+        <input type="text" id="merchantSearch" placeholder="搜公司名 / slug / 联系人 / 手机号 / 地区" onkeydown="if(event.key==='Enter')loadMerchants(1)">
+        <select id="merchantStatus" onchange="loadMerchants(1)">
+          <option value="">全部状态</option>
+          <option value="pending">待审核</option>
+          <option value="active">正常</option>
+          <option value="suspended">已停用</option>
+          <option value="rejected">已驳回</option>
+          <option value="draft">草稿</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadMerchants(1)">查询</button>
+        <button class="btn btn-outline btn-sm" onclick="resetMerchantFilters()">重置</button>
+      </div>
+      <div id="merchantTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="merchantPagination"></div>
+    </div>
+  </div>
+
+  <!-- Page: 可调度设备（系统设备，按槽位号添加） -->
+  <div class="container" id="pageDispatchDevices" style="display:none">
+    <div class="card">
+      <h3>可调度设备</h3>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
+        按客户端「本地槽位 ID」添加。H5 用户可以在「我的」里选择这些设备；选中系统设备后，该用户只能使用 AI 营销创作。
+      </div>
+      <div class="search-bar" style="margin-bottom:14px;flex-wrap:wrap">
+        <input type="text" id="dispatchDeviceSearch" placeholder="搜槽位号 / 名称 / 备注" onkeydown="if(event.key==='Enter')loadDispatchDevices(1)">
+        <select id="dispatchDeviceStatus" onchange="loadDispatchDevices(1)">
+          <option value="">全部状态</option>
+          <option value="enabled">启用中</option>
+          <option value="disabled">已停用</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadDispatchDevices(1)">查询</button>
+        <button class="btn btn-outline btn-sm" onclick="resetDispatchDeviceFilters()">重置</button>
+      </div>
+      <div class="search-bar" style="margin-bottom:14px;flex-wrap:wrap">
+        <input type="text" id="dispatchDeviceSlot" placeholder="槽位号（客户端「本地槽位 ID」，可复制整串）" style="min-width:320px">
+        <input type="text" id="dispatchDeviceName" placeholder="名称（可选，例如 直播机A）" style="min-width:200px">
+        <input type="text" id="dispatchDeviceNote" placeholder="备注（可选）" style="min-width:200px">
+        <button class="btn btn-primary btn-sm" onclick="addDispatchDevice()">添加设备</button>
+      </div>
+      <div id="dispatchDeviceTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="dispatchDevicePagination"></div>
+    </div>
+  </div>
+
   <!-- Page: TikHub records -->
   <div class="container" id="pageTikhubRecords" style="display:none">
     <div class="card">
@@ -775,6 +2207,62 @@ body{background:#edf2f7}
   </div>
 </div>
 
+<!-- 客户编辑弹窗 -->
+<div class="modal-mask" id="customerEditorModal" onclick="if(event.target===this)closeCustomerEditor()">
+  <div class="modal-card" style="max-width:760px">
+    <h3 id="customerEditorTitle">新增客户</h3>
+    <div class="modal-owner-note">客户归属将自动记录为当前登录账号</div>
+    <input type="hidden" id="customerEditorId">
+    <div class="template-form-grid">
+      <div class="form-group"><label>姓名 *</label><input id="customerNameInput" maxlength="160" placeholder="客户姓名"></div>
+      <div class="form-group"><label>公司</label><input id="customerCompanyInput" maxlength="255" placeholder="公司名称"></div>
+      <div class="form-group"><label>职位</label><input id="customerPositionInput" maxlength="160" placeholder="职位"></div>
+      <div class="form-group"><label>电话</label><input id="customerPhoneInput" maxlength="64" placeholder="手机号或座机"></div>
+      <div class="form-group"><label>邮箱</label><input id="customerEmailInput" maxlength="255" placeholder="邮箱"></div>
+      <div class="form-group"><label>来源</label><input id="customerSourceInput" maxlength="64" placeholder="例如：抖音、转介绍"></div>
+      <div class="form-group"><label>状态</label><select id="customerStatusInput"><option value="active">跟进中</option><option value="won">已成交</option><option value="lost">已暂停</option></select></div>
+      <div class="form-group full"><label>标签</label><input id="customerTagsInput" maxlength="500" placeholder="多个标签用逗号分隔"></div>
+      <div class="form-group full"><label>备注</label><textarea id="customerNotesInput" maxlength="10000" placeholder="客户背景、需求、下一步计划"></textarea></div>
+    </div>
+    <div class="error-msg" id="customerEditorError" style="text-align:left;min-height:18px"></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-compact" type="button" onclick="closeCustomerEditor()">取消</button><button class="btn btn-primary btn-compact" type="button" onclick="saveCustomerEditor()">保存</button></div>
+  </div>
+</div>
+
+<!-- 客户授权弹窗 -->
+<div class="modal-mask" id="customerAuthorizationModal" onclick="if(event.target===this)closeCustomerAuthorization()">
+  <div class="modal-card" style="max-width:720px">
+    <h3 id="customerAuthorizationTitle">授权客户数据</h3>
+    <div class="modal-sub">授权后，对方可以查看并维护该客户及沟通记录，客户归属不会改变。</div>
+    <div class="search-bar" style="margin:14px 0 10px">
+      <input type="text" id="customerAuthorizationSearch" placeholder="输入用户手机号或账号" onkeydown="if(event.key==='Enter')searchCustomerAuthorizationUsers()">
+      <button class="btn btn-primary btn-sm" type="button" onclick="searchCustomerAuthorizationUsers()">查询用户</button>
+    </div>
+    <div id="customerAuthorizationSearchResults"></div>
+    <h4 style="font-size:13px;margin:18px 0 8px">已授权用户</h4>
+    <div id="customerAuthorizationList"><div class="empty">加载中...</div></div>
+    <div class="error-msg" id="customerAuthorizationError" style="text-align:left;min-height:18px"></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-compact" type="button" onclick="closeCustomerAuthorization()">关闭</button></div>
+  </div>
+</div>
+
+<!-- 客户沟通记录弹窗 -->
+<div class="modal-mask" id="customerCommunicationModal" onclick="if(event.target===this)closeCustomerCommunication()">
+  <div class="modal-card" style="max-width:720px">
+    <h3 id="customerCommunicationTitle">新增沟通记录</h3>
+    <input type="hidden" id="customerCommunicationId">
+    <div class="template-form-grid">
+      <div class="form-group"><label>沟通类型</label><select id="customerCommunicationType"><option value="call">电话</option><option value="meeting">会议</option><option value="message">消息</option><option value="recording">录音</option><option value="note">备注</option></select></div>
+      <div class="form-group"><label>发生时间</label><input id="customerCommunicationAt" type="datetime-local"></div>
+      <div class="form-group full"><label>沟通内容</label><textarea id="customerCommunicationContent" maxlength="50000" placeholder="记录本次沟通内容"></textarea></div>
+      <div class="form-group full"><label>摘要</label><textarea id="customerCommunicationSummary" maxlength="10000" placeholder="可留空，关联录音时自动使用录音摘要"></textarea></div>
+      <div class="form-group full"><label>关联录音（可选）</label><select id="customerCommunicationRecording"><option value="">不关联录音</option></select></div>
+    </div>
+    <div class="error-msg" id="customerCommunicationError" style="text-align:left;min-height:18px"></div>
+    <div class="modal-actions"><button class="btn btn-outline btn-compact" type="button" onclick="closeCustomerCommunication()">取消</button><button class="btn btn-primary btn-compact" type="button" onclick="saveCustomerCommunication()">保存</button></div>
+  </div>
+</div>
+
 <script>
 const API = location.origin;
 const ADMIN_BRAND_MARKS = new Set(['bihuo', 'daka', 'jinghai', 'hikong']);
@@ -808,6 +2296,11 @@ let juheSelectedBatchId = null;
 let loginCaptchaId = '';
 let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
+let customerPage = 1;
+let customerRows = [];
+let customerDetailId = 0;
+let customerCommunicationsPage = 1;
+let customerAuthorizationId = 0;
 const COMMISSION_PAGE_SIZE = 100;
 const GENERATION_RECORD_PAGE_SIZE = 20;
 const TIKHUB_RECORD_PAGE_SIZE = 20;
@@ -1051,6 +2544,14 @@ function showDashboard() {
   loadUserBrandOptions();
   const brandsTab = document.getElementById('brandsNavTab');
   if (brandsTab) brandsTab.style.display = isAdmin() ? '' : 'none';
+  const remoteTab = document.getElementById('remoteSupportNavTab');
+  if (remoteTab) remoteTab.style.display = isAdmin() ? '' : 'none';
+  const merchantTab = document.getElementById('merchantsNavTab');
+  const dispatchDevicesTab = document.getElementById('dispatchDevicesNavTab');
+  if (dispatchDevicesTab) dispatchDevicesTab.style.display = isAdmin() ? '' : 'none';
+  const wechatContactsTab = document.getElementById('wechatContactsNavTab');
+  if (wechatContactsTab) wechatContactsTab.style.display = isAdmin() ? '' : 'none';
+  if (merchantTab) merchantTab.style.display = isAdmin() ? '' : 'none';
 
   requestAnimationFrame(() => {
     statsCache = null;
@@ -1059,30 +2560,297 @@ function showDashboard() {
 }
 
 let currentNav = 'stats';
+/* ── 店铺商家审核（平台管理员；数据来自 shopcms 商家后台） ── */
+const MERCHANT_PAGE_SIZE = 20;
+let merchantPage = 1;
+let merchantPages = 1;
+
+function merchantMoney(cents) {
+  return '¥' + (Number(cents || 0) / 100).toFixed(2);
+}
+
+function merchantStatusBadge(status, label) {
+  const map = { active: 'badge-green', pending: 'badge-yellow', suspended: 'badge-red', rejected: 'badge-red', draft: 'badge-blue' };
+  return '<span class="badge ' + (map[status] || 'badge-blue') + '">' + escapeHtml(label || status || '-') + '</span>';
+}
+
+async function merchantApi(path, opts) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(path, { ...(opts || {}), headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.detail || data.message || ('HTTP ' + res.status));
+  return data;
+}
+
+function merchantFilters() {
+  const q = (document.getElementById('merchantSearch') || {}).value || '';
+  const status = (document.getElementById('merchantStatus') || {}).value || '';
+  return { q: String(q).trim(), status: String(status) };
+}
+
+async function loadMerchants(page) {
+  const table = document.getElementById('merchantTable');
+  merchantPage = Math.max(1, Number(page) || 1);
+  if (!TOKEN) {
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">登录已过期，请重新登录</div>';
+    doLogout();
+    return;
+  }
+  if (table) table.innerHTML = '<div class="empty">加载中...</div>';
+  const f = merchantFilters();
+  try {
+    const data = await merchantApi('/admin/api/shop-merchants?page=' + merchantPage + '&size=' + MERCHANT_PAGE_SIZE
+      + '&q=' + encodeURIComponent(f.q) + '&status=' + encodeURIComponent(f.status));
+    renderMerchants(data);
+  } catch (e) {
+    const msg = String((e && e.message) || '');
+    const expired = /401|凭证|缺少管理/.test(msg);
+    toast(expired ? '登录已过期，请重新登录' : msg, 'error');
+    const stats = document.getElementById('merchantStats');
+    if (stats) stats.innerHTML = '';
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">' + (expired ? '登录已过期，请重新登录' : '加载失败：' + escapeHtml(msg)) + '</div>';
+    const pager = document.getElementById('merchantPagination');
+    if (pager) pager.innerHTML = '';
+    if (expired) doLogout();
+  }
+}
+
+function renderMerchants(data) {
+  const s = data.summary || {};
+  const stats = document.getElementById('merchantStats');
+  if (stats) {
+    stats.innerHTML = statCard('商家总数', Number(s.merchants_total || 0), '正常 ' + Number(s.merchants_active || 0) + ' · 待审核 ' + Number(s.merchants_pending || 0))
+      + statCard('商品总数', Number(s.products_total || 0), '全平台（含草稿）')
+      + statCard('订单 / 成交额', Number(s.orders_total || 0), merchantMoney(s.pay_amount_cents))
+      + statCard('佣金合计', merchantMoney(s.commission_total_cents), '待确认 ' + merchantMoney(s.commission_pending_cents));
+  }
+  merchantPages = Number(data.pages || 1);
+  const items = data.items || [];
+  const table = document.getElementById('merchantTable');
+  const pager = document.getElementById('merchantPagination');
+  if (!items.length) {
+    const f = merchantFilters();
+    table.innerHTML = '<div class="empty">' + ((f.q || f.status) ? '没有匹配的商家' : '还没有商家入驻') + '</div>';
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>商家</th><th>状态</th><th>联系人</th><th>在售/商品</th><th>订单</th><th>成交额</th><th>待结佣金</th><th>注册</th><th>操作</th></tr></thead><tbody>';
+  items.forEach(function (m) {
+    html += '<tr id="merchantRow' + m.id + '">'
+      + '<td><b>' + escapeHtml(m.company_name || '-') + '</b><div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(m.slug || '') + ' · ' + escapeHtml(m.email || '') + '</div></td>'
+      + '<td>' + merchantStatusBadge(m.status, m.status_label) + '</td>'
+      + '<td>' + escapeHtml(m.contact_name || '-') + '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(m.contact_phone || '') + (m.region ? ' · ' + escapeHtml(m.region) : '') + '</div></td>'
+      + '<td>' + Number(m.on_sale_count || 0) + ' / ' + Number(m.product_count || 0) + '</td>'
+      + '<td>' + Number(m.order_count || 0) + '</td>'
+      + '<td>' + merchantMoney(m.pay_amount_cents) + '</td>'
+      + '<td>' + merchantMoney(m.commission_pending_cents) + '</td>'
+      + '<td style="font-size:12px;color:var(--text-secondary)">' + escapeHtml(String(m.created_at || '').slice(0, 10)) + '</td>'
+      + '<td style="white-space:nowrap">'
+      + '<button class="btn btn-outline btn-sm" onclick="toggleMerchantDetail(' + m.id + ')">查看</button> '
+      + '<button class="btn btn-primary btn-sm" onclick="setMerchantStatus(' + m.id + ', \'active\')">通过</button> '
+      + '<button class="btn btn-outline btn-sm" onclick="setMerchantStatus(' + m.id + ', \'suspended\')">停用</button> '
+      + '<button class="btn btn-outline btn-sm" onclick="setMerchantStatus(' + m.id + ', \'rejected\')">驳回</button>'
+      + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  table.innerHTML = html;
+  if (pager) {
+    let pageHtml = '';
+    if (merchantPage > 1) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadMerchants(' + (merchantPage - 1) + ')">上一页</button>';
+    pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">共 ' + Number(data.total || 0) + ' 家 · 第 ' + merchantPage + ' / ' + merchantPages + ' 页</span>';
+    if (merchantPage < merchantPages) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadMerchants(' + (merchantPage + 1) + ')">下一页</button>';
+    pager.innerHTML = pageHtml;
+  }
+}
+
+async function toggleMerchantDetail(id) {
+  const row = document.getElementById('merchantRow' + id);
+  if (!row) return;
+  const existing = document.getElementById('merchantDetail' + id);
+  if (existing) { existing.remove(); return; }
+  const holder = document.createElement('tr');
+  holder.id = 'merchantDetail' + id;
+  holder.innerHTML = '<td colspan="9"><div class="empty">加载中...</div></td>';
+  row.parentNode.insertBefore(holder, row.nextSibling);
+  try {
+    const d = await merchantApi('/admin/api/shop-merchants/' + id);
+    const m = d.merchant || {};
+    const prod = (d.products || []).map(function (p) {
+      return '<tr><td>' + escapeHtml(p.title || '-') + '</td><td>' + merchantMoney(p.price_cents) + '</td><td>' + Number(p.stock || 0) + '</td><td>' + (Number(p.commission_bp || 0) / 100) + '%</td><td>' + escapeHtml(p.status || '') + '</td></tr>';
+    }).join('');
+    const ord = (d.orders || []).map(function (o) {
+      return '<tr><td>' + escapeHtml(o.order_no || '') + '</td><td>' + escapeHtml(o.status_label || o.status || '') + '</td><td>' + merchantMoney(o.pay_amount_cents) + '</td><td>' + merchantMoney(o.commission_cents) + '</td><td>' + escapeHtml(String(o.created_at || '').slice(0, 19).replace('T', ' ')) + '</td></tr>';
+    }).join('');
+    holder.innerHTML = '<td colspan="9" style="background:#f7f8fa">'
+      + '<div style="font-size:13px;line-height:1.9;margin-bottom:8px">'
+      + '<b>' + escapeHtml(m.company_name || '') + '</b> · ' + escapeHtml(m.status_label || '') + ' · 账号 ' + escapeHtml(m.email || '-')
+      + ' · 联系人 ' + escapeHtml(m.contact_name || '-') + ' ' + escapeHtml(m.contact_phone || '')
+      + ' · 注册 ' + escapeHtml(String(m.created_at || '').slice(0, 19).replace('T', ' '))
+      + '<br>商品 在售 ' + Number(m.on_sale_count || 0) + ' / 全部 ' + Number(m.product_count || 0)
+      + ' · 订单 ' + Number(m.order_count || 0) + ' 单 / 成交 ' + merchantMoney(m.pay_amount_cents)
+      + ' · 佣金 待确认 ' + merchantMoney(m.commission_pending_cents) + ' / 已确认 ' + merchantMoney(m.commission_confirmed_cents) + ' / 已结 ' + merchantMoney(m.commission_settled_cents)
+      + '</div>'
+      + '<div style="display:flex;gap:16px;flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:320px"><div style="font-weight:600;margin-bottom:6px">最近商品</div>'
+      + (prod ? '<div class="table-wrap"><table><thead><tr><th>标题</th><th>价格</th><th>库存</th><th>佣金</th><th>状态</th></tr></thead><tbody>' + prod + '</tbody></table></div>' : '<div class="empty">还没有商品</div>')
+      + '</div>'
+      + '<div style="flex:1;min-width:320px"><div style="font-weight:600;margin-bottom:6px">最近订单</div>'
+      + (ord ? '<div class="table-wrap"><table><thead><tr><th>订单号</th><th>状态</th><th>实付</th><th>佣金</th><th>下单</th></tr></thead><tbody>' + ord + '</tbody></table></div>' : '<div class="empty">还没有订单</div>')
+      + '</div></div>'
+      + '</td>';
+  } catch (e) {
+    toast(e.message, 'error');
+    holder.remove();
+  }
+}
+
+async function setMerchantStatus(id, status) {
+  const label = { active: '审核通过', suspended: '停用', rejected: '驳回' }[status] || status;
+  if (!confirm('确认把商家 #' + id + ' ' + label + '？')) return;
+  try {
+    await merchantApi('/admin/api/shop-merchants/' + id, { method: 'PATCH', body: JSON.stringify({ status: status }) });
+    toast('商家 #' + id + ' 已' + label);
+    loadMerchants(merchantPage);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function resetMerchantFilters() {
+  const q = document.getElementById('merchantSearch'); if (q) q.value = '';
+  const st = document.getElementById('merchantStatus'); if (st) st.value = '';
+  loadMerchants(1);
+}
+
+/* ── 上报微信号（个微接管识别到的联系方式） ── */
+let wechatContactPage = 1;
+let wechatContactPages = 1;
+const WECHAT_CONTACT_PAGE_SIZE = 20;
+const WECHAT_CONTACT_KIND_LABEL = {wechat_id: '微信号', mobile: '手机号', qq: 'QQ', email: '邮箱'};
+const WECHAT_CONTACT_STATUS_LABEL = {
+  pending: '待加好友', added: '已添加', failed: '加好友失败',
+  claimed: '已被领取', skipped: '已跳过'
+};
+
+// esc/escapeHtml 是页面里别的 IIFE 的局部函数，全局取不到 —— 这里自带一个（2026-10-05 修复"加载中"卡死）
+function wechatContactEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+
+function wechatContactKindLabel(kind, direction) {
+  let label = WECHAT_CONTACT_KIND_LABEL[kind] || kind || '-';
+  if (direction === 'outbound') label += '（我方发出）';
+  return label;
+}
+
+async function loadWechatContacts(page) {
+  wechatContactPage = Math.max(1, Number(page || 1));
+  const target = document.getElementById('wechatContactsTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  // 兜底：不管卡在网络还是渲染，20 秒后必须给出文字，绝不一直停在"加载中"
+  const guard = setTimeout(function () {
+    if (target.innerHTML.indexOf('加载中') >= 0) {
+      target.innerHTML = '<div class="empty">加载超时：接口没返回，请刷新页面重试（或看浏览器控制台报错）</div>';
+    }
+  }, 20000);
+  try {
+    const key = ((document.getElementById('wechatContactSearch') || {}).value || '').trim();
+    const kind = ((document.getElementById('wechatContactKind') || {}).value || '').trim();
+    const params = new URLSearchParams({
+      page: String(wechatContactPage),
+      page_size: String(WECHAT_CONTACT_PAGE_SIZE),
+      q: key,
+      kind: kind,
+    });
+    // 20 秒超时兜底：以前接口路径不对会一直停在"加载中"，看不出问题
+    const data = await Promise.race([
+      api('/admin/api/wechat-shared-contacts?' + params.toString()),
+      new Promise(function (_, reject) { setTimeout(function () { reject(new Error('加载超时，请重试')); }, 20000); })
+    ]);
+    const items = data.items || [];
+    wechatContactPages = Math.max(1, Math.ceil((Number(data.total) || 0) / WECHAT_CONTACT_PAGE_SIZE));
+    if (!items.length) {
+      target.innerHTML = '<div class="empty">暂无上报记录</div>';
+    } else {
+      let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>平台</th><th>客户 / 会话</th><th>类型</th><th>号码 / 微信号</th><th>状态</th><th>会话原文</th></tr></thead><tbody>';
+      items.forEach(function (it) {
+        html += '<tr>'
+          + '<td>' + wechatContactEsc(it.created_at ? new Date(it.created_at).toLocaleString() : '') + '</td>'
+          + '<td>' + wechatContactEsc((it.user_email || '') + ' (#' + (it.user_id || '') + ')') + '</td>'
+          + '<td>' + wechatContactEsc(it.platform || '') + '</td>'
+          + '<td>' + wechatContactEsc(it.contact_name || '') + '</td>'
+          + '<td>' + wechatContactEsc(wechatContactKindLabel(it.kind, it.direction)) + '</td>'
+          + '<td><b>' + wechatContactEsc(it.value || '') + '</b></td>'
+          + '<td>' + wechatContactEsc(WECHAT_CONTACT_STATUS_LABEL[it.status] || it.status || '') + '</td>'
+          + '<td style="max-width:320px;white-space:normal;word-break:break-all">' + wechatContactEsc(it.evidence || '') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+      target.innerHTML = html;
+    }
+    renderWechatContactPagination();
+  } catch (e) {
+    let msg = '';
+    try { msg = (e && e.message) || String(e); } catch (err) { msg = '未知错误'; }
+    target.innerHTML = '<div class="empty">加载失败：' + String(msg).replace(/[<>&]/g, '') + '</div>';
+  } finally {
+    clearTimeout(guard);
+  }
+}
+
+function renderWechatContactPagination() {
+  const box = document.getElementById('wechatContactsPagination');
+  if (!box) return;
+  box.innerHTML = '<button class="btn btn-sm" ' + (wechatContactPage <= 1 ? 'disabled' : '')
+    + ' onclick="loadWechatContacts(' + (wechatContactPage - 1) + ')">上一页</button>'
+    + '<span style="margin:0 12px">第 ' + wechatContactPage + ' / ' + wechatContactPages + ' 页</span>'
+    + '<button class="btn btn-sm" ' + (wechatContactPage >= wechatContactPages ? 'disabled' : '')
+    + ' onclick="loadWechatContacts(' + (wechatContactPage + 1) + ')">下一页</button>';
+}
+
 function navTitle(nav) {
   return {
     stats: '首页数据大盘',
     users: '用户列表',
+    customers: '客户管理',
     agents: '代理商管理',
     templates: '模板配置',
+    systemWorkflows: '系统模板工作流',
     generationRecords: '素材生成记录',
     tikhubRecords: '数据查询记录',
+    wechatContacts: '上报微信号',
     brands: '品牌管理',
     commissions: '分润记录',
+    remoteSupport: '远程支持设备',
+    merchants: '商家审核',
+    dispatchDevices: '可调度设备',
   }[nav] || '首页数据大盘';
 }
 
 function switchNav(nav) {
   if (nav === 'commissions' && !isAgent()) nav = 'stats';
   if (nav === 'brands' && !isAdmin()) nav = 'stats';
+  if (nav === 'remoteSupport' && !isAdmin()) nav = 'stats';
+  if (nav === 'systemWorkflows' && !isAdmin()) nav = 'stats';
+  if (nav === 'merchants' && !isAdmin()) nav = 'stats';
+  if (nav === 'dispatchDevices' && !isAdmin()) nav = 'stats';
+  if (nav === 'wechatContacts' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
   if (title) title.textContent = navTitle(nav);
   document.getElementById('pageUsers').style.display = nav === 'users' ? '' : 'none';
+  const pageCustomers = document.getElementById('pageCustomers');
+  if (pageCustomers) pageCustomers.style.display = nav === 'customers' ? '' : 'none';
   document.getElementById('pageStats').style.display = nav === 'stats' ? '' : 'none';
   const pageAgents = document.getElementById('pageAgents');
   if (pageAgents) pageAgents.style.display = nav === 'agents' ? '' : 'none';
+  const pageSystemWorkflows = document.getElementById('pageSystemWorkflows');
+  if (pageSystemWorkflows) pageSystemWorkflows.style.display = nav === 'systemWorkflows' ? '' : 'none';
   const pageTemplates = document.getElementById('pageTemplates');
   if (pageTemplates) pageTemplates.style.display = nav === 'templates' ? '' : 'none';
   const pageGenerationRecords = document.getElementById('pageGenerationRecords');
@@ -1093,14 +2861,140 @@ function switchNav(nav) {
   if (pageCommissions) pageCommissions.style.display = nav === 'commissions' ? '' : 'none';
   const pageBrands = document.getElementById('pageBrands');
   if (pageBrands) pageBrands.style.display = nav === 'brands' ? '' : 'none';
+  const pageRemoteSupport = document.getElementById('pageRemoteSupport');
+  if (pageRemoteSupport) pageRemoteSupport.style.display = nav === 'remoteSupport' ? '' : 'none';
+  const pageMerchants = document.getElementById('pageMerchants');
+  if (pageMerchants) pageMerchants.style.display = nav === 'merchants' ? '' : 'none';
+  const pageDispatchDevices = document.getElementById('pageDispatchDevices');
+  if (pageDispatchDevices) pageDispatchDevices.style.display = nav === 'dispatchDevices' ? '' : 'none';
+  const pageWechatContacts = document.getElementById('pageWechatContacts');
+  if (pageWechatContacts) pageWechatContacts.style.display = nav === 'wechatContacts' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
+  if (nav === 'customers') loadCustomers(customerPage || 1);
   if (nav === 'agents') loadAgents(agentPage || 1);
   if (nav === 'templates') prepareTemplatePage();
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
   if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
+  if (nav === 'wechatContacts') loadWechatContacts(wechatContactPage || 1);
   if (nav === 'commissions') loadCommissions(0);
   if (nav === 'brands') loadBrands();
+  if (nav === 'remoteSupport') loadRemoteSupportDevices();
+  if (nav === 'merchants') loadMerchants(merchantPage || 1);
+  if (nav === 'dispatchDevices') loadDispatchDevices(dispatchDevicePage || 1);
+}
+
+async function loadRemoteSupportDevices() {
+  const target = document.getElementById('remoteSupportTable');
+  if (!target) { ensureRemoteSupportWorkspace(); return; }
+  target.style.display = 'none';
+  const panel = document.getElementById('remoteSupportControlPanel');
+  if (panel) panel.hidden = false;
+  refreshRemoteSupportWorkspace();
+  return;
+  /* Kept below for backwards-compatible reference; the embedded workspace
+     now owns the authoritative device shelf and stage tabs. */
+  target.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/admin/api/remote-support/devices');
+    const items = Array.isArray(data.devices) ? data.devices : [];
+    if (!items.length) { target.innerHTML = '<div class="empty">暂无已开启远程支持的设备</div>'; return; }
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>设备</th><th>所属账号</th><th>安装槽位</th><th>设备编号</th><th>验证码</th><th>状态</th><th>最后心跳</th></tr></thead><tbody>'
+      + items.map(function(item) {
+        const rs = item.remote_support || {};
+        return '<tr><td>' + escapeHtml(item.device_name || '-') + '</td><td>' + escapeHtml(item.username || String(item.user_id || '-')) + '</td><td><code>' + escapeHtml(item.installation_id || '-') + '</code></td><td>' + escapeHtml(rs.device_id || '-') + '</td><td>' + escapeHtml(rs.verification_code || '-') + '</td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.last_seen_at || '-') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+let remoteWorkspaceLoading = false;
+function refreshRemoteSupportWorkspace() {
+  const frame = document.getElementById('remoteSupportFrame');
+  if (frame && frame.dataset.ready === '1' && frame.contentWindow) {
+    frame.contentWindow.postMessage({ type: 'refresh-devices' }, '*');
+    return;
+  }
+  if (frame) frame.dataset.ready = '';
+  remoteWorkspaceLoading = false;
+  ensureRemoteSupportWorkspace();
+}
+async function ensureRemoteSupportWorkspace() {
+  const frame = document.getElementById('remoteSupportFrame');
+  if (!frame || frame.dataset.ready === '1' || remoteWorkspaceLoading) return;
+  remoteWorkspaceLoading = true;
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || 'https://todesk.bhzn.top').replace(/\/$/, '');
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&direct=1&tab=control';
+    frame.onload = function() { frame.dataset.ready = '1'; remoteWorkspaceLoading = false; };
+  } catch (e) {
+    remoteWorkspaceLoading = false;
+    const meta = document.getElementById('remoteSupportControlMeta');
+    if (meta) meta.textContent = '远程工作区加载失败：' + (e.message || String(e));
+  }
+}
+
+async function addRemoteSupportDevice() {
+  const deviceId = (document.getElementById('remoteDeviceIdInput')?.value || '').trim();
+  const verificationCode = (document.getElementById('remoteDeviceCodeInput')?.value || '').trim();
+  const label = (document.getElementById('remoteDeviceLabelInput')?.value || '').trim();
+  if (!deviceId || !verificationCode) { toast('请填写设备编号和验证码', 'error'); return; }
+  try {
+    await api('/admin/api/remote-support/devices', { method: 'POST', body: JSON.stringify({ device_id: deviceId, verification_code: verificationCode, label }) });
+    toast('设备已添加到管理员授权列表');
+    await loadRemoteSupportDevices();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function removeRemoteSupportDevice(deviceId) {
+  if (!confirm('确定移除该设备的远程授权？')) return;
+  try { await api('/admin/api/remote-support/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' }); await loadRemoteSupportDevices(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function openRemoteSupportDevice(deviceId) {
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || location.origin).replace(/\/$/, '');
+    window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadRemoteSupportDevices() {
+  const target = document.getElementById('remoteSupportTable');
+  if (!target) { ensureRemoteSupportWorkspace(); return; }
+  target.innerHTML = '<div class="empty">Loading...</div>';
+  try {
+    const data = await api('/admin/api/remote-support/devices');
+    const items = Array.isArray(data.devices) ? data.devices : [];
+    if (!items.length) { target.innerHTML = '<div class="empty">暂无管理员添加的远程设备</div>'; return; }
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>设备</th><th>设备编号</th><th>状态</th><th>链路</th><th>操作</th></tr></thead><tbody>'
+      + items.map(function(item) {
+        const id = item.id || item.device_id || '';
+        const traffic = item.traffic || {};
+        return '<tr><td>' + escapeHtml(item.label || item.name || item.device_name || '-') + '</td><td><code>' + escapeHtml(id) + '</code></td><td><span class="badge ' + (item.online ? 'badge-green' : 'badge-yellow') + '">' + (item.online ? '在线' : '离线') + '</span></td><td>' + escapeHtml(item.activePath || traffic.activePath || '-') + '</td><td><button class="btn btn-primary btn-sm" onclick="openRemoteSupportDevice(\'' + escapeHtml(id) + '\')">远程</button> <button class="btn btn-outline btn-sm" onclick="removeRemoteSupportDevice(\'' + escapeHtml(id) + '\')">移除</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) { target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function addRemoteSupportDevice() {
+  const deviceId = (document.getElementById('remoteDeviceIdInput')?.value || '').trim();
+  const verificationCode = (document.getElementById('remoteDeviceCodeInput')?.value || '').trim();
+  const label = (document.getElementById('remoteDeviceLabelInput')?.value || '').trim();
+  if (!deviceId || !verificationCode) { toast('请填写设备编号和验证码', 'error'); return; }
+  try { await api('/admin/api/remote-support/devices', { method: 'POST', body: JSON.stringify({ device_id: deviceId, verification_code: verificationCode, label }) }); await loadRemoteSupportDevices(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function removeRemoteSupportDevice(deviceId) {
+  if (!confirm('确定移除该设备的远程授权？')) return;
+  try { await api('/admin/api/remote-support/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' }); await loadRemoteSupportDevices(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+async function openRemoteSupportDevice(deviceId) {
+  try { const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' }); const base = String(data.public_url || location.origin).replace(/\/$/, ''); window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId), '_blank', 'noopener'); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
 async function loadBrands() {
@@ -1156,6 +3050,123 @@ async function setBrandEnabled(mark, enabled) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+/* ── 可调度设备（系统设备；H5 用户选中后只能用 AI 营销创作） ── */
+const DISPATCH_DEVICE_PAGE_SIZE = 20;
+let dispatchDevicePage = 1;
+let dispatchDevicePages = 1;
+
+function dispatchDeviceFilters() {
+  const q = (document.getElementById('dispatchDeviceSearch') || {}).value || '';
+  const status = (document.getElementById('dispatchDeviceStatus') || {}).value || '';
+  return { q: String(q).trim(), status: String(status).trim() };
+}
+
+function resetDispatchDeviceFilters() {
+  const q = document.getElementById('dispatchDeviceSearch'); if (q) q.value = '';
+  const s = document.getElementById('dispatchDeviceStatus'); if (s) s.value = '';
+  loadDispatchDevices(1);
+}
+
+function renderDispatchDevicePagination(total, pages) {
+  const box = document.getElementById('dispatchDevicePagination');
+  if (!box) return;
+  if (!pages || pages <= 1) { box.innerHTML = ''; return; }
+  let html = '<button class="btn btn-outline btn-sm" ' + (dispatchDevicePage <= 1 ? 'disabled' : '') + ' onclick="loadDispatchDevices(' + (dispatchDevicePage - 1) + ')">上一页</button>';
+  html += '<span style="margin:0 10px;font-size:13px;color:var(--text-secondary)">第 ' + dispatchDevicePage + ' / ' + pages + ' 页 · 共 ' + total + ' 台</span>';
+  html += '<button class="btn btn-outline btn-sm" ' + (dispatchDevicePage >= pages ? 'disabled' : '') + ' onclick="loadDispatchDevices(' + (dispatchDevicePage + 1) + ')">下一页</button>';
+  box.innerHTML = html;
+}
+
+async function loadDispatchDevices(page) {
+  dispatchDevicePage = Math.max(1, Number(page || 1));
+  const target = document.getElementById('dispatchDeviceTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const f = dispatchDeviceFilters();
+    const params = new URLSearchParams({ page: String(dispatchDevicePage), page_size: String(DISPATCH_DEVICE_PAGE_SIZE), q: f.q, status: f.status });
+    const data = await api('/admin/api/dispatch-devices?' + params.toString());
+    const rows = Array.isArray(data.items) ? data.items : [];
+    const total = Number(data.total || 0);
+    dispatchDevicePages = Math.max(1, Number(data.pages || 1));
+    if (!rows.length) {
+      target.innerHTML = '<div class="empty">' + (total ? '没有匹配的可调度设备' : '还没有配置可调度设备，按槽位号添加一台') + '</div>';
+      renderDispatchDevicePagination(total, 1);
+      return;
+    }
+    const body = rows.map(function(row) {
+      const enabled = String(row.status || 'enabled') !== 'disabled';
+      return '<tr>'
+        + '<td><code>' + escapeHtml(row.installation_id || '-') + '</code></td>'
+        + '<td>' + escapeHtml(row.name || '-') + '</td>'
+        + '<td>' + escapeHtml(row.note || '-') + '</td>'
+        + '<td>' + (row.online ? '<span class="badge badge-green">在线</span>' : '<span class="badge badge-yellow">离线</span>') + '</td>'
+        + '<td>' + escapeHtml(row.last_seen_at || '-') + '</td>'
+        + '<td>' + (enabled ? '<span class="badge badge-blue">启用中</span>' : '<span class="badge badge-red">已停用</span>') + '</td>'
+        + '<td>'
+        + '<button class="btn btn-outline btn-sm" onclick="toggleDispatchDevice(' + row.id + ', \x27' + (enabled ? 'disabled' : 'enabled') + '\x27)">' + (enabled ? '停用' : '启用') + '</button> '
+        + '<button class="btn btn-outline btn-sm" onclick="renameDispatchDevice(' + row.id + ', \x27' + escapeHtml(row.name || '').replace(/'/g, '') + '\x27)">改名</button> '
+        + '<button class="btn btn-outline btn-sm" onclick="deleteDispatchDevice(' + row.id + ')">删除</button>'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+    target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>槽位号</th><th>名称</th><th>备注</th><th>在线</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+    renderDispatchDevicePagination(total, dispatchDevicePages);
+  } catch (err) {
+    target.innerHTML = '<div class="empty">加载失败：' + escapeHtml((err && err.message) || err) + '</div>';
+  }
+}
+
+async function addDispatchDevice() {
+  const slot = ((document.getElementById('dispatchDeviceSlot') || {}).value || '').trim();
+  const name = ((document.getElementById('dispatchDeviceName') || {}).value || '').trim();
+  const note = ((document.getElementById('dispatchDeviceNote') || {}).value || '').trim();
+  if (!slot) { toast('请先填写槽位号', 'error'); return; }
+  try {
+    await api('/admin/api/dispatch-devices', { method: 'POST', body: JSON.stringify({ slot: slot, name: name, note: note }) });
+    toast('已添加可调度设备');
+    const s = document.getElementById('dispatchDeviceSlot'); if (s) s.value = '';
+    const n = document.getElementById('dispatchDeviceName'); if (n) n.value = '';
+    const t = document.getElementById('dispatchDeviceNote'); if (t) t.value = '';
+    loadDispatchDevices(1);
+  } catch (err) {
+    toast((err && err.message) || '添加失败', 'error');
+  }
+}
+
+async function toggleDispatchDevice(id, status) {
+  try {
+    await api('/admin/api/dispatch-devices/' + id, { method: 'PATCH', body: JSON.stringify({ status: status }) });
+    toast(status === 'disabled' ? '已停用' : '已启用');
+    loadDispatchDevices(dispatchDevicePage);
+  } catch (err) {
+    toast((err && err.message) || '操作失败', 'error');
+  }
+}
+
+async function renameDispatchDevice(id, current) {
+  const name = window.prompt('设备名称（留空表示清空）', current || '');
+  if (name === null) return;
+  try {
+    await api('/admin/api/dispatch-devices/' + id, { method: 'PATCH', body: JSON.stringify({ name: name }) });
+    toast('已保存');
+    loadDispatchDevices(dispatchDevicePage);
+  } catch (err) {
+    toast((err && err.message) || '保存失败', 'error');
+  }
+}
+
+async function deleteDispatchDevice(id) {
+  if (!window.confirm('确认从可调度设备里删除？删除后 H5 用户不能再选它。')) return;
+  try {
+    await api('/admin/api/dispatch-devices/' + id, { method: 'DELETE' });
+    toast('已删除');
+    loadDispatchDevices(dispatchDevicePage);
+  } catch (err) {
+    toast((err && err.message) || '删除失败', 'error');
+  }
+}
+
 function switchTab(tab) {
   document.getElementById('userDetailView').style.display = 'none';
   document.getElementById('tabAll').style.display = '';
@@ -1171,6 +3182,180 @@ function clearUserSearch() {
   if (input) input.value = '';
   loadAllUsers(1);
 }
+
+function customerApiPath(path) { return '/admin/api/customers' + path; }
+function customerTagsValue(value) { return Array.isArray(value) ? value.join(', ') : String(value || ''); }
+function customerStatusLabel(value) { return ({active:'跟进中', won:'已成交', lost:'已暂停'})[value] || value || '-'; }
+function customerCommunicationTypeLabel(value) { return ({call:'电话', meeting:'会议', message:'消息', recording:'录音', note:'备注'})[value] || value || '沟通'; }
+
+function clearCustomerSearch() {
+  const q = document.getElementById('customerSearchInput'); if (q) q.value = '';
+  const s = document.getElementById('customerStatusFilter'); if (s) s.value = '';
+  loadCustomers(1);
+}
+
+async function loadCustomers(page) {
+  customerPage = Math.max(1, Number(page || 1));
+  const target = document.getElementById('customersTable');
+  if (!target) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const q = (document.getElementById('customerSearchInput') || {}).value || '';
+    const status = (document.getElementById('customerStatusFilter') || {}).value || '';
+    const params = new URLSearchParams({page: String(customerPage), page_size: '20', q: q.trim(), status});
+    const data = await api(customerApiPath('?' + params.toString()));
+    customerRows = data.items || [];
+    renderCustomerStats(data.stats || {});
+    if (!customerRows.length) {
+      target.innerHTML = '<div class="empty">暂无客户记录</div>';
+    } else {
+      target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>姓名</th><th>公司/职位</th><th>电话</th><th>归属</th><th>OEM</th><th>状态</th><th>沟通</th><th>最近联系</th><th>操作</th></tr></thead><tbody>' + customerRows.map((row) => `<tr>
+        <td><strong>${escapeHtml(row.name)}</strong>${row.tags?.length ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(row.tags.join(' · '))}</div>` : ''}</td>
+        <td>${escapeHtml(row.company || '-')}<div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(row.position || '')}</div></td>
+        <td>${escapeHtml(row.phone || '-')}</td><td>${escapeHtml(row.owner_label || ('#' + row.owner_user_id))}</td>
+        <td>${escapeHtml(row.owner_brand_name || row.owner_brand_mark || '-')}</td>
+        <td><span class="badge ${row.status === 'won' ? 'badge-green' : row.status === 'lost' ? 'badge-red' : 'badge-blue'}">${escapeHtml(customerStatusLabel(row.status))}</span></td>
+        <td>${Number(row.communications_count || 0)}</td><td style="font-size:11px;color:var(--text-secondary)">${row.last_contact_at ? new Date(row.last_contact_at).toLocaleString('zh-CN') : '-'}</td>
+        <td><button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id})">详情</button> <button class="btn btn-outline btn-sm" type="button" onclick="openCustomerAuthorization(${row.id})">授权</button></td></tr>`).join('') + '</tbody></table></div>';
+    }
+    const pager = document.getElementById('customersPagination');
+    const pages = Math.ceil((data.total || 0) / (data.page_size || 20));
+    pager.innerHTML = pages > 1 ? `${customerPage > 1 ? `<button class="btn btn-outline btn-sm" type="button" onclick="loadCustomers(${customerPage - 1})">上一页</button>` : ''}<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ${customerPage}/${pages} 页（共 ${data.total} 条）</span>${customerPage < pages ? `<button class="btn btn-outline btn-sm" type="button" onclick="loadCustomers(${customerPage + 1})">下一页</button>` : ''}` : '';
+  } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+function renderCustomerStats(stats) {
+  const target = document.getElementById('customerStats');
+  if (!target) return;
+  const byStatus = stats.by_status || {};
+  const byOem = stats.by_oem || {};
+  const statusText = Object.entries(byOem).map(([key, value]) => `${escapeHtml(key)} ${Number(value)}`).join(' · ') || '暂无 OEM 数据';
+  target.innerHTML = `<div class="stats-card"><div class="sc-label">客户总数</div><div class="sc-value">${Number(stats.total || 0)}</div><div class="sc-sub">当前筛选 ${Number(stats.filtered_total || stats.total || 0)} 条</div></div><div class="stats-card"><div class="sc-label">跟进中</div><div class="sc-value">${Number(byStatus.active || 0)}</div></div><div class="stats-card"><div class="sc-label">已成交</div><div class="sc-value">${Number(byStatus.won || 0)}</div></div><div class="stats-card"><div class="sc-label">已暂停</div><div class="sc-value">${Number(byStatus.lost || 0)}</div></div><div class="stats-card"><div class="sc-label">OEM 分布</div><div class="sc-sub" style="line-height:1.6">${statusText}</div></div>`;
+}
+
+async function openCustomerAuthorization(customerId) {
+  customerAuthorizationId = Number(customerId || 0);
+  const row = customerRows.find((item) => Number(item.id) === customerAuthorizationId);
+  document.getElementById('customerAuthorizationTitle').textContent = `授权客户数据${row?.name ? '：' + row.name : ''}`;
+  document.getElementById('customerAuthorizationSearch').value = '';
+  document.getElementById('customerAuthorizationSearchResults').innerHTML = '';
+  document.getElementById('customerAuthorizationError').textContent = '';
+  document.getElementById('customerAuthorizationModal').classList.add('show');
+  await loadCustomerAuthorizations();
+}
+
+function closeCustomerAuthorization() { document.getElementById('customerAuthorizationModal').classList.remove('show'); customerAuthorizationId = 0; }
+
+async function loadCustomerAuthorizations() {
+  const target = document.getElementById('customerAuthorizationList');
+  if (!target || !customerAuthorizationId) return;
+  target.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api(customerApiPath('/' + customerAuthorizationId + '/authorizations'));
+    const items = data.items || [];
+    target.innerHTML = items.length ? '<div class="table-wrap"><table><thead><tr><th>账号</th><th>OEM</th><th>授权时间</th><th>操作</th></tr></thead><tbody>' + items.map((item) => `<tr><td>${escapeHtml(item.grantee?.email || ('#' + item.grantee_user_id))}</td><td>${escapeHtml(item.grantee?.brand_mark || '-')}</td><td>${item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '-'}</td><td><button class="btn btn-danger btn-sm" type="button" onclick="revokeCustomerAuthorization(${item.grantee_user_id})">取消授权</button></td></tr>`).join('') + '</tbody></table></div>' : '<div class="empty">暂无授权用户</div>';
+  } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+async function searchCustomerAuthorizationUsers() {
+  const target = document.getElementById('customerAuthorizationSearchResults');
+  const q = (document.getElementById('customerAuthorizationSearch').value || '').trim();
+  if (!target || !q) { if (target) target.innerHTML = ''; return; }
+  target.innerHTML = '<div class="empty">查询中...</div>';
+  try {
+    const data = await api('/admin/api/users?page=1&page_size=20&q=' + encodeURIComponent(q) + '&brand=all');
+    const users = (data.users || []).filter((user) => Number(user.id) !== Number((customerRows.find((item) => Number(item.id) === customerAuthorizationId) || {}).owner_user_id));
+    target.innerHTML = users.length ? '<div class="table-wrap"><table><thead><tr><th>账号</th><th>OEM</th><th></th></tr></thead><tbody>' + users.map((user) => `<tr><td>${escapeHtml(user.email || ('#' + user.id))}</td><td>${escapeHtml(user.brand_mark || '-')}</td><td><button class="btn btn-primary btn-sm" type="button" onclick="grantCustomerAuthorization(${user.id})">授权</button></td></tr>`).join('') + '</tbody></table></div>' : '<div class="empty">未找到用户</div>';
+  } catch (e) { target.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+async function grantCustomerAuthorization(userId) {
+  const error = document.getElementById('customerAuthorizationError'); error.textContent = '';
+  try { await api(customerApiPath('/' + customerAuthorizationId + '/authorizations'), {method:'POST', body: JSON.stringify({grantee_user_id: Number(userId)})}); await loadCustomerAuthorizations(); toast('客户数据已授权'); } catch (e) { error.textContent = e.message; }
+}
+
+async function revokeCustomerAuthorization(userId) {
+  if (!confirm('确定取消该用户的客户数据授权？')) return;
+  try { await api(customerApiPath('/' + customerAuthorizationId + '/authorizations/' + Number(userId)), {method:'DELETE'}); await loadCustomerAuthorizations(); toast('授权已取消'); } catch (e) { toast(e.message, 'error'); }
+}
+
+function customerFormPayload() {
+  return { name: document.getElementById('customerNameInput').value.trim(), company: document.getElementById('customerCompanyInput').value.trim(), position: document.getElementById('customerPositionInput').value.trim(), phone: document.getElementById('customerPhoneInput').value.trim(), email: document.getElementById('customerEmailInput').value.trim(), source: document.getElementById('customerSourceInput').value.trim(), tags: document.getElementById('customerTagsInput').value.split(/[,，]/).map((x) => x.trim()).filter(Boolean), status: document.getElementById('customerStatusInput').value, notes: document.getElementById('customerNotesInput').value.trim() };
+}
+
+async function openCustomerEditor(row = null) {
+  const id = row ? Number(row.id) : 0;
+  document.getElementById('customerEditorTitle').textContent = id ? '编辑客户' : '新增客户';
+  document.getElementById('customerEditorId').value = id || '';
+  document.getElementById('customerNameInput').value = row?.name || '';
+  document.getElementById('customerCompanyInput').value = row?.company || '';
+  document.getElementById('customerPositionInput').value = row?.position || '';
+  document.getElementById('customerPhoneInput').value = row?.phone || '';
+  document.getElementById('customerEmailInput').value = row?.email || '';
+  document.getElementById('customerSourceInput').value = row?.source || '';
+  document.getElementById('customerTagsInput').value = customerTagsValue(row?.tags);
+  document.getElementById('customerStatusInput').value = row?.status || 'active';
+  document.getElementById('customerNotesInput').value = row?.notes || '';
+  document.getElementById('customerEditorError').textContent = '';
+  document.getElementById('customerEditorModal').classList.add('show');
+}
+
+function closeCustomerEditor() { document.getElementById('customerEditorModal').classList.remove('show'); }
+
+async function saveCustomerEditor() {
+  const error = document.getElementById('customerEditorError'); error.textContent = '';
+  const payload = customerFormPayload();
+  if (!payload.name) { error.textContent = '请填写客户姓名'; return; }
+  const id = Number(document.getElementById('customerEditorId').value || 0);
+  try {
+    const data = await api(id ? customerApiPath('/' + id) : customerApiPath(''), {method: id ? 'PATCH' : 'POST', body: JSON.stringify(payload)});
+    closeCustomerEditor(); await loadCustomers(customerPage); if (id) showCustomerDetail(id); else showCustomerDetail(data.customer.id); toast('客户已保存');
+  } catch (e) { error.textContent = e.message; }
+}
+
+async function showCustomerDetail(id, page = 1) {
+  const panel = document.getElementById('customerDetailPanel'); if (!panel) return;
+  customerDetailId = Number(id); customerCommunicationsPage = Math.max(1, Number(page || 1));
+  document.getElementById('customerListView').style.display = 'none';
+  document.getElementById('customerDetailView').style.display = '';
+  panel.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api(customerApiPath('/' + customerDetailId + '?page=' + customerCommunicationsPage + '&page_size=10'));
+    const row = data.customer; const communications = data.communications || [];
+    document.getElementById('customerDetailHeading').textContent = row.name || '客户详情';
+    const summary = (item) => item.summary ? `<div class="communication-summary" id="communication-summary-${item.id}">摘要：${escapeHtml(item.summary)}</div>${item.summary.length > 260 ? `<button class="communication-expand" type="button" onclick="toggleCommunicationSummary(${item.id}, this)">展开摘要</button>` : ''}` : '';
+    const records = communications.length ? communications.map((item) => `<div class="communication-item"><div class="communication-head"><strong>${escapeHtml(customerCommunicationTypeLabel(item.communication_type))}</strong><span style="font-size:12px;color:var(--text-secondary)">${item.occurred_at ? new Date(item.occurred_at).toLocaleString('zh-CN') : '-'}</span></div>${item.content ? `<div class="communication-content">${escapeHtml(item.content)}</div>` : ''}${summary(item)}${item.recording ? `<div class="communication-recording">录音：${escapeHtml(item.recording.name)}${item.recording.summary ? ` · ${escapeHtml(item.recording.summary)}` : ''}</div>` : ''}<div style="margin-top:10px;display:flex;gap:6px"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerCommunication(${row.id}, ${JSON.stringify(item).replace(/'/g, '&#39;')})'>编辑</button><button class="btn btn-danger btn-sm" type="button" onclick="deleteCustomerCommunication(${item.id}, ${row.id})">删除</button></div></div>`).join('') : '<div class="empty">暂无沟通记录</div>';
+    panel.innerHTML = `<div class="customer-detail-card"><div class="customer-detail-header"><div><h2 style="font-size:20px;margin:0">${escapeHtml(row.name)}</h2><div class="customer-detail-meta">${[row.company, row.position, row.phone, row.email, row.source].filter(Boolean).map((v) => `<span>${escapeHtml(v)}</span>`).join('') || '<span>暂无联系信息</span>'}</div>${row.tags?.length ? `<div style="margin-top:9px">${row.tags.map((tag) => `<span class="badge badge-blue" style="margin-right:5px">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}</div><div class="customer-detail-actions"><button class="btn btn-outline btn-sm" type="button" onclick='openCustomerEditor(${JSON.stringify(row).replace(/'/g, '&#39;')})'>编辑客户</button><button class="btn btn-primary btn-sm" type="button" onclick="openCustomerCommunication(${row.id})">新增沟通</button><button class="btn btn-danger btn-sm" type="button" onclick="deleteCustomer(${row.id})">删除客户</button></div></div><div class="customer-detail-notes">${escapeHtml(row.notes || '暂无备注')}</div></div><div class="customer-detail-card customer-communications-card"><div class="admin-card-head"><h3>沟通记录</h3><span style="font-size:12px;color:var(--text-secondary)">共 ${Number(data.total || 0)} 条</span></div>${records}</div>`;
+    const pager = document.getElementById('customerCommunicationsPagination'); const pages = Math.ceil((data.total || 0) / (data.page_size || 10));
+    pager.innerHTML = pages > 1 ? `${customerCommunicationsPage > 1 ? `<button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id}, ${customerCommunicationsPage - 1})">上一页</button>` : ''}<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ${customerCommunicationsPage}/${pages} 页</span>${customerCommunicationsPage < pages ? `<button class="btn btn-outline btn-sm" type="button" onclick="showCustomerDetail(${row.id}, ${customerCommunicationsPage + 1})">下一页</button>` : ''}` : '';
+  } catch (e) { panel.innerHTML = `<div class="empty" style="color:var(--danger)">${escapeHtml(e.message)}</div>`; }
+}
+
+function closeCustomerDetail() { customerDetailId = 0; document.getElementById('customerDetailView').style.display = 'none'; document.getElementById('customerListView').style.display = ''; document.getElementById('customerCommunicationsPagination').innerHTML = ''; }
+function toggleCommunicationSummary(id, button) { const el = document.getElementById('communication-summary-' + id); if (!el) return; const expanded = el.classList.toggle('expanded'); button.textContent = expanded ? '收起摘要' : '展开摘要'; }
+async function deleteCustomer(id) { if (!confirm('确定删除该客户及其全部沟通记录？')) return; try { await api(customerApiPath('/' + id), {method:'DELETE'}); closeCustomerDetail(); await loadCustomers(customerPage); toast('客户已删除'); } catch (e) { toast(e.message, 'error'); } }
+
+function toDateTimeLocal(value) { const d = value ? new Date(value) : new Date(); if (Number.isNaN(d.getTime())) return ''; const pad = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+async function openCustomerCommunication(customerId, row = null) {
+  document.getElementById('customerCommunicationTitle').textContent = row ? '编辑沟通记录' : '新增沟通记录';
+  document.getElementById('customerCommunicationId').value = row?.id || '';
+  document.getElementById('customerCommunicationType').value = row?.communication_type || 'note';
+  document.getElementById('customerCommunicationAt').value = toDateTimeLocal(row?.occurred_at);
+  document.getElementById('customerCommunicationContent').value = row?.content || '';
+  document.getElementById('customerCommunicationSummary').value = row?.summary || '';
+  document.getElementById('customerCommunicationModal').dataset.customerId = String(customerId);
+  document.getElementById('customerCommunicationError').textContent = '';
+  const select = document.getElementById('customerCommunicationRecording'); select.innerHTML = '<option value="">不关联录音</option>';
+  try { const data = await api(customerApiPath('/' + customerId + '/recordings?page=1&page_size=100')); select.innerHTML += (data.items || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}${item.summary ? ' · ' + escapeHtml(item.summary.slice(0, 80)) : ''}</option>`).join(''); if (row?.recording_id) select.value = String(row.recording_id); } catch (e) { document.getElementById('customerCommunicationError').textContent = e.message; }
+  document.getElementById('customerCommunicationModal').classList.add('show');
+}
+function closeCustomerCommunication() { document.getElementById('customerCommunicationModal').classList.remove('show'); }
+async function saveCustomerCommunication() {
+  const modal = document.getElementById('customerCommunicationModal'); const customerId = Number(modal.dataset.customerId || 0); const id = Number(document.getElementById('customerCommunicationId').value || 0); const error = document.getElementById('customerCommunicationError'); error.textContent = '';
+  const payload = {communication_type: document.getElementById('customerCommunicationType').value, occurred_at: new Date(document.getElementById('customerCommunicationAt').value).toISOString(), content: document.getElementById('customerCommunicationContent').value.trim(), summary: document.getElementById('customerCommunicationSummary').value.trim(), recording_id: Number(document.getElementById('customerCommunicationRecording').value || 0) || null};
+  try { await api(id ? '/admin/api/customer-communications/' + id : customerApiPath('/' + customerId + '/communications'), {method: id ? 'PATCH' : 'POST', body: JSON.stringify(payload)}); closeCustomerCommunication(); await showCustomerDetail(customerId); await loadCustomers(customerPage); toast('沟通记录已保存'); } catch (e) { error.textContent = e.message; }
+}
+async function deleteCustomerCommunication(id, customerId) { if (!confirm('确定删除这条沟通记录？')) return; try { await api('/admin/api/customer-communications/' + id, {method:'DELETE'}); await showCustomerDetail(customerId); await loadCustomers(customerPage); toast('沟通记录已删除'); } catch (e) { toast(e.message, 'error'); } }
 
 let currentPage = 1;
 async function loadAllUsers(page) {
@@ -1208,11 +3393,15 @@ function renderUserTable(users, containerId, title) {
   html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
+    const remark = String(u.admin_remark || '').trim();
+    const remarkHtml = remark
+      ? `<button type="button" class="user-remark user-remark-filled" title="点击编辑备注" onclick='editUserRemark(${u.id}, ${JSON.stringify(remark).replace(/'/g, '&#39;')})'>${escapeHtml(remark)}</button>`
+      : `<button type="button" class="user-remark user-remark-empty" onclick="editUserRemark(${u.id}, '')">添加备注</button>`;
     const agentLabel = u.agent_level === 2 ? '二级代理' : (u.is_agent ? '代理' : '-');
     const brandName = ((ADMIN_BRANDS[u.brand_mark] || {}).name) || u.brand_mark || '-';
     html += `<tr>
       <td>${u.id}</td>
-      <td>${email}</td>
+      <td>${escapeHtml(email)} <span class="user-remark-wrap">${remarkHtml}</span></td>
       <td><strong>${escapeHtml(brandName)}</strong><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(u.brand_mark || '-')}</div></td>
       <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
@@ -1225,6 +3414,23 @@ function renderUserTable(users, containerId, title) {
   }
   html += '</tbody></table></div>';
   el.innerHTML = html;
+}
+
+async function editUserRemark(userId, currentRemark) {
+  const value = window.prompt('用户备注（500字以内，留空可清除）', currentRemark || '');
+  if (value === null) return;
+  const remark = value.trim();
+  if (remark.length > 500) { toast('备注不能超过500字', 'error'); return; }
+  try {
+    const data = await api('/admin/api/user-remark', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, remark })
+    });
+    const row = (data || {}).user || {};
+    if (currentUserId === userId) currentUserData = row;
+    await loadAllUsers(currentPage);
+    toast(remark ? '备注已保存' : '备注已清除');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 function accountLabel(email) {
@@ -1855,7 +4061,7 @@ function ensureUserDetailTabs() {
   move('userTikhubRecordsCard', 'tikhub');
   move('agentToggleCard', 'skills');
   move('imageChannelCard', 'skills');
-  move('skillVisCard', 'skills');
+    move('skillVisCard', 'skills');
   move('userDevicesTaskCard', 'devices');
   move('openclawMemoryAdminCard', 'memory');
   tabs.addEventListener('click', function(e) {
@@ -2196,7 +4402,7 @@ function renderGenerationRecordsTable(items, tableId, pagerId, page, loadFnName,
       const model = item.model || '';
       const tags = item.tags || '';
       const badgeClass = item.media_type === 'video' ? 'badge-purple' : (item.media_type === 'audio' ? 'badge-yellow' : 'badge-blue');
-      html += '<tr>'
+       html += '<tr>'
         + '<td style="font-size:11px;color:var(--text-secondary);white-space:nowrap">' + (item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '-') + '</td>'
         + (includeUser ? '<td><button class="btn btn-outline btn-sm" onclick="switchNav(&quot;users&quot;);showUserDetail(' + item.user_id + ')">#' + item.user_id + '</button><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(item.user_account || '-') + '</div></td>' : '')
         + '<td><span class="badge ' + badgeClass + '">' + escapeHtml(mediaTypeLabel(item.media_type)) + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(formatBytes(item.file_size)) + '</div></td>'
@@ -2451,7 +4657,8 @@ async function showUserDetail(userId) {
     // admin / agent: skill visibility & unlock permissions
     const canManageSkills = isAdmin() || (isAgent() && !viewingSelf);
     document.getElementById('skillVisCard').style.display = canManageSkills ? '' : 'none';
-    document.getElementById('resetPwdBtn').style.display = isAdmin() ? '' : 'none';
+    // 管理员和代理商都可在积分页重置其有权管理的下级密码；代理商自查时整张卡片会隐藏。
+    document.getElementById('resetPwdBtn').style.display = (isAdmin() || isAgent()) ? '' : 'none';
 
     // agent: remove sub（自查时不显示）
     const removeCard = document.getElementById('removeSubCard');
@@ -2711,7 +4918,7 @@ async function doAddCredits() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-async function loadSkillVisibility(userId) {
+async function loadSkillVisibilityLegacy(userId) {
   const section = document.getElementById('skillVisibilitySection');
   try {
     const visData = await api('/admin/api/user-skill-visibility/' + userId);
@@ -2731,10 +4938,40 @@ async function loadSkillVisibility(userId) {
       </label>`;
     }
     html += '</div>';
+    html = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+      + '<input id="skillVisibilitySearch" type="search" placeholder="搜索权限名称或 ID" oninput="filterSkillVisibility()" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:7px">'
+      + '<select id="skillVisibilityGroup" onchange="filterSkillVisibility()" style="padding:9px 12px;border:1px solid var(--border);border-radius:7px"><option value="">全部分组</option><option value="entry">首页入口</option><option value="marketing">AI营销创作</option><option value="leads">获客与私信</option><option value="system">系统与其他技能</option></select>'
+      + '<label style="font-size:12px;white-space:nowrap"><input id="skillVisibilityOnlyEnabled" type="checkbox" onchange="filterSkillVisibility()"> 只看已开启</label></div>'
+      + '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">权限按分组筛选，搜索名称或 ID 即可定位。修改会立即保存到服务器。</div>' + html;
     section.innerHTML = html;
   } catch(e) {
     section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
   }
+}
+
+function filterSkillVisibility() {
+  const root = document.getElementById('skillVisibilitySection');
+  if (!root) return;
+  const q = String((document.getElementById('skillVisibilitySearch') || {}).value || '').trim().toLowerCase();
+  const group = String(root.dataset.skillGroup || '');
+  const only = !!((document.getElementById('skillVisibilityOnlyEnabled') || {}).checked);
+  root.querySelectorAll('.table-wrap tbody tr').forEach(row => {
+    const text = String(row.dataset.skillSearch || row.textContent || '').toLowerCase();
+    const id = text.match(/[a-z0-9_]+/g) || [];
+    const rowGroup = row.dataset.skillGroup || 'system';
+    const match = (!q || text.includes(q)) && (!group || group === rowGroup) && (!only || row.dataset.skillEnabled === '1');
+    row.style.display = match ? '' : 'none';
+  });
+  root.querySelectorAll('[data-skill-group]').forEach(button => {
+    button.classList.toggle('active', button.dataset.skillGroup === group);
+  });
+}
+
+function setSkillVisibilityGroup(group) {
+  const root = document.getElementById('skillVisibilitySection');
+  if (!root) return;
+  root.dataset.skillGroup = String(group || '');
+  filterSkillVisibility();
 }
 
 // ── 代理商：认领下级 ──
@@ -2838,6 +5075,15 @@ async function toggleSkillUnlock(userId, pkgId, checked) {
   } catch(e) { toast(e.message, 'error'); loadSkillVisibility(userId); }
 }
 
+function skillVisibilityGroup(pkg) {
+  const text = String((pkg && pkg.name) || '') + ' ' + String((pkg && pkg.id) || '');
+  const id = String((pkg && pkg.id) || '').toLowerCase();
+  if (/_entry$|_access$/.test(id) || /private_domain|overseas_platform/.test(id)) return 'entry';
+  if (/leads|inquiry|wechat|wecom|messenger|linkedin|reddit|tiktok|x_/.test(text.toLowerCase())) return 'leads';
+  if (/video|human|digital|image|content|article|ppt|ecommerce|seedance|tvc|bestseller/.test(text.toLowerCase())) return 'marketing';
+  return 'system';
+}
+
 async function loadSkillVisibility(userId) {
   const section = document.getElementById('skillVisibilitySection');
   try {
@@ -2867,8 +5113,8 @@ async function loadSkillVisibility(userId) {
       const permissionCell = isFeatureFlag
         ? '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + (active ? '已开通权限' : '开通权限') + '</span></label>'
         : '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label>';
-      html += '<tr>'
-        + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + pkgId + '</div></td>'
+      html += '<tr data-skill-group="' + skillVisibilityGroup(pkg) + '" data-skill-search="' + escapeHtml(String(pkg.name || '') + ' ' + pkg.id).toLowerCase() + '" data-skill-enabled="' + (active ? '1' : '0') + '">' 
+         + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + pkgId + '</div></td>'
         + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(price) + '</div></td>'
         + '<td>' + (pkg.capabilities_count || 0) + '</td>'
         + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + visibleText + '</span></label></td>'
@@ -2876,7 +5122,19 @@ async function loadSkillVisibility(userId) {
         + '</tr>';
     }
     html += '</tbody></table></div>';
+    html = '<div class="skill-visibility-tabs" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+      + '<button type="button" data-skill-group="" onclick="setSkillVisibilityGroup(\'\')">全部</button>'
+      + '<button type="button" data-skill-group="entry" onclick="setSkillVisibilityGroup(\'entry\')">入口权限</button>'
+      + '<button type="button" data-skill-group="marketing" onclick="setSkillVisibilityGroup(\'marketing\')">AI营销</button>'
+      + '<button type="button" data-skill-group="leads" onclick="setSkillVisibilityGroup(\'leads\')">获客与海外</button>'
+      + '<button type="button" data-skill-group="system" onclick="setSkillVisibilityGroup(\'system\')">系统与其他</button>'
+      + '</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+      + '<input id="skillVisibilitySearch" type="search" placeholder="搜索权限名称或 ID" oninput="filterSkillVisibility()" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:7px">'
+      + '<label style="font-size:12px;white-space:nowrap"><input id="skillVisibilityOnlyEnabled" type="checkbox" onchange="filterSkillVisibility()"> 只看已开启</label></div>'
+      + '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">权限按分组筛选，搜索名称或 ID 即可定位。修改会立即保存到服务器。</div>' + html;
     section.innerHTML = html;
+    section.dataset.skillGroup = '';
+    filterSkillVisibility();
   } catch(e) {
     section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
   }
@@ -3581,6 +5839,183 @@ function renderTopConsumers(items) {
     </div>`;
   });
   el.innerHTML = html;
+}
+/* Final remote-support admin UI overrides.  Kept at the end so legacy duplicate
+   handlers above cannot replace the card/embedded-window interaction. */
+async function loadRemoteSupportDevices() {
+  const target = document.getElementById('remoteSupportTable');
+  if (!target) { ensureRemoteSupportWorkspace(); return; }
+  target.style.display = 'none';
+  const panel = document.getElementById('remoteSupportControlPanel');
+  if (panel) panel.hidden = false;
+  refreshRemoteSupportWorkspace();
+  return;
+  target.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/admin/api/remote-support/devices');
+    const items = Array.isArray(data.devices) ? data.devices : [];
+    if (!items.length) {
+      target.innerHTML = '<div class="empty">暂无管理员添加的远程设备</div>';
+      return;
+    }
+    target.innerHTML = items.map(function(item) {
+      // The fallback main-server response also has a numeric authorization id;
+      // always prefer the actual ToDesk device id for controller routing.
+      const id = String(item.device_id || item.id || '');
+      const traffic = item.traffic || {};
+      const remote = item.remote_support || {};
+      const online = Boolean(item.online);
+      const path = item.activePath || traffic.activePath || '未建立链路';
+      const sessions = Number(item.activeSessionCount || traffic.activeSessionCount || traffic.activeRtcSessions || 0) || 0;
+      const label = item.label || item.name || item.device_name || '未命名设备';
+      const platform = item.platform || item.agentVersion || remote.platform || 'Online Agent';
+      return '<article class="remote-device-card ' + (online ? 'is-online' : 'is-offline') + '" data-device-id="' + escapeHtml(id) + '">' +
+        '<div class="remote-device-card-head"><div class="remote-device-title"><strong>' + escapeHtml(label) +
+        '</strong><code>' + escapeHtml(id) + '</code></div><span class="badge ' + (online ? 'badge-green' : 'badge-yellow') + '">' +
+        (online ? '在线' : '离线') + '</span></div>' +
+        '<div class="remote-device-meta"><span>链路：' + escapeHtml(path) + '</span><span>会话：' + sessions +
+        '</span><span>' + escapeHtml(platform) + '</span>' + (item.last_seen_at ? '<span>最后心跳：' + escapeHtml(item.last_seen_at) + '</span>' : '') +
+        '</div><div class="remote-device-actions"><button class="btn btn-primary btn-compact remote-open-btn" type="button">远程</button>' +
+        '<button class="btn btn-outline btn-compact remote-remove-btn" type="button">移除</button></div></article>';
+    }).join('');
+    target.querySelectorAll('.remote-device-card').forEach(function(card) {
+      const id = card.getAttribute('data-device-id') || '';
+      const open = card.querySelector('.remote-open-btn');
+      const remove = card.querySelector('.remote-remove-btn');
+      const monitorLabel = document.createElement('label');
+      monitorLabel.className = 'remote-monitor-toggle';
+      const monitorInput = document.createElement('input');
+      monitorInput.type = 'checkbox';
+      monitorInput.checked = Boolean((items.find(function(item) { return String(item.device_id || item.id || '') === id; }) || {}).monitorAlways);
+      monitorInput.setAttribute('data-monitor-toggle', '');
+      monitorLabel.appendChild(monitorInput);
+      monitorLabel.appendChild(document.createTextNode(' 加入屏幕墙'));
+      const actions = card.querySelector('.remote-device-actions');
+      if (actions) card.insertBefore(monitorLabel, actions);
+      monitorLabel.addEventListener('click', function(event) { event.stopPropagation(); });
+      monitorInput.addEventListener('click', function(event) { event.stopPropagation(); });
+      monitorInput.addEventListener('change', function() { updateRemoteSupportMonitor(id, monitorInput.checked, card); });
+      if (open) open.addEventListener('click', function() { openRemoteSupportDevice(id); });
+      if (remove) remove.addEventListener('click', function() { removeRemoteSupportDevice(id); });
+    });
+  } catch (e) {
+    target.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message || e) + '</div>';
+  }
+}
+
+async function updateRemoteSupportMonitor(deviceId, enabled, card) {
+  const title = card && card.querySelector('.remote-device-title strong');
+  const label = title ? title.textContent.trim() : '';
+  try {
+    await api('/admin/api/remote-support/devices/' + encodeURIComponent(deviceId), {
+      method: 'PATCH',
+      body: JSON.stringify({ device_id: deviceId, label: label, enabled: true, monitorAlways: Boolean(enabled) })
+    });
+    toast(enabled ? '已加入屏幕墙' : '已移出屏幕墙', 'success');
+  } catch (e) {
+    const input = card && card.querySelector('[data-monitor-toggle]');
+    if (input) input.checked = !enabled;
+    toast(e.message || String(e), 'error');
+  }
+}
+
+async function addRemoteSupportDevice() {
+  const deviceId = (document.getElementById('remoteDeviceIdInput')?.value || '').trim();
+  const verificationCode = (document.getElementById('remoteDeviceCodeInput')?.value || '').trim();
+  const label = (document.getElementById('remoteDeviceLabelInput')?.value || '').trim();
+  if (!deviceId || !verificationCode) { toast('请填写设备编号和验证码', 'error'); return; }
+  try {
+    await api('/admin/api/remote-support/devices', {
+      method: 'POST',
+      body: JSON.stringify({ device_id: deviceId, verification_code: verificationCode, label })
+    });
+    closeRemoteDeviceModal();
+    ['remoteDeviceIdInput', 'remoteDeviceCodeInput', 'remoteDeviceLabelInput'].forEach(function(id) {
+      const input = document.getElementById(id);
+      if (input) input.value = '';
+    });
+    toast('设备已添加到管理员授权列表', 'success');
+    await loadRemoteSupportDevices();
+  } catch (e) { toast(e.message || String(e), 'error'); }
+}
+
+async function openRemoteSupportDevice(deviceId) {
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || 'https://todesk.bhzn.top').replace(/\/$/, '');
+    const frame = document.getElementById('remoteSupportFrame');
+    const panel = document.getElementById('remoteSupportControlPanel');
+    const cards = Array.from(document.querySelectorAll('.remote-device-card'));
+    const card = cards.find(function(item) { return item.getAttribute('data-device-id') === String(deviceId); });
+    if (!frame || !panel) {
+      window.open(base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1', '_blank', 'noopener');
+      return;
+    }
+    cards.forEach(function(item) { item.classList.remove('is-active'); });
+    if (card) card.classList.add('is-active');
+    const title = document.getElementById('remoteSupportControlTitle');
+    const meta = document.getElementById('remoteSupportControlMeta');
+    if (title) title.textContent = '远程控制 · ' + (card && card.querySelector('.remote-device-title strong') ? card.querySelector('.remote-device-title strong').textContent : deviceId);
+    if (meta) meta.textContent = '正在连接设备 ' + deviceId;
+    // Open the complete workspace, not a single-device child page.  The
+    // embedded app owns the Remote/Wall/File tabs and the shared device list;
+    // the clicked device is only used as the initial Remote selection.
+    switchRemoteSupportView('devices');
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&device=' + encodeURIComponent(deviceId) + '&direct=1&tab=control';
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    toast(e.message || String(e), 'error');
+  }
+}
+
+function openRemoteDeviceModal() {
+  const modal = document.getElementById('remoteDeviceModal');
+  if (!modal) return;
+  modal.hidden = false;
+  const input = document.getElementById('remoteDeviceIdInput');
+  if (input) setTimeout(function() { input.focus(); }, 0);
+}
+
+function closeRemoteDeviceModal() {
+  const modal = document.getElementById('remoteDeviceModal');
+  if (modal) modal.hidden = true;
+}
+
+function switchRemoteSupportView(view) {
+  const isWall = view === 'wall';
+  const devicesView = document.getElementById('remoteDevicesView');
+  const wallView = document.getElementById('remoteWallView');
+  const devicesTab = document.getElementById('remoteDevicesTab');
+  const wallTab = document.getElementById('remoteWallTab');
+  if (devicesView) devicesView.hidden = isWall;
+  if (wallView) wallView.hidden = !isWall;
+  if (devicesTab) { devicesTab.classList.toggle('active', !isWall); devicesTab.setAttribute('aria-selected', String(!isWall)); }
+  if (wallTab) { wallTab.classList.toggle('active', isWall); wallTab.setAttribute('aria-selected', String(isWall)); }
+  if (isWall) reloadRemoteSupportWall();
+}
+
+async function reloadRemoteSupportWall() {
+  const frame = document.getElementById('remoteSupportWallFrame');
+  if (!frame || frame.dataset.loading === '1') return;
+  frame.dataset.loading = '1';
+  try {
+    const data = await api('/admin/api/remote-support/controller-session', { method: 'POST', body: '{}' });
+    const base = String(data.public_url || 'https://todesk.bhzn.top').replace(/\/$/, '');
+    frame.src = base + '/?admin_session=' + encodeURIComponent(data.token) + '&direct=1&tab=wall';
+    frame.onload = function() { frame.dataset.loading = '0'; };
+  } catch (e) {
+    frame.dataset.loading = '0';
+    toast(e.message || String(e), 'error');
+  }
+}
+
+function closeRemoteSupportDevice() {
+  const frame = document.getElementById('remoteSupportFrame');
+  const panel = document.getElementById('remoteSupportControlPanel');
+  if (frame) frame.src = 'about:blank';
+  if (panel) panel.hidden = true;
+  document.querySelectorAll('.remote-device-card.is-active').forEach(function(item) { item.classList.remove('is-active'); });
 }
 </script>
 </body>

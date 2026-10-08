@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # 在服务器上执行：拉取最新代码并重启 Backend + MCP + H5（若已安装）
+# ── 硬闸门：生产发布必须由用户明确说「发」，AI 会话不得绕过 ──
+if [ "${LOBSTER_DEPLOY_CONFIRM:-}" != "发" ]; then
+  echo "[BLOCKED] 未经用户授权：部署/发布已拦截。请让用户明确说「发」，然后：" >&2
+  echo "  LOBSTER_DEPLOY_CONFIRM=发 bash $0 $*" >&2
+  exit 3
+fi
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+export PATH="$ROOT/.runtime/node/bin:$PATH"
+INSTALL_REMOTE_SUPPORT="${INSTALL_REMOTE_SUPPORT:-0}"
+
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/remote_support_server/src/server.js" ] && ! grep -q '^REMOTE_SUPPORT_SERVICE_KEY=' "$ROOT/.env" 2>/dev/null; then
+  echo "REMOTE_SUPPORT_SERVICE_KEY=$(openssl rand -hex 32)" >> "$ROOT/.env"
+fi
 
 PREV_COMMIT="$(git rev-parse HEAD)"
 echo "$PREV_COMMIT" > "$ROOT/.deploy_rollback_commit"
@@ -17,6 +29,18 @@ if [ -n "$DIRTY_TRACKED" ]; then
   BACKUP_PATCH="$BACKUP_DIR/$(date +%Y%m%d_%H%M%S)_${PREV_COMMIT}.patch"
   git diff > "$BACKUP_PATCH"
   echo "[WARN] tracked working tree changes backed up to $BACKUP_PATCH"
+fi
+
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/remote_support_server/package.json" ]; then
+  echo "[Remote] 安装远程支持中继依赖 ..."
+  if [ -x "$ROOT/.runtime/node/bin/npm" ]; then
+    "$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/remote_support_server" install --omit=dev
+  elif command -v npm >/dev/null 2>&1; then
+    npm --prefix "$ROOT/remote_support_server" install --omit=dev
+  else
+    echo "[ERR] Node.js/npm is required for remote support dependencies"
+    exit 1
+  fi
 fi
 git reset --hard origin/main
 POST_RESET_DIRTY="$(git status --porcelain --untracked-files=no)"
@@ -53,6 +77,9 @@ bash "$ROOT/scripts/build_mastra_if_needed.sh" "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
+  if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/scripts/install_remote_support_nginx.sh" ]; then
+    bash "$ROOT/scripts/install_remote_support_nginx.sh" || echo "[WARN] remote support nginx route was not changed"
+  fi
   echo "[重启] 后端服务先更新，H5 保持在线并在最后快速重启 ..."
   H5_UNIT=""
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-h5\.service'; then
@@ -62,6 +89,10 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-background\.service'; then
     BG_UNIT="lobster-background"
   fi
+  MANAGE_UNIT=""
+  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-manage\.service'; then
+    MANAGE_UNIT="lobster-manage"
+  fi
   MASTRA_UNIT=""
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-mastra\.service'; then
     MASTRA_UNIT="lobster-mastra"
@@ -70,18 +101,41 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
     MASTRA_UNIT="lobster-mastra"
   fi
+  # Remote support is isolated from the main product deployment.  A normal
+  # release must neither install nor start its relay service.
+  if [ "$INSTALL_REMOTE_SUPPORT" = "1" ]; then
+    echo "[Remote] refresh remote support systemd unit"
+    bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
+  else
+    # Remote support is an independently deployed service. A normal product
+    # release must leave its process and port untouched.
+    if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
+      echo "[Remote] leave independently managed relay unchanged"
+    fi
+  fi
   sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
-  # 确保 8001/8000 端口无残留进程
   for PORT in 8001 8000 4111; do
+    PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
+    if [ -n "$PID_ON_PORT" ]; then
+      echo "[ERR] port $PORT is still occupied by PID(s) $PID_ON_PORT after stopping Lobster units; refusing to kill an unknown process" >&2
+      sudo ss -ltnp "sport = :$PORT" 2>/dev/null || true
+      exit 1
+    fi
+    : <<'LEGACY_PORT_CLEANUP'
+  # 确保 8001/8000 端口无残留进程
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
     if [ -n "$PID_ON_PORT" ]; then
       echo "[清理] 端口 $PORT 仍被进程 $PID_ON_PORT 占用，强制结束"
       sudo fuser -k "$PORT/tcp" 2>/dev/null || true
       sleep 1
     fi
+LEGACY_PORT_CLEANUP
   done
   sudo systemctl start lobster-mcp lobster-backend
+  if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-remote-support\.service'; then
+    sudo systemctl start lobster-remote-support
+  fi
   sudo systemctl start "$MASTRA_UNIT"
   if [ -n "$BG_UNIT" ]; then
     sudo systemctl start "$BG_UNIT"
@@ -116,11 +170,11 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     echo "[重启] H5 服务最后切换 ..."
     sudo systemctl restart "$H5_UNIT"
     H5_OK=0
-    for i in 1 2 3 4 5; do
+    for i in 1 2 3 4 5 6 7 8 9 10; do
       if curl --fail --silent "http://127.0.0.1:8010/api/branding?brand=bihuo" >/dev/null 2>&1; then
         H5_OK=1; break
       fi
-      sleep "$i"
+      sleep 2
     done
     if [ "$H5_OK" = 0 ]; then
       echo "[ERR] H5 启动失败"
@@ -128,7 +182,24 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
       exit 1
     fi
   fi
-  sudo systemctl status lobster-backend lobster-mcp $MASTRA_UNIT $BG_UNIT $H5_UNIT --no-pager || true
+  if [ -n "$MANAGE_UNIT" ]; then
+    echo "[重启] manage 站（8020）..."
+    sudo systemctl restart "$MANAGE_UNIT"
+    MANAGE_OK=0
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8020/api/manage/bootstrap || true)"
+      if [ -n "$CODE" ] && [ "$CODE" != "000" ]; then
+        MANAGE_OK=1; break
+      fi
+      sleep 2
+    done
+    if [ "$MANAGE_OK" = 0 ]; then
+      echo "[ERR] manage 站启动失败"
+      sudo journalctl -u "$MANAGE_UNIT" -n 80 --no-pager || true
+      exit 1
+    fi
+  fi
+  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support $MASTRA_UNIT $BG_UNIT $H5_UNIT $MANAGE_UNIT --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."

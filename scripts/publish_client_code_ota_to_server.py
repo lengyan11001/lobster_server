@@ -17,6 +17,27 @@ is no longer the default download target for clients.
 """
 from __future__ import annotations
 
+
+_DEPLOY_CONFIRM_PHRASE = "发"
+
+
+def _require_user_deploy_confirmation() -> None:
+    """部署/发布硬闸门：必须用户明确说「发」；AI 会话不得绕过。
+
+    授权：环境变量 LOBSTER_DEPLOY_CONFIRM=发 或命令行 --i-said-fa。
+    """
+    args = list(sys.argv[1:])
+    if (os.environ.get("LOBSTER_DEPLOY_CONFIRM") or "").strip() == _DEPLOY_CONFIRM_PHRASE or "--i-said-fa" in args:
+        return
+    print(
+        "[BLOCKED] 未经用户授权，部署/发布已拦截。\n"
+        "  请让用户明确说「发」，然后：\n"
+        "    LOBSTER_DEPLOY_CONFIRM=发 python <本脚本> ...   （或加 --i-said-fa）",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+
 import argparse
 import hashlib
 import json
@@ -56,12 +77,148 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
     "CLIENT_CODE_VERSION.json",
 ]
 
+WEBSITE_CLIENT_CODE_OTA_PATHS = [
+    "scripts",
+    "backend",
+    # Website OTA also carries the small OEM switcher runtime. Keep these as
+    # exact paths so a partial desktop update never replaces the whole desktop
+    # directory on the client.
+    "desktop/launcher.py",
+    "desktop/launcher.pyc",
+    "desktop/oem_branding.py",
+    "desktop/oem_branding.pyc",
+    "desktop/oem_configurator.py",
+    "desktop/oem_configurator.pyc",
+    # Optional BHZN ToDesk remote-support agent. Clients report the System
+    # Config remote switch as "未安装" unless this executable is installed, so
+    # website OTAs must ship it. It is an exact file path on purpose: any other
+    # desktop/ entry flips the manifest into full-code mode and makes the
+    # updater reconcile (and prune) the whole desktop directory.
+    "desktop/BHZN-ToDesk-Agent.exe",
+    "OEM配置启动器.exe",
+    "static/css",
+    "static/js",
+    "static/views",
+    # 灵感画布代码/功能资源（与 pack_client_code_ota.WEBSITE_OTA_PATHS 保持一致）。
+    # 只列代码与功能资源，不列用户运行目录（会被对账删除）。
+    "static/canvas-web",
+    "static/douyin-origin",
+    "static/vendor",
+    "static/data",
+    "static/branding/brands.json",
+    "static/index.html",
+    "static/ai3d-model-preview.html",
+    "requirements.txt",
+    "install.bat",
+    "install_slim.bat",
+    "static/client_version.json",
+    "CLIENT_CODE_VERSION.json",
+]
+
+OEM_SWITCHER_OTA_PATHS = frozenset(
+    {
+        "desktop/launcher.py",
+        "desktop/launcher.pyc",
+        "desktop/oem_branding.py",
+        "desktop/oem_branding.pyc",
+        "desktop/oem_configurator.py",
+        "desktop/oem_configurator.pyc",
+        "desktop/BHZN-ToDesk-Agent.exe",
+        "OEM配置启动器.exe",
+    }
+)
+
+_BRAND_ASSET_SUFFIXES = (".png", ".jpg", ".jpeg", ".ico", ".icns", ".webp", ".svg")
+
+
+def _static_root_brand_assets(names: set[str]) -> list[str]:
+    """static 根目录下的品牌/图标资源（OEM 资源包）。
+
+    它们必须出现在 manifest.paths 里：客户端更新器只对「manifest 列出的路径」做对账，
+    列出的目录中"包里没有的文件"会被删掉；反过来，没列出来的文件升级时不会被写回。
+    2026-09-20 build 341 事故就是 manifest 写了整根 static 而包里没有 daka_* 品牌图，
+    客户端升级后左上角 logo / 首页大图 / 页头合作方 logo 全部 404。
+    """
+    assets = [
+        name
+        for name in names
+        if name.startswith("static/")
+        and name.count("/") == 1
+        and name.lower().endswith(_BRAND_ASSET_SUFFIXES)
+    ]
+    return sorted(assets)
+
+
+def _expand_bare_root_paths(paths: list[str], names: set[str]) -> list[str]:
+    """把 "static"/"desktop" 这类整根路径展开成包内真实存在的子路径与根文件。
+
+    manifest 里列一个整根目录 = 让客户端把该目录下"包里没有的文件"全部删除。
+    发布常规网站 OTA 时包里只有 static 的部分子目录，一旦写成整根 static，
+    客户端本地独有的文件（OEM 品牌图、static/generated 等）会被误删。
+    """
+    expanded: list[str] = []
+    for path in paths:
+        normalized = path.replace("\\", "/").rstrip("/")
+        if normalized in {"static", "desktop"}:
+            prefix = normalized + "/"
+            derived: set[str] = set()
+            for name in names:
+                if not name.startswith(prefix):
+                    continue
+                rest = name[len(prefix) :]
+                if not rest:
+                    continue
+                if "/" in rest:
+                    derived.add(prefix + rest.split("/", 1)[0])
+                else:
+                    derived.add(name)
+            for item in sorted(derived):
+                if item not in expanded:
+                    expanded.append(item)
+            continue
+        if path not in expanded:
+            expanded.append(path)
+    return expanded
+
 
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
+    skill_roots = sorted(
+        {
+            "/".join(name.split("/")[:2])
+            for name in names
+            if name.startswith("skills/") and len(name.split("/")) >= 3
+        }
+    )
+    # skills 根目录下的文件（skills/__init__.py、skills/__init__.pyc…）也要下发：
+    # manifest 只列"目录"不会带上它们，而包内确实有此文件（2026-09-20 起常规网站 OTA 带 skills）。
+    skill_root_files = sorted(
+        {name for name in names if name.startswith("skills/") and name.count("/") == 1}
+    )
+    # 注意：2026-09-20 起「常规网站 OTA」也带 skills（见 pack_client_code_ota.WEBSITE_OTA_PATHS），
+    # 包里因此会出现 skills/__init__.py。它不能再作为"这是完整代码包"的判据，否则常规网站 OTA
+    # 会被误判成 full-code 模式、把整根 static 写进 manifest，客户端对账时删掉本地品牌资源图
+    # （build 341 事故）。完整代码包仍然能通过 mcp/publisher/openclaw/desktop 非白名单条目识别。
+    has_full_code_roots = any(
+        any(name.startswith(root + "/") for name in names)
+        for root in ("mcp", "publisher", "openclaw")
+    ) or any(
+        name.startswith("desktop/") and name not in OEM_SWITCHER_OTA_PATHS
+        for name in names
+    )
+    if has_full_code_roots:
+        candidate_paths = DEFAULT_CLIENT_CODE_OTA_PATHS
+    elif skill_roots:
+        # A targeted OTA carries only selected skills. Keep the manifest scoped
+        # to those directories so the updater never reconciles the whole skills tree.
+        candidate_paths = [
+            path for path in WEBSITE_CLIENT_CODE_OTA_PATHS if path != "CLIENT_CODE_VERSION.json"
+        ] + skill_roots + skill_root_files + ["CLIENT_CODE_VERSION.json"]
+    else:
+        candidate_paths = WEBSITE_CLIENT_CODE_OTA_PATHS
     paths = []
-    for path in DEFAULT_CLIENT_CODE_OTA_PATHS:
+    for path in candidate_paths:
         normalized = path.replace("\\", "/").rstrip("/")
         if normalized in names or any(name.startswith(normalized + "/") for name in names):
             paths.append(path)
@@ -83,7 +240,27 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
             if runtime_dir not in paths:
                 paths.append(runtime_dir)
         paths.append(version_path)
-    return paths
+    # 安全修正（2026-09-20）：永远不要把「整个 skills 根」写进 manifest。
+    # 客户端 update 会按 manifest.paths 对账：列了 skills 根就会把包里没有的 skill
+    # 从用户机器上删掉（例如刻意排除的 skills/ppt_master ≈58MB、已退役的 media_edit 等）。
+    # 一律展开成包内实际存在的 skill 目录，逐个列出。
+    expanded: list[str] = []
+    for path in paths:
+        if path.replace("\\", "/").rstrip("/") == "skills":
+            for root in skill_roots:
+                if root not in expanded:
+                    expanded.append(root)
+            continue
+        if path not in expanded:
+            expanded.append(path)
+    version_paths = {"CLIENT_CODE_VERSION.json", "static/client_version.json"}
+    head = [p for p in expanded if p not in version_paths]
+    tail = [p for p in expanded if p in version_paths]
+    result = _expand_bare_root_paths(head, names)
+    for asset in _static_root_brand_assets(names):
+        if asset not in result:
+            result.append(asset)
+    return result + tail
 
 
 def is_encrypted_ota_zip(zip_path: Path) -> bool:
@@ -222,6 +399,7 @@ print(public_domain + "/" + {json.dumps(object_key)})
 
 
 def main() -> int:
+    _require_user_deploy_confirmation()
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path", type=Path, help="local OTA zip")
     ap.add_argument("--version", default="1.0.5", help="manifest.version")

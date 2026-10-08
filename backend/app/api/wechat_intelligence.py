@@ -81,6 +81,7 @@ class WechatLearningCandidateIn(BaseModel):
 
 
 class WechatObservationIn(BaseModel):
+    channel: str = Field(default="wechat", max_length=16)
     account_id: str = Field(..., min_length=1, max_length=160)
     contact_key: str = Field(..., min_length=1, max_length=240)
     contact_name: str = Field(default="", max_length=240)
@@ -448,74 +449,6 @@ def get_wechat_intelligence_context(
     }
 
 
-@router.post("/api/wechat-intelligence/observe", summary="回写个微接管结果与学习信号")
-def observe_wechat_interaction(
-    body: WechatObservationIn,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    owner = _owner(db, current_user)
-    now = datetime.utcnow()
-    _maybe_prune_history(db, owner.id, now)
-    contact = (
-        db.query(WechatContactMemory)
-        .filter(
-            WechatContactMemory.user_id == owner.id,
-            WechatContactMemory.account_id == body.account_id,
-            WechatContactMemory.contact_key == body.contact_key,
-        )
-        .with_for_update()
-        .first()
-    )
-    if contact is None:
-        contact = WechatContactMemory(
-            user_id=owner.id,
-            account_id=body.account_id,
-            contact_key=body.contact_key,
-            contact_name=_clean(body.contact_name, 240) or body.contact_key,
-            profile={},
-        )
-        db.add(contact)
-    elif body.contact_name:
-        contact.contact_name = _clean(body.contact_name, 240)
-    contact.profile = _merge_profile(dict(contact.profile or {}), body.profile_updates)
-    if body.conversation_summary:
-        contact.rolling_summary = _clean(body.conversation_summary, 2000)
-    if body.topic:
-        contact.topic = _clean(body.topic, 160)
-    if body.next_followup:
-        contact.next_followup = _clean(body.next_followup, 2000)
-    stage = str(body.stage or "").strip().lower()
-    if stage in _VALID_STAGES:
-        contact.stage = stage
-    requested_intent = str(body.intent_level or "").strip().lower()
-    if requested_intent in _VALID_INTENT_LEVELS:
-        contact.intent_level = requested_intent
-        contact.intent_score = {"none": 0, "low": 25, "medium": 60, "high": 90}[requested_intent]
-    intent = contact.intent_level or "none"
-    contact.last_activity_at = now
-    contact.updated_at = now
-
-    dedup_source = body.inbound_message_id or uuid.uuid4().hex
-    dedup_key = _clean(f"{body.account_id}:{body.contact_key}:{dedup_source}:{body.event_type}", 255)
-    outcome = WechatInteractionOutcome(
-        id=uuid.uuid4().hex,
-        user_id=owner.id,
-        dedup_key=dedup_key,
-        account_id=body.account_id,
-        contact_key=body.contact_key,
-        contact_name=_clean(body.contact_name, 240) or None,
-        event_type=_clean(body.event_type, 32),
-        status=_clean(body.status, 24) or "completed",
-        category=_clean(body.category, 32) or None,
-        intent_level=intent,
-        inbound_message_id=_clean(body.inbound_message_id, 255) or None,
-        inbound_text=_clean(body.inbound_text, 4000) or None,
-        reply_text=_clean(body.reply_text, 4000) or None,
-        payload=_bounded_payload(body.payload),
-        error_message=_clean(body.error_message, 2000) or None,
-        happened_at=now,
-    )
     db.add(outcome)
     try:
         db.flush()
@@ -538,7 +471,8 @@ def observe_wechat_interaction(
             )
             .first()
         )
-        return {"ok": True, "deduplicated": True, "contact": _serialize_contact(existing) if existing else None, "candidates": []}
+        return {"ok": True, "deduplicated": True, "contact": _serialize_contact(existing) if existing else None,
+                "candidates": []}
 
     settings = _settings_payload(db, owner.id)
     created_candidates: List[WechatLearningCandidate] = []
@@ -620,7 +554,6 @@ def observe_wechat_interaction(
         "candidates": [_serialize_candidate(row) for row in created_candidates],
         "auto_applied_rules": [_serialize_rule(row) for row in created_rules],
     }
-
 
 @router.get("/api/wechat-intelligence/dashboard", summary="个微接管中枢概览")
 def get_wechat_intelligence_dashboard(

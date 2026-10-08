@@ -8,7 +8,13 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["视频", "混剪", "片段", "配乐", "模板"]
+      "tags": [
+        "视频",
+        "混剪",
+        "片段",
+        "配乐",
+        "模板"
+      ]
     },
     "bihuo_25_video_skill": {
       "name": "必火2.5",
@@ -18,7 +24,12 @@
       "default_installed": false,
       "status": "available",
       "capabilities": {},
-      "tags": ["视频", "多模态", "首尾帧", "视频编辑"]
+      "tags": [
+        "视频",
+        "多模态",
+        "首尾帧",
+        "视频编辑"
+      ]
     },
     "douyin_publish": {
       "name": "发抖音",
@@ -28,7 +39,11 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["publish", "douyin", "video"]
+      "tags": [
+        "publish",
+        "douyin",
+        "video"
+      ]
     },
     "xiaohongshu_publish": {
       "name": "发小红书",
@@ -38,7 +53,12 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["publish", "xiaohongshu", "video", "image"]
+      "tags": [
+        "publish",
+        "xiaohongshu",
+        "video",
+        "image"
+      ]
     },
     "toutiao_publish": {
       "name": "发今日头条",
@@ -48,7 +68,12 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["publish", "toutiao", "video", "image"]
+      "tags": [
+        "publish",
+        "toutiao",
+        "video",
+        "image"
+      ]
     },
     "youtube_publish": {
       "name": "YouTube 上传",
@@ -58,7 +83,11 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["YouTube", "OAuth", "publish"]
+      "tags": [
+        "YouTube",
+        "OAuth",
+        "publish"
+      ]
     },
     "twilio_whatsapp": {
       "name": "Twilio WhatsApp",
@@ -68,7 +97,33 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["WhatsApp", "Twilio", "chat"]
+      "tags": [
+        "WhatsApp",
+        "Twilio",
+        "chat"
+      ]
+    },
+    "personal_whatsapp_assistant": {
+      "name": "个人whatapp助手",
+      "description": "管理 Windows 桌面版 WhatsApp：同步会话和通讯录、查看与回复消息、添加联系人并执行私聊接管。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {
+        "online.whatsapp_takeover": {
+          "name": "个人whatapp助手",
+          "action": "native_whatsapp_poll",
+          "execution_target": "online",
+          "task_kind": "client_workflow"
+        }
+      },
+      "tags": [
+        "WhatsApp",
+        "桌面客户端",
+        "chat",
+        "automation"
+      ]
     },
     "openclaw_weixin_channel": {
       "name": "微信助手 (OpenClaw)",
@@ -78,7 +133,12 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["微信", "OpenClaw", "chat", "channel"]
+      "tags": [
+        "微信",
+        "OpenClaw",
+        "chat",
+        "channel"
+      ]
     },
     "openclaw_memory_skill": {
       "name": "OpenClaw 资料记忆",
@@ -88,7 +148,12 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["OpenClaw", "记忆", "知识库", "本机资料"]
+      "tags": [
+        "OpenClaw",
+        "记忆",
+        "知识库",
+        "本机资料"
+      ]
     },
     "browser_use_skill": {
       "name": "Browser Use",
@@ -98,7 +163,11 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["OpenClaw", "Browser", "automation"]
+      "tags": [
+        "OpenClaw",
+        "Browser",
+        "automation"
+      ]
     },
     "computer_use_skill": {
       "name": "Computer Use",
@@ -108,7 +177,11 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["OpenClaw", "Computer", "automation"]
+      "tags": [
+        "OpenClaw",
+        "Computer",
+        "automation"
+      ]
     },
     "wecom_reply": {
       "name": "企业微信自动回复",
@@ -118,7 +191,11 @@
       "unlock_price_credits": 1000,
       "status": "available",
       "capabilities": {},
-      "tags": ["wecom", "chat", "reply"]
+      "tags": [
+        "wecom",
+        "chat",
+        "reply"
+      ]
     },
     "messenger_reply": {
       "name": "Facebook Messenger 客服",
@@ -128,7 +205,12 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["messenger", "meta", "chat", "reply"]
+      "tags": [
+        "messenger",
+        "meta",
+        "chat",
+        "reply"
+      ]
     },
     "media_edit_skill": {
       "name": "素材剪辑",
@@ -150,49 +232,166 @@
             "properties": {
               "operation": {
                 "type": "string",
-                "enum": ["overlay_text", "trim", "scale_pad", "mute", "mux_audio", "image_to_video", "extract_frame"]
+                "enum": [
+                  "overlay_text",
+                  "trim",
+                  "scale_pad",
+                  "mute",
+                  "mux_audio",
+                  "image_to_video",
+                  "extract_frame"
+                ]
               },
-              "asset_id": { "type": "string" },
-              "text": { "type": "string" },
-              "position": { "type": "string", "enum": ["top", "center", "bottom"] },
-              "vertical_align": { "type": "string", "enum": ["top", "center", "bottom"] },
-              "horizontal_align": { "type": "string", "enum": ["left", "center", "right"] },
-              "margin_x": { "type": "integer" },
-              "margin_y": { "type": "integer" },
-              "offset_x": { "type": "integer" },
-              "offset_y": { "type": "integer" },
-              "font_size": { "type": "integer" },
-              "font_color": { "type": "string" },
-              "font_alpha": { "type": "number" },
-              "font_file": { "type": "string" },
-              "x_expr": { "type": "string" },
-              "y_expr": { "type": "string" },
-              "box": { "type": "boolean" },
-              "box_color": { "type": "string" },
-              "box_alpha": { "type": "number" },
-              "box_border_width": { "type": "integer" },
-              "border_width": { "type": "integer" },
-              "border_color": { "type": "string" },
-              "shadow_x": { "type": "integer" },
-              "shadow_y": { "type": "integer" },
-              "shadow_color": { "type": "string" },
-              "shadow_alpha": { "type": "number" },
-              "line_spacing": { "type": "integer" },
-              "text_align": { "type": "string", "enum": ["left", "center", "right"] },
-              "fix_bounds": { "type": "boolean" },
-              "start_sec": { "type": "number" },
-              "end_sec": { "type": "number" },
-              "aspect_ratio": { "type": "string", "enum": ["9:16", "16:9", "1:1", "4:3", "3:4"] },
-              "fit_mode": { "type": "string", "enum": ["contain", "cover"] },
-              "audio_asset_id": { "type": "string" },
-              "duration_sec": { "type": "number" },
-              "timestamp_sec": { "type": "number" }
+              "asset_id": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "top",
+                  "center",
+                  "bottom"
+                ]
+              },
+              "vertical_align": {
+                "type": "string",
+                "enum": [
+                  "top",
+                  "center",
+                  "bottom"
+                ]
+              },
+              "horizontal_align": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "center",
+                  "right"
+                ]
+              },
+              "margin_x": {
+                "type": "integer"
+              },
+              "margin_y": {
+                "type": "integer"
+              },
+              "offset_x": {
+                "type": "integer"
+              },
+              "offset_y": {
+                "type": "integer"
+              },
+              "font_size": {
+                "type": "integer"
+              },
+              "font_color": {
+                "type": "string"
+              },
+              "font_alpha": {
+                "type": "number"
+              },
+              "font_file": {
+                "type": "string"
+              },
+              "x_expr": {
+                "type": "string"
+              },
+              "y_expr": {
+                "type": "string"
+              },
+              "box": {
+                "type": "boolean"
+              },
+              "box_color": {
+                "type": "string"
+              },
+              "box_alpha": {
+                "type": "number"
+              },
+              "box_border_width": {
+                "type": "integer"
+              },
+              "border_width": {
+                "type": "integer"
+              },
+              "border_color": {
+                "type": "string"
+              },
+              "shadow_x": {
+                "type": "integer"
+              },
+              "shadow_y": {
+                "type": "integer"
+              },
+              "shadow_color": {
+                "type": "string"
+              },
+              "shadow_alpha": {
+                "type": "number"
+              },
+              "line_spacing": {
+                "type": "integer"
+              },
+              "text_align": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "center",
+                  "right"
+                ]
+              },
+              "fix_bounds": {
+                "type": "boolean"
+              },
+              "start_sec": {
+                "type": "number"
+              },
+              "end_sec": {
+                "type": "number"
+              },
+              "aspect_ratio": {
+                "type": "string",
+                "enum": [
+                  "9:16",
+                  "16:9",
+                  "1:1",
+                  "4:3",
+                  "3:4"
+                ]
+              },
+              "fit_mode": {
+                "type": "string",
+                "enum": [
+                  "contain",
+                  "cover"
+                ]
+              },
+              "audio_asset_id": {
+                "type": "string"
+              },
+              "duration_sec": {
+                "type": "number"
+              },
+              "timestamp_sec": {
+                "type": "number"
+              }
             },
-            "required": ["operation", "asset_id"]
+            "required": [
+              "operation",
+              "asset_id"
+            ]
           }
         }
       },
-      "tags": ["video", "image", "edit", "ffmpeg"]
+      "tags": [
+        "video",
+        "image",
+        "edit",
+        "ffmpeg"
+      ]
     },
     "add_more_publish_accounts": {
       "name": "添加更多发布账号",
@@ -202,7 +401,10 @@
       "show_in_store": false,
       "status": "available",
       "capabilities": {},
-      "tags": ["publish", "accounts"]
+      "tags": [
+        "publish",
+        "accounts"
+      ]
     },
     "comfly_ecommerce_detail_skill": {
       "name": "电商详情页",
@@ -228,26 +430,74 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "action": { "type": "string", "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"] },
-              "job_id": { "type": "string" },
-              "asset_id": { "type": "string" },
-              "image_url": { "type": "string" },
-              "reference_asset_ids": { "type": "array", "items": { "type": "string" } },
-              "reference_image_urls": { "type": "array", "items": { "type": "string" } },
-              "page_count": { "type": "integer" },
-              "auto_save": { "type": "boolean" },
-              "platform": { "type": "string" },
-              "country": { "type": "string" },
-              "language": { "type": "string" },
-              "analysis_model": { "type": "string" },
-              "image_model": { "type": "string" },
-              "output_dir": { "type": "string" },
-              "isolate_job_dir": { "type": "boolean" }
+              "action": {
+                "type": "string",
+                "enum": [
+                  "run_pipeline",
+                  "start_pipeline",
+                  "poll_pipeline"
+                ]
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "asset_id": {
+                "type": "string"
+              },
+              "image_url": {
+                "type": "string"
+              },
+              "reference_asset_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reference_image_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "page_count": {
+                "type": "integer"
+              },
+              "auto_save": {
+                "type": "boolean"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "analysis_model": {
+                "type": "string"
+              },
+              "image_model": {
+                "type": "string"
+              },
+              "output_dir": {
+                "type": "string"
+              },
+              "isolate_job_dir": {
+                "type": "boolean"
+              }
             }
           }
         }
       },
-      "tags": ["image", "ecommerce", "detail", "long-image", "comfly", "credential_package"]
+      "tags": [
+        "image",
+        "ecommerce",
+        "detail",
+        "long-image",
+        "comfly",
+        "credential_package"
+      ]
     },
     "ecommerce_publish_skill": {
       "name": "商品发布",
@@ -266,19 +516,57 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "action": { "type": "string", "enum": ["open_product_form", "list_shop_accounts"] },
-              "platform": { "type": "string", "enum": ["douyin_shop", "xiaohongshu_shop", "alibaba1688", "taobao", "pinduoduo"] },
-              "account_nickname": { "type": "string" },
-              "title": { "type": "string" },
-              "main_image_asset_ids": { "type": "array", "items": { "type": "string" } },
-              "detail_image_asset_ids": { "type": "array", "items": { "type": "string" } },
-              "price": { "type": "string" },
-              "category": { "type": "string" }
+              "action": {
+                "type": "string",
+                "enum": [
+                  "open_product_form",
+                  "list_shop_accounts"
+                ]
+              },
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "douyin_shop",
+                  "xiaohongshu_shop",
+                  "alibaba1688",
+                  "taobao",
+                  "pinduoduo"
+                ]
+              },
+              "account_nickname": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "main_image_asset_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "detail_image_asset_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "price": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              }
             }
           }
         }
       },
-      "tags": ["ecommerce", "publish", "shop", "product"]
+      "tags": [
+        "ecommerce",
+        "publish",
+        "shop",
+        "product"
+      ]
     },
     "sutui_mcp": {
       "name": "速推 MCP",
@@ -301,11 +589,22 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "prompt": {"type": "string", "description": "生成提示词"},
-              "model": {"type": "string", "description": "可选，模型名"},
-              "size": {"type": "string", "description": "可选，图像尺寸"}
+              "prompt": {
+                "type": "string",
+                "description": "生成提示词"
+              },
+              "model": {
+                "type": "string",
+                "description": "可选，模型名"
+              },
+              "size": {
+                "type": "string",
+                "description": "可选，图像尺寸"
+              }
             },
-            "required": ["prompt"]
+            "required": [
+              "prompt"
+            ]
           }
         },
         "video.generate": {
@@ -317,12 +616,26 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "prompt": {"type": "string", "description": "生成提示词"},
-              "model": {"type": "string", "description": "可选，模型名"},
-              "image_url": {"type": "string", "description": "可选，参考图片 URL（图生视频）"},
-              "duration": {"type": "integer", "description": "可选，视频时长（秒）"}
+              "prompt": {
+                "type": "string",
+                "description": "生成提示词"
+              },
+              "model": {
+                "type": "string",
+                "description": "可选，模型名"
+              },
+              "image_url": {
+                "type": "string",
+                "description": "可选，参考图片 URL（图生视频）"
+              },
+              "duration": {
+                "type": "integer",
+                "description": "可选，视频时长（秒）"
+              }
             },
-            "required": ["prompt"]
+            "required": [
+              "prompt"
+            ]
           }
         },
         "image.understand": {
@@ -355,9 +668,14 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "task_id": {"type": "string", "description": "任务 ID"}
+              "task_id": {
+                "type": "string",
+                "description": "任务 ID"
+              }
             },
-            "required": ["task_id"]
+            "required": [
+              "task_id"
+            ]
           }
         },
         "sutui.search_models": {
@@ -369,8 +687,18 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "query": {"type": "string"},
-              "category": {"type": "string", "enum": ["image", "video", "audio", "all"]}
+              "query": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "video",
+                  "audio",
+                  "all"
+                ]
+              }
             }
           }
         },
@@ -383,9 +711,20 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "action": {"type": "string", "enum": ["synthesize", "list_voices"], "default": "synthesize"},
-              "text": {"type": "string"},
-              "voice_id": {"type": "string"}
+              "action": {
+                "type": "string",
+                "enum": [
+                  "synthesize",
+                  "list_voices"
+                ],
+                "default": "synthesize"
+              },
+              "text": {
+                "type": "string"
+              },
+              "voice_id": {
+                "type": "string"
+              }
             }
           }
         },
@@ -397,8 +736,14 @@
           "is_default": false,
           "arg_schema": {
             "type": "object",
-            "properties": {"url": {"type": "string"}},
-            "required": ["url"]
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ]
           }
         },
         "sutui.guide": {
@@ -409,7 +754,11 @@
           "is_default": false,
           "arg_schema": {
             "type": "object",
-            "properties": {"query": {"type": "string"}}
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            }
           }
         },
         "sutui.transfer_url": {
@@ -421,18 +770,36 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "url": {"type": "string", "description": "公网直链；可为图片或视频（如 v3-tasks 的 .mp4）。"},
-              "type": {"type": "string", "enum": ["image", "audio"], "default": "image", "description": "视频转存填 image，音频填 audio。"}
+              "url": {
+                "type": "string",
+                "description": "公网直链；可为图片或视频（如 v3-tasks 的 .mp4）。"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "audio"
+                ],
+                "default": "image",
+                "description": "视频转存填 image，音频填 audio。"
+              }
             },
-            "required": ["url"]
+            "required": [
+              "url"
+            ]
           }
         }
       },
-      "tags": ["image", "video", "audio", "ai"]
+      "tags": [
+        "image",
+        "video",
+        "audio",
+        "ai"
+      ]
     },
     "hifly_digital_human_skill": {
-      "name": "必火数字人",
-      "description": "选择数字人和声音，输入口播文案后生成必火数字人视频，生成完成后自动入库。",
+      "name": "数字人",
+      "description": "选择数字人和声音，输入口播文案后生成数字人视频，生成完成后自动入库。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
@@ -448,18 +815,40 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "title": {"type": "string"},
-              "avatar": {"type": "string"},
-              "voice": {"type": "string"},
-              "text": {"type": "string"},
-              "st_show": {"type": "integer", "default": 0},
-              "aigc_flag": {"type": "integer", "default": 0}
+              "title": {
+                "type": "string"
+              },
+              "avatar": {
+                "type": "string"
+              },
+              "voice": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "st_show": {
+                "type": "integer",
+                "default": 0
+              },
+              "aigc_flag": {
+                "type": "integer",
+                "default": 0
+              }
             },
-            "required": ["avatar", "voice", "text"]
+            "required": [
+              "avatar",
+              "voice",
+              "text"
+            ]
           }
         }
       },
-      "tags": ["video", "digital-human", "必火"]
+      "tags": [
+        "video",
+        "digital-human",
+        "必火"
+      ]
     },
     "cutcli_template_studio": {
       "name": "模板视频",
@@ -469,7 +858,12 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["video", "template", "cutcli", "subtitle"]
+      "tags": [
+        "video",
+        "template",
+        "cutcli",
+        "subtitle"
+      ]
     },
     "comfly_veo_skill": {
       "name": "爆款TVC",
@@ -746,93 +1140,141 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {
-            "goal.image.pipeline": {
-                  "description": "根据目标和记忆自动规划文案与创意图片，只生成图片和可发布文案；对应定时任务里的“文案+创意图片”。",
-                  "upstream": "local",
-                  "upstream_tool": "invoke",
-                  "enabled": true,
-                  "is_default": false,
-                  "unit_credits": 0,
-                  "arg_schema": {
-                        "type": "object",
-                        "properties": {
-                              "action": {
-                                    "type": "string",
-                                    "enum": [
-                                          "run_pipeline",
-                                          "start_pipeline",
-                                          "poll_pipeline"
-                                    ],
-                                    "default": "start_pipeline"
-                              },
-                              "goal": {
-                                    "type": "string",
-                                    "description": "用户目标原文，例如：给某产品生成 6 秒宣传视频"
-                              },
-                              "job_id": {
-                                    "type": "string",
-                                    "description": "poll_pipeline 时传入的任务 ID"
-                              },
-                              "platform": {
-                                    "type": "string",
-                                    "default": "douyin"
-                              },
-                              "language": {
-                                    "type": "string",
-                                    "default": "中文"
-                              },
-                              "aspect_ratio": {
-                                    "type": "string",
-                                    "default": "9:16"
-                              },
-                              "memory_scope": {
-                                    "type": "string",
-                                    "default": "default"
-                              },
-                              "planning_model": {
-                                    "type": "string"
-                              },
-                              "image_model": {
-                                    "type": "string"
-                              },
-                              "reference_asset_ids": {
-                                    "type": "array",
-                                    "items": {
-                                          "type": "string"
-                                    }
-                              },
-                              "reference_image_urls": {
-                                    "type": "array",
-                                    "items": {
-                                          "type": "string"
-                                    }
-                              },
-                              "source_mode": {
-                                    "type": "string",
-                                    "enum": [
-                                          "ai_image"
-                                    ],
-                                    "default": "ai_image"
-                              },
-                              "image_retry_count": {
-                                    "type": "integer",
-                                    "default": 2
-                              }
-                        },
-                        "required": [
-                              "goal"
-                        ]
-                  }
-            }
+        "goal.image.pipeline": {
+          "description": "根据目标和记忆自动规划文案与创意图片，只生成图片和可发布文案；对应定时任务里的“文案+创意图片”。",
+          "upstream": "local",
+          "upstream_tool": "invoke",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "run_pipeline",
+                  "start_pipeline",
+                  "poll_pipeline"
+                ],
+                "default": "start_pipeline"
+              },
+              "goal": {
+                "type": "string",
+                "description": "用户目标原文，例如：给某产品生成 6 秒宣传视频"
+              },
+              "job_id": {
+                "type": "string",
+                "description": "poll_pipeline 时传入的任务 ID"
+              },
+              "platform": {
+                "type": "string",
+                "default": "douyin"
+              },
+              "language": {
+                "type": "string",
+                "default": "中文"
+              },
+              "aspect_ratio": {
+                "type": "string",
+                "default": "9:16"
+              },
+              "memory_scope": {
+                "type": "string",
+                "default": "default"
+              },
+              "planning_model": {
+                "type": "string"
+              },
+              "image_model": {
+                "type": "string"
+              },
+              "reference_asset_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reference_image_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source_mode": {
+                "type": "string",
+                "enum": [
+                  "ai_image"
+                ],
+                "default": "ai_image"
+              },
+              "image_retry_count": {
+                "type": "integer",
+                "default": 2
+              }
+            },
+            "required": [
+              "goal"
+            ]
+          }
+        }
       },
       "tags": [
-            "OpenClaw",
-            "video",
-            "image",
-            "memory",
-            "workflow"
+        "OpenClaw",
+        "video",
+        "image",
+        "memory",
+        "workflow"
       ]
-},
+    },
+    "ip_content_oral_skill": {
+      "name": "IP口播文案",
+      "description": "基于行业热门和专业同行数据，生成行业热门口播与专业 IP 口播文案。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "ip-content-studio",
+        "mode": "oral",
+        "server_proxy": true,
+        "query_recorded": true,
+        "default_platforms": [
+          "douyin",
+          "wechat_channels"
+        ]
+      },
+      "tags": [
+        "TikHub",
+        "抖音",
+        "口播",
+        "IP"
+      ]
+    },
+    "ip_content_moments_skill": {
+      "name": "朋友圈图文",
+      "description": "基于关键词、同行和记忆资料生成朋友圈图文内容与配图提示词。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "ip-content-studio",
+        "mode": "moments",
+        "server_proxy": true,
+        "query_recorded": true,
+        "default_platforms": [
+          "douyin",
+          "wechat_channels"
+        ]
+      },
+      "tags": [
+        "TikHub",
+        "朋友圈",
+        "图文",
+        "配图"
+      ]
+    },
     "ip_content_daily_skill": {
       "name": "IP日更文案",
       "description": "先基于抖音/视频号行业榜单、热门话题与同行最新作品整理数据源，再结合记忆素材生成口播和朋友圈日更文案；TikHub 查询统一由服务器转发、记录与扣费。",
@@ -844,7 +1286,10 @@
         "view": "ip-content-studio",
         "server_proxy": true,
         "query_recorded": true,
-        "default_platforms": ["douyin", "wechat_channels"]
+        "default_platforms": [
+          "douyin",
+          "wechat_channels"
+        ]
       },
       "capabilities": {
         "ip.content.tikhub_query": {
@@ -877,7 +1322,9 @@
                 "type": "object"
               }
             },
-            "required": ["query_type"]
+            "required": [
+              "query_type"
+            ]
           }
         }
       },
@@ -891,8 +1338,8 @@
       ]
     },
     "linkedin_mining_skill": {
-      "name": "LinkedIn\u7ebf\u7d22\u6316\u6398",
-      "description": "\u8f93\u5165LinkedIn\u4e2a\u4eba\u4e3b\u9875\u3001\u516c\u53f8\u4e3b\u9875\u3001\u5173\u952e\u8bcd\u6216\u8bdd\u9898\uff0c\u670d\u52a1\u7aef\u901a\u8fc7TikHub\u540c\u6b65\u753b\u50cf\u3001\u52a8\u6001\u3001\u5458\u5de5\u3001\u76f8\u4f3c\u516c\u53f8\u548c\u4e92\u52a8\u6570\u636e\uff0c\u751f\u6210\u53ef\u7ee7\u7eed\u6267\u884c\u7684\u7ebf\u7d22\u5206\u6790\u62a5\u544a\u3002",
+      "name": "LinkedIn线索挖掘",
+      "description": "输入LinkedIn个人主页、公司主页、关键词或话题，服务端通过TikHub同步画像、动态、员工、相似公司和互动数据，生成可继续执行的线索分析报告。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
@@ -916,26 +1363,36 @@
             "properties": {
               "seed_profile_urls": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "seed_company_urls": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "keywords": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "hashtags": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "target_profile": {
                 "type": "string"
               },
               "memory_docs": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "max_people": {
                 "type": "integer",
@@ -947,11 +1404,17 @@
           }
         }
       },
-      "tags": ["TikHub", "LinkedIn", "B2B", "lead-mining", "report"]
+      "tags": [
+        "TikHub",
+        "LinkedIn",
+        "B2B",
+        "lead-mining",
+        "report"
+      ]
     },
     "create_video_pipeline_skill": {
-      "name": "\u901f\u63a8\u89c6\u9891\u5236\u4f5c",
-      "description": "\u6839\u636e\u63d0\u793a\u8bcd\u89c4\u5212\u5206\u955c\uff0c\u8c03\u7528\u901f\u63a8 gpt-image-2 \u751f\u6210\u9996\u5e27\uff0c\u518d\u8c03\u7528 Veo 3.1 \u56fe\u751f\u89c6\u9891\u3002\u5165\u53e3\u548c\u6743\u9650\u7531\u670d\u52a1\u5668\u63a7\u5236\uff0conline \u53ea\u8d1f\u8d23\u672c\u673a\u6267\u884c\u3002",
+      "name": "速推视频制作",
+      "description": "根据提示词规划分镜，调用速推 gpt-image-2 生成首帧，再调用 Veo 3.1 图生视频。入口和权限由服务器控制，online 只负责本机执行。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
@@ -969,7 +1432,11 @@
             "properties": {
               "action": {
                 "type": "string",
-                "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"],
+                "enum": [
+                  "run_pipeline",
+                  "start_pipeline",
+                  "poll_pipeline"
+                ],
                 "default": "start_pipeline"
               },
               "job_id": {
@@ -1014,7 +1481,10 @@
               },
               "resolution": {
                 "type": "string",
-                "enum": ["720p", "1080p"],
+                "enum": [
+                  "720p",
+                  "1080p"
+                ],
                 "default": "720p"
               },
               "planning_model": {
@@ -1031,14 +1501,20 @@
               },
               "reference_asset_ids": {
                 "type": "array",
-                "items": {"type": "string"}
+                "items": {
+                  "type": "string"
+                }
               },
               "reference_image_urls": {
                 "type": "array",
-                "items": {"type": "string"}
+                "items": {
+                  "type": "string"
+                }
               }
             },
-            "required": ["prompt"]
+            "required": [
+              "prompt"
+            ]
           }
         }
       },
@@ -1062,7 +1538,7 @@
       },
       "capabilities": {
         "wewrite.article.pipeline": {
-          "description": "公众号文章整包流水线：用户只输入主题/想法，一次完成 AI 写文章、生成横屏配图、公众号排版，并推送到微信公众号草稿箱。",
+          "description": "公众号文章整包流水线：用户只输入主题/想法，一次完成 AI 写文章、生成横屏配图、公众号排版，并推送到微信公众号草稿箱。 也支持「复刻」：给一条公众号文章链接，抓正文后按原文逻辑、用记忆资料重写一篇新文章。 复刻模式不用选资料：不给 memory_document_ids/survey_ids 时自动用全部记忆 + 全部资料调查。",
           "upstream": "local",
           "upstream_tool": "invoke",
           "enabled": true,
@@ -1071,21 +1547,84 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "idea": { "type": "string", "description": "用户输入的公众号文章主题、想法或素材" },
-              "topic": { "type": "string", "description": "idea 的别名" },
-              "audience": { "type": "string", "description": "目标读者，可选" },
-              "style": { "type": "string", "description": "写作风格，可选" },
-              "theme": { "type": "string", "description": "排版主题" },
-              "include_images": { "type": "boolean", "description": "是否自动生成并插入配图，默认 true" },
-              "image_model": { "type": "string", "description": "图片模型，默认 gpt-image-2" },
-              "image_count": { "type": "integer", "description": "自动配图数量，默认 3" },
-              "image_aspect_ratio": { "type": "string", "description": "自动配图比例，默认横屏 16:9" }
+              "idea": {
+                "type": "string",
+                "description": "用户输入的公众号文章主题、想法或素材"
+              },
+              "topic": {
+                "type": "string",
+                "description": "idea 的别名"
+              },
+              "audience": {
+                "type": "string",
+                "description": "目标读者，可选"
+              },
+              "style": {
+                "type": "string",
+                "description": "写作风格，可选"
+              },
+              "theme": {
+                "type": "string",
+                "description": "排版主题"
+              },
+              "include_images": {
+                "type": "boolean",
+                "description": "是否自动生成并插入配图，默认 true"
+              },
+              "image_model": {
+                "type": "string",
+                "description": "图片模型，默认 gpt-image-2"
+              },
+              "image_count": {
+                "type": "integer",
+                "description": "自动配图数量，默认 3"
+              },
+              "image_aspect_ratio": {
+                "type": "string",
+                "description": "自动配图比例，默认横屏 16:9"
+              },
+              "source_url": {
+                "type": "string",
+                "description": "复刻模式：给一条公众号文章链接（mp.weixin.qq.com/s/...），按它的行文逻辑重写一篇；给了它 idea 可为空"
+              },
+              "memory_document_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "复刻模式：使用哪些记忆资料；留空=全部记忆"
+              },
+              "extra_material": {
+                "type": "string",
+                "description": "复刻模式：额外补充要点/要求"
+              },
+              "survey_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "复刻模式：资料调查（IP 内容调研问卷）id；留空=全部资料调查"
+              },
+              "memory_document_titles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "复刻模式：记忆资料标题（id 对不上时按标题匹配）"
+              }
             },
-            "required": ["idea"]
+            "required": [
+              "idea_or_source_url"
+            ]
           }
         }
       },
-      "tags": ["wechat", "official-account", "article", "draft"]
+      "tags": [
+        "wechat",
+        "official-account",
+        "article",
+        "draft"
+      ]
     },
     "juhe_wechat_skill": {
       "name": "微信协议助手",
@@ -1095,7 +1634,11 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["wechat", "MsgHelper", "local"]
+      "tags": [
+        "wechat",
+        "MsgHelper",
+        "local"
+      ]
     },
     "wechat_channels_transcript_skill": {
       "name": "视频号文案提取",
@@ -1105,7 +1648,11 @@
       "default_installed": true,
       "status": "available",
       "capabilities": {},
-      "tags": ["视频号", "TikHub", "文案提取"]
+      "tags": [
+        "视频号",
+        "TikHub",
+        "文案提取"
+      ]
     },
     "reddit_leads": {
       "name": "Reddit线索采集",
@@ -1131,15 +1678,39 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "keywords": { "type": "array", "items": { "type": "string" } },
-              "communities": { "type": "array", "items": { "type": "string" } },
-              "accounts": { "type": "array", "items": { "type": "string" } },
-              "post_ids": { "type": "array", "items": { "type": "string" } }
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "communities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "post_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }
       },
-      "tags": ["Reddit", "TikHub", "leads"]
+      "tags": [
+        "Reddit",
+        "TikHub",
+        "leads"
+      ]
     },
     "x_leads": {
       "name": "X线索采集",
@@ -1165,15 +1736,36 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "keywords": { "type": "array", "items": { "type": "string" } },
-              "accounts": { "type": "array", "items": { "type": "string" } },
-              "post_ids": { "type": "array", "items": { "type": "string" } },
-              "country": { "type": "string" }
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "post_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "country": {
+                "type": "string"
+              }
             }
           }
         }
       },
-      "tags": ["X", "TikHub", "leads"]
+      "tags": [
+        "X",
+        "TikHub",
+        "leads"
+      ]
     },
     "tiktok_leads": {
       "name": "TikTok线索采集",
@@ -1199,14 +1791,33 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "keywords": { "type": "array", "items": { "type": "string" } },
-              "source_keywords": { "type": "array", "items": { "type": "string" } },
-              "accounts": { "type": "array", "items": { "type": "string" } }
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source_keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }
       },
-      "tags": ["TikTok", "TikHub", "leads"]
+      "tags": [
+        "TikTok",
+        "TikHub",
+        "leads"
+      ]
     },
     "global_trade_leads_skill": {
       "name": "全球获客",
@@ -1237,20 +1848,43 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "company_name": { "type": "string" },
-              "domain": { "type": "string" },
-              "region": { "type": "string" },
-              "keywords": { "type": "array", "items": { "type": "string" } },
-              "sources": { "type": "array", "items": { "type": "string" } }
+              "company_name": {
+                "type": "string"
+              },
+              "domain": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }
       },
-      "tags": ["全球获客", "CRM", "企业搜索", "LinkedIn", "X", "TikTok"]
+      "tags": [
+        "全球获客",
+        "CRM",
+        "企业搜索",
+        "LinkedIn",
+        "X",
+        "TikTok"
+      ]
     },
     "alibaba_inquiry_takeover_skill": {
-      "name": "\u963f\u91cc\u8be2\u76d8\u63a5\u7ba1",
-      "description": "\u63a5\u5165\u963f\u91cc\u56fd\u9645\u7ad9\u8be2\u76d8\uff1a\u8d26\u53f7\u626b\u7801\u767b\u5f55\u3001\u6eda\u52a8\u540c\u6b65\u5386\u53f2\u8be2\u76d8\u3001\u672c\u5730\u5ba2\u6237\u6863\u6848\u3001AI\u8bdd\u672f\u603b\u7ed3\u548c\u56de\u590d\u8f85\u52a9\u3002",
+      "name": "阿里询盘接管",
+      "description": "接入阿里国际站询盘：账号扫码登录、滚动同步历史询盘、本地客户档案、AI话术总结和回复辅助。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
@@ -1262,7 +1896,7 @@
       },
       "capabilities": {
         "alibaba.inquiry.takeover": {
-          "description": "\u963f\u91cc\u56fd\u9645\u7ad9\u8be2\u76d8\u63a5\u7ba1\u5de5\u4f5c\u53f0\uff1a\u540c\u6b65\u8be2\u76d8\u3001\u5ba2\u6237\u6863\u6848\u3001\u8bad\u7ec3\u8bdd\u672f\u548c\u56de\u590d\u8f85\u52a9\u3002",
+          "description": "阿里国际站询盘接管工作台：同步询盘、客户档案、训练话术和回复辅助。",
           "upstream": "local",
           "upstream_tool": "alibaba_inquiries",
           "enabled": true,
@@ -1293,10 +1927,10 @@
         }
       },
       "tags": [
-        "\u963f\u91cc\u56fd\u9645\u7ad9",
-        "\u8be2\u76d8",
-        "\u5ba2\u6237\u6863\u6848",
-        "AI\u8bdd\u672f"
+        "阿里国际站",
+        "询盘",
+        "客户档案",
+        "AI话术"
       ]
     },
     "ai_3d_model_skill": {
@@ -1318,7 +1952,13 @@
         ]
       },
       "capabilities": {},
-      "tags": ["3D", "高质量建模", "Meshy", "多视角", "拆件包"]
+      "tags": [
+        "3D",
+        "高质量建模",
+        "Meshy",
+        "多视角",
+        "拆件包"
+      ]
     },
     "create_ppt_skill": {
       "name": "PPT",
@@ -1342,26 +1982,437 @@
           "arg_schema": {
             "type": "object",
             "properties": {
-              "mode": { "type": "string", "enum": ["outline", "markdown", "ai", "image_fullpage"], "description": "Generation mode. Use ai by default for AI image-composited full-slide PPT pages from a topic." },
-              "topic": { "type": "string", "description": "Specific PPT topic/title from the user. Required for ai and image_fullpage modes." },
-              "outline_markdown": { "type": "string", "description": "Markdown outline for slides." },
-              "slide_count": { "type": "integer", "minimum": 1, "maximum": 80, "description": "Number of slides to create. Default 10 for ai mode." },
-              "theme": { "type": "string", "description": "Visual theme." },
-              "language": { "type": "string", "description": "Deck language, for example zh-CN." },
-              "instructions": { "type": "string", "description": "Additional user requirements, style, audience, or structure notes." },
-              "model": { "type": "string", "description": "Optional OpenAI-compatible text model." },
-              "base_url": { "type": "string", "description": "Optional OpenAI-compatible base URL." },
-              "filename": { "type": "string", "description": "Optional output PPTX filename." },
-              "slide_prompts": { "type": "array", "items": { "type": "string" }, "description": "Per-slide prompts for image_fullpage mode." },
-              "image_model": { "type": "string", "description": "Image model for image_fullpage mode." },
-              "image_quality": { "type": "string", "description": "Image quality for image_fullpage mode." },
-              "image_background": { "type": "string", "description": "Image background mode for image_fullpage mode." },
-              "aspect_ratio": { "type": "string", "description": "Image aspect ratio for image_fullpage mode, normally 16:9." }
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "outline",
+                  "markdown",
+                  "ai",
+                  "image_fullpage"
+                ],
+                "description": "Generation mode. Use ai by default for AI image-composited full-slide PPT pages from a topic."
+              },
+              "topic": {
+                "type": "string",
+                "description": "Specific PPT topic/title from the user. Required for ai and image_fullpage modes."
+              },
+              "outline_markdown": {
+                "type": "string",
+                "description": "Markdown outline for slides."
+              },
+              "slide_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 80,
+                "description": "Number of slides to create. Default 10 for ai mode."
+              },
+              "theme": {
+                "type": "string",
+                "description": "Visual theme."
+              },
+              "language": {
+                "type": "string",
+                "description": "Deck language, for example zh-CN."
+              },
+              "instructions": {
+                "type": "string",
+                "description": "Additional user requirements, style, audience, or structure notes."
+              },
+              "model": {
+                "type": "string",
+                "description": "Optional OpenAI-compatible text model."
+              },
+              "base_url": {
+                "type": "string",
+                "description": "Optional OpenAI-compatible base URL."
+              },
+              "filename": {
+                "type": "string",
+                "description": "Optional output PPTX filename."
+              },
+              "slide_prompts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Per-slide prompts for image_fullpage mode."
+              },
+              "image_model": {
+                "type": "string",
+                "description": "Image model for image_fullpage mode."
+              },
+              "image_quality": {
+                "type": "string",
+                "description": "Image quality for image_fullpage mode."
+              },
+              "image_background": {
+                "type": "string",
+                "description": "Image background mode for image_fullpage mode."
+              },
+              "aspect_ratio": {
+                "type": "string",
+                "description": "Image aspect ratio for image_fullpage mode, normally 16:9."
+              }
             }
           }
         }
       },
-      "tags": ["ppt", "office", "presentation", "document"]
+      "tags": [
+        "ppt",
+        "office",
+        "presentation",
+        "document"
+      ]
+    },
+    "liepin_recruit_skill": {
+      "name": "猎聘招聘",
+      "description": "猎聘招聘端（lpt.liepin.com）：先扫码登录，再搜人才 / 读候选人 / 沟通发消息 / 出候选人表。搜索走协议直连（api-lpt.liepin.com，无需浏览器界面），发消息与开简历走已登录浏览器。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "liepin-recruit",
+        "site": "https://lpt.liepin.com",
+        "browser": "chromium_bundled",
+        "cdp_port": 9222,
+        "login_mode": "scan_qr",
+        "rate_limit": {
+          "searches_per_page": 2,
+          "restart_on_blank": true,
+          "restart_settle_sec": 30
+        }
+      },
+      "capabilities": {
+        "liepin.browser.open": {
+          "description": "启动/重启猎聘浏览器窗口并返回登录状态。若未登录，用户在该窗口扫码登录一次即可。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "start",
+                  "restart",
+                  "status"
+                ]
+              }
+            }
+          }
+        },
+        "liepin.login.status": {
+          "description": "查询猎聘登录状态（是否已登录、当前账号、当前页面）。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "liepin.candidates.search": {
+          "description": "搜索猎聘人才库，返回结构化候选人（姓名/性别/年龄/年限/学历/现居/期望城市/期望职位薪资/行业标签/公司履历/学校/活跃度/是否已沟通/res_id）。默认走协议直连（一次一页约 20 人，可翻页），失败自动回落到浏览器驱动。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "关键词，如「东南亚 销售总监 电表」；可为空（纯靠 filters 过滤）"
+              },
+              "pages": {
+                "type": "integer",
+                "default": 1,
+                "description": "抓几页（每页约 20 人）"
+              },
+              "limit": {
+                "type": "integer",
+                "default": 20
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "protocol",
+                  "browser"
+                ],
+                "default": "auto"
+              },
+              "filters": {
+                "type": "object",
+                "description": "协议直连过滤条件",
+                "properties": {
+                  "must_include": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "结果必须包含的关键词"
+                  },
+                  "cities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "min_years": {
+                    "type": "integer"
+                  },
+                  "dqs": {
+                    "type": "string",
+                    "description": "目前城市代码或中文，如 印度尼西亚/越南"
+                  },
+                  "want_dqs": {
+                    "type": "string",
+                    "description": "期望城市"
+                  },
+                  "jobtitles": {
+                    "type": "string"
+                  },
+                  "company": {
+                    "type": "string"
+                  },
+                  "workyears": {
+                    "type": "string",
+                    "description": "年限区间，如 0,99 / 8,99"
+                  },
+                  "edu_levels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "language": {
+                    "type": "string",
+                    "description": "语言要求，如 英语/印尼语"
+                  },
+                  "age": {
+                    "type": "string"
+                  },
+                  "sex": {
+                    "type": "string"
+                  },
+                  "active_status": {
+                    "type": "string"
+                  },
+                  "manage_exp": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": []
+          }
+        },
+        "liepin.candidates.suggest": {
+          "description": "搜索词联想（协议直连），用于把用户口语化需求（如「东南亚电表销售」）变成猎聘能命中的关键词。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "keyword": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "keyword"
+            ]
+          }
+        },
+        "liepin.candidates.detail": {
+          "description": "打开某位候选人的简历详情页，抓取完整履历/联系方式可见字段。会消耗猎聘查看权益，必须显式确认。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer"
+              },
+              "confirm": {
+                "type": "boolean",
+                "description": "true 才会真正打开（消耗查看权益）"
+              }
+            },
+            "required": [
+              "name",
+              "confirm"
+            ]
+          }
+        },
+        "liepin.session.info": {
+          "description": "猎聘账号概览：登录账号、会员身份与到期时间、开聊额度(b_open_chat)、未读消息数、新招呼数。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "liepin.applications.list": {
+          "description": "猎聘求职者投递列表（分页）：投递人、期望职位、期望城市、学历。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer",
+                "default": 0
+              },
+              "page_size": {
+                "type": "integer",
+                "default": 10
+              }
+            }
+          }
+        },
+        "liepin.chat.list": {
+          "description": "读取猎聘「沟通」页的会话列表（全部/新招呼/我发起的/我回复的等）。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer",
+                "default": 0
+              },
+              "page_size": {
+                "type": "integer",
+                "default": 30
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "protocol",
+                  "browser"
+                ],
+                "default": "auto"
+              }
+            }
+          }
+        },
+        "liepin.chat.send": {
+          "description": "给沟通列表中的候选人发送消息（真实触达）。需要 confirm=true，且台账去重（相同内容不会重复发）。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "会话里的候选人名称"
+              },
+              "text": {
+                "type": "string"
+              },
+              "confirm": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "target",
+              "text",
+              "confirm"
+            ]
+          }
+        },
+        "liepin.ledger.read": {
+          "description": "读取猎聘动作台账（搜索记录 / 已发消息 / 已开简历），用于去重和汇报。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "searches",
+                  "messages",
+                  "details"
+                ]
+              }
+            }
+          }
+        },
+        "liepin.report.export": {
+          "description": "把候选人行导出成 Excel/CSV（落到本机 _lobster_runtime/liepin/exports）。",
+          "upstream": "local",
+          "upstream_tool": "liepin",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "xlsx",
+                  "csv"
+                ]
+              },
+              "filename": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "rows"
+            ]
+          }
+        }
+      },
+      "tags": [
+        "招聘",
+        "猎聘",
+        "HR",
+        "候选人",
+        "浏览器自动化"
+      ]
     }
   }
 }

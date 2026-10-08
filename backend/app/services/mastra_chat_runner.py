@@ -17,6 +17,7 @@ from ..api.h5_chat import _add_event, _finish_mastra_parent_from_children
 from ..db import SessionLocal
 from ..models import H5ChatApproval, H5ChatEvent, H5ChatMessage, H5ChatSession, User
 from .brand_context import user_brand_mark
+from . import model_reply_profiles as _model_reply_profiles
 from .mastra_attachment_security import (
     UnsafeMastraImageError,
     assert_safe_remote_mastra_images,
@@ -24,9 +25,85 @@ from .mastra_attachment_security import (
 
 logger = logging.getLogger(__name__)
 
+
+def _strip_fake_tool_markup(value: Any) -> str:
+    """剥掉"把工具调用写进正文"的残留（DSML / XML / JSON 等形式）。
+
+    代理层已经按模型档案清过一遍，这里再兜一层：mastra 侧也会自己把模型想调的
+    工具渲染成文本回传（``<tool_calls><invoke name=...>`` 这类），必须在写库
+    和推事件之前清掉，否则会话记忆会反复照抄。
+    """
+    raw = str(value or "")
+    if not raw.strip():
+        return raw
+    profile = _model_reply_profiles.profile_for("")
+    cleaned, changed = _model_reply_profiles.strip_fake_tool_text(raw, profile, ())
+    if changed:
+        logger.warning(
+            "[dispatch-clean] stripped fake tool markup (%d -> %d chars)", len(raw), len(cleaned)
+        )
+        # 刻意不在这里塞兜底文案：调用方需要能区分"清空了"和"本来就有正文"，
+        # 否则"整段都是工具调用残留"会被包装成一句正常回复。
+        return cleaned.strip()
+    return cleaned
+
 _WORKER_ID = "mastra-server"
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _STREAM_EVENT_TYPES = {"thinking", "tool_start", "tool_end", "progress"}
+
+# 整段回复只有工具调用残留时给用户的说明（不再把标签写进对话）
+_EMPTY_REPLY_NOTICE = (
+    "这轮没能生成一段完整答复（模型只返回了工具调用）。"
+    "已经执行过的动作和结果都留在本条消息里；你可以直接回复「继续」，我会接着往下做。"
+)
+
+
+def _is_placeholder_reply(value: Any) -> bool:
+    """这句是不是"模型其实没给正文、被兜底文案顶上来"的占位句。
+
+    代理层会把"整段都是工具调用残留"的回复替换成 profile 的兜底文案，
+    runner 只看到一句正常中文，就会当成结果直接结束（用户看到的"停在那里、
+    没有结果"）。这里认出它，按"没拿到正文"处理，触发重试。
+    """
+    text_value = str(value or "").strip()
+    if not text_value:
+        return False
+    profile = _model_reply_profiles.profile_for("")
+    known = {
+        str(getattr(profile, "fake_tool_fallback_text", "") or "").strip(),
+        str(getattr(_model_reply_profiles, "DEFAULT_FALLBACK_TEXT", "") or "").strip(),
+    }
+    known.discard("")
+    return text_value in known
+
+
+def _usable_streamed_reply(parts: List[str]) -> str:
+    """把已经流式发给用户的正文挑出来（占位句、工具残留不算）。
+
+    2026-09-19 那次事故：第 2 轮明明流式给出了完整答复，但 final 事件里的正文是代理层的
+    占位句，runner 判成"没正文"→ 重试 → 最后用通知把好答案盖掉了。这里把流式正文留住。
+    """
+    text = "".join(str(part or "") for part in parts).strip()
+    if not text:
+        return ""
+    profile = _model_reply_profiles.profile_for("")
+    for known in (
+        getattr(profile, "fake_tool_fallback_text", ""),
+        getattr(_model_reply_profiles, "DEFAULT_FALLBACK_TEXT", ""),
+    ):
+        known_text = str(known or "").strip()
+        if known_text and text == known_text:
+            return ""
+        if known_text and known_text in text:
+            text = text.replace(known_text, "").strip()
+    cleaned = _strip_fake_tool_markup(text)
+    cleaned = cleaned.strip()
+    # 太短的一律不当正文（避免把"好的""收到"当成答复）
+    return cleaned if len(cleaned) >= 30 else ""
+
+
+class _JunkOnlyFinal(RuntimeError):
+    """最终回复整段都是工具调用残留：先重试，别把垃圾写进对话。"""
 
 
 @dataclass(frozen=True)
@@ -144,6 +221,55 @@ def _is_retryable_mastra_stream_error(error: Exception) -> bool:
             "timeout",
         )
     )
+
+
+_MODEL_QUOTA_HINTS = (
+    "payment required",
+    "insufficient_quota",
+    "insufficient quota",
+    "insufficient balance",
+    "quota exceeded",
+    "exceeded your current quota",
+    "billing",
+    "no credit",
+    "not enough credit",
+    "out of credit",
+    "欠费",
+    "余额不足",
+    "额度不足",
+    "额度已用尽",
+)
+
+_MODEL_AUTH_HINTS = ("unauthorized", "invalid api key", "invalid_api_key", "authentication")
+_MODEL_RATE_LIMIT_HINTS = ("rate limit", "rate_limit", "too many requests", "429")
+_MODEL_UNKNOWN_HINTS = (
+    "supported api model names",
+    "model not found",
+    "unknown model",
+    "does not exist",
+    "invalid model",
+    "unsupported model",
+)
+
+
+def _friendly_mastra_error(detail: str) -> str:
+    """Translate an upstream model/transport failure into an actionable message.
+
+    A raw "Payment Required" used to surface as "AI 调度服务暂时中断", which
+    tells the user nothing and looks like a random outage.  Map the known
+    upstream rejections to what actually happened and what to do next.
+    """
+    raw = str(detail or "").strip()
+    lowered = raw.lower()
+    if any(hint in lowered for hint in _MODEL_QUOTA_HINTS) or "402" in lowered:
+        return "模型额度不足（402 Payment Required），本轮没有下发任务；充值模型额度后重试即可。"
+    if any(hint in lowered for hint in _MODEL_UNKNOWN_HINTS):
+        return f"模型名不被服务商支持（{raw[:160]}）：请在设置里改用服务商支持的模型后重试。"
+    if any(hint in lowered for hint in _MODEL_AUTH_HINTS):
+        return "模型服务鉴权失败（401），请检查模型密钥后重试。"
+    if any(hint in lowered for hint in _MODEL_RATE_LIMIT_HINTS):
+        return "模型服务限流（429），本轮没有下发任务，稍后重试即可。"
+    return "AI 调度服务暂时中断，本轮未下发任务，请重试。"
 
 
 def _internal_secret() -> str:
@@ -593,6 +719,7 @@ def _complete_sync(
                 approval.updated_at = now
             db.commit()
             return
+        reply = _strip_fake_tool_markup(reply)
         clean_reply = (reply or "").strip() or (
             "任务已下发，正在等待 Online 执行。" if dispatches else "处理完成。"
         )
@@ -735,7 +862,9 @@ def _fallback_or_fail_sync(message_id: str, error: str) -> str:
             result = "waiting_online"
         else:
             row.status = "failed"
-            row.error = "AI 调度服务暂时中断，本轮未下发任务，请重试。"
+            # Keep the upstream detail in the event payload/log for diagnosis and
+            # show the user an actionable reason instead of a generic outage.
+            row.error = _friendly_mastra_error(error)
             row.finished_at = now
             row.updated_at = now
             _add_event(
@@ -944,6 +1073,8 @@ async def _run_job_request(job: MastraChatJob) -> None:
     delta_buffer = ""
     last_delta_flush = asyncio.get_running_loop().time()
     final_received = False
+    # 已经流式发给用户的正文（用于"final 是占位句但正文已经给过"的情况）
+    streamed_parts: List[str] = []
     observed_media_tasks: Dict[str, Dict[str, Any]] = {
         task["capability_id"]: task
         for task in (_normalized_media_task(item) for item in job.existing_media_tasks)
@@ -966,11 +1097,21 @@ async def _run_job_request(job: MastraChatJob) -> None:
         text = delta_buffer
         delta_buffer = ""
         last_delta_flush = asyncio.get_running_loop().time()
-        await _append_event(job.message_id, "delta", {"text": text})
+        # 流式也必须过 guard：不然 <||DSML|| …> 这种信封会一片一片飘进对话框
+        cleaned = stream_guard.feed(text)
+        if cleaned:
+            # 代理层的"没正文"占位句不要飘进对话框，也别算作已交付正文
+            if _is_placeholder_reply(cleaned.strip()):
+                return
+            streamed_parts.append(cleaned)
+            await _append_event(job.message_id, "delta", {"text": cleaned})
 
     attempts = _stream_retry_attempts()
     for attempt in range(1, attempts + 1):
         final_received = False
+        stream_guard = _model_reply_profiles.StreamGuard(
+            profile=_model_reply_profiles.profile_for("")
+        )
         try:
             async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
                 async with client.stream(
@@ -1002,25 +1143,89 @@ async def _run_job_request(job: MastraChatJob) -> None:
                             await _append_event(job.message_id, event_type, payload)
                             continue
                         if event_type == "final":
+                            raw_reply = str(event.get("reply") or "")
+                            dispatches = list(event.get("dispatches") or [])
+                            media_tasks = list(event.get("media_tasks") or [])
+                            saved_assets = list(event.get("saved_assets") or [])
+                            cleaned_reply = _strip_fake_tool_markup(raw_reply)
+                            if (
+                                raw_reply.strip()
+                                and (not cleaned_reply or _is_placeholder_reply(raw_reply))
+                                and not dispatches
+                                and not media_tasks
+                                and not saved_assets
+                            ):
+                                logger.warning(
+                                    "[dispatch-clean] junk-only final message=%s raw=%s",
+                                    job.message_id,
+                                    raw_reply[:400],
+                                )
+                                raise _JunkOnlyFinal("模型只返回了工具调用残留")
                             final_received = True
                             await asyncio.to_thread(
                                 _complete_sync,
                                 job.message_id,
-                                str(event.get("reply") or ""),
-                                list(event.get("dispatches") or []),
+                                raw_reply,
+                                dispatches,
                                 event.get("usage") if isinstance(event.get("usage"), dict) else None,
-                                list(event.get("media_tasks") or []),
-                                list(event.get("saved_assets") or []),
+                                media_tasks,
+                                saved_assets,
                             )
                             continue
                         if event_type == "error":
                             raise RuntimeError(str(event.get("error") or "AI 调度失败"))
             await flush_delta()
+            tail = stream_guard.flush()
+            if tail:
+                await _append_event(job.message_id, "delta", {"text": tail})
             if not final_received:
                 raise RuntimeError("AI 调度服务未返回最终结果")
             return
         except asyncio.CancelledError:
             raise
+        except _JunkOnlyFinal:
+            await flush_delta()
+            # 主循环已经把正文流式给过用户了：以正文收尾，别用"请再说一次"把它盖掉。
+            usable = _usable_streamed_reply(streamed_parts)
+            if usable:
+                logger.warning(
+                    "[dispatch-clean] junk-only final 但已有可用流式正文 message=%s chars=%d → 用正文收尾",
+                    job.message_id,
+                    len(usable),
+                )
+                await asyncio.to_thread(
+                    _complete_sync,
+                    job.message_id,
+                    usable,
+                    [],
+                    None,
+                    list(observed_media_tasks.values()),
+                    [],
+                )
+                return
+            if attempt < attempts:
+                await _append_event(
+                    job.message_id,
+                    "progress",
+                    {"text": f"模型这次只回了工具调用指令，正在重试（{attempt + 1}/{attempts}）"},
+                )
+                await asyncio.sleep(min(1.5 * attempt, 4.0))
+                continue
+            logger.warning(
+                "[dispatch-clean] 收尾仍无正文，使用兜底提示 message=%s streamed_chars=%d",
+                job.message_id,
+                len("".join(streamed_parts)),
+            )
+            await asyncio.to_thread(
+                _complete_sync,
+                job.message_id,
+                _EMPTY_REPLY_NOTICE,
+                [],
+                None,
+                [],
+                [],
+            )
+            return
         except Exception as exc:
             await flush_delta()
             if observed_media_tasks:

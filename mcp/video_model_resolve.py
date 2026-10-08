@@ -19,6 +19,7 @@ APIZ_VEO31_REFERENCE_MODEL = "apiz/veo3.1/reference-to-video"
 APIZ_BIHUO_25_VIDEO_MODEL = "st-ai/super-seed2-lite"
 SUTUI_GROK_TEXT_MODEL = "xai/grok-imagine-video/text-to-video"
 SUTUI_GROK_15_IMAGE_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
+DASHSCOPE_WAN30_VIDEO_MODEL = "wan3.0-video"
 _LEGACY_FAL_VEO31_RE = re.compile(r"^fal-ai/veo3\.1(?:/.*)?$", re.I)
 _LEGACY_DEFAULT_VIDEO_MODELS = frozenset(
     {
@@ -192,6 +193,22 @@ def _build_alias_map() -> Dict[str, Pair]:
             "wan v2.7",
         ),
         wan27,
+    )
+
+    # —— 千问万相 3.0 ——
+    # wan3.0 是 DashScope 的 All-in-One 模型，文生/图生使用同一个模型名；
+    # 由服务端根据是否有首帧图生成对应的 input.media。
+    add(
+        (
+            "wan 3.0",
+            "wan3.0",
+            "wan v3.0",
+            "wan/v3.0",
+            "wan3.0-video",
+            "万相3.0",
+            "万相 3.0",
+        ),
+        _p(DASHSCOPE_WAN30_VIDEO_MODEL, DASHSCOPE_WAN30_VIDEO_MODEL),
     )
 
     # 未指定版本的 wan → 默认 v2.7（最新可用）

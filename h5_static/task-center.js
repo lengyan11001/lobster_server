@@ -1,9 +1,21 @@
 (function () {
   "use strict";
 
-  var state = { rows: [], open: false, seen: {}, loading: false, dragging: false };
+  var state = {
+    rows: [],
+    open: false,
+    seen: {},
+    loading: false,
+    dragging: false,
+    authenticated: !!window.__lobsterH5AuthReady,
+    started: false,
+    timer: null
+  };
   var brand = (function () {
     try {
+      var host = String(location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
+      var domainBrands = { "hikongai.cn": "hikong", "www.hikongai.cn": "hikong", "admin.hikongai.cn": "hikong" };
+      if (domainBrands[host]) return domainBrands[host];
       var raw = String(new URLSearchParams(location.search).get("brand") || new URLSearchParams(location.search).get("brand_mark") || "bihuo").trim().toLowerCase();
       return /^[a-z][a-z0-9_-]{0,62}$/.test(raw) ? raw : "bihuo";
     } catch (_) {
@@ -32,7 +44,7 @@
   }
 
   function isActive(row) {
-    return ["pending", "processing", "running", "claimed", "queued"].indexOf(String(row && row.status || "").toLowerCase()) >= 0;
+    return ["pending", "processing", "running", "claimed", "queued", "waiting"].indexOf(String(row && row.status || "").toLowerCase()) >= 0;
   }
 
   function taskTitle(row) {
@@ -50,7 +62,7 @@
     root.id = "lobsterTaskCenter";
     root.innerHTML = [
       '<button id="lobsterTaskFab" class="lobster-task-fab" type="button" aria-label="当前执行任务" title="当前执行任务">',
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12M6 12h12M6 19h8"></path><path d="m16 17 2 2 4-5"></path></svg><i></i></button>',
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 17.5 4 21l4.2-1.35A9 9 0 1 0 5.5 17.5Z"></path><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"></path></svg><i></i></button>',
       '<section id="lobsterTaskPanel" class="lobster-task-panel" hidden aria-label="当前执行任务">',
       '<header class="lobster-task-head"><strong>当前执行任务</strong><button class="lobster-task-close" type="button" aria-label="关闭">×</button></header>',
       '<div id="lobsterTaskList" class="lobster-task-list"></div></section>'
@@ -75,7 +87,7 @@
     var height = Number(viewport && viewport.height || window.innerHeight || 0);
     var shell = document.querySelector(".shell");
     var shellRect = shell ? shell.getBoundingClientRect() : { left: left, right: left + width };
-    var size = fab.offsetWidth || 58;
+    var size = fab.offsetWidth || 54;
     var minLeft = Math.max(left + 10, shellRect.left + 10);
     var maxLeft = Math.max(minLeft, Math.min(left + width - size - 10, shellRect.right - size - 10));
     return { minLeft: minLeft, maxLeft: maxLeft, minTop: top + 10, maxTop: Math.max(top + 10, top + height - size - 10) };
@@ -193,35 +205,37 @@
   }
 
   function render() {
+    var root = document.getElementById("lobsterTaskCenter");
     var panel = document.getElementById("lobsterTaskPanel");
     var fab = document.getElementById("lobsterTaskFab");
     var list = document.getElementById("lobsterTaskList");
     if (!panel || !fab || !list) return;
+    if (root) root.hidden = !state.authenticated;
     var running = state.rows.filter(isActive);
     fab.classList.toggle("is-active", running.length > 0);
     panel.hidden = !state.open;
-    list.innerHTML = running.length ? running.slice(0, 8).map(function (row) {
+    list.innerHTML = running.length ? running.slice(0, 1).map(function (row) {
       return '<article class="lobster-task-card"><div class="lobster-task-copy"><div class="lobster-task-title">' + escapeHtml(taskTitle(row)) + '</div><div class="lobster-task-message">' + escapeHtml(taskMessage(row)) + '</div></div>' + (row.id ? '<button class="lobster-task-stop" data-run-id="' + escapeHtml(row.id) + '" type="button">停止</button>' : '') + '</article>';
     }).join("") : '<div class="lobster-task-empty">当前没有执行中的任务</div>';
     requestAnimationFrame(positionPanel);
   }
 
   async function refresh() {
-    if (state.loading || !token()) return;
+    if (state.loading || !state.authenticated || !token()) return;
     state.loading = true;
     try {
-      var params = new URLSearchParams({ limit: "30", compact: "false" });
+      var params = new URLSearchParams({ limit: "1", compact: "true", active_only: "1" });
       var iid = installationId();
       if (iid) params.set("installation_id", iid);
       var response = await fetch("/api/scheduled-tasks/runs?" + params.toString(), { headers: headers() });
       if (!response.ok) throw new Error("load failed");
       var data = await response.json();
       var rows = Array.isArray(data.runs) ? data.runs : [];
-      var running = rows.filter(isActive);
+      var running = rows.filter(isActive).slice(0, 1);
       var fresh = running.some(function (row) { return row.id && !state.seen[row.id]; });
       state.seen = {};
       running.forEach(function (row) { if (row.id) state.seen[row.id] = true; });
-      state.rows = rows;
+      state.rows = running;
       if (fresh) state.open = true;
       render();
     } catch (_) {
@@ -232,6 +246,7 @@
   }
 
   async function stopRun(event) {
+    if (!state.authenticated || !token()) return;
     var button = event.target.closest("[data-run-id]");
     if (!button) return;
     button.disabled = true;
@@ -246,12 +261,50 @@
     }
   }
 
-  function start() {
+  function clearTimer() {
+    if (state.timer !== null) {
+      window.clearTimeout(state.timer);
+      state.timer = null;
+    }
+  }
+
+  function schedulePoll(delay) {
+    if (!state.started || !state.authenticated || !token() || state.timer !== null) return;
+    state.timer = window.setTimeout(async function () {
+      state.timer = null;
+      if (!state.authenticated || !token()) return;
+      await refresh();
+    // Keep the fleet-side polling light: 20s while a task runs, 60s when idle.
+    schedulePoll(state.rows.some(isActive) ? 20000 : 60000);
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function setAuthenticated(value) {
+    state.authenticated = !!value;
+    if (!state.authenticated) {
+      clearTimer();
+      state.rows = [];
+      state.seen = {};
+      state.open = false;
+      render();
+      return;
+    }
     mount();
-    refresh();
-    setInterval(refresh, 4000);
+    render();
+    schedulePoll(0);
+  }
+
+  function start() {
+    state.started = true;
+    window.addEventListener("lobster-auth-state", function (event) {
+      var detail = event && event.detail;
+      setAuthenticated(!!(detail && detail.authenticated));
+    });
+    setAuthenticated(window.__lobsterH5AuthReady === true);
     window.addEventListener("storage", function (event) {
-      if (event.key === storage("lobster_h5_selected_installation_id")) refresh();
+      if (event.key === storage("lobster_h5_selected_installation_id") && state.authenticated) {
+        refresh();
+      }
     });
   }
 

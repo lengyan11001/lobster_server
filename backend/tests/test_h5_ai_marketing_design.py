@@ -342,7 +342,7 @@ def test_h5_storyboard_video_uses_online_workbench_payload_contract():
 
     assert 'return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };' in script
     assert 'return { model: "seedance-2.5", channel: "xing" };' in script
-    assert 'return { model: "veo3.1", channel: "yunwu" };' in script
+    assert 'return { model: "veo3.1", channel: "openmind" };' in script
     assert '["seedance-2.5", "影梦 2.5"]' in script
     assert 'seedanceIsYunwuVeoModel(model) ? 8 : 10' in script
     assert 'image_model_fallback: "nano-banana-2"' in payload_builder

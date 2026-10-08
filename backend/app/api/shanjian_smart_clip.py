@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from ..models import ShanjianDigitalHumanProfile, User
 from .auth import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _ROOT_DIR = Path(__file__).resolve().parents[3]
 _ENV_PATH = _ROOT_DIR / ".env"
@@ -68,6 +70,7 @@ class SubmitClipBody(TokenBody):
     resource_preprocess_method: str = "roughCut"
     material_composition: str = "random"
     video_duration: int = 30
+    struct_layers: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskBody(TokenBody):
@@ -164,6 +167,13 @@ def _data(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_material_composition(value: Any) -> str:
+    composition = _clean_text(value)
+    if composition == "sequential":
+        composition = "order"
+    return composition if composition in {"random", "order"} else "random"
 
 
 def _normalize_virtualman_row(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -367,8 +377,8 @@ async def submit_clip(
         endpoint = "/v1/clip/video/broadcast_mixcut"
     elif scene == "newsMixCutting":
         endpoint = "/v1/clip/video/news_mixcut"
-        payload["processRules"]["materialComposition"] = (
-            body.material_composition if body.material_composition in {"random", "sequential"} else "random"
+        payload["processRules"]["materialComposition"] = _normalize_material_composition(
+            body.material_composition
         )
         payload["processRules"]["videoDuration"] = max(5, min(int(body.video_duration or 30), 300))
 
@@ -391,20 +401,49 @@ async def submit_clip(
             file_url = str(item.get("fileUrl") or item.get("file_url") or "").strip()
             kind = str(item.get("type") or "").strip()
             if file_url and kind in {"image", "video"}:
-                cleaned.append({"type": kind, "fileUrl": file_url})
+                row = {"type": kind, "fileUrl": file_url}
+                if "soundSwitch" in item or "sound_switch" in item:
+                    row["soundSwitch"] = bool(item.get("soundSwitch", item.get("sound_switch")))
+                cleaned.append(row)
         if cleaned:
             payload["materials"] = cleaned
-    if body.introduce_name.strip() or body.introduce_description.strip():
+    intro_name = body.introduce_name.strip() or str(body.title or "").strip() or "智能剪辑"
+    if body.introduce_description.strip():
         payload["introduceCard"] = {
-            "name": body.introduce_name.strip(),
+            "name": intro_name[:80],
             "description": body.introduce_description.strip(),
         }
+    if body.struct_layers:
+        payload["structLayers"] = [
+            item for item in body.struct_layers[:10]
+            if isinstance(item, dict) and str(item.get("markCode") or item.get("mark_code") or "").strip()
+        ]
 
+    logger.info(
+        "[shanjian-smart-clip] submit user_id=%s scene=%s style_id=%s title_len=%s introduce_name_len=%s introduce_description_len=%s materials=%s pack_rules=%s process_rules=%s",
+        current_user.id,
+        scene,
+        body.style_id.strip(),
+        len(str(payload.get("title") or "")),
+        len(body.introduce_name.strip()),
+        len(body.introduce_description.strip()),
+        len(payload.get("materials") or []),
+        payload.get("packRules"),
+        payload.get("processRules"),
+    )
     upstream = await _post(endpoint, body.token, payload)
     data = _data(upstream)
     task_id = str(data.get("taskId") or "").strip()
     if not task_id:
         raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+    logger.info(
+        "[shanjian-smart-clip] accepted user_id=%s scene=%s style_id=%s task_id=%s request_id=%s",
+        current_user.id,
+        scene,
+        body.style_id.strip(),
+        task_id,
+        upstream.get("requestId") or "",
+    )
     return {
         "ok": True,
         "task_id": task_id,

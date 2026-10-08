@@ -6,9 +6,31 @@ reset the remote checkout to origin/main, then run server_update_and_restart.sh.
 """
 from __future__ import annotations
 
+
+_DEPLOY_CONFIRM_PHRASE = "发"
+
+
+def _require_user_deploy_confirmation() -> None:
+    """部署/发布硬闸门：必须用户明确说「发」；AI 会话不得绕过。
+
+    授权：环境变量 LOBSTER_DEPLOY_CONFIRM=发 或命令行 --i-said-fa。
+    """
+    args = list(sys.argv[1:])
+    if (os.environ.get("LOBSTER_DEPLOY_CONFIRM") or "").strip() == _DEPLOY_CONFIRM_PHRASE or "--i-said-fa" in args:
+        return
+    print(
+        "[BLOCKED] 未经用户授权，部署/发布已拦截。\n"
+        "  请让用户明确说「发」，然后：\n"
+        "    LOBSTER_DEPLOY_CONFIRM=发 python <本脚本> ...   （或加 --i-said-fa）",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+
 import argparse
 import os
 import shlex
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +61,13 @@ def _split_host(value: str) -> tuple[str, str]:
         user, host = value.split("@", 1)
         return user, host
     return "ubuntu", value
+
+
+def _local_key_path(value: str) -> Path:
+    """Accept native Windows paths and Git Bash paths such as /d/maczhuji."""
+    if os.name == "nt" and len(value) >= 3 and value[0] == "/" and value[1].isalpha() and value[2] == "/":
+        value = f"{value[1]}:{value[2:]}"
+    return Path(value)
 
 
 @dataclass(frozen=True)
@@ -116,7 +145,7 @@ def _connect(target: Target):
     }
 
     if target.key_path:
-        key = Path(target.key_path)
+        key = _local_key_path(target.key_path)
         if key.is_file():
             key_loaders = [
                 getattr(paramiko, name)
@@ -159,12 +188,12 @@ git fetch origin main && \
 DIRTY_TRACKED="$(git status --porcelain --untracked-files=no)" && \
 if [ -n "$DIRTY_TRACKED" ]; then BACKUP_DIR=.deploy_dirty_backups; mkdir -p "$BACKUP_DIR"; BACKUP_PATCH="$BACKUP_DIR/$(date +%Y%m%d_%H%M%S)_$(git rev-parse --short HEAD).patch"; git diff > "$BACKUP_PATCH"; echo "[WARN] tracked dirty backup=$BACKUP_PATCH"; fi && \
 git reset --hard origin/main && \
-bash scripts/server_update_and_restart.sh && \
+LOBSTER_DEPLOY_CONFIRM=发 bash scripts/server_update_and_restart.sh && \
 echo "[verify] commit=$(git rev-parse --short HEAD)" && \
 (systemctl is-active lobster-backend lobster-mcp lobster-background lobster-h5 2>/dev/null || true)"""
     return f"""cd {quoted_dir} && \
 git fetch origin main && git pull origin main && \
-bash scripts/server_update_and_restart.sh && \
+LOBSTER_DEPLOY_CONFIRM=发 bash scripts/server_update_and_restart.sh && \
 echo "[verify] commit=$(git rev-parse --short HEAD)" && \
 (systemctl is-active lobster-backend lobster-mcp lobster-background lobster-h5 2>/dev/null || true)"""
 
@@ -186,9 +215,11 @@ def deploy_target(target: Target, *, reset: bool = True) -> None:
 
 
 def main() -> int:
+    _require_user_deploy_confirmation()
     parser = argparse.ArgumentParser(description="Deploy lobster_server from Windows/Python without local bash.")
     parser.add_argument("--env", type=Path, default=ROOT / ".env.deploy", help=".env.deploy path")
     parser.add_argument("--test", action="store_true", help="Deploy only LOBSTER_DEPLOY_HOST_TEST")
+    parser.add_argument("--push", action="store_true", help="Push local main before deploying production (enabled by deploy_from_local.sh)")
     parser.add_argument("--no-reset", action="store_true", help="Use git pull instead of reset --hard origin/main")
     args = parser.parse_args()
 
@@ -206,6 +237,12 @@ def main() -> int:
     primary = _target_from_env(env)
     if not primary:
         raise SystemExit("[ERR] 未设置 LOBSTER_DEPLOY_HOST")
+    # The shell wrapper passes --push so a normal deployment always publishes
+    # the exact local main commit before the remote pull/restart.  Keep the
+    # flag for direct callers, while avoiding any second push.
+    if args.push:
+        print("[push] git push origin main")
+        subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, check=True)
     deploy_target(primary, reset=not args.no_reset)
 
     if _truthy(env.get("LOBSTER_DEPLOY_OVERSEAS")):

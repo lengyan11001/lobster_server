@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from backend.app.api import scheduled_tasks
-from backend.app.models import ScheduledTask, UserHiflyVoiceAsset
+from backend.app.models import IPContentScheduleTemplate, ScheduledTask, UserHiflyVoiceAsset
 
 
 def _payload():
@@ -27,7 +27,7 @@ def _context():
 
 def test_h5_legacy_digital_human_uses_ip_daily_script_context(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_LEGACY)
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _context())
 
     task_kind, payload = scheduled_tasks._maybe_convert_h5_digital_human_task(
         object(), task_kind="capability", payload=_payload(), target_user_id=7
@@ -41,7 +41,7 @@ def test_h5_legacy_digital_human_uses_ip_daily_script_context(monkeypatch):
 
 def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_V2)
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _context())
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_virtualman", lambda db, user_id: "virtualman-1")
     monkeypatch.setattr(
         scheduled_tasks,
@@ -76,7 +76,7 @@ def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
 
 def test_h5_v2_digital_human_preserves_duration_and_template_choices(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_V2)
-    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _context())
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_virtualman", lambda db, user_id: "virtualman-1")
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_available_virtualmans", lambda db, user_id: [])
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_voice", lambda db, user_id: "voice-2")
@@ -216,3 +216,119 @@ def test_scheduled_run_drops_a_deleted_voice_when_no_active_voice_exists(db_sess
 
     assert "voice" not in result["params"]
     assert "speaker_id" not in result["params"]
+
+
+def test_one_off_digital_human_does_not_require_personal_template_validation(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_h5_dh_context_params",
+        lambda db, user_id, installation_id="": {
+            "digital_human_template": {"style_id": "template-1"},
+            "digital_human_resources": {
+                "avatars": [{"virtualman_id": "avatar-1"}],
+                "voices": [],
+            },
+        },
+    )
+
+    result = scheduled_tasks._live_personal_template_validation(
+        db_session,
+        task_kind="capability",
+        payload={
+            "capability_id": "hifly.video.create_by_tts",
+            "payload": {"avatar": "avatar-1", "voice": "voice-1"},
+            "h5_context": {"source": "h5"},
+        },
+        target_user_id=test_user.id,
+    )
+
+    assert result is None
+
+
+def test_live_template_validation_allows_audio_driven_capability_without_voice(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_h5_dh_context_params",
+        lambda db, user_id, installation_id="": {
+            "digital_human_template": {"style_id": "template-1"},
+            "digital_human_resources": {
+                "avatars": [{"virtualman_id": "avatar-1"}],
+                "voices": [],
+            },
+        },
+    )
+
+    result = scheduled_tasks._live_personal_template_validation(
+        db_session,
+        task_kind="capability",
+        payload={
+            "capability_id": "hifly.video.create_by_tts",
+            "payload": {"avatar": "avatar-1", "audio_url": "https://example.test/voice.mp3"},
+            "h5_context": {"workflow_template_id": "template-1", "workflow_node_id": "node-1"},
+        },
+        target_user_id=test_user.id,
+    )
+
+    assert result["ok"] is True
+    assert "voice asset" not in result["missing"]
+
+
+def test_workflow_claim_uses_latest_personal_template_instead_of_payload_snapshot(db_session, test_user):
+    personal = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name=scheduled_tasks._PERSONAL_DEFAULT_TEMPLATE_NAME,
+        requirements={"industry": "new-industry"},
+        meta={"current_template_id": 0},
+    )
+    db_session.add(personal)
+    db_session.flush()
+    current = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="current-ip-template",
+        requirements={"industry": "new-industry"},
+        meta={
+            "digital_human_resources": {
+                "avatars": [{"provider": "shanjian_v2", "virtualman_id": "latest-avatar", "status": "ready"}],
+                "voices": [{"voice": "latest-voice", "status": "active"}],
+            },
+            "digital_human_resources_configured": True,
+        },
+    )
+    db_session.add(current)
+    db_session.flush()
+    personal.meta = {"current_template_id": current.id}
+    db_session.commit()
+
+    result = scheduled_tasks._refresh_live_personal_template_payload(
+        db_session,
+        task_kind="client_workflow",
+        target_user_id=test_user.id,
+        payload={
+            "action": "shanjian_digital_human_video",
+            "params": {
+                "requirements": {"industry": "old-industry"},
+                "virtualman_id": "old-avatar",
+                "voice": "old-voice",
+                "speed_ratio": 1.25,
+            },
+            "h5_context": {"workflow_template_id": "workflow-1", "workflow_node_id": "node-1"},
+        },
+    )
+
+    params = result["params"]
+    assert params["requirements"] == {"industry": "new-industry"}
+    assert [item["virtualman_id"] for item in params["virtualman_candidates"]] == ["latest-avatar"]
+    assert params["voice"] == "latest-voice"
+    assert params["speed_ratio"] == 1.25
+
+
+def test_shanjian_script_sources_multi_normalized():
+    """多选口播来源要原样保留，并给旧客户端写入单值。"""
+    params = {"script_sources": ["ip_daily_professional_ip_oral", "bogus", "ip_daily_industry_hot_oral"]}
+    ordered = scheduled_tasks._normalize_shanjian_script_sources(params)
+    assert ordered == ["ip_daily_professional_ip_oral", "ip_daily_industry_hot_oral"]
+    assert params["script_source"] in params["script_sources"]  # 多选随机：只要求取自多选集合
+
+    empty = {}
+    assert scheduled_tasks._normalize_shanjian_script_sources(empty) == ["ip_daily_industry_hot_oral"]
+    assert empty["script_source"] == "ip_daily_industry_hot_oral"

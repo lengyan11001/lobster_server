@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from backend.app.api import comfly_proxy
+from mcp import comfly_upstream
 
 
 @pytest.mark.asyncio
@@ -107,3 +108,28 @@ async def test_grok15_rejects_plain_url_like_reference():
             {"api_format": "grok"},
         )
 
+
+@pytest.mark.asyncio
+async def test_comfyui_grok_keeps_canonical_model_and_file_reference(tmp_path):
+    source = tmp_path / "reference.jpg"
+    source.write_bytes(b"fake-jpeg")
+
+    data, files = await comfly_upstream._build_comfyui_grok_multipart(
+        {
+            "prompt": "test",
+            "aspect_ratio": "9:16",
+        },
+        model_id="grok-imagine-video-1.5",
+        prompt="test",
+        first_image=str(source),
+    )
+
+    assert data == {
+        "model": "grok-imagine-video-1.5",
+        "prompt": "test",
+        "size": "720x1280",
+    }
+    assert files["model"] == (None, "grok-imagine-video-1.5")
+    assert files["input_reference"][0] == "reference.jpg"
+    assert files["input_reference"][1] == b"fake-jpeg"
+    assert files["input_reference"][2] == "image/jpeg"

@@ -62,6 +62,46 @@ def _coerce_grok_video_resolution(raw: Any) -> str:
     return "720p"
 
 
+def _coerce_wan30_resolution(raw: Any) -> str:
+    value = str(raw or "").strip().lower().replace(" ", "")
+    if "1080" in value:
+        return "1080P"
+    if "480" in value:
+        return "480P"
+    if "720" in value:
+        return "720P"
+    return "1080P"
+
+
+def _coerce_wan30_ratio(raw: Any) -> str:
+    value = str(raw or "").strip().lower().replace(" ", "").replace("：", ":")
+    aliases = {
+        "auto": "adaptive",
+        "automatic": "adaptive",
+        "default": "adaptive",
+        "original": "adaptive",
+        "adapt": "adaptive",
+        "landscape": "16:9",
+        "horizontal": "16:9",
+        "portrait": "9:16",
+        "vertical": "9:16",
+        "square": "1:1",
+    }
+    value = aliases.get(value, value)
+    return value if value in {"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"} else "adaptive"
+
+
+def _coerce_wan30_duration(raw: Any) -> int:
+    value = str(raw or "").strip().lower().replace(" ", "")
+    if value in {"-1", "-1s"}:
+        return -1
+    try:
+        seconds = int(round(float(value.rstrip("s")))) if value else 5
+    except (TypeError, ValueError):
+        seconds = 5
+    return max(2, min(30, seconds))
+
+
 _COMFLY_VIDEO_URL_KEYS = (
     "video_url",
     "videoUrl",
@@ -154,6 +194,10 @@ def get_comfly_config(token_group: str = "") -> Tuple[str, str]:
             grouped_base = (os.environ.get("YUNWU_API_BASE") or "").strip().rstrip("/")
         if not grouped_base and group in {"OPENMIND", "OPENMINDAPI"}:
             grouped_base = (os.environ.get("OPENMIND_API_BASE") or "").strip().rstrip("/")
+        if not grouped_base and group in {"DASHSCOPE", "QWEN", "WAN30", "DASHSCOPE_WAN30"}:
+            grouped_base = (
+                os.environ.get("DASHSCOPE_BASE_URL") or "https://dashscope.aliyuncs.com"
+            ).strip().rstrip("/")
         if grouped_base:
             base = grouped_base
             logger.debug("[Comfly] 使用 token_group=%s base_env=%s", token_group, base_env_name)
@@ -162,8 +206,14 @@ def get_comfly_config(token_group: str = "") -> Tuple[str, str]:
             key = (os.environ.get("YUNWU_API_KEY") or "").strip()
         if not key and group in {"OPENMIND", "OPENMINDAPI"}:
             key = (os.environ.get("OPENMIND_API_KEY") or "").strip()
+        if not key and group in {"DASHSCOPE", "QWEN"}:
+            key = (os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("ALIYUN_DASHSCOPE_API_KEY") or "").strip()
+        if not key and group in {"WAN30", "DASHSCOPE_WAN30"}:
+            key = (os.environ.get("DASHSCOPE_WAN30_API_KEY") or "").strip()
         if key:
             logger.debug("[Comfly] 使用 token_group=%s key_env=%s", token_group, key_env_name)
+        if group in {"DASHSCOPE", "QWEN", "WAN30", "DASHSCOPE_WAN30"}:
+            return base, key
     if not key:
         key = (os.environ.get("COMFLY_API_KEY") or "").strip()
     if base.endswith("/v1"):
@@ -181,6 +231,12 @@ def _get_model_token_group(model_id: str) -> str:
 
 def is_comfly_configured() -> bool:
     base, key = get_comfly_config()
+    return bool(base and key)
+
+
+def is_dashscope_wan30_configured() -> bool:
+    """判断 Wan 3.0 直连 DashScope 是否已配置。"""
+    base, key = get_comfly_config("dashscope_wan30")
     return bool(base and key)
 
 
@@ -435,6 +491,49 @@ def _build_sora2_multipart(
     return data, files
 
 
+async def _build_comfyui_grok_multipart(
+    payload: Dict[str, Any],
+    *,
+    model_id: str,
+    prompt: str,
+    first_image: str,
+) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """Build the dedicated ComfyUI Grok video upload request.
+
+    ComfyUI's Grok endpoint expects the reference image as a multipart file,
+    even when the caller supplies a public URL. Keep the canonical model id
+    and do not use the legacy duration-specific Grok aliases here.
+    """
+    size = _coerce_sora2_size(payload, model_id)
+    data: Dict[str, str] = {
+        "model": model_id,
+        "prompt": prompt,
+        "size": size,
+    }
+    files: Dict[str, Any] = {key: (None, value) for key, value in data.items()}
+
+    ref = (first_image or "").strip()
+    if not ref:
+        return data, files
+
+    filename = _filename_from_media_ref(ref)
+    media_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+    if ref.startswith(("http://", "https://")):
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False, follow_redirects=True) as client:
+            response = await client.get(ref)
+            response.raise_for_status()
+            content = response.content
+            media_type = (response.headers.get("content-type") or media_type).split(";", 1)[0].strip() or media_type
+    else:
+        path = Path(ref)
+        if not path.exists() or not path.is_file():
+            raise RuntimeError(f"ComfyUI Grok reference file not found: {ref}")
+        content = path.read_bytes()
+
+    files["input_reference"] = (filename, content, media_type)
+    return data, files
+
+
 _FORCE_SUTUI_MODEL_IDS = {
     "xai/grok-imagine-video/text-to-video",
     "xai/grok-imagine-video/image-to-video",
@@ -524,8 +623,6 @@ def should_route_to_comfly(capability_id: str, model_id: str, *, sutui_price: Op
     """
     if capability_id not in ("image.generate", "video.generate"):
         return False
-    if not is_comfly_configured():
-        return False
     if _is_force_sutui_model_id(model_id):
         logger.info("[Comfly] 跳过路由：model=%s 固定走速推真实定价", model_id)
         return False
@@ -534,6 +631,13 @@ def should_route_to_comfly(capability_id: str, model_id: str, *, sutui_price: Op
         return False
     entry = lookup_comfly_model(model_id)
     if not entry:
+        return False
+    api_format = str(entry.get("api_format") or "").strip().lower()
+    if api_format == "dashscope_wan30":
+        configured = is_dashscope_wan30_configured()
+        logger.info("[Comfly] Wan3.0 DashScope 直连配置=%s model=%s", configured, model_id)
+        return configured
+    if not is_comfly_configured():
         return False
     comfly_price = entry.get("price_per_unit")
     if comfly_price is None:
@@ -734,7 +838,29 @@ async def call_comfly_video_generate(
     request_mode = "json"
     multipart_files: Optional[Dict[str, Any]] = None
 
-    if api_format == "veo":
+    if api_format == "dashscope_wan30":
+        if not base or not key:
+            return {"error": {"message": "DashScope Wan3.0 未配置：缺少 DASHSCOPE_WAN30_API_KEY"}}
+        # DashScope Wan 3.0 使用统一模型名，通过 input.media 的 type 区分
+        # 文生视频和首帧图生视频，不能复用 Comfly 的 task/submit 契约。
+        json_headers["X-DashScope-Async"] = "enable"
+        url = f"{base}/api/v1/services/aigc/video-generation/video-synthesis"
+        input_body: Dict[str, Any] = {"prompt": prompt}
+        if first_image:
+            input_body["media"] = [{"type": "first_frame", "url": first_image}]
+        parameters: Dict[str, Any] = {
+            "resolution": _coerce_wan30_resolution(payload.get("resolution")),
+            "ratio": _coerce_wan30_ratio(payload.get("ratio") or payload.get("aspect_ratio")),
+            "duration": _coerce_wan30_duration(payload.get("duration") or payload.get("seconds")),
+        }
+        if payload.get("prompt_extend") is not None:
+            parameters["prompt_extend"] = bool(payload.get("prompt_extend"))
+        body = {
+            "model": comfly_model or "wan3.0-video",
+            "input": input_body,
+            "parameters": parameters,
+        }
+    elif api_format == "veo":
         url = f"{base}/v2/videos/generations"
         body: Dict[str, Any] = {
             "model": comfly_model,
@@ -743,6 +869,15 @@ async def call_comfly_video_generate(
         }
         aspect_ratio = payload.get("aspect_ratio") or "16:9"
         body["aspect_ratio"] = aspect_ratio
+    elif api_format == "comfyui_grok":
+        url = f"{base}/v1/videos"
+        request_mode = "multipart"
+        body, multipart_files = await _build_comfyui_grok_multipart(
+            payload,
+            model_id=str(comfly_model),
+            prompt=prompt,
+            first_image=first_image,
+        )
     elif api_format == "grok":
         url = f"{base}/v2/videos/generations"
         grok_duration = 10 if duration >= 10 else 6
@@ -858,7 +993,13 @@ async def call_comfly_task_query(task_id: str, token_group: str = "", api_format
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    if api_format in ("veo", "grok"):
+    if api_format == "dashscope_wan30":
+        if not base or not key:
+            return {"error": {"message": "DashScope Wan3.0 未配置：缺少 DASHSCOPE_WAN30_API_KEY"}}
+        url = f"{base}/api/v1/tasks/{task_id}"
+    elif api_format == "comfyui_grok":
+        url = f"{base}/v1/videos/{task_id}"
+    elif api_format in ("veo", "grok"):
         url = f"{base}/v2/videos/generations/{task_id}"
     elif api_format == "sora2":
         url = f"{base}/v1/videos/{task_id}"
@@ -987,13 +1128,20 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any], *, fallback_task
         or _find_nested_string(resp, _COMFLY_VIDEO_TASK_ID_KEYS)
         or ""
     )
-    raw_status = resp.get("status") or (data.get("status") if isinstance(data, dict) else "") or "pending"
+    output = resp.get("output") if isinstance(resp.get("output"), dict) else {}
+    raw_status = (
+        resp.get("status")
+        or (data.get("status") if isinstance(data, dict) else "")
+        or output.get("task_status")
+        or "pending"
+    )
     _VEO_STATUS_MAP = {
         "NOT_START": "pending",
         "IN_PROGRESS": "pending",
         "QUEUED": "pending",
         "SUBMITTED": "pending",
         "PROCESSING": "pending",
+        "RUNNING": "pending",
         "SUCCESS": "completed",
         "SUCCEEDED": "completed",
         "COMPLETED": "completed",
@@ -1044,7 +1192,13 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any], *, fallback_task
 
     if status_key in {"FAILURE", "FAILED", "ERROR"}:
         result["status"] = "failed"
-        fail_reason = resp.get("fail_reason") or resp.get("error") or ""
+        fail_reason = (
+            resp.get("fail_reason")
+            or resp.get("error")
+            or output.get("message")
+            or output.get("task_status")
+            or ""
+        )
         if fail_reason:
             result["output"] = {"error": fail_reason}
 

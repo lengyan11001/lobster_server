@@ -29,6 +29,7 @@ from mcp.video_model_resolve import (
     APIZ_VEO31_IMAGE_MODEL,
     APIZ_VEO31_REFERENCE_MODEL,
     APIZ_VEO31_TEXT_MODEL,
+    DASHSCOPE_WAN30_VIDEO_MODEL,
     SUTUI_GROK_15_IMAGE_MODEL,
     resolve_default_video_model_id,
     resolve_video_model_id,
@@ -67,7 +68,7 @@ _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
 _GPT_IMAGE_2_MODEL_ID = "openai/gpt-image-2"
 _APIZ_VISION_READ_TIMEOUT_SECONDS = 6 * 60.0
 _APIZ_VISION_MAX_ATTEMPTS = 2
-_DEFAULT_IMAGE_UNDERSTAND_MODEL = "openai/gpt-5.6-sol"
+_DEFAULT_IMAGE_UNDERSTAND_MODEL = "gpt-5.6-sol"
 _GPT_IMAGE_2_MODEL_IDS = frozenset(
     {
         _GPT_IMAGE_2_MODEL_ID,
@@ -510,6 +511,13 @@ def _tool_definitions(
     )
     invoke_description = (
         "调用能力(图片生成/视频/语音等)。"
+        "【工具名固定】工具名就是 invoke_capability，参数是 capability_id + payload；"
+        "不要把 capability_id 本身当工具名调用（例如不要调用 comfly_chat / image_generate）。"
+        "【写作文本】写文案、脚本、口播、分镜、翻译、总结、结构化整理用 capability_id=\"comfly.chat\"，"
+        "payload={\"model\": 用户指定或先查 sutui.search_models, \"messages\": [{\"role\":\"user\",\"content\":\"...\"}]}。"
+        "【看图文】图片/截图理解、读图里的文字用 capability_id=\"image.understand\"；视频理解用 video.understand。"
+        "【异步任务】图片/视频生成提交后用 capability_id=\"task.get_result\" 轮询取结果。"
+        "【关键词】写脚本 文案 口播 分镜 翻译 总结 理解图片 识别文字 生成图片 生成视频 数字人 语音。"
         f"【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"{_DEFAULT_IMAGE_MODEL}\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
         f"video.generate 用户未指定模型时 payload.model 填 \"{_DEFAULT_VIDEO_MODEL}\"；用户未指定时长时不要强行填 duration，由后端按模型默认值处理。"
         "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
@@ -533,7 +541,16 @@ def _tool_definitions(
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "capability_id": {"type": "string", "enum": capability_list},
+                    # 不再用 enum 卡死：模型偶尔会自己拼一个不存在的 capability_id（例如 document.understand），
+                    # 客户端校验会在到达服务端之前就抛一句难懂的 zod 错误，模型只能瞎重试。
+                    # 改成普通字符串 + 示例，服务端负责给出"能力未找到 + 可用清单"的可恢复提示。
+                    "capability_id": {
+                        "type": "string",
+                        "description": (
+                            "能力 ID，必须逐字取自 list_capabilities / list_system_capabilities 的返回值。"
+                            "常用：" + ", ".join(capability_list[:16])
+                        ),
+                    },
                     "payload": {"type": "object"},
                 },
                 "required": ["capability_id", "payload"],
@@ -924,8 +941,8 @@ def _video_fallback_candidates(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     has_image = bool(_collect_video_image_refs(payload))
     if has_image:
         return [
+            {"channel": "comfly", "model": "grok-imagine-video-1.5"},
             {"channel": "openmind", "model": "grok-video-3"},
-            {"channel": "comfly", "model": "grok-video-3"},
         ]
     return [
         {"channel": "comfly", "model": "veo3.1-fast"},
@@ -1695,6 +1712,129 @@ def _collect_chat_vision_urls(params: Dict[str, Any]) -> List[str]:
     return out
 
 
+async def _call_backend_image_understand(
+    params: Dict[str, Any],
+    user_token: str,
+    request: Request,
+    lobster_capability_id: str = "image.understand",
+) -> Dict[str, Any]:
+    """Run image understanding through the authenticated backend chat proxy.
+
+    The backend owns provider selection and billing.  This MCP layer only
+    adapts the capability payload to OpenAI multimodal chat format; the
+    backend downloads remote images and converts them to base64 before the
+    YYAPI route is attempted.
+    """
+    prompt = str(params.get("prompt") or "").strip()
+    image_urls = _collect_chat_vision_urls(params)
+    if not prompt:
+        return {"error": {"message": "image.understand 缺少 prompt"}}
+    if not image_urls:
+        return {"error": {"message": "image.understand 缺少 image_urls"}}
+
+    user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+    user_content.extend(
+        {"type": "image_url", "image_url": {"url": url}}
+        for url in image_urls
+    )
+    messages: List[Dict[str, Any]] = []
+    system_prompt = str(params.get("system_prompt") or "").strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_content})
+
+    body: Dict[str, Any] = {
+        "model": "gpt-5.6-sol",
+        "messages": messages,
+        "stream": False,
+    }
+    if "temperature" in params:
+        try:
+            body["temperature"] = float(params.get("temperature"))
+        except (TypeError, ValueError):
+            pass
+    else:
+        body["temperature"] = 0
+    if "max_tokens" in params:
+        try:
+            body["max_tokens"] = int(params.get("max_tokens"))
+        except (TypeError, ValueError):
+            pass
+    else:
+        body["max_tokens"] = 4096
+
+    trace_id = uuid.uuid4().hex
+    headers = _backend_headers(user_token, request)
+    headers["X-Lobster-Image-Understand"] = "1"
+    headers["X-Lobster-LLM-Billing-Mode"] = "openclaw_internal"
+    headers["X-Lobster-OpenClaw-Internal"] = "1"
+    headers["X-Lobster-Chat-Trace-Id"] = trace_id
+    url = f"{BASE_URL}/api/sutui-chat/completions"
+    timeout = httpx.Timeout(connect=15.0, read=240.0, write=30.0, pool=30.0)
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.post(url, json=body, headers=headers)
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "[image-understand] backend timeout capability=%s trace_id=%s err=%s",
+            lobster_capability_id,
+            trace_id,
+            str(exc)[:300],
+        )
+        return {"error": {"message": "图片理解请求超时，请稍后重试"}}
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "[image-understand] backend network error capability=%s trace_id=%s err=%s",
+            lobster_capability_id,
+            trace_id,
+            str(exc)[:300],
+        )
+        return {"error": {"message": f"图片理解服务连接失败：{str(exc)[:240]}"}}
+
+    try:
+        raw = response.json() if response.content else {}
+    except Exception:
+        raw = None
+    if response.status_code >= 400:
+        if isinstance(raw, dict):
+            detail = raw.get("detail") or raw.get("error") or raw.get("message")
+        else:
+            detail = response.text[:800]
+        logger.warning(
+            "[image-understand] backend HTTP error capability=%s trace_id=%s status=%s detail=%s",
+            lobster_capability_id,
+            trace_id,
+            response.status_code,
+            str(detail)[:500],
+        )
+        return {"error": {"message": f"图片理解服务 HTTP {response.status_code}: {str(detail)[:600]}"}}
+    if not isinstance(raw, dict):
+        return {"error": {"message": "图片理解服务返回格式异常"}}
+
+    content = _extract_chat_completion_content(raw)
+    if not content:
+        return {"error": {"message": "图片理解服务未返回有效内容"}}
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "[image-understand] backend success capability=%s trace_id=%s images=%s elapsed_ms=%s model=%s",
+        lobster_capability_id,
+        trace_id,
+        len(image_urls),
+        elapsed_ms,
+        raw.get("model") or "gpt-5.6-sol",
+    )
+    return {
+        "status": "completed",
+        "model": raw.get("model") or "gpt-5.6-sol",
+        "provider": "yyapi.sutui-chat",
+        "output": content,
+        "result": {"content": content},
+        "usage": raw.get("usage") if isinstance(raw.get("usage"), dict) else {},
+        "id": raw.get("id"),
+    }
+
+
 def _extract_chat_completion_content(data: Dict[str, Any]) -> str:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -2012,20 +2152,10 @@ async def _call_upstream_sutui_tasks_rest(
         if model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
             params["model"] = str(understand_model).strip()
         if lobster_capability_id == "image.understand":
-            if model.startswith("openrouter/router/"):
-                model = str(params.get("model") or _DEFAULT_IMAGE_UNDERSTAND_MODEL).strip() or _DEFAULT_IMAGE_UNDERSTAND_MODEL
-            params["model"] = model
-            logger.info(
-                "[apiz-chat] image.understand direct chat/completions model=%s params_keys=%s",
-                model,
-                sorted(params.keys()),
-            )
-            return await _call_apiz_chat_completions_vision(
-                api_base,
-                token,
-                params,
-                lobster_capability_id=lobster_capability_id,
-            )
+            # This path is retained only for legacy callers.  The capability
+            # dispatcher now routes image understanding through the backend
+            # chat proxy, so never fall back to APIZ /v3 here.
+            return {"error": {"message": "image.understand 必须通过后端 sutui-chat 路由"}}
         logger.info(
             "[apiz-sdk] tasks.create capability=%s model=%s params_keys=%s",
             lobster_capability_id or "(无)", model, sorted(params.keys()),
@@ -3657,6 +3787,47 @@ def _normalize_video_generate_payload(
         _merge_common_video_ui_fields(out, payload)
         return out
 
+    # 千问万相 3.0：统一模型名，服务端适配 DashScope input/parameters 契约。
+    if model == DASHSCOPE_WAN30_VIDEO_MODEL:
+        raw_duration = _payload_get_duration_raw(payload)
+        if str(raw_duration or "").strip().lower() in {"-1", "-1s"}:
+            wan_duration = -1
+        else:
+            wan_duration = max(2, min(30, duration_sec))
+        raw_ratio = _payload_get_aspect_ratio(payload)
+        ratio_value = str(raw_ratio or "").strip().lower().replace(" ", "").replace("：", ":")
+        ratio_value = {
+            "auto": "adaptive",
+            "automatic": "adaptive",
+            "default": "adaptive",
+            "original": "adaptive",
+            "adapt": "adaptive",
+            "landscape": "16:9",
+            "horizontal": "16:9",
+            "portrait": "9:16",
+            "vertical": "9:16",
+            "square": "1:1",
+        }.get(ratio_value, ratio_value)
+        if ratio_value not in {"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}:
+            ratio_value = "adaptive"
+        resolution_value = str(payload.get("resolution") or "1080P").strip().upper()
+        if resolution_value in {"AUTO", "AUTOMATIC", "DEFAULT", "ORIGINAL"}:
+            resolution_value = "1080P"
+        if resolution_value not in {"480P", "720P", "1080P"}:
+            resolution_value = "720P"
+        out = {
+            "model": model,
+            "prompt": prompt,
+            "duration": wan_duration,
+            "ratio": ratio_value,
+            "resolution": resolution_value,
+        }
+        if first_url:
+            out["image_url"] = first_url
+        if payload.get("prompt_extend") is not None:
+            out["prompt_extend"] = bool(payload.get("prompt_extend"))
+        return out
+
     # fal-ai/minimax/hailuo*：Pro 无 duration（固定196积分），Standard 有 duration（字符串）
     if "hailuo" in model or "minimax" in model:
         out = {"model": model, "prompt": prompt}
@@ -4180,7 +4351,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     _fmt = _mv.get("api_format", "")
                     if _fmt == "dalle":
                         _comfly_image_models.append(_mk)
-                    elif _fmt in ("unified_video",):
+                    elif _fmt in ("unified_video", "dashscope_wan30"):
                         _comfly_video_models.append(_mk)
             except Exception:
                 pass
@@ -4313,7 +4484,30 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                             pub_args[k] = v
                 return await _call_tool("publish_content", pub_args, token, request)
             if not capability_id or capability_id not in catalog:
-                return [{"type": "text", "text": f"能力未找到: {capability_id}"}], True
+                # 给模型一条能自己恢复的路：列出真实可用的 capability_id，让它按清单重试一次
+                if not capability_id:
+                    return [
+                        {
+                            "type": "text",
+                            "text": "缺少 capability_id：请先调用 list_capabilities（或调度侧的 list_system_capabilities）取到能力 ID，再用 invoke_capability 调用。",
+                        }
+                    ], True
+                available_ids = sorted(
+                    cid
+                    for cid in catalog.keys()
+                    if not _capability_id_is_debug_only_in_registry(cid)
+                )
+                listed = "、".join(available_ids[:24])
+                return [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"能力未找到: {capability_id}（这个 ID 不存在，不要自己拼名字）。"
+                            f"本服务当前可用 capability_id：{listed}。"
+                            "请从上面这一串里原样挑一个重试，或调用 list_capabilities 查看每个能力的参数。"
+                        ),
+                    }
+                ], True
 
             if not (token or "").strip():
                 return [
@@ -4349,7 +4543,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             sutui_token: Optional[str] = None
             sutui_pool_for_billing = ""
             sutui_token_ref_for_billing = ""
-            if upstream_name == "sutui":
+            if upstream_name == "sutui" and capability_id != "image.understand":
                 sutui_token, sutui_pool_for_billing = await next_sutui_server_token_with_pool(
                     brand_mark=user_brand_mark
                 )
@@ -4437,6 +4631,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         _early_use_comfly = True
                 elif _payload_prefer_comfly and _early_cf_ok() and capability_id in ("image.generate", "video.generate"):
                     _early_use_comfly = True
+                elif capability_id == "image.understand":
+                    # Image understanding is always owned by the backend
+                    # YYAPI chat route, never Comfly or the APIZ task API.
+                    _early_use_comfly = False
                 else:
                     _early_use_comfly = _early_should_cf(capability_id, _comfly_model_id)
                 logger.info(
@@ -4579,7 +4777,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     }
                 ], True
 
-            if not upstream_url:
+            if not upstream_url and not (capability_id == "image.understand" and upstream_name == "sutui"):
                 return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
 
             # 检测并转存内部图片 URL 到公开 CDN（图生视频/图生图需要）
@@ -4938,7 +5136,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             else:
                 logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
                 try:
-                    if capability_id == "video.generate" and upstream_name == "sutui":
+                    if capability_id == "image.understand" and upstream_name == "sutui":
+                        upstream_resp = await _call_backend_image_understand(
+                            payload,
+                            token,
+                            request,
+                            lobster_capability_id=capability_id,
+                        )
+                    elif capability_id == "video.generate" and upstream_name == "sutui":
                         payload = await _prepare_bihuo_25_video_input(
                             payload,
                             upstream_url=upstream_url,

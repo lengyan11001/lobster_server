@@ -80,7 +80,9 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     overseas_ids = {item["id"] for item in overseas_resp.json()["packages"]}
 
     assert "douyin_publish" in domestic_ids
-    assert "ip_content_daily_skill" in domestic_ids
+    assert "ip_content_oral_skill" in domestic_ids
+    assert "ip_content_moments_skill" in domestic_ids
+    assert "ip_content_daily_skill" not in domestic_ids
     assert "messenger_reply" not in domestic_ids
     assert "twilio_whatsapp" not in domestic_ids
     assert "bihuo_25_video_skill" not in domestic_ids
@@ -95,7 +97,9 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     assert "comfly_veo_skill" in overseas_ids
     assert "comfly_seedance_tvc_skill" in overseas_ids
     assert "goal_video_pipeline_skill" in overseas_ids
-    assert "ip_content_daily_skill" in overseas_ids
+    assert "ip_content_oral_skill" in overseas_ids
+    assert "ip_content_moments_skill" in overseas_ids
+    assert "ip_content_daily_skill" not in overseas_ids
     assert "create_ppt_skill" in overseas_ids
     assert "create_video_pipeline_skill" in overseas_ids
     assert "douyin_publish" not in overseas_ids
@@ -138,7 +142,8 @@ def test_skill_store_visibility_depends_on_client_header_not_user_origin(db_sess
     assert "youtube_publish" in overseas_ids
 
 
-def test_bihuo_25_is_visible_only_after_server_grant(db_session, db_session_factory, monkeypatch):
+def test_bihuo_25_video_is_retired(db_session, db_session_factory, monkeypatch):
+    """智能视频 2.5（bihuo_25_video_skill）已废弃：任何情况下都不再出现在技能商店。"""
     from backend.app.models import User, UserSkillVisibility
 
     user = User(
@@ -167,8 +172,10 @@ def test_bihuo_25_is_visible_only_after_server_grant(db_session, db_session_fact
 
     allowed = client.get("/skills/bihuo-25-video-eligible")
     store_after = client.get("/skills/store")
-    package = next(item for item in store_after.json()["packages"] if item["id"] == "bihuo_25_video_skill")
 
     assert allowed.status_code == 200
-    assert allowed.json()["allowed"] is True
-    assert package["default_installed"] is False
+    assert allowed.json()["allowed"] is False
+    # 退役后即使手工加了可见性行，也不再展示、不能再安装。
+    assert "bihuo_25_video_skill" not in {item["id"] for item in store_after.json()["packages"]}
+    install = client.post("/skills/install", json={"package_id": "bihuo_25_video_skill"})
+    assert install.status_code == 410

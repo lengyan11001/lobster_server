@@ -168,31 +168,13 @@ def test_h5_chat_supports_cancel_steer_and_editable_queue():
     assert ".composer-steer-btn" in styles
 
 
-def test_h5_chat_has_a_global_floating_entry_on_authenticated_views():
+def test_h5_chat_does_not_render_a_global_floating_entry():
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
-    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
-    styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
 
-    app_start = html.index('id="appPanel"')
-    app_end = html.index("</main>", app_start)
-    assert app_start < html.index('id="globalChatFab"') < app_end
-    assert 'aria-label="打开 AI 调度助手"' in html
+    assert 'id="globalChatFab"' not in html
+    assert 'class="global-chat-fab"' not in html
     assert 'id="departmentChatBtn"' not in html
     assert 'id="abilityChatBtn"' not in html
-    assert '.global-chat-fab {' in styles
-    assert 'body.messages-view-active .global-chat-fab' in styles
-    assert 'function setupGlobalChatFabDrag(button)' in script
-    assert 'brandStorageKey("lobster_h5_global_chat_fab_position")' in script
-    assert 'button.addEventListener("pointermove"' in script
-    assert 'setupGlobalChatFabDrag(globalChatFab);' in script
-    assert 'globalChatFab?.addEventListener("click"' in script
-    assert 'touch-action: none;' in styles
-    assert '.global-chat-fab.is-dragging' in styles
-    assert 'sourceView === "department"' in script
-    assert 'sourceView === "ability"' in script
-    assert "openContextChat(context);" in script
-    assert "scrollMessagesToBottom();" in script
-    assert "focusMessageInput();" in script
 
 
 def test_mastra_concurrency_slot_is_handed_directly_to_next_waiter():

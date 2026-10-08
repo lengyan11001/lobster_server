@@ -42,6 +42,7 @@ async def health(request: Request):
     mcp = await _mcp_status()
     request_gate = getattr(request.app.state, "request_work_gate", None)
     heavy_gate = getattr(request.app.state, "heavy_work_gate", None)
+    control_gate = getattr(request.app.state, "control_work_gate", None)
     return {
         "status": "ok",
         "lan_ip": _get_lan_ip(),
@@ -59,6 +60,12 @@ async def health(request: Request):
                 "waiting": int(getattr(heavy_gate, "waiting", 0)),
                 "concurrency": int(getattr(heavy_gate, "concurrency", 0)),
                 "queue_limit": int(getattr(heavy_gate, "queue_limit", 0)),
+            },
+            "control": {
+                "active": int(getattr(control_gate, "active", 0)),
+                "waiting": int(getattr(control_gate, "waiting", 0)),
+                "concurrency": int(getattr(control_gate, "concurrency", 0)),
+                "queue_limit": int(getattr(control_gate, "queue_limit", 0)),
             },
         },
     }

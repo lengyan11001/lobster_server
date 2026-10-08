@@ -6,6 +6,7 @@ ROOT="${1:-/opt/lobster-server}"
 USER_NAME="${LOBSTER_SERVICE_USER:-ubuntu}"
 PY="$ROOT/.venv/bin/python3"
 NODE="$ROOT/.runtime/node/bin/node"
+INSTALL_REMOTE_SUPPORT="${INSTALL_REMOTE_SUPPORT:-0}"
 
 if [ ! -x "$PY" ]; then
   echo "[ERR] Python not found: $PY" >&2
@@ -20,6 +21,10 @@ if [ ! -x "$NODE" ]; then
   echo "Run: $ROOT/scripts/install_mastra_runtime.sh $ROOT" >&2
   exit 1
 fi
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ ! -f "$ROOT/remote_support_server/src/server.js" ]; then
+  echo "[ERR] remote support server source is missing: $ROOT/remote_support_server/src/server.js" >&2
+  exit 1
+fi
 
 sudo tee /etc/systemd/system/lobster-backend.service >/dev/null <<UNIT
 [Unit]
@@ -32,7 +37,7 @@ Type=simple
 User=$USER_NAME
 WorkingDirectory=$ROOT
 Environment=PYTHONPATH=$ROOT
-Environment=BACKEND_WORKERS=2
+Environment=BACKEND_WORKERS=4
 Environment=LOBSTER_BACKEND_AUTOSTART_MCP=0
 EnvironmentFile=$ROOT/.env
 # Uvicorn workers otherwise inherit the systemd soft default of 1024. A burst
@@ -108,6 +113,37 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ]; then
+sudo tee /etc/systemd/system/lobster-remote-support.service >/dev/null <<UNIT
+[Unit]
+Description=Lobster Remote Support Relay
+After=network.target lobster-backend.service
+Wants=lobster-backend.service
+
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$ROOT/remote_support_server
+EnvironmentFile=$ROOT/.env
+Environment=PORT=38080
+Environment=LOBSTER_REMOTE_PORT=38080
+Environment=HOST=127.0.0.1
+Environment=DATA_DIR=$ROOT/remote_support_data
+Environment=LOBSTER_REMOTE_ALLOW_SELF_SERVICE=false
+Environment=LOBSTER_REMOTE_MAIN_API_BASE=http://127.0.0.1:8000
+ExecStart=$NODE $ROOT/remote_support_server/src/server.js
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable lobster-backend lobster-background lobster-mcp lobster-mastra
+if [ "$INSTALL_REMOTE_SUPPORT" = "1" ]; then
+  sudo systemctl enable lobster-remote-support
+fi
 echo "[OK] systemd units installed for $ROOT as user $USER_NAME"

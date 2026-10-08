@@ -1,0 +1,185 @@
+"""服务端：抖音私信接管节点支持「AI 记忆接管」（回复策略 + 记忆文件）。"""
+from __future__ import annotations
+
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.app.api import h5_workflows as wf  # noqa: E402
+
+
+def test_action_payload_keeps_ai_memory_and_memory_doc_ids():
+    node = {"note": "抖音私信接管", "ability_key": "douyin_leads"}
+    payload = {
+        "action": "stranger_message",
+        "params": {"reply_mode": "ai_memory", "memory_doc_ids": ["faq-doc"]},
+    }
+
+    result = wf._sales_douyin_action_payload(node, payload)
+
+    assert result["action"] == "stranger_message"
+    assert result["params"]["reply_mode"] == "ai_memory"
+    assert result["params"]["memory_doc_ids"] == ["faq-doc"]
+    assert result["params"]["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+
+
+def test_action_payload_still_normalizes_unknown_reply_mode():
+    node = {"note": "抖音私信接管", "ability_key": "douyin_leads"}
+    payload = {"action": "stranger_message", "params": {"reply_mode": "ai_whatever"}}
+
+    result = wf._sales_douyin_action_payload(node, payload)
+
+    assert result["params"]["reply_mode"] == "fixed"
+    assert "memory_doc_ids" not in result["params"]
+
+
+def test_private_switch_normalize_keeps_ai_memory():
+    node = {"ability_key": "douyin_leads", "ability_label": "抖音私信接管", "note": "抖音私信接管"}
+    plan = {"task_kind": "douyin_leads", "title": "抖音私信接管"}
+    payload = {
+        "action": "stranger_message",
+        "params": {"reply_mode": "ai_memory", "memory_doc_ids": ["faq-doc", "faq-doc", ""]},
+    }
+
+    wf._normalize_douyin_private_switch(node, plan, payload)
+
+    params = payload["params"]
+    assert params["reply_mode"] == "ai_memory"
+    assert params["memory_doc_ids"] == ["faq-doc"]
+    assert params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+
+
+def test_memory_doc_ids_cleaner():
+    assert wf._clean_douyin_memory_doc_ids(["a", {"doc_id": "b"}, "a", ""]) == ["a", "b"]
+
+
+def test_h5_app_douyin_node_offers_memory_takeover():
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'optionHtml("ai_memory", "AI 记忆接管（按记忆文件回复）")' in source
+    assert "function bindWorkflowDouyinReplyModeControls()" in source
+    assert 'douyinReplyMode === "ai_memory" ? "ai_memory"' in source
+    # 记忆文件不在 H5 节点里选（用 Online 节点上选的那份）
+    assert "workflowParamDouyinMemoryField" not in source
+
+
+def test_node_picker_has_dedicated_memory_takeover_node():
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'label: "抖音私信记忆接管", note: "抖音私信记忆接管", sales_action: "stranger_message", reply_mode: "ai_memory"' in source
+    assert "function salesWorkflowIsMemoryTakeoverNote(" in source
+    assert "@@memory_takeover" in source
+    assert "douyinDefaultReplyMode" in source
+
+
+def test_action_payload_defaults_memory_mode_from_node_note():
+    node = {"note": "抖音私信记忆接管", "ability_key": "douyin_leads"}
+
+    result = wf._sales_douyin_action_payload(node, {"action": "stranger_message", "params": {}})
+
+    assert result["action"] == "stranger_message"
+    assert result["params"]["reply_mode"] == "ai_memory"
+    assert result["params"]["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+
+
+def test_action_payload_keeps_legacy_node_untouched():
+    node = {"note": "抖音私信接管", "ability_key": "douyin_leads"}
+
+    result = wf._sales_douyin_action_payload(node, {"action": "stranger_message", "params": {}})
+
+    assert "reply_mode" not in result.get("params", {})
+
+
+def test_memory_takeover_node_uses_private_takeover_fields():
+    """「抖音私信记忆接管」必须走私信接管表单：否则弹窗显示的是搜索采集的地区/关键词参数。"""
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = source.index("function isSalesDouyinPrivateNode(node) {")
+    body = source[start : start + 1800]
+
+    assert "salesWorkflowIsMemoryTakeoverNote(text)" in body
+
+
+def test_server_private_takeover_node_detect_accepts_memory_note():
+    node = {
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音私信记忆接管",
+        "note": "抖音私信记忆接管",
+        "plan": {
+            "task_kind": "douyin_leads",
+            "title": "抖音私信记忆接管",
+            "payload": {"action": "stranger_message", "params": {}},
+        },
+    }
+
+    assert wf._is_douyin_private_takeover_node(node) is True
+
+
+def test_h5_node_detect_accepts_ai_memory_params():
+    """新建未保存、或参数里就是 ai_memory 的节点，也必须走私信接管表单（不是采集表单）。"""
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = source.index("function isSalesDouyinPrivateNode(node) {")
+    body = source[start : start + 1400]
+
+    assert 'params.reply_mode || "").trim().toLowerCase() === "ai_memory"' in body
+    assert "workflowBoolParam(params.memory_takeover, false)" in body
+
+
+def test_h5_memory_node_hides_add_friend_field():
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'id="workflowParamDouyinWechatAddFriendField"' in source
+    assert '$("workflowParamDouyinWechatAddFriendField")?.classList.toggle("hidden", mode === "ai_memory")' in source
+
+
+def test_h5_field_render_uses_lookup_and_node_params():
+    """刚添加、还没写 action 的记忆接管节点，也必须渲染成私信接管表单。"""
+    source = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = source.index("function workflowFieldsHtmlForNode(node, workflowNode = null, lookup = null) {")
+    body = source[start : start + 1800]
+
+    assert "memoryTakeoverFields" in body
+    assert "lookup.optionLabel || lookup.defaultNote" in body
+    assert "workflowBoolParam(douyinNodeParams.memory_takeover, false)" in body
+    assert 'workflowFieldsHtmlForNode(lookup.node, node, lookup)' in source
+
+
+def test_h5_add_node_form_has_private_takeover_branch():
+    """H5「添加节点」表单要有私信接管分支（原来只认采集/触达，节点被当成 search_collect）。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    # 添加节点时私信接管/记忆接管要生成 stranger_message 计划，而不是 search_collect
+    assert 'reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",' in script
+    assert 'const memoryTakeoverNode = String((lookup && lookup.optionReplyMode) || "").trim().toLowerCase() === "ai_memory"' in script
+
+
+def test_h5_workflow_node_has_no_memory_picker():
+    """工作流节点不带记忆文件参数：用 Online 节点上选的那份，且保存时不能覆盖它。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+    assert "workflowNodeDouyinMemoryField" not in html
+    assert "workflowParamDouyinMemoryDocs" not in script
+    assert "const douyinMemoryDocIds = Array.isArray(douyinExistingParams.memory_doc_ids)" in script
+
+
+def test_h5_add_form_never_shows_collection_params_for_takeover_note():
+    """硬规则：备注/名字里是私信接管的节点，添加表单永远不显示精准获客参数。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'const noteIsPrivateTakeover = /私信接管|私信引流|记忆接管/.test(selectedNote);' in script
+    assert "&& !showDouyinPrivate" in script
+
+
+def test_h5_picker_carries_explicit_action_and_reply_mode():
+    """H5：记忆接管节点在节点选择器上就写死 sales_action/reply_mode，添加节点不再靠备注猜。"""
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'sales_action: "stranger_message", reply_mode: "ai_memory"' in script
+    assert "salesAction: String(item.sales_action || \"\").trim().toLowerCase()" in script
+    assert "optionReplyMode: String(item.reply_mode || \"\").trim().toLowerCase()" in script
+    assert 'const douyinLookupAction = String((lookup && lookup.salesAction) || "").trim().toLowerCase()' in script
+    assert 'douyinLookupAction === "stranger_message"' in script
+    assert 'douyinLookupAction === "search_collect"' in script

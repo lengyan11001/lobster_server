@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import ipaddress
+import json
 import logging
 import math
+import re
 import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -22,7 +25,18 @@ from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, H5AgentTemplateGrant, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
 from ..services.brand_context import brand_short_name, normalize_brand_mark, user_brand_mark
-from .assets import _find_asset_ffmpeg, _gen_asset_id, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
+from .assets import (
+    _asset_hidden_from_library,
+    _clean_creative_group_name_optional,
+    _creative_candidate_group,
+    _find_asset_ffmpeg,
+    _gen_asset_id,
+    _get_tos_config,
+    _save_bytes_or_tos,
+    _stored_asset_content_context,
+    get_asset_public_url,
+    online_user_for_mobile_user,
+)
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
 
@@ -75,6 +89,9 @@ class CreateVideoBody(_TokenBody):
     virtualman_id: Optional[str] = None
     title: str = "数字人口播"
     text: Optional[str] = None
+    # 本次文案的口播来源（工作流随机抽中的那个）
+    script_source: Optional[str] = None
+    script_sources: Optional[List[str]] = None
     speaker_id: Optional[str] = None
     audio_url: Optional[str] = None
     audio_asset_id: Optional[str] = None
@@ -108,8 +125,19 @@ class VideoTaskBody(_TokenBody):
     record_id: Optional[int] = None
 
 
-def _clean_text(value: Optional[str]) -> str:
-    return str(value or "").strip()
+def _clean_text(value: Optional[str], limit: int = 0) -> str:
+    """去空白；limit>0 时再截断到该长度。
+
+    2026-10-04 线上事故：create_video 记录口播来源时写成 ``_clean_text(v, 64)``，
+    而当时这个 helper 只接受 1 个参数 → ``TypeError: _clean_text() takes 1
+    positional argument but 2 were given`` → ``POST /api/shanjian-digital-human/
+    video/create`` 对所有人返回 500（10-01 起 74 次调用 0 成功），数字人口播视频
+    全部做不出来。这里补上可选长度上限，两种调用方式都成立。
+    """
+    text = str(value or "").strip()
+    if limit and int(limit) > 0:
+        return text[: int(limit)]
+    return text
 
 
 def _validated_profile_auth_text(db: Session, current_user: User, body: ProfileTrainBody) -> tuple[str, str]:
@@ -453,6 +481,10 @@ async def _persist_audio_for_shanjian(
             "source": "shanjian_digital_human_audio_transfer",
             "original_url_hint": _url_hint(raw),
             "content_type": media_type,
+            # 过程件：这段配音只是喂给闪剪生成口播视频的输入，不是交付给用户的成品。
+            # 按口径（2026-09-22）素材库与内容库都不展示，仍可按 asset_id 取用。
+            "asset_origin": "intermediate",
+            "content_visibility": "hidden",
         },
     )
     db.add(asset)
@@ -502,6 +534,28 @@ def _task_status_text(status: str) -> str:
     return mapping.get(_clean_text(status), _clean_text(status) or "处理中")
 
 
+def _is_internal_upstream_url(value: str) -> bool:
+    """Reject local/private URLs before they are submitted to Shanjian."""
+    raw = _clean_text(value)
+    if not raw.lower().startswith(("http://", "https://")):
+        return True
+    try:
+        parsed = urlparse(raw)
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+    except Exception:
+        return True
+    if not hostname:
+        return True
+    if hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "bhzn.top", "www.bhzn.top", "42.194.209.150"}:
+        return True
+    if hostname.endswith(".local"):
+        return True
+    try:
+        return not ipaddress.ip_address(hostname).is_global
+    except ValueError:
+        return False
+
+
 def _resolve_asset_or_url(
     *,
     request: Request,
@@ -513,8 +567,10 @@ def _resolve_asset_or_url(
 ) -> str:
     raw_url = _clean_text(url)
     if raw_url:
-        if raw_url.startswith("http://") or raw_url.startswith("https://"):
+        if raw_url.startswith(("http://", "https://")) and not _is_internal_upstream_url(raw_url):
             return raw_url
+        if raw_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail=f"{label} URL must be a public address reachable by Shanjian")
         raise HTTPException(status_code=400, detail=f"{label} URL 必须是 http(s) 地址")
     aid = _clean_text(asset_id)
     if not aid:
@@ -942,7 +998,13 @@ def _stored_digital_human_template(meta: Any) -> tuple[bool, Optional[Dict[str, 
     raw = meta.get("digital_human_template")
     if not isinstance(raw, dict):
         return True, None
-    style_id = _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"))
+    style_id = _clean_text(
+        raw.get("style_id")
+        or raw.get("styleId")
+        or raw.get("template_id")
+        or raw.get("templateId")
+        or raw.get("id")
+    )
     if not style_id:
         return True, None
     pack_rules = raw.get("pack_rules") if isinstance(raw.get("pack_rules"), dict) else {}
@@ -973,6 +1035,380 @@ def _stored_digital_human_template(meta: Any) -> tuple[bool, Optional[Dict[str, 
         "video_duration": max(5, min(video_duration, 300)),
     }
 
+
+def _clean_digital_human_asset_groups(meta: Any) -> List[str]:
+    if not isinstance(meta, dict):
+        return []
+    raw = meta.get("digital_human_asset_groups")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    seen: List[str] = []
+    for item in raw:
+        name = _clean_creative_group_name_optional(None if item is None else str(item))
+        if name and name not in seen:
+            seen.append(name)
+        if len(seen) >= 20:
+            break
+    return seen
+
+
+def _template_asset_groups(template_meta: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(template_meta, dict):
+        return []
+    return _clean_digital_human_asset_groups({"digital_human_asset_groups": template_meta.get("asset_groups")})
+
+
+def _with_digital_human_asset_groups(template_meta: Optional[Dict[str, Any]], source_meta: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(template_meta, dict):
+        return template_meta
+    groups = _clean_digital_human_asset_groups(source_meta)
+    if not groups:
+        return template_meta
+    copied = dict(template_meta)
+    copied["asset_groups"] = groups
+    return copied
+
+
+def _asset_tag_list(row: Asset) -> List[str]:
+    context = _stored_asset_content_context(row)
+    text = _clean_text(context.get("tags")) or _clean_text(getattr(row, "tags", None))
+    if not text:
+        return []
+    seen: List[str] = []
+    for part in re.split(r"[,，;；\s]+", text):
+        tag = part.strip()[:40]
+        if tag and tag not in seen:
+            seen.append(tag)
+        if len(seen) >= 12:
+            break
+    return seen
+
+
+def _group_asset_candidates(db: Session, current_user: User, groups: List[str]) -> List[Dict[str, Any]]:
+    wanted = set(groups)
+    if not wanted:
+        return []
+    owner = online_user_for_mobile_user(db, current_user)
+    user_ids = {int(current_user.id)}
+    owner_id = getattr(owner, "id", None)
+    if owner_id:
+        user_ids.add(int(owner_id))
+    rows = (
+        db.query(Asset)
+        .filter(Asset.user_id.in_(user_ids))
+        .order_by(Asset.id.desc())
+        .all()
+    )
+    tagged: List[Dict[str, Any]] = []
+    plain: List[Dict[str, Any]] = []
+    for row in rows:
+        if _asset_hidden_from_library(row):
+            continue
+        kind = str(row.media_type or "").strip().lower()
+        if kind not in {"image", "video"}:
+            continue
+        group = _creative_candidate_group(row.meta)
+        if group not in wanted:
+            continue
+        tags = _asset_tag_list(row)
+        item = {
+            "id": _clean_text(row.asset_id),
+            "user_id": int(row.user_id),
+            "type": kind,
+            "group": group,
+            "tags": tags,
+            "name": _clean_text(row.filename)[:80],
+            "file_url": _clean_text(row.source_url),
+        }
+        if not item["id"]:
+            continue
+        (tagged if tags else plain).append(item)
+    return (tagged + plain)[:40]
+
+
+def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    raw = _clean_text(text)
+    fence = "```"
+    if raw.startswith(fence):
+        raw = raw[len(fence):].strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        if raw.endswith(fence):
+            raw = raw[:-len(fence)].strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(raw[start:end + 1])
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+# ── 分组素材选材：宁可不带也不能带错 ─────────────────────────────────────────
+# 模型（DeepSeek）必须明确回答"素材主题是否对得上文案"；另外再做一层本地关键词闸门：
+# 选中的素材必须能在文案里找到它的标签/文件名关键词，否则丢掉。全部丢光就不再传素材
+# （闪剪按模板自带素材出片），不会拿不相关素材凑数。
+
+# ── 分组素材选材：B 管准入、A 管排序 ─────────────────────────────────────────
+# B（关键词闸门，本地、硬保证）：候选素材的标签/文件名必须在文案里找到 ≥3 字的关键词
+#   （或整条标签≥3 字完整出现），否则不进候选池；一个都没有就不传素材。
+# A（DeepSeek）：只在通过 B 的池子里排序 + 写理由，决定"先带哪个"；A 不给全局否决权，
+#   也不再把明显不相关的素材选进来（那些已经被 B 拦在池外）。
+
+_SHANJIAN_ASSET_KEYWORD_STOPWORDS = {
+    "ai",
+    "视频",
+    "素材",
+    "图片",
+    "内容",
+    "口播",
+    "数字人",
+    "数字",
+    "智能",
+    "自动",
+    "生成",
+    "视频素材",
+    "口播视频",
+    "短视频",
+    "自媒体",
+    "私信",
+    "关注",
+    "账号",
+    "工具",
+    "落地",
+    "带货",
+    "企业",
+    "老板",
+    "客户",
+    "产品",
+}
+
+_SHANJIAN_ASSET_KEYWORD_MIN_LEN = 3
+_SHANJIAN_ASSET_KEYWORD_MAX_LEN = 6
+
+
+def _shanjian_asset_keyword_gate_enabled() -> bool:
+    raw = str(os.environ.get("SHANJIAN_ASSET_KEYWORD_GATE") or "").strip().lower()
+    return raw not in {"0", "false", "no", "off", "disabled", "disable"}
+
+
+def _normalize_tag_text(tag: str) -> str:
+    return re.sub(r"[\s\-_/,，、;；|·]+", "", _clean_text(tag)).lower()
+
+
+def _tag_core_text(tag: str) -> str:
+    """去掉过泛词之后的标签正文（"AI数字人营销" → "营销"）。"""
+    text = _normalize_tag_text(tag)
+    for word in sorted(_SHANJIAN_ASSET_KEYWORD_STOPWORDS, key=len, reverse=True):
+        if word and word in text:
+            text = text.replace(word, " ")
+    return re.sub(r"\s+", "", text)
+
+
+def _tag_keywords(
+    tag: str,
+    *,
+    min_len: int = _SHANJIAN_ASSET_KEYWORD_MIN_LEN,
+    max_len: int = _SHANJIAN_ASSET_KEYWORD_MAX_LEN,
+) -> List[str]:
+    """Break one tag's core text into min_len..max_len-char keywords."""
+    text = _tag_core_text(tag)
+    if len(text) < min_len:
+        return []
+    out: List[str] = []
+    longest = min(len(text), max(2, int(max_len)))
+    for size in range(longest, min_len - 1, -1):
+        for start in range(0, len(text) - size + 1):
+            piece = text[start:start + size]
+            if piece in _SHANJIAN_ASSET_KEYWORD_STOPWORDS or piece.isdigit():
+                continue
+            if piece not in out:
+                out.append(piece)
+    return out
+
+
+def _script_keyword_hits(script: str, tags: List[str]) -> List[str]:
+    """整条标签原样出现在文案里，或去掉泛词后仍有 ≥3 字关键词命中。"""
+    text = _clean_text(script).lower()
+    if not text:
+        return []
+    hits: List[str] = []
+    for tag in tags or []:
+        whole = _normalize_tag_text(str(tag))
+        if len(whole) >= _SHANJIAN_ASSET_KEYWORD_MIN_LEN and whole in text and whole not in hits:
+            hits.append(whole)
+            continue
+        for keyword in _tag_keywords(str(tag)):
+            if keyword in text and keyword not in hits:
+                hits.append(keyword)
+    return hits
+
+def _filename_keyword_hits(script: str, filename: str) -> List[str]:
+    name = _clean_text(filename)
+    if not name:
+        return []
+    stem = name.rsplit(".", 1)[0]
+    compact = re.sub(r"[\s\-_./]+", "", stem)
+    if not compact or re.fullmatch(r"[0-9a-f]{8,}", compact):
+        return []
+    text = _clean_text(script).lower()
+    hits: List[str] = []
+    longest = min(len(compact), _SHANJIAN_ASSET_KEYWORD_MAX_LEN)
+    for size in range(longest, _SHANJIAN_ASSET_KEYWORD_MIN_LEN - 1, -1):
+        for start in range(0, max(0, len(compact) - size + 1)):
+            piece = compact[start:start + size].lower()
+            if piece in _SHANJIAN_ASSET_KEYWORD_STOPWORDS or piece.isdigit():
+                continue
+            if piece in text and piece not in hits:
+                hits.append(piece)
+    return hits
+
+
+def _material_keyword_hits(script: str, item: Dict[str, Any]) -> Dict[str, Any]:
+    """{"keywords": [...], "source": "tags"|"filename"}；没命中返回空 keywords。"""
+    tag_hits = _script_keyword_hits(script, list((item or {}).get("tags") or []))
+    if tag_hits:
+        return {"keywords": tag_hits[:6], "source": "tags"}
+    name_hits = _filename_keyword_hits(script, _clean_text((item or {}).get("name")))
+    if name_hits:
+        return {"keywords": name_hits[:6], "source": "filename"}
+    return {"keywords": [], "source": ""}
+
+
+def _approve_candidates_by_script(
+    *,
+    candidates: List[Dict[str, Any]],
+    script: str,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """选材硬闸门：标签/文件名必须命中文案里的 ≥3 字关键词，否则不进池子。"""
+    if not _shanjian_asset_keyword_gate_enabled():
+        hits = {
+            str(item.get("id") or ""): {"keywords": [], "source": "gate_off"}
+            for item in candidates
+        }
+        return list(candidates), [], hits
+    approved: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
+    hits: Dict[str, Dict[str, Any]] = {}
+    for item in candidates:
+        asset_id = str(item.get("id") or "")
+        if not asset_id:
+            continue
+        matched = _material_keyword_hits(script, item)
+        if not matched.get("keywords"):
+            dropped.append(
+                {
+                    "id": asset_id,
+                    "reason": "no_keyword_match",
+                    "type": item.get("type"),
+                    "tags": list(item.get("tags") or [])[:6],
+                }
+            )
+            continue
+        hits[asset_id] = matched
+        approved.append(item)
+    return approved, dropped, hits
+
+
+def _rank_approved_materials(
+    approved: List[Dict[str, Any]],
+    *,
+    hits: Dict[str, Dict[str, Any]],
+    limit: int = 8,
+) -> List[Dict[str, Any]]:
+    """本地排序：命中词更多、最长命中词更长、标签命中优先于文件名命中。"""
+    def sort_key(indexed: tuple) -> tuple:
+        index, item = indexed
+        matched = hits.get(str(item.get("id") or "")) or {}
+        keywords = list(matched.get("keywords") or [])
+        longest = max((len(word) for word in keywords), default=0)
+        source_rank = 0 if matched.get("source") == "tags" else 1
+        return (-len(keywords), -longest, source_rank, index)
+
+    ordered = [item for _index, item in sorted(enumerate(approved), key=sort_key)]
+    return ordered[: max(1, int(limit))]
+
+def _materials_from_group_candidates(candidates: List[Dict[str, Any]], current_user_id: int) -> List[Dict[str, Any]]:
+    materials: List[Dict[str, Any]] = []
+    for item in candidates[:8]:
+        kind = item.get("type")
+        if kind not in {"image", "video"}:
+            continue
+        file_url = _clean_text(item.get("file_url"))
+        if int(item.get("user_id") or 0) == int(current_user_id) and item.get("id"):
+            material = {"type": kind, "asset_id": item["id"]}
+            if file_url:
+                material["fileUrl"] = file_url
+            materials.append(material)
+            continue
+        if file_url:
+            materials.append({"type": kind, "fileUrl": file_url})
+    return materials
+
+
+async def _apply_asset_group_materials(
+    *,
+    db: Session,
+    current_user: User,
+    row: ShanjianDigitalHumanVideoTask,
+    template_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """选材只用本地关键词闸门：命中文案的素材才会带给闪剪，没命中就不传。"""
+    groups = _template_asset_groups(template_meta)
+    if not groups:
+        return template_meta
+    candidates = _group_asset_candidates(db, current_user, groups)
+    snapshot = dict(template_meta)
+    script = _clean_text(getattr(row, "text", None))[:2000]
+    selection: Dict[str, Any] = {
+        "groups": groups,
+        "candidate_ids": [item["id"] for item in candidates],
+        "selected_ids": [],
+        "status": "empty",
+        "order_rule": "keyword_score",
+    }
+    if not candidates:
+        snapshot["asset_group_selection"] = selection
+        return snapshot
+
+    approved, dropped, hits = _approve_candidates_by_script(
+        candidates=candidates,
+        script=script,
+    )
+    ranked = _rank_approved_materials(approved, hits=hits)
+    selection["approved_ids"] = [item["id"] for item in approved]
+    selection["matched_keywords"] = {
+        asset_id: list((value or {}).get("keywords") or [])
+        for asset_id, value in hits.items()
+    }
+    selection["matched_source"] = {
+        asset_id: str((value or {}).get("source") or "")
+        for asset_id, value in hits.items()
+    }
+    selection["dropped_unrelated"] = dropped
+    selection["selected_ids"] = [item["id"] for item in ranked]
+    logger.info(
+        "[shanjian-dh] asset group selection user_id=%s groups=%s candidates=%s approved=%s selected=%s dropped=%s",
+        getattr(current_user, "id", ""),
+        groups,
+        len(candidates),
+        len(approved),
+        len(ranked),
+        len(dropped),
+    )
+    materials = _materials_from_group_candidates(ranked, int(current_user.id))
+    if not materials:
+        selection["status"] = "none"
+        snapshot["asset_group_selection"] = selection
+        return snapshot
+    selection["status"] = "selected"
+    snapshot["materials"] = materials
+    snapshot["asset_group_selection"] = selection
+    return snapshot
 
 def _default_digital_human_template(
     db: Session,
@@ -1021,10 +1457,10 @@ def _default_digital_human_template(
         if current is not None:
             configured, template_meta = _stored_digital_human_template(current.meta)
             if configured:
-                return template_meta
+                return _with_digital_human_asset_groups(template_meta, current.meta)
 
     _configured, template_meta = _stored_digital_human_template(personal_meta)
-    return template_meta
+    return _with_digital_human_asset_groups(template_meta, personal_meta)
 
 
 def _resolve_video_template_meta(
@@ -1082,6 +1518,253 @@ def _template_meta_from_submit_payload(submit_payload: Optional[dict]) -> Option
     return None
 
 
+# ── 闪剪素材分辨率兜底：能压就压，压不了就丢，绝不整单失败 ─────────────────────
+# 闪剪成片要求素材最长边 <= 2000（上游 InvalidFile.Resolution）。素材库/个人模板
+# 分组的素材可能来自任意设备，客户端预处理不一定命中，所以在云端提交剪辑前逐个
+# 体检：超限的压缩成合规副本再用，压缩失败的直接把该素材丢掉，剩下的照样出片。
+
+_SHANJIAN_MATERIAL_MAX_EDGE = 2000
+
+
+def _shanjian_material_max_edge() -> int:
+    raw = str(os.environ.get("SHANJIAN_MATERIAL_MAX_EDGE") or "").strip()
+    try:
+        value = int(raw) if raw else _SHANJIAN_MATERIAL_MAX_EDGE
+    except Exception:
+        value = _SHANJIAN_MATERIAL_MAX_EDGE
+    return max(320, min(value, 4096))
+
+
+def _shanjian_ffprobe_bin(ffmpeg: str) -> str:
+    if ffmpeg:
+        sibling = Path(ffmpeg).with_name(
+            "ffprobe.exe" if Path(ffmpeg).suffix.lower() == ".exe" else "ffprobe"
+        )
+        if sibling.is_file():
+            return str(sibling)
+    return shutil.which("ffprobe") or shutil.which("ffprobe.exe") or ""
+
+
+def _probe_material_dimensions(media_url: str) -> Optional[tuple[int, int]]:
+    """Probe one remote 闪剪 material. None means unknown, so keep it."""
+    try:
+        ffmpeg = _find_asset_ffmpeg()
+    except Exception:
+        ffmpeg = ""
+    ffprobe = _shanjian_ffprobe_bin(ffmpeg)
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "json",
+                media_url,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=45,
+            check=False,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception:
+        return None
+    stream = ((payload.get("streams") or [{}])[0]) or {}
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _shanjian_target_dimensions(width: int, height: int, max_edge: int) -> tuple[int, int]:
+    width = max(1, int(width or 0))
+    height = max(1, int(height or 0))
+    limit = max(2, int(max_edge))
+    longest = max(width, height)
+    scale = 1.0 if longest <= limit else float(limit) / float(longest)
+    target_w = max(2, int(round(width * scale)))
+    target_h = max(2, int(round(height * scale)))
+    return max(2, target_w - target_w % 2), max(2, target_h - target_h % 2)
+
+
+def _shrink_material_bytes(
+    *,
+    media_type: str,
+    data: bytes,
+    width: int,
+    height: int,
+    max_edge: int,
+) -> bytes:
+    """Downscale one material so the 闪剪 render API accepts it."""
+    target_w, target_h = _shanjian_target_dimensions(width, height, max_edge)
+    kind = str(media_type or "").strip().lower()
+    if kind == "image":
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+
+            with Image.open(BytesIO(data)) as img:
+                if not getattr(img, "is_animated", False):
+                    out = BytesIO()
+                    img.convert("RGB").resize(
+                        (target_w, target_h), Image.Resampling.LANCZOS
+                    ).save(out, "JPEG", quality=90, optimize=True, progressive=True)
+                    optimized = out.getvalue()
+                    if optimized:
+                        return optimized
+        except Exception:
+            logger.warning("[shanjian-dh] PIL material shrink failed, falling back to ffmpeg")
+    ffmpeg = _find_asset_ffmpeg()
+    with tempfile.TemporaryDirectory(prefix="shanjian_material_shrink_") as temp_name:
+        temp_dir = Path(temp_name)
+        suffix = ".jpg" if kind == "image" else ".mp4"
+        source = temp_dir / f"source{suffix}"
+        target = temp_dir / f"target{suffix}"
+        source.write_bytes(data)
+        if kind == "image":
+            command = [
+                ffmpeg, "-y", "-i", str(source),
+                "-vf", f"scale={target_w}:{target_h}",
+                "-q:v", "2",
+                str(target),
+            ]
+        else:
+            command = [
+                ffmpeg, "-y", "-i", str(source),
+                "-map", "0:v:0", "-map", "0:a?",
+                "-vf", f"scale={target_w}:{target_h}",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                "-max_muxing_queue_size", "2048",
+                str(target),
+            ]
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800,
+            check=False,
+        )
+        if proc.returncode != 0 or not target.is_file() or target.stat().st_size <= 0:
+            detail = (proc.stderr or proc.stdout or "ffmpeg failed").strip()[-300:]
+            raise RuntimeError(f"素材压缩失败：{detail}")
+        return target.read_bytes()
+
+
+async def _ensure_material_within_shanjian_limit(
+    material: Dict[str, Any],
+    *,
+    max_edge: int,
+    label: str,
+) -> tuple[Optional[Dict[str, Any]], str]:
+    """Keep, shrink, or drop one material. Never raises."""
+    kind = str(material.get("type") or "").strip().lower()
+    url = _clean_text(material.get("fileUrl") or material.get("file_url"))
+    if kind not in {"image", "video"} or not url:
+        return None, "invalid"
+    dimensions = await asyncio.to_thread(_probe_material_dimensions, url)
+    if dimensions is None:
+        return dict(material), "probe_unknown"
+    width, height = dimensions
+    if max(width, height) <= max_edge:
+        return dict(material), "ok"
+    accept = "video/*,*/*;q=0.8" if kind == "video" else "image/*,*/*;q=0.8"
+    try:
+        data, _content_type = await _download_media_bytes(url, accept=accept)
+        shrunk = await asyncio.to_thread(
+            _shrink_material_bytes,
+            media_type=kind,
+            data=data,
+            width=width,
+            height=height,
+            max_edge=max_edge,
+        )
+        extension = ".jpg" if kind == "image" else ".mp4"
+        content_type = "image/jpeg" if kind == "image" else "video/mp4"
+        _asset_id, _filename, file_size, public_url = await asyncio.to_thread(
+            _save_bytes_or_tos,
+            shrunk,
+            extension,
+            content_type,
+        )
+        if not public_url:
+            return None, "shrink_upload_failed"
+        logger.info(
+            "[shanjian-dh] material shrunk label=%s type=%s %sx%s size=%s url=%s",
+            label,
+            kind,
+            width,
+            height,
+            file_size,
+            _url_hint(public_url),
+        )
+        return {"type": kind, "fileUrl": public_url}, "shrunk"
+    except HTTPException as exc:
+        return None, f"shrink_failed:{str(getattr(exc, 'detail', exc))[:120]}"
+    except Exception as exc:
+        return None, f"shrink_failed:{type(exc).__name__}: {exc}"[:160]
+
+
+async def _filter_materials_within_shanjian_limit(
+    materials: List[Dict[str, Any]],
+    *,
+    label: str,
+    max_edge: Optional[int] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Return (usable materials, report). Oversized ones are shrunk or dropped."""
+    limit = max_edge or _shanjian_material_max_edge()
+    kept: List[Dict[str, Any]] = []
+    report: Dict[str, Any] = {
+        "limit": limit,
+        "checked": 0,
+        "shrunk": 0,
+        "unknown": 0,
+        "dropped": [],
+    }
+    for index, item in enumerate(materials or []):
+        if not isinstance(item, dict):
+            continue
+        report["checked"] += 1
+        usable, action = await _ensure_material_within_shanjian_limit(
+            item,
+            max_edge=limit,
+            label=f"{label}#{index + 1}",
+        )
+        if usable is None:
+            report["dropped"].append(
+                {
+                    "index": index + 1,
+                    "type": str(item.get("type") or ""),
+                    "url": _url_hint(_clean_text(item.get("fileUrl") or item.get("file_url"))),
+                    "reason": action,
+                }
+            )
+            continue
+        if action == "shrunk":
+            report["shrunk"] += 1
+        elif action == "probe_unknown":
+            report["unknown"] += 1
+        kept.append(usable)
+    return kept, report
+
 async def _prepare_template_media_urls(
     *,
     db: Session,
@@ -1132,6 +1815,28 @@ async def _prepare_template_media_urls(
             label=f"????{index + 1}",
         )
         materials.append({"type": kind, "fileUrl": uploaded_url})
+    materials, material_report = await _filter_materials_within_shanjian_limit(
+        materials,
+        label=title,
+    )
+    if material_report["shrunk"] or material_report["dropped"]:
+        prepared["material_report"] = material_report
+        logger.info(
+            "[shanjian-dh] material limit pass user_id=%s checked=%s shrunk=%s dropped=%s unknown=%s limit=%s",
+            getattr(current_user, "id", ""),
+            material_report["checked"],
+            material_report["shrunk"],
+            len(material_report["dropped"]),
+            material_report["unknown"],
+            material_report["limit"],
+        )
+        for item in material_report["dropped"]:
+            logger.warning(
+                "[shanjian-dh] material dropped type=%s url=%s reason=%s",
+                item.get("type"),
+                item.get("url"),
+                item.get("reason"),
+            )
     prepared["materials"] = materials
     return prepared
 
@@ -1198,6 +1903,12 @@ async def _submit_realman_clip_task(
         title=row.title or "数字人口播",
         media_type="video",
         label="基础数字人视频",
+    )
+    template_meta = await _apply_asset_group_materials(
+        db=db,
+        current_user=current_user,
+        row=row,
+        template_meta=template_meta,
     )
     prepared_template = await _prepare_template_media_urls(
         db=db,
@@ -1305,6 +2016,7 @@ def _profile_to_dict(row: ShanjianDigitalHumanProfile) -> Dict[str, Any]:
 
 
 def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
+    _submit = row.submit_payload if isinstance(row.submit_payload, dict) else {}
     return {
         "id": row.id,
         "user_id": row.user_id,
@@ -1319,6 +2031,8 @@ def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
         "audio_url": row.audio_url or "",
         "speaker_id": row.speaker_id or "",
         "text": row.text or "",
+        "script_source": str(_submit.get("script_source") or ""),
+        "script_sources": list(_submit.get("script_sources") or []),
         "video_url": row.video_url or "",
         "cover_url": row.cover_url or "",
         "duration": row.duration,
@@ -1505,6 +2219,8 @@ async def delete_video_task(
     return {"ok": True, "deleted": record_id}
 
 
+
+
 @router.post("/api/shanjian-digital-human/profile/train")
 async def create_profile(
     body: ProfileTrainBody,
@@ -1519,7 +2235,21 @@ async def create_profile(
         current_user=current_user,
     )
     _release_db_transaction(db)
-    upstream = await _post(endpoint, body.token, payload)
+    # 注意：不在云端压缩素材（服务器压力）。
+    # 超限素材由 online/设备端本机压好后再提交；云端只把上游的报错换成人话。
+    try:
+        upstream = await _post(endpoint, body.token, payload)
+    except HTTPException as exc:
+        detail = str(getattr(exc, "detail", exc) or "")
+        if _is_shanjian_material_rejection(detail):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "训练素材分辨率超过 2000x2000，请在 online（本机）里提交（会自动压好副本），"
+                    "或换一个分辨率更小的素材。"
+                ),
+            ) from exc
+        raise
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
     if not task_id:
@@ -1552,6 +2282,74 @@ async def create_profile(
         "request_id": row.request_id or "",
         "raw": upstream,
     }
+
+
+
+
+def _service_request_for_user(user: User, installation_id: str = "") -> Request:
+    """后台兜底轮询用的合成请求：带该用户的 token + X-Installation-Id，保证计费结算/退款能走通。"""
+    from .auth import access_token_claims, create_access_token
+
+    token = create_access_token(access_token_claims(user), expires_delta=timedelta(minutes=30))
+    headers = [
+        (b"authorization", ("Bearer " + token).encode("latin-1")),
+        (b"content-type", b"application/json"),
+    ]
+    slot = str(installation_id or getattr(user, "client_installation_id", "") or "").strip()
+    if slot:
+        headers.append((b"x-installation-id", slot.encode("latin-1", "ignore")))
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/shanjian-digital-human/video/task",
+            "headers": headers,
+        }
+    )
+
+
+async def refresh_stale_video_tasks(
+    db: Session,
+    *,
+    limit: int = 20,
+    min_age_minutes: int = 5,
+) -> int:
+    """客户端页面关掉后不再轮询，后台把生成中的数字人口播视频状态补到最新。"""
+    token = (os.environ.get("SHANJIAN_OPENAPI_TOKEN") or getattr(settings, "shanjian_openapi_token", "") or "").strip()
+    if not token:
+        return 0
+    cutoff = datetime.utcnow() - timedelta(minutes=max(2, int(min_age_minutes)))
+    rows = (
+        db.query(ShanjianDigitalHumanVideoTask)
+        .filter(
+            ShanjianDigitalHumanVideoTask.status.in_(("processing", "pending")),
+            ShanjianDigitalHumanVideoTask.updated_at < cutoff,
+        )
+        # 先处理最近卡住的（旧记录媒体已过期，排前面会把新任务挤出队列）
+        .order_by(ShanjianDigitalHumanVideoTask.updated_at.desc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    refreshed = 0
+    for row in rows:
+        user = db.query(User).filter(User.id == row.user_id).first()
+        if user is None:
+            continue
+        try:
+            await query_video_task(
+                VideoTaskBody(record_id=int(row.id), token=token),
+                _service_request_for_user(user, str(getattr(row, "installation_id", "") or "")),
+                user,
+                db,
+            )
+            refreshed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[shanjian-dh] background refresh failed row=%s err=%s", row.id, str(exc)[:200])
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    return refreshed
 
 
 @router.post("/api/shanjian-digital-human/profile/task")
@@ -1682,6 +2480,13 @@ async def create_video(
 
     template_meta, template_source = _resolve_video_template_meta(db, int(current_user.id), body)
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
+    _script_src = _clean_text(getattr(body, "script_source", ""), 64)
+    if _script_src:
+        submit_payload["script_source"] = _script_src
+    _script_srcs = [_clean_text(v, 64) for v in (getattr(body, "script_sources", None) or [])]
+    _script_srcs = [v for v in _script_srcs if v]
+    if _script_srcs:
+        submit_payload["script_sources"] = _script_srcs
     if body.long_video:
         submit_payload["output_constraints"] = {"duration_mode": "long"}
     elif body.hard_max_duration is not None:
@@ -1753,6 +2558,87 @@ async def create_video(
     return {"ok": True, "task_id": task_id, "record": _video_task_to_dict(row), "raw": upstream}
 
 
+def _is_shanjian_material_rejection(error_message: str, data: Any = None) -> bool:
+    """Detect the upstream material-resolution rejection."""
+    text = str(error_message or "")
+    if isinstance(data, (dict, list)):
+        text += " " + json.dumps(data, ensure_ascii=False)
+    if "InvalidFile.Resolution" in text or "2000x2000" in text:
+        return True
+    return "分辨率" in text and "素材" in text
+
+
+async def _retry_clip_without_materials(
+    *,
+    body: "VideoTaskBody",
+    db: Session,
+    current_user: User,
+    row: ShanjianDigitalHumanVideoTask,
+    submit_payload: Dict[str, Any],
+    error_message: str,
+) -> Optional[Dict[str, Any]]:
+    """Resubmit the clip with no materials so the user still gets a video."""
+    template_meta = _template_meta_from_submit_payload(submit_payload)
+    if not isinstance(template_meta, dict) or not template_meta:
+        return None
+    base_result = submit_payload.get("base_result")
+    if not isinstance(base_result, dict) or not base_result:
+        return None
+    retry_template = dict(template_meta)
+    dropped = retry_template.get("materials") or []
+    retry_template["materials"] = []
+    retry_template.pop("asset_groups", None)
+    retry_template.pop("digital_human_asset_groups", None)
+    retry_template.pop("clip_task_id", None)
+    retry_template.pop("clip_request_id", None)
+    retry_template["material_retry_reason"] = str(error_message or "")[:200]
+    retry_template["material_retry_dropped"] = len(dropped)
+    try:
+        result = await _submit_realman_clip_task(
+            body=body,
+            db=db,
+            current_user=current_user,
+            row=row,
+            template_meta=retry_template,
+            base_result_payload=base_result,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "[shanjian-dh] clip retry without materials failed user_id=%s detail=%s",
+            getattr(current_user, "id", ""),
+            str(getattr(exc, "detail", exc))[:200],
+        )
+        return None
+    state = dict(row.submit_payload or {})
+    state["material_retry_done"] = True
+    state["stage"] = "clip"
+    row.submit_payload = state
+    row.status = "processing"
+    row.error_message = None
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "[shanjian-dh] clip retried without materials user_id=%s dropped=%s clip_task=%s",
+        getattr(current_user, "id", ""),
+        len(dropped),
+        result.get("clip_task_id"),
+    )
+    return {
+        "ok": True,
+        "status": "processing",
+        "status_text": _task_status_text("processing"),
+        "task_id": row.task_id,
+        "clip_task_id": result.get("clip_task_id"),
+        "video_url": "",
+        "cover_url": "",
+        "duration": None,
+        "record": _video_task_to_dict(row),
+        "message": "素材分辨率超限，已跳过这些素材重新出片",
+        "raw": result.get("raw") or {},
+    }
+
 @router.post("/api/shanjian-digital-human/video/task")
 async def query_video_task(
     body: VideoTaskBody,
@@ -1794,6 +2680,21 @@ async def query_video_task(
         row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
         duration_value = _pick_result_value(result, "duration")
         postprocess: Optional[Dict[str, Any]] = None
+        if (
+            status == "failed"
+            and not submit_payload.get("material_retry_done")
+            and _is_shanjian_material_rejection(error_message, data)
+        ):
+            retried = await _retry_clip_without_materials(
+                body=body,
+                db=db,
+                current_user=current_user,
+                row=row,
+                submit_payload=submit_payload,
+                error_message=error_message,
+            )
+            if retried is not None:
+                return retried
         if status == "succeed" and row.video_url:
             try:
                 row.video_url, duration_value, postprocess = await _apply_video_duration_limit(

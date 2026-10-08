@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import io
 
+import pytest
 from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
 
@@ -71,3 +73,15 @@ def test_qwen_voice_clone_does_not_require_hifly_token(db_session, test_user, mo
     assert result["voice"] == "qwen-test-voice"
     assert calls[0]["filename"] == "voice-record.wav"
     assert calls[0]["raw"] == b"RIFFvoice-sample"
+
+
+def test_voice_clone_rejects_samples_above_qwen_limit():
+    from backend.app.api import hifly_assets
+
+    upload = UploadFile(
+        filename="voice.wav",
+        file=io.BytesIO(b"x" * (hifly_assets._VOICE_CLONE_MAX_BYTES + 1)),
+    )
+
+    with pytest.raises(HTTPException, match="10MB"):
+        asyncio.run(hifly_assets._prepare_voice_clone_upload(upload))

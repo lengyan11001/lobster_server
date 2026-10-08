@@ -432,3 +432,48 @@ def test_moments_content_publish_creates_and_reuses_pending_draft(db_session, te
         "https://cdn.example.test/publish-2.jpg",
     ]
     assert len(draft["attachments"]) == 3
+
+
+def test_list_content_records_returns_canvas_images(db_session, test_user, monkeypatch):
+    """2026-10-05：内容记录·生成的图片/视频 tab 直接读这个接口，kind=image 不能是 400。
+
+    画布产物落在 user_content_records(source=canvas, kind=image)，以前只放行 article/ppt，
+    传 kind=image 判「内容类型无效」→ 前端永远看不到画布出的图。
+    """
+    from backend.app.api import content_records as cr
+    from backend.app.models import UserContentRecord
+    import backend.app.api.mobile_identity as mobile_identity
+
+    monkeypatch.setattr(cr, "online_user_for_mobile_user", lambda _db, user: user)
+    monkeypatch.setattr(mobile_identity, "online_user_for_mobile_user", lambda _db, user: user, raising=False)
+
+    db_session.add(UserContentRecord(
+        user_id=test_user.id, source="canvas", source_id="task-1", kind="image",
+        title="nano-banana-2 · 生成个水杯的图片", summary="生成个水杯的图片",
+        filename="nano-banana-2_20261005_155858.png",
+        cover_url="https://cdn.example.test/canvas.png",
+        file_url="https://cdn.example.test/canvas.png",
+        status="completed", meta={"model": "fal-ai/nano-banana-2", "media_type": "image"},
+        source_created_at=datetime.utcnow(),
+    ))
+    db_session.commit()
+
+    out = cr.list_content_records(kind="image", limit=20, offset=0, compact=True,
+                                  current_user=test_user, db=db_session)
+    assert out["pagination"]["total"] == 1
+    item = out["items"][0]
+    assert item["kind"] == "image"
+    assert item["media_type"] == "image"
+    assert item["file_url"] == "https://cdn.example.test/canvas.png"
+    assert item["title"].startswith("nano-banana-2")
+
+    # 视频/音频也要放行，未知类型仍然 400
+    cr.list_content_records(kind="video", limit=20, offset=0, compact=True,
+                            current_user=test_user, db=db_session)
+    try:
+        cr.list_content_records(kind="bogus", limit=20, offset=0, compact=True,
+                                current_user=test_user, db=db_session)
+        raised = False
+    except HTTPException:
+        raised = True
+    assert raised

@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import random
+
 import copy
+import logging
 import os
 import re
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import (
     ContentCompetitorAccount,
     H5WorkflowActivation,
@@ -23,46 +28,322 @@ from ..models import (
     IPContentKeyword,
     IPContentScheduleTemplate,
     OpenClawMemoryDocument,
-    ShanjianDigitalHumanProfile,
-    UserHiflyAvatarAsset,
-    UserHiflyVoiceAsset,
     ScheduledTask,
     User,
 )
 from .admin import _agent_sub_user_ids
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
+from ..services import dispatch_devices
 from .scheduled_tasks import (
     ScheduledTaskCreate,
     _SERVER_SIDE_TASK_KINDS,
     _cancel_unfinished_runs_for_task,
     _create_task_row,
+    _h5_dh_context_params,
     _delete_task_row,
-    _enqueue_task,
+    _hydrate_workflow_task_payload,
     _local_bestseller_profile_from_persona,
+    _missing_local_bestseller_profile_fields,
     _serialize_task,
+    douyin_node_label,
+    normalize_douyin_task_kind,
+    normalize_workflow_nodes_for_save,
 )
+from .ip_content_studio import (
+    _personal_default_resource_overrides,
+    _personal_default_row_for_slot,
+    _survey_for_template,
+)
+from ..services.user_feature_flags import user_feature_flags
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _from_marketing_page(request) -> bool:
+    """这次提交是不是从 AI 营销创作页面（含二级菜单）发出的。
+
+    1) H5 显式标记头 X-H5-AI-Marketing: 1
+    2) 兜底：Referer / Origin 指向 AI营销创作页面（路由里带 marketing / 营销）
+    """
+    try:
+        for name in ("x-h5-ai-marketing", "x-ai-marketing"):
+            value = str(request.headers.get(name) or "").strip().lower()
+            if value in ("1", "true", "yes", "marketing", "ai_marketing", "ai-marketing"):
+                return True
+        ref = (str(request.headers.get("referer") or "") + " " + str(request.headers.get("origin") or "")).lower()
+        return any(k in ref for k in ("ai-marketing", "ai_marketing", "/marketing", "marketing/", "营销"))
+    except Exception:
+        return False
+
+
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
-_DEVICE_ONLINE_TTL_SECONDS = 120
+# 在线判定窗口：客户端上报的设备心跳有节流（写入最快 20s 一次，实际间隔可能到
+# 数分钟），窗口比心跳间隔略长才不会出现"刚显示在线、两分钟就掉线"的闪烁。
+_DEVICE_ONLINE_TTL_SECONDS = 300
 _WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_channels": "视频号", "wechat_moments": "朋友圈图文"}
 _WORKFLOW_CHILD_CLIENT_ACTIONS = {
     "native_wechat_poll",
     "native_wechat_add_friend",
     "native_wechat_moments_engage",
+    "native_whatsapp_poll",
 }
 _WORKFLOW_CHILD_ACTION_TYPES = {
     "client_workflow",
     "native_wechat_add_friend",
     "native_wechat_moments_engage",
+    "native_whatsapp_poll",
 }
-_ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
+_SYSTEM_WORKFLOW_OWNER_ID = 0
+_SYSTEM_WORKFLOW_CATALOG_SOURCE = "system_catalog"
+
+# 数字人节点口播来源：行业热门口播（默认）/ 专业 IP 口播
+_SHANJIAN_SCRIPT_SOURCES = {"ip_daily_industry_hot_oral", "ip_daily_professional_ip_oral"}
+_SHANJIAN_DEFAULT_SCRIPT_SOURCE = "ip_daily_industry_hot_oral"
+
+def _normalize_shanjian_script_sources(params) -> list:
+    """数字人节点口播来源（多选）归一：保留合法值，顺便给旧客户端写入单值。"""
+    raw = params.get("script_sources") if isinstance(params, dict) else None
+    values = []
+    if isinstance(raw, list):
+        values = [_clean_text(item, 64) for item in raw]
+    elif str(raw or "").strip():
+        values = [_clean_text(raw, 64)]
+    legacy = _clean_text((params or {}).get("script_source"), 64)
+    if legacy:
+        values.append(legacy)
+    ordered = list(dict.fromkeys([value for value in values if value in _SHANJIAN_SCRIPT_SOURCES]))
+    if not ordered:
+        ordered = [_SHANJIAN_DEFAULT_SCRIPT_SOURCE]
+    params["script_sources"] = ordered
+    # 多选时每次随机取一种（对齐界面文案「都选则每次随机一种」）；单选/默认值保持原样。
+    params["script_source"] = random.choice(ordered) if len(ordered) > 1 else ordered[0]
+    return ordered
+_ENABLED_SYSTEM_WORKFLOW_KEYS = {
+    "system_sales",
+    "system_short_video_wechat",
+    "system_douyin_leads",
+}
 _SALES_DH_PROVIDER_V2 = "shanjian_v2"
 _SALES_DH_PROVIDER_LEGACY = "hifly_legacy"
+
+# 上架中的系统模板 key 从 system_catalog 行动态读取（下架的不返回给用户端，
+# 所以上下架只靠服务端控制，客户端不需要改动）。目录还没建好时退回内置三条，
+# 避免把系统模板整体关掉。
+_SYSTEM_WORKFLOW_KEYS_TTL_SECONDS = 5.0
+_SYSTEM_WORKFLOW_KEYS_CACHE: dict = {"at": 0.0, "keys": tuple(sorted(_ENABLED_SYSTEM_WORKFLOW_KEYS))}
+
+
+def _enabled_system_workflow_keys() -> set:
+    now = time.monotonic()
+    cached = _SYSTEM_WORKFLOW_KEYS_CACHE
+    if now - float(cached.get("at") or 0.0) < _SYSTEM_WORKFLOW_KEYS_TTL_SECONDS:
+        return set(cached.get("keys") or ())
+    discovered: set = set()
+    catalog_rows = 0
+    try:
+        with SessionLocal() as session:
+            rows = (
+                session.query(H5WorkflowTemplate)
+                .filter(
+                    H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+                    H5WorkflowTemplate.status == "active",
+                )
+                .all()
+            )
+            for row in rows:
+                meta = dict(row.meta) if isinstance(row.meta, dict) else {}
+                catalog_rows += 1
+                if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+                    continue
+                key = str(meta.get("system_template_key") or "").strip()
+                if not key:
+                    continue
+                if meta.get("system_published") is False:
+                    continue
+                discovered.add(key)
+    except Exception:
+        logger.warning("enabled system workflow key scan failed", exc_info=True)
+    keys = set(_ENABLED_SYSTEM_WORKFLOW_KEYS) | discovered
+    cached["at"] = now
+    cached["keys"] = tuple(sorted(keys))
+    return keys
+
+
+class SystemWorkflowTemplateIn(BaseModel):
+    name: str = ""
+    nodes: list[dict] = []
+    published: Optional[bool] = None
+    confirm: bool = False
+
+
+def _require_system_template_admin(current_user: User) -> None:
+    if str(getattr(current_user, "role", "") or "").strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可用")
+
+
+def _system_catalog_template_row(db: Session, key: str) -> Optional[H5WorkflowTemplate]:
+    rows = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+            H5WorkflowTemplate.status == "active",
+        )
+        .all()
+    )
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("source") or "") != _SYSTEM_WORKFLOW_CATALOG_SOURCE:
+            continue
+        if str(meta.get("system_template_key") or "").strip() == key:
+            return row
+    return None
+
+
+@router.get("/api/h5-workflows/system-templates/{template_key}", summary="读取系统模板工作流（仅管理员，供编辑器使用）")
+def get_system_workflow_template(
+    template_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_system_template_admin(current_user)
+    key = _clean_text(template_key, 128)
+    row = _system_catalog_template_row(db, key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    return {
+        "ok": True,
+        "system_template": True,
+        "key": key,
+        "name": str(row.name or key),
+        "published": meta.get("system_published") is not False,
+        "nodes": list(row.nodes or []),
+    }
+
+
+@router.post("/api/h5-workflows/system-templates/{template_key}", summary="保存系统模板工作流（仅管理员，二次确认后生效并同步）")
+def save_system_workflow_template(
+    template_key: str,
+    body: SystemWorkflowTemplateIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_system_template_admin(current_user)
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="需要二次确认后才会生效")
+    key = _clean_text(template_key, 128)
+    row = _system_catalog_template_row(db, key)
+    if row is None:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    # 管理后台编辑器提交的节点可能把抖音节点写成 client_workflow + action=douyin_leads
+    # （admin.html buildNode 的老行为）→ 保存前归一，别再把坏 kind 存进系统模板并同步给镜像。
+    nodes, _douyin_fixed = normalize_workflow_nodes_for_save(body.nodes or [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="系统模板不能为空")
+    now = datetime.utcnow()
+    row.nodes = nodes
+    name = str(body.name or "").strip()
+    if name:
+        row.name = name[:160]
+    meta = dict(row.meta or {})
+    if body.published is not None:
+        meta["system_published"] = bool(body.published)
+    row.meta = meta
+    row.updated_at = now
+    synced = 0
+    mirrors = (
+        db.query(H5WorkflowTemplate)
+        .filter(
+            H5WorkflowTemplate.status == "active",
+            H5WorkflowTemplate.owner_user_id != _SYSTEM_WORKFLOW_OWNER_ID,
+        )
+        .all()
+    )
+    for mirror in mirrors:
+        # 只覆盖"直接启用系统模板"的镜像；复制出去自己改过的没有 system_template_key。
+        mirror_meta = mirror.meta if isinstance(mirror.meta, dict) else {}
+        if str(mirror_meta.get("source") or "") != "system_mirror":
+            continue
+        if str(mirror_meta.get("system_template_key") or "").strip() != key:
+            continue
+        mirror.nodes = nodes
+        mirror.updated_at = now
+        synced += 1
+    db.commit()
+    try:
+        _SYSTEM_WORKFLOW_KEYS_CACHE["at"] = 0.0
+    except Exception:
+        pass
+    try:
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+    except Exception:
+        pass
+    return {"ok": True, "key": key, "node_count": len(nodes), "synced_mirrors": synced}
+
+_WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS = 3.0
+_WORKFLOW_TEMPLATE_CACHE_LOCK = threading.Lock()
+_WORKFLOW_TEMPLATE_CACHE: dict[tuple[int, str], tuple[float, list[dict[str, Any]]]] = {}
+_WORKFLOW_TEMPLATE_CACHE_KEY_LOCKS: dict[tuple[int, str], threading.Lock] = {}
+
+# Keep server-side workflow activation aligned with the node picker in H5 and
+# Online. The picker uses package visibility as the capability permission;
+# activation must not be able to bypass that rule through a direct request.
+_WORKFLOW_NODE_CAPABILITY_IDS = {
+    "image_composer_studio": "goal.image.pipeline",
+    "hifly.video.create_by_tts": "hifly.video.create_by_tts",
+    "comfly.seedance.tvc.pipeline": "comfly.seedance.tvc.pipeline",
+    "comfly.daihuo.pipeline": "comfly.daihuo.pipeline",
+    "ip_content_daily": "ip_content_daily",
+    "ip_content_oral": "ip_content_oral",
+    "ip_content_moments": "ip_content_moments",
+    "wewrite.article.pipeline": "wewrite.article.pipeline",
+    "native_whatsapp_poll": "online.whatsapp_takeover",
+}
+_WORKFLOW_NODE_PACKAGE_IDS = {
+    "hifly.video.create_by_tts": "hifly_digital_human_skill",
+    "comfly.seedance.tvc.pipeline": "comfly_seedance_tvc_skill",
+    "comfly.daihuo.pipeline": "comfly_veo_skill",
+    "image_composer_studio": "goal_video_pipeline_skill",
+    "ip_content_daily": "ip_content_daily_skill",
+    "ip_content_oral": "ip_content_oral_skill",
+    "ip_content_moments": "ip_content_moments_skill",
+    "wewrite.article.pipeline": "wewrite_official_account_skill",
+    "linkedin_leads": "linkedin_leads",
+    "linkedin_mining": "linkedin_leads",
+    "reddit_leads": "reddit_leads",
+    "x_leads": "x_leads",
+    "tiktok_leads": "tiktok_leads",
+    "native_whatsapp_poll": "personal_whatsapp_assistant",
+}
+_WORKFLOW_ACTION_CAPABILITY_IDS = {
+    "image_studio_generate": "goal.image.pipeline",
+}
+_WORKFLOW_TASK_CAPABILITY_IDS = {
+    "ip_content_daily": "ip_content_daily",
+    "ip_content_oral": "ip_content_oral",
+    "ip_content_moments": "ip_content_moments",
+}
+_WORKFLOW_PACKAGE_LABELS = {
+    "hifly_digital_human_skill": "数字人口播视频",
+    "comfly_seedance_tvc_skill": "创意分镜头视频",
+    "comfly_veo_skill": "爆款TVC",
+    "goal_video_pipeline_skill": "AI设计图",
+    "ip_content_daily_skill": "IP日更文案",
+    "ip_content_oral_skill": "IP口播文案",
+    "ip_content_moments_skill": "朋友圈图文",
+    "wewrite_official_account_skill": "公众号文章",
+    "linkedin_leads": "LinkedIn线索挖掘",
+    "reddit_leads": "Reddit线索采集",
+    "x_leads": "X线索采集",
+    "tiktok_leads": "TikTok线索采集",
+    "personal_whatsapp_assistant": "个人whatapp助手",
+}
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -101,6 +382,156 @@ def _clean_time(value: Any) -> str:
     if not _TIME_RE.match(text):
         raise HTTPException(status_code=400, detail="节点时间格式应为 HH:MM")
     return text
+
+
+def _workflow_visible_package_ids(db: Session, user_id: int) -> set[str]:
+    """Return the same package visibility used by the H5/Online node picker."""
+    from .skills import _skill_store_admin, _user_visible_package_ids
+
+    user = db.query(User).filter(User.id == int(user_id or 0)).first()
+    if not user:
+        return set()
+    if _skill_store_admin(user):
+        from .skills import _load_registry
+
+        return set((_load_registry().get("packages") or {}).keys())
+    return set(_user_visible_package_ids(db, user, is_overseas_client=False))
+
+
+def _workflow_capability_package_map() -> dict[str, str]:
+    """Map executable workflow capability ids to their registered package."""
+    from .skills import _load_registry
+
+    packages = _load_registry().get("packages") or {}
+    result: dict[str, str] = {}
+    for package_id, package in packages.items():
+        if not isinstance(package, dict):
+            continue
+        for capability_id in (package.get("capabilities") or {}).keys():
+            normalized = str(capability_id or "").strip()
+            if normalized:
+                result[normalized] = str(package_id or "").strip()
+    return result
+
+
+def _workflow_node_access_requirements(node: dict[str, Any], capability_packages: dict[str, str]) -> tuple[set[str], set[str]]:
+    """Return feature gates and package ids required by one workflow node."""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    nested_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+    action = _clean_text(payload.get("action"), 128).lower()
+    task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+    capability_id = _clean_text(
+        payload.get("capability_id")
+        or nested_payload.get("capability_id")
+        or params.get("capability_id")
+        or _WORKFLOW_ACTION_CAPABILITY_IDS.get(action)
+        or _WORKFLOW_TASK_CAPABILITY_IDS.get(task_kind)
+        or _WORKFLOW_NODE_CAPABILITY_IDS.get(key),
+        128,
+    )
+    # Split IP content nodes keep the executable task_kind for backward
+    # compatibility, so the node key is the authoritative capability for
+    # permission checks.
+    if task_kind == "ip_content_daily" and key in {"ip_content_oral", "ip_content_moments"}:
+        capability_id = key
+    if not capability_id and key in capability_packages:
+        capability_id = key
+
+    required_features: set[str] = set()
+    required_packages: set[str] = set()
+    effective_key = action or key
+    legacy_ip_daily = False
+    if task_kind == "ip_content_daily" and capability_id == "ip_content_daily" and key not in {
+        "ip_content_oral",
+        "ip_content_moments",
+    }:
+        # Existing schedules still use the combined task kind. Resolve their
+        # permission from the actual selected output groups so they continue
+        # to run after the skill is split into two independently controlled
+        # entries.
+        selected_tasks = {
+            _clean_text(item, 80)
+            for item in (payload.get("tasks") if isinstance(payload.get("tasks"), list) else [])
+            if _clean_text(item, 80)
+        }
+        oral_tasks = {"industry_hot_oral", "professional_ip_oral"}
+        if selected_tasks == {"moments_candidate"}:
+            required_packages.add("ip_content_moments_skill")
+        elif selected_tasks and selected_tasks.issubset(oral_tasks):
+            required_packages.add("ip_content_oral_skill")
+        else:
+            required_packages.update({"ip_content_oral_skill", "ip_content_moments_skill"})
+        legacy_ip_daily = True
+    if effective_key in {"native_wechat_poll", "native_wechat_add_friend", "native_wechat_moments_engage", "native_wechat_group_invite"}:
+        required_features.add("private_domain_entry")
+    if effective_key == "douyin_leads" or key == "douyin_leads" or task_kind == "douyin_leads":
+        required_features.add("douyin_leads_access")
+    if effective_key in {"linkedin_leads", "linkedin_mining", "reddit_leads", "x_leads", "tiktok_leads", "global_trade_leads_skill"}:
+        required_features.add("overseas_platform_entry")
+    if task_kind == "social_leads":
+        platform = _clean_text(payload.get("platform"), 32).lower()
+        if platform in {"reddit", "x", "tiktok"}:
+            required_features.add("overseas_platform_entry")
+            required_packages.add({"reddit": "reddit_leads", "x": "x_leads", "tiktok": "tiktok_leads"}[platform])
+
+    if capability_id:
+        package_id = capability_packages.get(capability_id)
+        if package_id:
+            required_packages.add(package_id)
+        # These split IP capabilities are server-task aliases rather than
+        # MCP catalog entries, so they are not necessarily present in the
+        # registry's ``capabilities`` map. Keep their package gate explicit.
+        split_package = {
+            "ip_content_oral": "ip_content_oral_skill",
+            "ip_content_moments": "ip_content_moments_skill",
+        }.get(capability_id)
+        if split_package:
+            required_packages.add(split_package)
+    package_from_key = None if legacy_ip_daily else (
+        _WORKFLOW_NODE_PACKAGE_IDS.get(effective_key) or _WORKFLOW_NODE_PACKAGE_IDS.get(key)
+    )
+    if package_from_key:
+        required_packages.add(package_from_key)
+    return required_features, required_packages
+
+
+def _assert_workflow_feature_permissions(db: Session, user_id: int, nodes: list[dict[str, Any]]) -> None:
+    """Prevent direct API activation from bypassing the H5/Online node gates."""
+    flags = user_feature_flags(db, int(user_id or 0))
+    required_features: set[str] = set()
+    required_packages: set[str] = set()
+    capability_packages = _workflow_capability_package_map()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        features, packages = _workflow_node_access_requirements(node, capability_packages)
+        required_features.update(features)
+        required_packages.update(packages)
+        children = list(node.get("children") or [])
+        children.extend(node.get("actions") or [])
+        for child in children:
+            visit(child)
+
+    for node in nodes or []:
+        visit(node)
+    denied_features = sorted(key for key in required_features if not flags.get(key, False))
+    if denied_features:
+        labels = {
+            "douyin_leads_access": "抖音获客",
+            "private_domain_entry": "私域销冠",
+            "overseas_platform_entry": "海外平台",
+        }
+        raise HTTPException(status_code=403, detail="当前账号未开通：" + "、".join(labels.get(key, key) for key in denied_features))
+    if required_packages:
+        visible_packages = _workflow_visible_package_ids(db, int(user_id or 0))
+        denied_packages = sorted(package_id for package_id in required_packages if package_id not in visible_packages)
+        if denied_packages:
+            labels = [_WORKFLOW_PACKAGE_LABELS.get(package_id, package_id) for package_id in denied_packages]
+            raise HTTPException(status_code=403, detail="当前账号未开通：" + "、".join(labels))
 
 
 def _workflow_platform_label(platform: str) -> str:
@@ -274,6 +705,60 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         task_kind = str(plan.get("task_kind") or plan.get("taskKind") or "").strip().lower()
         payload = copy.deepcopy(plan.get("payload")) if isinstance(plan.get("payload"), dict) else {}
         _normalize_douyin_private_switch(raw, plan, payload)
+        # 老编辑器把抖音节点存成 client_workflow + action=douyin_leads，而客户端只认顶层
+        # task_kind=douyin_leads（子动作放 payload.action）→ 保存时归一，别再存坏数据。
+        # 子动作优先按节点标签推断（payload 里没有标签，只有 node.ability_label/plan.title）。
+        task_kind, payload, _douyin_fixed = normalize_douyin_task_kind(
+            task_kind, payload, label=douyin_node_label(raw)
+        )
+        if _douyin_fixed:
+            plan["task_kind"] = task_kind
+            plan["payload"] = payload
+        if task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "search_collect":
+            collection_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            collection_params = dict(collection_params)
+            reply_params = _sales_douyin_collection_reply_params(collection_params)
+            if reply_params:
+                collection_params.update(reply_params)
+            else:
+                for key in (
+                    "reply_precise_comments",
+                    "reply_comment_mode",
+                    "reply_comment_text",
+                    "reply_comment_prompt",
+                    "reply_comment_seed_text",
+                    "comment_mode",
+                    "comment_text",
+                    "comment_prompt",
+                    "comment_seed_text",
+                ):
+                    collection_params.pop(key, None)
+            collection_params["followup_actions"] = []
+            collection_params.pop("touch_actions", None)
+            collection_params["customer_scope"] = "current_collection_batch"
+            payload["params"] = collection_params
+        elif task_kind == "douyin_leads" and _is_sales_node(raw) and _sales_douyin_node_action(raw) == "precise_touch":
+            touch_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            touch_params = dict(touch_params)
+            has_explicit_actions = "touch_actions" in touch_params or "followup_actions" in touch_params
+            raw_actions = touch_params.get("touch_actions") if "touch_actions" in touch_params else touch_params.get("followup_actions")
+            touch_params["touch_actions"] = (
+                _sales_douyin_followup_actions(raw_actions)
+                if has_explicit_actions
+                else list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+            )
+            touch_params.pop("followup_actions", None)
+            for key in ("reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text"):
+                touch_params.pop(key, None)
+            touch_params["customer_scope"] = "precise_pool"
+            if touch_params.get("max_users") not in (None, "", []):
+                try:
+                    touch_params["max_users"] = max(1, min(200, int(touch_params["max_users"])))
+                except (TypeError, ValueError):
+                    touch_params["max_users"] = 20
+            else:
+                touch_params["max_users"] = 20
+            payload["params"] = touch_params
         title = str(plan.get("title") or raw.get("label") or raw.get("ability_label") or "工作流任务").strip()[:160]
         content = str(plan.get("content") or f"H5 工作流：{title}").strip()[:12000]
         if _is_workflow_placeholder(raw) or payload.get("action") == "workflow_coming_soon":
@@ -374,7 +859,11 @@ def _normalize_douyin_private_switch(
     # worker treats an omitted value as fixed mode.
     if "reply_mode" in params:
         raw_reply_mode = _clean_text(params.get("reply_mode"), 32).lower()
-        params["reply_mode"] = raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead"} else "fixed"
+        params["reply_mode"] = (
+            raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead", "ai_memory"} else "fixed"
+        )
+    if _clean_douyin_memory_doc_ids(params.get("memory_doc_ids")):
+        params["memory_doc_ids"] = _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
     params.pop("wechat_add_friend_rules", None)
     payload["params"] = params
 
@@ -405,6 +894,37 @@ def _is_legacy_add_friend_child(node: Any) -> bool:
     return (
         _clean_text(node.get("action_type") or node.get("type"), 64).lower() == "native_wechat_add_friend"
         or _clean_text(payload.get("action") or node.get("ability_key"), 128).lower() == "native_wechat_add_friend"
+    )
+
+
+# 「个微自动加好友」节点的目标来源：和 Online h5-employees.js 的
+# nativeAddFriendSourceOf / normalizeNativeAddFriendSource 保持同一口径。
+_DOUYIN_ADD_FRIEND_SOURCE_MODES = {
+    "douyin_private_message_phone",
+    "douyin_private_message_mobile",
+    "douyin_private_message_wechat_id",
+}
+
+
+def _add_friend_source_mode(node: Any) -> str:
+    if not isinstance(node, dict):
+        return ""
+    params = _node_payload(node).get("params")
+    if not isinstance(params, dict):
+        return ""
+    return _clean_text(params.get("source_mode"), 64).lower()
+
+
+def _is_douyin_bound_add_friend(node: Any) -> bool:
+    """只有「来源=上级抖音私信结果」的加好友节点才折叠进抖音父节点。
+
+    一级节点（本机导入名单 / 服务端上报池）自带目标清单，必须保持一级可见：
+    否则管理后台配好的「8 点个微自动加好友」在终端读接口（_template_payload）
+    时会被整条丢掉，终端就再也看不到这个节点。
+    """
+    return (
+        _is_legacy_add_friend_child(node)
+        and _add_friend_source_mode(node) in _DOUYIN_ADD_FRIEND_SOURCE_MODES
     )
 
 
@@ -471,10 +991,12 @@ def _clean_legacy_sales_action_children(nodes: Any) -> list[dict[str, Any]]:
         return []
     items = copy.deepcopy([item for item in nodes if isinstance(item, dict)])
     douyin_parents = [item for item in items if _is_douyin_private_sales_node(item)]
-    legacy_top_add = [item for item in items if _is_legacy_add_friend_child(item)] if douyin_parents else []
+    # 只有来源=上级抖音私信结果的一级加好友节点才折叠进抖音父节点；
+    # 本机导入名单 / 服务端上报池的一级节点保持不动（和 Online 同一口径）。
+    legacy_top_add = [item for item in items if _is_douyin_bound_add_friend(item)] if douyin_parents else []
     cleaned: list[dict[str, Any]] = []
     for item in items:
-        if douyin_parents and _is_legacy_add_friend_child(item) and item not in douyin_parents:
+        if douyin_parents and _is_douyin_bound_add_friend(item) and item not in douyin_parents:
             continue
         raw_children = item.get("children") if isinstance(item.get("children"), list) else item.get("actions")
         if isinstance(raw_children, list):
@@ -519,8 +1041,21 @@ def _sales_douyin_node_action(node: Any) -> str:
     inferred = _sales_action_from_note(
         node.get("note") or node.get("ability_label") or node.get("label") or plan.get("title")
     )
-    explicit = _clean_text(params.get("sales_action") or payload.get("action"), 64).lower()
-    return inferred if inferred != "search_collect" else (explicit or inferred)
+    explicit = _clean_text(payload.get("action") or params.get("sales_action"), 64).lower()
+    valid_actions = {
+        "search_collect",
+        "precise_touch",
+        "self_comment_monitor",
+        "account_nurture",
+        "reply_comments",
+        "follow_comment",
+        "mention_comment",
+        "direct_message",
+        "stranger_message",
+    }
+    if explicit in valid_actions:
+        return inferred if explicit == "search_collect" and inferred != "search_collect" else explicit
+    return inferred
 
 
 def _fold_legacy_sales_douyin_followup_nodes(nodes: Any) -> list[dict[str, Any]]:
@@ -538,16 +1073,32 @@ def _fold_legacy_sales_douyin_followup_nodes(nodes: Any) -> list[dict[str, Any]]
             current_collection = item
             prepared.append(item)
             continue
-        if is_sales_douyin and action in _SALES_DOUYIN_FOLLOWUP_ACTIONS and current_collection is not None:
-            parent_plan = current_collection.get("plan") if isinstance(current_collection.get("plan"), dict) else {}
-            parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
-            parent_params = dict(parent_payload.get("params") if isinstance(parent_payload.get("params"), dict) else {})
-            selected = _sales_douyin_followup_actions([*(parent_params.get("followup_actions") or []), action])
-            parent_params["followup_actions"] = selected
-            parent_params["customer_scope"] = "current_collection_batch"
-            parent_payload["params"] = parent_params
-            parent_plan["payload"] = parent_payload
-            current_collection["plan"] = parent_plan
+        if is_sales_douyin and action in (*_SALES_DOUYIN_FOLLOWUP_ACTIONS, "reply_comments") and current_collection is not None:
+            if action == "reply_comments":
+                current_plan = current_collection.get("plan") if isinstance(current_collection.get("plan"), dict) else {}
+                current_payload = current_plan.get("payload") if isinstance(current_plan.get("payload"), dict) else {}
+                current_params = dict(current_payload.get("params") if isinstance(current_payload.get("params"), dict) else {})
+                current_params["reply_precise_comments"] = True
+                legacy_plan = item.get("plan") if isinstance(item.get("plan"), dict) else {}
+                legacy_payload = legacy_plan.get("payload") if isinstance(legacy_plan.get("payload"), dict) else {}
+                legacy_params = legacy_payload.get("params") if isinstance(legacy_payload.get("params"), dict) else {}
+                for source_key, target_key in (
+                    ("reply_comment_mode", "reply_comment_mode"),
+                    ("reply_comment_text", "reply_comment_text"),
+                    ("reply_comment_prompt", "reply_comment_prompt"),
+                    ("reply_comment_seed_text", "reply_comment_seed_text"),
+                    ("comment_mode", "reply_comment_mode"),
+                    ("comment_text", "reply_comment_text"),
+                    ("comment_prompt", "reply_comment_prompt"),
+                    ("comment_seed_text", "reply_comment_seed_text"),
+                ):
+                    if legacy_params.get(source_key) not in (None, "", []):
+                        current_params[target_key] = legacy_params.get(source_key)
+                current_payload["params"] = current_params
+                current_plan["payload"] = current_payload
+                current_collection["plan"] = current_plan
+            # Legacy standalone touch nodes must not make collection execute
+            # touch actions. The standalone precise-touch node owns that work.
             continue
         prepared.append(item)
     return prepared
@@ -600,17 +1151,12 @@ def _clean_id_list(value: Any, limit: int = 50) -> list[int]:
     return out
 
 
-def _personal_default_template(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
-    return (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == user_id,
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
+def _personal_default_template(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+) -> Optional[IPContentScheduleTemplate]:
+    return _personal_default_row_for_slot(db, int(user_id), installation_id)
 
 
 def _first_req_text(requirements: dict[str, Any], *keys: str, limit: int = 500) -> str:
@@ -752,81 +1298,6 @@ def _current_personal_schedule_template(
     return row if grant else None
 
 
-def _latest_hifly_avatar(db: Session, user_id: int) -> str:
-    row = (
-        db.query(UserHiflyAvatarAsset)
-        .filter(
-            UserHiflyAvatarAsset.user_id == user_id,
-            UserHiflyAvatarAsset.status == "success",
-            UserHiflyAvatarAsset.hifly_avatar_id.isnot(None),
-        )
-        .order_by(UserHiflyAvatarAsset.updated_at.desc(), UserHiflyAvatarAsset.id.desc())
-        .first()
-    )
-    return _clean_text(row.hifly_avatar_id if row else "", 128)
-
-
-def _latest_hifly_voice(db: Session, user_id: int) -> str:
-    row = (
-        db.query(UserHiflyVoiceAsset)
-        .filter(
-            UserHiflyVoiceAsset.user_id == user_id,
-            UserHiflyVoiceAsset.status == "success",
-            UserHiflyVoiceAsset.hifly_voice_id.isnot(None),
-        )
-        .order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
-        .first()
-    )
-    return _clean_text(row.hifly_voice_id if row else "", 128)
-
-
-def _latest_shanjian_virtualman(db: Session, user_id: int) -> str:
-    row = (
-        db.query(ShanjianDigitalHumanProfile)
-        .filter(
-            ShanjianDigitalHumanProfile.user_id == user_id,
-            ShanjianDigitalHumanProfile.status == "succeed",
-            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
-        )
-        .order_by(
-            ShanjianDigitalHumanProfile.is_default.desc(),
-            ShanjianDigitalHumanProfile.updated_at.desc(),
-            ShanjianDigitalHumanProfile.id.desc(),
-        )
-        .first()
-    )
-    return _clean_text(row.virtualman_id if row else "", 128)
-
-
-def _available_shanjian_virtualmans(db: Session, user_id: int) -> list[dict[str, Any]]:
-    rows = (
-        db.query(ShanjianDigitalHumanProfile)
-        .filter(
-            ShanjianDigitalHumanProfile.user_id == user_id,
-            ShanjianDigitalHumanProfile.status == "succeed",
-            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
-        )
-        .order_by(ShanjianDigitalHumanProfile.id.asc())
-        .all()
-    )
-    candidates: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in rows:
-        virtualman_id = _clean_text(row.virtualman_id, 128)
-        if not virtualman_id or virtualman_id in seen:
-            continue
-        seen.add(virtualman_id)
-        candidates.append(
-            {
-                "profile_id": int(row.id),
-                "virtualman_id": virtualman_id,
-                "title": _clean_text(row.title, 128),
-                "cover_url": _clean_text(row.cover_url, 1000),
-            }
-        )
-    return candidates
-
-
 def _template_language(requirements: dict[str, Any], template: Optional[IPContentScheduleTemplate]) -> str:
     req = requirements if isinstance(requirements, dict) else {}
     meta = template.meta if template and isinstance(template.meta, dict) else {}
@@ -840,6 +1311,8 @@ def _template_language(requirements: dict[str, Any], template: Optional[IPConten
         64,
     )
     lowered = raw.lower()
+    if lowered in {"zh-tw", "zh-hant", "繁體中文", "繁体中文", "traditional chinese"}:
+        return "zh-TW"
     if lowered in {"zh", "zh-cn", "中文", "简体中文", "chinese"}:
         return "zh-CN"
     if lowered in {"en", "en-us", "english", "英文", "英语"}:
@@ -1000,6 +1473,8 @@ _SALES_DIGITAL_HUMAN_REQUEST_TEMPLATE_KEYS = {
     "use_template",
     "template_scene",
     "style_id",
+    "template_id",
+    "templateId",
     "materials",
     "material_sound_switch",
     "introduce_name",
@@ -1030,10 +1505,131 @@ def _sales_digital_human_template_id(
 ) -> str:
     personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
     current_meta = current.meta if current and isinstance(current.meta, dict) else {}
-    raw = current_meta.get("digital_human_template") if "digital_human_template" in current_meta else personal_meta.get("digital_human_template")
+    raw, current_configured = _sales_digital_human_meta_value(current_meta, "digital_human_template", "digital_human_template_configured")
+    if not current_configured:
+        raw = personal_meta.get("digital_human_template")
     if not isinstance(raw, dict):
         return ""
-    return _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"), 128)
+    return _clean_text(
+        raw.get("style_id")
+        or raw.get("styleId")
+        or raw.get("template_id")
+        or raw.get("templateId")
+        or raw.get("id"),
+        128,
+    )
+
+
+def _sales_digital_human_meta_value(
+    meta: dict[str, Any],
+    key: str,
+    configured_key: str,
+) -> tuple[Any, bool]:
+    """Resolve a selected digital-human value without treating empty legacy
+    metadata as an intentional override.
+
+    New saves include ``*_configured`` so an explicit clear remains a clear;
+    old rows with an empty current-template value still fall back to the
+    personal selection.
+    """
+    if key not in meta:
+        return None, False
+    value = meta.get(key)
+    # ``None`` is the legacy representation of an explicit "do not use"
+    # choice for the template itself; keep that clear instead of falling back.
+    if value is None:
+        return None, True
+    if meta.get(configured_key) is True:
+        return value, True
+    if isinstance(value, dict):
+        if any(value.get(name) for name in ("avatars", "voices")):
+            return value, True
+        if any(
+            str(value.get(name) or "").strip()
+            for name in ("style_id", "styleId", "template_id", "templateId", "id")
+        ):
+            return value, True
+        return value, False
+    return value, bool(value)
+
+
+def _sales_digital_human_resources(
+    personal: Optional[IPContentScheduleTemplate],
+    current: Optional[IPContentScheduleTemplate],
+) -> dict[str, list[dict[str, Any]]]:
+    """Read the avatar/voice allow-list stored on the active personal template.
+
+    The list is deliberately taken from template metadata only.  Falling back to
+    the user's latest/all assets here would make a workflow silently use assets
+    that were never selected in the template.
+    """
+    personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    current_meta = current.meta if current and isinstance(current.meta, dict) else {}
+    raw, current_configured = _sales_digital_human_meta_value(
+        current_meta,
+        "digital_human_resources",
+        "digital_human_resources_configured",
+    )
+    if not current_configured:
+        raw = personal_meta.get("digital_human_resources")
+    if not isinstance(raw, dict):
+        return {"avatars": [], "voices": []}
+
+    avatars: list[dict[str, Any]] = []
+    seen_avatars: set[str] = set()
+    for item in raw.get("avatars") if isinstance(raw.get("avatars"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in {"succeed", "success", "completed", "complete", "done", "ready", "published", "active"}:
+            continue
+        provider = _clean_text(item.get("provider") or item.get("source"), 32).lower()
+        virtualman_id = _clean_text(item.get("virtualman_id") or item.get("virtualmanId"), 128)
+        avatar_id = _clean_text(item.get("avatar") or item.get("avatar_id") or item.get("avatarId"), 128)
+        if provider in {"shanjian", "shanjian_v2", "digital_human"} and not virtualman_id:
+            virtualman_id = avatar_id
+        identifier = virtualman_id if provider in {"shanjian", "digital_human", "shanjian_v2"} else avatar_id
+        if not identifier:
+            identifier = virtualman_id or avatar_id
+        if not identifier:
+            continue
+        key = f"{provider}:{identifier}"
+        if key in seen_avatars:
+            continue
+        seen_avatars.add(key)
+        avatars.append(
+            {
+                "provider": provider or ("shanjian" if virtualman_id else "hifly"),
+                "virtualman_id": virtualman_id,
+                "avatar": avatar_id,
+                "profile_id": _safe_int(item.get("profile_id") or item.get("source_record_id") or item.get("id")),
+                "title": _clean_text(item.get("title") or item.get("name"), 128),
+                "cover_url": _clean_text(item.get("cover_url") or item.get("coverUrl") or item.get("image_url"), 1000),
+            }
+        )
+
+    voices: list[dict[str, Any]] = []
+    seen_voices: set[str] = set()
+    for item in raw.get("voices") if isinstance(raw.get("voices"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = _clean_text(item.get("status") or item.get("state"), 32).lower()
+        if status and status not in {"succeed", "success", "completed", "complete", "done", "ready", "published", "active"}:
+            continue
+        provider = _clean_text(item.get("provider") or item.get("source"), 32).lower()
+        voice = _clean_text(item.get("voice") or item.get("voice_id") or item.get("speaker_id") or item.get("speakerId"), 128)
+        if not voice or voice in seen_voices:
+            continue
+        seen_voices.add(voice)
+        voices.append(
+            {
+                "provider": provider or "hifly",
+                "voice": voice,
+                "title": _clean_text(item.get("title") or item.get("name"), 128),
+                "source_record_id": _safe_int(item.get("source_record_id") or item.get("id")),
+            }
+        )
+    return {"avatars": avatars, "voices": voices}
 
 
 def _prepare_publish_action_nodes(
@@ -1126,6 +1722,10 @@ def _prepare_publish_action_nodes(
 
 def _sales_action_from_note(note: Any) -> str:
     text = _clean_text(note, 200)
+    if "我的评论区" in text:
+        return "self_comment_monitor"
+    if "精准用户触达" in text or "精准触达" in text:
+        return "precise_touch"
     if "养号" in text:
         return "account_nurture"
     if "发布后采集" in text or "关键词抓取" in text:
@@ -1144,11 +1744,106 @@ def _sales_action_from_note(note: Any) -> str:
 
 
 _SALES_DOUYIN_FOLLOWUP_ACTIONS = (
-    "reply_comments",
-    "mention_comment",
     "follow_comment",
+    "mention_comment",
     "direct_message",
 )
+
+
+def _sales_douyin_collection_reply_params(params: Any) -> dict[str, Any]:
+    source = params if isinstance(params, dict) else {}
+    legacy_values = []
+    for key in ("followup_actions", "touch_actions"):
+        values = source.get(key)
+        if isinstance(values, list):
+            legacy_values.extend(values)
+    legacy_reply = "reply_comments" in {
+        _clean_text(item, 64).lower() for item in (legacy_values if isinstance(legacy_values, list) else [])
+    }
+    explicit_enabled = _bool_param(source.get("reply_precise_comments"), False)
+    explicit_values = any(
+        _clean_text(source.get(key) or source.get(alias), 1000)
+        for key, alias in (
+            ("reply_comment_mode", "comment_mode"),
+            ("reply_comment_text", "comment_text"),
+            ("reply_comment_prompt", "comment_prompt"),
+            ("reply_comment_seed_text", "comment_seed_text"),
+        )
+    )
+    # A persisted false checkbox is authoritative.  Older rows may omit the
+    # checkbox entirely and only contain a mode/text, in which case retain
+    # the legacy configuration for that user.  Do not let a stale mode on a
+    # row explicitly marked false re-enable comment replies.
+    has_reply_config = explicit_enabled or legacy_reply or (
+        "reply_precise_comments" not in source and explicit_values
+    )
+    if not has_reply_config:
+        return {}
+    mode = _clean_text(source.get("reply_comment_mode") or source.get("comment_mode"), 32).lower()
+    result = {"reply_precise_comments": True}
+    if mode in {"fixed", "ai", "rewrite"}:
+        result["reply_comment_mode"] = mode
+    for key, alias, limit in (
+        ("reply_comment_text", "comment_text", 500),
+        ("reply_comment_prompt", "comment_prompt", 1000),
+        ("reply_comment_seed_text", "comment_seed_text", 500),
+    ):
+        value = _clean_text(source.get(key) or source.get(alias), limit)
+        if value:
+            result[key] = value
+    return result
+
+
+def _sanitize_system_douyin_collection_defaults(nodes: Any) -> list[dict[str, Any]]:
+    """Remove legacy reply defaults from the read-only system catalog.
+
+    The system workflow catalog is shared by every account, so it must never
+    carry a user's old comment mode or prompt.  An account's current Online
+    settings are resolved when the scheduled task is claimed instead.
+    """
+    prepared = copy.deepcopy(nodes) if isinstance(nodes, list) else []
+    kept: list[dict[str, Any]] = []
+    for node in prepared:
+        if not isinstance(node, dict):
+            continue
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+        action = _clean_text(payload.get("action"), 64).lower()
+        # Old system snapshots could contain a standalone reply-comments
+        # child.  Dropping it here prevents the legacy-node fold from turning
+        # replies back on after the collection parameters were sanitized.
+        if task_kind == "douyin_leads" and (
+            action == "reply_comments"
+            or _sales_douyin_node_action(node) == "reply_comments"
+        ):
+            continue
+        if task_kind == "douyin_leads" and (
+            action == "search_collect"
+            or _sales_douyin_node_action(node) == "search_collect"
+        ):
+            params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
+            for key in (
+                "reply_precise_comments",
+                "reply_comment_mode",
+                "reply_comment_text",
+                "reply_comment_prompt",
+                "reply_comment_seed_text",
+                "comment_mode",
+                "comment_text",
+                "comment_prompt",
+                "comment_seed_text",
+            ):
+                params.pop(key, None)
+            params["customer_scope"] = "current_collection_batch"
+            payload["params"] = params
+            plan["payload"] = payload
+            node["plan"] = plan
+        for child_key in ("children", "actions"):
+            if isinstance(node.get(child_key), list):
+                node[child_key] = _sanitize_system_douyin_collection_defaults(node[child_key])
+        kept.append(node)
+    return kept
 
 
 def _sales_douyin_followup_actions(value: Any) -> list[str]:
@@ -1157,39 +1852,78 @@ def _sales_douyin_followup_actions(value: Any) -> list[str]:
     return [action for action in _SALES_DOUYIN_FOLLOWUP_ACTIONS if action in selected]
 
 
+def _clean_douyin_memory_doc_ids(value: Any, limit: int = 3) -> list[str]:
+    rows = value if isinstance(value, list) else []
+    ids: list[str] = []
+    for item in rows:
+        if isinstance(item, dict):
+            doc_id = _clean_text(item.get("doc_id") or item.get("id"), 128)
+        else:
+            doc_id = _clean_text(item, 128)
+        if doc_id and doc_id not in ids:
+            ids.append(doc_id)
+    return ids[: max(1, int(limit or 1))]
+
+
 def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Reduce a sales Douyin node to the action-only Online contract."""
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     inferred_action = _sales_action_from_note(node.get("note") or node.get("ability_label"))
-    action = inferred_action
-    if action == "search_collect":
-        action = _clean_text(params.get("sales_action"), 64)
-    if not action or action == "search_collect":
-        requested_action = _clean_text(payload.get("action"), 64)
-        if requested_action and requested_action != "search_collect":
-            action = requested_action
-    if not action:
+    requested_action = _clean_text(payload.get("action") or params.get("sales_action"), 64).lower()
+    valid_actions = {
+        "search_collect",
+        "precise_touch",
+        "self_comment_monitor",
+        "account_nurture",
+        "reply_comments",
+        "follow_comment",
+        "mention_comment",
+        "direct_message",
+        "stranger_message",
+    }
+    if requested_action in valid_actions:
+        action = inferred_action if requested_action == "search_collect" and inferred_action != "search_collect" else requested_action
+    else:
         action = inferred_action
     result: dict[str, Any] = {"action": action or "search_collect"}
     if (action or "search_collect") == "search_collect":
-        followup_actions = (
-            _sales_douyin_followup_actions(params.get("followup_actions"))
-            if "followup_actions" in params
-            else list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
-        )
         result["params"] = {
-            "followup_actions": followup_actions,
             "customer_scope": "current_collection_batch",
         }
+        result["params"].update(_sales_douyin_collection_reply_params(params))
         for key in ("keyword", "regions", "max_results", "max_videos_per_run", "mode"):
             value = params.get(key)
+            if key == "keyword" and any(marker in _clean_text(value, 200) for marker in ("抖音获客", "精准用户触达", "精准触达")):
+                continue
             if value not in (None, "", []):
                 result["params"][key] = copy.deepcopy(value)
+    if action == "precise_touch":
+        has_explicit_actions = "touch_actions" in params or "followup_actions" in params
+        raw_actions = params.get("touch_actions") if "touch_actions" in params else params.get("followup_actions")
+        touch_actions = _sales_douyin_followup_actions(raw_actions)
+        if not has_explicit_actions:
+            touch_actions = list(_SALES_DOUYIN_FOLLOWUP_ACTIONS)
+        result["params"] = {
+            "touch_actions": touch_actions,
+            "customer_scope": "precise_pool",
+        }
+        if params.get("max_users") not in (None, "", []):
+            try:
+                result["params"]["max_users"] = max(1, min(200, int(params.get("max_users"))))
+            except (TypeError, ValueError):
+                result["params"]["max_users"] = 20
     # Private-message takeover keeps add-friend behavior on the parent node.
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.
+    # 节点备注写着「记忆接管」时（节点选择器里的「抖音私信记忆接管」），默认按记忆文件回复。
+    memory_takeover_note = "记忆接管" in _clean_text(
+        node.get("note") or node.get("ability_label") or node.get("abilityLabel"), 200
+    )
     if action == "stranger_message" and (
-        "wechat_add_friend_enabled" in params or "reply_mode" in params
+        "wechat_add_friend_enabled" in params
+        or "reply_mode" in params
+        or _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
+        or memory_takeover_note
     ):
         result["params"] = {
             "wechat_add_friend_enabled": _bool_param(params.get("wechat_add_friend_enabled"), False),
@@ -1198,11 +1932,22 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
         }
         if "reply_mode" in params:
             raw_reply_mode = _clean_text(params.get("reply_mode"), 32).lower()
-            result["params"]["reply_mode"] = raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead"} else "fixed"
+            result["params"]["reply_mode"] = (
+                raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead", "ai_memory"} else "fixed"
+            )
+        elif memory_takeover_note:
+            result["params"]["reply_mode"] = "ai_memory"
+        memory_doc_ids = _clean_douyin_memory_doc_ids(params.get("memory_doc_ids"))
+        if memory_doc_ids:
+            result["params"]["memory_doc_ids"] = memory_doc_ids
     return result
 
 
-_NATIVE_WECHAT_WORKFLOW_ACTIONS = _WORKFLOW_CHILD_CLIENT_ACTIONS
+_NATIVE_WECHAT_WORKFLOW_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_add_friend",
+    "native_wechat_moments_engage",
+}
 
 
 def _native_wechat_key_from_sales_note(note: Any) -> str:
@@ -1380,6 +2125,7 @@ def _is_douyin_private_takeover_node(node: dict[str, Any]) -> bool:
         and (
             _clean_text(payload.get("action"), 64) == "stranger_message"
             or "抖音私信接管" in text
+            or "记忆接管" in text
         )
     )
 
@@ -1493,8 +2239,8 @@ def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> lis
     if not parents:
         return nodes
 
-    legacy_rows = [node for node in nodes if isinstance(node, dict) and _is_native_wechat_add_friend_node(node)]
-    prepared = [node for node in nodes if not (isinstance(node, dict) and _is_native_wechat_add_friend_node(node))]
+    legacy_rows = [node for node in nodes if _is_douyin_bound_add_friend(node)]
+    prepared = [node for node in nodes if not _is_douyin_bound_add_friend(node)]
     for parent in parents:
         parent_plan = parent.get("plan") if isinstance(parent.get("plan"), dict) else {}
         parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
@@ -1526,6 +2272,126 @@ def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> lis
     return prepared
 
 
+def _node_consumes_ip_persona(node: dict[str, Any]) -> bool:
+    """节点执行时会读取当前模板的人设资料，而不是只靠 Online 本机配置。"""
+    if not isinstance(node, dict) or _is_workflow_placeholder(node):
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+    action = _clean_text(
+        payload.get("action") or node.get("ability_key") or node.get("abilityKey"),
+        128,
+    ).lower()
+    capability_id = _clean_text(
+        payload.get("capability_id") or nested.get("capability_id"),
+        128,
+    ).lower()
+    key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+    # 朋友圈图文 / 口播日更：生成时读资料调查、关键词、同行和记忆。
+    if task_kind == "ip_content_daily" or key in {"ip_content_daily", "ip_content_oral", "ip_content_moments"}:
+        return True
+    # 同城爆款：人物照片和城市、身份等人设来自资料调查。
+    if action.startswith("local_bestseller") or key.startswith("local_bestseller"):
+        return True
+    # 数字人口播：文案走行业热门口播，并注入人设、关键词、同行、记忆、形象和声音。
+    if action in {"shanjian_digital_human_video", "hifly.video.create_by_tts"} or key in {
+        "shanjian_digital_human_video",
+        "hifly.video.create_by_tts",
+    }:
+        return True
+    if capability_id == "hifly.video.create_by_tts":
+        return True
+    return False
+
+
+def _workflow_consumes_ip_persona(nodes: list[dict[str, Any]]) -> bool:
+    return any(_node_consumes_ip_persona(node) for node, _parent in _workflow_nodes_with_actions(nodes))
+
+
+
+_IP_ORAL_TASKS = ["industry_hot_oral", "professional_ip_oral"]
+_IP_MOMENTS_TASKS = ["moments_candidate"]
+
+
+def _custom_ip_daily_tasks(node: dict[str, Any], payload: Optional[dict[str, Any]] = None) -> list[str]:
+    """自编节点的 IP 产出。显式 tasks 优先；口播节点不能被扩成三日更。"""
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    source = payload if isinstance(payload, dict) else (
+        plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    )
+    key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+    raw_tasks = source.get("tasks") if isinstance(source.get("tasks"), list) else None
+    selected = [task for task in (raw_tasks or []) if task in _IP_DAILY_DEFAULT_TASKS]
+    if selected:
+        return selected
+    if key == "ip_content_oral":
+        return list(_IP_ORAL_TASKS)
+    if key == "ip_content_moments":
+        return list(_IP_MOMENTS_TASKS)
+    return list(_IP_DAILY_DEFAULT_TASKS)
+
+
+def _persona_requirements_have_content(requirements: Any) -> bool:
+    def walk(value: Any) -> bool:
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, dict):
+            return any(walk(item) for item in value.values())
+        if isinstance(value, list):
+            return any(walk(item) for item in value)
+        return False
+
+    return walk(requirements)
+
+
+def _custom_workflow_material_needs(nodes: list[dict[str, Any]]) -> dict[str, bool]:
+    """自编工作流只认证整条流程真正会读的资料，取并集，不套销售整包。"""
+    needs = {
+        "keywords": False,
+        "competitors": False,
+        "survey": False,
+        "memory": False,
+        "local_bestseller": False,
+        "digital_human": False,
+        "wechat": False,
+        "whatsapp": False,
+    }
+    for node, _parent in _workflow_nodes_with_actions(nodes):
+        if not isinstance(node, dict) or _is_workflow_placeholder(node):
+            continue
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+        task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+        key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+        action = _clean_text(payload.get("action") or key, 128).lower()
+        capability_id = _clean_text(payload.get("capability_id") or nested.get("capability_id"), 128).lower()
+        if task_kind == "ip_content_daily" or key in {"ip_content_daily", "ip_content_oral", "ip_content_moments"}:
+            tasks = _custom_ip_daily_tasks(node, payload)
+            if "industry_hot_oral" in tasks or "moments_candidate" in tasks:
+                needs["keywords"] = True
+            if "professional_ip_oral" in tasks or "moments_candidate" in tasks:
+                needs["competitors"] = True
+        if action.startswith("local_bestseller") or key.startswith("local_bestseller"):
+            needs["survey"] = True
+            needs["local_bestseller"] = True
+        if action in {"shanjian_digital_human_video", "hifly.video.create_by_tts"} or key in {
+            "shanjian_digital_human_video",
+            "hifly.video.create_by_tts",
+        } or capability_id == "hifly.video.create_by_tts":
+            needs["survey"] = True
+            needs["keywords"] = True
+            needs["memory"] = True
+            needs["digital_human"] = True
+        if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
+            needs["wechat"] = True
+        if task_kind == "client_workflow" and action == "native_whatsapp_poll":
+            needs["whatsapp"] = True
+    return needs
+
+
 def _prepare_sales_workflow_nodes(
     *,
     db: Session,
@@ -1535,68 +2401,105 @@ def _prepare_sales_workflow_nodes(
     nodes: list[dict[str, Any]],
     snapshot_extra: Optional[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    if not _is_sales_workflow(template_name, nodes, snapshot_extra):
+    sales_workflow = _is_sales_workflow(template_name, nodes, snapshot_extra)
+    template_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
+    # 直接启用的非销售系统目录保持原样。复制出来自己改的模板没有 system key，
+    # 按节点认证：含朋友圈图文、同城爆款或数字人时，必须补齐这些节点真正读取的资料。
+    system_non_sales = (
+        bool(template_key)
+        and template_key in _enabled_system_workflow_keys()
+        and template_key != "system_sales"
+    )
+    if not sales_workflow and (system_non_sales or not _workflow_consumes_ip_persona(nodes)):
         return nodes
 
     prepared = copy.deepcopy(nodes)
-    for node in prepared:
-        _normalize_sales_native_wechat_node(node)
-    prepared = _ensure_sales_douyin_add_friend_children(prepared)
-    personal = _personal_default_template(db, owner.id)
+    if sales_workflow:
+        for node in prepared:
+            _normalize_sales_native_wechat_node(node)
+        prepared = _ensure_sales_douyin_add_friend_children(prepared)
+    personal = _personal_default_template(db, owner.id, installation_id)
     current_template = _current_personal_schedule_template(db, owner.id, personal)
     reference_template = current_template or personal
+    # 人设必须以"当前模板关联的资料调查"为准。模板没挂资料调查就直接拦下，
+    # 不能再回落去取个人默认行里残留的旧人设（否则换模板后内容还是旧行业）。
+    template_survey = _survey_for_template(db, reference_template) if reference_template is not None else None
     digital_human_template_id = _sales_digital_human_template_id(personal, current_template)
     reference_owner_id = int(reference_template.user_id) if reference_template else int(owner.id)
-    requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
-    if current_template and isinstance(current_template.requirements, dict):
-        merged_requirements = dict(requirements)
-        merged_requirements.update(current_template.requirements)
-        requirements = merged_requirements
-    keyword_ids = _clean_id_list(reference_template.keyword_ids if reference_template else [])
-    competitor_ids = _clean_id_list(reference_template.competitor_ids if reference_template else [])
-    keywords = _active_keywords_for_ids(db, reference_owner_id, keyword_ids)
-    competitors = _active_competitors_for_ids(db, reference_owner_id, competitor_ids)
-    memory_doc_ids = [str(x or "").strip() for x in ((reference_template.memory_doc_ids if reference_template else []) or []) if str(x or "").strip()]
-    memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
-    if memory_doc_ids and not memory_docs:
-        numeric_doc_ids = [int(value) for value in memory_doc_ids if value.isdigit()]
-        memory_rows = (
-            db.query(OpenClawMemoryDocument)
-            .filter(
-                OpenClawMemoryDocument.target_user_id == reference_owner_id,
-                OpenClawMemoryDocument.status == "active",
-                OpenClawMemoryDocument.id.in_(numeric_doc_ids),
-            )
-            .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
-            .limit(12)
-            .all()
-            if numeric_doc_ids
-            else []
-        )
-        memory_docs = [
-            {
-                "id": row.id,
-                "title": row.title,
-                "doc_type": row.doc_type,
-                "content": (row.content or "")[:4000],
-            }
-            for row in memory_rows
-        ]
-    keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
+    # Activation and runtime use the same server-side effective template
+    # context. Workflow nodes may retain action/timing controls, but they
+    # never retain an activation-time copy of personal template resources.
+    # 必须带上设备槽位：不带槽位时这里会回落到账号级（installation_id=""）
+    # 的空壳个人默认行，于是明明在槽位模板里选好了同行账号/关键词/记忆文件，
+    # 启动时仍然报"IP人设定位-模板：请在当前启用模板中选择 1 个同行账号"。
+    template_context = _h5_dh_context_params(db, owner.id, installation_id)
+    resource_overrides = (
+        _personal_default_resource_overrides(personal, reference_template)
+        if personal and reference_template
+        else {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": False}
+    )
+    keyword_ids = _clean_id_list(template_context.get("keyword_ids"), 100)
+    competitor_ids = _clean_id_list(template_context.get("competitor_ids"), 100)
+    keyword_owner_id = owner.id if resource_overrides.get("keyword_ids") else reference_owner_id
+    competitor_owner_id = owner.id if resource_overrides.get("competitor_ids") else reference_owner_id
+    keywords = _active_keywords_for_ids(db, keyword_owner_id, keyword_ids)
+    competitors = _active_competitors_for_ids(db, competitor_owner_id, competitor_ids)
+    requirements = template_context.get("requirements") if isinstance(template_context.get("requirements"), dict) else {}
+    keyword_texts = [
+        _clean_text(value, 120)
+        for value in (template_context.get("keyword_texts") if isinstance(template_context.get("keyword_texts"), list) else [])
+        if _clean_text(value, 120)
+    ]
+    competitor_texts = [
+        _clean_text(value, 160)
+        for value in (template_context.get("competitors") if isinstance(template_context.get("competitors"), list) else [])
+        if _clean_text(value, 160)
+    ]
+    memory_doc_ids = [
+        str(value or "").strip()
+        for value in (template_context.get("memory_doc_ids") if isinstance(template_context.get("memory_doc_ids"), list) else [])
+        if str(value or "").strip()
+    ]
+    memory_docs = template_context.get("memory_docs") if isinstance(template_context.get("memory_docs"), list) else []
     digital_human_provider = _sales_digital_human_provider(snapshot_extra, reference_template)
-    hifly_avatar = _latest_hifly_avatar(db, owner.id) if digital_human_provider == _SALES_DH_PROVIDER_LEGACY else ""
-    shanjian_virtualman = _latest_shanjian_virtualman(db, owner.id)
-    shanjian_virtualmans = _available_shanjian_virtualmans(db, owner.id)
-    hifly_voice = _latest_hifly_voice(db, owner.id)
-    template_language = _template_language(requirements, reference_template)
+    digital_human_resources = template_context.get("digital_human_resources")
+    if not isinstance(digital_human_resources, dict):
+        digital_human_resources = {"avatars": [], "voices": []}
+    selected_avatars = digital_human_resources.get("avatars") if isinstance(digital_human_resources.get("avatars"), list) else []
+    selected_voices = digital_human_resources.get("voices") if isinstance(digital_human_resources.get("voices"), list) else []
+    hifly_avatar_rows = [
+        row for row in selected_avatars
+        if row.get("provider") not in {"shanjian", "shanjian_v2", "digital_human"}
+        and _clean_text(row.get("avatar"), 128)
+    ]
+    shanjian_virtualmans = [
+        {
+            "profile_id": _safe_int(row.get("profile_id")),
+            "virtualman_id": _clean_text(row.get("virtualman_id"), 128),
+            "title": _clean_text(row.get("title"), 128),
+            "cover_url": _clean_text(row.get("cover_url"), 1000),
+        }
+        for row in selected_avatars
+        if _clean_text(row.get("virtualman_id"), 128)
+    ]
+    hifly_avatar = _clean_text((hifly_avatar_rows[0] if hifly_avatar_rows else {}).get("avatar"), 128)
+    shanjian_virtualman = _clean_text((shanjian_virtualmans[0] if shanjian_virtualmans else {}).get("virtualman_id"), 128)
+    hifly_voice = _clean_text((selected_voices[0] if selected_voices else {}).get("voice"), 128)
+    template_language = _clean_text(template_context.get("language"), 64) or _template_language(requirements, reference_template)
 
     has_hifly = False
     has_ip_daily = False
     has_local_bestseller = False
     has_wechat = False
+    has_whatsapp = False
+    has_memory_takeover = False
     missing: list[str] = []
 
-    for node in prepared:
+    # 销售整包只处理顶层节点。自编工作流要把动作子节点一并算进资料并集。
+    material_nodes = prepared if sales_workflow else [
+        node for node, _parent in _workflow_nodes_with_actions(prepared)
+    ]
+    for node in material_nodes:
         if _is_workflow_placeholder(node):
             continue
         plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
@@ -1605,7 +2508,11 @@ def _prepare_sales_workflow_nodes(
         capability_id = _clean_text(payload.get("capability_id"), 128)
         action = _clean_text(payload.get("action"), 128)
 
-        if task_kind == "ip_content_daily":
+        ability_key = _clean_text(node.get("ability_key") or node.get("abilityKey") or node.get("key"), 128).lower()
+        is_ip_content = task_kind == "ip_content_daily" or (
+            not sales_workflow and ability_key in {"ip_content_daily", "ip_content_oral", "ip_content_moments"}
+        )
+        if is_ip_content:
             has_ip_daily = True
             payload = dict(payload)
             if personal:
@@ -1627,14 +2534,41 @@ def _prepare_sales_workflow_nodes(
                 payload["requirements"] = requirements
                 if "sync_before" not in payload:
                     payload["sync_before"] = True
+                # The workflow schedule is durable, but its selected IP
+                # template is resolved live on every run.
+                payload["template_source"] = "personal_current"
+                for stale_key in (
+                    "template_id",
+                    "keyword_ids",
+                    "competitor_ids",
+                    "memory_doc_ids",
+                    "memory_docs",
+                    "requirements",
+                ):
+                    payload.pop(stale_key, None)
             tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
             normalized_tasks = [task for task in tasks if task in _IP_DAILY_DEFAULT_TASKS]
-            payload["tasks"] = normalized_tasks or list(_IP_DAILY_DEFAULT_TASKS)
+            if sales_workflow:
+                payload["tasks"] = normalized_tasks or list(_IP_DAILY_DEFAULT_TASKS)
+            else:
+                payload["tasks"] = _custom_ip_daily_tasks(node, payload)
             plan["payload"] = payload
 
-        if task_kind == "douyin_leads":
+        if sales_workflow and task_kind == "douyin_leads":
             # 销售工作流只触发动作；关键词、账号、话术和节奏统一由 Online 本机配置决定。
+            # 自编工作流不能改写成销售动作。
             plan["payload"] = _sales_douyin_action_payload(node, payload)
+            douyin_payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+            douyin_params = (
+                douyin_payload.get("params") if isinstance(douyin_payload.get("params"), dict) else {}
+            )
+            if (
+                _clean_text(douyin_payload.get("action"), 64).lower() == "stranger_message"
+                and _clean_text(douyin_params.get("reply_mode"), 32).lower() == "ai_memory"
+            ):
+                # 抖音私信「AI 记忆接管」：记忆文件在 Online「抖音获客 → 私信引流」里选，
+                # 下发时客户端读本机那份配置，所以这里不注入、也不拿它当启用条件。
+                has_memory_takeover = True
 
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
             has_local_bestseller = True
@@ -1642,11 +2576,14 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
             has_wechat = True
 
+        if task_kind == "client_workflow" and action == "native_whatsapp_poll":
+            has_whatsapp = True
+
         if task_kind == "client_workflow" and action == "native_wechat_poll":
             payload = dict(payload)
             params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
-            params.setdefault("language", template_language)
-            params.setdefault("target_language", template_language)
+            params["language"] = template_language
+            params["target_language"] = template_language
             payload["params"] = params
             plan["payload"] = payload
 
@@ -1655,10 +2592,14 @@ def _prepare_sales_workflow_nodes(
             if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
                 params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
                 inner = dict(params)
+                inner.pop("avatar", None)
+                inner.pop("avatar_id", None)
                 if hifly_avatar:
-                    inner.setdefault("avatar", hifly_avatar)
+                    inner["avatar"] = hifly_avatar
+                inner.pop("voice", None)
+                inner.pop("speaker_id", None)
                 if hifly_voice:
-                    inner.setdefault("voice", hifly_voice)
+                    inner["voice"] = hifly_voice
                 if _clean_text(inner.get("script"), 200) in {
                     _clean_text(node.get("note"), 200),
                     _clean_text(node.get("ability_label"), 200),
@@ -1673,25 +2614,29 @@ def _prepare_sales_workflow_nodes(
                 payload = dict(payload)
                 params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
                 params = dict(params)
-                params.setdefault("requirements", requirements)
-                params.setdefault("keyword_ids", keyword_ids)
-                params.setdefault("keywords", keyword_texts)
-                params.setdefault("keyword_texts", keyword_texts)
-                params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
-                params.setdefault("memory_doc_ids", memory_doc_ids)
-                params.setdefault("memory_docs", memory_docs)
-                params.setdefault("language", template_language)
-                params.setdefault("target_language", template_language)
+                params["requirements"] = copy.deepcopy(requirements)
+                params["keyword_ids"] = list(keyword_ids)
+                params["keywords"] = list(keyword_texts)
+                params["keyword_texts"] = list(keyword_texts)
+                params["competitors"] = list(competitor_texts)
+                params["memory_doc_ids"] = list(memory_doc_ids)
+                params["memory_docs"] = copy.deepcopy(memory_docs)
+                params["language"] = template_language
+                params["target_language"] = template_language
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
-                params["script_source"] = "ip_daily_industry_hot_oral"
-                if shanjian_virtualmans:
-                    params["virtualman_candidates"] = shanjian_virtualmans
-                    params["virtualman_selection_mode"] = "daily_round_robin"
+                _normalize_shanjian_script_sources(params)
+                params["virtualman_candidates"] = copy.deepcopy(shanjian_virtualmans)
+                params["virtualman_selection_mode"] = "daily_round_robin" if shanjian_virtualmans else "fixed"
+                params.pop("virtualman_id", None)
                 if shanjian_virtualman:
-                    params.setdefault("virtualman_id", shanjian_virtualman)
+                    params["virtualman_id"] = shanjian_virtualman
+                params.pop("voice", None)
+                params.pop("speaker_id", None)
                 if hifly_voice:
-                    params.setdefault("voice", hifly_voice)
-                    params.setdefault("speaker_id", hifly_voice)
+                    params["voice"] = hifly_voice
+                    params["speaker_id"] = hifly_voice
+                params["voice_candidates"] = copy.deepcopy(selected_voices)
+                params["voice_selection_mode"] = "daily_round_robin" if selected_voices else "fixed"
                 params = _apply_sales_digital_human_defaults(params)
                 payload["params"] = params
                 plan["payload"] = payload
@@ -1712,10 +2657,14 @@ def _prepare_sales_workflow_nodes(
                 if script_value in placeholder_texts or script_value.startswith("自动创作"):
                     inner.pop(script_key, None)
             if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                inner.pop("avatar", None)
+                inner.pop("avatar_id", None)
                 if hifly_avatar:
-                    inner.setdefault("avatar", hifly_avatar)
+                    inner["avatar"] = hifly_avatar
+                inner.pop("voice", None)
+                inner.pop("speaker_id", None)
                 if hifly_voice:
-                    inner.setdefault("voice", hifly_voice)
+                    inner["voice"] = hifly_voice
                 payload["payload"] = inner
                 plan["payload"] = payload
             else:
@@ -1724,87 +2673,181 @@ def _prepare_sales_workflow_nodes(
                     for key, value in inner.items()
                     if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
                 }
-                params.setdefault("requirements", requirements)
-                params.setdefault("keyword_ids", keyword_ids)
-                params.setdefault("keywords", keyword_texts)
-                params.setdefault("keyword_texts", keyword_texts)
-                params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
-                params.setdefault("memory_doc_ids", memory_doc_ids)
-                params.setdefault("memory_docs", memory_docs)
-                params.setdefault("language", template_language)
-                params.setdefault("target_language", template_language)
+                params["requirements"] = copy.deepcopy(requirements)
+                params["keyword_ids"] = list(keyword_ids)
+                params["keywords"] = list(keyword_texts)
+                params["keyword_texts"] = list(keyword_texts)
+                params["competitors"] = list(competitor_texts)
+                params["memory_doc_ids"] = list(memory_doc_ids)
+                params["memory_docs"] = copy.deepcopy(memory_docs)
+                params["language"] = template_language
+                params["target_language"] = template_language
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
-                params["script_source"] = "ip_daily_industry_hot_oral"
-                if shanjian_virtualmans:
-                    params["virtualman_candidates"] = shanjian_virtualmans
-                    params["virtualman_selection_mode"] = "daily_round_robin"
+                _normalize_shanjian_script_sources(params)
+                params["virtualman_candidates"] = copy.deepcopy(shanjian_virtualmans)
+                params["virtualman_selection_mode"] = "daily_round_robin" if shanjian_virtualmans else "fixed"
+                params.pop("virtualman_id", None)
                 if shanjian_virtualman:
-                    params.setdefault("virtualman_id", shanjian_virtualman)
+                    params["virtualman_id"] = shanjian_virtualman
+                params.pop("voice", None)
+                params.pop("speaker_id", None)
                 if hifly_voice:
-                    params.setdefault("voice", hifly_voice)
-                    params.setdefault("speaker_id", hifly_voice)
+                    params["voice"] = hifly_voice
+                    params["speaker_id"] = hifly_voice
+                params["voice_candidates"] = copy.deepcopy(selected_voices)
+                params["voice_selection_mode"] = "daily_round_robin" if selected_voices else "fixed"
                 params = _apply_sales_digital_human_defaults(params)
                 node["ability_key"] = "shanjian_digital_human_video"
                 plan["task_kind"] = "client_workflow"
                 plan["payload"] = {"action": "shanjian_digital_human_video", "params": params}
 
-    if not personal:
-        missing.append("IP人设定位：请先完成资料调查并保存")
-    else:
-        profile_missing = _missing_sales_persona_fields(requirements)
-        if profile_missing:
-            missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
-        if not keywords:
-            if _has_active_keywords(db, reference_owner_id):
-                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+    if not sales_workflow:
+        needs = _custom_workflow_material_needs(prepared)
+        persona_needed = any(
+            needs[key]
+            for key in ("survey", "keywords", "competitors", "memory", "local_bestseller", "digital_human")
+        )
+        if not personal:
+            if persona_needed:
+                missing.append("IP人设定位：请先完成资料调查并保存")
+        elif persona_needed:
+            if needs["survey"] and template_survey is None:
+                missing.append(
+                    "IP人设定位-模板：当前模板还没有关联资料调查（人设），"
+                    "请先在模板里选择资料调查后再启用"
+                )
             else:
-                missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
-        if not competitors:
-            if _has_active_competitors(db, reference_owner_id):
-                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
-            else:
-                missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
-        elif not any(row.last_fetch_at for row in competitors):
-            missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
-        if not (memory_doc_ids or memory_docs):
-            if _has_active_memory_docs(db, owner.id, installation_id):
-                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
-            else:
-                missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+                if needs["digital_human"] and needs["survey"] and not _persona_requirements_have_content(requirements):
+                    missing.append("IP人设定位-资料调查：当前资料调查还没有可用内容，请先完善后再启用")
+                if needs["local_bestseller"] and template_survey is not None:
+                    profile = _local_bestseller_profile_from_persona(requirements if isinstance(requirements, dict) else {})
+                    profile_missing = _missing_local_bestseller_profile_fields(profile if isinstance(profile, dict) else {})
+                    if profile_missing:
+                        missing.append("同城爆款视频：" + "、".join(profile_missing))
+            if needs["keywords"]:
+                if not keywords:
+                    if _has_active_keywords(db, reference_owner_id):
+                        missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+                    else:
+                        missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
+            if needs["competitors"]:
+                if not competitors:
+                    if _has_active_competitors(db, reference_owner_id):
+                        missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
+                    else:
+                        missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
+                elif not any(getattr(row, "last_fetch_at", None) for row in competitors):
+                    missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
+            if needs["memory"] and not (memory_doc_ids or memory_docs):
+                if _has_active_memory_docs(db, owner.id, installation_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
+                else:
+                    missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+        if needs["wechat"] and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
+        if needs["whatsapp"] and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
+        if needs["digital_human"]:
+            if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                if not hifly_avatar_rows:
+                    missing.append("素材库：请先创建可用的旧版数字人形象分身")
+            elif not shanjian_virtualmans:
+                missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
+            if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
+                missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
+            if not selected_voices:
+                missing.append("素材库：请先创建可用的声音分身")
+        if missing:
+            detail = "当前工作流无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
+            raise HTTPException(status_code=400, detail=detail)
+        return prepared
 
-    if has_ip_daily and not personal:
-        missing.append("IP日更：缺少当前使用模板")
-    if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
-        missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
-    if has_hifly:
-        if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
-            if not hifly_avatar:
-                missing.append("素材库：请先创建可用的旧版数字人形象分身")
-        elif not shanjian_virtualmans:
-            missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
-        if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
-            missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
-        if not hifly_voice:
-            missing.append("素材库：请先创建可用的声音分身")
-    if has_local_bestseller and personal:
-        profile = _local_bestseller_profile_from_persona(requirements)
-        if not (_clean_text(profile.get("photo_asset_id"), 128) or _clean_text(profile.get("photo_url"), 1000)):
-            missing.append("同城爆款视频：缺少人物照片")
+    if sales_workflow:
+        if not personal:
+            missing.append("IP人设定位：请先完成资料调查并保存")
+        else:
+            profile_missing = _missing_sales_persona_fields(requirements)
+            if template_survey is None:
+                # 当前模板没关联资料调查：不再用个人默认行里的旧人设兜底，直接拦下，
+                # 让用户去模板里选好资料调查再启用。
+                missing.append(
+                    "IP人设定位-模板：当前模板还没有关联资料调查（人设），"
+                    "请先在模板里选择资料调查后再启用"
+                )
+                profile_missing = []
+            if profile_missing:
+                missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
+            if not keywords:
+                if _has_active_keywords(db, reference_owner_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+                else:
+                    missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
+            if not competitors:
+                if _has_active_competitors(db, reference_owner_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
+                else:
+                    missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
+            elif not any(row.last_fetch_at for row in competitors):
+                missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
+            # 只有「记忆接管」节点时不需要 IP 模板记忆文件：那份记忆在 Online 抖音获客-私信引流里选。
+            needs_template_memory = has_ip_daily or has_hifly
+            if not (memory_doc_ids or memory_docs) and not (has_memory_takeover and not needs_template_memory):
+                if _has_active_memory_docs(db, owner.id, installation_id):
+                    missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
+                else:
+                    missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
 
-    if missing:
-        detail = "销售员工无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
-        raise HTTPException(status_code=400, detail=detail)
-    return prepared
+        if has_ip_daily and not personal:
+            missing.append("IP日更：缺少当前使用模板")
+        if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
+        if has_whatsapp and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+            missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
+        if has_hifly:
+            if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                if not hifly_avatar_rows:
+                    missing.append("素材库：请先创建可用的旧版数字人形象分身")
+            elif not shanjian_virtualmans:
+                missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
+            if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
+                missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
+            if not selected_voices:
+                missing.append("素材库：请先创建可用的声音分身")
+        if has_local_bestseller and personal:
+            profile = _local_bestseller_profile_from_persona(requirements)
+            if not (_clean_text(profile.get("photo_asset_id"), 128) or _clean_text(profile.get("photo_url"), 1000)):
+                missing.append("同城爆款视频：缺少人物照片")
+
+        if missing:
+            subject = "销售员工" if sales_workflow else "当前工作流"
+            detail = subject + "无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
+            raise HTTPException(status_code=400, detail=detail)
+        return prepared
 
 
 def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, source: str = "own", grants: Optional[list[int]] = None) -> dict[str, Any]:
+    from .scheduled_tasks import sort_workflow_nodes_by_time
+
+    # 节点按「设置的开始时间」展示/执行，而不是按添加顺序（库里老数据顺序乱了也照样对）
+    nodes = sort_workflow_nodes_by_time(_canonical_workflow_nodes(row.nodes))
+    # System catalog rows are immutable shared defaults.  Hide any legacy
+    # reply mode/prompt that may still exist in the database; the actual run
+    # resolves the current account's Online configuration.
+    template_meta = row.meta if isinstance(row.meta, dict) else {}
+    is_system_key = _clean_text(template_meta.get("system_template_key"), 128) in _enabled_system_workflow_keys()
+    if (
+        (source in {"system", "granted"} and is_system_key)
+        or source == "system"
+        or _is_system_catalog_template(row)
+    ):
+        nodes = _sanitize_system_douyin_collection_defaults(nodes)
     return {
         "id": row.id,
         "owner_user_id": row.owner_user_id,
         "installation_id": _clean_text(row.installation_id, 128),
         "owner_name": owner.email if owner else "",
         "name": row.name,
-        "nodes": _canonical_workflow_nodes(row.nodes),
+        "nodes": nodes,
         "status": row.status,
         "source": source,
         "meta": row.meta or {},
@@ -1814,11 +2857,164 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
     }
 
 
+def _clear_workflow_template_cache() -> None:
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        _WORKFLOW_TEMPLATE_CACHE.clear()
+
+
+def _workflow_template_cache_lock(key: tuple[int, str]) -> threading.Lock:
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        return _WORKFLOW_TEMPLATE_CACHE_KEY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _cached_workflow_template_payloads(key: tuple[int, str]) -> Optional[list[dict[str, Any]]]:
+    now = time.monotonic()
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        entry = _WORKFLOW_TEMPLATE_CACHE.get(key)
+        if not entry:
+            return None
+        created_at, payloads = entry
+        if now - created_at >= _WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS:
+            _WORKFLOW_TEMPLATE_CACHE.pop(key, None)
+            return None
+        return copy.deepcopy(payloads)
+
+
+def _store_workflow_template_payloads(key: tuple[int, str], payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stored = copy.deepcopy(payloads)
+    now = time.monotonic()
+    with _WORKFLOW_TEMPLATE_CACHE_LOCK:
+        _WORKFLOW_TEMPLATE_CACHE[key] = (now, stored)
+        expired = [
+            cache_key
+            for cache_key, (created_at, _) in _WORKFLOW_TEMPLATE_CACHE.items()
+            if now - created_at >= _WORKFLOW_TEMPLATE_CACHE_TTL_SECONDS
+        ]
+        for cache_key in expired:
+            _WORKFLOW_TEMPLATE_CACHE.pop(cache_key, None)
+    return copy.deepcopy(stored)
+
+
+def _workflow_template_payloads(db: Session, owner: User, installation_id: str) -> list[dict[str, Any]]:
+    key = (int(owner.id), str(installation_id or ""))
+    cached = _cached_workflow_template_payloads(key)
+    if cached is not None:
+        return cached
+
+    # Multiple UI entry points can request the same device at once. Serialize
+    # only that user/device key, then re-check the cache after the first query.
+    with _workflow_template_cache_lock(key):
+        cached = _cached_workflow_template_payloads(key)
+        if cached is not None:
+            return cached
+
+        system_rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(
+                H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+                H5WorkflowTemplate.status == "active",
+            )
+            .order_by(H5WorkflowTemplate.id.asc())
+            .all()
+        )
+        system_rows = [row for row in system_rows if _is_system_catalog_template(row)]
+        # 系统模板顺序由管理后台决定（meta["system_order"]），不是数据库创建顺序
+        system_rows.sort(key=system_catalog_display_key)
+        system_catalog_keys = {
+            _clean_text((row.meta or {}).get("system_template_key"), 128)
+            for row in system_rows
+            if isinstance(row.meta, dict)
+        }
+        template_scope = (
+            or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == installation_id)
+            if installation_id
+            else H5WorkflowTemplate.installation_id == ""
+        )
+        own_rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(H5WorkflowTemplate.owner_user_id == owner.id, H5WorkflowTemplate.status == "active", template_scope)
+            .order_by(H5WorkflowTemplate.updated_at.desc())
+            .all()
+        )
+        own_rows = [row for row in own_rows if not _is_legacy_system_mirror(row, system_catalog_keys)]
+        grants = (
+            db.query(H5WorkflowTemplateGrant)
+            .filter(H5WorkflowTemplateGrant.target_user_id == owner.id, H5WorkflowTemplateGrant.status == "active")
+            .all()
+        )
+        granted_ids = [grant.template_id for grant in grants]
+        granted_rows = []
+        if granted_ids:
+            # A grant transfers the template to the target account.  The
+            # template's installation_id belongs to the granting account's
+            # device and must not hide the template on the target's device.
+            # Keep the installation scope for owned templates above, while
+            # resolving granted templates by the active grant alone.
+            granted_rows = (
+                db.query(H5WorkflowTemplate)
+                .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active")
+                .order_by(H5WorkflowTemplate.updated_at.desc())
+                .all()
+            )
+        grant_map: dict[int, list[int]] = {}
+        if own_rows:
+            own_ids = [row.id for row in own_rows]
+            for grant in (
+                db.query(H5WorkflowTemplateGrant)
+                .filter(H5WorkflowTemplateGrant.template_id.in_(own_ids), H5WorkflowTemplateGrant.status == "active")
+                .all()
+            ):
+                grant_map.setdefault(grant.template_id, []).append(grant.target_user_id)
+
+        owner_ids = {
+            int(row.owner_user_id)
+            for row in granted_rows
+            if row.owner_user_id and int(row.owner_user_id) != int(owner.id)
+        }
+        owners_by_id = {}
+        if owner_ids:
+            owners_by_id = {
+                user.id: user
+                for user in db.query(User).filter(User.id.in_(owner_ids)).all()
+            }
+
+        payloads = [
+            *[_template_payload(row, source="system") for row in system_rows],
+            *[_template_payload(row, source="own", grants=grant_map.get(row.id, [])) for row in own_rows],
+            *[
+                _template_payload(row, owner=owners_by_id.get(row.owner_user_id), source="granted")
+                for row in granted_rows
+                if row.owner_user_id != owner.id
+            ],
+        ]
+        return _store_workflow_template_payloads(key, payloads)
+
+
+def _normalized_activation_nodes(nodes: Any) -> list[dict[str, Any]]:
+    """启用快照里的节点展示/下发前归一（抖音节点被写成 client_workflow 的历史脏数据）。
+
+    返回新的列表（深拷贝），不改动调用方/ORM 里的原始 JSON。
+    """
+    copied = copy.deepcopy(nodes) if isinstance(nodes, list) else []
+    fixed_nodes, _fixed = normalize_workflow_nodes_for_save(copied)
+    return fixed_nodes
+
+
 def _activation_payload(row: H5WorkflowActivation, template: Optional[H5WorkflowTemplate] = None) -> dict[str, Any]:
     snapshot = row.template_snapshot if isinstance(row.template_snapshot, dict) else {}
     template_nodes = snapshot.get("nodes") if isinstance(snapshot.get("nodes"), list) else None
     if template_nodes is None and template is not None:
         template_nodes = template.nodes or []
+    # 09-20 之前存的启用快照可能带着坏组合（client_workflow + action=douyin_leads）：
+    # H5 的「我已启用的工作流」直接渲染这份快照，且客户端「同步/重新启用」会把它发回来，
+    # 所以读出来就归一（深拷贝，不回写行，避免污染当前 session 的 JSON）。
+    template_nodes = _normalized_activation_nodes(template_nodes)
+    template_nodes = _canonical_workflow_nodes(template_nodes)
+    if (
+        _clean_text(snapshot.get("source"), 32).lower() in {"system", "granted"}
+        and _clean_text(snapshot.get("template_key"), 128) in _enabled_system_workflow_keys()
+    ):
+        template_nodes = _sanitize_system_douyin_collection_defaults(template_nodes)
     return {
         "id": row.id,
         "user_id": row.user_id,
@@ -1827,7 +3023,7 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
         "template_key": snapshot.get("template_key") or "",
         "template_source": snapshot.get("source") or "",
         "template_name": template.name if template else snapshot.get("name", ""),
-        "template_nodes": _canonical_workflow_nodes(template_nodes),
+        "template_nodes": template_nodes,
         "status": row.status,
         "scheduled_task_ids": row.scheduled_task_ids or [],
         "started_at": _iso(row.started_at),
@@ -1876,11 +3072,60 @@ def _system_workflow_template(
     return None
 
 
+def system_catalog_display_key(row: Any) -> tuple:
+    """系统模板展示顺序：后台排过序（meta["system_order"] = 10/20/30…）的按它排，
+    没排过的老数据按 id 兜底，保证两边顺序稳定一致。"""
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    try:
+        order = int(meta.get("system_order"))
+    except (TypeError, ValueError):
+        order = 0
+    rid = int(getattr(row, "id", 0) or 0)
+    if order <= 0:
+        return (1, 0, rid)
+    return (0, order, rid)
+
+
+def _is_system_catalog_template(row: Optional[H5WorkflowTemplate]) -> bool:
+    if row is None or row.owner_user_id is None or int(row.owner_user_id) != _SYSTEM_WORKFLOW_OWNER_ID:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    return (
+        _clean_text(meta.get("source"), 64) == _SYSTEM_WORKFLOW_CATALOG_SOURCE
+        and _clean_text(meta.get("system_template_key"), 128) in _enabled_system_workflow_keys()
+    )
+
+
+def _is_legacy_system_mirror(row: Optional[H5WorkflowTemplate], catalog_keys: set[str]) -> bool:
+    """Hide old per-user system mirrors once shared catalog rows exist."""
+    if row is None or int(row.owner_user_id or 0) == _SYSTEM_WORKFLOW_OWNER_ID:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    key = _clean_text(meta.get("system_template_key"), 128)
+    return _clean_text(meta.get("source"), 64) == "system_mirror" and key in catalog_keys
+
+
 def _accessible_template(db: Session, template_id: int, owner_user_id: int) -> H5WorkflowTemplate:
     row = db.query(H5WorkflowTemplate).filter(H5WorkflowTemplate.id == template_id, H5WorkflowTemplate.status == "active").first()
     if not row:
         raise HTTPException(status_code=404, detail="模板不存在")
+    if _is_system_catalog_template(row):
+        return row
     if row.owner_user_id == owner_user_id:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        key = _clean_text(meta.get("system_template_key"), 128)
+        if _clean_text(meta.get("source"), 64) == "system_mirror" and key in _enabled_system_workflow_keys():
+            catalog_rows = (
+                db.query(H5WorkflowTemplate)
+                .filter(
+                    H5WorkflowTemplate.owner_user_id == _SYSTEM_WORKFLOW_OWNER_ID,
+                    H5WorkflowTemplate.status == "active",
+                )
+                .all()
+            )
+            for candidate in catalog_rows:
+                if _is_system_catalog_template(candidate) and _clean_text((candidate.meta or {}).get("system_template_key"), 128) == key:
+                    return candidate
         return row
     grant = (
         db.query(H5WorkflowTemplateGrant)
@@ -1996,19 +3241,36 @@ def _workflow_node_should_start_now(
     return start <= current <= end
 
 
-def _activate_nodes_for_device(
+def _prepare_activation_nodes(
     *,
     db: Session,
-    current_user: User,
     owner: User,
     installation_id: str,
-    template_id: int,
-    template_owner_user_id: int,
     template_name: str,
     nodes: list[dict[str, Any]],
-    timezone_offset_minutes: Optional[int],
     snapshot_extra: Optional[dict[str, Any]] = None,
-):
+) -> list[dict[str, Any]]:
+    """启动工作流与节点「演示」共用的节点组装。
+
+    两处必须走同一段逻辑，否则「演示」下发的能力/参数会和真正启用时不一致
+    （09-15 排查：Online 节点「演示」直接照抄节点里残留的旧 plan，数字人节点
+    里留的还是 1.0 的 hifly.video.create_by_tts + 空参数，演示必然秒失败
+    "请选择数字人"）。
+    """
+    snapshot_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
+    if snapshot_key in _enabled_system_workflow_keys():
+        nodes = _sanitize_system_douyin_collection_defaults(nodes)
+    if snapshot_key in _enabled_system_workflow_keys() and snapshot_key != "system_sales":
+        # These system catalogs also contain a Douyin collection node, but
+        # are not full sales presets and therefore must not be forced through
+        # the sales persona/resource validation path.
+        for node in nodes:
+            plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+            payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+            if _clean_text(plan.get("task_kind"), 64).lower() == "douyin_leads":
+                payload = _sales_douyin_action_payload(node, payload)
+                plan["payload"] = payload
+                node["plan"] = plan
     nodes = _prepare_sales_workflow_nodes(
         db=db,
         owner=owner,
@@ -2030,6 +3292,107 @@ def _activate_nodes_for_device(
         installation_id=installation_id,
         nodes=nodes,
     )
+    return nodes
+
+
+def _workflow_node_task_spec(
+    node: dict[str, Any],
+    parent_node: Optional[dict[str, Any]],
+    *,
+    installation_id: str,
+    template_id: int,
+    template_name: str,
+    snapshot_extra: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """把组装好的节点转成一条待下发任务（启动与演示共用同一份字段）。"""
+    plan = node.get("plan") or {}
+    task_kind = str(plan.get("task_kind") or "").strip().lower()
+    payload = dict(plan.get("payload") or {})
+    # 已在库里的老模板仍可能是 client_workflow + action=douyin_leads（2026-09-20 排查）
+    # → 组装任务前再归一一次，「演示」和「启动」都下发客户端认的 douyin_leads。
+    task_kind, payload, _douyin_fixed = normalize_douyin_task_kind(
+        task_kind, payload, label=douyin_node_label(node)
+    )
+    if task_kind == "douyin_leads":
+        # Each H5 workflow trigger is one finite Online action. The
+        # workflow schedule may trigger it again later, but it must
+        # never start a persistent Douyin monitor.
+        payload["h5_task_source"] = "workflow"
+        payload["h5_one_shot"] = True
+        payload["douyin_execution_mode"] = "one_shot"
+    payload["h5_context"] = {
+        **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
+        # The activation belongs to one installation slot; execution
+        # resolves that device's personal default template.
+        "installation_id": installation_id,
+        "workflow_template_id": template_id,
+        "workflow_template_name": template_name,
+        "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
+        "workflow_template_source": (snapshot_extra or {}).get("source") or "",
+        # Template resources are live personal-settings references.
+        # The node context identifies the workflow only; execution
+        # resolves the current template instead of this activation.
+        "template_source": "personal_current",
+        "workflow_node_id": node.get("id"),
+        "workflow_node_time": node.get("time"),
+        "workflow_node_end_time": node.get("end_time") or "",
+        "workflow_node_time_range": node.get("time_range") or (
+            f"{node.get('time')}-{node.get('end_time')}" if node.get("end_time") else node.get("time")
+        ),
+        "ability_key": node.get("ability_key"),
+        "ability_label": node.get("ability_label"),
+        "department_id": node.get("department_id"),
+        "department_name": node.get("department_name"),
+    }
+    if parent_node:
+        payload["h5_context"].update(
+            {
+                "workflow_parent_node_id": parent_node.get("id"),
+                "workflow_parent_node_time": parent_node.get("time"),
+                "workflow_parent_node_end_time": parent_node.get("end_time") or "",
+                "workflow_parent_node_time_range": parent_node.get("time_range") or (
+                    f"{parent_node.get('time')}-{parent_node.get('end_time')}"
+                    if parent_node.get("end_time")
+                    else parent_node.get("time")
+                ),
+                "workflow_parent_ability_key": parent_node.get("ability_key"),
+                "workflow_parent_ability_label": parent_node.get("ability_label"),
+                "workflow_action_type": node.get("action_type") or node.get("type"),
+                "workflow_action_platform": node.get("platform"),
+            }
+        )
+    return {
+        "title": str(plan.get("title") or node.get("ability_label") or template_name),
+        "task_kind": task_kind,
+        "content": str(plan.get("content") or f"H5 工作流：{node.get('ability_label') or template_name}"),
+        "payload": payload,
+        "server_side": task_kind in _SERVER_SIDE_TASK_KINDS,
+        "ability_label": _clean_text(node.get("ability_label"), 160),
+        "node_id": node.get("id"),
+    }
+
+
+def _activate_nodes_for_device(
+    *,
+    db: Session,
+    current_user: User,
+    owner: User,
+    installation_id: str,
+    template_id: int,
+    template_owner_user_id: int,
+    template_name: str,
+    nodes: list[dict[str, Any]],
+    timezone_offset_minutes: Optional[int],
+    snapshot_extra: Optional[dict[str, Any]] = None,
+):
+    nodes = _prepare_activation_nodes(
+        db=db,
+        owner=owner,
+        installation_id=installation_id,
+        template_name=template_name,
+        nodes=nodes,
+        snapshot_extra=snapshot_extra,
+    )
     now = datetime.utcnow()
     stopped_ids = _stop_active_for_device(db, owner.id, installation_id, now)
     db.commit()
@@ -2038,60 +3401,25 @@ def _activate_nodes_for_device(
         for node, parent_node in _workflow_nodes_with_actions(nodes):
             if _is_workflow_placeholder(node):
                 continue
-            plan = node.get("plan") or {}
-            task_kind = str(plan.get("task_kind") or "").strip().lower()
-            payload = dict(plan.get("payload") or {})
-            if task_kind == "douyin_leads":
-                # Each H5 workflow trigger is one finite Online action. The
-                # workflow schedule may trigger it again later, but it must
-                # never start a persistent Douyin monitor.
-                payload["h5_task_source"] = "workflow"
-                payload["h5_one_shot"] = True
-                payload["douyin_execution_mode"] = "one_shot"
-            payload["h5_context"] = {
-                **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
-                "workflow_template_id": template_id,
-                "workflow_template_name": template_name,
-                "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
-                "workflow_node_id": node.get("id"),
-                "workflow_node_time": node.get("time"),
-                "workflow_node_end_time": node.get("end_time") or "",
-                "workflow_node_time_range": node.get("time_range") or (
-                    f"{node.get('time')}-{node.get('end_time')}" if node.get("end_time") else node.get("time")
-                ),
-                "ability_key": node.get("ability_key"),
-                "ability_label": node.get("ability_label"),
-                "department_id": node.get("department_id"),
-                "department_name": node.get("department_name"),
-            }
-            if parent_node:
-                payload["h5_context"].update(
-                    {
-                        "workflow_parent_node_id": parent_node.get("id"),
-                        "workflow_parent_node_time": parent_node.get("time"),
-                        "workflow_parent_node_end_time": parent_node.get("end_time") or "",
-                        "workflow_parent_node_time_range": parent_node.get("time_range") or (
-                            f"{parent_node.get('time')}-{parent_node.get('end_time')}"
-                            if parent_node.get("end_time")
-                            else parent_node.get("time")
-                        ),
-                        "workflow_parent_ability_key": parent_node.get("ability_key"),
-                        "workflow_parent_ability_label": parent_node.get("ability_label"),
-                        "workflow_action_type": node.get("action_type") or node.get("type"),
-                        "workflow_action_platform": node.get("platform"),
-                    }
-                )
+            spec = _workflow_node_task_spec(
+                node,
+                parent_node,
+                installation_id=installation_id,
+                template_id=template_id,
+                template_name=template_name,
+                snapshot_extra=snapshot_extra,
+            )
             scheduled = _create_task_row(
                 db,
                 ScheduledTaskCreate(
-                    title=str(plan.get("title") or node.get("ability_label") or template_name),
-                    task_kind=task_kind,
-                    content=str(plan.get("content") or f"H5 工作流：{node.get('ability_label') or template_name}"),
-                    payload=payload,
+                    title=spec["title"],
+                    task_kind=spec["task_kind"],
+                    content=spec["content"],
+                    payload=spec["payload"],
                     schedule_type="daily_times",
                     daily_times=[node["time"]],
                     timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
-                    installation_ids=[] if task_kind in _SERVER_SIDE_TASK_KINDS else [installation_id],
+                    installation_ids=[] if spec["server_side"] else [installation_id],
                 ),
                 target_user_id=owner.id,
                 created_by_user_id=current_user.id,
@@ -2099,12 +3427,11 @@ def _activate_nodes_for_device(
             )
             if _workflow_node_should_start_now(
                 node,
-                task_kind=task_kind,
+                task_kind=spec["task_kind"],
                 now_utc=now,
                 timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
             ):
                 scheduled.next_run_at = now
-                _enqueue_task(db, scheduled, now, scheduled_at=scheduled.next_run_at)
             created_task_ids.append(int(scheduled.id))
     except Exception:
         try:
@@ -2117,6 +3444,44 @@ def _activate_nodes_for_device(
                 _delete_task_row(db, task)
         db.commit()
         raise
+    # 同一槽位启动新工作流时，把该槽位上"不在本次工作流里"的旧 workflow 任务停掉。
+    # 背景（09-15 排查）：设备上明明没有配养号节点却在跑养号 —— 09-11 批量创建的那批
+    # workflow 任务一直 active，客户端按 installation_id 领任务时就会照跑。
+    # 开关：H5_WORKFLOW_SLOT_TASK_RECONCILE=0 可一键关掉。
+    if (os.environ.get("H5_WORKFLOW_SLOT_TASK_RECONCILE", "1").strip().lower() not in {"0", "false", "no", "off"}):
+        try:
+            _keep_ids = {int(item) for item in created_task_ids}
+            _paused_ids = []
+            for _task in (
+                db.query(ScheduledTask)
+                .filter(
+                    ScheduledTask.user_id == int(owner.id),
+                    ScheduledTask.status == "active",
+                )
+                .all()
+            ):
+                if int(_task.id) in _keep_ids:
+                    continue
+                # 槽位在库里可能带前缀（例如 u54-9cfefed5…），必须用"包含"匹配；
+                # 精确相等会漏判（09-15 排查 9cfefed5 槽位时踩到过）。
+                if not any(
+                    str(installation_id) in str(value)
+                    for value in (_task.target_installation_ids or [])
+                ):
+                    continue
+                _task.status = "paused"
+                _paused_ids.append(int(_task.id))
+            if _paused_ids:
+                db.commit()
+                logger.info(
+                    "[workflow-slot-reconcile] user_id=%s installation_id=%s paused=%s kept=%s",
+                    owner.id,
+                    installation_id,
+                    _paused_ids,
+                    created_task_ids,
+                )
+        except Exception as _reconcile_exc:
+            logger.warning("[workflow-slot-reconcile] failed: %s", _reconcile_exc)
     snapshot = {"name": template_name, "nodes": nodes}
     if snapshot_extra:
         snapshot.update(snapshot_extra)
@@ -2139,6 +3504,77 @@ def _activate_nodes_for_device(
     return activation, stopped_ids, tasks
 
 
+class WorkflowDemoPlanBody(BaseModel):
+    """Online 员工节点「演示」请求体：直接用客户端当前的模板节点配置。"""
+
+    name: str = ""
+    nodes: list[dict[str, Any]] = []
+    meta: dict[str, Any] = {}
+    installation_id: str = ""
+    template_id: int = 0
+
+
+@router.post("/api/h5-workflows/demo-plan", summary="Online 节点演示：按当前节点配置生成与启动一致的任务 plan")
+def workflow_demo_plan(
+    body: WorkflowDemoPlanBody,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """演示任务必须和"启动工作流"用同一段组装逻辑。
+
+    历史实现是客户端直接照抄节点里残留的 plan.payload（数字人节点那份还是 1.0 的
+    `hifly.video.create_by_tts` + 空参数），于是演示必然秒失败"请选择数字人"。
+    这里复用启动路径的 _prepare_activation_nodes() + _workflow_node_task_spec()，
+    拿到与真正启用时逐字段一致的能力、参数和 h5_context（含安装槽位），
+    否则执行端解析不到该槽位的个人模板资源。
+    """
+    owner = online_user_for_mobile_user(db, current_user)
+    iid = _clean_text(body.installation_id or x_installation_id, 128)
+    nodes = _clean_nodes(body.nodes or [])
+    if not nodes:
+        raise HTTPException(status_code=400, detail="缺少要演示的节点")
+    template_name = _clean_text(body.name, 160)
+    snapshot_extra = dict(body.meta or {})
+    prepared = _prepare_activation_nodes(
+        db=db,
+        owner=owner,
+        installation_id=iid,
+        template_name=template_name,
+        nodes=nodes,
+        snapshot_extra=snapshot_extra,
+    )
+    plans: list[dict[str, Any]] = []
+    for node, parent_node in _workflow_nodes_with_actions(prepared):
+        if _is_workflow_placeholder(node):
+            continue
+        spec = _workflow_node_task_spec(
+            node,
+            parent_node,
+            installation_id=iid,
+            template_id=int(body.template_id or 0),
+            template_name=template_name,
+            snapshot_extra=snapshot_extra,
+        )
+        # 和 _create_task_row 落库前同一步实时模板覆盖，否则演示拿到的
+        # 关键词/人设/数字人素材会和真正执行时用的不是一套。
+        spec["payload"] = _hydrate_workflow_task_payload(
+            db,
+            task_kind=spec["task_kind"],
+            payload=spec["payload"],
+            target_user_id=owner.id,
+        )
+        plans.append(spec)
+    if not plans:
+        raise HTTPException(status_code=400, detail="该节点暂不支持演示")
+    return {
+        "ok": True,
+        # plan 保留单条形态兼容旧客户端；plans 是完整清单（组合节点会展开子动作）。
+        "plan": plans[0],
+        "plans": plans,
+    }
+
+
 @router.get("/api/h5-workflows/templates", summary="H5 工作流模板列表")
 def list_workflow_templates(
     installation_id: str = Query("", max_length=128),
@@ -2148,46 +3584,9 @@ def list_workflow_templates(
 ):
     owner = online_user_for_mobile_user(db, current_user)
     iid = _clean_text(installation_id or x_installation_id, 128)
-    template_scope = or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == iid) if iid else H5WorkflowTemplate.installation_id == ""
-    own_rows = (
-        db.query(H5WorkflowTemplate)
-        .filter(H5WorkflowTemplate.owner_user_id == owner.id, H5WorkflowTemplate.status == "active", template_scope)
-        .order_by(H5WorkflowTemplate.updated_at.desc())
-        .all()
-    )
-    grants = (
-        db.query(H5WorkflowTemplateGrant)
-        .filter(H5WorkflowTemplateGrant.target_user_id == owner.id, H5WorkflowTemplateGrant.status == "active")
-        .all()
-    )
-    granted_ids = [g.template_id for g in grants]
-    granted_rows = []
-    if granted_ids:
-        granted_rows = (
-            db.query(H5WorkflowTemplate)
-            .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active", template_scope)
-            .order_by(H5WorkflowTemplate.updated_at.desc())
-            .all()
-        )
-    grant_map: dict[int, list[int]] = {}
-    if own_rows:
-        own_ids = [r.id for r in own_rows]
-        for item in (
-            db.query(H5WorkflowTemplateGrant)
-            .filter(H5WorkflowTemplateGrant.template_id.in_(own_ids), H5WorkflowTemplateGrant.status == "active")
-            .all()
-        ):
-            grant_map.setdefault(item.template_id, []).append(item.target_user_id)
-    owners = {
-        row.id: db.query(User).filter(User.id == row.owner_user_id).first()
-        for row in granted_rows
-    }
     return {
         "ok": True,
-        "templates": [
-            *[_template_payload(row, source="own", grants=grant_map.get(row.id, [])) for row in own_rows],
-            *[_template_payload(row, owner=owners.get(row.id), source="granted") for row in granted_rows if row.owner_user_id != owner.id],
-        ],
+        "templates": _workflow_template_payloads(db, owner, iid),
         "can_grant": bool(getattr(current_user, "is_agent", False)),
     }
 
@@ -2206,7 +3605,7 @@ def create_workflow_template(
     meta = dict(body.meta or {})
     installation_id = _clean_text(body.installation_id or x_installation_id, 128)
     system_template_key = _clean_text(meta.get("system_template_key"), 128)
-    if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if system_template_key and system_template_key not in _enabled_system_workflow_keys():
         raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
     if system_template_key:
         existing = _system_workflow_template(db, owner.id, system_template_key, installation_id=installation_id)
@@ -2218,6 +3617,7 @@ def create_workflow_template(
             existing.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(existing)
+            _clear_workflow_template_cache()
             return {"ok": True, "created": False, "template": _template_payload(existing, source="own")}
     row = H5WorkflowTemplate(
         owner_user_id=owner.id,
@@ -2232,6 +3632,7 @@ def create_workflow_template(
     db.add(row)
     db.commit()
     db.refresh(row)
+    _clear_workflow_template_cache()
     return {"ok": True, "created": True, "template": _template_payload(row, source="own")}
 
 
@@ -2248,13 +3649,21 @@ def update_workflow_template(
     name = (body.name or "").strip()[:160]
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
+    body_iid = _clean_text(body.installation_id, 128)
+    header_iid = _clean_text(x_installation_id, 128)
+    if body_iid and header_iid and body_iid != header_iid:
+        raise HTTPException(status_code=409, detail="员工槽位参数与当前设备不一致，请刷新后重试")
+    requested_iid = body_iid or header_iid
+    bound_iid = _clean_text(row.installation_id, 128)
+    if bound_iid and requested_iid and bound_iid != requested_iid:
+        raise HTTPException(status_code=409, detail="该员工已绑定其他设备槽位，请切换到原设备后编辑")
     meta: Optional[dict[str, Any]] = None
-    if body.installation_id is not None or x_installation_id:
-        row.installation_id = _clean_text(body.installation_id or x_installation_id, 128)
+    if requested_iid and not bound_iid:
+        row.installation_id = requested_iid
     if body.meta:
         meta = dict(body.meta)
         system_template_key = _clean_text(meta.get("system_template_key"), 128)
-        if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        if system_template_key and system_template_key not in _enabled_system_workflow_keys():
             raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
         duplicate_system_template = system_template_key and _system_workflow_template(
             db,
@@ -2274,6 +3683,7 @@ def update_workflow_template(
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
+    _clear_workflow_template_cache()
     return {"ok": True, "template": _template_payload(row, source="own")}
 
 
@@ -2290,6 +3700,7 @@ def delete_workflow_template(
     row.updated_at = now
     stopped_ids = _stop_active_for_template(db, row.id, owner.id, now)
     db.commit()
+    _clear_workflow_template_cache()
     return {"ok": True, "deleted": True, "stopped_activation_ids": stopped_ids}
 
 
@@ -2367,6 +3778,7 @@ def grant_workflow_template(
             )
         )
     db.commit()
+    _clear_workflow_template_cache()
     return {"ok": True, "template_id": row.id, "target_user_ids": target_ids}
 
 
@@ -2397,6 +3809,7 @@ def get_active_workflow(
 @router.post("/api/h5-workflows/activate", summary="启用 H5 工作流模板")
 def activate_workflow_template(
     body: WorkflowActivateIn,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2405,19 +3818,42 @@ def activate_workflow_template(
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")
     template = _accessible_template(db, body.template_id, owner.id)
+    # 系统设备下只拦「需要自有设备」的工作流；AI 营销创作模板放行
+    dispatch_devices.assert_marketing_only_allowed(
+        db, owner.id, "workflow_activate",
+        " ".join(str(x or "") for x in (getattr(template, "template_key", ""), getattr(template, "name", ""),
+                                        getattr(template, "department", ""))),
+    )
     bound_iid = _clean_text(template.installation_id, 128)
-    if bound_iid and bound_iid != iid:
+    # A granted template belongs to the granting account's template namespace,
+    # but it must run on the recipient's own device. Only enforce the bound
+    # slot for templates owned by the account activating them.
+    is_granted_template = int(template.owner_user_id) != int(owner.id)
+    if bound_iid and bound_iid != iid and not is_granted_template:
         raise HTTPException(status_code=409, detail="该员工已绑定其他设备槽位，请从当前设备的员工列表进入")
     if not bound_iid and template.owner_user_id == owner.id:
         template.installation_id = iid
         template.updated_at = datetime.utcnow()
         db.commit()
-    nodes = _clean_nodes(template.nodes or [])
+    raw_nodes = template.nodes or []
+    if _is_system_catalog_template(template):
+        raw_nodes = _sanitize_system_douyin_collection_defaults(raw_nodes)
+    nodes = _clean_nodes(raw_nodes)
+    _assert_workflow_feature_permissions(db, owner.id, nodes)
     template_meta = template.meta if isinstance(template.meta, dict) else {}
     system_template_key = _clean_text(template_meta.get("system_template_key"), 128)
-    snapshot_extra = None
-    if system_template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
-        snapshot_extra = {"template_key": system_template_key, "source": "own"}
+    is_system_catalog = _is_system_catalog_template(template)
+    snapshot_extra = (
+        {"source": "system"}
+        if is_system_catalog
+        else ({"source": "granted"} if is_granted_template else None)
+    )
+    if system_template_key in _enabled_system_workflow_keys():
+        snapshot_extra = {
+            **(snapshot_extra or {}),
+            "template_key": system_template_key,
+            "source": "system" if is_system_catalog else ("granted" if is_granted_template else "own"),
+        }
     if body.plan_day is not None:
         snapshot_extra = {**(snapshot_extra or {"source": "own"}), "plan_day": body.plan_day}
     activation, stopped_ids, tasks = _activate_nodes_for_device(
@@ -2443,20 +3879,30 @@ def activate_workflow_template(
 @router.post("/api/h5-workflows/activate-inline", summary="启用 H5 工作流快照")
 def activate_inline_workflow_template(
     body: WorkflowActivateInlineIn,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
+    dispatch_devices.assert_marketing_only_allowed(db, owner.id, "workflow_activate_inline",
+                                                   str(body.template_key or ""))
     iid = (body.installation_id or "").strip()
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")
     template_key = (body.template_key or "").strip()[:128]
     if not template_key:
         raise HTTPException(status_code=400, detail="缺少系统模板标识")
-    if template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+    if template_key not in _enabled_system_workflow_keys():
         raise HTTPException(status_code=400, detail="该系统员工暂未开放")
     name = (body.name or "系统员工模板").strip()[:160] or "系统员工模板"
-    nodes = _clean_nodes(body.nodes or [])
+    raw_nodes = body.nodes or []
+    # Inline activation is used by the system workflow cards.  Sanitize on
+    # the server as well as in the UI so an older client cannot re-submit the
+    # catalog's stale screenshot prompt/mode.
+    if template_key in _enabled_system_workflow_keys():
+        raw_nodes = _sanitize_system_douyin_collection_defaults(raw_nodes)
+    nodes = _clean_nodes(raw_nodes)
+    _assert_workflow_feature_permissions(db, owner.id, nodes)
     activation, stopped_ids, tasks = _activate_nodes_for_device(
         db=db,
         current_user=current_user,

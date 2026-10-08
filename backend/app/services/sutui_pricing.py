@@ -10,9 +10,11 @@ import math
 import os
 import re
 import time
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -46,13 +48,45 @@ _DEEPSEEK_OFFICIAL_CREDITS_PER_1M: Dict[str, Dict[str, float]] = {
     },
 }
 
+# DeepSeek V4.1 Flash official CNY prices. One yuan equals 100 Lobster credits.
+# Peak: Monday-Friday 09:00-12:00 and 14:00-18:00 Beijing time. Every other
+# period (including weekends) is billed at the half-price off-peak rate.
+_DEEPSEEK_FLASH_CREDITS_PER_1M: Dict[str, Dict[str, float]] = {
+    "peak": {
+        "input_cache_miss": 200.0,  # CNY 2.00
+        "input_cache_hit": 4.0,     # CNY 0.04
+        "output": 800.0,            # CNY 8.00
+    },
+    "off_peak": {
+        "input_cache_miss": 100.0,  # CNY 1.00
+        "input_cache_hit": 2.0,     # CNY 0.02
+        "output": 400.0,            # CNY 4.00
+    },
+}
+
+
+def _deepseek_flash_pricing_period(now: Optional[datetime] = None) -> str:
+    beijing = ZoneInfo("Asia/Shanghai")
+    current = now or datetime.now(beijing)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=beijing)
+    else:
+        current = current.astimezone(beijing)
+    if current.weekday() >= 5:
+        return "off_peak"
+    minute = current.hour * 60 + current.minute
+    return "peak" if (9 * 60 <= minute < 12 * 60 or 14 * 60 <= minute < 18 * 60) else "off_peak"
+
 
 def credits_from_direct_api_usage(model: str, usage: Optional[dict]) -> Decimal:
     """按 DeepSeek 官方定价 + usage 中 cache hit/miss 精确计费。1 元 = 100 积分。"""
     if not usage or not isinstance(usage, dict):
         return Decimal(0)
     mid = (model or "").strip()
-    pricing = _DEEPSEEK_OFFICIAL_CREDITS_PER_1M.get(mid)
+    if mid in {"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"}:
+        pricing = _DEEPSEEK_FLASH_CREDITS_PER_1M[_deepseek_flash_pricing_period()]
+    else:
+        pricing = _DEEPSEEK_OFFICIAL_CREDITS_PER_1M.get(mid)
     if not pricing:
         return Decimal(0)
 
@@ -208,6 +242,67 @@ def credits_from_llm_market_usage(model_id: str, usage: Optional[dict]) -> Decim
     if cost <= 0:
         return Decimal(0)
     return quantize_credits(cost)
+
+
+def yyapi_usage_billing(usage: Optional[dict]) -> Optional[dict]:
+    """Calculate YYAPI cost and Lobster charge from OpenAI-compatible usage.
+
+    YYAPI exposes list prices in yuan per million tokens.  Keep the provider
+    cost (list price * 0.23) separate from the customer charge (list price *
+    0.40), because both values are useful when reconciling the ledger.
+    """
+    if not isinstance(usage, dict):
+        return None
+
+    def _int(name: str) -> int:
+        try:
+            return max(0, int(usage.get(name) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    prompt_tokens = _int("prompt_tokens")
+    cache_hit_tokens = _int("prompt_cache_hit_tokens")
+    cache_miss_tokens = _int("prompt_cache_miss_tokens")
+    completion_tokens = _int("completion_tokens")
+    if cache_hit_tokens + cache_miss_tokens > prompt_tokens and prompt_tokens > 0:
+        cache_miss_tokens = max(0, prompt_tokens - cache_hit_tokens)
+    if cache_hit_tokens == 0 and cache_miss_tokens == 0:
+        cache_miss_tokens = prompt_tokens
+    elif cache_miss_tokens == 0 and prompt_tokens > cache_hit_tokens:
+        cache_miss_tokens = prompt_tokens - cache_hit_tokens
+
+    try:
+        input_rate = Decimal(str(getattr(settings, "yyapi_input_price_yuan_per_1m", 5.0)))
+        cache_rate = Decimal(str(getattr(settings, "yyapi_cached_input_price_yuan_per_1m", 0.5)))
+        output_rate = Decimal(str(getattr(settings, "yyapi_output_price_yuan_per_1m", 30.0)))
+        upstream_multiplier = Decimal(str(getattr(settings, "yyapi_upstream_multiplier", 0.23)))
+        customer_multiplier = Decimal(str(getattr(settings, "yyapi_customer_multiplier", 0.4)))
+        credits_per_yuan = Decimal(str(getattr(settings, "yyapi_credits_per_yuan", 100.0)))
+    except Exception:
+        return None
+    if min(input_rate, cache_rate, output_rate, upstream_multiplier, customer_multiplier, credits_per_yuan) < 0:
+        return None
+
+    list_price_yuan = (
+        Decimal(cache_miss_tokens) * input_rate
+        + Decimal(cache_hit_tokens) * cache_rate
+        + Decimal(completion_tokens) * output_rate
+    ) / Decimal(1_000_000)
+    if list_price_yuan <= 0:
+        return None
+    upstream_cost_yuan = list_price_yuan * upstream_multiplier
+    customer_charge_yuan = list_price_yuan * customer_multiplier
+    customer_credits = quantize_credits(customer_charge_yuan * credits_per_yuan)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "prompt_cache_hit_tokens": cache_hit_tokens,
+        "prompt_cache_miss_tokens": cache_miss_tokens,
+        "completion_tokens": completion_tokens,
+        "list_price_yuan": list_price_yuan,
+        "upstream_cost_yuan": upstream_cost_yuan,
+        "customer_charge_yuan": customer_charge_yuan,
+        "customer_credits": customer_credits,
+    }
 
 
 def _quantize_credits(value: float) -> int:

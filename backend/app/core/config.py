@@ -130,6 +130,8 @@ class Settings(BaseSettings):
     fuiou_ins_cd: Optional[str] = None
     """是否启用幂等重复下单（Reserved_repeat_order=1）"""
     fuiou_repeat_order: Optional[str] = None
+    """按 OEM 覆盖富友商户配置的 JSON 映射；未命中时回退系统级 FUIOU_*。"""
+    fuiou_brand_configs_json: Optional[str] = None
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
     openclaw_agent_id: str = "main"
@@ -147,10 +149,14 @@ class Settings(BaseSettings):
     comfly_api_base: Optional[str] = None
     comfly_api_key: Optional[str] = None
     """TikHub server-side proxy config. Keep API key on the server only."""
-    tikhub_api_base: str = "https://api.tikhub.dev"
+    tikhub_api_base: str = "https://api.tikhub.io"
     tikhub_api_key: Optional[str] = None
-    """Default Lobster credits charged per successful TikHub query."""
+    """Legacy minimum Lobster credits charged per successful TiKHub query."""
     tikhub_query_unit_credits: float = 1.0
+    """USD→CNY conversion used for TiKHub endpoint costs (100 credits = CNY 1)."""
+    tikhub_usd_to_cny_rate: float = 7.5
+    """Optional JSON object overriding audited TiKHub endpoint USD costs."""
+    tikhub_endpoint_costs_json: Optional[str] = None
     """Customer archive first-priority search provider. Values: auto/serper/google_cse/tavily/html."""
     customer_research_search_provider: str = "auto"
     """Stable web search API key. Keep it on the server; never send it to clients."""
@@ -164,6 +170,12 @@ class Settings(BaseSettings):
     capability_upstream_urls_json: Optional[str] = None
     reddit_comment2video_backend_url: Optional[str] = None
     auth_server_base: Optional[str] = None
+    remote_support_service_key: Optional[str] = None
+    remote_support_service_url: str = "http://127.0.0.1:38080"
+    # The relay process and data remain isolated on port 38080. The public
+    # controller uses the dedicated ToDesk hostname so admin links do not
+    # fall through the main site's /remote route.
+    remote_support_public_url: str = "https://todesk.bhzn.top"
     """HiFly 默认 API Token；用户不显式传 token 时，服务端用它访问 HiFly。"""
     hifly_default_token: Optional[str] = None
     """HiFly 消费者站 JWT；用于调用 hifly.cc 内部接口（如声音 preview），过期需手动更新。"""
@@ -203,6 +215,10 @@ class Settings(BaseSettings):
     aliyun_sms_sign_name: str = "深圳市必火智能信息技术"
     """阿里云短信模板Code"""
     aliyun_sms_template_code: str = "SMS_333406023"
+    # Optional JSON map of OEM marks to Aliyun SMS channel settings. Credentials
+    # stay in environment configuration; missing per-brand fields fall back to
+    # the global channel above.
+    aliyun_sms_brand_channels_json: Optional[str] = None
 
     # ── H5 实时语音识别（默认接讯飞流式听写）──
     h5_voice_asr_provider: str = "xfyun"
@@ -219,6 +235,21 @@ class Settings(BaseSettings):
     # ── 直连 LLM API（优先于 xskill.ai 中转）──
     deepseek_api_key: Optional[str] = None
     deepseek_api_base: str = "https://api.deepseek.com"
+    change2pro_api_key: Optional[str] = None
+    change2pro_api_base: str = "https://api.change2pro.com"
+    change2pro_chat_model: str = "gpt-5.6-sol"
+    yyapi_api_key: Optional[str] = None
+    yyapi_api_base: str = "https://www.yyapi.cloud"
+    yyapi_chat_model: str = "gpt-5.6-sol"
+    # YYAPI token billing: provider list price is in yuan per 1M tokens.
+    # The provider applies 0.23x to its internal cost; Lobster charges 0.40x
+    # of the same list price and converts yuan to the account credit unit.
+    yyapi_input_price_yuan_per_1m: float = 5.0
+    yyapi_cached_input_price_yuan_per_1m: float = 0.5
+    yyapi_output_price_yuan_per_1m: float = 30.0
+    yyapi_upstream_multiplier: float = 0.23
+    yyapi_customer_multiplier: float = 0.4
+    yyapi_credits_per_yuan: float = 100.0
 
     # ── Meta Social（Instagram / Facebook 发布）──
     """Facebook App ID（在 developers.facebook.com 创建 App 后获取）"""

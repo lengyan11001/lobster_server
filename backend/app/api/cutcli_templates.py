@@ -2855,13 +2855,29 @@ def _caption_llm_model_id() -> str:
 def _caption_llm_attempts(token: str, model: str) -> List[Dict[str, str]]:
     models = [model]
     try:
-        from .sutui_chat_proxy import _get_v3_route, _sutui_chat_model_candidates
+        from .sutui_chat_proxy import (
+            _get_direct_route,
+            _get_v3_route,
+            _sutui_chat_model_candidates,
+        )
 
         models = _sutui_chat_model_candidates(model, has_tools=False) or models
         attempts: List[Dict[str, str]] = []
         for mid in models:
+            direct = _get_direct_route(mid)
+            if direct:
+                attempts.append(
+                    {
+                        "model": mid,
+                        "url": f"{str(direct['api_base']).rstrip('/')}/v1/chat/completions",
+                        "api_key": str(direct["api_key"]),
+                        "provider": f"direct:{direct['provider']}",
+                    }
+                )
+                if direct.get("provider") == "yyapi":
+                    continue
             route = _get_v3_route(mid, token)
-            if route:
+            if route and token:
                 endpoint_prefix = str(route.get("endpoint_prefix") or "/v3").rstrip("/")
                 attempts.append(
                     {
@@ -2871,14 +2887,15 @@ def _caption_llm_attempts(token: str, model: str) -> List[Dict[str, str]]:
                         "provider": str(route.get("provider") or "xskill-v3"),
                     }
                 )
-            attempts.append(
-                {
-                    "model": mid,
-                    "url": f"{_STT_API_BASE}/v1/chat/completions",
-                    "api_key": token,
-                    "provider": "xskill-v1",
-                }
-            )
+            if token:
+                attempts.append(
+                    {
+                        "model": mid,
+                        "url": f"{_STT_API_BASE}/v1/chat/completions",
+                        "api_key": token,
+                        "provider": "xskill-v1",
+                    }
+                )
         return attempts
     except Exception as exc:
         logger.debug("[cutcli-caption-segment] sutui model candidates unavailable: %s", exc)

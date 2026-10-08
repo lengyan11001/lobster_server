@@ -9,7 +9,7 @@ try:
 
     _root = Path(__file__).resolve().parents[2]
     load_dotenv(_root / ".env", override=False)
-    _log_level_name = os.environ.get("LOG_LEVEL", "debug").strip().lower()
+    _log_level_name = os.environ.get("LOG_LEVEL", "info").strip().lower()
     _log_level = getattr(logging, _log_level_name.upper(), logging.DEBUG)
 
     from .core.log_retention import cleanup_diagnostics_uploads, configure_daily_file_logging

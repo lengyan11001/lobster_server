@@ -43,15 +43,51 @@ def _cfg(name: str, default: Optional[str] = None) -> str:
     return (getattr(settings, name, None) or default or "").strip()
 
 
-def fuiou_configured() -> bool:
+def _fuiou_config(brand_mark: Optional[str] = None) -> dict[str, str]:
+    """Resolve one OEM's 富友配置; an absent/incomplete OEM entry falls back globally."""
+    names = (
+        "mchnt_cd", "mchnt_key", "precreate_url", "query_url", "refund_url",
+        "term_id", "default_order_type", "order_prefix", "ins_cd", "repeat_order",
+    )
+    cfg = {name: _cfg(f"fuiou_{name}") for name in names}
+    mark = str(brand_mark or "").strip().lower()
+    raw = _cfg("fuiou_brand_configs_json")
+    if not mark or not raw:
+        return cfg
+    try:
+        parsed = json.loads(raw)
+        entry = parsed.get(mark) if isinstance(parsed, dict) else None
+        if not isinstance(entry, dict):
+            return cfg
+    except (TypeError, ValueError):
+        logger.warning("[fuiou] invalid FUIOU_BRAND_CONFIGS_JSON")
+        return cfg
+    # Require both merchant id and key before enabling an OEM override. Other
+    # fields may inherit the system-level defaults.
+    mchnt_cd = str(entry.get("mchnt_cd") or entry.get("FUIOU_MCHNT_CD") or "").strip()
+    mchnt_key = str(entry.get("mchnt_key") or entry.get("FUIOU_MCHNT_KEY") or "").strip()
+    if not mchnt_cd or not mchnt_key:
+        return cfg
+    aliases = {name: (name, f"FUIOU_{name.upper()}") for name in names}
+    for name, keys in aliases.items():
+        for key in keys:
+            value = entry.get(key)
+            if value is not None and str(value).strip():
+                cfg[name] = str(value).strip()
+                break
+    cfg["mchnt_cd"] = mchnt_cd
+    cfg["mchnt_key"] = mchnt_key
+    return cfg
+
+
+def fuiou_brand_configured(brand_mark: Optional[str]) -> bool:
+    cfg = _fuiou_config(brand_mark)
+    return bool(cfg["mchnt_cd"] and cfg["mchnt_key"] and cfg["precreate_url"])
+
+
+def fuiou_configured(brand_mark: Optional[str] = None) -> bool:
     """商户号 + mchnt_key + 下单 URL 齐全即视为已配置。"""
-    if not _cfg("fuiou_mchnt_cd"):
-        return False
-    if not _cfg("fuiou_mchnt_key"):
-        return False
-    if not _cfg("fuiou_precreate_url"):
-        return False
-    return True
+    return fuiou_brand_configured(brand_mark)
 
 
 # ── MD5 签名 ──
@@ -187,9 +223,9 @@ def _random_str(length: int = 32) -> str:
     return uuid.uuid4().hex[:length]
 
 
-def gen_order_no() -> str:
+def gen_order_no(brand_mark: Optional[str] = None) -> str:
     """生成符合富友规范的商户订单号: 订单前缀(5位) + 日期(8位) + 随机数(最多17位), ≤30。"""
-    prefix = _cfg("fuiou_order_prefix", "10000")[:5].ljust(5, "0")
+    prefix = (_fuiou_config(brand_mark)["order_prefix"] or "10000")[:5].ljust(5, "0")
     date_str = datetime.now(_BJ).strftime("%Y%m%d")
     rand_part = str(int(time.time() * 1000))[-10:] + uuid.uuid4().hex[:7]
     return (prefix + date_str + rand_part)[:30]
@@ -225,40 +261,42 @@ async def fuiou_order_pay(
     goods_des: str,
     order_type: Optional[str] = None,
     term_ip: str = "127.0.0.1",
+    brand_mark: Optional[str] = None,
 ) -> dict[str, Any]:
     """统一下单（主扫 preCreate）→ 返回二维码 URL。
 
     Returns:
         {"ok": bool, "qr_code": str, "raw": dict, "result_code": str, "result_msg": str}
     """
-    url = _cfg("fuiou_precreate_url")
+    cfg = _fuiou_config(brand_mark)
+    url = cfg["precreate_url"]
     if not url:
         raise RuntimeError("未配置 FUIOU_PRECREATE_URL")
-    mchnt_key = _cfg("fuiou_mchnt_key")
+    mchnt_key = cfg["mchnt_key"]
     if not mchnt_key:
         raise RuntimeError("未配置 FUIOU_MCHNT_KEY")
 
-    otype = (order_type or _cfg("fuiou_default_order_type", "WECHAT")).upper()
+    otype = (order_type or cfg["default_order_type"] or "WECHAT").upper()
     params: dict[str, str] = {
         "version": "1.0",
-        "mchnt_cd": _cfg("fuiou_mchnt_cd"),
+        "mchnt_cd": cfg["mchnt_cd"],
         "random_str": _random_str(),
         "order_type": otype,
         "order_amt": str(int(order_amt_fen)),
         "mchnt_order_no": mchnt_order_no[:30],
         "txn_begin_ts": _now_ts(),
         "goods_des": (goods_des or "recharge")[:128],
-        "term_id": _cfg("fuiou_term_id", "88888888")[:8],
+        "term_id": (cfg["term_id"] or "88888888")[:8],
         "term_ip": term_ip[:16],
         "notify_url": notify_url[:256],
     }
     params["sign"] = _sign_precreate(params, mchnt_key)
 
-    ins_cd = _cfg("fuiou_ins_cd")
+    ins_cd = cfg["ins_cd"]
     if ins_cd:
         params["ins_cd"] = ins_cd
 
-    repeat = _cfg("fuiou_repeat_order")
+    repeat = cfg["repeat_order"]
     if repeat:
         params["Reserved_repeat_order"] = "1"
 
@@ -280,6 +318,7 @@ async def fuiou_order_query(
     *,
     mchnt_order_no: str,
     order_type: Optional[str] = None,
+    brand_mark: Optional[str] = None,
 ) -> dict[str, Any]:
     """订单查询 commonQuery。
 
@@ -287,21 +326,22 @@ async def fuiou_order_query(
         {"ok": bool, "trans_stat": str, "order_amt_fen": int|None, "transaction_id": str|None,
          "raw": dict, "result_code": str, "result_msg": str}
     """
-    url = _cfg("fuiou_query_url")
+    cfg = _fuiou_config(brand_mark)
+    url = cfg["query_url"]
     if not url:
         raise RuntimeError("未配置 FUIOU_QUERY_URL")
-    mchnt_key = _cfg("fuiou_mchnt_key")
+    mchnt_key = cfg["mchnt_key"]
     if not mchnt_key:
         raise RuntimeError("未配置 FUIOU_MCHNT_KEY")
 
-    otype = (order_type or _cfg("fuiou_default_order_type", "WECHAT")).upper()
+    otype = (order_type or cfg["default_order_type"] or "WECHAT").upper()
     params: dict[str, str] = {
         "version": "1.0",
-        "mchnt_cd": _cfg("fuiou_mchnt_cd"),
+        "mchnt_cd": cfg["mchnt_cd"],
         "random_str": _random_str(),
         "order_type": otype,
         "mchnt_order_no": mchnt_order_no[:30],
-        "term_id": _cfg("fuiou_term_id", "88888888")[:8],
+        "term_id": (cfg["term_id"] or "88888888")[:8],
     }
     params["sign"] = _sign_query(params, mchnt_key)
 
@@ -328,7 +368,7 @@ async def fuiou_order_query(
 
 # ── 异步通知验签 ──
 
-def parse_notify(data: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+def parse_notify(data: dict[str, Any], brand_mark: Optional[str] = None) -> tuple[bool, dict[str, Any]]:
     """验签富友异步回调 JSON → (ok, data)。
 
     成功条件：
@@ -338,10 +378,11 @@ def parse_notify(data: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     """
     if not isinstance(data, dict):
         return False, {}
-    if (data.get("mchnt_cd") or "").strip() != _cfg("fuiou_mchnt_cd"):
+    cfg = _fuiou_config(brand_mark)
+    if (data.get("mchnt_cd") or "").strip() != cfg["mchnt_cd"]:
         logger.warning("[fuiou] notify mchnt_cd mismatch: got %s", data.get("mchnt_cd"))
         return False, {}
-    mchnt_key = _cfg("fuiou_mchnt_key")
+    mchnt_key = cfg["mchnt_key"]
     if not mchnt_key:
         logger.warning("[fuiou] notify: mchnt_key not configured")
         return False, {}

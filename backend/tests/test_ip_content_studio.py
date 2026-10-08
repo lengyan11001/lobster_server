@@ -6,6 +6,48 @@ import pytest
 from fastapi import HTTPException
 
 
+def test_personal_profile_survives_live_template_save():
+    from backend.app.api import ip_content_studio as studio
+
+    existing = {
+        "basic_profile": {"name": "阿玲", "role": "企业顾问"},
+        "business_description": {"product": "AI员工"},
+        "profile_name": "阿玲",
+    }
+    incoming = {
+        "language": "zh-CN",
+        "target_language": "简体中文",
+        "common": "目标语种：简体中文",
+        "basic_profile": {"name": "阿玲", "role": "企业顾问"},
+        "business_description": {"product": "AI员工"},
+        "profile_name": "阿玲",
+        "role": "企业顾问",
+        "product": "AI员工",
+    }
+
+    saved = studio._personal_default_requirements_for_save(
+        incoming, existing, {"source": "online_personal_profile"}
+    )
+
+    assert saved["basic_profile"]["name"] == "阿玲"
+    assert saved["business_description"]["product"] == "AI员工"
+    assert saved["profile_name"] == "阿玲"
+
+
+def test_empty_profile_save_does_not_erase_existing_profile():
+    from backend.app.api import ip_content_studio as studio
+
+    existing = {"basic_profile": {"name": "阿玲"}, "profile_name": "阿玲"}
+    saved = studio._personal_default_requirements_for_save(
+        {"basic_profile": {}, "profile_name": ""},
+        existing,
+        {"source": "online_personal_profile"},
+    )
+
+    assert saved["basic_profile"]["name"] == "阿玲"
+    assert saved["profile_name"] == "阿玲"
+
+
 def test_collects_tikhub_billboard_search_list():
     from backend.app.api import ip_content_studio as studio
 
@@ -200,6 +242,34 @@ def test_normalizes_douyin_user_search_v2_candidates():
     assert candidates[0]["avatar_url"] == "https://example.com/avatar-v2.jpg"
 
 
+def test_normalizes_legacy_douyin_user_search_dynamic_patch_candidates():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "user_list": [
+                {
+                    "dynamic_patch": {
+                        "raw_data": '{"user_info":{"uid":"123","sec_uid":"MS4wLjABAAAA-legacy","nickname":"Legacy account","unique_id":"legacy_account","follower_count":42,"aweme_count":8,"avatar_thumb":{"url_list":["https://example.com/legacy.jpg"]}}}'
+                    }
+                }
+            ]
+        },
+    }
+
+    candidates, raw_count = studio._normalize_douyin_users_from_payload(payload)
+
+    assert raw_count == 1
+    assert candidates[0]["sec_user_id"] == "MS4wLjABAAAA-legacy"
+    assert candidates[0]["uid"] == "123"
+    assert candidates[0]["display_name"] == "Legacy account"
+    assert candidates[0]["unique_id"] == "legacy_account"
+    assert candidates[0]["follower_count"] == 42
+    assert candidates[0]["aweme_count"] == 8
+    assert candidates[0]["avatar_url"] == "https://example.com/legacy.jpg"
+
+
 def test_normalizes_wechat_channels_user_search_candidates():
     from backend.app.api import ip_content_studio as studio
 
@@ -345,6 +415,48 @@ def test_ip_content_wechat_channels_user_search_resolves_channel_id(monkeypatch)
             "body": {"channel_id": "sphtOuVyK8PeSGt", "raw": False},
         }
     ]
+
+
+def test_add_competitor_by_channel_id_uses_conversion_only(monkeypatch, db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append((query_type, body))
+        return {
+            "ok": True,
+            "raw_response": {"code": 200, "data": {"channel_id": "sphABC123456", "username": "v2_direct@finder", "nickname": "直接账号"}},
+            "query": {"query_type": query_type},
+            "balance_after": 8,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+    result = asyncio.run(
+        studio.add_competitor_by_channel_id(
+            studio.CompetitorByChannelIdBody(channel_id="sphABC123456", industry_tags="教育"),
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["item"]["account_key"] == "v2_direct@finder"
+    assert result["item"]["display_name"] == "直接账号"
+    assert calls == [("wechat_channels_channel_id_to_username_v2", {"channel_id": "sphABC123456", "raw": False})]
+
+
+def test_add_competitor_by_channel_id_rejects_non_public_id(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            studio.add_competitor_by_channel_id(
+                studio.CompetitorByChannelIdBody(channel_id="a nickname"),
+                current_user=test_user,
+                db=db_session,
+            )
+        )
+    assert exc_info.value.status_code == 400
 
 
 def test_ip_content_wechat_channels_user_search_prefers_wechat_search_v2(monkeypatch):
@@ -700,6 +812,55 @@ def test_collects_legacy_wechat_channels_objects_as_posts():
     assert normalized["metrics"]["fav_count"] == 41
 
 
+def test_normalizes_wechat_channels_v2_camel_case_video_fields():
+    from backend.app.api import ip_content_studio as studio
+
+    raw = {
+        "id": "15007290119030311436",
+        "nickname": "人民日报",
+        "username": "v2_test_user@finder",
+        "createtime": 1789008393,
+        "readCount": 123,
+        "likeCount": 45,
+        "commentCount": 6,
+        "forwardCount": 7,
+        "favCount": 8,
+        "objectDesc": {
+            "description": "当把评论区网友们唱的《夜空中最亮的星》合在一起……",
+            "media": [
+                {
+                    "thumbUrl": "https://example.com/thumb.jpg",
+                    "fullCoverUrl": "https://example.com/full.jpg",
+                    "url": "https://example.com/video.mp4",
+                }
+            ],
+        },
+    }
+
+    normalized = studio._normalize_item(
+        raw,
+        user_id=31,
+        query_id="query-id",
+        platform="wechat_channels",
+        source_type="home_page",
+        idx=0,
+    )
+
+    assert normalized["item_key"] == "15007290119030311436"
+    assert normalized["title"] == "当把评论区网友们唱的《夜空中最亮的星》合在一起……"
+    assert normalized["description"] == normalized["title"]
+    assert normalized["public_url"] == "https://example.com/video.mp4"
+    assert normalized["cover_url"] == "https://example.com/thumb.jpg"
+    assert normalized["publish_time"] == "1789008393"
+    assert normalized["metrics"] == {
+        "read_count": 123,
+        "like_count": 45,
+        "comment_count": 6,
+        "forward_count": 7,
+        "fav_count": 8,
+    }
+
+
 def test_sync_wechat_channels_competitor_uses_v2_user_videos_without_legacy_fallback(monkeypatch):
     from datetime import datetime
     from types import SimpleNamespace
@@ -979,6 +1140,52 @@ def test_schedule_template_payload_falls_back_to_memory_docs_ids():
     assert payload["memory_doc_ids"] == ["doc-a", "doc-b", "legacy title"]
 
 
+def test_template_payload_with_resources_filters_deleted_memory_ids(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentScheduleTemplate, OpenClawMemoryDocument
+
+    active = OpenClawMemoryDocument(
+        doc_id="active-memory",
+        target_user_id=test_user.id,
+        installation_id="test-install",
+        origin="user",
+        title="Active memory",
+        filename="active.txt",
+        content_text="active content",
+        status="active",
+    )
+    deleted = OpenClawMemoryDocument(
+        doc_id="deleted-memory",
+        target_user_id=test_user.id,
+        installation_id="test-install",
+        origin="user",
+        title="Deleted memory",
+        filename="deleted.txt",
+        content_text="deleted content",
+        status="deleted",
+    )
+    db_session.add_all([active, deleted])
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="stale-memory-template",
+        memory_doc_ids=["deleted-memory", "active-memory", "legacy-inline-memory"],
+        memory_docs=[
+            {"id": "deleted-memory", "title": "Deleted memory"},
+            {"id": "active-memory", "title": "Active memory"},
+            {"id": "legacy-inline-memory", "title": "Inline memory"},
+        ],
+        status="active",
+    )
+    db_session.add(template)
+    db_session.commit()
+
+    payload = studio._template_payload_with_resources(db_session, template)
+
+    assert payload["memory_doc_ids"] == ["active-memory", "legacy-inline-memory"]
+    assert [item["id"] for item in payload["memory_docs"]] == ["active-memory", "legacy-inline-memory"]
+
+
 def test_personal_default_template_payload_marks_source():
     from types import SimpleNamespace
 
@@ -1004,6 +1211,109 @@ def test_personal_default_template_payload_marks_source():
     assert payload["name"] == "个人默认配置"
     assert payload["meta"]["source"] == "personal_settings"
     assert payload["meta"]["is_personal_default"] is True
+
+
+def test_template_payload_resolves_linked_survey_live(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentProfileSurvey, IPContentScheduleTemplate
+
+    survey = IPContentProfileSurvey(
+        user_id=test_user.id,
+        name="餐饮老板人设",
+        requirements={"profile_name": "第一版", "product": "餐饮培训"},
+        status="active",
+    )
+    db_session.add(survey)
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="餐饮模板",
+        survey_id=survey.id,
+        requirements={"language": "zh-CN"},
+        status="active",
+    )
+    db_session.add(template)
+    db_session.commit()
+
+    first = studio._template_payload_with_resources(db_session, template)
+    assert first["survey_id"] == survey.id
+    assert first["requirements"]["profile_name"] == "第一版"
+    assert first["requirements"]["language"] == "zh-CN"
+
+    survey.requirements = {"profile_name": "第二版", "product": "餐饮咨询"}
+    db_session.commit()
+    refreshed = studio._template_payload_with_resources(db_session, template)
+    assert refreshed["requirements"]["profile_name"] == "第二版"
+    assert refreshed["requirements"]["product"] == "餐饮咨询"
+
+
+def test_current_template_survey_change_is_live_for_existing_workflow(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentProfileSurvey, IPContentScheduleTemplate
+
+    first_survey = IPContentProfileSurvey(
+        user_id=test_user.id, name="人设一", requirements={"profile_name": "人设一"}, status="active"
+    )
+    second_survey = IPContentProfileSurvey(
+        user_id=test_user.id, name="人设二", requirements={"profile_name": "人设二"}, status="active"
+    )
+    db_session.add_all([first_survey, second_survey])
+    db_session.flush()
+    selected = IPContentScheduleTemplate(
+        user_id=test_user.id, name="当前模板", survey_id=first_survey.id, status="active"
+    )
+    db_session.add(selected)
+    db_session.flush()
+    personal = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name=studio._PERSONAL_DEFAULT_TEMPLATE_NAME,
+        requirements={"profile_name": "旧快照"},
+        meta={"current_template_id": selected.id},
+        status="active",
+    )
+    db_session.add(personal)
+    db_session.commit()
+
+    old_run = studio._use_current_personal_template_options(
+        db_session, test_user.id, {"template_source": "personal_current"}
+    )
+    assert old_run["requirements"]["profile_name"] == "人设一"
+
+    studio.update_schedule_template(
+        selected.id,
+        studio.ScheduleTemplateBody(name="当前模板", survey_id=second_survey.id),
+        current_user=test_user,
+        db=db_session,
+    )
+    next_run = studio._use_current_personal_template_options(
+        db_session, test_user.id, {"template_source": "personal_current"}
+    )
+    assert next_run["requirements"]["profile_name"] == "人设二"
+
+
+def test_update_template_can_clear_survey_relation(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentProfileSurvey, IPContentScheduleTemplate
+
+    survey = IPContentProfileSurvey(
+        user_id=test_user.id, name="待解除", requirements={"profile_name": "待解除"}, status="active"
+    )
+    db_session.add(survey)
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id, name="可解除模板", survey_id=survey.id, status="active"
+    )
+    db_session.add(template)
+    db_session.commit()
+
+    studio.update_schedule_template(
+        template.id,
+        studio.ScheduleTemplateBody(name="可解除模板", survey_id=None),
+        current_user=test_user,
+        db=db_session,
+    )
+    db_session.refresh(template)
+    assert template.survey_id is None
 
 
 def test_ip_content_batch_sizes_split_into_stable_chunks():
@@ -1102,6 +1412,68 @@ def test_personal_default_preserves_granted_agent_template_refs(db_session, test
     assert silent_result["item"]["competitor_ids"] == [competitor.id]
     assert silent_result["item"]["memory_doc_ids"] == ["agent-doc-1"]
     assert silent_result["item"]["requirements"]["moments"] == "agent moments"
+
+
+def test_copy_granted_ip_template_clones_resources_and_stays_independent(db_session, test_user, other_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument
+
+    keyword = IPContentKeyword(user_id=test_user.id, keyword="copy-keyword", display_name="Copy Keyword")
+    competitor = ContentCompetitorAccount(
+        user_id=test_user.id,
+        platform="douyin",
+        display_name="Copy Competitor",
+        account_key="copy-competitor",
+    )
+    memory = OpenClawMemoryDocument(
+        doc_id="copy-source-doc",
+        target_user_id=test_user.id,
+        installation_id="agent-install",
+        origin="agent",
+        uploader_user_id=test_user.id,
+        uploader_role="agent",
+        title="Source memory",
+        filename="source.txt",
+        content_text="source content",
+        status="active",
+    )
+    db_session.add_all([keyword, competitor, memory])
+    db_session.flush()
+    source = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="Agent source",
+        keyword_ids=[keyword.id],
+        competitor_ids=[competitor.id],
+        memory_doc_ids=[memory.doc_id],
+        memory_docs=[{"id": memory.doc_id, "title": memory.title, "content": memory.content_text}],
+        requirements={"common": "source requirement"},
+        meta={"source": "admin_template_config"},
+    )
+    db_session.add(source)
+    db_session.flush()
+    db_session.add(H5AgentTemplateGrant(
+        template_id=source.id,
+        owner_user_id=test_user.id,
+        target_user_id=other_user.id,
+        status="active",
+    ))
+    db_session.commit()
+
+    result = studio.copy_schedule_template(source.id, None, None, other_user, db_session)
+    copied = db_session.query(IPContentScheduleTemplate).filter(
+        IPContentScheduleTemplate.id == result["item"]["id"],
+        IPContentScheduleTemplate.user_id == other_user.id,
+    ).one()
+    assert copied.keyword_ids != source.keyword_ids
+    assert copied.competitor_ids != source.competitor_ids
+    assert copied.memory_doc_ids != source.memory_doc_ids
+    assert copied.meta["copied_from_template_id"] == source.id
+
+    source.requirements = {"common": "changed at agent"}
+    source.name = "Agent source changed"
+    db_session.commit()
+    db_session.refresh(copied)
+    assert copied.requirements == {"common": "source requirement"}
 
 
 def test_keyword_text_seed_briefs_deduplicate_template_keywords():
@@ -1342,3 +1714,40 @@ def test_clean_scheduled_daily_tasks_keeps_allowed_unique_values():
 
     assert tasks == ["moments_candidate", "industry_hot_oral", "professional_ip_oral"]
     assert studio._clean_scheduled_daily_tasks("moments_candidate") == []
+
+
+def test_ip_content_llm_timeout_keeps_proxy_fallback_budget(monkeypatch):
+    import httpx
+
+    from backend.app.api import ip_content_studio as studio
+
+    seen_timeouts = []
+
+    class TimeoutClient:
+        def __init__(self, **kwargs):
+            seen_timeouts.append(kwargs["timeout"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            raise httpx.ReadTimeout("provider timed out")
+
+    monkeypatch.setattr(studio.httpx, "AsyncClient", TimeoutClient)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            studio._post_llm_with_retry(
+                payload={},
+                headers={},
+                attempts=1,
+                timeout_seconds=30,
+            )
+        )
+
+    assert exc.value.status_code == 504
+    assert seen_timeouts
+    assert seen_timeouts[0].read >= studio._LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS

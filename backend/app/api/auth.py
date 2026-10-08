@@ -37,11 +37,13 @@ from ..services.brand_context import (
     scoped_account_email,
     scoped_installation_id,
     unscoped_account_email,
+    is_brand_fixed_agent,
     user_brand_mark,
     user_for_account,
 )
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
+from ..services.sms_channel import resolve_aliyun_sms_channel
 from ..services.user_feature_flags import user_feature_flags
 from ..services.installation_slot_ownership import claim_installation_slot
 from .installation_slots import (
@@ -63,14 +65,17 @@ SMS_SEND_COOLDOWN_SEC = 60
 SMS_MAX_PER_HOUR = 10
 PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
-# 新注册用户满额新人分（在线独立认证下按 installation_id 仅首注发放，同机再注册为 0），最多 4 位小数
+# 新注册用户满额新人分：同一 OEM 内按手机号仅首次注册发放，跨 OEM 独立计算。
 REGISTER_INITIAL_CREDITS = Decimal("1000.0000")
 DEFAULT_ONLINE_USER_CREDITS = Decimal("99999.0000")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days（客户端会在到期前静默续签 /auth/refresh）
+"""续签：客户端在剩余有效期不足 20 天时调 POST /auth/refresh 换新 token（jti 保持不变，
+因此槽位占用/会话等按 jti 记录的状态不受影响）。"""
+ACCESS_TOKEN_REFRESH_MIN_REMAINING_SECONDS = 60 * 60 * 24  # 已过期超过 1 天不给续，必须重新登录
 
 
 class UserOut(BaseModel):
@@ -78,12 +83,17 @@ class UserOut(BaseModel):
     id: int
     email: str
     preferred_model: str
+    language: str = "zh-CN"
     credits: Optional[float] = None
     brand_mark: Optional[str] = None
     is_overseas_user: bool = False
     wecom_userid: Optional[str] = None
     is_agent: bool = False
     features: Dict[str, bool] = Field(default_factory=dict)
+
+
+class UserLanguageBody(BaseModel):
+    language: str
 
 
 class Token(BaseModel):
@@ -104,7 +114,8 @@ def brand_mark_for_jwt_claim(raw: Optional[str]) -> Optional[str]:
 
 
 def access_token_claims(user: User) -> dict:
-    claims: dict = {"sub": str(user.id)}
+    # pv = 密码版本号：改密码后 +1，旧 token 的 pv 对不上就会被 401（踢出登录）
+    claims: dict = {"sub": str(user.id), "pv": password_version_of(user)}
     bm = brand_mark_for_jwt_claim(getattr(user, "brand_mark", None))
     if bm:
         claims["brand_mark"] = bm
@@ -158,6 +169,24 @@ class PhonePasswordLoginBody(BaseModel):
 
 class SetPasswordBody(BaseModel):
     password: str
+
+
+class ChangePasswordBody(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class PhoneChangeSendBody(BaseModel):
+    password: str
+    new_phone: str
+    brand_mark: Optional[str] = None
+
+
+class PhoneChangeBody(BaseModel):
+    password: str
+    new_phone: str
+    code: str
+    brand_mark: Optional[str] = None
 
 
 def _normalize_cn_mobile(raw: str) -> str:
@@ -397,6 +426,27 @@ def backfill_phone_default_passwords(db: Session) -> int:
     return updated
 
 
+def password_version_of(user: Any) -> int:
+    try:
+        return int(getattr(user, "password_version", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def assert_token_password_version(payload: dict, user: Any) -> None:
+    """改密码后旧 token（pv 对不上）直接 401，客户端会被要求重新登录。"""
+    try:
+        token_version = int(payload.get("pv") or 0)
+    except (TypeError, ValueError):
+        token_version = 0
+    if token_version != password_version_of(user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="密码已修改，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -446,6 +496,7 @@ async def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    assert_token_password_version(payload, user)
     validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
     # Do not keep the authentication read transaction checked out while the
     # endpoint waits on an upstream API or streams a response.
@@ -469,6 +520,7 @@ async def get_current_user_id_from_token(
         user = db.query(User).filter(User.id == user_id).first()
         if user is None:
             raise credentials_exception
+        assert_token_password_version(payload, user)
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
         request.state.auth_session_id = str(payload.get("jti") or "").strip()[:128] or hashlib.sha256(
             token.encode("utf-8")
@@ -498,6 +550,7 @@ async def get_messenger_user_id(
         raise credentials_exception
     user = db.query(User).filter(User.id == user_id).first()
     if user is not None:
+        assert_token_password_version(payload, user)
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
         db.commit()
         return user_id
@@ -546,12 +599,31 @@ def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Ses
     user = user_for_account(db, account_key, brand_mark)
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="账号或密码错误")
+    _assert_merchant_login_allowed(db, user)
     access_token = create_access_token(data=access_token_claims(user))
     raw_iid = optional_installation_id_from_request(request)
     iid = scoped_installation_id(raw_iid, brand_mark)
     if iid:
         ensure_installation_slot(db, user.id, iid)
     return Token(access_token=access_token)
+
+
+def _assert_merchant_login_allowed(db, user) -> None:
+    """商家店铺被停用 / 驳回后不允许再登录商家后台。"""
+    if str(getattr(user, "role", "") or "").lower() != "merchant":
+        return
+    try:
+        from ..services.shop_merchant_status import shop_merchant_blocked_reason
+        from ..shop_models import ShopMerchant
+
+        merchant = db.query(ShopMerchant).filter(ShopMerchant.user_id == int(user.id)).first()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[auth/login] merchant status check skipped user=%s: %s", getattr(user, "id", None), exc)
+        return
+    reason = shop_merchant_blocked_reason(getattr(merchant, "status", "")) if merchant is not None else ""
+    if reason:
+        logger.info("[auth/login] blocked merchant login user=%s status=%s", getattr(user, "id", None), merchant.status)
+        raise HTTPException(status_code=403, detail=reason)
 
 
 @router.post("/set-password", summary="当前登录用户设置手机号密码")
@@ -567,6 +639,193 @@ def set_password(
     db.commit()
     logger.info("[auth/set-password] user_id=%s ok=1", current_user.id)
     return {"ok": True}
+
+
+def _dispatch_sms_code(db: Session, mobile: str, brand_mark: str) -> None:
+    """生成并发送短信验证码（含限流与通道选择）；调用方负责其余校验。"""
+    from ..core.config import settings
+
+    aliyun = resolve_aliyun_sms_channel(brand_mark, settings)
+    ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
+    ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
+    use_aliyun = aliyun.ready
+    use_ihuyi = bool(ihuyi_acc and ihuyi_pwd) and not aliyun.brand_specific
+    if not use_aliyun and not use_ihuyi:
+        raise HTTPException(status_code=503, detail="未配置短信通道")
+    _check_and_update_sms_send_limit(db, mobile)
+    code = f"{secrets.randbelow(1000000):06d}"
+    _create_auth_challenge(
+        db,
+        kind="sms",
+        target=_sms_challenge_target(mobile, brand_mark),
+        answer=code,
+        ttl_seconds=SMS_CODE_TTL_SEC,
+    )
+    try:
+        if use_aliyun:
+            _aliyun_send(
+                access_key_id=aliyun.access_key_id,
+                access_key_secret=aliyun.access_key_secret,
+                sign_name=aliyun.sign_name,
+                template_code=aliyun.template_code,
+                mobile=mobile,
+                code=code,
+            )
+        else:
+            _ihuyi_send(account=ihuyi_acc, api_key=ihuyi_pwd, mobile=mobile, code=code)
+    except RuntimeError as e:
+        _clear_sms_code(db, mobile, brand_mark)
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+def _assert_current_password(user: User, password: str) -> None:
+    """自助改密 / 换绑前必须校验本人原密码。"""
+    value = str(password or "")
+    if not value.strip():
+        raise HTTPException(status_code=400, detail="请输入原密码")
+    if not user or not user.hashed_password or not verify_password(value, user.hashed_password):
+        raise HTTPException(status_code=400, detail="原密码不正确")
+
+
+def _fixed_agent_phone_set() -> set:
+    from ..services.brand_context import BRAND_FIXED_AGENT_PHONES
+
+    return {str(v or "").strip() for v in (BRAND_FIXED_AGENT_PHONES or {}).values() if str(v or "").strip()}
+
+
+def _assert_phone_change_allowed(db: Session, user: User, mobile: str, brand_mark: str) -> None:
+    """固定代理号禁止换绑；目标号不能已被同品牌其它账号占用。"""
+    fixed = _fixed_agent_phone_set()
+    current = phone_from_account_email(getattr(user, "email", "") or "")
+    if current and current in fixed:
+        raise HTTPException(status_code=403, detail="当前手机号是品牌固定代理号，不允许自助换绑，请联系运营")
+    if mobile in fixed:
+        raise HTTPException(status_code=403, detail="该手机号是品牌固定代理号，不允许绑定")
+    existing = user_for_account(db, _phone_account_email(mobile), brand_mark)
+    if existing is not None and int(existing.id) != int(user.id):
+        raise HTTPException(status_code=409, detail="该手机号已绑定其他账号")
+
+
+def _migrate_phone_references(db: Session, user: User, old_mobile: str, new_mobile: str, brand_mark: str) -> None:
+    """换绑后把仍按手机号关联的存量数据迁走。
+
+    注意：新增关联一律用表内 ID（user_id / device_id 等），这里只处理历史遗留的两处手机号字段。
+    """
+    from ..models import InstallationSignupBonusClaim, MobileDeviceBinding
+
+    mark = normalize_brand_mark(brand_mark, strict=False)
+    now = _utcnow()
+    if old_mobile and old_mobile != new_mobile:
+        db.query(MobileDeviceBinding).filter(
+            MobileDeviceBinding.user_id == user.id,
+            MobileDeviceBinding.phone == old_mobile,
+        ).update({"phone": new_mobile}, synchronize_session=False)
+    new_key = f"phone:{mark}:{new_mobile}"
+    old_key = f"phone:{mark}:{old_mobile}" if old_mobile else ""
+    old_rows = []
+    if old_key:
+        old_rows = db.query(InstallationSignupBonusClaim).filter(
+            InstallationSignupBonusClaim.installation_id == old_key
+        ).all()
+    existing_new = db.query(InstallationSignupBonusClaim).filter(
+        InstallationSignupBonusClaim.installation_id == new_key
+    ).first()
+    if existing_new is None:
+        if old_rows:
+            for row in old_rows:
+                row.installation_id = new_key
+                row.phone = new_mobile
+                row.brand_mark = mark
+                db.add(row)
+        else:
+            # 没有历史赠送记录时补一条，保证「一个手机号只赠送一次」
+            db.add(InstallationSignupBonusClaim(
+                installation_id=new_key,
+                user_id=user.id,
+                phone=new_mobile,
+                brand_mark=mark,
+                created_at=now,
+            ))
+    else:
+        for row in old_rows:
+            db.delete(row)
+    db.commit()
+
+
+@router.post("/password/change", summary="修改密码（需原密码）")
+def change_password(
+    body: ChangePasswordBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _assert_current_password(current_user, body.old_password)
+    new_password = _normalize_new_password(body.new_password)
+    if str(body.old_password or "") == new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+    current_user.hashed_password = get_password_hash(new_password)
+    current_user.password_initialized = True
+    # 改密即踢掉所有旧会话：token 里的 pv 对不上就 401（客户端会要求重新登录）
+    current_user.password_version = password_version_of(current_user) + 1
+    db.add(current_user)
+    db.commit()
+    logger.info("[auth/password/change] user_id=%s ok=1 pv=%s", current_user.id, current_user.password_version)
+    return {"ok": True, "relogin_required": True}
+
+
+@router.post("/phone/change/send-code", summary="换绑手机号：向新号码发送验证码（需原密码）")
+def send_phone_change_code(
+    body: PhoneChangeSendBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
+    if brand_mark != user_brand_mark(current_user):
+        raise HTTPException(status_code=403, detail="登录品牌不一致")
+    _assert_current_password(current_user, body.password)
+    mobile = _normalize_cn_mobile(body.new_phone)
+    _assert_phone_change_allowed(db, current_user, mobile, brand_mark)
+    _dispatch_sms_code(db, mobile, brand_mark)
+    logger.info("[auth/phone/change/send-code] user_id=%s new_tail=%s ok=1", current_user.id, mobile[-4:])
+    return {"ok": True, "phone": mobile}
+
+
+@router.post("/phone/change", summary="换绑手机号（原密码 + 新号码验证码）")
+def change_phone(
+    body: PhoneChangeBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
+    if brand_mark != user_brand_mark(current_user):
+        raise HTTPException(status_code=403, detail="登录品牌不一致")
+    _assert_current_password(current_user, body.password)
+    mobile = _normalize_cn_mobile(body.new_phone)
+    code_in = str(body.code or "").strip()
+    if not code_in or len(code_in) > 8:
+        raise HTTPException(status_code=400, detail="短信验证码无效")
+    _assert_phone_change_allowed(db, current_user, mobile, brand_mark)
+    if not _verify_sms_challenge(db, mobile, code_in, brand_mark):
+        raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
+    old_mobile = phone_from_account_email(getattr(current_user, "email", "") or "")
+    if old_mobile == mobile:
+        return {"ok": True, "phone": mobile, "email": current_user.email, "unchanged": True}
+    current_user.email = scoped_account_email(_phone_account_email(mobile), brand_mark)
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    _migrate_phone_references(db, current_user, old_mobile, mobile, brand_mark)
+    if old_mobile:
+        _clear_sms_code(db, old_mobile, brand_mark)
+    logger.info(
+        "[auth/phone/change] user_id=%s old_tail=%s new_tail=%s brand=%s ok=1",
+        current_user.id,
+        (old_mobile or "")[-4:],
+        mobile[-4:],
+        brand_mark,
+    )
+    return {"ok": True, "phone": mobile, "email": current_user.email}
 
 
 @router.post("/register", response_model=Token, summary="（已关闭）原字母账号注册，请用 /auth/register-phone")
@@ -588,40 +847,10 @@ def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持")
     brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
-    aliyun_ak = (getattr(settings, "aliyun_sms_access_key_id", None) or "").strip()
-    aliyun_sk = (getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip()
-    ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
-    ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
-    use_aliyun = bool(aliyun_ak and aliyun_sk)
-    if not use_aliyun and not (ihuyi_acc and ihuyi_pwd):
-        raise HTTPException(status_code=503, detail="未配置短信通道")
     if not _verify_auth_challenge(db, kind="captcha", subject=body.captcha_id or "", answer=body.captcha_answer or ""):
         raise HTTPException(status_code=400, detail="图形验证码错误或已过期，请刷新后重试")
     mobile = _normalize_cn_mobile(body.phone)
-    _check_and_update_sms_send_limit(db, mobile)
-    code = f"{secrets.randbelow(1000000):06d}"
-    _create_auth_challenge(
-        db,
-        kind="sms",
-        target=_sms_challenge_target(mobile, brand_mark),
-        answer=code,
-        ttl_seconds=SMS_CODE_TTL_SEC,
-    )
-    try:
-        if use_aliyun:
-            _aliyun_send(
-                access_key_id=aliyun_ak,
-                access_key_secret=aliyun_sk,
-                sign_name=getattr(settings, "aliyun_sms_sign_name", "深圳市必火智能信息技术"),
-                template_code=getattr(settings, "aliyun_sms_template_code", "SMS_333406023"),
-                mobile=mobile,
-                code=code,
-            )
-        else:
-            _ihuyi_send(account=ihuyi_acc, api_key=ihuyi_pwd, mobile=mobile, code=code)
-    except RuntimeError as e:
-        _clear_sms_code(db, mobile, brand_mark)
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    _dispatch_sms_code(db, mobile, brand_mark)
     logger.info("[auth/sms/send] mobile=%s ok=1", mobile[:3] + "****" + mobile[-4:])
     return {"ok": True}
 
@@ -680,7 +909,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     )
     db.add(user)
     db.flush()
-    apply_installation_signup_bonus_for_new_user(db, user, reg_iid)
+    apply_installation_signup_bonus_for_new_user(db, user, phone=mobile, brand_mark=brand_mark)
     db.commit()
     db.refresh(user)
     _remote = getattr(request.client, "host", None) if request.client else None
@@ -725,6 +954,7 @@ def get_me(
         id=current_user.id,
         email=unscoped_account_email(current_user.email),
         preferred_model=preferred,
+        language=str(getattr(current_user, "language", None) or "zh-CN"),
         credits=credits_json_float(getattr(current_user, "credits", None) or 0),
         brand_mark=user_brand_mark(current_user),
         is_overseas_user=bool(getattr(current_user, "is_overseas_user", False)),
@@ -732,6 +962,87 @@ def get_me(
         is_agent=bool(getattr(current_user, "is_agent", False)),
         features=user_feature_flags(db, current_user.id),
     )
+
+
+@router.post("/refresh", summary="静默续签：用当前 token 换一个新 token（jti 不变，有效期 30 天）")
+def refresh_access_token(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> dict:
+    """客户端在剩余有效期不足 20 天时静默换新 token，避免用户被强制重新登录。
+
+    - 正常续签：token 有效或刚过期一点点（宽限 ACCESS_TOKEN_REFRESH_MIN_REMAINING_SECONDS）；
+    - jti 保持不变 → 槽位占用（installation_slot_owners.auth_session_id）、
+      其它按会话 id 记录的状态都不受影响；
+    - 过期太久 / 用户不存在 / 品牌不一致 → 401/403，客户端照旧提示重新登录。
+    """
+    raw = (token or "").strip()
+    bad = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="登录状态已失效，请重新登录",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not raw:
+        raise bad
+    try:
+        payload = jwt.decode(
+            raw,
+            settings.secret_key,
+            algorithms=[ALGORITHM],
+            options={"verify_exp": False},  # 允许「刚过期」的 token 续签，过期时间自己判
+        )
+        exp = payload.get("exp")
+        user_id = int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError):
+        raise bad
+    if exp is not None:
+        try:
+            exp_ts = float(exp)
+        except (TypeError, ValueError):
+            raise bad
+        if datetime.utcnow().timestamp() - exp_ts > ACCESS_TOKEN_REFRESH_MIN_REMAINING_SECONDS:
+            logger.info("[auth/refresh] 过期过久，拒绝续签 user_id=%s", user_id)
+            raise bad
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise bad
+    if int(payload.get("pv") or 0) != password_version_of(user):
+        logger.info("[auth/refresh] 密码已修改，拒绝续签 user_id=%s", user_id)
+        raise bad
+    validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+    claims = {k: v for k, v in payload.items() if k not in ("exp", "iat", "nbf")}
+    claims["pv"] = password_version_of(user)
+    new_token = create_access_token(data=claims)
+    expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    logger.info(
+        "[auth/refresh] user_id=%s brand=%s 续签成功 expires_at=%s",
+        user_id,
+        normalize_brand_mark(payload.get("brand_mark"), strict=False),
+        expires_at.isoformat(),
+    )
+    return {
+        "ok": True,
+        "access_token": new_token,
+        "token_type": "bearer",
+        "expires_in": int(ACCESS_TOKEN_EXPIRE_MINUTES) * 60,
+        "expires_at": expires_at.isoformat() + "Z",
+        "user_id": user_id,
+    }
+
+
+@router.post("/language", summary="保存当前用户界面语言")
+def update_user_language(
+    body: UserLanguageBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    language = str(body.language or "").strip()
+    if language not in {"zh-CN", "en-US"}:
+        raise HTTPException(status_code=400, detail="language must be zh-CN or en-US")
+    current_user.language = language
+    db.commit()
+    return {"language": language}
 
 
 @router.post("/claim-installation-slot", summary="登录完成后接管当前安装槽位")
@@ -1129,7 +1440,7 @@ def wechat_miniprogram_login(
         )
         db.add(user)
         db.flush()
-        apply_installation_signup_bonus_for_new_user(db, user, wx_iid if slots else None)
+        apply_installation_signup_bonus_for_new_user(db, user, brand_mark=brand_mark)
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data=access_token_claims(user))
@@ -1205,7 +1516,7 @@ def wechat_callback(
         )
         db.add(user)
         db.flush()
-        apply_installation_signup_bonus_for_new_user(db, user, wx_iid if slots else None)
+        apply_installation_signup_bonus_for_new_user(db, user, brand_mark=brand_mark)
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data=access_token_claims(user))
@@ -1315,7 +1626,15 @@ def agent_sub_users(
         raise HTTPException(status_code=403, detail="非代理商，无权访问")
     from sqlalchemy import func
     from ..models import RechargeOrder
-    subs = db.query(User).filter(User.parent_user_id == current_user.id).order_by(User.created_at.desc()).all()
+    if is_brand_fixed_agent(current_user):
+        subs = (
+            db.query(User)
+            .filter(User.brand_mark == user_brand_mark(current_user), User.id != current_user.id)
+            .order_by(User.created_at.desc())
+            .all()
+        )
+    else:
+        subs = db.query(User).filter(User.parent_user_id == current_user.id).order_by(User.created_at.desc()).all()
     result = []
     for u in subs:
         paid_sum = (

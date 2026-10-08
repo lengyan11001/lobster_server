@@ -19,12 +19,13 @@ from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_use
 from .assets import RegisterAssetUrlReq, _registered_asset_payload, upsert_registered_assets
 from .auth import get_current_user
 from ..db import get_db
-from ..models import DataMigrationMarker, GenerationRecord, User
+from ..models import Asset, DataMigrationMarker, GenerationRecord, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _GENERATION_ASSET_BACKFILL = "generation_records_to_assets_v1"
+_GENERATED_ASSET_ORIGIN_REPAIR = "generated_asset_origin_repair_v1"
 
 
 class GenerationRecordReportBody(BaseModel):
@@ -202,6 +203,67 @@ def backfill_generation_records_to_assets(bind, *, batch_size: int = 500) -> dic
             updated,
         )
         return {"applied": True, "scanned": scanned, "created": created, "updated": updated}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def repair_generated_asset_origins(bind, *, batch_size: int = 500) -> dict[str, int | bool]:
+    """Repair rows whose generation metadata was later overwritten as a user upload."""
+    from sqlalchemy.orm import sessionmaker
+
+    session_factory = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=bind)
+    db = session_factory()
+    scanned = 0
+    updated = 0
+    try:
+        marker = db.query(DataMigrationMarker).filter(
+            DataMigrationMarker.name == _GENERATED_ASSET_ORIGIN_REPAIR
+        ).first()
+        if marker is not None:
+            return {"applied": False, "scanned": 0, "updated": 0}
+
+        cursor = 0
+        size = max(50, min(int(batch_size or 500), 1000))
+        while True:
+            rows = (
+                db.query(Asset)
+                .filter(Asset.id > cursor)
+                .order_by(Asset.id.asc())
+                .limit(size)
+                .all()
+            )
+            if not rows:
+                break
+            cursor = int(rows[-1].id)
+            scanned += len(rows)
+            for row in rows:
+                meta = row.meta if isinstance(row.meta, dict) else {}
+                origin = str(meta.get("asset_origin") or meta.get("origin") or "").strip().lower()
+                generated_signal = (
+                    meta.get("generation_record_id") is not None
+                    or str(meta.get("registered_from") or "").strip()
+                    in {"online_generation_report", "generation_record_backfill"}
+                )
+                if origin != "user_upload" or not generated_signal:
+                    continue
+                repaired_meta = dict(meta)
+                repaired_meta["asset_origin"] = "generated"
+                repaired_meta["asset_origin_repaired_from"] = "user_upload"
+                row.meta = repaired_meta
+                db.add(row)
+                updated += 1
+
+        db.add(DataMigrationMarker(
+            name=_GENERATED_ASSET_ORIGIN_REPAIR,
+            meta={"scanned": scanned, "updated": updated},
+            applied_at=datetime.utcnow(),
+        ))
+        db.commit()
+        logger.info("generated asset origin repair completed scanned=%s updated=%s", scanned, updated)
+        return {"applied": True, "scanned": scanned, "updated": updated}
     except Exception:
         db.rollback()
         raise

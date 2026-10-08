@@ -116,6 +116,14 @@
       "comfly_model": "doubao-seedance-2-0-fast-260128",
       "sutui_equivalent": ["seedance-2-0-lite-250428", "seedance-2-0-fast-260128"]
     },
+    "wan3.0-video": {
+      "price_type": "per_second",
+      "price_per_unit": 60,
+      "api_format": "dashscope_wan30",
+      "comfly_model": "wan3.0-video",
+      "token_group": "dashscope_wan30",
+      "note": "DashScope 万相3.0，支持文生视频和首帧图生视频；基础积分 60/秒，默认 2 倍用户价即 120 积分/秒。"
+    },
     "seedance2.0-900": {
       "price_type": "per_call",
       "price_per_unit": 500,
@@ -197,15 +205,16 @@
     },
     "grok-imagine-video-1.5": {
       "price_type": "per_call",
-      "price_per_unit": 80,
-      "api_format": "xai_official",
+      "price_per_unit": 160,
+      "api_format": "comfyui_grok",
       "comfly_model": "grok-imagine-video-1.5",
+      "token_group": "comfyui_video",
       "sutui_equivalent": [
         "grok-imagine-video-1.5",
         "xai/grok-imagine-video/image-to-video",
         "xai/grok-imagine-video/text-to-video"
       ],
-      "note": "Official xAI Grok Imagine Video 1.5 fallback channel; same user charge as the existing Grok video provider."
+      "note": "Dedicated ComfyUI Grok video channel. Uses the original model name and the separate COMFLY_API_KEY_COMFYUI_VIDEO token group. User charge is 320 credits with the default 2x multiplier."
     },
     "sora2": {
       "enabled": false,

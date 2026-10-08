@@ -29,6 +29,9 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from .auth import access_token_claims, create_access_token, get_current_user, oauth2_scheme
+from ..services.customer_service_faq import build_service_context, strip_customer_service_faq
+from ..services.work_mode_brief import strip_work_brief
+from .sutui_chat_proxy import _normalize_deepseek_messages
 # 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
 # from .consumption_accounts import get_effective_sutui_token
 from ..models import CapabilityCallLog, ChatTurnLog, ToolCallLog, User
@@ -152,6 +155,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., description="当前用户输入")
+    duty_mode: Optional[str] = Field(default="", description="work=照旧；service=客服模式（把百问百答交给 LLM）")
     history: Optional[List[ChatMessage]] = Field(default_factory=list)
     session_id: Optional[str] = None
     context_id: Optional[str] = None
@@ -1230,7 +1234,8 @@ async def _chat_openai(
     """OpenAI-compatible chat loop (DeepSeek, OpenAI, Google Gemini)."""
     base = (cfg.get("base_url") or "").rstrip("/")
     # Server-side sutui-chat proxy: OpenAI-compatible body, but endpoint is /api/sutui-chat/completions
-    # (not /v1/chat/completions). This proxy implements "direct deepseek first, then xskill fallback".
+    # (not /v1/chat/completions). The proxy owns the provider order: YYAPI,
+    # APIZ Seed 2.0 Mini, then text-only DeepSeek for text requests.
     if base.endswith("/api/sutui-chat"):
         url = f"{base}/completions"
     elif "googleapis.com" in base or base.endswith("/v1"):
@@ -1277,6 +1282,9 @@ async def _chat_openai(
             body["tool_choice"] = "auto"
 
         async with httpx.AsyncClient(timeout=120.0) as c:
+            # DeepSeek 官方直连对报文更严：developer 角色、孤立 tool、
+            # assistant.tool_calls 缺结果、content 缺字段都会被拒；发之前先整形。
+            _normalize_deepseek_messages(url, body, stream=False)
             resp = await c.post(url, json=body, headers=hdrs)
         if resp.status_code != 200:
             _raise_api_err(resp, model=f"{cfg.get('provider','')}/{cfg.get('model_name','')}")
@@ -1662,6 +1670,7 @@ async def _chat_openai(
                 "tools": oai_tools, "tool_choice": "required",
             }
             async with httpx.AsyncClient(timeout=120.0) as c:
+                _normalize_deepseek_messages(url, body_retry, stream=False)
                 resp2 = await c.post(url, json=body_retry, headers=hdrs)
             if resp2.status_code == 200:
                 choice2 = (resp2.json().get("choices") or [{}])[0]
@@ -2631,6 +2640,18 @@ async def chat_stream_endpoint(
     """Stream SSE events: tool_start, tool_end, then done with reply. Frontend can show progress in chat."""
     user_id = int(current_user.id)
     preferred_model = str(getattr(current_user, "preferred_model", None) or "")
+    # 客服模式：两段式给知识（先让检索 LLM 看目录挑章节，再只发相关章节；多轮一起给）
+    if str(getattr(payload, "duty_mode", "") or "").strip().lower() == "service":
+        history_text = "\n".join(
+            f"{str(getattr(item, 'role', '') or '')}：{str(getattr(item, 'content', '') or '')[:300]}"
+            for item in (payload.history or [])[-6:]
+        )
+        payload.message = await asyncio.to_thread(
+            build_service_context,
+            payload.message,
+            history_text,
+            request.headers.get("authorization", ""),
+        )
     db.commit()
     return StreamingResponse(
         _chat_stream_events(payload, raw_token, user_id, preferred_model, request),
@@ -2663,7 +2684,7 @@ def list_chat_history(
             "id": r.id,
             "session_id": r.session_id,
             "context_id": r.context_id,
-            "user_message": r.user_message,
+            "user_message": strip_work_brief(strip_customer_service_faq(r.user_message)),
             "assistant_reply": r.assistant_reply,
             "meta": r.meta,
             "created_at": r.created_at.isoformat() if r.created_at else "",

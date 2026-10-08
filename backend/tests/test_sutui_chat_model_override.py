@@ -1,37 +1,48 @@
 from backend.app.api.sutui_chat_proxy import (
+    _request_has_multimodal_images,
     _sutui_chat_attempts_for_models,
     _sutui_chat_model_candidates,
 )
+import backend.app.api.sutui_chat_proxy as sutui_chat_proxy
 
 
-def test_model_override_still_keeps_deepseek_fallback_route():
+def test_deepseek_candidates_are_direct_only(monkeypatch):
+    """DeepSeek 的 id 只走官方直连；没有直连 key 时不再退到 xskill 的 deepseek 通道。"""
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", None, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     attempts = _sutui_chat_attempts_for_models(
         _sutui_chat_model_candidates("openai/gpt-4.1"),
         "sutui-token",
         forced_model_override=False,
     )
 
-    assert attempts[0]["model"] == "openai/gpt-4.1"
-    assert attempts[0]["provider"] == "xskill"
-    assert attempts[0]["is_direct"] is False
-    assert ("deepseek-chat", "direct:deepseek") in [(a["model"], a["provider"]) for a in attempts]
+    pairs = [(a["model"], a["provider"]) for a in attempts]
+    assert ("deepseek/deepseek-v3.2", "xskill-v3") not in pairs
+    assert ("deepseek-chat", "xskill") not in pairs
+    assert pairs == [
+        ("apiz/seed-2.0-mini", "xskill"),
+        ("openai/gpt-4.1", "xskill"),
+    ]
 
 
-def test_default_deepseek_chat_keeps_existing_fallback_routes():
+def test_default_deepseek_chat_drops_the_xskill_hops(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
+    candidates = _sutui_chat_model_candidates("deepseek-chat")
     attempts = _sutui_chat_attempts_for_models(
-        ["deepseek-chat"],
+        candidates,
         "sutui-token",
         forced_model_override=False,
     )
 
+    assert candidates == ["deepseek-chat", "apiz/seed-2.0-mini"]
     assert [(a["model"], a["provider"]) for a in attempts] == [
-        ("deepseek-chat", "direct:deepseek"),
-        ("deepseek/deepseek-v3.2", "xskill-v3"),
-        ("deepseek-chat", "xskill"),
+        ("apiz/seed-2.0-mini", "xskill"),
     ]
 
 
 def test_default_chain_uses_provider_qualified_gpt_5_6_as_final_fallback(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", None, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     monkeypatch.delenv("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON", raising=False)
     monkeypatch.delenv("SUTUI_CHAT_MODEL_MAP_JSON", raising=False)
     monkeypatch.delenv("SUTUI_CHAT_DISABLED_MODELS_JSON", raising=False)
@@ -43,24 +54,25 @@ def test_default_chain_uses_provider_qualified_gpt_5_6_as_final_fallback(monkeyp
         forced_model_override=False,
     )
 
-    assert candidates == ["deepseek-chat", "openai/gpt-5.6-terra"]
-    assert (attempts[-1]["model"], attempts[-1]["provider"]) == (
-        "openai/gpt-5.6-terra",
+    assert candidates == ["deepseek-chat", "apiz/seed-2.0-mini"]
+    assert (attempts[0]["model"], attempts[0]["provider"]) == (
+        "apiz/seed-2.0-mini",
         "xskill",
     )
 
 
 def test_disabled_sol_is_skipped_even_when_requested(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", None, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     monkeypatch.delenv("SUTUI_CHAT_DISABLED_MODELS_JSON", raising=False)
     candidates = _sutui_chat_model_candidates("openai/gpt-5.6-sol")
 
-    assert candidates == [
-        "openai/gpt-5.6-terra",
-        "deepseek-chat",
-    ]
+    assert candidates == ["deepseek-chat", "apiz/seed-2.0-mini"]
 
 
 def test_user_preference_uses_terra_then_deepseek(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", None, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     monkeypatch.setenv("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON", '["openai/gpt-5.6-sol"]')
     monkeypatch.delenv("SUTUI_CHAT_MODEL_MAP_JSON", raising=False)
 
@@ -70,13 +82,15 @@ def test_user_preference_uses_terra_then_deepseek(monkeypatch):
     )
 
     assert candidates == [
+        "deepseek-chat",
+        "apiz/seed-2.0-mini",
         "openai/gpt-4.1",
         "openai/gpt-5.6-terra",
-        "deepseek-chat",
     ]
 
 
 def test_mastra_requires_deepseek_even_when_global_chain_omits_it(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", None, raising=False)
     monkeypatch.setenv("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON", '["openai/gpt-5.6-sol"]')
     monkeypatch.delenv("SUTUI_CHAT_MODEL_MAP_JSON", raising=False)
     monkeypatch.delenv("SUTUI_CHAT_DISABLED_MODELS_JSON", raising=False)
@@ -87,4 +101,85 @@ def test_mastra_requires_deepseek_even_when_global_chain_omits_it(monkeypatch):
         required_fallbacks=["deepseek-chat"],
     )
 
-    assert candidates == ["deepseek-chat"]
+    assert candidates == ["deepseek-chat", "apiz/seed-2.0-mini"]
+
+
+def test_configured_yyapi_is_first_but_keeps_direct_fallbacks(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_key", None, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_base", "https://www.yyapi.cloud")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", "test-deepseek-key")
+
+    candidates = _sutui_chat_model_candidates("deepseek-chat", has_tools=True)
+    attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
+
+    assert candidates[:3] == ["deepseek-flash", "deepseek-chat", "gpt-5.6-sol"]
+    assert attempts[0]["model"] == "deepseek-flash"
+    assert attempts[0]["provider"] == "direct:deepseek"
+    assert attempts[0]["is_direct"] is True
+
+
+def test_yyapi_route_keeps_fallback_candidates(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", "test-deepseek-key")
+
+    candidates = _sutui_chat_model_candidates("openai/gpt-4.1")
+    attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
+
+    assert ("gpt-5.6-sol", "direct:yyapi") in [(a["model"], a["provider"]) for a in attempts]
+    assert ("deepseek-chat", "direct:deepseek") in [(a["model"], a["provider"]) for a in attempts]
+
+
+def test_image_candidates_put_deepseek_flash_first(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_key", None, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", "test-deepseek-key")
+    monkeypatch.delenv("SUTUI_CHAT_DISABLED_MODELS_JSON", raising=False)
+
+    candidates = _sutui_chat_model_candidates("deepseek-chat", has_images=True)
+    assert candidates == ["deepseek-flash", "gpt-5.6-sol", "apiz/seed-2.0-mini"]
+
+    attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
+    assert [(a["model"], a["provider"]) for a in attempts[:2]] == [
+        ("deepseek-flash", "direct:deepseek"),
+        ("gpt-5.6-sol", "direct:yyapi"),
+    ]
+
+
+def test_change2pro_is_first_and_yyapi_is_same_model_fallback(monkeypatch):
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_key", "test-change2pro-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_api_base", "https://api.change2pro.com")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "change2pro_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_api_key", "test-yyapi-key")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "yyapi_chat_model", "gpt-5.6-sol")
+    monkeypatch.setattr(sutui_chat_proxy.settings, "deepseek_api_key", "test-deepseek-key")
+
+    candidates = _sutui_chat_model_candidates("deepseek-chat", has_images=True)
+    attempts = _sutui_chat_attempts_for_models(candidates, "sutui-token")
+
+    assert candidates[:2] == ["deepseek-flash", "gpt-5.6-sol"]
+    assert [(a["model"], a["provider"]) for a in attempts[:3]] == [
+        ("deepseek-flash", "direct:deepseek"),
+        ("gpt-5.6-sol", "direct:change2pro"),
+        ("gpt-5.6-sol", "direct:yyapi"),
+    ]
+
+
+def test_request_image_detection_handles_remote_and_data_uri_parts():
+    assert _request_has_multimodal_images({
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+        ]}],
+    })
+    assert _request_has_multimodal_images({
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "image": "data:image/png;base64,AAAA"},
+        ]}],
+    })
+    assert not _request_has_multimodal_images({
+        "messages": [{"role": "user", "content": "plain text"}],
+    })

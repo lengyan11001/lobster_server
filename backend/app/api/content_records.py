@@ -19,11 +19,16 @@ from ..models import IPContentDraftRecord, ScheduledTaskRun, User, UserContentRe
 
 router = APIRouter()
 
-_CONTENT_KINDS = {"article", "wechat_article", "ppt"}
+# 2026-10-05：画布/生成类的图片、视频也落在 user_content_records（kind=image/video/audio），
+# 客户端「内容记录·生成」的图片/视频 tab 现在直接读这个接口；以前这里只放行 article/ppt，
+# 传 kind=image 会被判 400「内容类型无效」，前端于是永远看不到画布出的图。
+_CONTENT_KINDS = {"article", "wechat_article", "ppt", "image", "video", "audio"}
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^\s)]+)", re.IGNORECASE)
 _HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(https?://.*?)\1", re.IGNORECASE)
 _IP_TASK_LABELS = {
+    "industry_hot_oral": "行业热门口播",
+    "professional_ip_oral": "专业 IP 口播",
     "moments_candidate": "朋友圈内容",
     "douyin_copy": "抖音文案",
     "xiaohongshu_copy": "小红书文案",
@@ -343,7 +348,7 @@ def _synced_payload(row: UserContentRecord, *, compact: bool = False) -> dict[st
         "file_url": row.file_url or "",
         "source_url": row.file_url or cover_url,
         "filename": row.filename or "",
-        "media_type": "document",
+        "media_type": (row.kind if row.kind in ("image", "video", "audio") else "document"),
         "status": row.status or "completed",
         "tags": f"content-record,{row.kind},{row.source}",
         "prompt": compact_preview if compact else (row.summary or ""),
@@ -610,6 +615,19 @@ def _unique_publish_values(values: Any, *, limit: int, max_length: int) -> list[
     return out
 
 
+_VIDEO_URL_SUFFIXES = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".flv", ".wmv")
+
+
+def _publish_ref_looks_like_video(ref: dict) -> bool:
+    """按声明类型或 URL 后缀判断该素材是不是视频（朋友圈图文要把它剔掉）。"""
+    kind = str(ref.get("kind") or ref.get("media_type") or "").strip().lower()
+    if kind == "video":
+        return True
+    if kind == "image":
+        return False
+    url = str(ref.get("image_url") or ref.get("url") or "").split("?", 1)[0].strip().lower()
+    return url.endswith(_VIDEO_URL_SUFFIXES)
+
 def _publish_value_list(value: Any) -> list[Any]:
     if isinstance(value, (list, tuple)):
         return list(value)
@@ -703,16 +721,24 @@ def request_content_record_publish(
 
     add_parallel_refs(body.image_urls, body.image_asset_ids)
     add_parallel_refs(incoming.get("image_urls"), incoming.get("image_asset_ids"))
-    for raw in _publish_value_list(incoming.get("attachments")):
-        if isinstance(raw, dict):
-            add_image_ref(raw.get("source_url") or raw.get("url"), raw.get("asset_id") or raw.get("image_asset_id"))
-    for raw in _publish_value_list(incoming.get("images")):
-        if isinstance(raw, dict):
-            add_image_ref(raw.get("image_url") or raw.get("url") or raw.get("source_url"), raw.get("image_asset_id") or raw.get("asset_id"))
-    for raw in _publish_value_list(item.get("images")):
-        if isinstance(raw, dict):
-            add_image_ref(raw.get("image_url") or raw.get("url") or raw.get("source_url"), raw.get("image_asset_id") or raw.get("asset_id"))
+    # 只认显式声明的图片引用：attachments / images 这些旧兜底来源已停用
+    # （曾把视频、模板封面当图片发到朋友圈）。
     add_parallel_refs(item.get("image_urls"), item.get("image_asset_ids"))
+    # 微信朋友圈图文只发图片：URL/声明里是视频的一律剔除，避免微信「处理失败」
+    # （线上事故：9 个素材里 5 个其实是 mov/mp4，被当图片发出去）
+    video_refs = [ref for ref in image_refs if _publish_ref_looks_like_video(ref)]
+    if video_refs:
+        dropped = [
+            str(ref.get("filename") or ref.get("image_url") or ref.get("image_asset_id") or "")[:80]
+            for ref in video_refs
+        ]
+        image_refs = [ref for ref in image_refs if ref not in video_refs]
+        if not image_refs:
+            raise HTTPException(
+                status_code=400,
+                detail="朋友圈图文只能发图片：本次素材是视频（%s），请改用视频发布"
+                % ("、".join(dropped[:5]) or "视频"),
+            )
     image_refs = image_refs[:9]
     image_urls = [ref["image_url"] for ref in image_refs if ref.get("image_url")]
     image_asset_ids = [ref["image_asset_id"] for ref in image_refs if ref.get("image_asset_id")]
@@ -759,16 +785,19 @@ def request_content_record_publish(
     for index, ref in enumerate(image_refs):
         url = ref.get("image_url") or ""
         asset_id = ref.get("image_asset_id") or ""
-        attachments.append(
-            {
-                "asset_id": asset_id,
-                "source_url": url,
-                "url": url,
-                "media_type": "image",
-                "kind": "image",
-                "filename": f"moments-{index + 1}.jpg",
-            }
-        )
+        # 素材类型交给下游按真实内容判定：这里不再硬编码 jpg/image。
+        # 线上事故：把视频素材命名成 moments-N.jpg 当图片发，微信直接「处理失败」。
+        declared_kind = str(ref.get("kind") or ref.get("media_type") or "").strip().lower()
+        entry: dict[str, Any] = {
+            "asset_id": asset_id,
+            "source_url": url,
+            "url": url,
+            "filename": str(ref.get("filename") or "").strip(),
+        }
+        if declared_kind in {"image", "video"}:
+            entry["kind"] = declared_kind
+            entry["media_type"] = declared_kind
+        attachments.append(entry)
 
     now = datetime.utcnow()
     draft = {

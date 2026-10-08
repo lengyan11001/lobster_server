@@ -58,6 +58,7 @@ def test_oem_manifest_registers_brand_without_a_second_code_map():
     assert BUILTIN_BRANDS["jinghai"]["icon_32"] == "/client/oem/jinghai/icon_32_v3.png"
     assert BUILTIN_BRANDS["hikong"]["display_name"] == "海康AI智能体"
     assert BUILTIN_BRANDS["hikong"]["icon_32"] == "/client/oem/hikong/icon_32_v3.png"
+    assert "h5.hikongai.cn" in BUILTIN_BRANDS["hikong"]["domains"]
 
 
 @pytest.mark.parametrize("brand", ["jinghai", "hikong"])
@@ -79,6 +80,53 @@ def test_oem_manifest_assets_exist_and_match_checksums():
             assert path.is_file(), item["url"]
             assert path.stat().st_size == item["size"]
             assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"]
+
+
+@pytest.mark.parametrize("code", ["0100", "0200", "0300", "0400"])
+def test_bootstrap_offers_the_unified_start_entry_copy(code):
+    response = _client().get(f"/api/oem/bootstrap?code={code}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assets = payload["assets"]
+    launcher = next(item for item in assets if item["key"] == "launcher_exe")
+    entry = next(item for item in assets if item["key"] == "start_entry")
+
+    mark = payload["brand_mark"]
+    assert entry["url"] == f"/client/oem/{mark}/start.exe"
+    # Same bytes as the branded launcher EXE, so both carry the same brand icon.
+    assert (entry["size"], entry["sha256"]) == (launcher["size"], launcher["sha256"])
+    root = Path(__file__).resolve().parents[2]
+    entry_path = root / "client_static" / entry["url"].removeprefix("/client/")
+    launcher_path = root / "client_static" / launcher["url"].removeprefix("/client/")
+    assert entry_path.read_bytes() == launcher_path.read_bytes()
+
+
+def test_bootstrap_hides_start_entry_when_the_copy_is_not_a_mirror(tmp_path, monkeypatch):
+    from backend.app.api import branding
+
+    mark = "daka"
+    manifest = json.loads((branding._OEM_ROOT / "manifest.json").read_text(encoding="utf-8"))
+    brand = manifest["brands"][mark]
+    launcher = next(item for item in brand["assets"] if item["key"] == "launcher_exe")
+    monkeypatch.setattr(branding, "_OEM_ROOT", tmp_path)
+    (tmp_path / mark).mkdir(parents=True)
+    (tmp_path / mark / "start.exe").write_bytes(b"stale-shell")
+
+    assert branding._start_entry_asset(mark, brand["assets"]) is None
+
+    (tmp_path / mark / "start.exe").write_bytes(
+        (Path(__file__).resolve().parents[2] / "client_static" / launcher["url"].removeprefix("/client/")).read_bytes()
+    )
+    entry = branding._start_entry_asset(mark, brand["assets"])
+    assert entry is not None
+    assert entry["sha256"] == launcher["sha256"]
+
+
+def test_oem_start_entry_copies_are_current():
+    from scripts.sync_oem_start_entry import sync
+
+    assert sync(check_only=True) == 0
 
 
 def test_h5_app_serves_oem_brand_assets_on_the_h5_origin():

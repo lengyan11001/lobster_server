@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -21,7 +23,6 @@ from .api.comfly_proxy import router as comfly_proxy_router
 from .api.mcp_gateway import router as mcp_gateway_router
 # 自定义配置已迁至客户端；openclaw_config 保留（含 sutui/balance、recharge 等支付）
 # from .api.custom_config import router as custom_config_router
-from .api.openclaw_config import router as openclaw_config_router
 from .api.openclaw_memory_cloud import router as openclaw_memory_cloud_router
 from .api.scheduled_tasks import router as scheduled_tasks_router
 from .api.billing import router as billing_router
@@ -35,6 +36,7 @@ from .api.cutcli_templates import router as cutcli_templates_router
 # from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
+from .api.douyin_platform_information_desk import router as douyin_platform_information_desk_router
 from .api.h5_chat import router as h5_chat_router
 from .api.mastra_chat import router as mastra_chat_router
 from .api.h5_home import router as h5_home_router
@@ -47,8 +49,11 @@ from .api.hifly_assets import router as hifly_assets_router
 from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.shanjian_digital_human import router as shanjian_digital_human_router
 from .api.provider_balances import router as provider_balances_router
+from .api.canvas_proxy import router as canvas_proxy_router
+from .api.canvas_hub import router as canvas_hub_public_router
 from .api.meshy_proxy import router as meshy_proxy_router
 from .api.runtime_monitor import router as runtime_monitor_router
+from .api.shop import cms_router as shop_cms_router, router as shop_router
 from .api.aliyun_wan_role import router as aliyun_wan_role_router
 from .api.wechat_oa import router as wechat_oa_router
 from .api.messenger import router as messenger_router
@@ -58,15 +63,23 @@ from .api.oauth_public_pages import router as oauth_public_pages_router
 from .api.homepage import router as homepage_router
 from .api.meta_social_publish import router as meta_social_publish_router
 from .api.admin import router as admin_router
-from .api.generation_records import backfill_generation_records_to_assets, router as generation_records_router
+from .api.generation_records import (
+    backfill_generation_records_to_assets,
+    repair_generated_asset_origins,
+    router as generation_records_router,
+)
 from .api.content_records import router as content_records_router
+from .api.publish_metrics import router as publish_metrics_router
+from .api.customer_management import router as customer_management_router
 from .api.ip_content_studio import router as ip_content_studio_router
+from .api.moments_coach import router as moments_coach_router
 from .api.linkedin_mining import router as linkedin_mining_router
 from .api.social_leads import router as social_leads_router
 from .api.lead_collection_templates import router as lead_collection_templates_router
 from .api.global_leads import router as global_leads_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .api.wechat_intelligence import router as wechat_intelligence_router
+from .api.wechat_contact_pool import router as wechat_contact_pool_router
 from .api.mobile_client import router as mobile_client_router
 from .api.alibaba_customer_research import router as alibaba_customer_research_router
 try:
@@ -84,8 +97,41 @@ from .core.config import settings
 from .db import Base, engine, SessionLocal, reset_db_request_context, set_db_request_context
 from . import models  # noqa: F401
 from .services.workload_guard import install_workload_guard
+from .services.retire_openclaw_tasks import migrate_openclaw_task_kinds
 
 logger = logging.getLogger(__name__)
+
+
+def _worker_rss_kb() -> int:
+    """Resident set size of this worker in KB (0 when /proc is unavailable)."""
+    try:
+        with open("/proc/self/statm", "r", encoding="ascii") as handle:
+            pages = int(handle.read().split()[1])
+        return pages * (os.sysconf("SC_PAGE_SIZE") // 1024)
+    except Exception:
+        return 0
+
+
+try:
+    _MEMORY_SAMPLE_THRESHOLD_KB = max(
+        0, int(float(os.environ.get("LOBSTER_REQUEST_MEMORY_SAMPLE_MB", "8")) * 1024)
+    )
+except (TypeError, ValueError):
+    _MEMORY_SAMPLE_THRESHOLD_KB = 8 * 1024
+
+try:
+    _MEMORY_SAMPLE_SUMMARY_SECONDS = max(
+        0.0, float(os.environ.get("LOBSTER_WORKER_MEMORY_LOG_SEC", "300"))
+    )
+except (TypeError, ValueError):
+    _MEMORY_SAMPLE_SUMMARY_SECONDS = 300.0
+
+# Per-worker request tally used by the periodic memory summary. It is a small
+# dict of path -> count; the summary shows which endpoints a growing worker is
+# actually serving, which the 2026-09-14 hang could not be attributed to.
+_worker_request_counts: dict[str, int] = {}
+_worker_request_total = 0
+_worker_memory_last_summary = 0.0
 _STARTUP_DB_LOCK_KEY = 510051001
 
 
@@ -117,6 +163,55 @@ def _startup_db_lock():
         conn.close()
 
 
+def _migrate_user_password_version():
+    """users.password_version：改密码后旧 token 失效（老库补列）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        with engine.begin() as conn:
+            if "password_version" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0"))
+        logger.info("Migration users.password_version ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration users.password_version skipped: %s", e)
+
+
+def _migrate_douyin_imitation_task_columns():
+    """给 douyin_imitation_task 补计费列（表是 2026-09-27 新建的，create_all 不会改老表）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("douyin_imitation_task"):
+            return
+        cols = [c["name"] for c in insp.get_columns("douyin_imitation_task")]
+        with engine.begin() as conn:
+            if "billable_seconds" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN billable_seconds INTEGER NOT NULL DEFAULT 0"))
+            if "credits_charged" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN credits_charged NUMERIC(20, 4) NOT NULL DEFAULT 0"))
+            if "credits_refunded" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN credits_refunded NUMERIC(20, 4) NOT NULL DEFAULT 0"))
+            if "asset_id" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN asset_id VARCHAR(64) NOT NULL DEFAULT ''"))
+            if "stored_url" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN stored_url TEXT"))
+            if "file_size" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0"))
+            # 2026-10-05：管理后台要看「我们请求上游的什么 / 上游返回的什么」
+            if "upstream_request" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN upstream_request TEXT"))
+            if "upstream_response" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN upstream_response TEXT"))
+        logger.info("Migration douyin_imitation_task billing columns ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration douyin_imitation_task billing columns skipped: %s", e)
+
+
 def _migrate_capability_configs_extra_config():
     """Add extra_config JSON column to capability_configs if missing."""
     from sqlalchemy import inspect, text
@@ -131,6 +226,30 @@ def _migrate_capability_configs_extra_config():
                 conn.execute(text("ALTER TABLE capability_configs ADD COLUMN extra_config JSON"))
     except Exception as e:
         logger.warning("Migration capability_configs.extra_config skipped: %s", e)
+
+
+def _migrate_wechat_outcome_channel():
+    """给 wechat_interaction_outcomes 补 channel 列（WhatsApp 接管复用这套回写）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("wechat_interaction_outcomes"):
+            return
+        columns = [c["name"] for c in insp.get_columns("wechat_interaction_outcomes")]
+        with engine.begin() as conn:
+            if "channel" not in columns:
+                # ADD COLUMN IF NOT EXISTS 在部分数据库（老 sqlite）不认，先查列再加
+                conn.execute(text(
+                    "alter table wechat_interaction_outcomes add column channel varchar(16) "
+                    "not null default 'wechat'"
+                ))
+            conn.execute(text(
+                "create index if not exists ix_wechat_interaction_outcome_channel "
+                "on wechat_interaction_outcomes (channel)"
+            ))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration wechat_interaction_outcomes.channel skipped: %s", e)
 
 
 def _migrate_model_usage_events_table():
@@ -254,6 +373,113 @@ def _migrate_ip_content_schedule_template_memory_doc_ids():
         logger.warning("Migration ip_content_schedule_templates.memory_doc_ids skipped: %s", e)
 
 
+def _migrate_ip_content_schedule_template_installation():
+    """Bind IP daily templates (including the personal default) to a slot.
+
+    The legacy unique constraint on ``(user_id, name)`` rejects a second
+    personal-default row for the same account, which is exactly what a
+    per-device default needs, so it is replaced by
+    ``(user_id, installation_id, name)``.
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("ip_content_schedule_templates"):
+            return
+        cols = {c["name"] for c in insp.get_columns("ip_content_schedule_templates")}
+        with engine.begin() as conn:
+            if "installation_id" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE ip_content_schedule_templates "
+                        "ADD COLUMN installation_id VARCHAR(128) NOT NULL DEFAULT ''"
+                    )
+                )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ip_content_schedule_templates_installation_id "
+                    "ON ip_content_schedule_templates (installation_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ip_content_schedule_templates_user_slot_status "
+                    "ON ip_content_schedule_templates (user_id, installation_id, status)"
+                )
+            )
+            if engine.dialect.name == "postgresql":
+                # PostgreSQL can drop the legacy constraint in place. SQLite
+                # cannot, but new databases are created from the current model
+                # and already carry the slot-aware constraint.
+                conn.execute(
+                    text(
+                        "ALTER TABLE ip_content_schedule_templates "
+                        "DROP CONSTRAINT IF EXISTS uq_ip_content_schedule_template_user_name"
+                    )
+                )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_content_schedule_template_user_slot_name "
+                    "ON ip_content_schedule_templates (user_id, installation_id, name)"
+                )
+            )
+    except Exception as e:
+        logger.warning("Migration ip_content_schedule_templates.installation_id skipped: %s", e)
+
+
+def _migrate_ip_content_profile_surveys():
+    """Create reusable profile survey records and link them from templates."""
+    from sqlalchemy import inspect, text
+
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.IPContentProfileSurvey.__table__])
+        insp = inspect(engine)
+        if insp.has_table("ip_content_schedule_templates"):
+            cols = [c["name"] for c in insp.get_columns("ip_content_schedule_templates")]
+            if "survey_id" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE ip_content_schedule_templates ADD COLUMN survey_id INTEGER"))
+        # Preserve every existing user's current profile as the first survey
+        # record. This is intentionally idempotent and only runs for rows that
+        # have no linked record yet.
+        db = SessionLocal()
+        try:
+            defaults = db.query(models.IPContentScheduleTemplate).filter(
+                models.IPContentScheduleTemplate.status == "active",
+                models.IPContentScheduleTemplate.survey_id.is_(None),
+            ).all()
+            for row in defaults:
+                meta = row.meta if isinstance(row.meta, dict) else {}
+                row_name = str(row.name or "")
+                if not (meta.get("is_personal_default") or "默认" in row_name or "榛" in row_name or "default" in row_name.lower()):
+                    continue
+                requirements = row.requirements if isinstance(row.requirements, dict) else {}
+                profile_keys = {"basic_profile", "business_description", "profile_name", "name", "gender", "product", "target_customer", "advantages"}
+                def _has_profile_value(value):
+                    if isinstance(value, dict):
+                        return any(_has_profile_value(item) for item in value.values())
+                    if isinstance(value, (list, tuple, set)):
+                        return any(_has_profile_value(item) for item in value)
+                    return bool(str(value or "").strip())
+                if not any(_has_profile_value(value) for key, value in requirements.items() if key in profile_keys):
+                    continue
+                survey = models.IPContentProfileSurvey(
+                    user_id=row.user_id,
+                    name="资料调查",
+                    requirements=requirements,
+                    meta={"source": "migration"},
+                )
+                db.add(survey)
+                db.flush()
+                row.survey_id = survey.id
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Migration ip_content_profile_surveys skipped: %s", e)
+
+
 def _migrate_h5_device_presence_account_payload():
     """Store the latest publish-account snapshot reported by each online device."""
     from sqlalchemy import inspect, text
@@ -268,6 +494,86 @@ def _migrate_h5_device_presence_account_payload():
                 conn.execute(text("ALTER TABLE h5_chat_device_presence ADD COLUMN account_payload JSON"))
     except Exception as e:
         logger.warning("Migration h5_chat_device_presence.account_payload skipped: %s", e)
+
+
+def _migrate_remote_support_device_authorizations():
+    """Create the administrator-owned remote device allow-list."""
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.RemoteSupportDeviceAuthorization.__table__])
+    except Exception as e:
+        logger.warning("Migration remote support device authorizations skipped: %s", e)
+
+
+def _migrate_device_labels():
+    """设备备注（设备名）改成按机器身份保存 + 把历史备注搬进新表（幂等）。
+
+    以前设备名只在 h5_chat_device_presence.display_name 上，槽位 ID 一变（换账号/换品牌/
+    OTA 后新的签名槽位）名字就丢失、界面退回默认名。这里建 user_device_labels 并把已存在的
+    自定义设备名按机器身份补录一遍，之后新槽位会自动沿用同一个名字。
+    """
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.UserDeviceLabel.__table__])
+    except Exception as e:
+        logger.warning("Migration device labels table skipped: %s", e)
+        return
+    from .services import device_labels as device_label_service
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(models.H5ChatDevicePresence)
+            .filter(models.H5ChatDevicePresence.display_name.isnot(None))
+            .all()
+        )
+        migrated = 0
+        for row in rows:
+            if not device_label_service.is_custom_label(row.display_name):
+                continue
+            created = device_label_service.remember_device_label(
+                db,
+                user_id=int(row.user_id),
+                installation_id=str(row.installation_id or ""),
+                display_name=str(row.display_name),
+                source="manual",
+            )
+            if created is not None:
+                migrated += 1
+        db.commit()
+        if migrated:
+            logger.info("[MANAGE] device labels backfilled rows=%s", migrated)
+    except Exception as e:
+        db.rollback()
+        logger.warning("Migration device labels backfill skipped: %s", e)
+    finally:
+        db.close()
+
+
+def _migrate_manage_ai_employee_columns():
+    """Ensure m_ai_employee carries the manual-add identity columns."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("m_ai_employee"):
+            return
+        cols = [c["name"] for c in insp.get_columns("m_ai_employee")]
+        with engine.begin() as conn:
+            if "device_id" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN device_id VARCHAR(128) NOT NULL DEFAULT ''"))
+            if "source" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'slot'"))
+            if "note" not in cols:
+                conn.execute(text("ALTER TABLE m_ai_employee ADD COLUMN note VARCHAR(255) NOT NULL DEFAULT ''"))
+    except Exception as e:
+        logger.warning("Migration m_ai_employee identity columns skipped: %s", e)
+
+
+def _migrate_customer_authorizations():
+    """Create customer sharing grants used by the admin customer console."""
+    try:
+        Base.metadata.create_all(bind=engine, tables=[models.CustomerAuthorization.__table__])
+    except Exception as e:
+        logger.warning("Migration customer authorizations skipped: %s", e)
 
 
 def _migrate_h5_chat_mastra_columns():
@@ -619,6 +925,24 @@ def _migrate_user_is_overseas_user():
         logger.warning("Migration user is_overseas_user skipped: %s", e)
 
 
+def _migrate_user_language():
+    """Add the persisted UI language preference for existing users."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        if "language" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN language VARCHAR(16) NOT NULL DEFAULT 'zh-CN'"))
+        logger.info("[startup] users added column language")
+    except Exception as e:
+        logger.warning("Migration user language skipped: %s", e)
+
+
 def _migrate_user_wecom_userid():
     """Add wecom_userid to users（企业微信 FromUserName 绑定，渠道消息按该用户扣费）。"""
     from sqlalchemy import inspect, text
@@ -703,6 +1027,58 @@ def _migrate_user_agent_task_dispatch_enabled():
         logger.info("[启动] users 已增加列 agent_task_dispatch_enabled")
     except Exception as e:
         logger.warning("Migration user agent_task_dispatch_enabled skipped: %s", e)
+
+
+def _migrate_user_admin_remark():
+    """Add the operator-facing remark shown beside accounts in the admin list."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        columns = {column["name"] for column in insp.get_columns("users")}
+        if "admin_remark" in columns:
+            return
+        column_type = "VARCHAR(500)"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    f"ALTER TABLE users ADD COLUMN admin_remark {column_type} "
+                    "NOT NULL DEFAULT ''"
+                )
+            )
+        logger.info("[startup] users added column admin_remark")
+    except Exception as e:
+        logger.warning("Migration user admin_remark skipped: %s", e)
+
+
+def _migrate_user_agent_columns():
+    """Add agent relationship columns required by the current User model.
+
+    Some overseas installations were created before the agent fields were
+    introduced. SQLAlchemy selects every mapped column when authenticating, so
+    a missing column breaks even the password-login endpoint with a 500.
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = {c["name"] for c in insp.get_columns("users")}
+        dname = engine.dialect.name
+        with engine.begin() as conn:
+            if "is_agent" not in cols:
+                sql = "ALTER TABLE users ADD COLUMN is_agent BOOLEAN NOT NULL DEFAULT 0"
+                if dname in {"mysql", "mariadb"}:
+                    sql = "ALTER TABLE users ADD COLUMN is_agent BOOLEAN NOT NULL DEFAULT FALSE"
+                conn.execute(text(sql))
+            if "parent_user_id" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN parent_user_id INTEGER"))
+        logger.info("[startup] users agent columns migration checked")
+    except Exception as e:
+        logger.warning("Migration user agent columns skipped: %s", e)
 
 
 def _migrate_user_agent_level():
@@ -798,6 +1174,14 @@ def _migrate_recharge_callback_audit():
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN callback_amount_fen INTEGER"))
             if "wechat_transaction_id" not in cols:
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN wechat_transaction_id VARCHAR(64)"))
+            if "brand_mark" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN brand_mark VARCHAR(64)"))
+            if "agent_user_id" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN agent_user_id INTEGER"))
+            if "agent_reserved_credits" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN agent_reserved_credits NUMERIC(20,4)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_recharge_orders_brand_mark ON recharge_orders (brand_mark)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_recharge_orders_agent_user_id ON recharge_orders (agent_user_id)"))
     except Exception as e:
         logger.warning("Migration recharge_orders callback_audit skipped: %s", e)
 
@@ -1082,12 +1466,83 @@ def _migrate_sutui_recon_balance_remote_prev():
         logger.warning("Migration sutui_recon balance_remote_prev skipped: %s", e)
 
 
+def _migrate_installation_signup_bonus_claims():
+    """Add phone/OEM claim keys and migrate legacy device claims in place."""
+    from sqlalchemy import inspect, text
+
+    from . import models
+    from .db import SessionLocal
+    from .services.brand_context import phone_from_account_email, user_brand_mark
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("installation_signup_bonus_claims"):
+            return
+        columns = {column["name"] for column in insp.get_columns("installation_signup_bonus_claims")}
+        with engine.begin() as conn:
+            if "phone" not in columns:
+                conn.execute(text("ALTER TABLE installation_signup_bonus_claims ADD COLUMN phone VARCHAR(32)"))
+            if "brand_mark" not in columns:
+                conn.execute(text("ALTER TABLE installation_signup_bonus_claims ADD COLUMN brand_mark VARCHAR(64)"))
+
+        db = SessionLocal()
+        try:
+            claims = (
+                db.query(models.InstallationSignupBonusClaim, models.User)
+                .outerjoin(models.User, models.User.id == models.InstallationSignupBonusClaim.user_id)
+                .order_by(
+                    models.InstallationSignupBonusClaim.created_at.asc(),
+                    models.InstallationSignupBonusClaim.installation_id.asc(),
+                )
+                .all()
+            )
+            claimed_keys: set[tuple[str, str]] = set()
+            for claim, user in claims:
+                phone = phone_from_account_email(user.email) if user is not None else ""
+                brand = user_brand_mark(user) if user is not None else ""
+                if not phone or not brand:
+                    continue
+                key = (phone, brand)
+                if key in claimed_keys:
+                    # Keep the earliest historical claim; duplicate device claims
+                    # must not occupy the new phone/OEM unique key.
+                    claim.phone = None
+                    claim.brand_mark = None
+                    continue
+                claim.phone = phone
+                claim.brand_mark = brand
+                claimed_keys.add(key)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("Migration installation_signup_bonus_claims data skipped: %s", e)
+        finally:
+            db.close()
+
+        index_name = "uq_installation_signup_bonus_claim_phone_brand"
+        refreshed = inspect(engine)
+        index_names = {item["name"] for item in refreshed.get_indexes("installation_signup_bonus_claims")}
+        unique_names = {item.get("name") for item in refreshed.get_unique_constraints("installation_signup_bonus_claims")}
+        if index_name not in index_names and index_name not in unique_names:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX uq_installation_signup_bonus_claim_phone_brand "
+                        "ON installation_signup_bonus_claims (phone, brand_mark)"
+                    )
+                )
+        logger.info("[startup] installation signup bonus claims use phone + OEM keys")
+    except Exception as e:
+        logger.warning("Migration installation_signup_bonus_claims skipped: %s", e)
+
+
 def _backfill_installation_signup_bonus_claims():
-    """已有 user_installations 的设备视为已占用新人礼包，避免上线后同机多号再领满额分。"""
+    """Mark legacy phone users with an installation as having claimed their bonus."""
     from sqlalchemy import inspect
 
     from . import models
     from .db import SessionLocal
+    from .services.brand_context import phone_from_account_email, user_brand_mark
 
     try:
         insp = inspect(engine)
@@ -1095,31 +1550,40 @@ def _backfill_installation_signup_bonus_claims():
             return
         db = SessionLocal()
         try:
-            if db.query(models.InstallationSignupBonusClaim).count() > 0:
-                return
-            distinct_iids = [r[0] for r in db.query(models.UserInstallation.installation_id).distinct().all()]
-            if not distinct_iids:
-                return
-            for iid in distinct_iids:
-                first = (
-                    db.query(models.UserInstallation)
-                    .filter(models.UserInstallation.installation_id == iid)
-                    .order_by(models.UserInstallation.created_at.asc(), models.UserInstallation.user_id.asc())
-                    .first()
-                )
-                if first is not None:
-                    db.add(
-                        models.InstallationSignupBonusClaim(
-                            installation_id=first.installation_id,
-                            user_id=first.user_id,
-                            created_at=first.created_at,
-                        )
-                    )
-            db.commit()
-            logger.info(
-                "[启动] installation_signup_bonus_claims 已从 user_installations 回填 %s 条",
-                len(distinct_iids),
+            claimed_keys = {
+                (str(phone), str(brand))
+                for phone, brand in db.query(
+                    models.InstallationSignupBonusClaim.phone,
+                    models.InstallationSignupBonusClaim.brand_mark,
+                ).all()
+                if phone and brand
+            }
+            installations = (
+                db.query(models.UserInstallation, models.User)
+                .join(models.User, models.User.id == models.UserInstallation.user_id)
+                .order_by(models.UserInstallation.created_at.asc(), models.UserInstallation.user_id.asc())
+                .all()
             )
+            added = 0
+            for installation, user in installations:
+                phone = phone_from_account_email(user.email)
+                brand = user_brand_mark(user)
+                if not phone or (phone, brand) in claimed_keys:
+                    continue
+                db.add(
+                    models.InstallationSignupBonusClaim(
+                        installation_id=f"phone:{brand}:{phone}",
+                        user_id=user.id,
+                        phone=phone,
+                        brand_mark=brand,
+                        created_at=installation.created_at,
+                    )
+                )
+                claimed_keys.add((phone, brand))
+                added += 1
+            if added:
+                db.commit()
+                logger.info("[startup] installation signup bonus claims backfilled %s phone/OEM rows", added)
         except Exception as e:
             db.rollback()
             logger.warning("Backfill installation_signup_bonus_claims failed: %s", e)
@@ -1140,16 +1604,23 @@ def create_app() -> FastAPI:
             # Shared-library history is recoverable and idempotent; a malformed
             # legacy row must not keep the API process from starting.
             logger.exception("generation asset backfill failed; it will retry on the next startup")
+        try:
+            repair_generated_asset_origins(engine)
+        except Exception:
+            logger.exception("generated asset origin repair failed; it will retry on the next startup")
         _migrate_user_sutui_token()
         _migrate_user_wechat_openid()
         _migrate_user_phone_default_passwords()
         _migrate_user_brand_mark()
         _seed_brand_configs()
         _migrate_user_is_overseas_user()
+        _migrate_user_language()
         _migrate_user_wecom_userid()
         _migrate_user_llm_model_override()
         _migrate_user_agent_openclaw_memory_enabled()
         _migrate_user_agent_task_dispatch_enabled()
+        _migrate_user_admin_remark()
+        _migrate_user_agent_columns()
         _migrate_user_agent_level()
         _migrate_wecom_config_secret()
         _migrate_wecom_agent_id()
@@ -1157,22 +1628,32 @@ def create_app() -> FastAPI:
         _migrate_recharge_callback_audit()
         _migrate_credits_decimal_sqlite()
         _migrate_credits_decimal_mysql()
+        _migrate_installation_signup_bonus_claims()
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
+        _migrate_user_password_version()
+        _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()
+        _migrate_wechat_outcome_channel()
         _migrate_model_usage_events_table()
         _migrate_recorder_audio_columns()
         _migrate_h5_workflow_template_installation()
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
+        _migrate_ip_content_schedule_template_installation()
+        _migrate_ip_content_profile_surveys()
         _migrate_h5_device_presence_account_payload()
+        _migrate_remote_support_device_authorizations()
+        _migrate_device_labels()
+        _migrate_customer_authorizations()
+        _migrate_manage_ai_employee_columns()
         _migrate_h5_chat_mastra_columns()
         _migrate_h5_home_preference_columns()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()
         _sync_catalog_capability_definitions()
-    _auto_start_openclaw()
+        migrate_openclaw_task_kinds()
 
     app = FastAPI(
         title="龙虾 (Lobster) API",
@@ -1204,6 +1685,53 @@ def create_app() -> FastAPI:
         finally:
             reset_db_request_context(token)
 
+    @app.middleware("http")
+    async def request_memory_sampler(request: Request, call_next):
+        """Log requests that grow this worker's RSS noticeably.
+
+        The fleet polls a handful of endpoints thousands of times an hour; when one
+        of them retains hundreds of MB the worker balloons and the whole box dies
+        (2026-09-14 hang). The per-request delta keeps that visible without a
+        profiler: set LOBSTER_REQUEST_MEMORY_SAMPLE_MB=0 to disable.
+        """
+        global _worker_request_total, _worker_memory_last_summary
+        sampling = _MEMORY_SAMPLE_THRESHOLD_KB > 0 or _MEMORY_SAMPLE_SUMMARY_SECONDS > 0
+        if not sampling:
+            return await call_next(request)
+        path = request.url.path
+        before_kb = _worker_rss_kb()
+        response = await call_next(request)
+        after_kb = _worker_rss_kb()
+        _worker_request_counts[path] = _worker_request_counts.get(path, 0) + 1
+        _worker_request_total += 1
+        delta_kb = after_kb - before_kb
+        if _MEMORY_SAMPLE_THRESHOLD_KB > 0 and delta_kb >= _MEMORY_SAMPLE_THRESHOLD_KB:
+            logger.warning(
+                "[mem-sample] pid=%s +%.1fMB rss=%.0fMB %s %s",
+                os.getpid(),
+                delta_kb / 1024.0,
+                after_kb / 1024.0,
+                request.method,
+                path,
+            )
+        if _MEMORY_SAMPLE_SUMMARY_SECONDS > 0:
+            now = time.monotonic()
+            if _worker_memory_last_summary == 0.0:
+                _worker_memory_last_summary = now
+            elif (now - _worker_memory_last_summary) >= _MEMORY_SAMPLE_SUMMARY_SECONDS:
+                top = sorted(_worker_request_counts.items(), key=lambda item: item[1], reverse=True)[:6]
+                logger.warning(
+                    "[mem-sample] pid=%s rss=%.0fMB requests=%s top=%s",
+                    os.getpid(),
+                    after_kb / 1024.0,
+                    _worker_request_total,
+                    ", ".join(f"{name}:{count}" for name, count in top),
+                )
+                _worker_request_counts.clear()
+                _worker_request_total = 0
+                _worker_memory_last_summary = now
+        return response
+
     @app.exception_handler(Exception)
     async def catch_all(request: Request, exc: Exception):
         if settings.debug:
@@ -1228,7 +1756,6 @@ def create_app() -> FastAPI:
     app.include_router(comfly_proxy_router, prefix="")
     app.include_router(chat_router, prefix="")
     app.include_router(mcp_gateway_router, prefix="")
-    app.include_router(openclaw_config_router, prefix="")
     app.include_router(openclaw_memory_cloud_router, prefix="")
     # 自定义配置已迁至客户端；server 仅保留支付相关（sutui/balance、recharge 在 openclaw_config 中）
     # app.include_router(custom_config_router, prefix="")
@@ -1241,6 +1768,7 @@ def create_app() -> FastAPI:
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
     app.include_router(douyin_dashboard_h5_router, prefix="")
+    app.include_router(douyin_platform_information_desk_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
     app.include_router(mastra_chat_router, prefix="")
     app.include_router(h5_home_router, prefix="")
@@ -1255,6 +1783,8 @@ def create_app() -> FastAPI:
     app.include_router(provider_balances_router, prefix="")
     app.include_router(meshy_proxy_router, prefix="")
     app.include_router(runtime_monitor_router, prefix="")
+    app.include_router(shop_router, prefix="")
+    app.include_router(shop_cms_router, prefix="")
     app.include_router(aliyun_wan_role_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
@@ -1264,13 +1794,17 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="")
     app.include_router(generation_records_router, prefix="")
     app.include_router(content_records_router, prefix="")
+    app.include_router(publish_metrics_router, prefix="")
+    app.include_router(customer_management_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
+    app.include_router(moments_coach_router, prefix="")
     app.include_router(linkedin_mining_router, prefix="")
     app.include_router(social_leads_router, prefix="")
     app.include_router(lead_collection_templates_router, prefix="")
     app.include_router(global_leads_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
     app.include_router(wechat_intelligence_router, prefix="")
+    app.include_router(wechat_contact_pool_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
     app.include_router(alibaba_customer_research_router, prefix="")
     if wecom_kf_router is not None:
@@ -1332,10 +1866,23 @@ def create_app() -> FastAPI:
     app.mount(
         "/client/miniprogram",
         StaticFiles(directory=str(_miniprogram_static_dir)),
+
         name="client_miniprogram",
     )
 
     logger.info("[启动] create_app 完成")
+    try:
+        _canvas_web_dir = Path(__file__).resolve().parent.parent.parent / "canvas_web_dist"
+        if _canvas_web_dir.exists():
+            app.mount(
+                "/canvas-web",
+                StaticFiles(directory=str(_canvas_web_dir), html=True),
+                name="canvas-web",
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Mount canvas-web static skipped: %s", e)
+    app.include_router(canvas_hub_public_router, prefix="")
+    app.include_router(canvas_proxy_router, prefix="")
     return app
 
 

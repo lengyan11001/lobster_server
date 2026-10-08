@@ -46,7 +46,9 @@ router = APIRouter()
 _HIFLY_API_BASE = "https://hfw-api.hifly.cc"
 _IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _VIDEO_MAX_BYTES = 500 * 1024 * 1024
-_AUDIO_MAX_BYTES = 20 * 1024 * 1024
+# Qwen voice enrollment rejects samples above 10 MiB. Keep this limit on the
+# clone endpoint so oversized files never get persisted or sent upstream.
+_VOICE_CLONE_MAX_BYTES = 10 * 1024 * 1024
 _AUDIO_DRIVE_MAX_BYTES = 100 * 1024 * 1024
 _HIFLY_IN_MEMORY_UPLOAD_BYTES = 32 * 1024 * 1024
 _MAX_AVATAR_PAGE_SIZE = 100
@@ -1256,10 +1258,10 @@ async def _prepare_voice_clone_upload(upload: UploadFile) -> Dict[str, Any]:
     if ext not in _AUDIO_EXTS:
         raise HTTPException(status_code=400, detail=f"仅支持 {', '.join(sorted(_AUDIO_EXTS))} 格式")
     try:
-        size = await asyncio.to_thread(_validate_upload_size, upload.file, _AUDIO_MAX_BYTES)
+        size = await asyncio.to_thread(_validate_upload_size, upload.file, _VOICE_CLONE_MAX_BYTES)
     except HTTPException as exc:
         if exc.status_code == 413:
-            raise HTTPException(status_code=400, detail=f"上传文件不能超过 {_AUDIO_MAX_BYTES // (1024 * 1024)}MB") from exc
+            raise HTTPException(status_code=400, detail=f"声音样本不能超过 {_VOICE_CLONE_MAX_BYTES // (1024 * 1024)}MB") from exc
         raise HTTPException(status_code=400, detail="上传文件为空") from exc
 
     raw = await upload.read(size + 1)
@@ -1622,7 +1624,14 @@ def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request
     meta = dict(row.meta or {})
     detail_asset_id = str(meta.get("source_asset_id") or "").strip()
     detail_url = build_asset_file_url(request, detail_asset_id) if request and detail_asset_id else ""
-    cover_url = row.cover_url or ""
+    upload_meta = meta.get("upload_meta") if isinstance(meta.get("upload_meta"), dict) else {}
+    task_raw = meta.get("task_raw") if isinstance(meta.get("task_raw"), dict) else {}
+    create_raw = meta.get("create_raw") if isinstance(meta.get("create_raw"), dict) else {}
+    source_type = str(row.source_type or upload_meta.get("source_type") or "image").strip().lower()
+    media_type = "video" if "video" in source_type else "image"
+    media_url = detail_url or str(upload_meta.get("source_url") or "").strip()
+    cover_url = str(row.cover_url or _pick_cover(task_raw) or _pick_cover(create_raw) or _pick_cover(meta) or "").strip()
+    image_url = cover_url or (media_url if media_type == "image" else "")
     return {
         "id": row.id,
         "source": "hifly",
@@ -1632,9 +1641,14 @@ def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request
         "task_id": row.hifly_task_id,
         "avatar": row.hifly_avatar_id or "",
         "title": row.title,
-        "image_url": cover_url,
+        "image_url": image_url,
         "cover_url": cover_url,
-        "source_type": row.source_type,
+        "thumbnail_url": cover_url,
+        "poster_url": cover_url,
+        "media_type": media_type,
+        "media_url": media_url,
+        "video_url": media_url if media_type == "video" else "",
+        "source_type": source_type,
         "detail_asset_id": detail_asset_id,
         "detail_url": detail_url,
         "status": row.status,
@@ -1658,6 +1672,7 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
     voice_id = row.hifly_voice_id or ""
     demo_url = _resolve_voice_preview_source(row, request)
     cover_url = row.cover_url or ""
+    provider = _voice_provider(row)
     voice_params = {}
     if isinstance(row.meta, dict) and isinstance(row.meta.get("voice_params"), dict):
         voice_params = dict(row.meta.get("voice_params") or {})
@@ -1687,9 +1702,9 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
                 "label": "默认风格",
                 "demo_url": public_demo_url,
                 "title": row.title,
+                "provider": provider,
             }
         )
-    provider = _voice_provider(row)
     return {
         "id": row.id,
         "source": "hifly",
@@ -1735,7 +1750,10 @@ def _normalize_shanjian_profile_as_avatar(
 ) -> Dict[str, Any]:
     source_asset_id = str(row.source_asset_id or "").strip()
     detail_url = build_asset_file_url(request, source_asset_id) if request and source_asset_id else (row.source_url or "")
-    cover_url = row.cover_url or row.source_url or detail_url or ""
+    source_type = str(row.train_mode or "image").strip().lower()
+    media_type = "video" if "video" in source_type else "image"
+    media_url = detail_url or row.source_url or ""
+    cover_url = row.cover_url or (media_url if media_type == "image" else "")
     status = str(row.status or "").strip()
     if status == "succeed":
         normalized_status = "success"
@@ -1754,7 +1772,12 @@ def _normalize_shanjian_profile_as_avatar(
         "title": row.title,
         "image_url": cover_url,
         "cover_url": cover_url,
-        "source_type": row.train_mode or "image",
+        "thumbnail_url": cover_url,
+        "poster_url": cover_url,
+        "media_type": media_type,
+        "media_url": media_url,
+        "video_url": media_url if media_type == "video" else "",
+        "source_type": source_type,
         "detail_asset_id": source_asset_id,
         "detail_url": detail_url,
         "status": normalized_status,
@@ -3850,13 +3873,16 @@ def list_h5_digital_library(
 
     page_offset = (page - 1) * size
     fetch_size = page_offset + size
+    # 模板里关联形象/分身只能用训练成功的：未完成 / 失败的直接不进这个库
     hifly_query = db.query(UserHiflyAvatarAsset).filter(
         UserHiflyAvatarAsset.user_id == current_user.id,
-        UserHiflyAvatarAsset.status != "deleted",
+        UserHiflyAvatarAsset.status == "success",
     )
     shanjian_query = db.query(ShanjianDigitalHumanProfile).filter(
         ShanjianDigitalHumanProfile.user_id == int(current_user.id),
-        ShanjianDigitalHumanProfile.status != "deleted",
+        ShanjianDigitalHumanProfile.status == "succeed",
+        ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+        ShanjianDigitalHumanProfile.virtualman_id != "",
     )
     hifly_total = hifly_query.count()
     shanjian_total = shanjian_query.count()

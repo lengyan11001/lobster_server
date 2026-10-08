@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(_root, ".env"), override=False)
 
 # 全日志：由 LOG_LEVEL 控制，默认 debug（.env 可设 LOG_LEVEL=info 仅关键信息）
-_log_level_name = os.environ.get("LOG_LEVEL", "debug").strip().lower()
+_log_level_name = os.environ.get("LOG_LEVEL", "info").strip().lower()
 _log_level = getattr(logging, _log_level_name.upper(), logging.DEBUG)
 logging.basicConfig(
     level=_log_level,
@@ -101,13 +101,23 @@ if __name__ == "__main__":
         workers = max(1, int(workers_raw))
     except ValueError:
         workers = 1
+    # A fixed low request limit makes equally-loaded workers retire together.
+    # Long polling/SSE can then hold all workers in graceful shutdown. Disable
+    # request-count recycling by default; an operator may still opt in.
+    max_requests_raw = (os.environ.get("BACKEND_MAX_REQUESTS") or "0").strip()
+    try:
+        parsed_max_requests = int(max_requests_raw)
+        max_requests = max(1000, parsed_max_requests) if parsed_max_requests > 0 else None
+    except ValueError:
+        max_requests = None
     _logger.info(
-        "[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s workers=%s",
+        "[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s workers=%s max_requests=%s",
         host,
         port,
         edition,
         _log_level_name,
         workers,
+        max_requests,
     )
     uvicorn.run(
         "backend.app.main:app",
@@ -115,4 +125,6 @@ if __name__ == "__main__":
         port=port,
         log_level=_log_level_name,
         workers=workers,
+        limit_max_requests=max_requests,
+        timeout_graceful_shutdown=30,
     )

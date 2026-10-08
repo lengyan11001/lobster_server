@@ -32,27 +32,33 @@ import tempfile
 import time
 import uuid
 from collections import OrderedDict
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import Asset, User
+from ..models import Asset, CreditLedger, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.brand_context import explicit_request_brand_mark
-from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
+from ..services.credits_amount import (
+    credits_json_float,
+    quantize_credits,
+    quantize_credits_signed,
+    user_balance_decimal,
+)
 from ..services.model_usage_monitor import log_model_usage_event
 from ..services.runtime_cache import cache_delete, cache_get, cache_set, cache_set_if_absent
 from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
-from .assets import _run_asset_upload_io, _save_bytes_or_tos
+from .assets import _find_asset_by_content_sha256, _run_asset_upload_io, _save_bytes_or_tos
 from .auth import ALGORITHM, get_current_user, validate_token_brand
 from .mobile_identity import online_user_for_mobile_user
 
@@ -62,6 +68,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from mcp.comfly_upstream import (  # noqa: E402
+    call_comfly_task_query,
+    call_comfly_video_generate,
     estimate_comfly_credits,
     get_comfly_config,
     lookup_comfly_model,
@@ -75,7 +83,15 @@ _PROXY_AUDIT_LOGGER = logging.getLogger("comfly_proxy_audit")
 
 # Comfly 上游超时（与 pipeline 默认 poll 间隔对齐，video submit 通常很快返回 task_id）
 _TIMEOUT_CHAT = 120.0
-_TIMEOUT_IMAGE = 300.0
+try:
+    # A slow image provider must yield to the fallback chain well before the
+    # local image-workbench job gives up waiting for the cloud proxy.
+    _TIMEOUT_IMAGE = max(
+        30.0,
+        min(180.0, float(os.environ.get("COMFLY_IMAGE_UPSTREAM_TIMEOUT_SECONDS") or "90")),
+    )
+except (TypeError, ValueError):
+    _TIMEOUT_IMAGE = 90.0
 try:
     _TIMEOUT_OPENMIND_IMAGE_READ = max(
         30.0,
@@ -283,6 +299,8 @@ def _image_generation_channel_disable_ttl_seconds(provider: str, error: str) -> 
         return _env_int("COMFLY_IMAGE_PROVIDER_AUTH_DISABLE_SECONDS", 1800, min_value=60, max_value=7200)
     if "http 429" in msg and provider in {"openai_official", "gaisc", "comfyui_official", "openmindapi", "openmind", "yunwu", "sutui"}:
         return _env_int("COMFLY_IMAGE_PROVIDER_RATE_LIMIT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
+    if "timeout" in msg or any(status in msg for status in ("http 502", "http 503", "http 504")):
+        return _env_int("COMFLY_IMAGE_PROVIDER_TRANSIENT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
     return 0
 
 
@@ -469,6 +487,8 @@ def _do_pre_deduct_by_user_id(
     model: str,
     endpoint: str,
     extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy",
+    ref_id: Optional[str] = None,
 ) -> Decimal:
     db = SessionLocal()
     try:
@@ -483,6 +503,8 @@ def _do_pre_deduct_by_user_id(
             model=model,
             endpoint=endpoint,
             extra_meta=extra_meta,
+            ref_type=ref_type,
+            ref_id=ref_id,
         )
     finally:
         db.close()
@@ -496,6 +518,9 @@ def _do_full_refund_by_user_id(
     model: str,
     endpoint: str,
     error: str = "",
+    ref_type: str = "comfly_proxy",
+    ref_id: Optional[str] = None,
+    description: str = "",
 ) -> None:
     db = SessionLocal()
     try:
@@ -510,6 +535,9 @@ def _do_full_refund_by_user_id(
             model=model,
             endpoint=endpoint,
             error=error,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            description=description,
         )
     finally:
         db.close()
@@ -524,6 +552,9 @@ def _do_settle_by_user_id(
     model: str,
     endpoint: str,
     extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy",
+    ref_id: Optional[str] = None,
+    description: str = "",
 ) -> None:
     db = SessionLocal()
     try:
@@ -539,9 +570,440 @@ def _do_settle_by_user_id(
             model=model,
             endpoint=endpoint,
             extra_meta=extra_meta,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            description=description,
         )
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# 视频计费：预扣可追溯到任务 → 按上游回执结算（任务失败全退 / 按秒结算差额）
+# ---------------------------------------------------------------------------
+
+_VIDEO_CHARGE_REF_TYPE = "comfly_proxy_video"
+_VIDEO_SETTLE_REF_TYPE = "comfly_proxy_video_settle"
+_VIDEO_SEGMENT_HEADER = "x-lobster-video-segment"
+
+_VIDEO_STATUS_KEYS = ("task_status", "status", "state", "task_state", "video_status", "videoStatus")
+_VIDEO_SECONDS_KEYS = (
+    "output_video_duration",
+    "video_duration",
+    "output_duration",
+    "duration",
+    "seconds",
+)
+_VIDEO_FAILED_STATUSES = {
+    "failed", "failure", "error", "canceled", "cancelled", "cancel", "rejected", "timeout", "expired",
+}
+_VIDEO_DONE_STATUSES = {"succeeded", "success", "completed", "complete", "done", "finished"}
+
+
+def _video_charge_hold_key() -> str:
+    """预扣时先挂一个 hold key，拿到上游 task id 后再改写，便于按回执结算。"""
+    return "vc-" + uuid.uuid4().hex[:24]
+
+
+def _video_segment_key_from_request(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    raw = request.headers.get(_VIDEO_SEGMENT_HEADER) or request.headers.get("X-Lobster-Video-Segment") or ""
+    return str(raw).strip()[:128]
+
+
+def _video_duration_from_body(body: Dict[str, Any]) -> Optional[float]:
+    for key in ("duration", "seconds"):
+        raw = (body or {}).get(key)
+        if raw is None or isinstance(raw, bool):
+            continue
+        if isinstance(raw, str) and raw.strip().lower().endswith("s"):
+            raw = raw.strip()[:-1]
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _video_receipt_lookup(payload: Any, keys: tuple) -> Any:
+    """在回执里递归找第一个命中的键（各家渠道字段位置不一致）。"""
+    if isinstance(payload, dict):
+        for key in keys:
+            if key in payload and payload[key] not in (None, "", [], {}):
+                return payload[key]
+        for value in payload.values():
+            found = _video_receipt_lookup(value, keys)
+            if found not in (None, "", [], {}):
+                return found
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            found = _video_receipt_lookup(item, keys)
+            if found not in (None, "", [], {}):
+                return found
+    return None
+
+
+def _video_receipt_status(payload: Any) -> str:
+    raw = _video_receipt_lookup(payload, _VIDEO_STATUS_KEYS)
+    value = str(raw or "").strip().lower()
+    return value
+
+
+def _video_receipt_seconds(payload: Any) -> Optional[float]:
+    raw = _video_receipt_lookup(payload, _VIDEO_SECONDS_KEYS)
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, str) and raw.strip().lower().endswith("s"):
+        raw = raw.strip()[:-1]
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _video_charge_extra_meta(
+    body: Dict[str, Any], *, segment_key: str = "", hold_key: str = "",
+) -> Dict[str, Any]:
+    duration = _video_duration_from_body(body)
+    extra: Dict[str, Any] = {}
+    if duration is not None:
+        extra["duration_seconds"] = duration
+        extra["charged_duration_seconds"] = duration
+    if hold_key:
+        extra["video_charge_hold"] = hold_key
+    if segment_key:
+        extra["video_segment_key"] = segment_key
+    return extra
+
+
+def _bind_video_charge_to_task(*, user_id: int, hold_key: str, task_id: str) -> None:
+    """把预扣行从 hold key 改挂到上游 task id（跨进程/跨轮询都能查到）。"""
+    hold = str(hold_key or "").strip()
+    tid = str(task_id or "").strip()
+    if not hold or not tid:
+        return
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(user_id),
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.ref_id == hold,
+            )
+            .order_by(CreditLedger.id.desc())
+            .first()
+        )
+        if row is None:
+            return
+        row.ref_id = tid
+        meta = dict(row.meta or {})
+        meta["generation_task_id"] = tid
+        meta.pop("video_charge_hold", None)
+        row.meta = meta
+        db.add(row)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("[comfly_proxy] 绑定视频任务号失败 hold=%s task=%s: %s", hold, tid, exc)
+    finally:
+        db.close()
+
+
+def _supersede_previous_video_charge(*, user_id: int, segment_key: str, reason: str = "") -> Optional[Decimal]:
+    """同一段分镜换渠道重试时，把上一笔还没结算的预扣退掉（同段只扣一次）。"""
+    key = str(segment_key or "").strip()
+    if not key:
+        return None
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(user_id),
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.entry_type == "pre_deduct",
+            )
+            .order_by(CreditLedger.id.desc())
+            .limit(40)
+            .all()
+        )
+        target = None
+        for row in rows:
+            meta = dict(row.meta or {})
+            if str(meta.get("video_segment_key") or "") != key:
+                continue
+            if meta.get("video_settled_at"):
+                continue
+            target = row
+            break
+        if target is None:
+            return None
+        meta = dict(target.meta or {})
+        user = db.query(User).filter(User.id == int(target.user_id)).first()
+        if user is None:
+            return None
+        # 预扣行 delta 是负数（quantize_credits 会把负数钳成 0，必须用 signed 版本）
+        amount = quantize_credits(abs(quantize_credits_signed(target.delta)))
+        if amount > 0:
+            _do_full_refund(
+                db,
+                user,
+                pre=amount,
+                capability_id=_CAPABILITY_FOR_BILLING,
+                model=str(meta.get("model") or ""),
+                endpoint=str(meta.get("endpoint") or "video_submit"),
+                error=reason or "同段分镜换渠道重试",
+                ref_type=_VIDEO_SETTLE_REF_TYPE,
+                ref_id=f"{key}#superseded",
+                description=f"同段分镜重试，退回上一笔预扣 ({key})",
+            )
+        meta["video_settled_at"] = datetime.utcnow().isoformat()
+        meta["video_settle_action"] = "superseded"
+        target.meta = meta
+        db.add(target)
+        db.commit()
+        return amount
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("[comfly_proxy] 同段重试退款失败 segment=%s: %s", key, exc)
+        return None
+    finally:
+        db.close()
+
+
+def _settle_video_charge_by_task(
+    *, user_id: int, task_id: str, payload: Any, model_hint: str = "",
+) -> Optional[Dict[str, Any]]:
+    """按上游回执结算视频预扣（幂等，异常只记日志，绝不影响轮询）：
+
+    · 任务失败/取消 → 全额退款
+    · 任务成功且模型按秒计费 → 按实际时长结算差额（多退少补）
+    · 任务成功但一次性计费 / 拿不到时长 → 按预扣定案
+    """
+    tid = str(task_id or "").strip()
+    if not tid:
+        return None
+    status = _video_receipt_status(payload)
+    if not status:
+        return None
+    failed = status in _VIDEO_FAILED_STATUSES
+    done = status in _VIDEO_DONE_STATUSES
+    if not failed and not done:
+        return None
+    db = SessionLocal()
+    try:
+        charge = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.ref_id == tid,
+                CreditLedger.entry_type == "pre_deduct",
+            )
+            .order_by(CreditLedger.id.desc())
+            .first()
+        )
+        if charge is None:
+            return None
+        meta = dict(charge.meta or {})
+        if meta.get("video_settled_at"):
+            return None
+        user = db.query(User).filter(User.id == int(charge.user_id)).first()
+        if user is None:
+            return None
+        model = str(meta.get("model") or model_hint or "")
+        endpoint = str(meta.get("endpoint") or "video_submit")
+        # 预扣行 delta 是负数（quantize_credits 会把负数钳成 0，必须用 signed 版本）
+        pre_amount = quantize_credits(abs(quantize_credits_signed(charge.delta)))
+        charged_seconds = meta.get("charged_duration_seconds") or meta.get("duration_seconds")
+        summary: Dict[str, Any]
+        if failed:
+            if pre_amount > 0:
+                _do_full_refund(
+                    db,
+                    user,
+                    pre=pre_amount,
+                    capability_id=_CAPABILITY_FOR_BILLING,
+                    model=model,
+                    endpoint=endpoint,
+                    error=f"upstream task {status}",
+                    ref_type=_VIDEO_SETTLE_REF_TYPE,
+                    ref_id=tid,
+                    description=f"视频任务失败自动退款 ({endpoint}) status={status}",
+                )
+            summary = {
+                "action": "refund",
+                "amount": credits_json_float(pre_amount),
+                "status": status,
+            }
+        else:
+            actual_seconds = _video_receipt_seconds(payload)
+            entry = lookup_comfly_model(model) or {}
+            per_second = str(entry.get("price_type") or "").strip() == "per_second"
+            if not per_second or not actual_seconds:
+                summary = {
+                    "action": "settled_as_charged",
+                    "amount": credits_json_float(pre_amount),
+                    "status": status,
+                    "actual_seconds": actual_seconds,
+                }
+            else:
+                actual_charge = estimate_comfly_credits(model, {"duration": actual_seconds}, for_user=True) or 0
+                _do_settle(
+                    db,
+                    user,
+                    pre=pre_amount,
+                    actual=int(actual_charge),
+                    capability_id=_CAPABILITY_FOR_BILLING,
+                    model=model,
+                    endpoint=endpoint,
+                    extra_meta={
+                        "status": status,
+                        "duration_seconds": actual_seconds,
+                        "charged_duration_seconds": charged_seconds,
+                    },
+                    ref_type=_VIDEO_SETTLE_REF_TYPE,
+                    ref_id=tid,
+                    description=(
+                        f"视频按实际时长结算 ({endpoint}) 实际 {actual_seconds}s / 预扣 "
+                        f"{charged_seconds if charged_seconds is not None else '-'}s"
+                    ),
+                )
+                summary = {
+                    "action": "settle",
+                    "amount": credits_json_float(actual_charge),
+                    "status": status,
+                    "actual_seconds": actual_seconds,
+                    "charged_duration_seconds": charged_seconds,
+                }
+        meta["video_settled_at"] = datetime.utcnow().isoformat()
+        meta["video_settle_action"] = str(summary.get("action") or "")
+        charge.meta = meta
+        db.add(charge)
+        db.commit()
+        _audit(
+            "video_task_settled",
+            user_id=int(charge.user_id),
+            model=model,
+            endpoint=endpoint,
+            task_id=tid,
+            **{k: v for k, v in summary.items() if k != "action"},
+            settle_action=summary.get("action"),
+        )
+        return summary
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.warning("[comfly_proxy] 视频按回执结算失败 task=%s: %s", tid, exc)
+        return None
+    finally:
+        db.close()
+
+
+_UPSTREAM_VIDEO_PROMPT_MAX_CHARS = 3900
+
+
+def _limit_upstream_video_prompt(text: Any, max_chars: int = _UPSTREAM_VIDEO_PROMPT_MAX_CHARS) -> str:
+    """把视频提示词截进上游上限（xAI / comfly grok / OpenMind 都是 4096），保留头尾。
+
+    2026-09-20 排查：老客户端没有客户端侧 3800 字符截断，长提示词让三个兜底通道
+    全部回 "Prompt length exceeds the maximum allowed length of 4096"，整单失败。
+    """
+    value = str(text or "").strip()
+    limit = max(1, int(max_chars or _UPSTREAM_VIDEO_PROMPT_MAX_CHARS))
+    if len(value) <= limit:
+        return value
+    marker = "……（内容过长已截断）……"
+    budget = max(1, limit - len(marker))
+    head = (budget * 2) // 3
+    tail = budget - head
+    trimmed = f"{value[:head].rstrip()}{marker}{value[-tail:].lstrip() if tail else ''}"
+    return trimmed[:limit]
+
+
+def _wan30_body_from_seedance_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+    """把「seedance 直连风格」的 body 转成 wan3.0（DashScope）需要的字段。
+
+    老客户端（OTA 落后于 2026-09-12）不认识 dashscope 通道，会把 wan3.0 打到
+    /seedance/v3/contents/generations/tasks，body 形如：
+      {"model": "wan3.0-video",
+       "content": [{"type": "text", "text": "..."},
+                   {"type": "image_url", "image_url": {"url": "https://..."}}],
+       "ratio": "9:16", "duration": 10}
+    这里把 prompt/首帧/时长/比例抽出来，交给 DashScope 通道，避免 Comfly 404。
+    """
+    prompt_parts: List[str] = []
+    images: List[str] = []
+    content = (body or {}).get("content")
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type == "text":
+                text = str(item.get("text") or "").strip()
+                if text:
+                    prompt_parts.append(text)
+            elif item_type in {"image_url", "image", "input_image", "first_frame"}:
+                ref = item.get("image_url")
+                if isinstance(ref, dict):
+                    ref = ref.get("url")
+                ref = str(ref or item.get("url") or "").strip()
+                if ref:
+                    images.append(ref)
+    prompt = str((body or {}).get("prompt") or "").strip() or "\n".join(prompt_parts)
+    for key in ("images", "image_urls", "image_url", "image", "filePaths", "media_files"):
+        value = (body or {}).get(key)
+        if isinstance(value, str) and value.strip():
+            images.append(value.strip())
+        elif isinstance(value, list):
+            for item in value:
+                ref = item.get("url") if isinstance(item, dict) else item
+                if str(ref or "").strip():
+                    images.append(str(ref).strip())
+    out: Dict[str, Any] = {"model": _canonical_video_model(str((body or {}).get("model") or "wan3.0-video"))}
+    if prompt:
+        out["prompt"] = prompt
+    if images:
+        out["images"] = images[:1]
+        out["image_url"] = images[0]
+    ratio = (body or {}).get("ratio") or (body or {}).get("aspect_ratio")
+    if ratio:
+        out["ratio"] = ratio
+    duration = (body or {}).get("duration") or (body or {}).get("seconds")
+    if duration:
+        out["duration"] = duration
+    resolution = (body or {}).get("resolution")
+    if resolution:
+        out["resolution"] = resolution
+    return out
+
+
+async def _submit_wan30_via_seedance_route(body: Dict[str, Any], model: str) -> Dict[str, Any]:
+    """在 seedance 直连路由上收到 wan3.0 时，改走 DashScope（老客户端兼容）。"""
+    wan_body = _wan30_body_from_seedance_payload(body)
+    resp = await call_comfly_video_generate(model, wan_body)
+    if isinstance(resp, dict) and resp.get("error"):
+        error = resp.get("error")
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        raise RuntimeError(message or "DashScope Wan3.0 提交失败")
+    task_id = _task_id_from_response(resp)
+    if isinstance(resp, dict) and task_id:
+        # 客户端在 seedance 分支里只认顶层 id/task_id，这里补上；其余字段原样带回供轮询使用
+        resp = {**resp, "id": task_id, "task_id": task_id}
+    return resp
 
 
 async def _save_generated_images_best_effort_by_user_id(
@@ -656,6 +1118,28 @@ def _normalized_model_id(model_id: str) -> str:
     return (model_id or "").strip().lower().replace("_", "-")
 
 
+_DASHSCOPE_WAN30_MODEL_ALIASES = frozenset(
+    {
+        "wan3.0",
+        "wan3.0-video",
+        "wanv3.0",
+        "wan/v3.0",
+        "万相3.0",
+        "万相3.0-video",
+    }
+)
+
+
+def _is_dashscope_wan30_model(model_id: str) -> bool:
+    """Accept the public wan3.0 label while keeping one priced upstream model."""
+    normalized = str(model_id or "").strip().lower().replace(" ", "")
+    return normalized in _DASHSCOPE_WAN30_MODEL_ALIASES
+
+
+def _canonical_video_model(model_id: str) -> str:
+    return "wan3.0-video" if _is_dashscope_wan30_model(model_id) else str(model_id or "").strip()
+
+
 _GPT_IMAGE_2_REQUEST_ALIASES = {
     "gpt-image-2",
     "gpt-image2",
@@ -736,20 +1220,25 @@ def _image_generation_model_attempts(model: str) -> List[str]:
     return [model]
 
 
-def _image_generation_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
+def _image_generation_model_attempts_for_user(
+    model: str,
+    *,
+    openai_official_first: bool,
+    prefer_openmind: bool = False,
+) -> List[str]:
     if not _is_gpt_image_2_request_model(model):
         return [model]
+    attempts = _image_generation_model_attempts(model)
     if openai_official_first:
-        return [
-            "gpt-image-2-openai-official",
-            "gpt-image-2-gaisc",
-            "gpt-image-2",
-            "gpt-image-2-comfyui-official",
-            "gpt-image-2-sutui",
-            "gpt-image-2-openmindapi",
-            "nano-banana-2",
-        ]
-    return _image_generation_model_attempts(model)
+        attempts.insert(0, "gpt-image-2-openai-official")
+    if prefer_openmind and "gpt-image-2-openmindapi" in attempts:
+        attempts.remove("gpt-image-2-openmindapi")
+        # Keep the official OpenAI channel first for entitled users. OpenMind
+        # is otherwise promoted ahead of relays whose recent failures can be
+        # circuit-broken by the loop below.
+        insert_at = 1 if openai_official_first else 0
+        attempts.insert(insert_at, "gpt-image-2-openmindapi")
+    return attempts
 
 
 def _image_edit_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
@@ -815,6 +1304,7 @@ def _is_trusted_internal_video_fallback(request: Request) -> bool:
 def _do_pre_deduct(
     db: Session, user: User, credits: int, *,
     capability_id: str, model: str, endpoint: str, extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy", ref_id: Optional[str] = None,
 ) -> Decimal:
     """直接扣账（与 capabilities.py force_credits 路径一致）。返回实际扣的 Decimal。"""
     if not _should_deduct_credits() or credits <= 0:
@@ -831,7 +1321,8 @@ def _do_pre_deduct(
     append_credit_ledger(
         db, user.id, -fc, "pre_deduct", bal,
         description=f"Comfly proxy 预扣 ({endpoint})",
-        ref_type="comfly_proxy",
+        ref_type=ref_type,
+        ref_id=ref_id,
         meta={
             "capability_id": capability_id, "model": model, "endpoint": endpoint,
             "pre_estimated": credits_json_float(fc), "upstream": "comfly",
@@ -845,6 +1336,7 @@ def _do_pre_deduct(
 def _do_settle(
     db: Session, user: User, *, pre: Decimal, actual: int,
     capability_id: str, model: str, endpoint: str, extra_meta: Optional[Dict[str, Any]] = None,
+    ref_type: str = "comfly_proxy", ref_id: Optional[str] = None, description: str = "",
 ) -> None:
     """实际 vs 预扣的差额结算。actual<pre 退差额，actual>pre 再扣差额。"""
     if not _should_deduct_credits():
@@ -862,8 +1354,9 @@ def _do_settle(
         bal = quantize_credits(user.credits)
         append_credit_ledger(
             db, user.id, -deduct_now, "settle", bal,
-            description=f"Comfly proxy 结算补扣 ({endpoint}) actual={actual} pre={float(pre)}",
-            ref_type="comfly_proxy",
+            description=description or f"Comfly proxy 结算补扣 ({endpoint}) actual={actual} pre={float(pre)}",
+            ref_type=ref_type,
+            ref_id=ref_id,
             meta={
                 "capability_id": capability_id, "model": model, "endpoint": endpoint,
                 "pre_estimated": credits_json_float(pre), "actual": credits_json_float(actual_dec),
@@ -883,8 +1376,9 @@ def _do_settle(
         bal = quantize_credits(user.credits)
         append_credit_ledger(
             db, user.id, refund_amt, "refund", bal,
-            description=f"Comfly proxy 结算退款 ({endpoint}) actual={actual} pre={float(pre)}",
-            ref_type="comfly_proxy",
+            description=description or f"Comfly proxy 结算退款 ({endpoint}) actual={actual} pre={float(pre)}",
+            ref_type=ref_type,
+            ref_id=ref_id,
             meta={
                 "capability_id": capability_id, "model": model, "endpoint": endpoint,
                 "pre_estimated": credits_json_float(pre), "actual": credits_json_float(actual_dec),
@@ -898,6 +1392,7 @@ def _do_settle(
 def _do_full_refund(
     db: Session, user: User, *, pre: Decimal,
     capability_id: str, model: str, endpoint: str, error: str = "",
+    ref_type: str = "comfly_proxy", ref_id: Optional[str] = None, description: str = "",
 ) -> None:
     if not _should_deduct_credits() or pre <= 0:
         return
@@ -906,8 +1401,9 @@ def _do_full_refund(
     bal = quantize_credits(user.credits)
     append_credit_ledger(
         db, user.id, pre, "refund", bal,
-        description=f"Comfly proxy 调用失败全额退款 ({endpoint})",
-        ref_type="comfly_proxy",
+        description=description or f"Comfly proxy 调用失败全额退款 ({endpoint})",
+        ref_type=ref_type,
+        ref_id=ref_id,
         meta={
             "capability_id": capability_id, "model": model, "endpoint": endpoint,
             "refunded": credits_json_float(pre), "upstream": "comfly",
@@ -921,11 +1417,16 @@ async def _comfly_request(
     method: str, url: str, body: Optional[Dict[str, Any]], headers: Dict[str, str], timeout: float,
 ) -> Dict[str, Any]:
     """统一封装 httpx 调用 Comfly。失败抛 RuntimeError，含状态码与文本片段。"""
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        if method.upper() == "GET":
-            r = await client.get(url, headers=headers)
-        else:
-            r = await client.post(url, headers=headers, json=body or {})
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            if method.upper() == "GET":
+                r = await client.get(url, headers=headers)
+            else:
+                r = await client.post(url, headers=headers, json=body or {})
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Comfly request timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Comfly transport error ({type(exc).__name__}): {exc}") from exc
     if r.status_code >= 400:
         raise RuntimeError(f"Comfly HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -958,8 +1459,13 @@ async def _comfly_multipart_request(
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        r = await client.post(url, headers=headers, data=data, files=files)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            r = await client.post(url, headers=headers, data=data, files=files)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Comfly multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Comfly multipart transport error ({type(exc).__name__}): {exc}") from exc
     if r.status_code >= 400:
         raise RuntimeError(f"Comfly HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -975,8 +1481,13 @@ async def _yunwu_multipart_request(
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        r = await client.post(url, headers=headers, data=data, files=files)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            r = await client.post(url, headers=headers, data=data, files=files)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Yunwu multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Yunwu multipart transport error ({type(exc).__name__}): {exc}") from exc
     if r.status_code >= 400:
         raise RuntimeError(f"Yunwu HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -1077,12 +1588,17 @@ async def _sutui_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
         body["model"] = "openai/gpt-image-2"
     if body.get("size") and not body.get("image_size"):
         body["image_size"] = body.get("size")
-    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
-        resp = await client.post(
-            f"{_sutui_image_base_url()}/v1/images/generations",
-            headers=await _sutui_image_headers(),
-            json=body,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+            resp = await client.post(
+                f"{_sutui_image_base_url()}/v1/images/generations",
+                headers=await _sutui_image_headers(),
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Sutui request timeout after {int(_TIMEOUT_IMAGE)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Sutui transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"Sutui HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1103,13 +1619,18 @@ async def _sutui_multipart_request(
     files: List[Tuple[str, Tuple[Any, ...]]],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        resp = await client.post(
-            f"{_sutui_image_base_url()}{path}",
-            headers=await _sutui_image_headers(multipart=True),
-            data=data,
-            files=files,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            resp = await client.post(
+                f"{_sutui_image_base_url()}{path}",
+                headers=await _sutui_image_headers(multipart=True),
+                data=data,
+                files=files,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Sutui multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"Sutui multipart transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"Sutui HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1153,6 +1674,7 @@ def _is_retryable_image_error(exc: BaseException) -> bool:
         "connection",
         "read",
         "network",
+        "transport",
         "new_api_error",
         "unknown_error",
         "upstream",
@@ -1160,6 +1682,12 @@ def _is_retryable_image_error(exc: BaseException) -> bool:
         "未接收到上游响应内容",
     )
     return any(token in msg for token in retry_tokens)
+
+
+def _should_skip_same_image_channel_retry(exc: BaseException) -> bool:
+    """Advance to the next provider immediately for transient upstream failures."""
+    msg = str(exc or "").lower()
+    return "timeout" in msg or "transport" in msg or "http 5" in msg
 
 
 def _extract_upstream_trace_id(error: Any) -> str:
@@ -1687,6 +2215,32 @@ async def _persist_generated_image_asset(
         raise RuntimeError(
             f"generated image exceeds {int(_MAX_GENERATED_IMAGE_PERSIST_BYTES / (1024 * 1024))}MB"
         )
+    content_sha256 = hashlib.sha256(data).hexdigest()
+    content_size = len(data)
+    existing_asset = _find_asset_by_content_sha256(
+        db,
+        int(user_id),
+        media_type="image",
+        file_size=content_size,
+        content_sha256=content_sha256,
+    )
+    if existing_asset is not None:
+        logger.info(
+            "[素材] 生成图内容去重 命中已有 asset_id=%s sha=%s size=%s",
+            existing_asset.asset_id,
+            content_sha256[:12],
+            content_size,
+        )
+        return {
+            "asset_id": existing_asset.asset_id,
+            "media_type": existing_asset.media_type,
+            "url": existing_asset.source_url,
+            "source_url": existing_asset.source_url,
+            "file_size": existing_asset.file_size,
+            "prompt": prompt,
+            "model": model,
+            "reused": True,
+        }
     aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
         _save_bytes_or_tos,
         data,
@@ -1711,7 +2265,7 @@ async def _persist_generated_image_asset(
         prompt=prompt,
         model=model,
         tags="auto,image_generate,miniprogram",
-        meta={"source": "miniprogram_image_generate", "job_id": job_id, "origin_url": url},
+        meta={"source": "miniprogram_image_generate", "job_id": job_id, "origin_url": url, "content_sha256": content_sha256},
     )
     db.add(asset)
     db.flush()
@@ -1796,13 +2350,18 @@ async def _openmind_multipart_request(
 ) -> Dict[str, Any]:
     headers = _openmind_image_headers()
     headers.pop("Content-Type", None)
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        resp = await client.post(
-            f"{_openmind_image_base_url()}{path}",
-            headers=headers,
-            data=data,
-            files=files,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            resp = await client.post(
+                f"{_openmind_image_base_url()}{path}",
+                headers=headers,
+                data=data,
+                files=files,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"OpenMind multipart timeout after {int(timeout)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"OpenMind multipart transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenMind HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1818,12 +2377,17 @@ async def _openmind_multipart_request(
 
 async def _openai_official_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
     body = _openai_official_image_body(source_body)
-    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
-        resp = await client.post(
-            _openai_official_image_url("/images/generations"),
-            headers=_openai_official_image_headers(),
-            json=body,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+            resp = await client.post(
+                _openai_official_image_url("/images/generations"),
+                headers=_openai_official_image_headers(),
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"OpenAI official image timeout after {int(_TIMEOUT_IMAGE)}s ({type(exc).__name__})") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"OpenAI official image transport error ({type(exc).__name__}): {exc}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenAI official HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
@@ -1922,6 +2486,8 @@ def _openmind_video_model(model: str) -> str:
 def _openmind_video_body(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     forwarded = dict(body or {})
     forwarded["model"] = _openmind_video_model(model)
+    if forwarded.get("prompt"):
+        forwarded["prompt"] = _limit_upstream_video_prompt(forwarded.get("prompt"))
     duration_value = None
     for key in ("duration", "seconds"):
         if key in forwarded and forwarded.get(key) is not None:
@@ -2311,7 +2877,7 @@ def _xai_video_api_key() -> str:
 
 def _xai_video_body(body: Dict[str, Any], model: str) -> Dict[str, Any]:
     source = dict(body or {})
-    prompt = str(source.get("prompt") or "").strip()
+    prompt = _limit_upstream_video_prompt(source.get("prompt"))
     if not prompt:
         raise HTTPException(400, "missing prompt")
     try:
@@ -2572,14 +3138,17 @@ async def _openmind_video_content(task_id: str, model: str = "") -> Response:
 def _task_id_from_response(resp: Dict[str, Any]) -> str:
     if not isinstance(resp, dict):
         return ""
-    for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
-        value = resp.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    data = resp.get("data")
-    if isinstance(data, dict):
-        for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
-            value = data.get(key)
+    # DashScope returns a request_id at the top level and the pollable task
+    # id under output.task_id. Always prefer the provider task id.
+    containers = []
+    for container_key in ("output", "data"):
+        container = resp.get(container_key)
+        if isinstance(container, dict):
+            containers.append(container)
+    containers.append(resp)
+    for container in containers:
+        for key in ("task_id", "id", "video_id", "job_id", "generation_id", "run_id", "request_id"):
+            value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return ""
@@ -2589,13 +3158,41 @@ def _remember_proxy_video_task(task_id: str, api_kind: str = "", model: str = ""
     tid = (task_id or "").strip()
     if not tid:
         return
-    _proxy_video_task_meta[tid] = ((api_kind or "").strip(), (model or "").strip())
+    kind = (api_kind or "").strip()
+    route_model = (model or "").strip()
+    _proxy_video_task_meta[tid] = (kind, route_model)
     while len(_proxy_video_task_meta) > _MAX_PROXY_VIDEO_TASK_TRACK:
         _proxy_video_task_meta.popitem(last=False)
+    try:
+        cache_set(
+            f"comfly:video-task-meta:{tid}",
+            json.dumps({"api_kind": kind, "model": route_model}, ensure_ascii=False),
+            ttl_seconds=24 * 60 * 60,
+        )
+    except Exception:
+        logger.debug("failed to persist video task routing metadata", exc_info=True)
 
 
 def _proxy_video_task_hint(task_id: str) -> Tuple[str, str]:
-    return _proxy_video_task_meta.get((task_id or "").strip(), ("", ""))
+    tid = (task_id or "").strip()
+    if not tid:
+        return "", ""
+    remembered = _proxy_video_task_meta.get(tid)
+    if remembered:
+        return remembered
+    try:
+        raw = cache_get(f"comfly:video-task-meta:{tid}")
+        if raw:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(payload, dict):
+                kind = str(payload.get("api_kind") or "").strip()
+                route_model = str(payload.get("model") or "").strip()
+                if kind or route_model:
+                    _proxy_video_task_meta[tid] = (kind, route_model)
+                    return kind, route_model
+    except Exception:
+        logger.debug("failed to load persisted video task routing metadata", exc_info=True)
+    return "", ""
 
 def _require_model_entry(model: str) -> Dict[str, Any]:
     entry = lookup_comfly_model(model)
@@ -2617,6 +3214,10 @@ def _coerce_grok_video_resolution(raw: Any) -> str:
 
 def _is_grok_api_format(entry: Dict[str, Any]) -> bool:
     return str((entry or {}).get("api_format") or "").strip().lower() == "grok"
+
+
+def _is_comfyui_grok_api_format(entry: Dict[str, Any]) -> bool:
+    return str((entry or {}).get("api_format") or "").strip().lower() == "comfyui_grok"
 
 
 def _coerce_grok15_model(duration: Any) -> str:
@@ -2816,9 +3417,15 @@ async def _build_comfly_grok15_multipart(
     entry: Dict[str, Any],
 ) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]], str, List[Any], List[Path]]:
     forwarded = dict(body or {})
-    prompt = str(forwarded.get("prompt") or "").strip()
+    prompt = _limit_upstream_video_prompt(forwarded.get("prompt"))
     duration = forwarded.get("duration") or forwarded.get("seconds") or 6
-    upstream_model = _coerce_grok15_model(duration)
+    # The dedicated ComfyUI video relay accepts the canonical model id. The
+    # legacy Comfly Grok route still uses duration-specific model aliases.
+    upstream_model = (
+        _upstream_model(model, entry)
+        if _is_comfyui_grok_api_format(entry)
+        else _coerce_grok15_model(duration)
+    )
     ratio = forwarded.get("ratio") or forwarded.get("aspect_ratio") or "9:16"
     data: Dict[str, str] = {
         "model": upstream_model,
@@ -2876,8 +3483,9 @@ async def _submit_comfly_grok15_video(
             except Exception:
                 pass
     if isinstance(resp, dict):
-        resp.setdefault("_provider", "comfly")
-        resp.setdefault("_api_format", "grok_v1")
+        is_comfyui = _is_comfyui_grok_api_format(entry)
+        resp.setdefault("_provider", "comfyui" if is_comfyui else "comfly")
+        resp.setdefault("_api_format", "comfyui_grok_v1" if is_comfyui else "grok_v1")
         resp.setdefault("_requested_model", upstream_model)
     return resp
 
@@ -2893,7 +3501,18 @@ async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str =
         raise HTTPException(400, "missing task_id")
     kind = (api_kind or "").strip().lower()
     route_model = (model or "").strip()
-    if kind == "grok_v1":
+    if kind == "dashscope_wan30":
+        response = await call_comfly_task_query(
+            tid,
+            token_group="dashscope_wan30",
+            api_format="dashscope_wan30",
+        )
+        if isinstance(response, dict) and response.get("error"):
+            error = response.get("error")
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise RuntimeError(message or "DashScope Wan3.0 查询失败")
+        return response
+    if kind in {"grok_v1", "comfyui_grok_v1"}:
         resp = await _comfly_request(
             "GET",
             _comfly_url(f"/v1/videos/{tid}", route_model or "grok-video-3"),
@@ -2902,8 +3521,8 @@ async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str =
             _TIMEOUT_VIDEO_POLL,
         )
         if isinstance(resp, dict):
-            resp.setdefault("_provider", "comfly")
-            resp.setdefault("_api_format", "grok_v1")
+            resp.setdefault("_provider", "comfyui" if kind == "comfyui_grok_v1" else "comfly")
+            resp.setdefault("_api_format", kind)
         return resp
     try:
         resp = await _comfly_request(
@@ -2979,6 +3598,20 @@ def _coerce_comfly_image_ratio_size(*values: Any) -> str:
     return "1:1"
 
 
+def _gaisc_image_size(*values: Any) -> str:
+    """Return G-AISC pixel dimensions aligned to its required 16-pixel grid."""
+    ratio = _coerce_comfly_image_ratio_size(*values)
+    return {
+        "1:1": "1024x1024",
+        "4:3": "1360x1024",
+        "3:4": "1024x1360",
+        "16:9": "1920x1088",
+        "9:16": "1088x1920",
+        "3:2": "1536x1024",
+        "2:3": "1024x1536",
+    }.get(ratio, "1024x1024")
+
+
 def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     upstream = _upstream_model(model, entry)
     forwarded = dict(body)
@@ -3044,6 +3677,13 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
             out["image"] = image_url
         if image_urls:
             out["image_urls"] = image_urls
+        if str(entry.get("token_group") or "").strip().lower() == "gaisc":
+            out["size"] = _gaisc_image_size(
+                forwarded.get("aspect_ratio"),
+                forwarded.get("ratio"),
+                forwarded.get("size"),
+                forwarded.get("image_size"),
+            )
         return out
     if api_format == "grok":
         prompt = str(forwarded.get("prompt") or "").strip()
@@ -3194,15 +3834,58 @@ async def _execute_image_generation_request(
     billing_user_id: int,
     model: str,
     body: Dict[str, Any],
+    persist_assets: bool = True,
 ) -> Dict[str, Any]:
     openai_official_first = _openai_official_image_first_for_user(billing_user_id)
-    attempt_models = _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
+    attempt_models = _image_generation_model_attempts_for_user(
+        model,
+        openai_official_first=openai_official_first,
+        prefer_openmind=_openmind_image_fallback_enabled(),
+    )
     if len(attempt_models) == 1:
         _require_model_entry(model)
     errors: List[str] = []
     last_error = ""
     attempts_per_model = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
     reference_urls = _image_reference_urls(body)
+    if reference_urls:
+        # 垫图走 generations 会被上游忽略（实测 openmindapi 只按纯文本出图，结果与垫图无关）。
+        # 这里把参考图下载成真实图片，改走 edits 通道，保留垫图语义。
+        buffered_files: List[Tuple[str, str, bytes, str]] = []
+        for ref_url in reference_urls[:4]:
+            try:
+                ref_bytes, ref_content_type, ref_ext = await _download_image_bytes(ref_url)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "参考图下载失败，无法作为垫图使用（可能是内网/需要登录的地址），"
+                        "请改用上传图片作为垫图。%s" % str(exc)[:120]
+                    ),
+                )
+            if ref_bytes:
+                buffered_files.append(("image", "reference%s" % (ref_ext or ".png"), ref_bytes, ref_content_type or "image/png"))
+        if buffered_files:
+            edit_data: Dict[str, str] = {
+                str(k): (json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v))
+                for k, v in body.items()
+                if v is not None and str(k) not in {"image", "image_url", "image_urls", "images"}
+            }
+            edit_data.setdefault("response_format", "url")
+            client_request_id = body.get("client_request_id")
+            logger.info(
+                "[image_generate] routing to edits model=%s refs=%d",
+                model,
+                len(buffered_files),
+            )
+            return await _execute_image_edit_request(
+                request_user_id=request_user_id,
+                billing_user_id=billing_user_id,
+                model=model,
+                data=edit_data,
+                buffered_files=buffered_files,
+                client_request_id=str(client_request_id or "").strip()[:120],
+            )
 
     for index, attempt_model in enumerate(attempt_models, start=1):
         try:
@@ -3298,17 +3981,18 @@ async def _execute_image_generation_request(
                         )
                     else:
                         resp = await _openai_official_image_request(upstream_body)
+                elif token_group == "openmindapi":
+                    # This channel is a direct provider, not a Comfly relay.
+                    # It must work for both text-to-image and image editing.
+                    resp = await _openmind_image_request(upstream_body)
                 elif reference_urls:
-                    if token_group == "openmindapi":
-                        resp = await _openmind_image_request(upstream_body)
-                    else:
-                        edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
-                        resp = await _submit_image_edit_attempt(
-                            attempt_model=attempt_model,
-                            entry=entry,
-                            data=edit_data,
-                            files=edit_files,
-                        )
+                    edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
+                    resp = await _submit_image_edit_attempt(
+                        attempt_model=attempt_model,
+                        entry=entry,
+                        data=edit_data,
+                        files=edit_files,
+                    )
                 elif token_group == "sutui":
                     resp = await _sutui_image_request(upstream_body)
                 else:
@@ -3319,14 +4003,18 @@ async def _execute_image_generation_request(
                         _comfly_headers(attempt_model),
                         _TIMEOUT_IMAGE,
                     )
-                asset_persistence_queued = _queue_generated_image_asset_persistence(
-                    billing_user_id,
-                    response_payload=resp,
-                    prompt=str(body.get("prompt") or ""),
-                    model=attempt_model,
-                    limit=int(body.get("n") or body.get("num_images") or 1),
-                    exclude_urls=reference_urls,
-                ) if isinstance(resp, dict) else False
+                asset_persistence_queued = (
+                    _queue_generated_image_asset_persistence(
+                        billing_user_id,
+                        response_payload=resp,
+                        prompt=str(body.get("prompt") or ""),
+                        model=attempt_model,
+                        limit=int(body.get("n") or body.get("num_images") or 1),
+                        exclude_urls=reference_urls,
+                    )
+                    if persist_assets and isinstance(resp, dict)
+                    else False
+                )
                 if isinstance(resp, dict) and attempt_model != model:
                     resp = dict(resp)
                     fallback = resp.setdefault("_lobster_fallback", {})
@@ -3404,26 +4092,35 @@ async def _execute_image_generation_request(
                     error_message=last_error[:1000],
                     meta={"attempt": index, "retry": retry_index, "retries": attempts_per_model, "refs": len(reference_urls)},
                 )
-                if retry_index >= attempts_per_model or not _is_retryable_image_error(e):
+                if (
+                    retry_index >= attempts_per_model
+                    or not _is_retryable_image_error(e)
+                    or _should_skip_same_image_channel_retry(e)
+                ):
                     break
                 await asyncio.sleep(0.8 * retry_index)
 
         openmind_fallback_provider = "openmind"
         if (
             _openmind_image_fallback_enabled()
+            and provider_label != "openmindapi"
             and _image_generation_channel_available(openmind_fallback_provider, attempt_model)
             and (not last_error or _is_retryable_image_error(RuntimeError(last_error)))
         ):
             try:
                 resp = await _openmind_image_request(upstream_body)
-                asset_persistence_queued = _queue_generated_image_asset_persistence(
-                    billing_user_id,
-                    response_payload=resp,
-                    prompt=str(body.get("prompt") or ""),
-                    model=attempt_model,
-                    limit=int(body.get("n") or body.get("num_images") or 1),
-                    exclude_urls=reference_urls,
-                ) if isinstance(resp, dict) else False
+                asset_persistence_queued = (
+                    _queue_generated_image_asset_persistence(
+                        billing_user_id,
+                        response_payload=resp,
+                        prompt=str(body.get("prompt") or ""),
+                        model=attempt_model,
+                        limit=int(body.get("n") or body.get("num_images") or 1),
+                        exclude_urls=reference_urls,
+                    )
+                    if persist_assets and isinstance(resp, dict)
+                    else False
+                )
                 if isinstance(resp, dict):
                     resp = dict(resp)
                     fallback = resp.setdefault("_lobster_fallback", {})
@@ -4061,21 +4758,35 @@ async def proxy_videos_generations_submit(
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
-    model = (body.get("model") or "").strip()
+    requested_model = (body.get("model") or "").strip()
+    model = _canonical_video_model(requested_model)
     if not model:
         raise HTTPException(400, "缺少 model")
+    if model != requested_model:
+        body = dict(body)
+        body["model"] = model
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if not internal_fallback and segment_key:
+        # 同一段分镜换渠道重试：先把上一笔还没结算的预扣退掉（同段只扣一次）
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="video_submit",
+        extra_meta=_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     _audit(
         "video_submit_pre_deduct",
@@ -4087,7 +4798,14 @@ async def proxy_videos_generations_submit(
     )
 
     try:
-        if _is_grok_api_format(entry):
+        api_format = str(entry.get("api_format") or "").strip().lower()
+        if api_format == "dashscope_wan30":
+            resp = await call_comfly_video_generate(model, body)
+            if isinstance(resp, dict) and resp.get("error"):
+                error = resp.get("error")
+                message = error.get("message") if isinstance(error, dict) else str(error)
+                raise RuntimeError(message or "DashScope Wan3.0 提交失败")
+        elif _is_grok_api_format(entry) or _is_comfyui_grok_api_format(entry):
             resp = await _submit_comfly_grok15_video(body, model, entry)
         else:
             resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
@@ -4121,8 +4839,21 @@ async def proxy_videos_generations_submit(
     task_id = _task_id_from_response(resp) or (
         (resp.get("data", {}) or {}).get("task_id") if isinstance(resp.get("data"), dict) else resp.get("task_id")
     )
-    api_kind = "grok_v1" if _is_grok_api_format(entry) else "veo_v2"
+    api_kind = (
+        "dashscope_wan30"
+        if str(entry.get("api_format") or "").strip().lower() == "dashscope_wan30"
+        else (
+            "comfyui_grok_v1"
+            if _is_comfyui_grok_api_format(entry)
+            else ("grok_v1" if _is_grok_api_format(entry) else "veo_v2")
+        )
+    )
     _remember_proxy_video_task(task_id, api_kind, model)
+    if pre > 0 and task_id:
+        # 预扣挂到上游任务号上，后续轮询就能按回执结算（失败全退 / 按秒结算差额）
+        _bind_video_charge_to_task(
+            user_id=billing_user_id, hold_key=hold_key, task_id=str(task_id).strip()
+        )
     _audit("video_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
            task_id=task_id,
            api_kind=api_kind,
@@ -4135,8 +4866,16 @@ async def proxy_videos_generations_submit(
         user_id=billing_user_id,
         requested_model=model,
         model=model,
-        provider="comfly",
-        channel="comfly",
+        provider=(
+            "dashscope"
+            if api_kind == "dashscope_wan30"
+            else ("comfyui" if _is_comfyui_grok_api_format(entry) else "comfly")
+        ),
+        channel=(
+            "dashscope"
+            if api_kind == "dashscope_wan30"
+            else ("comfyui" if _is_comfyui_grok_api_format(entry) else "comfly")
+        ),
         route=api_kind,
         endpoint="/api/comfly-proxy/v2/videos/generations",
         request_id=task_id or "",
@@ -4149,38 +4888,110 @@ async def proxy_videos_generations_submit(
 async def proxy_videos_generations_poll(
     task_id: str,
     request: Request,
+    api_kind: str = Query("", description="显式指定任务提供商，例如 dashscope_wan30"),
+    model: str = Query("", description="显式指定上游模型，用于跨进程轮询路由"),
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
     remembered_kind, remembered_model = _proxy_video_task_hint(task_id)
+    requested_kind = (api_kind or "").strip().lower()
+    requested_model = (model or "").strip()
+    effective_kind = requested_kind or remembered_kind
+    effective_model = requested_model or remembered_model
+    if effective_kind == "dashscope_wan30" and not effective_model:
+        effective_model = "wan3.0-video"
     try:
-        resp = await _poll_comfly_video_task(task_id, remembered_model, remembered_kind)
+        resp = await _poll_comfly_video_task(task_id, effective_model, effective_kind)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
+    # 按上游回执结算：任务失败全额退；按秒计费的（wan3.0）按实际时长退差额；幂等
+    _settle_video_charge_by_task(
+        user_id=int(current_user.id),
+        task_id=task_id,
+        payload=resp,
+        model_hint=effective_model,
+    )
     return JSONResponse(resp)
 
 
 
 
 
-def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
+def _video_provider_policy_raw(model: str, channel: str = "", feature: str = "") -> Dict[str, Any]:
     raw_model = (model or "").strip()
     low_model = raw_model.lower().replace("_", "-").replace(" ", "")
     low_channel = (channel or "").strip().lower()
+    low_feature = (feature or "").strip().lower().replace("-", "_")
     proxy_base = "/api/comfly-proxy"
+
+    # 分镜台/批量创意视频共用的万相3.0（DashScope）：批量视频那条链路一直在用，
+    # 2026-09-18 冒烟确认可用（5s 9:16 出片耗时约 274s，直连 DASHSCOPE_WAN30_API_KEY）。
+    # 位置由 VIDEO_POLICY_WAN30_POSITION 控制：first(默认)/last/off。
+    wan30_provider = {"channel": "dashscope", "model": "wan3.0-video", "base_url": proxy_base}
+    # 用户口径（2026-09-30）：openmind 优先，wan3.0 / seedance 放最后调度。
+    wan30_position = (os.environ.get("VIDEO_POLICY_WAN30_POSITION") or "last").strip().lower()
+
+    if _is_dashscope_wan30_model(raw_model):
+        return {
+            "ok": True,
+            "model_family": "wan30",
+            "providers": [
+                {
+                    "channel": "dashscope",
+                    "model": "wan3.0-video",
+                    "base_url": proxy_base,
+                }
+            ],
+        }
+
+    # veo3.1 text-to-video (yingmeng 1.0): yunwu retired -> OpenMind(veo31) then our comfly.
+    # image-to-video / reference-to-video keep the grok branch below.
+    if (
+        low_channel == "yunwu"
+        or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"}
+        or low_model.startswith("apiz/veo3.1/text-to-video")
+    ):
+        return {
+            "ok": True,
+            "model_family": "veo31",
+            "providers": [
+                {"channel": "openmind", "model": "veo3.1", "base_url": proxy_base},
+                {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
+            ],
+        }
 
     if low_model.startswith("apiz/veo3.1/image-to-video") or low_model.startswith("apiz/veo3.1/reference-to-video"):
         low_channel = "grok"
 
-    if low_channel in {"openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/") or low_model.startswith("xai/grok-imagine-video-1.5/"):
+    if low_channel in {"comfyui", "comfyui_video", "openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/") or low_model.startswith("xai/grok-imagine-video-1.5/"):
+        providers = [
+            # Keep the public channel name compatible with existing clients.
+            # The pricing entry routes this model to the dedicated comfyui_grok
+            # upstream internally.
+            {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+            {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+            {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+        ]
+        if low_feature in {"local_bestseller", "localbestseller"}:
+            # 同城爆款单段 10 秒视频：固定 OpenMind 主通道（grok-video-3，160 积分/条），
+            # 不插 DashScope 万相3.0（wan3.0-video，1200 积分/条），否则余额不足会整条失败。
+            return {
+                "ok": True,
+                "model_family": "grok",
+                "providers": [
+                    {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+                    {"channel": "comfly", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+                ],
+            }
+
+        if wan30_position in {"first", "1", "primary"}:
+            providers.insert(0, dict(wan30_provider))
+        elif wan30_position in {"last", "2"}:
+            providers.append(dict(wan30_provider))
         return {
             "ok": True,
             "model_family": "grok",
-            "providers": [
-                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
-                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
-                {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
-            ],
+            "providers": providers,
         }
 
     if low_channel in {"yunwu", "??", "??"} or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"} or low_model.startswith("apiz/veo3.1/text-to-video"):
@@ -4188,7 +4999,8 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "veo31",
             "providers": [
-                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+                {"channel": "openmind", "model": "veo3.1", "base_url": proxy_base},
+                {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
             ],
         }
 
@@ -4226,9 +5038,44 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
         "ok": True,
         "model_family": "default",
         "providers": [
+            {"channel": "openmind", "model": "doubao-seedance-2-0-260128", "base_url": proxy_base},
             {"channel": "seedance", "model": raw_model or "doubao-seedance-2-0-260128", "base_url": proxy_base},
         ],
     }
+
+
+# 视频通道调度优先级（2026-09-30 用户口径）：openmind 优先；wan3.0(dashscope) 与 seedance 放最后。
+_VIDEO_CHANNEL_PRIORITY: Dict[str, int] = {
+    "openmind": 0,
+    "comfly": 10,
+    "xai": 20,
+    "xing": 30,
+    "dashscope": 900,
+    "seedance": 910,
+}
+_VIDEO_CHANNEL_PRIORITY_DEFAULT = 500
+
+
+def _ordered_video_providers(providers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按通道优先级稳定排序：openmind → comfly → xai → xing → wan/seedance（最后）。"""
+    indexed = list(enumerate(providers or []))
+    indexed.sort(
+        key=lambda pair: (
+            _VIDEO_CHANNEL_PRIORITY.get(str((pair[1] or {}).get("channel") or "").strip().lower(), _VIDEO_CHANNEL_PRIORITY_DEFAULT),
+            pair[0],
+        )
+    )
+    return [item for _, item in indexed]
+
+
+def _video_provider_policy(model: str, channel: str = "", feature: str = "") -> Dict[str, Any]:
+    """对外入口：先算原始策略，再强制按全局通道优先级排序。"""
+    policy = _video_provider_policy_raw(model, channel, feature)
+    providers = policy.get("providers") if isinstance(policy, dict) else None
+    if isinstance(providers, list) and len(providers) > 1:
+        policy = dict(policy)
+        policy["providers"] = _ordered_video_providers(providers)
+    return policy
 
 
 @router.get("/api/comfly-proxy/video/provider-policy", summary="Server-controlled video provider fallback policy")
@@ -4240,7 +5087,7 @@ async def proxy_video_provider_policy(
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
-    policy = _video_provider_policy(model, channel)
+    policy = _video_provider_policy(model, channel, feature)
     _audit("video_provider_policy", user_id=current_user.id, model=model, channel=channel, feature=feature, family=policy.get("model_family"))
     return JSONResponse(policy)
 
@@ -4260,13 +5107,25 @@ async def proxy_openmind_video_submit(
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if not internal_fallback and segment_key:
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="openmind_video_submit",
-        extra_meta={"upstream": "openmind", "openmind_model": upstream_body.get("model")},
+        extra_meta={
+            "upstream": "openmind",
+            "openmind_model": upstream_body.get("model"),
+            **_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        },
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     _audit(
         "openmind_video_submit_pre_deduct",
@@ -4321,6 +5180,12 @@ async def proxy_openmind_video_submit(
         task_id=_task_id_from_response(resp),
         pre=credits_json_float(pre),
     )
+    if pre > 0 and _task_id_from_response(resp):
+        _bind_video_charge_to_task(
+            user_id=billing_user_id,
+            hold_key=hold_key,
+            task_id=str(_task_id_from_response(resp)).strip(),
+        )
     _remember_video_image_retry_context(
         _task_id_from_response(resp),
         provider="openmind",
@@ -4388,6 +5253,14 @@ async def proxy_openmind_video_poll(
             )
     except Exception as e:
         raise HTTPException(502, f"OpenMind video poll failed: {e}")
+    for _settle_task_id in {requested_task_id, active_task_id}:
+        if _settle_task_id:
+            _settle_video_charge_by_task(
+                user_id=int(current_user.id),
+                task_id=_settle_task_id,
+                payload=resp,
+                model_hint=str((retry_context or {}).get("model") or ""),
+            )
     return JSONResponse(resp)
 
 
@@ -4494,13 +5367,24 @@ async def proxy_xai_video_submit(request: Request):
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if not internal_fallback and segment_key:
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="xai_video_submit",
-        extra_meta={"upstream": "xai"},
+        extra_meta={
+            "upstream": "xai",
+            **_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        },
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     try:
         response = await _xai_video_submit(body, model)
@@ -4517,6 +5401,10 @@ async def proxy_xai_video_submit(request: Request):
         raise HTTPException(502, f"xAI video submit failed: {exc}")
     task_id = _task_id_from_response(response)
     _remember_proxy_video_task(task_id, "xai", model)
+    if pre > 0 and task_id:
+        _bind_video_charge_to_task(
+            user_id=billing_user_id, hold_key=hold_key, task_id=str(task_id).strip()
+        )
     _remember_video_image_retry_context(
         task_id,
         provider="xai",
@@ -4566,6 +5454,13 @@ async def proxy_xai_video_poll(
             )
     except Exception as exc:
         raise HTTPException(502, f"xAI video poll failed: {exc}")
+    for _settle_task_id in {request_id, active_task_id}:
+        if _settle_task_id:
+            _settle_video_charge_by_task(
+                user_id=int(current_user.id),
+                task_id=_settle_task_id,
+                payload=response,
+            )
     return JSONResponse(response)
 
 
@@ -4688,26 +5583,41 @@ async def proxy_seedance_tasks_submit(
         raise HTTPException(400, "缺少 model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
+    seedance_api_format = str(entry.get("api_format") or "").strip().lower()
+    seedance_is_wan30 = seedance_api_format == "dashscope_wan30"
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
+    segment_key = _video_segment_key_from_request(request)
+    hold_key = _video_charge_hold_key()
+    if seedance_is_wan30 and segment_key:
+        _supersede_previous_video_charge(
+            user_id=billing_user_id, segment_key=segment_key, reason="同段分镜换渠道重试"
+        )
     pre = _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="seedance_submit",
+        extra_meta=_video_charge_extra_meta(body, segment_key=segment_key, hold_key=hold_key),
+        ref_type=_VIDEO_CHARGE_REF_TYPE,
+        ref_id=hold_key,
     )
     _audit("seedance_submit_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
 
     try:
-        resp = await _comfly_request(
-            "POST",
-            _comfly_url("/seedance/v3/contents/generations/tasks", model),
-            upstream_body,
-            _comfly_headers(model),
-            _TIMEOUT_VIDEO_SUBMIT,
-        )
+        if seedance_is_wan30:
+            # 老客户端把 wan3.0 提交到 seedance 直连路由：Comfly 会 404，这里改走 DashScope
+            resp = await _submit_wan30_via_seedance_route(body, model)
+        else:
+            resp = await _comfly_request(
+                "POST",
+                _comfly_url("/seedance/v3/contents/generations/tasks", model),
+                upstream_body,
+                _comfly_headers(model),
+                _TIMEOUT_VIDEO_SUBMIT,
+            )
     except Exception as e:
         _do_full_refund_by_user_id(billing_user_id, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit", error=str(e))
@@ -4715,8 +5625,11 @@ async def proxy_seedance_tasks_submit(
         raise HTTPException(502, f"Comfly Seedance submit 调用失败：{e}")
 
     data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+    seedance_task_id = str(resp.get("id") or resp.get("task_id") or data.get("task_id") or data.get("id") or "").strip()
+    if pre > 0 and seedance_task_id:
+        _bind_video_charge_to_task(user_id=billing_user_id, hold_key=hold_key, task_id=seedance_task_id)
     _audit("seedance_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
-           task_id=resp.get("id") or resp.get("task_id") or data.get("task_id") or data.get("id"),
+           task_id=seedance_task_id,
            pre=credits_json_float(pre))
     return JSONResponse(resp)
 
@@ -4737,5 +5650,19 @@ async def proxy_seedance_tasks_poll(
             _TIMEOUT_VIDEO_POLL,
         )
     except Exception as e:
-        raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}")
+        # 老客户端把 wan3.0 打到 seedance 路由，Comfly 查不到这个任务（404/400）→ 改问 DashScope
+        message = str(e).lower()
+        if "http 404" not in message and "http 400" not in message:
+            raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}")
+        try:
+            resp = await _poll_comfly_video_task(task_id, model="wan3.0-video", api_kind="dashscope_wan30")
+        except Exception as wan_exc:  # noqa: BLE001
+            raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}") from wan_exc
+    # 按上游回执结算（失败全退 / 按秒结算差额），老客户端这条路径也能享受
+    _settle_video_charge_by_task(
+        user_id=int(current_user.id),
+        task_id=task_id,
+        payload=resp,
+        model_hint="wan3.0-video",
+    )
     return JSONResponse(resp)

@@ -108,6 +108,23 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
             }
         ),
     },
+    "online.whatsapp_takeover": {
+        "name": "个人whatapp助手",
+        "description": "接管本机 Windows 桌面版 WhatsApp，按轮次读取未读私聊并自动生成回复。",
+        "keywords": ["WhatsApp", "whatapp", "私信接管", "自动回复", "桌面客户端"],
+        "execution_target": "online",
+        "task_kind": "client_workflow",
+        "action": "native_whatsapp_poll",
+        "arg_schema": _schema(
+            {
+                "account_id": {"type": "string", "default": "desktop-whatsapp-default"},
+                "message_poll_interval_seconds": {"type": "integer", "minimum": 1, "maximum": 300, "default": 15},
+                "takeover_session_minutes": {"type": "integer", "minimum": 1, "maximum": 1440, "default": 30},
+                "max_unread_per_round": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+                "reply_instruction": {"type": "string", "maxLength": 4000, "default": ""},
+            }
+        ),
+    },
     "online.wechat_add_friend": {
         "name": "个人微信加好友",
         "description": "通过本机个人微信按手机号或微信号添加好友。",
@@ -140,6 +157,36 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
                 "max_scrolls": {"type": "integer", "minimum": 1, "maximum": 30, "default": 6},
             },
             ["targets"],
+        ),
+    },
+    "online.wechat_send_message": {
+        "name": "微信发消息",
+        "description": (
+            "用本机个人微信给指定联系人或群发一条文本消息。收件人可以写微信备注名、昵称或微信号，"
+            "多个目标会逐个发送；发送前会核对当前会话是否就是这个收件人，对不上就跳过并说明原因。"
+        ),
+        "keywords": ["微信", "发消息", "发信息", "私信", "通知", "转告", "发给", "告诉", "发这个"],
+        "execution_target": "online",
+        "task_kind": "client_workflow",
+        "action": "native_wechat_send_message",
+        "arg_schema": _schema(
+            {
+                "targets": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "description": "收件人：微信备注名 / 昵称 / 微信号，可传多个",
+                },
+                "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "要发送的文本内容，原样发出，不要带引号或说明",
+                },
+                "account_id": {"type": "string", "default": "pc-wechat-default"},
+            },
+            ["targets", "message"],
         ),
     },
     "online.moments_generate_images": {

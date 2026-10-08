@@ -181,6 +181,37 @@ def test_brand_token_rejected_under_other_brand(db_session, db_session_factory, 
     assert accepted.json()["email"] == PHONE_EMAIL
 
 
+def test_account_language_can_be_persisted_for_h5(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import access_token_claims, create_access_token, get_password_hash
+    from backend.app.models import User
+
+    user = User(
+        email=f"{PHONE}+language@sms.lobster.local",
+        hashed_password=get_password_hash("language-pass"),
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="bihuo",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    token = create_access_token(access_token_claims(user))
+    client = _auth_client(db_session_factory, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}", "X-Lobster-Brand": "bihuo"}
+
+    invalid = client.post("/auth/language", headers=headers, json={"language": "fr-FR"})
+    updated = client.post("/auth/language", headers=headers, json={"language": "en-US"})
+    current = client.get("/auth/me", headers=headers)
+
+    assert invalid.status_code == 400
+    assert updated.status_code == 200
+    assert updated.json() == {"language": "en-US"}
+    assert current.status_code == 200
+    assert current.json()["language"] == "en-US"
+
+
 def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
     db_session, db_session_factory, monkeypatch
 ):

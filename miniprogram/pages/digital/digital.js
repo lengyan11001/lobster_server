@@ -5,6 +5,7 @@ const staticAssets = require("../../utils/static_assets");
 const share = require("../../utils/share");
 
 const DIGITAL_VIDEO_PENDING_KEY = "lobster_digital_video_pending_tasks";
+const VOICE_CLONE_MAX_BYTES = 10 * 1024 * 1024;
 
 function assetUrl(path) {
   const value = String(path || "").trim();
@@ -544,6 +545,10 @@ Page({
       extension: ["mp3", "wav", "m4a", "aac"],
       success: (res) => {
         const file = (res.tempFiles || [])[0] || {};
+        if (Number(file.size || 0) > VOICE_CLONE_MAX_BYTES) {
+          wx.showToast({ title: "声音文件不能超过10MB", icon: "none" });
+          return;
+        }
         const filePath = file.path || file.tempFilePath || "";
         if (!filePath) {
           wx.showToast({ title: "未选择音频", icon: "none" });

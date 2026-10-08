@@ -36,17 +36,22 @@ from ..models import (
     PublishAccount,
     ScheduledTaskRun,
     User,
+    UserDeviceLabel,
     UserInstallation,
 )
 from ..services.brand_context import explicit_request_brand_mark, public_brand_config, request_brand_mark
+from ..services import device_labels
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import attach_system_task_message
 from ..services.installation_slot_ownership import assert_installation_slot_owner
+from ..services import dispatch_devices
 from ..services.mastra_attachment_security import (
     UnsafeMastraImageError,
     assert_safe_mastra_image,
 )
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
+from ..services.customer_service_faq import strip_customer_service_faq
+from ..services.work_mode_brief import strip_work_brief
 from .auth import (
     ALGORITHM,
     get_current_user,
@@ -77,6 +82,7 @@ _H5_INDEX_HEADERS = {
 }
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _H5_WEBCLIP_URL = "https://h5.bhzn.top/"
+_HIKONG_WEBCLIP_URL = "https://h5.hikongai.cn/"
 _H5_WEBCLIP_LABEL = "必火AI员工"
 _VALID_MODES = {"direct"}
 _H5_CLIENT_COMMAND_PREFIX = "__LOBSTER_H5_CLIENT_COMMAND__"
@@ -138,6 +144,7 @@ class H5HeartbeatIn(BaseModel):
     publish_accounts: Optional[List[Dict[str, Any]]] = None
     wechat_contacts: Optional[List[Dict[str, Any]]] = None
     capabilities: Optional[List[str]] = None
+    remote_support: Optional[Dict[str, Any]] = None
 
 
 class H5DeviceDisplayNameIn(BaseModel):
@@ -175,6 +182,11 @@ _WECHAT_REPLY_LANGUAGE_ALIASES = {
     "chinese": "zh-CN",
     "中文": "zh-CN",
     "简体中文": "zh-CN",
+    "zh-tw": "zh-TW",
+    "zh-hant": "zh-TW",
+    "繁體中文": "zh-TW",
+    "繁体中文": "zh-TW",
+    "traditional chinese": "zh-TW",
     "en-us": "en",
     "en-gb": "en",
     "english": "en",
@@ -189,7 +201,7 @@ _WECHAT_REPLY_LANGUAGE_ALIASES = {
     "韩文": "ko",
     "韩语": "ko",
 }
-_WECHAT_REPLY_LANGUAGES = {"zh-CN", "en", "ja", "ko", "th", "vi", "id", "ms", "es", "pt", "fr", "de", "ru", "ar"}
+_WECHAT_REPLY_LANGUAGES = {"zh-CN", "zh-TW", "en", "ja", "ko", "th", "vi", "id", "ms", "es", "pt", "fr", "de", "ru", "ar"}
 
 
 def _normalize_wechat_reply_language(value: Any) -> str:
@@ -292,14 +304,31 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
-def _device_payload(row: H5ChatDevicePresence, now: Optional[datetime] = None) -> Dict[str, Any]:
+def _device_payload(
+    row: H5ChatDevicePresence,
+    now: Optional[datetime] = None,
+    *,
+    resolved: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """设备条目。resolved 来自 device_labels.device_names_for()：备注按机器身份保存，
+    所以换过槽位（换账号/换品牌/OTA 后新签名槽位）设备名也不会退回默认。"""
     current = now or datetime.utcnow()
-    return {
+    info = resolved if isinstance(resolved, dict) else {}
+    name = str(info.get("display_name") or "").strip()
+    source = str(info.get("label_source") or "").strip()
+    if not name:
+        name = str(row.display_name or "").strip() or "local-online"
+        source = source or ("presence" if row.display_name else "none")
+    data = {
         "installation_id": row.installation_id,
-        "device_name": row.display_name or row.installation_id,
+        "device_name": name,
+        "label_source": source or "none",
         "last_seen_at": _iso(row.last_seen_at),
         "online": is_device_online(row.last_seen_at, now=current),
     }
+    if info.get("suggested_label"):
+        data["suggested_label"] = info.get("suggested_label")
+    return data
 
 
 def _mounted_default_rows(db: Session, user_id: int) -> Dict[str, H5MountedAccountDefault]:
@@ -439,7 +468,11 @@ def _collect_device_publish_accounts(
         .limit(100)
         .all()
     )
-    device_rows = [_device_payload(row, now) for row in devices]
+    names = device_labels.device_names_for(db, user_id, [str(r.installation_id) for r in devices])
+    device_rows = [
+        _device_payload(row, now, resolved=names.get(str(row.installation_id)))
+        for row in devices
+    ]
     out: list[Dict[str, Any]] = []
     wechat_contacts_by_device: Dict[str, list[Dict[str, str]]] = {}
     seen: set[str] = set()
@@ -600,11 +633,6 @@ def _collect_wechat_account(
             device_name=str(selected.get("device_name") or ""),
             last_seen_at=str(selected.get("last_seen_at") or ""),
             defaultable=False,
-            extra={
-                "wechat_contacts": list(
-                    (wechat_contacts_by_device or {}).get(str(selected.get("installation_id") or ""), [])
-                )[:500]
-            },
         )
         for selected in device_rows
     ]
@@ -695,7 +723,7 @@ def _serialize_message(
         "target_message_id": row.target_message_id or "",
         "session_id": row.session_id,
         "parent_message_id": row.parent_message_id,
-        "content": row.content,
+        "content": strip_work_brief(strip_customer_service_faq(row.content)),
         "attachments": row.attachments or [],
         "status": row.status,
         "installation_id": row.installation_id,
@@ -1039,6 +1067,7 @@ def _image_media_type(path: Path) -> str:
 
 def _h5_static_media_type(path: Path) -> str:
     return {
+        ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
         ".js": "application/javascript; charset=utf-8",
     }.get(path.suffix.lower(), _image_media_type(path))
@@ -1090,7 +1119,8 @@ def _webclip_icon_xml(branding: Dict[str, Any]) -> str:
 def _ios_webclip_mobileconfig(branding: Dict[str, Any]) -> str:
     mark = str(branding.get("mark") or "bihuo").strip().lower()
     label_raw = str(branding.get("display_name") or branding.get("document_title") or _H5_WEBCLIP_LABEL).strip()
-    webclip_url_raw = f"{_H5_WEBCLIP_URL}?brand={quote(mark, safe='')}"
+    webclip_base_url = _HIKONG_WEBCLIP_URL if mark == "hikong" else _H5_WEBCLIP_URL
+    webclip_url_raw = f"{webclip_base_url}?brand={quote(mark, safe='')}"
     webclip_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{webclip_url_raw}#webclip"))
     profile_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{webclip_url_raw}#profile"))
     identifier = f"top.bhzn.h5.webclip.{mark}"
@@ -1279,7 +1309,35 @@ def _h5_index_response(branding: Dict[str, Any]) -> Response:
     content = _H5_INDEX.read_text(encoding="utf-8")
     for placeholder, value in replacements.items():
         content = content.replace(placeholder, html.escape(value, quote=True))
+    # 每次部署都把 js/css 的 ?v= 换成当前构建：浏览器必然当新资源去取，
+    # 手机端不会再有「还停在老界面，要用户自己刷新」的情况。
+    from ..services.deploy_build import deploy_build_id
+
+    build = deploy_build_id()
+    content = re.sub(r'(/h5-static/[^"?\s]+)\?v=[^"\']*', r"\1?v=" + build, content)
+    healer = (
+        '<script id="h5-build-selfheal">(function(){'
+        "window.__H5_BUILD__=" + json.dumps(build) + ";"
+        "var c=window.__H5_BUILD__;if(!c)return;var k=false;"
+        "function q(){if(k)return;k=true;"
+        'fetch("/h5/api/build?_="+Date.now(),{cache:"no-store"})'
+        ".then(function(r){return r.ok?r.json():null;})"
+        ".then(function(d){k=false;if(d&&d.build&&d.build!==c){console.warn('[h5] 新版本 '+d.build+'，自动刷新');location.reload();}})"
+        '.catch(function(){k=false;});}'
+        "setInterval(q,20000);"
+        'document.addEventListener("visibilitychange",function(){if(!document.hidden)q();});'
+        "window.addEventListener('focus',q);})();</script>"
+    )
+    content = content.replace("</head>", healer + "</head>", 1)
     return Response(content=content, media_type="text/html", headers=_H5_INDEX_HEADERS)
+
+
+@router.get("/h5/api/build", include_in_schema=False)
+def h5_build() -> dict:
+    """H5 前端版本探针（页面据此自动刷新）。"""
+    from ..services.deploy_build import deploy_build_id
+
+    return {"build": deploy_build_id()}
 
 
 @router.get("/h5", include_in_schema=False)
@@ -1293,9 +1351,15 @@ def h5_static_asset(filename: str):
     safe = _safe_upload_filename(filename)
     path = (_H5_STATIC_DIR / safe).resolve()
     root = _H5_STATIC_DIR.resolve()
-    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
+    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".html", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
         raise HTTPException(status_code=404, detail="文件不存在")
-    cache_control = "no-store, no-cache, must-revalidate, max-age=0" if path.suffix.lower() in {".css", ".js"} else "public, max-age=86400"
+    # 静态资源在 index.html 里带 ?v= 版本号，可以长缓存；
+    # 但 html（尤其 index.html）必须不缓存，否则手机/WebView 会拿 24h 前的页面
+    # 继续引用旧的 js 版本，表现成"还在跳老界面 / 接口加载失败"。
+    if path.suffix.lower() == ".html":
+        cache_control = "no-store, no-cache, must-revalidate, max-age=0"
+    else:
+        cache_control = "public, max-age=86400"
     return FileResponse(str(path), media_type=_h5_static_media_type(path), headers={"Cache-Control": cache_control})
 
 
@@ -1610,10 +1674,20 @@ def h5_device_heartbeat(
         if body.capabilities is not None
         else None
     )
+    remote_support_snapshot = None
+    if isinstance(body.remote_support, dict):
+        remote_support_snapshot = {
+            "enabled": bool(body.remote_support.get("enabled")),
+            "running": bool(body.remote_support.get("running")),
+            "device_id": str(body.remote_support.get("device_id") or "")[:128],
+            "verification_code": str(body.remote_support.get("verification_code") or "")[:64],
+            "server": str(body.remote_support.get("server") or "")[:255],
+        }
     if (
         account_snapshot is None
         and wechat_contact_snapshot is None
         and capability_snapshot is None
+        and remote_support_snapshot is None
         and _heartbeat_fast_ack_recent(heartbeat_key)
     ):
         return {"ok": True, "installation_id": xi, "throttled": True}
@@ -1650,12 +1724,13 @@ def h5_device_heartbeat(
             and account_snapshot is None
             and wechat_contact_snapshot is None
             and capability_snapshot is None
+            and remote_support_snapshot is None
         ):
             return {"ok": True, "installation_id": xi, "last_seen_at": _iso(previous_seen_at), "throttled": True}
         row.last_seen_at = now
         if should_set_display_name:
             row.display_name = body.display_name.strip()[:128] or None
-        if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None:
+        if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None or remote_support_snapshot is not None:
             previous_payload = row.account_payload if isinstance(row.account_payload, dict) else {}
             row.account_payload = {
                 "accounts": account_snapshot if account_snapshot is not None else previous_payload.get("accounts", []),
@@ -1670,6 +1745,11 @@ def h5_device_heartbeat(
                     else previous_payload.get("capabilities", [])
                 ),
                 "reported_at": now.isoformat(),
+                "remote_support": (
+                    remote_support_snapshot
+                    if remote_support_snapshot is not None
+                    else previous_payload.get("remote_support", {"enabled": False})
+                ),
             }
     else:
         row = H5ChatDevicePresence(
@@ -1682,16 +1762,34 @@ def h5_device_heartbeat(
                     "wechat_contacts": wechat_contact_snapshot or [],
                     "capabilities": capability_snapshot or [],
                     "reported_at": now.isoformat(),
+                    "remote_support": remote_support_snapshot or {"enabled": False},
                 }
-                if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None
+                if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None or remote_support_snapshot is not None
                 else None
             ),
             last_seen_at=now,
             created_at=now,
         )
         db.add(row)
+    # 设备备注按机器身份保存：人工改过的名字，换槽位（换账号/换品牌/OTA 后新签名槽位）后自动沿用
+    if device_labels.is_custom_label(body.display_name):
+        device_labels.remember_device_label(
+            db,
+            user_id=current_user_id,
+            installation_id=xi,
+            display_name=str(body.display_name).strip(),
+            source="manual",
+        )
+    # 新建的存在时这行还没有 flush（会话 autoflush=False），先落库再沿用，否则查不到刚建的行
+    db.flush()
+    adopted = device_labels.adopt_device_label(db, current_user_id, xi)
     db.commit()
-    return {"ok": True, "installation_id": xi, "last_seen_at": _iso(now)}
+    return {
+        "ok": True,
+        "installation_id": xi,
+        "last_seen_at": _iso(now),
+        "device_name": adopted or (row.display_name or ""),
+    }
 
 
 @router.patch("/api/h5-chat/devices/{installation_id}/display-name", summary="H5 设置 online 员工昵称")
@@ -1712,16 +1810,38 @@ def h5_update_device_display_name(
     )
     if not row:
         raise HTTPException(status_code=404, detail="设备不存在")
-    row.display_name = (body.display_name or "").strip()[:128] or None
+    new_name = (body.display_name or "").strip()[:128]
+    row.display_name = new_name or None
     db.add(row)
+    # 备注按机器身份保存 + 同机器的其它槽位一起改名，避免换槽位后又变回默认名字
+    if device_labels.is_custom_label(new_name):
+        device_labels.remember_device_label(
+            db, user_id=owner_user.id, installation_id=iid, display_name=new_name, source="manual"
+        )
+        device_labels.apply_label_to_machine_slots(
+            db, user_id=owner_user.id, installation_id=iid, display_name=new_name
+        )
+    else:
+        existing = (
+            db.query(UserDeviceLabel)
+            .filter(
+                UserDeviceLabel.user_id == owner_user.id,
+                UserDeviceLabel.last_installation_id == iid,
+            )
+            .first()
+        )
+        if existing is not None:
+            db.delete(existing)
     db.commit()
     db.refresh(row)
     now = datetime.utcnow()
+    resolved_name, label_source = device_labels.resolve_device_label(db, owner_user.id, iid)
     return {
         "ok": True,
         "device": {
             "installation_id": row.installation_id,
-            "display_name": row.display_name,
+            "display_name": resolved_name or row.display_name or "local-online",
+            "label_source": label_source,
             "last_seen_at": _iso(row.last_seen_at),
             "online": is_device_online(row.last_seen_at, now=now),
             "publish_account_count": len((row.account_payload or {}).get("accounts") or []) if isinstance(row.account_payload, dict) else 0,
@@ -1743,24 +1863,67 @@ def h5_devices_status(
         .limit(100)
         .all()
     )
+    names = device_labels.device_names_for(db, owner_user.id, [str(r.installation_id) for r in rows])
     devices = []
     for r in rows:
         account_payload = r.account_payload if isinstance(r.account_payload, dict) else {}
         capabilities = account_payload.get("capabilities") if isinstance(account_payload.get("capabilities"), list) else []
-        wechat_contacts = account_payload.get("wechat_contacts") if isinstance(account_payload.get("wechat_contacts"), list) else []
-        wechat_contacts = [contact for contact in wechat_contacts[:500] if isinstance(contact, dict)]
+        # 微信通讯录（明文联系方式）不在状态轮询里回传；需要时走 /api/h5-chat/wechat-contacts 按需拉取
+        resolved = names.get(str(r.installation_id)) or {}
+        display_name = str(resolved.get("display_name") or "").strip() or str(r.display_name or "").strip() or "local-online"
+        entry = {
+            "installation_id": r.installation_id,
+            "display_name": display_name,
+            "label_source": str(resolved.get("label_source") or ("presence" if r.display_name else "none")),
+            "last_seen_at": _iso(r.last_seen_at),
+            "online": is_device_online(r.last_seen_at, now=now),
+            "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
+            "capabilities": capabilities,
+        }
+        if not resolved.get("display_name"):
+            suggestions = device_labels.suggest_device_labels(
+                db, user_id=owner_user.id, installation_id=str(r.installation_id), limit=5
+            )
+            if suggestions:
+                # 机器身份也换过（不只是槽位变）时连不上，这时把最近改过的备注列出来让用户选
+                entry["suggested_label"] = suggestions[0]
+                entry["suggested_labels"] = suggestions
         devices.append(
-            {
-                "installation_id": r.installation_id,
-                "display_name": r.display_name,
-                "last_seen_at": _iso(r.last_seen_at),
-                "online": is_device_online(r.last_seen_at, now=now),
-                "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
-                "capabilities": capabilities,
-                "wechat_contacts": wechat_contacts,
-            }
+            entry
         )
-    return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
+    selection_slot, selection_source = dispatch_devices.get_selection(db, owner_user.id)
+    return {
+        "ok": True,
+        "online": any(d["online"] for d in devices),
+        "devices": devices,
+        "system_devices": dispatch_devices.system_device_rows(db, now=now),
+        "selection": {"installation_id": selection_slot, "source": selection_source},
+        "marketing_only": dispatch_devices.user_uses_system_device(db, owner_user.id),
+    }
+
+
+@router.get("/api/h5-chat/wechat-contacts", summary="H5 按需读取 online 微信通讯录（选择联系人时才拉）")
+def h5_wechat_contacts(
+    installation_id: str = Query("", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    target = (installation_id or "").strip()
+    query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == owner_user.id)
+    if target:
+        query = query.filter(H5ChatDevicePresence.installation_id == target)
+    row = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).first()
+    contacts: list[Dict[str, Any]] = []
+    if row is not None:
+        payload = row.account_payload if isinstance(row.account_payload, dict) else {}
+        raw = payload.get("wechat_contacts") if isinstance(payload.get("wechat_contacts"), list) else []
+        contacts = [item for item in raw[:500] if isinstance(item, dict)]
+    return {
+        "ok": True,
+        "installation_id": str(getattr(row, "installation_id", "") or ""),
+        "contacts": contacts,
+    }
 
 
 @router.get("/api/h5-chat/mounted-accounts", summary="H5 已挂载平台账号列表")
@@ -2195,3 +2358,70 @@ def h5_complete_message(
     _finish_mastra_parent_from_children(db, row)
     db.commit()
     return {"ok": True, "status": row.status}
+
+
+class H5DeviceSelectionIn(BaseModel):
+    """H5 选择设备：installation_id + source（own / system）。"""
+
+    installation_id: str = ""
+    source: str = ""
+
+
+@router.get("/api/h5-chat/device-selection", summary="H5 当前选择的设备")
+def h5_get_device_selection(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    slot, source = dispatch_devices.get_selection(db, owner_user.id)
+    return {
+        "ok": True,
+        "installation_id": slot,
+        "source": source,
+        "marketing_only": dispatch_devices.user_uses_system_device(db, owner_user.id),
+    }
+
+
+@router.post("/api/h5-chat/device-selection", summary="H5 选择设备（自己的设备 / 可调度系统设备）")
+def h5_save_device_selection(
+    body: H5DeviceSelectionIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    slot = dispatch_devices.normalize_slot(body.installation_id)
+    kind = "system" if str(body.source or "").strip().lower() == "system" else "own"
+    if not slot:
+        raise HTTPException(status_code=400, detail="缺少设备")
+    if dispatch_devices.is_system_selection(slot):
+        # 「系统设备」= 交给系统调度：池子空则拒绝；池子非空则存哨兵（派发时挑空闲设备）
+        if not dispatch_devices.has_system_devices(db):
+            raise HTTPException(status_code=403, detail="系统设备池为空，请联系管理员在后台添加可调度设备")
+        kind = dispatch_devices.SYSTEM_DEVICE_SOURCE
+    if kind == "system":
+        if not dispatch_devices.is_system_device(db, slot):
+            raise HTTPException(status_code=403, detail="该设备不在可调度设备列表中")
+    else:
+        owned = (
+            db.query(H5ChatDevicePresence)
+            .filter(
+                H5ChatDevicePresence.user_id == owner_user.id,
+                H5ChatDevicePresence.installation_id == slot,
+            )
+            .first()
+        )
+        if owned is None:
+            raise HTTPException(status_code=403, detail="不是当前账号的设备")
+    saved_slot, saved_kind = dispatch_devices.save_selection(db, owner_user.id, slot, kind)
+    logger.info(
+        "[h5-chat] device selection user_id=%s slot=%s source=%s",
+        owner_user.id,
+        saved_slot,
+        saved_kind,
+    )
+    return {
+        "ok": True,
+        "installation_id": saved_slot,
+        "source": saved_kind,
+        "marketing_only": saved_kind == dispatch_devices.SYSTEM_DEVICE_SOURCE,
+    }

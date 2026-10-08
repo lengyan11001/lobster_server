@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,6 +18,14 @@ DEFAULT_BRAND_MARK = "bihuo"
 BRAND_MARK_RE = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 BRAND_EMAIL_TAG = "+brand-"
+# Each OEM has one designated level-1 operator account. These accounts act as
+# the brand's default agent and can see all users in that brand without first
+# claiming them. The bihuo account intentionally keeps the legacy hierarchy.
+BRAND_FIXED_AGENT_PHONES: dict[str, str] = {
+    "daka": "13927485337",
+    "hikong": "13510019898",
+    "jinghai": "13554848542",
+}
 
 BUILTIN_BRANDS: dict[str, dict[str, Any]] = {
     "bihuo": {
@@ -40,6 +49,18 @@ BUILTIN_BRANDS: dict[str, dict[str, Any]] = {
         "icon_128": "/h5-static/daka_128.png",
         "icon_256": "/h5-static/daka_256.png",
         "primary_color": "#00a9c7",
+    },
+    "hikong": {
+        "mark": "hikong",
+        "display_name": "海康AI智能体",
+        "logo_primary": "海康",
+        "logo_accent": "AI智能体",
+        "document_title": "海康AI智能体",
+        "icon_32": "/h5-static/hikong_32.png",
+        "icon_128": "/h5-static/hikong_128.png",
+        "icon_256": "/h5-static/hikong_256.png",
+        "primary_color": "#0b8f8a",
+        "domains": ["hikongai.cn", "www.hikongai.cn", "h5.hikongai.cn", "admin.hikongai.cn"],
     },
 }
 
@@ -70,6 +91,14 @@ def _manifest_oem_brands() -> dict[str, dict[str, Any]]:
 
 
 BUILTIN_BRANDS.update(_manifest_oem_brands())
+# Domains are deployment-owned routing signals, kept separate from the OEM asset
+# manifest so a client branding refresh cannot remove a live web entry point.
+BUILTIN_BRANDS.setdefault("hikong", {})["domains"] = [
+    "hikongai.cn",
+    "www.hikongai.cn",
+    "h5.hikongai.cn",
+    "admin.hikongai.cn",
+]
 
 
 def ensure_user_brand_schema(db_engine) -> None:
@@ -141,6 +170,9 @@ def resolve_brand_mark_candidates(
 
 def explicit_request_brand_mark(request: Request) -> Optional[str]:
     """Return a request's explicit brand without inventing a default."""
+    domain_mark = request_domain_brand_mark(request)
+    if domain_mark:
+        return domain_mark
     return resolve_brand_mark_candidates(
         *request.headers.getlist("x-lobster-brand"),
         *request.query_params.getlist("brand"),
@@ -151,6 +183,9 @@ def explicit_request_brand_mark(request: Request) -> Optional[str]:
 
 def resolve_request_brand_mark(request: Request, *raw_values: Optional[str]) -> str:
     """Resolve body/form and transport brand values as one consistent context."""
+    domain_mark = request_domain_brand_mark(request)
+    if domain_mark:
+        return domain_mark
     return str(
         resolve_brand_mark_candidates(
             *raw_values,
@@ -159,6 +194,46 @@ def resolve_request_brand_mark(request: Request, *raw_values: Optional[str]) -> 
             *request.query_params.getlist("brand_mark"),
         )
     )
+
+
+def _domain_brand_map() -> dict[str, str]:
+    """Return trusted OEM host mappings; URL parameters remain the fallback."""
+    result: dict[str, str] = {}
+    for mark, profile in BUILTIN_BRANDS.items():
+        for raw_host in (profile.get("domains") or []) if isinstance(profile, dict) else []:
+            host = str(raw_host or "").strip().lower().rstrip(".")
+            if host:
+                result[host] = mark
+    raw = (os.environ.get("LOBSTER_OEM_DOMAIN_MAP") or os.environ.get("OEM_DOMAIN_MAP") or "").strip()
+    if raw:
+        try:
+            configured = json.loads(raw)
+        except (TypeError, ValueError):
+            configured = {}
+        if isinstance(configured, dict):
+            for key, value in configured.items():
+                key = str(key or "").strip().lower().rstrip(".")
+                if not key:
+                    continue
+                # Accept either {"host": "mark"} or {"mark": ["host", ...]}.
+                if isinstance(value, str):
+                    mark = normalize_brand_mark(value, strict=False)
+                    if "." in key:
+                        result[key] = mark
+                elif isinstance(value, (list, tuple, set)):
+                    mark = normalize_brand_mark(key, strict=False)
+                    for raw_host in value:
+                        host = str(raw_host or "").strip().lower().rstrip(".")
+                        if host:
+                            result[host] = mark
+    return result
+
+
+def request_domain_brand_mark(request: Request) -> Optional[str]:
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",", 1)[0]
+    host = host.split(":", 1)[0].strip().lower().rstrip(".")
+    mark = _domain_brand_map().get(host)
+    return normalize_brand_mark(mark, strict=False) if mark else None
 
 
 def request_brand_mark(request: Request) -> str:
@@ -180,6 +255,20 @@ def ensure_brand_enabled(db: Session, raw: Optional[str]) -> str:
 
 def user_brand_mark(user: User) -> str:
     return normalize_brand_mark(getattr(user, "brand_mark", None), strict=False)
+
+
+def is_brand_fixed_agent(user: Optional[User]) -> bool:
+    """Whether a user is the designated full-visibility agent for its OEM."""
+    if user is None or not bool(getattr(user, "is_agent", False)):
+        return False
+    try:
+        if int(getattr(user, "agent_level", 0) or 0) != 1:
+            return False
+    except (TypeError, ValueError):
+        return False
+    mark = user_brand_mark(user)
+    expected_phone = BRAND_FIXED_AGENT_PHONES.get(mark)
+    return bool(expected_phone and phone_from_account_email(getattr(user, "email", "")) == expected_phone)
 
 
 def scoped_account_email(account_email: str, raw_brand: Optional[str]) -> str:

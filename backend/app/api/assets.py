@@ -481,15 +481,72 @@ def _queue_online_video_split(
     installation_id: str,
     source_asset: Asset,
     source_filename: str,
+    creative_candidate_group: str = "",
+    tags: str = "",
+    segment_seconds: Optional[int] = None,
+    keep_source: bool = False,
 ) -> H5ChatMessage:
     now = datetime.utcnow()
+    seconds = _VIDEO_SEGMENT_SECONDS if segment_seconds is None else max(2, min(int(segment_seconds), 60))
     command = {
         "action": "split_uploaded_video_asset",
         "source_asset_id": source_asset.asset_id,
         "source_url": source_asset.source_url or "",
         "source_filename": source_filename,
-        "segment_seconds": _VIDEO_SEGMENT_SECONDS,
+        "segment_seconds": seconds,
         "max_segments": _VIDEO_SEGMENT_MAX_COUNT,
+    }
+    if creative_candidate_group:
+        command["creative_candidate_group"] = creative_candidate_group
+    if tags:
+        command["tags"] = tags
+    if keep_source:
+        command["keep_source"] = True
+    message = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner_user_id,
+        installation_id=installation_id,
+        mode="client_command",
+        content=_H5_CLIENT_COMMAND_PREFIX + json.dumps(command, ensure_ascii=False, separators=(",", ":")),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    attach_system_task_message(db, message, now=now)
+    db.add(message)
+    db.add(
+        H5ChatEvent(
+            message_id=message.id,
+            user_id=owner_user_id,
+            event_type="queued",
+            payload={
+                "mode": "client_command",
+                "action": command["action"],
+                "source_asset_id": source_asset.asset_id,
+            },
+            created_at=now,
+        )
+    )
+    return message
+
+
+def _queue_fill_asset_ai_tags(
+    db: Session,
+    *,
+    owner_user_id: int,
+    installation_id: str,
+    source_asset: Asset,
+    source_filename: str,
+    creative_candidate_group: str = "",
+) -> H5ChatMessage:
+    now = datetime.utcnow()
+    command = {
+        "action": "fill_asset_ai_tags",
+        "source_asset_id": source_asset.asset_id,
+        "source_url": source_asset.source_url or "",
+        "source_filename": source_filename,
+        "media_type": (source_asset.media_type or "video").strip().lower() or "video",
+        "creative_candidate_group": creative_candidate_group,
     }
     message = H5ChatMessage(
         id=uuid.uuid4().hex,
@@ -545,16 +602,29 @@ def _existing_online_split_segment(
     return None
 
 
-def _uploaded_asset_payload(row: Asset, *, deduplicated: bool = False) -> dict:
+def _uploaded_asset_payload(
+    row: Asset,
+    *,
+    deduplicated: bool = False,
+    request: Optional[Request] = None,
+) -> dict:
+    source_url = str(row.source_url or '').strip()
+    preview_url = source_url or (build_asset_file_url(request, row.asset_id) if request else '')
     return {
         "asset_id": row.asset_id,
         "filename": row.filename,
         "media_type": row.media_type,
         "file_size": row.file_size,
-        "source_url": row.source_url,
-        "url": row.source_url,
+        "source_url": source_url,
+        "url": preview_url,
+        "preview_url": preview_url,
+        "open_url": preview_url,
+        "cover_url": preview_url if row.media_type == "image" else "",
         "asset_origin": "user_upload",
         "deduplicated": deduplicated,
+        "tags": row.tags or "",
+        "creative_candidate_group": _creative_candidate_group(row.meta),
+        "creative_candidate_groups": _creative_candidate_groups(row.meta),
     }
 
 
@@ -608,6 +678,11 @@ class CreativeCandidateGroupReq(BaseModel):
     group_name: str
 
 
+class AssetLabelsReq(BaseModel):
+    creative_candidate_group: str = ""
+    tags: str = ""
+
+
 def _autosave_tags_require_tos(tags: Optional[str]) -> bool:
     """MCP 对话生成后自动入库使用 tags=auto,<capability_id>，此类必须走 TOS，source_url 才稳定可预览。"""
     return (tags or "").strip().startswith("auto,")
@@ -635,6 +710,125 @@ def _save_url_dedupe_key(url: str) -> str:
     return hashlib.sha256(
         (url or "").strip().split("?")[0].split("#")[0].lower().encode("utf-8")
     ).hexdigest()
+
+
+_ASSET_CONTENT_HASH_MAX_BYTES = 64 * 1024 * 1024
+_ASSET_CONTENT_HASH_CANDIDATE_LIMIT = 4
+
+
+def _hash_stream(fileobj) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        chunk = fileobj.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        digest.update(chunk)
+    return total, digest.hexdigest()
+
+
+def _remote_content_info(url: str, *, timeout: float = 60.0) -> tuple[int, str]:
+    """下载远端内容并返回 (字节数, sha256)；超限或失败返回 (0, "")。"""
+    target = str(url or "").strip()
+    if not target.lower().startswith(("http://", "https://")):
+        return 0, ""
+    try:
+        with httpx.stream(
+            "GET",
+            target,
+            headers=_SAVE_URL_DOWNLOADER_HEADERS,
+            timeout=timeout,
+            follow_redirects=True,
+            trust_env=False,
+        ) as resp:
+            resp.raise_for_status()
+            digest = hashlib.sha256()
+            total = 0
+            for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _ASSET_CONTENT_HASH_MAX_BYTES:
+                    return 0, ""
+                digest.update(chunk)
+            return (total, digest.hexdigest()) if total > 0 else (0, "")
+    except Exception:
+        return 0, ""
+
+
+def _asset_content_sha256(asset: "Asset", *, persist: bool = True) -> str:
+    """素材内容 sha256：先读 meta 缓存，没有就按 URL 下载计算并写回缓存。"""
+    meta = asset.meta if isinstance(asset.meta, dict) else {}
+    cached = str(meta.get("content_sha256") or "").strip()
+    if cached:
+        return cached
+    url = str(asset.source_url or "").strip()
+    if not url:
+        return ""
+    _size, digest = _remote_content_info(url)
+    if digest and persist:
+        updated = dict(meta)
+        updated["content_sha256"] = digest
+        asset.meta = updated
+    return digest
+
+
+def _find_asset_by_content_sha256(
+    db: Session,
+    user_id: int,
+    *,
+    media_type: str,
+    file_size: int,
+    content_sha256: str,
+    limit_rows: int = _ASSET_CONTENT_HASH_CANDIDATE_LIMIT,
+) -> Optional[Asset]:
+    """同一用户内按内容去重：同类型 + 同字节数 + sha256 一致 = 同一张图。"""
+    digest = str(content_sha256 or "").strip()
+    size = int(file_size or 0)
+    if not digest or size <= 0:
+        return None
+    try:
+        return _find_asset_by_content_sha256_query(
+            db,
+            user_id,
+            media_type=media_type,
+            file_size=size,
+            content_sha256=digest,
+            limit_rows=limit_rows,
+        )
+    except Exception:
+        # 去重查询失败绝不能影响素材入库本身
+        return None
+
+
+def _find_asset_by_content_sha256_query(
+    db: Session,
+    user_id: int,
+    *,
+    media_type: str,
+    file_size: int,
+    content_sha256: str,
+    limit_rows: int = _ASSET_CONTENT_HASH_CANDIDATE_LIMIT,
+) -> Optional[Asset]:
+    digest = str(content_sha256 or "").strip()
+    size = int(file_size or 0)
+    query = db.query(Asset).filter(Asset.user_id == int(user_id))
+    if media_type:
+        query = query.filter(Asset.media_type == str(media_type))
+    candidates = (
+        query.filter(Asset.file_size == size)
+        .order_by(Asset.id.asc())
+        .limit(max(1, int(limit_rows)))
+        .all()
+    )
+    for row in candidates:
+        try:
+            if _asset_content_sha256(row) == digest:
+                return row
+        except Exception:
+            continue
+    return None
 
 
 def _find_existing_asset_by_save_url_dedupe(db: Session, user_id: int, dedupe_key: str) -> Optional[Asset]:
@@ -669,6 +863,33 @@ def _clean_creative_group_name_optional(value: Optional[str]) -> str:
     return name[:40]
 
 
+def _clean_upload_group_form(value: Any) -> str:
+    """Optional upload group. Non-strings, including omitted Form defaults, stay empty."""
+    if not isinstance(value, str):
+        return ""
+    return _clean_creative_group_name_optional(value)
+
+
+def _clean_upload_tags(value: Any) -> Optional[str]:
+    """Optional user-upload tags. Non-strings and blanks stay unset."""
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.startswith("auto,"):
+        return raw[:2048]
+    seen: list[str] = []
+    for part in re.split(r"[,，;；\s]+", raw):
+        tag = part.strip()[:40]
+        if not tag or tag in seen:
+            continue
+        seen.append(tag)
+        if len(seen) >= 12:
+            break
+    return ",".join(seen) if seen else None
+
+
 def _incoming_creative_candidate_group(body: RegisterAssetUrlReq) -> str:
     group = _clean_creative_group_name_optional(body.creative_candidate_group)
     if group:
@@ -682,6 +903,8 @@ def _incoming_creative_candidate_group(body: RegisterAssetUrlReq) -> str:
 
 
 def _register_asset_origin(body: RegisterAssetUrlReq) -> str:
+    if body.generation_record_id is not None or str(body.generation_task_id or "").strip():
+        return "generated"
     origin = _normalize_asset_origin_filter(body.asset_origin)
     return origin or "user_upload"
 
@@ -858,7 +1081,7 @@ def upsert_registered_assets(
     )
     all_existing = {row.id: row for row in [*existing_rows, *recent_rows] if row.id is not None}.values()
     by_url: dict[tuple[str, str], Asset] = {}
-    by_source_id: dict[str, Asset] = {}
+    by_source_id: dict[tuple[str, str], Asset] = {}
     by_dedupe: dict[tuple[str, str], Asset] = {}
     for row in all_existing:
         row_origin = _asset_origin(row.meta)
@@ -873,7 +1096,7 @@ def upsert_registered_assets(
         for key in ("source_asset_id", "client_asset_id"):
             source_id = str(meta.get(key) or "").strip()
             if source_id:
-                by_source_id.setdefault(source_id, row)
+                by_source_id.setdefault((row_origin, source_id), row)
 
     rows: list[Asset] = []
     created = 0
@@ -883,7 +1106,7 @@ def upsert_registered_assets(
         source_id = str(body.source_asset_id or "").strip()[:80]
         dedupe_key = _save_url_dedupe_key(source_url)
         asset_origin = _register_asset_origin(body)
-        row = by_source_id.get(source_id) if source_id else None
+        row = by_source_id.get((asset_origin, source_id)) if source_id else None
         if row is None:
             candidate = by_url.get((asset_origin, source_url)) or by_dedupe.get((asset_origin, dedupe_key))
             candidate_meta = candidate.meta if candidate is not None and isinstance(candidate.meta, dict) else {}
@@ -898,6 +1121,26 @@ def upsert_registered_assets(
             if not source_id or not candidate_source_ids or source_id in candidate_source_ids:
                 row = candidate
         group_name = _incoming_creative_candidate_group(body)
+        content_sha256 = ""
+        content_size = 0
+        if row is None:
+            content_size, content_sha256 = _remote_content_info(source_url)
+            if content_sha256:
+                content_dup = _find_asset_by_content_sha256(
+                    db,
+                    user_id,
+                    media_type="image",
+                    file_size=content_size,
+                    content_sha256=content_sha256,
+                )
+                if content_dup is not None:
+                    logger.info(
+                        "[素材] register 内容去重 命中已有 asset_id=%s sha=%s size=%s",
+                        content_dup.asset_id,
+                        content_sha256[:12],
+                        content_size,
+                    )
+                    row = content_dup
         if row is None:
             aid = _gen_asset_id()
             row = Asset(
@@ -928,10 +1171,17 @@ def upsert_registered_assets(
                 group_name=group_name,
                 registered_from=registered_from,
             )
+        if content_sha256:
+            merged_meta = dict(row.meta or {})
+            if str(merged_meta.get("content_sha256") or "") != content_sha256:
+                merged_meta["content_sha256"] = content_sha256
+                if content_size:
+                    merged_meta["content_size"] = int(content_size)
+                row.meta = merged_meta
         by_url[(asset_origin, source_url)] = row
         by_dedupe[(asset_origin, dedupe_key)] = row
         if source_id:
-            by_source_id[source_id] = row
+            by_source_id[(asset_origin, source_id)] = row
         rows.append(row)
     return rows, created, updated
 
@@ -1244,6 +1494,7 @@ async def save_asset_from_url(
                     resp.raise_for_status()
                     response_content_type = resp.headers.get("content-type", "") or ""
                     total = 0
+                    content_digest = hashlib.sha256()
                     async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
                         if not chunk:
                             continue
@@ -1251,6 +1502,7 @@ async def save_asset_from_url(
                         if total > _ASSET_UPLOAD_MAX_BYTES:
                             limit_mb = int(_ASSET_UPLOAD_MAX_BYTES / 1024 / 1024)
                             raise HTTPException(status_code=413, detail=f"远程素材不能超过 {limit_mb}MB")
+                        content_digest.update(chunk)
                         await asyncio.to_thread(temp_file.write, chunk)
                     if total <= 0:
                         raise HTTPException(status_code=400, detail="下载失败: 远程素材为空")
@@ -1306,6 +1558,27 @@ async def save_asset_from_url(
             detail="save-url 已下载素材但火山 TOS 上传失败，无法入库。请检查 TOS 配置与网络后重试。",
         )
     source_url = tos_public_url
+    content_sha256 = content_digest.hexdigest()
+    content_dup = _find_asset_by_content_sha256(
+        db,
+        user_id,
+        media_type=body.media_type,
+        file_size=int(fsize or 0),
+        content_sha256=content_sha256,
+    )
+    if content_dup is not None:
+        logger.info(
+            "[素材] save-url 内容去重 命中已有 asset_id=%s sha=%s",
+            content_dup.asset_id,
+            content_sha256[:12],
+        )
+        return {
+            "asset_id": content_dup.asset_id,
+            "filename": content_dup.filename,
+            "media_type": content_dup.media_type,
+            "file_size": content_dup.file_size or 0,
+            "source_url": content_dup.source_url or "",
+        }
     asset = Asset(
         asset_id=aid,
         user_id=user_id,
@@ -1316,7 +1589,7 @@ async def save_asset_from_url(
         prompt=body.prompt,
         model=body.model,
         tags=body.tags,
-        meta={"save_url_dedupe": dk},
+        meta={"save_url_dedupe": dk, "content_sha256": content_sha256},
     )
     db.add(asset)
     db.commit()
@@ -1336,11 +1609,14 @@ async def save_asset_from_url(
 @_limit_asset_upload_requests
 async def upload_asset(
     file: UploadFile = File(...),
+    request: Request = None,
     split_video: bool = Form(False),
     source_upload_filename: str = Form(""),
     video_segment: bool = Form(False),
     segment_index: int = Form(0),
     split_job_id: str = Form(""),
+    creative_candidate_group: str = Form(""),
+    tags: str = Form(""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1357,6 +1633,18 @@ async def upload_asset(
         mtype = "audio"
     elif ext.lower() in (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".txt", ".md"):
         mtype = "document"
+    # Android photo pickers may provide a generic filename without an image
+    # extension. Use the multipart MIME type as a fallback for classification.
+    content_type = getattr(file, "content_type", "") or ""
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mtype == "file" and mime.startswith("image/"):
+        mtype = "image"
+        if ext == ".bin":
+            ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/heic": ".heic", "image/heif": ".heif"}.get(mime, ".jpg")
+    elif mtype == "file" and mime.startswith("video/"):
+        mtype = "video"
+    elif mtype == "file" and mime.startswith("audio/"):
+        mtype = "audio"
 
     split_device = None
     if split_video and mtype == "video":
@@ -1367,6 +1655,8 @@ async def upload_asset(
             raise HTTPException(status_code=409, detail="视频切片需要先启动并登录 Online，服务器不再代替本机执行切片")
     clean_split_job_id = str(split_job_id or "")[:64] if isinstance(split_job_id, str) else ""
     clean_segment_index = max(0, int(segment_index or 0)) if isinstance(segment_index, int) else 0
+    upload_group = _clean_upload_group_form(creative_candidate_group)
+    upload_tags = _clean_upload_tags(tags)
     if video_segment is True and clean_split_job_id and clean_segment_index:
         existing_segment = _existing_online_split_segment(
             db,
@@ -1375,9 +1665,8 @@ async def upload_asset(
             segment_index=clean_segment_index,
         )
         if existing_segment is not None:
-            return _uploaded_asset_payload(existing_segment, deduplicated=True)
+            return _uploaded_asset_payload(existing_segment, deduplicated=True, request=request)
     _release_asset_db_before_io(db)
-    content_type = getattr(file, "content_type", "") or ""
     started_at = time.monotonic()
     aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
         _save_upload_file_or_tos,
@@ -1418,6 +1707,8 @@ async def upload_asset(
             installation_id=str(split_device.installation_id),
             source_asset=source_asset,
             source_filename=name,
+            creative_candidate_group=upload_group,
+            tags=upload_tags or "",
         )
         db.commit()
         from .h5_chat import _clear_pending_empty_for_target
@@ -1460,6 +1751,9 @@ async def upload_asset(
             ),
         )
     asset_meta = {"asset_origin": "user_upload"}
+    if upload_group:
+        asset_meta["creative_candidate_group"] = upload_group
+        asset_meta["creative_candidate_groups"] = [upload_group]
     if video_segment is True:
         asset_meta.update(
             {
@@ -1477,12 +1771,13 @@ async def upload_asset(
         media_type=mtype,
         file_size=fsize,
         source_url=tos_public_url,
+        tags=upload_tags,
         meta=asset_meta,
     )
     db.add(asset)
     db.commit()
     logger.info("[上传流程-步骤5] 服务器直连上传完成（TOS）asset_id=%s source_url=%s", aid, tos_public_url[:80])
-    return _uploaded_asset_payload(asset)
+    return _uploaded_asset_payload(asset, request=request)
 
 
 # ── Temporary file upload (for clients without TOS) ───────────────
@@ -1706,6 +2001,7 @@ def list_assets(
     asset_origin: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1756,15 +2052,17 @@ def list_assets(
     def payload(row: Asset) -> dict:
         context = _stored_asset_content_context(row)
         source_url = (row.source_url or "").strip()
+        local_path = _asset_local_path(row)
+        preview_url = source_url or (build_asset_file_url(request, row.asset_id) if local_path is not None and request else "")
         return {
             "asset_id": row.asset_id,
             "filename": row.filename,
             "media_type": row.media_type,
             "file_size": row.file_size,
             "source_url": source_url,
-            "preview_url": source_url,
-            "cover_url": source_url if row.media_type == "image" else "",
-            "open_url": source_url,
+            "preview_url": preview_url,
+            "cover_url": preview_url if row.media_type == "image" else "",
+            "open_url": preview_url,
             "title": context.get("title", ""),
             "description": context.get("description", ""),
             "prompt": row.prompt or context.get("creative_prompt", ""),
@@ -1798,12 +2096,16 @@ def list_creative_candidate_groups(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    rows = db.query(Asset).filter(Asset.user_id == owner_user.id, Asset.media_type == "image").all()
+    rows = db.query(Asset).filter(Asset.user_id == owner_user.id).all()
     groups: dict[str, dict] = {}
     for row in rows:
+        if _asset_hidden_from_library(row):
+            continue
         name = _creative_candidate_group(row.meta)
-        if name:
-            current = groups.setdefault(name, {"name": name, "count": 0})
+        if not name:
+            continue
+        current = groups.setdefault(name, {"name": name, "count": 0})
+        if str(row.media_type or "").strip().lower() == "image":
             current["count"] += 1
     return {
         "ok": True,
@@ -1836,6 +2138,173 @@ def add_asset_to_creative_candidate_group(
     db.add(row)
     db.commit()
     return {"ok": True, "asset_id": row.asset_id, "group_name": group_name, "groups": [group_name]}
+
+
+_LABEL_MEDIA_TYPES = {"image", "video", "audio", "document"}
+
+
+def _clear_creative_candidate_group_meta(meta: dict) -> None:
+    meta.pop("creative_candidate_group", None)
+    meta.pop("creative_candidate_groups", None)
+
+
+
+class AssetSplitReq(BaseModel):
+    segment_seconds: int = 3
+
+
+def _saved_asset_group_name(asset: Asset) -> str:
+    meta = asset.meta if isinstance(asset.meta, dict) else {}
+    group_name = str(meta.get("creative_candidate_group") or "").strip()
+    if group_name:
+        return group_name
+    groups = meta.get("creative_candidate_groups")
+    if isinstance(groups, list) and groups:
+        return str(groups[0] or "").strip()
+    return ""
+
+
+def _saved_asset_filename(asset: Asset) -> str:
+    meta = asset.meta if isinstance(asset.meta, dict) else {}
+    return str(meta.get("source_upload_filename") or asset.filename or "video.mp4")
+
+
+def _require_online_split_device(db: Session, owner_user_id: int, offline_detail: str, outdated_detail: str):
+    device, has_online_device = _online_video_split_device(db, owner_user_id)
+    if device is None:
+        if has_online_device:
+            raise HTTPException(status_code=409, detail=outdated_detail)
+        raise HTTPException(status_code=409, detail=offline_detail)
+    return device
+
+
+@router.post("/api/assets/{asset_id}/split", summary="把已入库视频交给 Online 切片")
+def split_saved_asset(
+    asset_id: str,
+    body: AssetSplitReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    owner_user_id = int(owner_user.id)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user_id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    if (row.media_type or "").strip().lower() != "video":
+        raise HTTPException(400, detail="只有视频可以切片")
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if meta.get("online_split_source") or str(meta.get("content_visibility") or "").strip() == "intermediate":
+        raise HTTPException(400, detail="中间素材不能再次切片")
+    source_url = str(row.source_url or "").strip()
+    if not source_url.startswith(("http://", "https://")):
+        raise HTTPException(400, detail="视频还没有公网地址，暂时不能切片")
+    device = _require_online_split_device(
+        db,
+        owner_user_id,
+        "视频切片需要先启动并登录 Online，服务器不再代替本机执行切片",
+        "当前 Online 版本不支持本机视频切片，请升级最新 OTA 后重试",
+    )
+    message = _queue_online_video_split(
+        db,
+        owner_user_id=owner_user_id,
+        installation_id=str(device.installation_id),
+        source_asset=row,
+        source_filename=_saved_asset_filename(row),
+        creative_candidate_group=_saved_asset_group_name(row),
+        tags=row.tags or "",
+        segment_seconds=max(2, min(int(body.segment_seconds or 3), 60)),
+        keep_source=True,
+    )
+    db.commit()
+    from .h5_chat import _clear_pending_empty_for_target
+
+    _clear_pending_empty_for_target(owner_user_id, str(device.installation_id))
+    return {
+        "ok": True,
+        "split_video": True,
+        "processing": "online",
+        "message_id": message.id,
+        "installation_id": str(device.installation_id),
+    }
+
+
+@router.post("/api/assets/{asset_id}/ai-tags", summary="把已入库视频交给 Online 理解并写标签")
+def fill_saved_asset_ai_tags(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    owner_user_id = int(owner_user.id)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user_id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    media_type = (row.media_type or "").strip().lower()
+    if media_type == "image":
+        raise HTTPException(400, detail="图片由浏览器直接理解，服务器不代为请求")
+    if media_type != "video":
+        raise HTTPException(400, detail="只支持视频")
+    source_url = str(row.source_url or "").strip()
+    if not source_url.startswith(("http://", "https://")):
+        raise HTTPException(400, detail="视频还没有公网地址，暂时不能理解")
+    device = _require_online_split_device(
+        db,
+        owner_user_id,
+        "AI理解需要先启动并登录 Online，服务器不再代替本机执行",
+        "当前 Online 版本不支持本机素材理解，请升级最新 OTA 后重试",
+    )
+    message = _queue_fill_asset_ai_tags(
+        db,
+        owner_user_id=owner_user_id,
+        installation_id=str(device.installation_id),
+        source_asset=row,
+        source_filename=_saved_asset_filename(row),
+        creative_candidate_group=_saved_asset_group_name(row),
+    )
+    db.commit()
+    from .h5_chat import _clear_pending_empty_for_target
+
+    _clear_pending_empty_for_target(owner_user_id, str(device.installation_id))
+    return {
+        "ok": True,
+        "processing": "online",
+        "message_id": message.id,
+        "installation_id": str(device.installation_id),
+    }
+
+
+@router.post("/api/assets/{asset_id}/labels", summary="编辑素材分组和标签")
+def update_asset_labels(
+    asset_id: str,
+    body: AssetLabelsReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    media_type = (row.media_type or "").strip().lower()
+    if media_type not in _LABEL_MEDIA_TYPES:
+        raise HTTPException(400, detail="该素材类型不支持编辑分组和标签")
+    group_name = _clean_creative_group_name_optional(body.creative_candidate_group)
+    tags = _clean_upload_tags(body.tags if isinstance(body.tags, str) else "")
+    meta = dict(row.meta or {})
+    if group_name:
+        _apply_creative_candidate_group_meta(meta, group_name)
+    else:
+        _clear_creative_candidate_group_meta(meta)
+    row.meta = meta
+    row.tags = tags
+    db.add(row)
+    db.commit()
+    return {
+        "ok": True,
+        "asset_id": row.asset_id,
+        "creative_candidate_group": group_name,
+        "creative_candidate_groups": [group_name] if group_name else [],
+        "tags": tags or "",
+    }
 
 
 # ── Get single + serve file ──────────────────────────────────────
@@ -1895,6 +2364,7 @@ def serve_asset_file(
 @router.get("/api/assets/{asset_id}", summary="获取素材详情")
 def get_asset(
     asset_id: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1909,15 +2379,17 @@ def get_asset(
         db.refresh(a)
         context = _stored_asset_content_context(a)
     local_path = _asset_local_path(a)
+    source_url = (a.source_url or "").strip()
+    preview_url = source_url or (build_asset_file_url(request, a.asset_id) if local_path is not None and request else "")
     out = {
         "asset_id": a.asset_id,
         "filename": a.filename,
         "media_type": a.media_type,
         "file_size": a.file_size,
-        "source_url": a.source_url,
-        "preview_url": a.source_url or "",
-        "cover_url": (a.source_url or "") if a.media_type == "image" else "",
-        "open_url": a.source_url or "",
+        "source_url": source_url,
+        "preview_url": preview_url,
+        "cover_url": preview_url if a.media_type == "image" else "",
+        "open_url": preview_url,
         "title": context.get("title", ""),
         "description": context.get("description", ""),
         "prompt": a.prompt or context.get("creative_prompt", ""),

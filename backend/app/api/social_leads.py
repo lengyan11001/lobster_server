@@ -2073,10 +2073,11 @@ async def list_social_leads_jobs(
     )
     total = q.count()
     rows = q.order_by(CreativeGenerationJob.created_at.desc(), CreativeGenerationJob.id.desc()).offset(offset).limit(limit).all()
-    for row in rows:
-        if _schedule_autorun_if_needed(row, db):
-            db.refresh(row)
-    return {"ok": True, "total": total, "items": [_job_payload(row, db=db, include_sources=True) for row in rows]}
+    # The history view must be a cheap snapshot.  Rebuilding all source rows
+    # (and resuming stale autoruns) here made opening the page scale with the
+    # entire collection history.  Details/resume endpoints handle that work
+    # when the user explicitly opens a job.
+    return {"ok": True, "total": total, "items": [_job_payload(row, db=db, include_sources=False) for row in rows]}
 
 
 @router.get("/api/social-leads/jobs/{job_id}", summary="Reddit/X/TikTok 线索采集任务详情")

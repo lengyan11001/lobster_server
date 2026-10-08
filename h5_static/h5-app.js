@@ -1,6 +1,61 @@
     const $ = (id) => document.getElementById(id);
+
+    // ── 重复请求抑制：同一 key 在 TTL 内复用结果；已在飞的请求复用同一个 Promise ──
+    const h5RequestCache = new Map();
+    function h5CachedRequest(key, ttlMs, loader, options = {}) {
+      const force = !!options.force;
+      const now = Date.now();
+      const hit = h5RequestCache.get(key);
+      if (hit && hit.pending) return hit.promise;
+      if (hit && !force && ttlMs > 0 && now - hit.at < ttlMs) return Promise.resolve(hit.value);
+      const entry = { at: now, pending: true, value: null, promise: null };
+      entry.promise = Promise.resolve()
+        .then(loader)
+        .then((value) => {
+          entry.value = value;
+          entry.at = Date.now();
+          return value;
+        })
+        .finally(() => {
+          entry.pending = false;
+        });
+      h5RequestCache.set(key, entry);
+      return entry.promise;
+    }
+    // 首屏"先显示上次数据、后台再刷新"用的本地缓存
+    function h5CacheWrite(key, value) {
+      try {
+        localStorage.setItem(brandStorageKey("lobster_h5_snap_" + key), JSON.stringify({ at: Date.now(), value }));
+      } catch {}
+    }
+    function h5CacheRead(key, maxAgeMs) {
+      try {
+        const raw = localStorage.getItem(brandStorageKey("lobster_h5_snap_" + key));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        if (maxAgeMs && Date.now() - Number(parsed.at || 0) > maxAgeMs) return null;
+        return parsed.value;
+      } catch {
+        return null;
+      }
+    }
+
+    function h5InvalidateCachedRequest(prefix = "") {
+      for (const key of Array.from(h5RequestCache.keys())) {
+        if (!prefix || key.startsWith(prefix)) h5RequestCache.delete(key);
+      }
+    }
+
     const H5_BRAND_MARK = (() => {
       try {
+        const host = String(window.location.hostname || "").trim().toLowerCase().replace(/\.$/, "");
+        const domainBrands = {
+          "hikongai.cn": "hikong",
+          "www.hikongai.cn": "hikong",
+          "admin.hikongai.cn": "hikong",
+        };
+        if (domainBrands[host]) return domainBrands[host];
         const params = new URLSearchParams(window.location.search || "");
         const raw = String(params.get("brand") || params.get("brand_mark") || "bihuo").trim().toLowerCase();
         return /^[a-z][a-z0-9_-]{0,62}$/.test(raw) ? raw : "bihuo";
@@ -16,6 +71,24 @@
       const legacyToken = localStorage.getItem("lobster_h5_token") || "";
       if (legacyToken) localStorage.setItem(H5_TOKEN_KEY, legacyToken);
     }
+    // 后台系统模板编辑器桥接：/h5/?system_key=<key>[&token=<jwt>][&brand=<mark>]
+    // 走系统的共享模板读写接口，直接在 H5 的卡片+弹窗编辑器里改系统模板。
+    const H5_EDITOR_PARAMS = (() => {
+      try {
+        return new URLSearchParams(window.location.search || "");
+      } catch {
+        return null;
+      }
+    })();
+    const H5_SYSTEM_TEMPLATE_KEY = String((H5_EDITOR_PARAMS && H5_EDITOR_PARAMS.get("system_key")) || "").trim();
+    (() => {
+      const bridgeToken = String((H5_EDITOR_PARAMS && H5_EDITOR_PARAMS.get("token")) || "").trim();
+      if (!bridgeToken) return;
+      try {
+        localStorage.setItem(H5_TOKEN_KEY, bridgeToken);
+        if (H5_BRAND_MARK === "bihuo") localStorage.setItem("lobster_h5_token", bridgeToken);
+      } catch {}
+    })();
     function readCachedH5User() {
       if (!localStorage.getItem(H5_TOKEN_KEY)) return null;
       try {
@@ -28,6 +101,7 @@
         return null;
       }
     }
+    window.__lobsterH5AuthReady = false;
     const state = {
       token: localStorage.getItem(H5_TOKEN_KEY) || "",
       blockingActionCount: 0,
@@ -50,6 +124,9 @@
       devices: [],
       devicesLoaded: false,
       selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
+      systemDevices: [],
+      deviceSelectionSource: localStorage.getItem(brandStorageKey("lobster_h5_device_selection_source")) || "",
+      systemDeviceModeNoticeShown: false,
       liveExecutor: {
         image: null,
         imagePreviewUrl: "",
@@ -71,6 +148,7 @@
       tasks: [],
       runs: [],
       runStatusSnapshot: {},
+      ipContentFailureNotified: {},
       runStatusReady: false,
       taskListOffset: 0,
       taskListHasNext: false,
@@ -237,6 +315,10 @@
       h5LastResumeAt: 0,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
+      workflowTemplatesLoadedAt: 0,
+      workflowTemplatesInstallationId: "",
+      workflowTemplatesRequest: null,
+      workflowTemplatesRequestKey: "",
       workflowTemplatesLoading: false,
       workflowTemplateSaving: false,
       workflowCanGrant: false,
@@ -256,6 +338,12 @@
       workflowGrantTemplateId: "",
       workflowGrantSelectedUserIds: {},
       workflowSubmitting: false,
+      workflowSalesTemplateMigrationPending: false,
+      workflowSystemEditorKey: "",
+      workflowSystemEditorName: "",
+      workflowSystemEditorPublished: true,
+      workflowSystemEditorLoadedKey: "",
+      workflowSystemEditorOpening: false,
       workflowParamNodeId: "",
       workflowActionParentNodeId: "",
       workflowActionEditId: "",
@@ -297,7 +385,9 @@
       personalCompetitors: [],
       personalCompetitorCandidates: [],
       personalMemoryDocs: [],
+      personalSurveys: [],
       personalTemplates: [],
+      personalEditingSurveyId: "",
       personalEditingTemplateId: "",
       personalTemplateBaseMeta: {},
       personalTemplateLanguage: "zh-CN",
@@ -309,6 +399,17 @@
       personalDigitalHumanTemplatePickerTarget: "personal",
       personalSelectedDigitalHumanTemplate: null,
       personalDigitalHumanTemplateDraft: null,
+      personalDigitalHumanResources: { avatars: [], voices: [] },
+      personalDigitalHumanAvatarOptions: [],
+      personalDigitalHumanVoiceOptions: [],
+      personalDigitalHumanResourcesLoaded: false,
+      personalDigitalHumanResourcesLoading: false,
+      personalDigitalHumanResourcePickerKind: "avatar",
+      personalDigitalHumanResourceQuery: "",
+      personalDigitalHumanResourcePage: 1,
+      personalDigitalHumanResourceDraft: null,
+      personalDigitalHumanAssetGroups: [],
+      personalDigitalHumanAssetGroupsLoaded: false,
       workSelectedDigitalHumanTemplate: null,
       personalDefault: null,
       localBestsellerPersonaPromise: null,
@@ -399,6 +500,14 @@
       speechLastText: "",
       speechLastAt: 0,
     };
+    // 首屏先用上次的快照渲染（登录后再静默刷新），避免"登录后干等"
+    {
+      const cachedRuns = h5CacheRead("runs", 12 * 3600 * 1000);
+      if (Array.isArray(cachedRuns) && cachedRuns.length) state.runs = cachedRuns;
+      const cachedDevices = h5CacheRead("devices", 6 * 3600 * 1000);
+      if (Array.isArray(cachedDevices) && cachedDevices.length) state.devices = cachedDevices;
+    }
+
     const H5_LIFECYCLE_KEY = brandStorageKey("lobster_h5_lifecycle");
 
     function lifecycleDetail(value) {
@@ -511,6 +620,22 @@
         department: "AI营销创作",
         serverTask: true,
       },
+      "ip_content_oral": {
+        label: "IP口播文案",
+        description: "基于行业热门和专业同行数据生成行业热门口播、专业 IP 口播。",
+        packageId: "ip_content_oral_skill",
+        department: "AI营销创作",
+        serverTask: true,
+        taskKind: "ip_content_daily",
+      },
+      "ip_content_moments": {
+        label: "朋友圈图文",
+        description: "基于关键词、同行和记忆资料生成首条朋友圈图文并自动生成 3 张配图。",
+        packageId: "ip_content_moments_skill",
+        department: "AI营销创作",
+        serverTask: true,
+        taskKind: "ip_content_daily",
+      },
       "comfly.daihuo.pipeline": {
         label: "爆款TVC",
         description: "用素材或公网图生成多分镜成片，适合商品宣传和广告视频。",
@@ -554,12 +679,19 @@
         department: "AI获客",
         routeTab: "douyinLeadsSchedule",
       },
+      "online.whatsapp_takeover": {
+        label: "个人whatapp助手",
+        description: "接管 Windows 桌面版 WhatsApp，按轮次处理私聊消息。",
+        packageId: "personal_whatsapp_assistant",
+        department: "私域销冠",
+      },
     };
-    const TASK_DEPARTMENTS = ["AI营销创作", "AI获客", "私域销管"];
+    const TASK_DEPARTMENTS = ["AI营销创作", "AI获客", "私域销冠", "海外平台"];
     const SCHEDULED_TASK_CAPABILITY_IDS = [
       "comfly.seedance.tvc.pipeline",
       "goal.image.pipeline",
-      "ip_content_daily",
+      "ip_content_oral",
+      "ip_content_moments",
       "hifly.video.create_by_tts",
     ];
     // H5 should dispatch new planning/generation work to Online by default;
@@ -642,11 +774,21 @@
         key: "wecom_reply",
         packageId: "wecom_reply",
         label: "企业微信客服",
-        department: "私域销管",
+        department: "私域销冠",
         mark: "微",
         dispatchKind: "client_workflow",
         workflowAction: "wecom_poll_reply",
         hidden: true,
+      },
+      {
+        key: "native_whatsapp_poll",
+        capabilityId: "online.whatsapp_takeover",
+        packageId: "personal_whatsapp_assistant",
+        label: "个人whatapp助手",
+        department: "私域销冠",
+        mark: "W",
+        dispatchKind: "client_workflow",
+        workflowAction: "native_whatsapp_poll",
       },
       {
         key: "publish_center",
@@ -731,16 +873,46 @@
             key: "marketing_copy_group",
             label: "AI文案智能体",
             mark: "文",
-            description: "生成IP日更、公众号文章和营销文案。",
+            description: "生成IP口播、朋友圈图文、公众号文章和营销文案。",
             children: [
               {
-                key: "ip_content_daily",
-                label: "IP日更文案",
+                key: "ip_content_oral",
+                label: "IP口播文案",
                 mark: "IP",
-                description: "生成短视频口播、朋友圈文案和配图提示词。",
+                description: "生成行业热门口播和专业 IP 口播文案。",
+                capabilityId: "ip_content_oral",
+                packageId: "ip_content_oral_skill",
+                serverTask: true,
+              },
+              {
+                key: "ip_content_moments",
+                label: "朋友圈图文",
+                mark: "圈",
+                description: "生成首条朋友圈图文内容并自动生成 3 张配图。",
+                capabilityId: "ip_content_moments",
+                packageId: "ip_content_moments_skill",
+                serverTask: true,
+              },
+              {
+                // Kept only so older saved workflows can still be resolved;
+                // it is not offered as a new node after the split.
+                key: "ip_content_daily",
+                label: "IP日更文案（旧）",
+                mark: "旧",
+                description: "兼容旧版 IP 日更工作流。",
                 capabilityId: "ip_content_daily",
                 packageId: "ip_content_daily_skill",
                 serverTask: true,
+                legacy: true,
+              },
+              {
+                key: "moments_sales_coach",
+                label: "朋友圈成交文案教练",
+                mark: "圈",
+                description: "基于真实素材生成生活、咨询、反馈、收款和促成交朋友圈文案。",
+                capabilityId: "moments_sales_coach",
+                serverTask: true,
+                always: true,
               },
               {
                 key: "wewrite.article.pipeline",
@@ -782,9 +954,10 @@
       },
       {
         id: "private_domain",
-        name: "私域销管",
+        name: "私域销冠",
         alias: "个微",
         mark: "微",
+        featureKey: "private_domain_entry",
         description: "负责个人微信私聊、加好友、拉群和朋友圈互动。",
         children: [
           {
@@ -819,13 +992,24 @@
               },
             ],
           },
+          {
+            key: "native_whatsapp_poll",
+            label: "个人whatapp助手",
+            mark: "W",
+            description: "接管 Windows 桌面版 WhatsApp，按轮次处理私聊消息。",
+            capabilityId: "online.whatsapp_takeover",
+            packageId: "personal_whatsapp_assistant",
+            workQuickKey: "native_whatsapp_poll",
+            workflowAction: "native_whatsapp_poll",
+          },
         ],
       },
       {
         id: "overseas",
-        name: "AI海外平台",
+        name: "海外平台",
         alias: "海外线索",
         mark: "海",
+        featureKey: "overseas_platform_entry",
         description: "负责海外平台线索采集和客户资料沉淀。",
         children: [
           {
@@ -864,6 +1048,24 @@
       { value: "professional_ip_oral", label: "专业 IP 口播" },
       { value: "moments_candidate", label: "朋友圈文案" },
     ];
+    const IP_CONTENT_ORAL_CAPABILITY = "ip_content_oral";
+    const IP_CONTENT_MOMENTS_CAPABILITY = "ip_content_moments";
+    function isIpContentCapability(value) {
+      const id = String(value || "").trim();
+      return id === "ip_content_daily" || id === IP_CONTENT_ORAL_CAPABILITY || id === IP_CONTENT_MOMENTS_CAPABILITY;
+    }
+    function ipContentTasksForCapability(value) {
+      const id = String(value || "").trim();
+      if (id === IP_CONTENT_ORAL_CAPABILITY) return ["industry_hot_oral", "professional_ip_oral"];
+      if (id === IP_CONTENT_MOMENTS_CAPABILITY) return ["moments_candidate"];
+      return IP_DAILY_TASK_OPTIONS.map((item) => item.value);
+    }
+    function ipContentCapabilityLabel(value) {
+      const id = String(value || "").trim();
+      if (id === IP_CONTENT_ORAL_CAPABILITY) return "IP口播文案";
+      if (id === IP_CONTENT_MOMENTS_CAPABILITY) return "朋友圈图文";
+      return "IP日更文案";
+    }
     const SALES_WORKFLOW_PRESET = [
       { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }, { time: "09:00", platform: "wechat_channels", label: "同城爆款视频发布视频号", note: "同城爆款视频发布视频号，配文案、带标签发布" }] },
       { time: "06:30", endTime: "07:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "09:30", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
@@ -875,7 +1077,10 @@
       { time: "10:00", endTime: "10:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "10:30", endTime: "11:00", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "11:00", endTime: "11:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
-      { time: "11:30", endTime: "12:45", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { followup_actions: ["reply_comments", "mention_comment", "follow_comment", "direct_message"], customer_scope: "current_collection_batch" } },
+      { time: "11:30", endTime: "12:45", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { customer_scope: "current_collection_batch" } },
+      // 只出现在“节点选择列表”里（pickerOnly），不会自动并入已有工作流，
+      // 所以不影响任何老节点和老排期。
+      { time: "", endTime: "", key: "douyin_leads", label: "抖音精准获客AI", note: "抖音精准获客AI", pickerOnly: true, params: { ai_keywords: true, ai_keyword_count: 3, ai_keyword_avoid_days: 7, ai_keyword_publish_days: 7, customer_scope: "current_collection_batch" } },
       { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
       { time: "13:45", endTime: "14:15", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "14:15", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
@@ -886,8 +1091,10 @@
       { time: "16:00", endTime: "16:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
       { time: "16:30", endTime: "16:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "17:00", endTime: "17:15", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
-      { time: "17:15", endTime: "18:15", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { followup_actions: ["reply_comments", "mention_comment", "follow_comment", "direct_message"], customer_scope: "current_collection_batch" } },
+      { time: "17:15", endTime: "18:15", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户", params: { customer_scope: "current_collection_batch" } },
+      { time: "18:15", endTime: "18:30", key: "douyin_leads", label: "抖音精准用户触达", note: "抖音精准用户触达", params: { touch_actions: ["follow_comment", "mention_comment", "direct_message"], customer_scope: "precise_pool", max_users: 20 } },
       { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "18:45", endTime: "19:00", key: "douyin_leads", label: "抖音我的评论区", note: "抖音我的评论区" },
       { time: "19:15", endTime: "19:30", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
       { time: "19:30", endTime: "20:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "20:00", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
       { time: "20:15", endTime: "20:30", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
@@ -898,14 +1105,22 @@
       { time: "23:00", endTime: "23:30", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "23:30", endTime: "24:00", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
     ];
-    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map(SALES_WORKFLOW_PRESET.filter((row) => !row.comingSoon).map((row) => {
-      const key = `${row.key}@@${row.label || row.note}`;
-      return [key, { key: row.key, label: row.label || row.note, note: row.note || row.label }];
-    })).values());
+    // 不进默认排班表（SALES_WORKFLOW_PRESET），只在节点选择器里多一个可选节点。
+    const SALES_WORKFLOW_EXTRA_NODE_OPTIONS = [
+      { key: "douyin_leads", label: "抖音私信记忆接管", note: "抖音私信记忆接管", sales_action: "stranger_message", reply_mode: "ai_memory" },
+    ];
+    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map([
+      ...SALES_WORKFLOW_PRESET.filter((row) => !row.comingSoon).map((row) => {
+        const key = `${row.key}@@${row.label || row.note}`;
+        return [key, { key: row.key, label: row.label || row.note, note: row.note || row.label }];
+      }),
+      ...SALES_WORKFLOW_EXTRA_NODE_OPTIONS.map((row) => [`${row.key}@@${row.label}`, row]),
+    ]).values());
     const SALES_PERSONA_DEFAULT_KEYS = new Set([
       "local_bestseller",
       "hifly.video.create_by_tts",
-      "ip_content_daily",
+      "ip_content_oral",
+      "ip_content_moments",
       "douyin_leads",
       "wecom_reply",
       "native_wechat_poll",
@@ -917,9 +1132,10 @@
       if (!node) return false;
       const id = String(node.id || "");
       const key = String(node.ability_key || node.key || "");
-      if (isNativeWechatWorkflowKey(key)) return false;
+      if (isNativeWechatWorkflowKey(key) || key === "native_whatsapp_poll") return false;
       if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
       if (key === "douyin_leads" && isSalesDouyinCollectionNode(node)) return false;
+      if (key === "douyin_leads" && isSalesDouyinPreciseTouchNode(node)) return false;
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
     }
@@ -973,9 +1189,7 @@
         };
       }
       if (actionKey === "native_wechat_moments_engage") {
-        const rawTargets = Array.isArray(baseParams.contact_wx_nos) ? baseParams.contact_wx_nos : baseParams.targets;
-        const targets = Array.from(new Set((Array.isArray(rawTargets) ? rawTargets : []).map((value) => String(value || "").trim()).filter(Boolean)));
-        if (options.requireTargets && !targets.length) throw new Error("请选择或填写朋友圈联系人");
+        // 联系人不落节点：执行时读机器上「微信协议助手-通讯录」确认过的那份
         const momentParams = { ...baseParams };
         [
           "group_invite_enabled",
@@ -999,11 +1213,34 @@
           content: "H5 工作流：朋友圈点赞评论",
           payload: {
             action: "native_wechat_moments_engage",
-            params: { ...momentParams, contact_wx_nos: targets, targets, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
+            params: { ...momentParams, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
           },
         };
       }
       throw new Error("这个个微节点暂不支持加入工作流");
+    }
+
+    function nativeWhatsappWorkflowPlan(note, params = {}) {
+      const prompt = String(note || "").trim();
+      const source = params && typeof params === "object" ? params : {};
+      const accountId = String(source.account_id || "desktop-whatsapp-default").trim() || "desktop-whatsapp-default";
+      return {
+        title: "个人WhatsApp助手",
+        task_kind: "client_workflow",
+        content: "H5 工作流：个人WhatsApp助手",
+        payload: {
+          action: "native_whatsapp_poll",
+          params: {
+            account_id: accountId,
+            message_poll_interval_seconds: Math.max(1, Math.min(300, Number(source.message_poll_interval_seconds || 15))),
+            takeover_session_minutes: Math.max(1, Math.min(1440, Number(source.takeover_session_minutes || 30))),
+            max_unread_per_round: Math.max(1, Math.min(100, Number(source.max_unread_per_round || 50))),
+            reply_instruction: String(source.reply_instruction || "").trim().slice(0, 4000),
+            note: prompt,
+            prompt,
+          },
+        },
+      };
     }
 
     function salesWorkflowPlaceholderPlan(row) {
@@ -1065,7 +1302,7 @@
         ...node,
         ability_key: nativeKey,
         department_id: lookup && lookup.department ? lookup.department.id || "private_domain" : "private_domain",
-        department_name: lookup && lookup.department ? lookup.department.name || "私域销管" : "私域销管",
+        department_name: lookup && lookup.department ? lookup.department.name || "私域销冠" : "私域销冠",
         plan: nativeWechatWorkflowPlan(nativeKey, note),
         children: workflowChildActions(node).map(normalizeSalesWorkflowNode).filter(Boolean),
       };
@@ -1119,6 +1356,8 @@
 
     function salesWorkflowActionForNote(note) {
       const text = String(note || "");
+      if (text.includes("我的评论区")) return "self_comment_monitor";
+      if (text.includes("精准用户触达") || text.includes("精准触达")) return "precise_touch";
       if (text.includes("养号")) return "account_nurture";
       if (text.includes("发布后采集") || text.includes("关键词抓取")) return "search_collect";
       if (text.includes("回复") && text.includes("评论")) return "reply_comments";
@@ -1129,7 +1368,21 @@
       return "search_collect";
     }
 
-    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["reply_comments", "mention_comment", "follow_comment", "direct_message"];
+    // “精准获客AI”节点：关键词由 AI 每轮决定（客户端据此生成关键词并做去重）。
+    function salesWorkflowIsAiKeywordNote(value) {
+      const text = String(value || "");
+      if (!text) return false;
+      return /精准获客\s*AI/i.test(text) || /AI\s*获客/i.test(text) || /AI\s*关键词/i.test(text);
+    }
+
+    // 「抖音私信记忆接管」节点：和「抖音私信接管」同一个 action，但回复策略默认按记忆文件回复。
+    function salesWorkflowIsMemoryTakeoverNote(value) {
+      const text = String(value || "");
+      if (!text) return false;
+      return text.includes("记忆接管") || /memory\s*takeover/i.test(text);
+    }
+
+    const SALES_DOUYIN_FOLLOWUP_ACTIONS = ["follow_comment", "mention_comment", "direct_message"];
 
     function normalizeSalesDouyinFollowupActions(value) {
       const selected = new Set((Array.isArray(value) ? value : []).map((item) => String(item || "").trim().toLowerCase()));
@@ -1141,13 +1394,21 @@
       const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       const inferred = salesWorkflowActionForNote(node && (node.note || node.ability_label) || plan.title || "");
-      const explicit = String(params.sales_action || payload.action || "").trim().toLowerCase();
-      return inferred !== "search_collect" ? inferred : (explicit || inferred);
+      const explicit = String(payload.action || params.sales_action || "").trim().toLowerCase();
+      if (["search_collect", "precise_touch", "self_comment_monitor", "account_nurture", "reply_comments", "follow_comment", "mention_comment", "direct_message", "stranger_message"].includes(explicit)) {
+        return explicit === "search_collect" && inferred !== "search_collect" ? inferred : explicit;
+      }
+      return inferred;
     }
 
     function isSalesDouyinCollectionNode(node) {
       return String(node && (node.ability_key || node.key) || "") === "douyin_leads"
         && salesDouyinNodeAction(node) === "search_collect";
+    }
+
+    function isSalesDouyinPreciseTouchNode(node) {
+      return String(node && (node.ability_key || node.key) || "") === "douyin_leads"
+        && salesDouyinNodeAction(node) === "precise_touch";
     }
 
     function foldSalesDouyinFollowupNodes(nodes) {
@@ -1159,18 +1420,48 @@
           && (node.sales_preset || String(node.id || "").startsWith("sales_") || String(node.department_id || "") === "sales");
         if (isSalesDouyin && action === "search_collect") {
           currentCollection = node;
+          const collectionPlan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
+          const collectionPayload = collectionPlan.payload && typeof collectionPlan.payload === "object" ? { ...collectionPlan.payload } : {};
+          const collectionParams = collectionPayload.params && typeof collectionPayload.params === "object" ? { ...collectionPayload.params } : {};
+          const legacyCollectionActions = [
+            ...(Array.isArray(collectionParams.followup_actions) ? collectionParams.followup_actions : []),
+            ...(Array.isArray(collectionParams.touch_actions) ? collectionParams.touch_actions : []),
+          ];
+          collectionParams.followup_actions = [];
+          delete collectionParams.touch_actions;
+          collectionParams.customer_scope = "current_collection_batch";
+          const legacyReplyEnabled = legacyCollectionActions.includes("reply_comments");
+          const replyEnabled = workflowBoolParam(collectionParams.reply_precise_comments, false) || legacyReplyEnabled;
+          const replyMode = String(collectionParams.reply_comment_mode || collectionParams.comment_mode || "").toLowerCase();
+          const replyText = String(collectionParams.reply_comment_text || collectionParams.comment_text || "").trim();
+          const replyPrompt = String(collectionParams.reply_comment_prompt || collectionParams.comment_prompt || "").trim();
+          const replySeedText = String(collectionParams.reply_comment_seed_text || collectionParams.comment_seed_text || "").trim();
+          ["reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text", "comment_mode", "comment_text", "comment_prompt", "comment_seed_text"].forEach((key) => delete collectionParams[key]);
+          if (replyEnabled) {
+            collectionParams.reply_precise_comments = true;
+            if (["fixed", "ai", "rewrite"].includes(replyMode)) collectionParams.reply_comment_mode = replyMode;
+            if (replyText) collectionParams.reply_comment_text = replyText;
+            if (replyPrompt) collectionParams.reply_comment_prompt = replyPrompt;
+            if (replySeedText) collectionParams.reply_comment_seed_text = replySeedText;
+          }
+          collectionPayload.params = collectionParams;
+          collectionPlan.payload = collectionPayload;
+          currentCollection.plan = collectionPlan;
           prepared.push(node);
           return;
         }
-        if (isSalesDouyin && SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action) && currentCollection) {
-          const plan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
-          const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
-          const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
-          params.followup_actions = normalizeSalesDouyinFollowupActions([...(params.followup_actions || []), action]);
-          params.customer_scope = "current_collection_batch";
-          payload.params = params;
-          plan.payload = payload;
-          currentCollection.plan = plan;
+        if (isSalesDouyin && (SALES_DOUYIN_FOLLOWUP_ACTIONS.includes(action) || action === "reply_comments")) {
+          if (action === "reply_comments" && currentCollection) {
+            const collectionPlan = currentCollection.plan && typeof currentCollection.plan === "object" ? { ...currentCollection.plan } : {};
+            const collectionPayload = collectionPlan.payload && typeof collectionPlan.payload === "object" ? { ...collectionPlan.payload } : {};
+            const collectionParams = collectionPayload.params && typeof collectionPayload.params === "object" ? { ...collectionPayload.params } : {};
+            collectionParams.reply_precise_comments = true;
+            collectionPayload.params = collectionParams;
+            collectionPlan.payload = collectionPayload;
+            currentCollection.plan = collectionPlan;
+          }
+          // Legacy standalone follow-up nodes must not make collection execute
+          // touch actions. The standalone precise-touch node owns that work.
           return;
         }
         prepared.push(node);
@@ -1199,25 +1490,23 @@
       "local_bestseller",
       "image_composer_studio",
       "marketing_copy_group",
-      "ip_content_daily",
+      "ip_content_oral",
+      "ip_content_moments",
+      "moments_sales_coach",
       "wewrite.article.pipeline",
     ]);
     const AI_MARKETING_COVERS = {
-      "goal.video.pipeline": "/h5-static/marketing-cover-creative-video.png",
-      local_bestseller: "/h5-static/marketing-cover-local-bestseller.png",
-      "comfly.daihuo.pipeline": "/h5-static/marketing-cover-tvc.png",
-      "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.png",
-      viral_video_remix: "/h5-static/marketing-cover-remix.png",
-      ip_content_daily: "/h5-static/marketing-cover-ip-daily.png",
-      "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.png",
+      "goal.video.pipeline": "/h5-static/marketing-cover-creative-video.jpg",
+      local_bestseller: "/h5-static/marketing-cover-local-bestseller.jpg",
+      "comfly.daihuo.pipeline": "/h5-static/marketing-cover-tvc.jpg",
+      "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.jpg",
+      viral_video_remix: "/h5-static/marketing-cover-remix.jpg",
+      ip_content_daily: "/h5-static/marketing-cover-ip-daily.jpg",
+      ip_content_oral: "/h5-static/marketing-cover-ip-daily.jpg",
+      ip_content_moments: "/h5-static/marketing-cover-ip-daily.jpg",
+      moments_sales_coach: "/h5-static/marketing-cover-moments-coach.jpg",
+      "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.jpg",
     };
-    const SYSTEM_WORKFLOW_EMPLOYEES = [
-      { id: "system_sales", name: "销售员工", departmentId: "sales", mark: "销", preset: "sales" },
-      { id: "system_customer_service", name: "客服员工", departmentId: "customer_service", mark: "客", comingSoon: true },
-      { id: "system_overseas", name: "海外员工", departmentId: "overseas", mark: "海", comingSoon: true },
-      { id: "system_hr", name: "HR员工", departmentId: "operations", mark: "HR", comingSoon: true },
-    ];
-
     const DOUYIN_TASK_ACTIONS = {
       account_nurture: {
         label: "自动养号",
@@ -1686,13 +1975,20 @@
 
     function openWorkHistory(scope = null, backTarget = null) {
       closeTaskSuccessDialog();
-      const nextScope = scope || scopeFromActiveView();
-      const options = workScopeOptions(nextScope);
-      const target = backTarget ? normalizeViewTarget(backTarget) : viewTargetFromCurrent("profile");
+      // 统一：工作列表只做"全部记录"，不再按部门/能力分 tab（所有入口落到同一个列表）
+      const nextScope = { type: "all", label: "全部记录" };
+      const options = [{ type: "all", label: "全部记录" }];
+      // 返回：回到"点进来之前那一页"（传入的优先；否则就是当前页）
+      const target = normalizeViewTarget(backTarget || viewTargetFromCurrent("office"), "office");
       state.workListBackTarget = target;
-      state.workListBackTab = target.tab || "profile";
+      state.workListBackTab = target.tab || "office";
       setWorkListScope(nextScope, options);
       switchTab("workList");
+      // 打开工作历史时强制刷新，避免"下发完点查看，列表里看不到刚创建的任务"（原来是拿旧缓存直接渲染）
+      Promise.all([
+        loadTasks({ reset: true }).catch(() => {}),
+        loadRuns({ reset: true }).catch(() => {}),
+      ]).then(() => renderWorkList()).catch(() => {});
     }
 
     function backTargetFromCurrent(defaultTab = "profile") {
@@ -1844,7 +2140,7 @@
       return "document";
     }
 
-    function openMobileMediaPreview(url, filename) {
+    function openMobileMediaPreview(url, filename, mediaKind = "") {
       const source = String(url || "").trim();
       if (!source) return;
       const modal = $("mobileMediaPreviewDialog");
@@ -1852,7 +2148,9 @@
       if (!modal || !body) return;
       closeMobileMediaPreview();
       const safeName = String(filename || filenameFromUrl(source, "素材预览")).trim() || "素材预览";
-      const kind = mediaPreviewKind(source, safeName);
+      const kind = ["image", "video", "audio", "document"].includes(String(mediaKind || "").toLowerCase())
+        ? String(mediaKind).toLowerCase()
+        : mediaPreviewKind(source, safeName);
       let media;
       if (kind === "video") {
         media = document.createElement("video");
@@ -1885,14 +2183,27 @@
       if (download) {
         download.dataset.mediaDownloadUrl = source.replace(/([?&])disposition=inline(?:&|$)/, "$1disposition=attachment&");
         download.dataset.mediaDownloadName = safeName;
+        download.dataset.mediaDownloadKind = kind;
       }
       modal.classList.remove("hidden");
     }
 
-    function startMediaDownload(url, filename) {
+    function startMediaDownload(url, filename, mediaKind = "") {
       const source = String(url || "").trim();
       const safeName = String(filename || filenameFromUrl(source, "lobster-media")).trim() || "lobster-media";
       if (!source) return false;
+      const kind = ["image", "video"].includes(String(mediaKind || "").toLowerCase())
+        ? String(mediaKind).toLowerCase()
+        : mediaPreviewKind(source, safeName);
+      if (["image", "video"].includes(kind) && window.LobsterAndroid && typeof window.LobsterAndroid.saveMediaToGallery === "function") {
+        try {
+          window.LobsterAndroid.saveMediaToGallery(source, safeName, kind);
+          return true;
+        } catch {
+          toast("保存到相册启动失败，请稍后重试");
+          return true;
+        }
+      }
       if (window.LobsterAndroid && typeof window.LobsterAndroid.downloadFile === "function") {
         try {
           window.LobsterAndroid.downloadFile(source, safeName);
@@ -1966,7 +2277,30 @@
       }
     }
 
-    async function api(path, options = {}) {
+    // 2026-09-30：判断这次请求是不是从「AI 营销创作」页面或其二级菜单发出的。
+// 是的话，请求会带 X-H5-AI-Marketing: 1，服务端闸门据此放行（系统设备下也允许生成）。
+function inAiMarketingContext() {
+  try {
+    const dept = String(
+      (state.currentTask && state.currentTask.department)
+      || state.activeDepartment
+      || state.currentDepartment
+      || (state.activeTask && state.activeTask.department)
+      || ""
+    ).trim();
+    if (dept === "AI营销创作") return true;
+    if (state.aiMarketingOpen === true) return true;
+    const route = String(window.location.hash || "") + String(window.location.pathname || "");
+    if (/marketing|ai-marketing|营销/i.test(route)) return true;
+    const active = String(document.body && document.body.dataset ? (document.body.dataset.activeView || "") : "");
+    if (/marketing|营销/i.test(active)) return true;
+    return false;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function api(path, options = {}) {
       const requestOptions = { ...options };
       const requestedAttempts = Number(requestOptions.maxAttempts || 0);
       const timeoutMs = Math.max(0, Number(requestOptions.timeoutMs || 0));
@@ -1974,6 +2308,7 @@
       delete requestOptions.maxAttempts;
       delete requestOptions.timeoutMs;
       const headers = { ...(requestOptions.headers || {}), ...authHeaders() };
+  if (inAiMarketingContext()) headers["X-H5-AI-Marketing"] = "1";
       if (requestOptions.json) {
         headers["Content-Type"] = "application/json";
         requestOptions.body = JSON.stringify(requestOptions.json);
@@ -2424,6 +2759,352 @@
         .replace(/'/g, "&#39;");
     }
 
+    let douyinInformationDeskCategory = "";
+
+    function douyinInformationDeskAllowed() {
+      const features = state.user && state.user.features;
+      return !!(state.user && String(state.user.role || "").toLowerCase() === "admin")
+        || !!(features && (features.douyin_platform_information_desk || features.douyin_platform_information_desk_access));
+    }
+
+    function renderDouyinInformationDesk(data) {
+      const snapshot = data && data.snapshot;
+      const fetchedAt = $("douyinInformationDeskFetchedAt");
+      const tabs = $("douyinInformationDeskTabs");
+      const content = $("douyinInformationDeskContent");
+      if (!snapshot) {
+        if (fetchedAt) fetchedAt.textContent = "服务器尚未生成今日快照，将在每天 09:00（北京时间）采集";
+        if (tabs) tabs.innerHTML = "";
+        if (content) content.innerHTML = '<div class="douyin-information-desk-empty">暂无平台快照</div>';
+        return;
+      }
+      // 信息台只留两个榜（服务端已收敛，这里再兜一层，避免旧快照/缓存带出别的分类）
+      const allowedCategories = ["内容榜", "热点榜"];   // 内容榜排前面
+      const snapshotSections = (Array.isArray(snapshot.sections) ? snapshot.sections : []).filter((section) => {
+        return allowedCategories.includes(String((section && section.category) || "").trim());
+      });
+      const categories = [];
+      snapshotSections.forEach((section) => {
+        const category = String(section && section.category || "其他").trim() || "其他";
+        if (!categories.includes(category)) categories.push(category);
+      });
+      if (!categories.includes(douyinInformationDeskCategory)) douyinInformationDeskCategory = categories[0] || "";
+      if (fetchedAt) fetchedAt.textContent = `最近采集：${fmtTime(snapshot.fetched_at)}`;
+      if (tabs) {
+        tabs.innerHTML = categories.map((category) => `<button class="douyin-information-desk-tab${category === douyinInformationDeskCategory ? " active" : ""}" type="button" data-douyin-information-category="${escapeHtml(category)}">${escapeHtml(category)}</button>`).join("");
+      }
+      const visible = snapshotSections.filter((section) => String(section && section.category || "其他") === douyinInformationDeskCategory);
+      if (content) {
+        content.innerHTML = visible.length ? visible.map((section) => {
+          const items = Array.isArray(section.items) ? section.items : [];
+          const itemHtml = items.length ? items.map((item) => {
+            const metricLabels = { score: "热度分", hot_score: "热度", hot_value: "热度", heat: "热度", play_cnt: "播放", like_cnt: "点赞", follow_cnt: "涨粉", fans_cnt: "粉丝", new_like_cnt: "新增点赞", new_fans_cnt: "新增粉丝", publish_cnt: "发布", avg_play_cnt: "平均播放", video_count: "视频数", rank_diff: "上升", duration: "时长", like_rate: "点赞率", follow_rate: "涨粉率" };
+            const metrics = item.metrics && typeof item.metrics === "object"
+              ? Object.entries(item.metrics).slice(0, 6).map(([key, value]) => `${escapeHtml(metricLabels[key] || key.replace(/_/g, " "))} ${escapeHtml(value)}`).join(" · ")
+              : "";
+            const title = item.title || item.name || "热门内容";
+            const metaParts = [];
+            if (item.author && item.author !== title) metaParts.push(`作者 ${item.author}`);
+            if (item.value) metaParts.push(item.value);
+            if (item.detail) metaParts.push(item.detail);
+            if (metrics) metaParts.push(metrics);
+            const meta = metaParts.join(" · ") || "暂无指标";
+            const link = /^https?:\/\//i.test(String(item.url || ""))
+              ? `<a class="douyin-information-desk-item-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">打开观看</a>`
+              : "";
+            const cover = /^https?:\/\//i.test(String(item.cover_url || ""))
+              ? `<img class="douyin-information-desk-cover" src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+              : '<span class="douyin-information-desk-cover is-empty"></span>';
+            const sameStyle = `<button class="douyin-information-desk-same-style" type="button" data-douyin-imitation="1" data-douyin-item-id="${escapeHtml(item.id || "")}" data-douyin-title="${escapeHtml(title)}" data-douyin-cover="${escapeHtml(item.cover_url || "")}">做同款（换人）</button>`;
+            return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-cover">${cover}</div><div class="douyin-information-desk-item-body"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span><span class="douyin-information-desk-item-title">${escapeHtml(title)}</span></div><div class="douyin-information-desk-item-meta">${escapeHtml(meta)}${link}</div><div class="douyin-information-desk-item-actions">${sameStyle}</div></div></div>`;
+          }).join("") : `<div class="douyin-information-desk-empty">该接口暂无可展示条目${section.error ? `：${escapeHtml(section.error)}` : ""}</div>`;
+          return `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title"><span>${escapeHtml(section.title || section.key || "数据")}</span><small>${items.length} 条</small></div><div class="douyin-information-desk-items">${itemHtml}</div></section>`;
+        }).join("") : '<div class="douyin-information-desk-empty">该分类暂无数据</div>';
+        bindDouyinDeskItems(content);
+      }
+    }
+
+    function bindDouyinDeskItems(root) {
+      if (!root) return;
+      root.querySelectorAll(".douyin-information-desk-cover").forEach((img) => {
+        img.addEventListener("error", () => { img.style.display = "none"; });
+      });
+      root.querySelectorAll("[data-douyin-imitation]").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openDouyinImitation({
+            itemId: btn.dataset.douyinItemId || "",
+            title: btn.dataset.douyinTitle || "",
+            cover: btn.dataset.douyinCover || "",
+          });
+        });
+      });
+    }
+
+    function douyinDeskItemHtml(item) {
+      const title = item.title || item.name || "榜单数据";
+      const cover = /^https?:\/\//i.test(String(item.cover_url || ""))
+        ? `<img class="douyin-information-desk-cover" src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+        : '<span class="douyin-information-desk-cover is-empty"></span>';
+      const metaParts = [String(item.category || ""), String(item.section_title || "")].filter(Boolean);
+      if (item.author && item.author !== title) metaParts.push(`作者 ${item.author}`);
+      if (item.value) metaParts.push(String(item.value));
+      const link = /^https?:\/\//i.test(String(item.url || ""))
+        ? `<a class="douyin-information-desk-item-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">打开观看</a>`
+        : "";
+      const sameStyle = item.id
+        ? `<button class="douyin-information-desk-same-style" type="button" data-douyin-imitation="1" data-douyin-item-id="${escapeHtml(item.id)}" data-douyin-title="${escapeHtml(title)}" data-douyin-cover="${escapeHtml(item.cover_url || "")}">做同款（换人）</button>`
+        : "";
+      return `<div class="douyin-information-desk-item"><div class="douyin-information-desk-item-cover">${cover}</div>`
+        + `<div class="douyin-information-desk-item-body"><div class="douyin-information-desk-item-head"><span class="douyin-information-desk-rank">${escapeHtml(item.rank || "-")}</span>`
+        + `<span class="douyin-information-desk-item-title">${escapeHtml(title)}</span></div>`
+        + `<div class="douyin-information-desk-item-meta">${escapeHtml(metaParts.join(" · "))}${link}</div>`
+        + `<div class="douyin-information-desk-item-actions">${sameStyle}</div></div></div>`;
+    }
+
+    async function searchDouyinInformationDesk() {
+      const box = $("douyinInformationDeskSearchInput");
+      const content = $("douyinInformationDeskContent");
+      const q = String((box && box.value) || "").trim();
+      if (!q) {
+        toast("先输入关键词，例如：火锅 / 探店 / 城市名");
+        return;
+      }
+      if (content) content.innerHTML = `<div class="douyin-information-desk-empty">正在搜索「${escapeHtml(q)}」…</div>`;
+      try {
+        const data = await api(`/api/douyin/platform-information-desk/search?q=${encodeURIComponent(q)}`, { blocking: false });
+        const items = Array.isArray(data && data.items) ? data.items : [];
+        if (content) {
+          content.innerHTML = `<section class="douyin-information-desk-section"><div class="douyin-information-desk-section-title">`
+            + `<span>搜索「${escapeHtml(q)}」</span><small>${items.length} 条</small></div>`
+            + `<div class="douyin-information-desk-items">${items.length
+                ? items.map(douyinDeskItemHtml).join("")
+                : '<div class="douyin-information-desk-empty">没搜到，换个词试试</div>'}</div></section>`;
+          bindDouyinDeskItems(content);
+        }
+        const clearBtn = $("douyinInformationDeskSearchClear");
+        if (clearBtn) clearBtn.classList.remove("hidden");
+      } catch (err) {
+        if (content) content.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml(douyinErrorText(err))}</div>`;
+      }
+    }
+
+    function clearDouyinInformationDeskSearch() {
+      const box = $("douyinInformationDeskSearchInput");
+      if (box) box.value = "";
+      const clearBtn = $("douyinInformationDeskSearchClear");
+      if (clearBtn) clearBtn.classList.add("hidden");
+      loadDouyinInformationDesk();
+    }
+
+    const douyinImitationState = { timer: 0, tries: 0, title: "", itemId: "", bound: false };
+
+    // 后端 detail 有时是对象，直接拼字符串会显示 [object Object]
+    function douyinErrorText(err) {
+      if (!err) return "操作失败";
+      const raw = err.message !== undefined && err.message !== null ? err.message : err;
+      if (typeof raw === "string") return raw;
+      if (raw && typeof raw === "object") {
+        const inner = raw.message || raw.detail || raw.error;
+        if (typeof inner === "string" && inner) return inner;
+        try {
+          return JSON.stringify(raw).slice(0, 300);
+        } catch (e) {
+          return "操作失败";
+        }
+      }
+      return String(raw);
+    }
+
+    function closeDouyinImitation() {
+      if (douyinImitationState.timer) {
+        clearTimeout(douyinImitationState.timer);
+        douyinImitationState.timer = 0;
+      }
+      const modal = $("douyinImitationDialog");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+    }
+
+    function openDouyinImitation(item) {
+      const modal = $("douyinImitationDialog");
+      if (!modal) return;
+      if (!douyinImitationState.bound) {
+        douyinImitationState.bound = true;
+        const closeBtn = $("douyinImitationCloseBtn");
+        if (closeBtn) closeBtn.addEventListener("click", closeDouyinImitation);
+        const backdrop = $("douyinImitationBackdrop");
+        if (backdrop) backdrop.addEventListener("click", closeDouyinImitation);
+        const submitBtn = $("douyinImitationSubmit");
+        if (submitBtn) submitBtn.addEventListener("click", submitDouyinImitation);
+      }
+      douyinImitationState.title = String((item && item.title) || "");
+      douyinImitationState.itemId = String((item && item.itemId) || "");
+      const titleEl = $("douyinImitationTitle");
+      if (titleEl) titleEl.textContent = `做同款（换人）· ${douyinImitationState.title || "热门内容"}`;
+      const promptEl = $("douyinImitationPrompt");
+      if (promptEl && !promptEl.value) {
+        promptEl.value = "将视频中的人物替换为图片中的人物，保持原视频的动作、镜头、场景与节奏不变";
+      }
+      const noteEl = $("douyinImitationNote");
+      if (noteEl) {
+        noteEl.textContent = douyinImitationState.itemId
+          ? "原视频取榜单这条作品，把视频里的人换成你图中的人（图里只放一个人、五官清晰）"
+          : "这条数据没有作品 id，换不了人（换内容榜的视频条目试）";
+      }
+      const statusEl = $("douyinImitationStatus");
+      if (statusEl) statusEl.textContent = "";
+      const fileEl = $("douyinImitationFile");
+      if (fileEl) fileEl.value = "";
+      const resultEl = $("douyinImitationResult");
+      if (resultEl) {
+        resultEl.innerHTML = (item && /^https?:\/\//i.test(String(item.cover || "")))
+          ? `<img src="${escapeHtml(item.cover)}" alt="" style="max-width:140px;border-radius:10px" />`
+          : "";
+      }
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+    }
+
+    async function submitDouyinImitation() {
+      // 换人模型不需要提示词 / 时长 / 画幅：原视频来自榜单，人物来自用户图片
+      const fileEl = $("douyinImitationFile");
+      const file = fileEl && fileEl.files && fileEl.files[0];
+      const statusEl = $("douyinImitationStatus");
+      const resultEl = $("douyinImitationResult");
+      if (!file) {
+        toast("先选一张只含一个人的清晰照片");
+        return;
+      }
+      if (!douyinImitationState.itemId) {
+        toast("这条数据没有作品 id，换不了人", true);
+        return;
+      }
+      const submitBtn = $("douyinImitationSubmit");
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        if (statusEl) statusEl.textContent = "正在上传参考图…";
+        const form = new FormData();
+        form.append("file", file, file.name || "imitation-image");
+        const uploadResp = await blockingFetch(apiUrl("/api/assets/upload-temp"), {
+          method: "POST",
+          headers: authHeaders(),
+          body: form,
+        });
+        const uploadData = await uploadResp.json().catch(() => ({}));
+        if (!uploadResp.ok) {
+          throw new Error((uploadData && (uploadData.detail || uploadData.message)) || `上传失败 HTTP ${uploadResp.status}`);
+        }
+        const imageUrl = String(uploadData.public_url || "").trim();
+        if (!imageUrl) throw new Error("参考图上传后没有拿到公网地址");
+        if (statusEl) statusEl.textContent = "已提交换人任务，生成中（约 1-3 分钟）…";
+        const submitted = await api("/api/douyin/platform-information-desk/imitation", {
+          method: "POST",
+          blocking: "正在准备素材并提交换人（约 1-3 分钟）",
+          json: {
+            image_url: imageUrl,
+            item_id: douyinImitationState.itemId,
+            title: douyinImitationState.title || "",
+            prompt: String(($("douyinImitationPrompt") && $("douyinImitationPrompt").value) || "").trim(),
+          },
+        });
+        if (resultEl) {
+          resultEl.innerHTML = `<div class="douyin-information-desk-empty">任务 ${escapeHtml(String(submitted.task_id || ""))} 已提交，生成中…</div>`;
+        }
+        douyinImitationState.tries = 0;
+        pollDouyinImitation(String(submitted.task_id || ""));
+      } catch (err) {
+        const reason = douyinErrorText(err);
+        if (statusEl) statusEl.textContent = `失败：${reason}`;
+        toast(reason, true);
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    function pollDouyinImitation(taskId) {
+      if (!taskId) return;
+      if (douyinImitationState.timer) clearTimeout(douyinImitationState.timer);
+      douyinImitationState.timer = setTimeout(async () => {
+        douyinImitationState.tries += 1;
+        const statusEl = $("douyinImitationStatus");
+        const resultEl = $("douyinImitationResult");
+        try {
+          const data = await api(`/api/douyin/platform-information-desk/imitation/${encodeURIComponent(taskId)}`, { blocking: false });
+          if (data.status === "SUCCESS" && data.video_url) {
+            if (statusEl) statusEl.textContent = "已完成";
+            if (resultEl) {
+              resultEl.innerHTML = `<video controls playsinline preload="metadata" style="width:100%;border-radius:12px" src="${escapeHtml(data.video_url)}"></video>`
+                + `<div style="margin-top:8px"><a href="${escapeHtml(data.video_url)}" target="_blank" rel="noopener noreferrer">打开 / 下载视频</a></div>`;
+            }
+            return;
+          }
+          if (data.done) {
+            const reason = String(data.fail_reason || "生成失败");
+            if (statusEl) statusEl.textContent = `失败：${reason}`;
+            if (resultEl) resultEl.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml(reason)}</div>`;
+            return;
+          }
+          if (statusEl) statusEl.textContent = `生成中 ${data.progress || ""}（第 ${douyinImitationState.tries} 次查询）`;
+          if (douyinImitationState.tries >= 40) {
+            if (statusEl) statusEl.textContent = "还在生成中，任务已提交，稍后重新点做同款可查结果";
+            return;
+          }
+          pollDouyinImitation(taskId);
+        } catch (err) {
+          if (statusEl) statusEl.textContent = `查询失败：${douyinErrorText(err)}`;
+        }
+      }, 6000);
+    }
+
+    async function loadDouyinInformationDesk() {
+      const content = $("douyinInformationDeskContent");
+      if (content) content.innerHTML = '<div class="douyin-information-desk-empty">正在读取服务器快照...</div>';
+      try {
+        const data = await api("/api/douyin/platform-information-desk");
+        renderDouyinInformationDesk(data);
+      } catch (err) {
+        if (content) content.innerHTML = `<div class="douyin-information-desk-empty">${escapeHtml(err && err.message || "读取平台数据失败")}</div>`;
+      }
+    }
+
+    function openDouyinInformationDesk() {
+      if (!douyinInformationDeskAllowed()) {
+        toast("当前账号没有抖音平台信息台权限");
+        return;
+      }
+      const modal = $("douyinInformationDeskDialog");
+      if (!modal) return;
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      const searchBtn = $("douyinInformationDeskSearchBtn");
+      if (searchBtn && !searchBtn._sqBound) {
+        searchBtn._sqBound = true;
+        searchBtn.addEventListener("click", searchDouyinInformationDesk);
+        const clearBtn = $("douyinInformationDeskSearchClear");
+        if (clearBtn) clearBtn.addEventListener("click", clearDouyinInformationDeskSearch);
+        const searchInput = $("douyinInformationDeskSearchInput");
+        if (searchInput) {
+          searchInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              searchDouyinInformationDesk();
+            }
+          });
+        }
+      }
+      loadDouyinInformationDesk();
+    }
+
+    function closeDouyinInformationDesk() {
+      const modal = $("douyinInformationDeskDialog");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+    }
+
     function cssEscape(value) {
       const text = String(value || "");
       if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(text);
@@ -2587,6 +3268,8 @@
         "goal.image.pipeline": "文案+创意图片",
         "hifly.video.create_by_tts": "数字人口播",
         "ip_content_daily": "IP日更文案",
+        "ip_content_oral": "IP口播文案",
+        "ip_content_moments": "朋友圈图文",
         "douyin_leads": "抖音获客",
         "comfly.daihuo.pipeline": "爆款TVC",
         "comfly.seedance.tvc.pipeline": "创意分镜头视频",
@@ -2608,6 +3291,7 @@
         native_wechat_poll: "native_wechat_poll",
         native_wechat_add_friend: "native_wechat_add_friend",
         native_wechat_moments_engage: "native_wechat_moments_engage",
+        native_whatsapp_poll: "native_whatsapp_poll",
         publish_content: "publish_center",
       }[raw] || (raw.startsWith("local_bestseller_") ? "local_bestseller" : "");
     }
@@ -2620,7 +3304,12 @@
 
     function taskCapabilityId(row) {
       const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
-      if (row && row.task_kind === "ip_content_daily") return "ip_content_daily";
+      if (row && row.task_kind === "ip_content_daily") {
+        const tasks = Array.isArray(payload.tasks) ? new Set(payload.tasks.map((item) => String(item || "").trim()).filter(Boolean)) : new Set();
+        if (tasks.size === 1 && tasks.has("moments_candidate")) return "ip_content_moments";
+        if (tasks.size > 0 && Array.from(tasks).every((item) => item === "industry_hot_oral" || item === "professional_ip_oral")) return "ip_content_oral";
+        return "ip_content_daily";
+      }
       if (row && row.task_kind === "douyin_leads") return "douyin_leads";
       if (row && ["social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(row.task_kind)) return row.task_kind;
       return String(payload.capability_id || "");
@@ -2760,29 +3449,18 @@
 
     function workScopeOptions(scope) {
       const options = [{ type: "all", label: "全部记录" }];
-      const active = activeViewKey();
-      let department = null;
-      let lookup = null;
-      if (active === "department") department = departmentById(state.currentDepartmentId);
-      if (active === "ability") {
-        lookup = activeAbilityLookup();
-        department = displayDepartmentForAbility(lookup);
-      }
-      if (!department && scope && scope.departmentId) department = departmentById(scope.departmentId);
+      // 只按当前选中的筛选条件推导 tab（不看当前停在哪个页面），
+      // 避免"首页全部任务" 和"下发成功->查看工作历史"落到同一个页却看到不同的 tab。
+      const next = scope && typeof scope === "object" ? scope : {};
+      let department = next.departmentId ? departmentById(next.departmentId) : null;
+      const lookup = next.abilityKey ? abilityLookup(next.abilityKey) : null;
+      if (!department && lookup) department = displayDepartmentForAbility(lookup);
       if (department) options.push(departmentScope(department));
       if (lookup && Array.isArray(lookup.trail)) {
         lookup.trail.forEach((node, idx) => {
-          const next = abilityScope(lookup, idx);
-          if (!options.some((item) => scopeId(item) === scopeId(next))) options.push(next);
+          const item = abilityScope(lookup, idx);
+          if (!options.some((existing) => scopeId(existing) === scopeId(item))) options.push(item);
         });
-      } else if (scope && scope.abilityKey) {
-        const scopedLookup = abilityLookup(scope.abilityKey);
-        if (scopedLookup) {
-          scopedLookup.trail.forEach((node, idx) => {
-            const next = abilityScope(scopedLookup, idx);
-            if (!options.some((item) => scopeId(item) === scopeId(next))) options.push(next);
-          });
-        }
       }
       return options;
     }
@@ -2816,6 +3494,12 @@
       const options = state.workListScopeOptions && state.workListScopeOptions.length
         ? state.workListScopeOptions
         : workScopeOptions(state.workListScope);
+      if (options.length <= 1) {
+        box.innerHTML = "";
+        box.classList.add("hidden");
+        return;
+      }
+      box.classList.remove("hidden");
       const active = scopeId(state.workListScope || { type: "all" });
       box.innerHTML = options.map((item) => `<button type="button" class="${scopeId(item) === active ? "active" : ""}" data-work-scope="${escapeHtml(scopeId(item))}">${escapeHtml(item.label || "全部记录")}</button>`).join("");
     }
@@ -3002,7 +3686,7 @@
     function employeeAsset(device, index, mode) {
       const gender = employeeGender(device, index);
       const status = mode === "working" ? "working" : (mode === "offline" ? "offline" : "idle");
-      return `/h5-static/h5-employee-${gender}-${status}.png`;
+      return `/h5-static/h5-employee-${gender}-${status}.jpg`;
     }
 
     function idleBubbleForDevice(device, index) {
@@ -3065,6 +3749,7 @@
       if (ev.type === "publish_result") return "发布完成";
       if (ev.type === "final") return "处理完成";
       if (ev.type === "error") return p.error || p.detail || "处理失败";
+      if (ev.type === "task_card") return p.text || "后台任务进行中";
       return "";
     }
 
@@ -3226,6 +3911,12 @@
       return DEPARTMENT_SKILL_TREE.find((dept) => dept.id === normalized) || DEPARTMENT_SKILL_TREE[0];
     }
 
+    function departmentFeatureVisible(department) {
+      const featureKey = String((department && department.featureKey) || "").trim();
+      if (!featureKey) return true;
+      return !!(state.user && state.user.features && state.user.features[featureKey]);
+    }
+
     function isMarketingCreationDepartment(department) {
       const id = String((department && department.id) || "").trim();
       return id === AI_MARKETING_CREATION_ID || id === "marketing";
@@ -3296,6 +3987,7 @@
     }
 
     function departmentLeafNodes(department) {
+      if (!departmentFeatureVisible(department)) return [];
       if (isMarketingCreationDepartment(department)) {
         return abilityLeafNodes(marketingCreationEntryNodes());
       }
@@ -3303,16 +3995,17 @@
     }
 
     function departmentEntryNodes(department) {
+      if (!departmentFeatureVisible(department)) return [];
       if (isMarketingCreationDepartment(department)) return marketingCreationEntryNodes();
       return ((department && department.children) || []).filter((node) => node && !isPublishCenterNode(node));
     }
 
     function officeDepartments() {
-      return DEPARTMENT_SKILL_TREE;
+      return DEPARTMENT_SKILL_TREE.filter(departmentFeatureVisible);
     }
 
     function departmentAvailableLeafCount(department) {
-      return departmentLeafNodes(department).filter((node) => node && !node.comingSoon).length;
+      return departmentLeafNodes(department).filter((node) => node && !node.comingSoon && abilityIsActionable(node)).length;
     }
 
     function workflowOptionValue(lookup) {
@@ -3323,27 +4016,45 @@
     function workflowSalesNodeLookups() {
       return SALES_WORKFLOW_NODE_OPTIONS.map((item, index) => {
         const lookup = abilityLookup(item.key);
-        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)) return null;
+        // Sales presets use the same capability gates as custom employee
+        // nodes.  Without this check, a hidden department can reappear via
+        // the system sales preset's duplicated options.
+        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node) || !abilityIsActionable(lookup.node)) return null;
         return {
           ...lookup,
           optionId: index,
           optionLabel: item.label,
           defaultNote: item.note,
+          optionGroup: workflowNodeOptionGroup(item.key),
+          salesAction: String(item.sales_action || "").trim().toLowerCase(),
+          optionReplyMode: String(item.reply_mode || "").trim().toLowerCase(),
         };
       }).filter(Boolean);
+    }
+
+    const WORKFLOW_NODE_GROUP_ORDER = ["抖音", "个微", "AI营销"];
+
+    function workflowNodeOptionGroup(nodeOrKey) {
+      const key = typeof nodeOrKey === "string"
+        ? nodeOrKey
+        : nodeOrKey && (nodeOrKey.key || nodeOrKey.workQuickKey || nodeOrKey.ability_key);
+      const normalized = String(key || "").trim();
+      if (normalized === "douyin_leads") return "抖音";
+      if (normalized.startsWith("native_wechat_") || normalized === "native_whatsapp_poll") return "个微";
+      return "AI营销";
     }
 
     function workflowDepartmentNodeLookups() {
       const rows = [];
       DEPARTMENT_SKILL_TREE.forEach((department) => {
         departmentLeafNodes(department).forEach((node) => {
-          if (!node || node.comingSoon || isPublishCenterNode(node)) return;
+          if (!node || node.comingSoon || isPublishCenterNode(node) || !abilityIsActionable(node)) return;
           rows.push({
             node,
             department,
             trail: [node],
             optionLabel: node.label || node.key,
-            optionGroup: department.name || "能力类目",
+            optionGroup: workflowNodeOptionGroup(node),
           });
         });
       });
@@ -3351,7 +4062,25 @@
     }
 
     function workflowLeafLookups() {
-      return [...workflowSalesNodeLookups(), ...workflowDepartmentNodeLookups()];
+      const rows = [
+        ...workflowSalesNodeLookups().filter((lookup) => String(lookup && lookup.node && lookup.node.key || "") === "douyin_leads"),
+        ...workflowDepartmentNodeLookups().filter((lookup) => String(lookup && lookup.node && lookup.node.key || "") !== "douyin_leads"),
+      ];
+      const seen = new Set();
+      return rows.filter((lookup) => {
+        const key = String(lookup && lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
+        if (!key) return false;
+        const identity = key === "douyin_leads"
+          ? (salesWorkflowIsMemoryTakeoverNote(lookup.optionLabel || lookup.defaultNote)
+            ? `${key}@@memory_takeover`
+            : salesWorkflowIsAiKeywordNote(lookup.optionLabel || lookup.defaultNote)
+              ? `${key}@@ai_keywords`
+              : `${key}@@${salesWorkflowActionForNote(lookup.optionLabel || lookup.defaultNote || "")}`)
+          : key;
+        if (seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
+      });
     }
 
     function workflowLookupFromValue(value) {
@@ -3382,20 +4111,38 @@
       return String(node.key || node.workQuickKey || "").trim() === "native_wechat_moments_engage";
     }
 
+    function workflowLookupIsNativeWhatsapp(lookup) {
+      const node = lookup && lookup.node || {};
+      return String(node.key || node.workQuickKey || "").trim() === "native_whatsapp_poll";
+    }
+
+    // 微信通讯录只在"选择联系人"时按需拉一次（状态轮询接口不再带明文联系方式）
+    const wechatContactsCache = { at: 0, installationId: "", rows: [] };
+
+    async function loadWechatContacts(force = false) {
+      const installationId = currentInstallationId();
+      const now = Date.now();
+      if (!force && wechatContactsCache.rows.length && wechatContactsCache.installationId === installationId
+          && now - wechatContactsCache.at < 60000) {
+        return wechatContactsCache.rows;
+      }
+      const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+      let rows = [];
+      try {
+        const data = await api(`/api/h5-chat/wechat-contacts${query}`);
+        rows = Array.isArray(data && data.contacts) ? data.contacts : [];
+      } catch (err) {
+        rows = wechatContactsCache.rows || [];
+      }
+      wechatContactsCache.at = now;
+      wechatContactsCache.installationId = installationId;
+      wechatContactsCache.rows = rows;
+      return rows;
+    }
+
     function workflowMomentContacts(scope = "param") {
       const cfg = workflowMomentPickerConfig(scope);
-      const selectedId = String(state.selectedInstallationId || "").trim();
-      const device = selectedId
-        ? (state.devices || []).find((item) => String(item && item.installation_id || "") === selectedId)
-        : selectedDevice();
-      let rows = device && Array.isArray(device.wechat_contacts) ? device.wechat_contacts : [];
-      if (!rows.length) {
-        const mountedRow = (state.mountedAccounts || []).find((item) => {
-          if (!item || item.scope !== "wechat" || !Array.isArray(item.wechat_contacts)) return false;
-          return !selectedId || String(item.installation_id || "") === selectedId;
-        });
-        rows = mountedRow && Array.isArray(mountedRow.wechat_contacts) ? mountedRow.wechat_contacts : [];
-      }
+      const rows = Array.isArray(wechatContactsCache.rows) ? wechatContactsCache.rows : [];
       const seen = new Set();
       const normalized = rows.map((item) => {
         if (!item || typeof item !== "object") return null;
@@ -3496,6 +4243,8 @@
       });
       if ($(cfg.search)) $(cfg.search).value = "";
       renderWorkflowMomentPicker(scope);
+      // 这里才是"添加/编辑节点"的时刻：按需拉一次通讯录，回来再重绘
+      loadWechatContacts().then(() => renderWorkflowMomentPicker(scope)).catch(() => {});
     }
 
     function renderWorkflowMomentPicker(scope) {
@@ -3525,6 +4274,33 @@
       const cfg = workflowMomentPickerConfig(scope);
       $(cfg.field)?.classList.toggle("hidden", !visible);
       if (visible) renderWorkflowMomentPicker(scope);
+    }
+
+    function syncWorkflowDouyinReplyCommentFields(prefix = "workflowParam", collectionVisible = true) {
+      const modeId = `${prefix}DouyinReplyCommentMode`;
+      const mode = ["", "fixed", "ai", "rewrite"].includes(workflowParamValue(modeId))
+        ? workflowParamValue(modeId)
+        : "";
+      [
+        ["Fixed", "fixed"],
+        ["Ai", "ai"],
+        ["Rewrite", "rewrite"],
+      ].forEach(([suffix, expected]) => {
+        const field = $(`${prefix}DouyinReplyComment${suffix}Field`);
+        if (!field) return;
+        const visible = !!collectionVisible && mode === expected;
+        field.classList.toggle("hidden", !visible);
+        field.querySelectorAll("input, textarea, select").forEach((input) => {
+          input.disabled = !visible;
+        });
+      });
+    }
+
+    function bindWorkflowDouyinReplyCommentMode(prefix = "workflowParam") {
+      const mode = $(`${prefix}DouyinReplyCommentMode`);
+      if (!mode || mode.dataset.workflowReplyModeBound === "1") return;
+      mode.dataset.workflowReplyModeBound = "1";
+      mode.addEventListener("change", () => syncWorkflowDouyinReplyCommentFields(prefix, true));
     }
 
     function bindWorkflowMomentPicker(scope) {
@@ -3559,32 +4335,72 @@
       if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
         await loadMountedAccounts(true).catch(() => {});
       }
+      await loadWechatContacts(true).catch(() => {});
+      renderWorkflowMomentPicker("param");
+      renderWorkflowMomentPicker("action");
+      renderWorkflowMomentPicker("node");
     }
 
     function syncWorkflowNodeModalFields(reset = false) {
       const lookup = workflowSelectedNodeLookup();
       const showGroupInvite = workflowLookupIsNativeWechatTakeover(lookup);
       const showMoments = workflowLookupIsNativeWechatMoments(lookup);
+      const showWhatsapp = workflowLookupIsNativeWhatsapp(lookup);
       const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
+      // 私信接管 / 记忆接管节点：这里只给记忆接管形态露一个记忆文件，绝不露采集参数。
+      // 判定按"备注/名字"先算，并且给采集参数加一道硬闸：接管节点永远不显示精准获客参数。
+      const noteIsPrivateTakeover = /私信接管|私信引流|记忆接管/.test(selectedNote);
+      const showDouyinPrivate = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && (noteIsPrivateTakeover || salesWorkflowActionForNote(selectedNote) === "stranger_message");
       const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && !showDouyinPrivate
         && salesWorkflowActionForNote(selectedNote) === "search_collect";
+      const showDouyinAiKeywords = showDouyinCollection && salesWorkflowIsAiKeywordNote(selectedNote);
+      const showDouyinPreciseTouch = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && salesWorkflowActionForNote(selectedNote) === "precise_touch";
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
+      $("workflowNodeNativeWhatsappField")?.classList.toggle("hidden", !showWhatsapp);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
+      // 精准获客AI 的关键词全部由 AI 生成，不需要用户填、也不从 Online 取，
+      // 所以这个节点直接隐藏“精准获客参数”输入框。
+      $("workflowNodeDouyinKeywordField")?.classList.toggle("hidden", showDouyinAiKeywords);
+      $("workflowNodeDouyinAiKeywordField")?.classList.toggle("hidden", !showDouyinAiKeywords);
+      $("workflowNodeDouyinTouchField")?.classList.toggle("hidden", !showDouyinPreciseTouch);
+      syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);
       syncWorkflowMomentPicker("node", showMoments);
       const checkbox = $("workflowNodeNativeWechatGroupInviteEnabled");
       if (checkbox && !showGroupInvite) checkbox.checked = false;
       else if (checkbox && reset) checkbox.checked = false;
       if (reset && showMoments) initializeWorkflowMomentPicker("node", []);
+      if (reset && showWhatsapp) {
+        setFieldValue("workflowNodeNativeWhatsappAccountId", "desktop-whatsapp-default");
+        setFieldValue("workflowNodeNativeWhatsappInterval", 15);
+        setFieldValue("workflowNodeNativeWhatsappTakeoverMinutes", 30);
+        setFieldValue("workflowNodeNativeWhatsappMaxUnread", 50);
+        setFieldValue("workflowNodeNativeWhatsappInstruction", "");
+      }
       if (reset && showDouyinCollection) {
         setFieldValue("workflowNodeDouyinKeyword", "");
         setFieldValue("workflowNodeDouyinRegions", "全国");
         setFieldValue("workflowNodeDouyinMaxResults", 50);
         setFieldValue("workflowNodeDouyinMode", "script");
+        setFieldValue("workflowNodeDouyinAiKeywordCount", 3);
+        setFieldValue("workflowNodeDouyinAiKeywordAvoidDays", 7);
+        setFieldValue("workflowNodeDouyinAiKeywordPublishDays", 7);
+        setFieldValue("workflowNodeDouyinReplyPreciseComments", false);
+        setFieldValue("workflowNodeDouyinReplyCommentMode", "");
+        setFieldValue("workflowNodeDouyinReplyCommentText", "");
+        setFieldValue("workflowNodeDouyinReplyCommentPrompt", "");
+        setFieldValue("workflowNodeDouyinReplyCommentSeedText", "");
+      }
+      bindWorkflowDouyinReplyCommentMode("workflowNode");
+      syncWorkflowDouyinReplyCommentFields("workflowNode", showDouyinCollection);
+      if (reset && showDouyinPreciseTouch) {
+        setFieldValue("workflowNodeDouyinTouchMaxUsers", 20);
         [
-          "workflowNodeDouyinFollowupReplyComments",
-          "workflowNodeDouyinFollowupMentionComment",
           "workflowNodeDouyinFollowupFollowComment",
+          "workflowNodeDouyinFollowupMentionComment",
           "workflowNodeDouyinFollowupDirectMessage",
         ].forEach((id) => setFieldValue(id, true));
       }
@@ -3593,11 +4409,16 @@
     function workflowAbilityOptionsHtml() {
       const groups = new Map();
       workflowLeafLookups().forEach((lookup) => {
-        const group = lookup.optionGroup || "销售员工";
+        const group = lookup.optionGroup || workflowNodeOptionGroup(lookup && lookup.node);
         if (!groups.has(group)) groups.set(group, []);
         groups.get(group).push(lookup);
       });
-      return Array.from(groups.entries()).map(([group, lookups]) => {
+      const orderedGroups = [
+        ...WORKFLOW_NODE_GROUP_ORDER.filter((group) => groups.has(group)),
+        ...Array.from(groups.keys()).filter((group) => !WORKFLOW_NODE_GROUP_ORDER.includes(group)),
+      ];
+      return orderedGroups.map((group) => {
+        const lookups = groups.get(group) || [];
         const options = lookups.map((lookup) => {
           const isSalesWorkflowOption = lookup && lookup.optionId != null;
           const disabled = (isSalesWorkflowOption || abilityIsActionable(lookup.node)) ? "" : " disabled";
@@ -3668,11 +4489,11 @@
       };
     }
 
-    function articleFieldsHtml(prefix, titleValue = "公众号文章") {
-      return taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue))
-        + taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题"), true)
-        + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
-        + taskAdvancedFieldsHtml(
+    const ARTICLE_FIELD_TABS = {};
+
+    function articleAdvancedFieldsHtml(prefix) {
+      return taskAdvancedFieldsHtml(
+
           taskFieldHtml("写作风格", taskSelectHtml(`${prefix}Style`, optionHtml("专业、有观点、适合公众号阅读", "专业观点") + optionHtml("简洁大气、商业分析、少废话", "简洁商业") + optionHtml("故事感强、情绪自然、有真实案例", "故事叙事") + optionHtml("通俗易懂、步骤清晰、可直接照做", "实用教程")))
           + taskFieldHtml("排版主题", taskSelectHtml(`${prefix}Theme`, optionHtml("professional-clean", "专业清爽") + optionHtml("minimal-gold", "极简金色") + optionHtml("warm-editorial", "暖色杂志")))
           + taskFieldHtml("配图比例", taskSelectHtml(`${prefix}ImageRatio`, optionHtml("3:2", "3:2 横图") + optionHtml("16:9", "16:9 宽横图") + optionHtml("1:1", "1:1 方图") + optionHtml("2:3", "2:3 竖图") + optionHtml("9:16", "9:16 竖图")))
@@ -3685,13 +4506,154 @@
         );
     }
 
+    function articleComposeFieldsHtml(prefix) {
+      // 只有「AI 创作」特有的输入（共用字段在外面只渲染一份，避免重复 id）
+      return taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题"), true);
+    }
+
+    function articleRemixFieldsHtml(prefix) {
+      // 复刻特有输入：只要链接。资料用「IP 人设模板」里选好的，模板没选就直接拦住不让提交。
+      return taskFieldHtml("要复刻的公众号文章链接", workInputHtml(`${prefix}SourceUrl`, "text", "", 'placeholder="https://mp.weixin.qq.com/s/..."'), true)
+        + '<p class="meta" style="margin:-0.4rem 0 0.7rem;">资料用你 IP 人设模板里选好的（记忆文件 / 资料调查）；模板里没选会在下发前拦住，请先到「个人设置 → 个人记忆 / 资料调查」给模板选好资料。</p>';
+    }
+
+    function articleFieldsHtml(prefix, titleValue = "公众号文章") {
+      const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
+      const tab = (key, label) => `<button type="button" class="article-mode-tab${mode === key ? " active" : ""}" data-article-tab-prefix="${prefix}" data-article-field-tab="${key}">${label}</button>`;
+      const tabBar = `<div class="article-mode-tabs">${tab("compose", "AI 创作")}${tab("remix", "复刻")}</div>`;
+      // 和 online 一样：tab 在最上面单独一行；复刻 tab 里只留一个链接输入，任务名称/目标读者/高级设置都收起来
+      return `<div class="article-fields-stack">`
+        + tabBar
+        + `<div data-article-title-block="${prefix}" class="${mode === "remix" ? "hidden" : ""}">`
+        + taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue, `data-article-default-title="${titleValue}"`))
+        + `</div>`
+        + `<div data-article-prefix="${prefix}" data-article-panel="compose" class="${mode === "compose" ? "" : "hidden"}">${articleComposeFieldsHtml(prefix)}</div>`
+        + `<div data-article-prefix="${prefix}" data-article-panel="remix" class="${mode === "remix" ? "" : "hidden"}">${articleRemixFieldsHtml(prefix)}</div>`
+        + `<div data-article-compose-only="${prefix}" class="${mode === "compose" ? "" : "hidden"}">`
+        + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
+        + articleAdvancedFieldsHtml(prefix)
+        + `</div>`
+        + `</div>`;
+    }
+
+    function setArticleFieldTab(prefix, mode) {
+      const key = String(prefix || "").trim();
+      if (!key) return;
+      const next = String(mode || "").trim() === "remix" ? "remix" : "compose";
+      ARTICLE_FIELD_TABS[key] = next;
+      document.querySelectorAll(`[data-article-tab-prefix="${key}"]`).forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-article-field-tab") === next);
+      });
+      document.querySelectorAll(`[data-article-prefix="${key}"][data-article-panel]`).forEach((panel) => {
+        panel.classList.toggle("hidden", panel.getAttribute("data-article-panel") !== next);
+      });
+      document.querySelectorAll(`[data-article-compose-only="${key}"]`).forEach((block) => {
+        block.classList.toggle("hidden", next !== "compose");
+      });
+      document.querySelectorAll(`[data-article-title-block="${key}"]`).forEach((block) => {
+        block.classList.toggle("hidden", next === "remix");
+      });
+      const titleInput = document.getElementById(`${key}Title`);
+      if (titleInput) {
+        const fallback = String(titleInput.getAttribute("data-article-default-title") || "公众号文章");
+        if (next === "remix") {
+          if (!titleInput.value || titleInput.value === fallback) titleInput.value = "公众号复刻";
+        } else if (titleInput.value === "公众号复刻") {
+          titleInput.value = fallback;
+        }
+      }
+    }
+
+    const WECHAT_ARTICLE_REMIX_NO_MATERIAL = "IP 人设模板里还没有选资料（记忆文件 / 资料调查）：请先到「个人设置 → 个人记忆 / 资料调查」给模板选好资料，再回来做复刻。";
+
+    const wechatArticleRemixTemplateCache = { at: 0, ready: false, hasMaterial: false, label: "", readFailed: false };
+
+    function wechatArticleTemplateRowHasMaterial(row) {
+      const rowData = row && typeof row === "object" ? row : {};
+      const memoryIds = Array.isArray(rowData.memory_doc_ids)
+        ? rowData.memory_doc_ids.filter((item) => String(item || "").trim())
+        : [];
+      const requirements = rowData.requirements;
+      const requirementText = requirements && typeof requirements === "object"
+        ? Object.keys(requirements).length > 0
+        : !!String(requirements || "").trim();
+      return !!(memoryIds.length || String(rowData.survey_id || "").trim() || requirementText);
+    }
+
+    // 复刻的资料来源 = 「IP 人设模板」里选定的资料（当前模板 → 没设当前模板时用默认配置行）。
+    // 与客户端 _resolve_template_material 同一套判定：选了什么带什么，不兜底、不默认全带。
+    async function loadWechatArticleRemixTemplateMaterial(force = false) {
+      const now = Date.now();
+      if (!force && wechatArticleRemixTemplateCache.ready && now - wechatArticleRemixTemplateCache.at < 15000) {
+        return wechatArticleRemixTemplateCache;
+      }
+      const results = await Promise.all([
+        api("/api/ip-content/personal-default", { cache: "no-store" })
+          .then((data) => ({ ok: true, data }), (err) => ({ ok: false, err })),
+        api("/api/ip-content/schedule-templates", { cache: "no-store" })
+          .then((data) => ({ ok: true, data }), (err) => ({ ok: false, err })),
+      ]);
+      const readFailed = !(results[0].ok && results[1].ok);
+      if (readFailed) {
+        console.warn("[wechat-article] read remix template failed", results[0].err, results[1].err);
+      }
+      const defaults = (results[0].ok && results[0].data) || {};
+      const templates = (results[1].ok && results[1].data) || {};
+      const item = defaults && defaults.item && typeof defaults.item === "object" ? defaults.item : {};
+      const rows = Array.isArray(templates && templates.items)
+        ? templates.items.filter((row) => row && typeof row === "object")
+        : [];
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+      const currentId = String(meta.current_template_id || "").trim();
+      let chosen = item;
+      if (currentId) {
+        const hit = rows.find((row) => String(row.id || "") === currentId);
+        if (hit) chosen = hit;
+      } else {
+        const hit = rows.find((row) => {
+          const rowMeta = row.meta && typeof row.meta === "object" ? row.meta : {};
+          return String(rowMeta.source || "") === "online_personal_profile" || String(row.name || "").includes("默认");
+        });
+        if (hit) chosen = hit;
+      }
+      wechatArticleRemixTemplateCache.at = now;
+      wechatArticleRemixTemplateCache.ready = true;
+      wechatArticleRemixTemplateCache.readFailed = readFailed;
+      wechatArticleRemixTemplateCache.hasMaterial = wechatArticleTemplateRowHasMaterial(chosen);
+      wechatArticleRemixTemplateCache.label = String((chosen && chosen.name) || "").trim() || "默认配置";
+      return wechatArticleRemixTemplateCache;
+    }
+
+    function wechatArticlePayloadIsRemix(payload) {
+      return !!(payload && String(payload.source_url || "").trim());
+    }
+
+    // 复刻下发前的硬拦：模板里没选资料就不让提交（去掉兜底，不默认全带）
+    async function ensureWechatArticleRemixMaterial(payload) {
+      if (!wechatArticlePayloadIsRemix(payload)) return true;
+      const snapshot = await loadWechatArticleRemixTemplateMaterial();
+      // 读不到模板（接口/网络异常）不等于"没选资料"：不在这里拦，交给设备端判定，避免误报
+      if (snapshot.readFailed) return true;
+      if (!snapshot.hasMaterial) throw new Error(WECHAT_ARTICLE_REMIX_NO_MATERIAL);
+      return true;
+    }
+
     function articlePayloadFromFields(prefix) {
-      const idea = workflowParamValue(`${prefix}Idea`);
-      if (!idea) throw new Error("请填写公众号主题");
+      const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
+      const idea = mode === "remix" ? "" : workflowParamValue(`${prefix}Idea`);
+      const sourceUrl = mode === "remix" ? String(workflowParamValue(`${prefix}SourceUrl`) || "").trim() : "";
+      if (mode === "remix" && !sourceUrl) throw new Error("请粘贴要复刻的公众号文章链接");
+      if (mode !== "remix" && !idea) throw new Error("请填写公众号主题");
+      // 复刻不选资料：留空 -> 设备端用全部记忆 + 全部资料调查（IP 人设默认模板）
       const selectedValues = assetPickerSelectedValues(`${prefix}SelectedImages`).slice(0, 12);
       return {
         idea,
         topic: idea,
+        source_url: sourceUrl,
+        memory_document_ids: [],
+        memory_document_titles: [],
+        survey_ids: [],
+        survey_names: [],
         audience: workflowParamValue(`${prefix}Audience`),
         style: workflowParamValue(`${prefix}Style`) || "专业、有观点、适合公众号阅读",
         theme: workflowParamValue(`${prefix}Theme`) || "professional-clean",
@@ -3709,10 +4671,11 @@
       return splitTextareaList(workflowParamValue(id));
     }
 
-    function workflowIpDailyTaskOptionsHtml() {
+    function workflowIpDailyTaskOptionsHtml(capabilityId = "ip_content_daily") {
+      const allowed = new Set(ipContentTasksForCapability(capabilityId));
       return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox ip-daily-task-option">
-          <input type="checkbox" data-workflow-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <input type="checkbox" data-workflow-ip-daily-task="${escapeHtml(item.value)}"${allowed.has(item.value) ? " checked" : ""}${String(capabilityId) !== "ip_content_daily" ? " disabled" : ""}>
           <span>${escapeHtml(item.label)}</span>
         </label>
       `).join("")}</div>`;
@@ -3754,9 +4717,9 @@
 
     function workflowCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
-      if (id === "ip_content_daily") {
+      if (isIpContentCapability(id)) {
         return taskFieldHtml("模板", ipTemplateSelectControl("workflowParamIpTemplate"), true)
-          + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(id), true)
           + ipDailyAdvancedFieldsHtml("workflowParamIp");
       }
       if (id === "goal.image.pipeline") {
@@ -3810,27 +4773,48 @@
         + taskFieldHtml("任务要求", taskTextareaHtml("workflowParamGenericPrompt", "填写要执行的任务参数和要求"), true);
     }
 
+    function workflowDouyinReplyCommentFieldsHtml(prefix = "workflowParam") {
+      return taskFieldHtml("回复模式", taskSelectHtml(`${prefix}DouyinReplyCommentMode`, optionHtml("", "不启用回复（默认）") + optionHtml("fixed", "固定文案") + optionHtml("ai", "AI 按客户评论生成") + optionHtml("rewrite", "AI 同方向改编")))
+        + `<div class="field full hidden" id="${prefix}DouyinReplyCommentFixedField"><label for="${prefix}DouyinReplyCommentText">固定回复文案</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentText`, "固定模式使用")}</div>`
+        + `<div class="field full hidden" id="${prefix}DouyinReplyCommentAiField"><label for="${prefix}DouyinReplyCommentPrompt">回复要求</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentPrompt`, "AI 模式：回复方向和约束")}</div>`
+        + `<div class="field full hidden" id="${prefix}DouyinReplyCommentRewriteField"><label for="${prefix}DouyinReplyCommentSeedText">改编基准文案</label>${taskTextareaHtml(`${prefix}DouyinReplyCommentSeedText`, "改编模式使用")}</div>`;
+    }
+
     function workflowQuickFieldsHtml(item) {
       const key = String(item && item.key || "");
       if (key === "image_composer_studio") return workflowCapabilityFieldsHtml("goal.image.pipeline");
       if (key === "comfly.seedance.tvc.pipeline") return workflowCapabilityFieldsHtml("comfly.seedance.tvc.pipeline");
       if (key === "comfly.daihuo.pipeline") return workflowCapabilityFieldsHtml("comfly.daihuo.pipeline");
       if (key === "hifly.video.create_by_tts") return workflowCapabilityFieldsHtml("hifly.video.create_by_tts");
+      if (key === "native_whatsapp_poll") {
+        return taskFieldHtml("账号标识", workInputHtml("workflowParamNativeWhatsappAccountId", "text", "desktop-whatsapp-default", 'readonly'))
+          + taskFieldHtml("消息轮询间隔（秒）", workInputHtml("workflowParamNativeWhatsappInterval", "number", "15", 'min="1" max="300" step="1"'))
+          + taskFieldHtml("接管时长（分钟）", workInputHtml("workflowParamNativeWhatsappTakeoverMinutes", "number", "30", 'min="1" max="1440" step="1"'))
+          + taskFieldHtml("每轮最多会话数", workInputHtml("workflowParamNativeWhatsappMaxUnread", "number", "50", 'min="1" max="100" step="1"'))
+          + taskFieldHtml("回复要求", taskTextareaHtml("workflowParamNativeWhatsappInstruction", "可选：回复语气、业务边界和语言要求"), true);
+      }
       if (key === "douyin_leads") {
         if (item && item.privateTakeover) {
-          return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡")))
-            + taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
+          // 记忆文件不在工作流节点里选：用 Online「我的AI员工」那个节点上选的那份。
+          return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡") + optionHtml("ai_memory", "AI 记忆接管（按记忆文件回复）")))
+            // 记忆接管不需要再加好友：自动加好友那块只在固定话术/AI 引导模式下显示。
+            + `<div id="workflowParamDouyinWechatAddFriendField">${taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true))}</div>`;
         }
-        return taskFieldHtml("采集关键词", taskTextareaHtml("workflowParamDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
+        if (item && item.selfCommentMonitor) return "";
+        if (item && item.preciseTouch) {
+          return taskFieldHtml("每次触达数量", workInputHtml("workflowParamDouyinTouchMaxUsers", "number", "20", 'min="1" max="200"'))
+            + taskFieldHtml("触达动作（按顺序执行）", workCheckboxGroupHtml([
+              { id: "workflowParamDouyinFollowupFollowComment", label: "关注并评论", checked: true },
+              { id: "workflowParamDouyinFollowupMentionComment", label: "评论并@客户", checked: true },
+              { id: "workflowParamDouyinFollowupDirectMessage", label: "主动私信", checked: true },
+            ]), true);
+        }
+        return taskFieldHtml("采集关键词（可选）", taskTextareaHtml("workflowParamDouyinKeyword", "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
           + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")))
-          + taskFieldHtml("采集后继续执行", workCheckboxGroupHtml([
-            { id: "workflowParamDouyinFollowupReplyComments", label: "回复客户评论", checked: true },
-            { id: "workflowParamDouyinFollowupMentionComment", label: "评论并@客户", checked: true },
-            { id: "workflowParamDouyinFollowupFollowComment", label: "关注并评论", checked: true },
-            { id: "workflowParamDouyinFollowupDirectMessage", label: "主动私信", checked: true },
-          ]), true);
+          + taskFieldHtml("筛选后立即回复", workCheckboxHtml("workflowParamDouyinReplyPreciseComments", "对本轮每个视频筛选出的精准评论回复一轮", false))
+          + workflowDouyinReplyCommentFieldsHtml("workflowParam");
       }
       if (key === "local_bestseller") {
         return localBestsellerFieldsHtml("workflowParamLocal", false);
@@ -3852,6 +4836,13 @@
         return taskFieldHtml("是否拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
       }
+      if (key === "native_whatsapp_poll") {
+        return taskFieldHtml("账号标识", workInputHtml("workflowParamNativeWhatsappAccountId", "text", "desktop-whatsapp-default", 'readonly'))
+          + taskFieldHtml("消息轮询间隔（秒）", workInputHtml("workflowParamNativeWhatsappInterval", "number", "15", 'min="1" max="300" step="1"'))
+          + taskFieldHtml("接管时长（分钟）", workInputHtml("workflowParamNativeWhatsappTakeoverMinutes", "number", "30", 'min="1" max="1440" step="1"'))
+          + taskFieldHtml("每轮最多会话数", workInputHtml("workflowParamNativeWhatsappMaxUnread", "number", "50", 'min="1" max="100" step="1"'))
+          + taskFieldHtml("回复要求", taskTextareaHtml("workflowParamNativeWhatsappInstruction", "可选：回复语气、业务边界和语言要求"), true);
+      }
       if (key === "native_wechat_add_friend") {
         return taskFieldHtml("手机号/微信号", taskTextareaHtml("workflowParamNativeWechatTargets", "多个目标用逗号或换行分隔"), true)
           + taskFieldHtml("申请语", workInputHtml("workflowParamNativeWechatApplyMessage", "text", "", 'placeholder="可选"'));
@@ -3864,7 +4855,7 @@
       return workflowCapabilityFieldsHtml(item && (item.capabilityId || item.key));
     }
 
-    function workflowFieldsHtmlForNode(node, workflowNode = null) {
+    function workflowFieldsHtmlForNode(node, workflowNode = null, lookup = null) {
       if (!node) return "";
       if (workflowNodeUsesPersonaDefaults(workflowNode)) return "";
       const platform = socialPlatformFromAbilityKey(node.key);
@@ -3873,7 +4864,27 @@
       if (node.key === "wechat_channels_transcript") return workflowWechatTranscriptFieldsHtml();
        if (node.workQuickKey) {
          const quick = workQuickItemByKey(node.workQuickKey) || node;
-         return workflowQuickFieldsHtml(isSalesDouyinPrivateNode(workflowNode) ? { ...quick, privateTakeover: true } : quick);
+         // 记忆接管节点可能刚添加、还没写 action/note：把节点参数和节点选择器上的
+         // 文案都算进来，否则会掉到最下面的搜索采集表单（地区/搜索数量/搜索方式）。
+         const douyinNodeParams = (workflowNode && workflowNode.plan && workflowNode.plan.payload
+           && workflowNode.plan.payload.params && typeof workflowNode.plan.payload.params === "object")
+           ? workflowNode.plan.payload.params : {};
+         const memoryTakeoverFields = isSalesDouyinPrivateNode(workflowNode)
+           || salesWorkflowIsMemoryTakeoverNote(
+                `${(workflowNode && (workflowNode.ability_label || workflowNode.note)) || ""} `
+                + `${(lookup && (lookup.optionLabel || lookup.defaultNote)) || ""}`
+              )
+           || String(douyinNodeParams.reply_mode || "").trim().toLowerCase() === "ai_memory"
+           || workflowBoolParam(douyinNodeParams.memory_takeover, false);
+         return workflowQuickFieldsHtml(
+           memoryTakeoverFields
+             ? { ...quick, privateTakeover: true }
+             : isSalesDouyinPreciseTouchNode(workflowNode)
+               ? { ...quick, preciseTouch: true }
+               : workflowNode && salesWorkflowActionForNote(workflowNode.note || workflowNode.ability_label) === "self_comment_monitor"
+                 ? { ...quick, selfCommentMonitor: true }
+                 : quick,
+         );
        }
       if (node.capabilityId || node.serverTask) return workflowCapabilityFieldsHtml(node.capabilityId || node.key);
       if (node.routeTab) return `<div class="quick-empty">这个节点是页面入口，不能加入定时工作流。</div>`;
@@ -3892,12 +4903,25 @@
       }
     }
 
+    function bindWorkflowDouyinReplyModeControls() {
+      const mode = String(workflowParamValue("workflowParamDouyinReplyMode") || "fixed").trim().toLowerCase();
+      $("workflowParamDouyinWechatAddFriendField")?.classList.toggle("hidden", mode === "ai_memory");
+      const sel = $("workflowParamDouyinReplyMode");
+      if (sel && !sel.dataset.workflowDouyinReplyModeBound) {
+        sel.dataset.workflowDouyinReplyModeBound = "1";
+        sel.addEventListener("change", bindWorkflowDouyinReplyModeControls);
+      }
+    }
+
     function initWorkflowParamControls(node) {
       const modal = $("workflowParamModal");
       if (!modal) return;
       initAssetPickerControls(modal);
+      bindWorkflowDouyinReplyCommentMode("workflowParam");
+      syncWorkflowDouyinReplyCommentFields("workflowParam", false);
       if ($("workflowParamLocalStyle")) bindLocalBestsellerPersonaControls("workflowParamLocal");
       bindWorkflowGoalVideoModeControls();
+      bindWorkflowDouyinReplyModeControls();
       if ($("workflowParamVideoCandidateGroup")) {
         fillCandidateGroupSelect();
         loadCandidateGroups();
@@ -3995,18 +5019,18 @@
 
     function collectWorkflowCapabilityPlan(node) {
       const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         const templateId = parseInt(workflowParamValue("workflowParamIpTemplate") || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedWorkflowIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
         return {
-          title: node.label || "IP日更文案",
+          title: node.label || ipContentCapabilityLabel(capabilityId),
           task_kind: "ip_content_daily",
-          content: "H5 工作流：IP日更文案",
+          content: `H5 工作流：${ipContentCapabilityLabel(capabilityId)}`,
           payload: {
             template_id: templateId,
-            tasks,
+            tasks: tasks.length ? tasks : ipContentTasksForCapability(capabilityId),
             sync_before: workflowParamChecked("workflowParamIpSyncBefore"),
             requirements: ipDailyRequirementsFromFields("workflowParamIp", templateId),
             industry_count: workflowParamNumber("workflowParamIpIndustryCount", 5, 1, 5),
@@ -4045,13 +5069,15 @@
         const driveMode = workflowParamValue("workflowParamHiflyDriveMode") || "tts";
         const voice = workflowParamValue("workflowParamVoice");
         const script = workflowParamValue("workflowParamHiflyScript");
+        const oralSourcesRaw = workflowParamMulti("workflowParamHiflyScriptSources");
+        const oralSources = oralSourcesRaw.length ? oralSourcesRaw : ["ip_daily_industry_hot_oral"];
         const audioValue = assetPickerSelectedValues("workflowParamHiflyAudio")[0] || "";
         const longVideo = workflowParamValue("workflowParamHiflyDurationMode") === "long";
         const useTemplate = workflowParamValue("workflowParamHiflyTemplateMode") === "template";
         const videoDuration = longVideo ? workflowParamNumber("workflowParamHiflyTargetDuration", 60, 31, 300) : 30;
         if (!avatar) throw new Error("请选择数字人");
         if (driveMode === "tts" && !voice) throw new Error("请选择声音");
-        if (driveMode === "tts" && !script) throw new Error("请填写口播文案");
+        if (driveMode === "tts" && !script && !oralSources.length) throw new Error("请填写口播文案或选择口播来源");
         if (driveMode === "audio" && !audioValue) throw new Error("请选择驱动音频");
         const styleId = workflowParamValue("workflowParamHiflyTemplate");
         if (useTemplate && !styleId) throw new Error("请选择剪辑模板");
@@ -4066,7 +5092,15 @@
             virtualman_id: avatar,
             drive_mode: driveMode,
             ...(driveMode === "tts"
-              ? { voice, speaker_id: voice, script, text: script, prompt: script }
+              ? {
+                  voice,
+                  speaker_id: voice,
+                  script,
+                  text: script,
+                  prompt: script,
+                  script_sources: oralSources,
+                  script_source: oralSources[0],
+                }
               : (/^https?:\/\//i.test(audioValue) ? { audio_url: audioValue } : { audio_asset_id: audioValue })),
             rate: workflowParamValue("workflowParamHiflyRate") || "1",
             speed_ratio: Number(workflowParamValue("workflowParamHiflyRate") || 1),
@@ -4200,8 +5234,26 @@
       if (key === "comfly.seedance.tvc.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.seedance.tvc.pipeline", label: quick.label || "创意分镜头视频" });
       if (key === "comfly.daihuo.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.daihuo.pipeline", label: quick.label || "爆款TVC" });
       if (key === "hifly.video.create_by_tts") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "hifly.video.create_by_tts", label: quick.label || "数字人口播" });
+      if (key === "native_whatsapp_poll") {
+        return nativeWhatsappWorkflowPlan(workflowParamValue("workflowParamNativeWhatsappInstruction"), {
+          account_id: workflowParamValue("workflowParamNativeWhatsappAccountId") || "desktop-whatsapp-default",
+          message_poll_interval_seconds: workflowParamNumber("workflowParamNativeWhatsappInterval", 15, 1, 300),
+          takeover_session_minutes: workflowParamNumber("workflowParamNativeWhatsappTakeoverMinutes", 30, 1, 1440),
+          max_unread_per_round: workflowParamNumber("workflowParamNativeWhatsappMaxUnread", 50, 1, 100),
+          reply_instruction: workflowParamValue("workflowParamNativeWhatsappInstruction"),
+        });
+      }
       if (key === "douyin_leads") {
         if (workflowNode && isSalesDouyinPrivateNode(workflowNode)) {
+          const douyinReplyMode = String(workflowParamValue("workflowParamDouyinReplyMode") || "fixed").trim().toLowerCase();
+          // 记忆文件在 Online 那个节点上选（工作流节点不提供这个参数）：
+          // 这里原样保留已经存下来的值，绝对不能用 [] 覆盖掉。
+          const douyinExistingParams = (workflowNode && workflowNode.plan && workflowNode.plan.payload
+            && workflowNode.plan.payload.params && typeof workflowNode.plan.payload.params === "object")
+            ? workflowNode.plan.payload.params : {};
+          const douyinMemoryDocIds = Array.isArray(douyinExistingParams.memory_doc_ids)
+            ? douyinExistingParams.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 3)
+            : [];
           return {
             title: "抖音私信接管",
             task_kind: "douyin_leads",
@@ -4212,18 +5264,73 @@
               h5_one_shot: true,
               douyin_execution_mode: "one_shot",
               params: {
-                reply_mode: workflowParamValue("workflowParamDouyinReplyMode") || "fixed",
+                reply_mode: douyinReplyMode === "ai_memory" ? "ai_memory" : (douyinReplyMode === "ai_lead" ? "ai_lead" : "fixed"),
+                memory_doc_ids: douyinMemoryDocIds,
                 wechat_add_friend_enabled: workflowParamChecked("workflowParamDouyinWechatAddFriend"),
                 wechat_add_friend_targets_source: "douyin_private_message_phone",
               },
             },
           };
         }
+        if ((quick && quick.preciseTouch) || (workflowNode && isSalesDouyinPreciseTouchNode(workflowNode))) {
+          const touchActions = normalizeSalesDouyinFollowupActions([
+            workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
+            workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
+            workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
+          ]);
+          return {
+            title: "抖音精准用户触达",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：精准用户触达",
+            payload: {
+              action: "precise_touch",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: {
+                max_users: workflowParamNumber("workflowParamDouyinTouchMaxUsers", 20, 1, 200),
+                touch_actions: touchActions,
+                customer_scope: "precise_pool",
+              },
+            },
+          };
+        }
+        if ((quick && quick.selfCommentMonitor) || (workflowNode && salesWorkflowActionForNote(workflowNode.note || workflowNode.ability_label) === "self_comment_monitor")) {
+          return {
+            title: "抖音我的评论区",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：抖音我的评论区",
+            payload: {
+              action: "self_comment_monitor",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: { customer_scope: "self_comments" },
+            },
+          };
+        }
         const keyword = workflowParamValue("workflowParamDouyinKeyword");
-        if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workflowParamValue("workflowParamDouyinRegions"));
+        const collectionParams = {
+          max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
+          regions: regions.length ? regions : ["全国"],
+          mode: workflowParamValue("workflowParamDouyinMode") || "script",
+          customer_scope: "current_collection_batch",
+        };
+        if (workflowParamChecked("workflowParamDouyinReplyPreciseComments")) {
+          const replyMode = workflowParamValue("workflowParamDouyinReplyCommentMode");
+          const replyText = workflowParamValue("workflowParamDouyinReplyCommentText");
+          const replyPrompt = workflowParamValue("workflowParamDouyinReplyCommentPrompt");
+          const replySeedText = workflowParamValue("workflowParamDouyinReplyCommentSeedText");
+          collectionParams.reply_precise_comments = true;
+          if (replyMode) collectionParams.reply_comment_mode = replyMode;
+          if (replyText) collectionParams.reply_comment_text = replyText;
+          if (replyPrompt) collectionParams.reply_comment_prompt = replyPrompt;
+          if (replySeedText) collectionParams.reply_comment_seed_text = replySeedText;
+        }
+        if (keyword) collectionParams.keyword = keyword;
         return {
-          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
           payload: {
@@ -4231,19 +5338,7 @@
             h5_task_source: "h5",
             h5_one_shot: true,
             douyin_execution_mode: "one_shot",
-            params: {
-              keyword,
-              max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
-              regions: regions.length ? regions : ["全国"],
-              mode: workflowParamValue("workflowParamDouyinMode") || "script",
-              followup_actions: normalizeSalesDouyinFollowupActions([
-                workflowParamChecked("workflowParamDouyinFollowupReplyComments") ? "reply_comments" : "",
-                workflowParamChecked("workflowParamDouyinFollowupMentionComment") ? "mention_comment" : "",
-                workflowParamChecked("workflowParamDouyinFollowupFollowComment") ? "follow_comment" : "",
-                workflowParamChecked("workflowParamDouyinFollowupDirectMessage") ? "direct_message" : "",
-              ]),
-              customer_scope: "current_collection_batch",
-            },
+            params: collectionParams,
           },
         };
       }
@@ -4293,12 +5388,9 @@
       }
       if (isNativeWechatWorkflowKey(key)) {
         if (key === "native_wechat_moments_engage") {
-          const wxNos = workflowMomentSelectedValues("param");
           return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
-            contact_wx_nos: wxNos,
-            targets: wxNos,
             moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
-          }, { requireTargets: true });
+          });
         }
         return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
           targets: workSplitList(workflowParamValue("workflowParamNativeWechatTargets")),
@@ -4306,6 +5398,15 @@
           group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled"),
           moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
         }, { requireTargets: key !== "native_wechat_poll" });
+      }
+      if (key === "native_whatsapp_poll") {
+        return nativeWhatsappWorkflowPlan(workflowParamValue("workflowParamNativeWhatsappInstruction"), {
+          account_id: workflowParamValue("workflowParamNativeWhatsappAccountId") || "desktop-whatsapp-default",
+          message_poll_interval_seconds: workflowParamNumber("workflowParamNativeWhatsappInterval", 15, 1, 300),
+          takeover_session_minutes: workflowParamNumber("workflowParamNativeWhatsappTakeoverMinutes", 30, 1, 1440),
+          max_unread_per_round: workflowParamNumber("workflowParamNativeWhatsappMaxUnread", 50, 1, 100),
+          reply_instruction: workflowParamValue("workflowParamNativeWhatsappInstruction"),
+        });
       }
       return collectWorkflowCapabilityPlan(quick || {});
     }
@@ -4332,6 +5433,15 @@
       ) {
         return collectWorkflowQuickPlan(
           workQuickItemByKey(node.workQuickKey || node.key) || node,
+          workflowNode,
+        );
+      }
+      if (
+        isSalesDouyinPreciseTouchNode(workflowNode)
+        && (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads")
+      ) {
+        return collectWorkflowQuickPlan(
+          { ...(workQuickItemByKey(node.workQuickKey || node.key) || node), preciseTouch: true },
           workflowNode,
         );
       }
@@ -4383,6 +5493,34 @@
       }
       if (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads") {
         const salesAction = salesWorkflowActionForNote(prompt);
+        if (salesAction === "precise_touch") {
+          return {
+            title: "抖音精准用户触达",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：精准用户触达",
+            payload: {
+              action: "precise_touch",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: { touch_actions: [...SALES_DOUYIN_FOLLOWUP_ACTIONS], max_users: 20, customer_scope: "precise_pool" },
+            },
+          };
+        }
+        if (salesAction === "self_comment_monitor") {
+          return {
+            title: "抖音我的评论区",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：抖音我的评论区",
+            payload: {
+              action: "self_comment_monitor",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
+              params: { customer_scope: "self_comments" },
+            },
+          };
+        }
         return {
           title: `抖音获客 - ${prompt.slice(0, 24)}`,
           task_kind: "douyin_leads",
@@ -4394,15 +5532,15 @@
         return nativeWechatWorkflowPlan(node.key || node.workQuickKey, prompt);
       }
       const capabilityId = String(node.capabilityId || node.key || "").trim();
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         return {
-          title: "IP日更文案",
+          title: ipContentCapabilityLabel(capabilityId),
           task_kind: "ip_content_daily",
-          content: "H5 工作流：IP日更文案",
+          content: `H5 工作流：${ipContentCapabilityLabel(capabilityId)}`,
           payload: {
             template_id: 0,
             use_personal_default: true,
-            tasks: ["industry_hot_oral", "professional_ip_oral", "moments_candidate"],
+            tasks: ipContentTasksForCapability(capabilityId),
             sync_before: true,
             requirements: ipDailyRequirementsWithLanguage(prompt, 0),
             industry_count: 5,
@@ -4461,6 +5599,9 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
       const nodeKey = String(lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
+      // 节点选择器上写明的 sales_action 优先；没有才按备注/名字推。
+      const douyinLookupAction = String((lookup && lookup.salesAction) || "").trim().toLowerCase()
+        || salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note);
       let plan;
       if (nodeKey === "native_wechat_poll") {
         plan = nativeWechatWorkflowPlan(nodeKey, note, workflowParamChecked("workflowNodeNativeWechatGroupInviteEnabled") ? {
@@ -4468,24 +5609,125 @@
             group_invite_rule_status: "pending_rules",
             trigger: "qualified_intent",
           } : { group_invite_enabled: false });
+      } else if (nodeKey === "native_whatsapp_poll") {
+        plan = nativeWhatsappWorkflowPlan(note, {
+          account_id: workflowParamValue("workflowNodeNativeWhatsappAccountId") || "desktop-whatsapp-default",
+          message_poll_interval_seconds: workflowParamNumber("workflowNodeNativeWhatsappInterval", 15, 1, 300),
+          takeover_session_minutes: workflowParamNumber("workflowNodeNativeWhatsappTakeoverMinutes", 30, 1, 1440),
+          max_unread_per_round: workflowParamNumber("workflowNodeNativeWhatsappMaxUnread", 50, 1, 100),
+          reply_instruction: workflowParamValue("workflowNodeNativeWhatsappInstruction"),
+        });
       } else if (nodeKey === "native_wechat_moments_engage") {
-        const wxNos = workflowMomentSelectedValues("node");
-        if (!wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
         plan = nativeWechatWorkflowPlan(nodeKey, note, {
-          contact_wx_nos: wxNos,
-          targets: wxNos,
           moment_action: workflowParamValue("workflowNodeMomentAction") || "like_comment",
           max_scrolls: 6,
-        }, { requireTargets: true });
+        });
       } else if (
         workflowLookupIsDouyinLeads(lookup.node)
-        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "search_collect"
+        && douyinLookupAction === "precise_touch"
+      ) {
+        const touchActions = normalizeSalesDouyinFollowupActions([
+          workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
+          workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
+          workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
+        ]);
+        plan = {
+          title: "抖音精准用户触达",
+          task_kind: "douyin_leads",
+          content: "H5 工作流：精准用户触达",
+          payload: {
+            action: "precise_touch",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: {
+              max_users: workflowParamNumber("workflowNodeDouyinTouchMaxUsers", 20, 1, 200),
+              touch_actions: touchActions,
+              customer_scope: "precise_pool",
+            },
+          },
+        };
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
+        && douyinLookupAction === "self_comment_monitor"
+      ) {
+        plan = {
+          title: "抖音我的评论区",
+          task_kind: "douyin_leads",
+          content: "H5 工作流：抖音我的评论区",
+          payload: {
+            action: "self_comment_monitor",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: { customer_scope: "self_comments" },
+          },
+        };
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
+        && (douyinLookupAction === "stranger_message"
+          || salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note))
+      ) {
+        const memoryTakeoverNode = String((lookup && lookup.optionReplyMode) || "").trim().toLowerCase() === "ai_memory"
+          || salesWorkflowIsMemoryTakeoverNote(lookup.defaultNote || lookup.optionLabel || note);
+        plan = {
+          title: memoryTakeoverNode ? "抖音私信记忆接管" : "抖音私信接管",
+          task_kind: "douyin_leads",
+          content: `H5 工作流：${memoryTakeoverNode ? "抖音私信记忆接管" : "抖音私信接管"}`,
+          payload: {
+            action: "stranger_message",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: {
+              reply_mode: memoryTakeoverNode ? "ai_memory" : "fixed",
+              memory_takeover: memoryTakeoverNode,
+              wechat_add_friend_enabled: false,
+              wechat_add_friend_targets_source: "douyin_private_message_phone",
+            },
+          },
+        };
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
+        && douyinLookupAction === "search_collect"
       ) {
         const keyword = workflowParamValue("workflowNodeDouyinKeyword");
-        if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workflowParamValue("workflowNodeDouyinRegions"));
+        const aiKeywordNode = salesWorkflowIsAiKeywordNote(lookup.defaultNote || lookup.optionLabel || note);
+        const collectionParams = {
+          regions: regions.length ? regions : ["全国"],
+          max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
+          mode: workflowParamValue("workflowNodeDouyinMode") || "script",
+          customer_scope: "current_collection_batch",
+        };
+        if (aiKeywordNode) {
+          const aiKeywordCount = workflowParamNumber("workflowNodeDouyinAiKeywordCount", 3, 1, 8);
+          const aiKeywordAvoidDays = workflowParamNumber("workflowNodeDouyinAiKeywordAvoidDays", 7, 1, 60);
+          const aiKeywordPublishDays = workflowParamNumber("workflowNodeDouyinAiKeywordPublishDays", 7, 1, 180);
+          collectionParams.ai_keywords = true;
+          collectionParams.ai_keyword_count = aiKeywordCount;
+          collectionParams.ai_keyword_avoid_days = aiKeywordAvoidDays;
+          collectionParams.ai_keyword_publish_days = aiKeywordPublishDays;
+          // 保证新视频：按最新发布 + 最近 N 天筛选
+          collectionParams.search_sort_type = "1";
+          collectionParams.search_publish_time = String(aiKeywordPublishDays);
+        }
+        if (workflowParamChecked("workflowNodeDouyinReplyPreciseComments")) {
+          const replyMode = workflowParamValue("workflowNodeDouyinReplyCommentMode");
+          const replyText = workflowParamValue("workflowNodeDouyinReplyCommentText");
+          const replyPrompt = workflowParamValue("workflowNodeDouyinReplyCommentPrompt");
+          const replySeedText = workflowParamValue("workflowNodeDouyinReplyCommentSeedText");
+          collectionParams.reply_precise_comments = true;
+          if (replyMode) collectionParams.reply_comment_mode = replyMode;
+          if (replyText) collectionParams.reply_comment_text = replyText;
+          if (replyPrompt) collectionParams.reply_comment_prompt = replyPrompt;
+          if (replySeedText) collectionParams.reply_comment_seed_text = replySeedText;
+        }
+        if (keyword) collectionParams.keyword = keyword;
         plan = {
-          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          title: aiKeywordNode
+            ? "抖音精准获客AI"
+            : (keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词"),
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
           payload: {
@@ -4493,19 +5735,7 @@
             h5_task_source: "h5",
             h5_one_shot: true,
             douyin_execution_mode: "one_shot",
-            params: {
-              keyword,
-              regions: regions.length ? regions : ["全国"],
-              max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
-              mode: workflowParamValue("workflowNodeDouyinMode") || "script",
-              followup_actions: normalizeSalesDouyinFollowupActions([
-                workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
-                workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
-                workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
-                workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
-              ]),
-              customer_scope: "current_collection_batch",
-            },
+            params: collectionParams,
           },
         };
       } else {
@@ -4537,6 +5767,11 @@
       params.workflow_node_end_time = endTime || "";
       params.sales_schedule_start = startTime || "";
       params.sales_schedule_end = endTime || "";
+      if (payload.action === "native_whatsapp_poll") {
+        const durationMinutes = salesWorkflowDurationMinutes({ time: startTime || "", endTime: endTime || "" });
+        if (durationMinutes > 0) params.takeover_session_minutes = durationMinutes;
+        else delete params.takeover_session_minutes;
+      }
       payload.params = params;
       next.payload = payload;
       return next;
@@ -4591,7 +5826,6 @@
       const actionPayload = action && action.plan && action.plan.payload && typeof action.plan.payload === "object" ? action.plan.payload : {};
       const actionParams = actionPayload.params && typeof actionPayload.params === "object" ? actionPayload.params : {};
       if ($("workflowActionMomentAction")) $("workflowActionMomentAction").value = actionParams.moment_action || "like_comment";
-      initializeWorkflowMomentPicker("action", Array.isArray(actionParams.contact_wx_nos) ? actionParams.contact_wx_nos : actionParams.targets);
       syncWorkflowActionModalFields();
       modal.classList.remove("hidden");
       if (workflowActionKind(action || {}) === "native_wechat_moments_engage") {
@@ -4635,14 +5869,11 @@
       });
       if (duplicate) throw new Error(actionType === "publish" ? "这个平台已经有发布动作了" : "这个子动作已经添加过了");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
-      const wxNos = actionType === "native_wechat_moments_engage" ? workflowMomentSelectedValues("action") : [];
-      if (actionType === "native_wechat_moments_engage" && !wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
       const nextAction = workflowActionPayload(parentNode, {
         time,
         end_time: endTime,
         action_type: actionType,
         platform,
-        contact_wx_nos: wxNos,
         moment_action: (($("workflowActionMomentAction") && $("workflowActionMomentAction").value) || "like_comment").trim(),
       }, existing);
       const children = currentChildren
@@ -4701,7 +5932,13 @@
           const replyMode = String(
             planParams.reply_mode || rowParams.reply_mode || "fixed"
           ).trim().toLowerCase();
-          preservedParams.reply_mode = replyMode === "ai_lead" ? "ai_lead" : "fixed";
+          preservedParams.reply_mode = ["ai_lead", "ai_memory"].includes(replyMode) ? replyMode : "fixed";
+          const preservedMemoryIds = Array.isArray(planParams.memory_doc_ids) && planParams.memory_doc_ids.length
+            ? planParams.memory_doc_ids
+            : (Array.isArray(rowParams.memory_doc_ids) ? rowParams.memory_doc_ids : []);
+          if (preservedMemoryIds.length) {
+            preservedParams.memory_doc_ids = preservedMemoryIds.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 3);
+          }
           if (Object.prototype.hasOwnProperty.call(planParams, "wechat_add_friend_enabled")) {
             preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);
           }
@@ -4715,12 +5952,24 @@
             if (Object.prototype.hasOwnProperty.call(planParams, key)) preservedParams[key] = planParams[key];
             else if (Object.prototype.hasOwnProperty.call(rowParams, key)) preservedParams[key] = rowParams[key];
           });
-          const hasPlanFollowups = Object.prototype.hasOwnProperty.call(planParams, "followup_actions");
-          const hasRowFollowups = Object.prototype.hasOwnProperty.call(rowParams, "followup_actions");
-          preservedParams.followup_actions = hasPlanFollowups || hasRowFollowups
-            ? normalizeSalesDouyinFollowupActions(hasPlanFollowups ? planParams.followup_actions : rowParams.followup_actions)
-            : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+          ["reply_precise_comments", "reply_comment_mode", "reply_comment_text", "reply_comment_prompt", "reply_comment_seed_text"].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(planParams, key)) preservedParams[key] = planParams[key];
+            else if (Object.prototype.hasOwnProperty.call(rowParams, key)) preservedParams[key] = rowParams[key];
+          });
+          preservedParams.followup_actions = [];
           preservedParams.customer_scope = "current_collection_batch";
+        }
+        if (action === "precise_touch") {
+          const sourceActions = Object.prototype.hasOwnProperty.call(planParams, "touch_actions")
+            ? planParams.touch_actions
+            : rowParams.touch_actions;
+          const touchActions = Object.prototype.hasOwnProperty.call(planParams, "touch_actions") || Object.prototype.hasOwnProperty.call(rowParams, "touch_actions")
+            ? normalizeSalesDouyinFollowupActions(sourceActions)
+            : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+          preservedParams.touch_actions = touchActions;
+          const maxUsers = planParams.max_users ?? rowParams.max_users;
+          if (maxUsers != null && maxUsers !== "") preservedParams.max_users = Math.max(1, Math.min(200, Number(maxUsers) || 20));
+          preservedParams.customer_scope = "precise_pool";
         }
         next.payload = Object.keys(preservedParams).length
           ? { action, params: preservedParams }
@@ -4799,8 +6048,16 @@
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       const action = String(payload.action || params.sales_action || "").trim();
       if (action === "stranger_message") return true;
+      // 记忆接管节点（新建还没写 action、或参数里就是 ai_memory）也必须走这一套表单，
+      // 否则会掉到下面的搜索采集表单，弹出地区/搜索数量/搜索方式这些无关参数。
+      if (String(params.reply_mode || "").trim().toLowerCase() === "ai_memory") return true;
+      if (workflowBoolParam(params.memory_takeover, false)) return true;
       const text = salesWorkflowRowText(node);
-      return text.includes("抖音私信接管") || text.includes("抖音私信引流");
+      // 「抖音私信记忆接管」是同一个 action 的记忆接管形态：不带这个判断，
+      // 弹窗会掉到下面的搜索采集表单（地区/关键词/搜索数量），用户看到的参数全不对。
+      return text.includes("抖音私信接管")
+        || text.includes("抖音私信引流")
+        || salesWorkflowIsMemoryTakeoverNote(text);
     }
 
     function workflowLookupIsDouyinLeads(nodeInfo) {
@@ -4850,7 +6107,7 @@
         ability_key: key,
         ability_label: row.label || row.note || "",
         department_id: parentNode && parentNode.department_id || "private_domain",
-        department_name: parentNode && parentNode.department_name || "私域销管",
+        department_name: parentNode && parentNode.department_name || "私域销冠",
         note: row.note || row.label || "",
         sales_preset: true,
         is_action_node: true,
@@ -4933,12 +6190,29 @@
       return prepared;
     }
 
+    // 一级「个微自动加好友」节点只有来源=上级抖音私信结果时才折叠进抖音父节点；
+    // 本机导入名单 / 服务端上报池自带目标清单，必须保持一级可见
+    // （和 Online h5-employees.js 的 nativeAddFriendSourceOf 同一口径）。
+    const DOUYIN_ADD_FRIEND_SOURCES = [
+      "douyin_private_message_phone",
+      "douyin_private_message_mobile",
+      "douyin_private_message_wechat_id",
+    ];
+
+    function isSalesDouyinBoundAddFriend(node) {
+      if (!isSalesWechatAddFriendRow(node)) return false;
+      const plan = node && node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      return DOUYIN_ADD_FRIEND_SOURCES.indexOf(String(params.source_mode || "").trim().toLowerCase()) >= 0;
+    }
+
     function migrateSalesDouyinAddFriendChildren(nodes) {
       const list = Array.isArray(nodes) ? nodes : [];
       const parents = list.filter(isSalesDouyinPrivateNode);
       if (!parents.length) return list;
-      const legacyRows = list.filter(isSalesWechatAddFriendRow);
-      const prepared = list.filter((node) => !isSalesWechatAddFriendRow(node));
+      const legacyRows = list.filter(isSalesDouyinBoundAddFriend);
+      const prepared = list.filter((node) => !isSalesDouyinBoundAddFriend(node));
       parents.forEach((parentNode) => {
         const plan = parentNode.plan && typeof parentNode.plan === "object" ? parentNode.plan : {};
         const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
@@ -4962,6 +6236,8 @@
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
       SALES_WORKFLOW_PRESET.forEach((row, index) => {
+        // pickerOnly 只作为可选节点出现在节点选择列表里，绝不自动并入工作流。
+        if (row && row.pickerOnly) return;
         if (isSalesWechatAddFriendRow(row)) {
           return;
         }
@@ -4998,6 +6274,39 @@
         }
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+    }
+
+    function salesPresetNodeIdentity(node) {
+      if (!node || typeof node !== "object") return "";
+      const key = String(node.ability_key || node.key || "").trim();
+      const text = String(node.note || node.ability_label || "");
+      const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const explicitAction = String(payload.action || params.sales_action || "").trim().toLowerCase();
+      const action = key === "douyin_leads" ? (explicitAction || salesWorkflowActionForNote(text)) : "";
+      // These two Douyin actions were added after older sales mirrors were
+      // already saved. Their action identity remains stable if a user edits
+      // the displayed time or wording.
+      if (key === "douyin_leads" && (action === "precise_touch" || action === "self_comment_monitor")) {
+        return `douyin:${action}`;
+      }
+      return [key, text.trim(), String(node.time || "").trim()].join("|");
+    }
+
+    function mergeSalesWorkflowPresetNodes(nodes) {
+      const existing = cloneWorkflowNodes(nodes);
+      const defaults = buildSalesWorkflowPresetNodes();
+      const seen = new Set(existing.map(salesPresetNodeIdentity).filter(Boolean));
+      let added = 0;
+      defaults.forEach((node) => {
+        const identity = salesPresetNodeIdentity(node);
+        if (!identity || seen.has(identity)) return;
+        existing.push(cloneWorkflowNodes([node])[0]);
+        seen.add(identity);
+        added += 1;
+      });
+      return { nodes: normalizeWorkflowScheduleNodes(existing), added };
     }
 
     function normalizeWorkflowScheduleNodes(nodes) {
@@ -5039,6 +6348,11 @@
       return String(meta.system_template_key || "").trim();
     }
 
+    function workflowTemplateIsLegacySystemMirror(tpl) {
+      const meta = tpl && tpl.meta && typeof tpl.meta === "object" ? tpl.meta : {};
+      return String(meta.source || "").trim() === "system_mirror" && !!workflowSystemTemplateKey(tpl);
+    }
+
     function workflowTemplateIsSales(tpl) {
       if (!tpl) return false;
       const meta = tpl.meta && typeof tpl.meta === "object" ? tpl.meta : {};
@@ -5076,6 +6390,7 @@
     function personalSystemWorkflowTemplate(templateKey) {
       const key = String(templateKey || "").trim();
       const ownRows = userWorkflowTemplateRows();
+      if (ownRows.some((tpl) => tpl && tpl.source === "system" && workflowSystemTemplateKey(tpl) === key)) return null;
       const exact = ownRows.find((tpl) => workflowSystemTemplateKey(tpl) === key);
       if (exact) return exact;
       if (key !== "system_sales") return null;
@@ -5192,7 +6507,7 @@
             source_workflow_node_label: String(parentNode && (parentNode.ability_label || parentNode.note) || ""),
             platform,
             media_type: mediaType,
-            ai_publish_copy: true,
+            ai_publish_copy: !(platform === "wechat_moments" && String(parentNode && parentNode.ability_key || "").trim() === "ip_content_moments"),
           },
         },
       };
@@ -5217,13 +6532,9 @@
         });
       }
       if (type === "native_wechat_moments_engage") {
-        const wxNos = Array.isArray(formData.contact_wx_nos)
-          ? formData.contact_wx_nos.map((value) => String(value || "").trim()).filter(Boolean)
-          : (Array.isArray(source.contact_wx_nos) ? source.contact_wx_nos : source.targets || []);
+        // 联系人不落节点：执行时读机器上确认过的那份
         return nativeWechatWorkflowPlan("native_wechat_moments_engage", "微信朋友圈点赞评论", {
           ...source,
-          contact_wx_nos: wxNos,
-          targets: wxNos,
           moment_action: formData.moment_action || source.moment_action || "like_comment",
           max_scrolls: Number(source.max_scrolls || 6),
         });
@@ -5338,24 +6649,25 @@
     }
 
     function systemWorkflowTemplates() {
-      return SYSTEM_WORKFLOW_EMPLOYEES.map((item) => {
-        const nodes = item.preset === "sales"
-          ? buildSalesWorkflowPresetNodes()
-          : buildDepartmentWorkflowPresetNodes(item.departmentId, item.id.replace(/^system_/, ""));
-        return {
-          id: item.id,
-          owner_user_id: 0,
-          owner_name: "系统",
-          name: item.name,
-          nodes,
-          status: item.comingSoon ? "coming_soon" : "active",
-          source: "system",
-          system: true,
-          mark: item.mark,
-          comingSoon: !!item.comingSoon,
-          granted_user_ids: [],
-        };
-      });
+      const catalogRows = userWorkflowTemplateRows().filter((tpl) => (
+        tpl && tpl.source === "system" && workflowSystemTemplateKey(tpl)
+      ));
+      if (catalogRows.length) {
+        return catalogRows.map((tpl) => {
+          const key = workflowSystemTemplateKey(tpl);
+          return {
+            ...tpl,
+            id: key,
+            source: "system",
+            system: true,
+            system_catalog: true,
+            comingSoon: false,
+            status: "active",
+            mark: String(tpl.name || "员").slice(0, 1),
+          };
+        });
+      }
+      return [];
     }
 
     function closeWorkflowOverlays() {
@@ -5375,13 +6687,20 @@
       closeWorkflowOverlays();
       const personalMirror = personalSystemWorkflowTemplate("system_sales");
       if (personalMirror) {
-        applyWorkflowTemplate({
+        const merged = mergeSalesWorkflowPresetNodes(personalMirror.nodes);
+        const migratedMirror = {
           ...personalMirror,
+          nodes: merged.nodes,
           meta: { ...(personalMirror.meta || {}), system_template_key: "system_sales" },
-        });
+        };
+        const index = state.workflowTemplates.findIndex((item) => String(item && item.id || "") === String(personalMirror.id || ""));
+        if (index >= 0) state.workflowTemplates[index] = migratedMirror;
+        applyWorkflowTemplate(migratedMirror);
+        state.workflowSalesTemplateMigrationPending = merged.added > 0;
         state.workflowViewingTemplateKey = "system_sales";
         return;
       }
+      state.workflowSalesTemplateMigrationPending = false;
       state.workflowEditingTemplateId = "";
       state.workflowEditingTemplateMeta = { system_template_key: "system_sales", source: "system_mirror" };
       state.workflowViewingTemplateId = "";
@@ -5421,6 +6740,7 @@
       state.workflowEditingTemplateMeta = {};
       state.workflowViewingTemplateId = "";
       state.workflowViewingTemplateKey = "";
+      state.workflowSalesTemplateMigrationPending = false;
       state.workflowNodesDraft = [];
       state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
@@ -5465,22 +6785,34 @@
       }
       const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
       if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
-        setFieldValue("workflowParamDouyinReplyMode", String(params.reply_mode || "fixed").toLowerCase() === "ai_lead" ? "ai_lead" : "fixed");
+        const douyinNodeNoteText = `${node.ability_label || node.label || ""} ${node.note || ""} ${plan.title || ""}`;
+        const douyinDefaultReplyMode = salesWorkflowIsMemoryTakeoverNote(douyinNodeNoteText) ? "ai_memory" : "fixed";
+        const openedReplyMode = String(params.reply_mode || douyinDefaultReplyMode).trim().toLowerCase();
+        setFieldValue("workflowParamDouyinReplyMode", ["ai_lead", "ai_memory"].includes(openedReplyMode) ? openedReplyMode : "fixed");
+        bindWorkflowDouyinReplyModeControls();
         setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, false));
         return;
       }
+      if (isDouyinLookup && isSalesDouyinPreciseTouchNode(node)) {
+        setFieldValue("workflowParamDouyinTouchMaxUsers", params.max_users || params.max_users_per_run || 20);
+        const touchActions = Object.prototype.hasOwnProperty.call(params, "touch_actions")
+          ? normalizeSalesDouyinFollowupActions(params.touch_actions)
+          : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
+        setFieldValue("workflowParamDouyinFollowupFollowComment", touchActions.includes("follow_comment"));
+        setFieldValue("workflowParamDouyinFollowupMentionComment", touchActions.includes("mention_comment"));
+        setFieldValue("workflowParamDouyinFollowupDirectMessage", touchActions.includes("direct_message"));
+        return;
+      }
       if (payload.action === "search_collect" || isDouyinLookup) {
-        setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || node.note || "");
+        setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || "");
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
-        const followupActions = Object.prototype.hasOwnProperty.call(params, "followup_actions")
-          ? normalizeSalesDouyinFollowupActions(params.followup_actions)
-          : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
-        setFieldValue("workflowParamDouyinFollowupReplyComments", followupActions.includes("reply_comments"));
-        setFieldValue("workflowParamDouyinFollowupMentionComment", followupActions.includes("mention_comment"));
-        setFieldValue("workflowParamDouyinFollowupFollowComment", followupActions.includes("follow_comment"));
-        setFieldValue("workflowParamDouyinFollowupDirectMessage", followupActions.includes("direct_message"));
+        setFieldValue("workflowParamDouyinReplyPreciseComments", workflowBoolParam(params.reply_precise_comments, false));
+        setFieldValue("workflowParamDouyinReplyCommentMode", params.reply_comment_mode || "");
+        setFieldValue("workflowParamDouyinReplyCommentText", params.reply_comment_text || "");
+        setFieldValue("workflowParamDouyinReplyCommentPrompt", params.reply_comment_prompt || "");
+        setFieldValue("workflowParamDouyinReplyCommentSeedText", params.reply_comment_seed_text || "");
         return;
       }
       if (payload.action === "image_studio_generate" || nodeInfo.workQuickKey === "image_composer_studio") {
@@ -5521,13 +6853,20 @@
         setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
         return;
       }
+      if (nodeInfo.key === "native_whatsapp_poll") {
+        setFieldValue("workflowParamNativeWhatsappAccountId", params.account_id || "desktop-whatsapp-default");
+        setFieldValue("workflowParamNativeWhatsappInterval", params.message_poll_interval_seconds || 15);
+        setFieldValue("workflowParamNativeWhatsappTakeoverMinutes", params.takeover_session_minutes || 30);
+        setFieldValue("workflowParamNativeWhatsappMaxUnread", params.max_unread_per_round || 50);
+        setFieldValue("workflowParamNativeWhatsappInstruction", params.reply_instruction || "");
+        return;
+      }
       if (String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage") {
         setFieldValue("workflowParamNativeWechatMomentAction", params.moment_action || "like_comment");
         setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
-        initializeWorkflowMomentPicker("param", Array.isArray(params.contact_wx_nos) ? params.contact_wx_nos : params.targets);
         return;
       }
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         const setTemplate = () => setFieldValue("workflowParamIpTemplate", payload.template_id || "");
         if (state.ipTemplatesLoaded) setTemplate();
         else loadIpTemplates(true).then(setTemplate).catch(() => {});
@@ -5570,6 +6909,7 @@
         setFieldValue("workflowParamVoice", hifly.voice || hifly.speaker_id || "");
         setFieldValue("workflowParamHiflyTitle", plan.title || nodeInfo.label || "数字人口播");
         setFieldValue("workflowParamHiflyScript", hifly.script || hifly.text || hifly.prompt || "");
+        setHiflyOralSources(Array.isArray(hifly.script_sources) && hifly.script_sources.length ? hifly.script_sources : (hifly.script_source ? [hifly.script_source] : []));
         setFieldValue("workflowParamHiflyAudio", hifly.audio_url || hifly.audio_asset_id || "");
         setFieldValue("workflowParamHiflyDurationMode", hifly.long_video === true ? "long" : "short");
         setFieldValue("workflowParamHiflyTargetDuration", hifly.video_duration || hifly.duration_seconds || (hifly.long_video === true ? 60 : 30));
@@ -5656,10 +6996,11 @@
       $("workflowParamTime").value = node.time || "09:00";
       $("workflowParamEndTime").value = node.end_time || "";
       $("workflowParamNote").value = node.note || "";
-      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node, node);
+      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node, node, lookup);
       modal.classList.remove("hidden");
       initWorkflowParamControls(lookup.node);
       refillWorkflowParamFields(node, lookup);
+      syncWorkflowDouyinReplyCommentFields("workflowParam", isSalesDouyinCollectionNode(node));
       if (String(lookup.node.key || lookup.node.workQuickKey || "") === "native_wechat_moments_engage") {
         refreshWorkflowMomentContactSource().then(() => {
           if (String(state.workflowParamNodeId || "") === String(node.id || "")) renderWorkflowMomentPicker("param");
@@ -5691,6 +7032,7 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = workflowParamValue("workflowParamNote");
       const plan = withWorkflowSchedule(workflowPlanFromParamFields(lookup, note, current), time, endTime);
+      await ensureWechatArticleRemixMaterial(plan && plan.payload);
       state.workflowNodesDraft[idx] = {
         ...current,
         time,
@@ -5951,21 +7293,24 @@
       return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl));
     }
 
+    // The office home should promote the built-in employees only until the
+    // user has created an employee of their own.  Granted/system rows must
+    // not count as a personal employee for this switch.
+    function homeOwnedWorkflowTemplateRows() {
+      return userWorkflowTemplateRows().filter((tpl) => workflowTemplateCanEdit(tpl));
+    }
+
     function workflowTemplateRows() {
       const systemRows = systemWorkflowTemplates();
       const userRows = userWorkflowTemplateRows();
-      const mirrors = new Map();
-      userRows.forEach((tpl) => {
-        const key = workflowSystemTemplateKey(tpl);
-        if (key && !mirrors.has(key)) mirrors.set(key, tpl);
-      });
-      const mergedSystemRows = systemRows.map((tpl) => mirrors.get(String(tpl.id || "")) || tpl);
-      const mergedIds = new Set(mergedSystemRows.map((tpl) => String(tpl && tpl.id || "")));
+      const mergedIds = new Set(systemRows.map((tpl) => String(tpl && tpl.id || "")));
       return [
-        ...mergedSystemRows,
+        ...systemRows,
         ...userRows.filter((tpl) => {
           const id = String(tpl && tpl.id || "");
-          return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);
+          return !workflowTemplateIsLegacySystemMirror(tpl)
+            && !workflowSystemTemplateKey(tpl)
+            && !mergedIds.has(id);
         }),
       ];
     }
@@ -5974,6 +7319,14 @@
       const sid = String(id || "");
       const direct = workflowTemplateRows().find((tpl) => String(tpl && tpl.id || "") === sid);
       if (direct) return direct;
+      const legacyMirror = userWorkflowTemplateRows().find((tpl) => (
+        String(tpl && tpl.id || "") === sid && workflowTemplateIsLegacySystemMirror(tpl)
+      ));
+      if (legacyMirror) {
+        const key = workflowSystemTemplateKey(legacyMirror);
+        const catalog = systemWorkflowTemplates().find((tpl) => workflowSystemTemplateKey(tpl) === key);
+        if (catalog) return catalog;
+      }
       return personalSystemWorkflowTemplate(sid)
         || systemWorkflowTemplates().find((tpl) => String(tpl && tpl.id || "") === sid)
         || null;
@@ -6263,6 +7616,98 @@
       if (options.openList !== false) openCustomEmployeeList();
     }
 
+    function systemEditorModeActive() {
+      return !!String(state.workflowSystemEditorKey || "").trim();
+    }
+
+    function ensureSystemEditorBanner() {
+      let banner = $("workflowSystemEditorBanner");
+      if (banner) return banner;
+      const shell = document.querySelector("#workflowView .workflow-shell");
+      if (!shell) return null;
+      banner = document.createElement("div");
+      banner.id = "workflowSystemEditorBanner";
+      banner.className = "workflow-system-editor-banner hidden";
+      banner.style.cssText = "margin:0 0 10px;padding:10px 12px;border-radius:10px;background:#fff7e6;border:1px solid #ffd591;color:#874d00;font-size:12px;line-height:1.5";
+      shell.insertBefore(banner, shell.firstChild);
+      return banner;
+    }
+
+    function renderSystemEditorChrome() {
+      const editorOn = systemEditorModeActive();
+      ["workflowActivateBtn", "workflowStopBtn", "workflowDeleteTemplateBtn", "workflowTemplateListBtn"].forEach((id) => {
+        const el = $(id);
+        if (el) el.classList.toggle("hidden", editorOn);
+      });
+      const saveButton = $("workflowSaveTemplateBtn");
+      if (saveButton) saveButton.textContent = editorOn ? "保存并生效" : "保存模板";
+      const banner = ensureSystemEditorBanner();
+      if (!banner) return;
+      banner.classList.toggle("hidden", !editorOn);
+      if (editorOn) {
+        const published = state.workflowSystemEditorPublished !== false;
+        banner.textContent = `系统模板编辑中：${state.workflowSystemEditorName || state.workflowSystemEditorKey}（${published ? "已上架" : "已下架"}）· 保存后立即同步给正在直接启用该模板的用户`;
+      }
+    }
+
+    async function openSystemWorkflowTemplateEditor(key) {
+      const templateKey = String(key || "").trim();
+      if (!templateKey) return null;
+      const data = await api(`/api/h5-workflows/system-templates/${encodeURIComponent(templateKey)}`);
+      const resolvedKey = String((data && data.key) || templateKey).trim();
+      state.workflowSystemEditorKey = resolvedKey;
+      state.workflowSystemEditorName = String((data && data.name) || resolvedKey);
+      state.workflowSystemEditorPublished = !(data && data.published === false);
+      state.workflowSystemEditorLoadedKey = resolvedKey;
+      state.workflowSalesTemplateMigrationPending = false;
+      state.workflowEditingTemplateId = "";
+      state.workflowEditingTemplateMeta = { system_template_key: resolvedKey, source: "system" };
+      state.workflowViewingTemplateId = "";
+      state.workflowViewingTemplateKey = resolvedKey;
+      state.workflowNodesDraft = cloneWorkflowNodes((data && Array.isArray(data.nodes)) ? data.nodes : []);
+      if ($("workflowTemplateName")) $("workflowTemplateName").value = state.workflowSystemEditorName;
+      renderWorkflow();
+      switchTab("workflow");
+      return resolvedKey;
+    }
+
+    function maybeOpenSystemWorkflowEditor() {
+      if (!H5_SYSTEM_TEMPLATE_KEY || !state.token) return;
+      if (state.workflowSystemEditorLoadedKey === H5_SYSTEM_TEMPLATE_KEY) return;
+      if (state.workflowSystemEditorOpening) return;
+      state.workflowSystemEditorOpening = true;
+      openSystemWorkflowTemplateEditor(H5_SYSTEM_TEMPLATE_KEY)
+        .catch((err) => {
+          state.workflowSystemEditorLoadedKey = "";
+          toast((err && err.message) || "系统模板加载失败");
+          try {
+            switchTab("workflow");
+          } catch {}
+        })
+        .finally(() => {
+          state.workflowSystemEditorOpening = false;
+        });
+    }
+
+    async function saveSystemWorkflowTemplate({ notify = true } = {}) {
+      const key = String(state.workflowSystemEditorKey || "").trim();
+      if (!key) return null;
+      const nodes = cloneWorkflowNodes(state.workflowNodesDraft || []);
+      if (!nodes.length) throw new Error("请先添加至少一个节点");
+      if (!window.confirm(`确认保存系统模板「${state.workflowSystemEditorName || key}」并立即对所有直接启用该模板的用户生效？`)) {
+        return null;
+      }
+      const name = (($("workflowTemplateName") && $("workflowTemplateName").value) || "").trim();
+      const data = await api(`/api/h5-workflows/system-templates/${encodeURIComponent(key)}`, {
+        method: "POST",
+        json: { name, nodes, confirm: true },
+      });
+      if (notify) {
+        toast(`系统模板已生效：${Number((data && data.node_count) || nodes.length)} 个节点，已同步 ${Number((data && data.synced_mirrors) || 0)} 个用户`);
+      }
+      return data;
+    }
+
     function renderWorkflowGrantPanel() {
       const panel = $("workflowGrantPanel");
       const list = $("workflowSubUserList");
@@ -6289,11 +7734,13 @@
       renderWorkflowDayBoard();
       renderWorkflowTimeline();
       renderWorkflowTemplates();
+      renderSystemEditorChrome();
       renderWorkflowGrantPanel();
     }
 
     function applyWorkflowTemplate(tpl) {
       if (!tpl) return;
+      state.workflowSalesTemplateMigrationPending = false;
       const meta = tpl.meta && typeof tpl.meta === "object" ? { ...tpl.meta } : {};
       const systemTemplateKey = tpl.source === "system" ? String(tpl.id || "") : workflowSystemTemplateKey(tpl);
       state.workflowEditingTemplateId = tpl.source === "own" ? String(tpl.id || "") : "";
@@ -6308,46 +7755,69 @@
     function openWorkflowTemplateEditor(id) {
       const tpl = workflowTemplateById(id);
       if (!tpl) throw new Error("员工模板不存在");
-      if (tpl.source === "system" && String(tpl.id || "") === "system_sales") {
+      if (tpl.source === "system" && !tpl.system_catalog && String(tpl.id || "") === "system_sales") {
         prepareSalesWorkflowDraft();
+      } else if (tpl.source === "system") {
+        applyWorkflowTemplate(tpl);
+      } else if (!workflowTemplateCanEdit(tpl)) {
+        openCustomEmployeeDetail(id);
+        return;
       } else {
         applyWorkflowTemplate(tpl);
-        if (!workflowTemplateCanEdit(tpl)) {
-          state.workflowEditingTemplateId = "";
-          state.workflowEditingTemplateMeta = {
-            copied_from: String(tpl.id || ""),
-            copied_source: String(tpl.source || ""),
-          };
-          state.workflowViewingTemplateId = "";
-        }
       }
       closeCustomEmployeeDialog();
       switchTab("workflow");
     }
 
     async function loadWorkflowTemplates(force = false) {
-      if (!force && state.workflowTemplatesLoaded) {
+        return h5CachedRequest("workflow-templates", force ? 0 : 30000, () => loadWorkflowTemplatesInner(force), { force });
+    }
+
+    async function loadWorkflowTemplatesInner(force = false) {
+      const requestKey = String(currentInstallationId() || "");
+      if (state.workflowTemplatesRequest && state.workflowTemplatesRequestKey === requestKey) {
+        return state.workflowTemplatesRequest;
+      }
+      const cacheFresh = state.workflowTemplatesLoadedAt > 0 && Date.now() - state.workflowTemplatesLoadedAt < 60000;
+      if (state.workflowTemplatesLoaded && state.workflowTemplatesInstallationId === requestKey && (!force || cacheFresh)) {
         renderWorkflowTemplates();
         return;
       }
-      state.workflowTemplatesLoading = true;
-      renderWorkflowTemplates();
-      try {
-        const iid = currentInstallationId();
-        const query = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
-        const data = await api(`/api/h5-workflows/templates${query}`);
-        state.workflowTemplates = (Array.isArray(data.templates) ? data.templates : []).map(normalizeWorkflowTemplate);
-        state.workflowCanGrant = !!data.can_grant;
-        state.workflowTemplatesLoaded = true;
-      } finally {
-        state.workflowTemplatesLoading = false;
-        renderWorkflow();
-        renderCustomEmployees();
-        if (document.querySelector("#officeView.active")) renderOfficeEmployees();
-      }
+      let request;
+      request = (async () => {
+        state.workflowTemplatesLoading = true;
+        renderWorkflowTemplates();
+        try {
+          const iid = currentInstallationId();
+          const query = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
+          const data = await api(`/api/h5-workflows/templates${query}`);
+          if (String(currentInstallationId() || "") !== requestKey) return state.workflowTemplates;
+          state.workflowTemplates = (Array.isArray(data.templates) ? data.templates : []).map(normalizeWorkflowTemplate);
+          state.workflowCanGrant = !!data.can_grant;
+          state.workflowTemplatesInstallationId = requestKey;
+          state.workflowTemplatesLoaded = true;
+          state.workflowTemplatesLoadedAt = Date.now();
+          return state.workflowTemplates;
+        } finally {
+          if (state.workflowTemplatesRequest !== request) return;
+          state.workflowTemplatesLoading = false;
+          state.workflowTemplatesRequest = null;
+          state.workflowTemplatesRequestKey = "";
+          renderWorkflow();
+          renderCustomEmployees();
+          if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+        }
+      })();
+      state.workflowTemplatesRequest = request;
+      state.workflowTemplatesRequestKey = requestKey;
+      return request;
     }
 
-    async function loadWorkflowActive() {
+    async function loadWorkflowActive(force = false) {
+        return h5CachedRequest("workflow-active", force ? 0 : 4000, () => loadWorkflowActiveInner(), { force });
+    }
+
+    async function loadWorkflowActiveInner() {
       const iid = currentInstallationId();
       const requestId = ++state.workflowActiveRequestSeq;
       if (!iid) {
@@ -6378,6 +7848,28 @@
     async function saveWorkflowTemplate({ notify = true } = {}) {
       if (state.workflowTemplateSaving) return;
       const name = ($("workflowTemplateName") && $("workflowTemplateName").value || "").trim();
+      if (systemEditorModeActive()) {
+        const saveButton = $("workflowSaveTemplateBtn");
+        const previousLabel = saveButton ? saveButton.textContent : "";
+        state.workflowTemplateSaving = true;
+        if (saveButton) {
+          saveButton.disabled = true;
+          saveButton.setAttribute("aria-busy", "true");
+          saveButton.textContent = "保存中…";
+        }
+        try {
+          await saveSystemWorkflowTemplate({ notify });
+        } finally {
+          state.workflowTemplateSaving = false;
+          if (saveButton) {
+            saveButton.disabled = false;
+            saveButton.removeAttribute("aria-busy");
+            saveButton.textContent = previousLabel || "保存并生效";
+          }
+          renderSystemEditorChrome();
+        }
+        return;
+      }
       if (!name) {
         $("workflowTemplateName")?.focus();
         throw new Error("请先给员工模板取一个名字");
@@ -6407,6 +7899,7 @@
         });
         const savedTemplate = normalizeWorkflowTemplate(data.template || null);
         state.workflowEditingTemplateId = String((savedTemplate && savedTemplate.id) || id || "");
+        state.workflowSalesTemplateMigrationPending = false;
         state.workflowEditingTemplateMeta = savedTemplate && savedTemplate.meta && typeof savedTemplate.meta === "object"
           ? { ...savedTemplate.meta }
           : meta;
@@ -6438,6 +7931,10 @@
 
     async function activateWorkflowTemplate(templateId = "") {
       let id = String(templateId || state.workflowEditingTemplateId || "");
+      if (state.workflowSalesTemplateMigrationPending && state.workflowEditingTemplateId) {
+        await saveWorkflowTemplate({ notify: false });
+        id = String(state.workflowEditingTemplateId || id);
+      }
       if (!id) {
         await saveWorkflowTemplate();
         id = String(state.workflowEditingTemplateId || "");
@@ -6723,7 +8220,10 @@
     }
 
     function abilityIsActionable(node) {
-      if (!node || node.comingSoon) return false;
+      if (!node || node.comingSoon || node.legacy) return false;
+      if (node.featureKey && !(state.user && state.user.features && state.user.features[node.featureKey])) return false;
+      const nodeLookup = node.key ? abilityLookup(node.key) : null;
+      if (nodeLookup && !departmentFeatureVisible(nodeLookup.department)) return false;
       if (node.children && node.children.length) return true;
       if (node.always || node.routeTab) return true;
       if (isNativeWechatWorkflowKey(node.key) || isNativeWechatWorkflowKey(node.workQuickKey) || isNativeWechatWorkflowKey(node.workflowAction)) return true;
@@ -6750,6 +8250,7 @@
 
     function abilityDesignerIcon(node) {
       const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("moments") || key.includes("circle") || key.includes("coach")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6a3.5 3.5 0 0 1-3.5 3.5H11l-4.5 4v-4.2A3.5 3.5 0 0 1 4 11.5v-6z"/><path d="M8 8h8M8 11h5"/></svg>`;
       if (key.includes("video") || key.includes("daily")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8 11.2 11.6 9A1 1 0 0 0 10 9.9v4.2a1 1 0 0 0 1.6.8l3.2-2.1a1 1 0 0 0 0-1.6z"/><path d="M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z"/></svg>`;
       if (key.includes("article") || key.includes("copy") || key.includes("text")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.8V8h4.2M8 12h8v2H8v-2zm0 4h8v2H8v-2z"/></svg>`;
       if (key.includes("image") || key.includes("pic")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16l1.6-1.6a2 2 0 0 1 2.8 0L22 16v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3zM6 5h12a2 2 0 0 1 2 2v5.2l-.2-.2a4 4 0 0 0-5.6 0L16 13.8l-3.2-3.2a4 4 0 0 0-5.6 0L4 13.8V7a2 2 0 0 1 2-2z"/></svg>`;
@@ -6758,6 +8259,7 @@
 
     function abilityDesignerTone(node) {
       const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("moments") || key.includes("circle") || key.includes("coach")) return "rose";
       if (key.includes("article")) return "emerald";
       if (key.includes("ppt")) return "rose";
       if (key.includes("image")) return "purple";
@@ -6767,6 +8269,7 @@
 
     function abilityDesignerArtLabel(node) {
       const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("moments") || key.includes("circle") || key.includes("coach")) return "朋 友 圈 成 交 教 练";
       if (key.includes("ppt")) return "幻 灯 片 自 动 化";
       if (key.includes("3d") || key.includes("model")) return "3D 建 模 实 验 室";
       if (key.includes("article")) return "深 度 内 容 构 建";
@@ -6976,6 +8479,11 @@
     function renderDepartmentView() {
       const department = departmentById(state.currentDepartmentId);
       if (!department) return;
+      if (!departmentFeatureVisible(department)) {
+        toast("当前账号没有该部门权限");
+        switchTab("office");
+        return;
+      }
       const entryOnly = setDepartmentEntryOnlyMode(department);
       state.currentDepartmentId = department.id;
       $("departmentKicker").textContent = department.alias || "DEPARTMENT";
@@ -6998,6 +8506,10 @@
     function openAbilityView(key, backDepartmentId = "") {
       const lookup = abilityLookup(key);
       if (!lookup) return;
+      if (!departmentFeatureVisible(lookup.department)) {
+        toast("当前账号没有该部门权限");
+        return;
+      }
       const sourceDepartmentId = String(backDepartmentId || state.currentDepartmentId || "").trim();
       state.currentDepartmentId = lookup.department.id;
       state.currentAbilityKey = lookup.node.key;
@@ -7037,10 +8549,11 @@
         .filter(Boolean);
     }
 
-    function abilityIpDailyTaskOptionsHtml() {
+    function abilityIpDailyTaskOptionsHtml(capabilityId = "ip_content_daily") {
+      const allowed = new Set(ipContentTasksForCapability(capabilityId));
       return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox ip-daily-task-option">
-          <input type="checkbox" data-ability-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <input type="checkbox" data-ability-ip-daily-task="${escapeHtml(item.value)}"${allowed.has(item.value) ? " checked" : ""}${String(capabilityId) !== "ip_content_daily" ? " disabled" : ""}>
           <span>${escapeHtml(item.label)}</span>
         </label>
       `).join("")}</div>`;
@@ -7094,9 +8607,10 @@
 
     function abilityCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
-      if (id === "ip_content_daily") {
+      if (id === "moments_sales_coach") return momentsCoachFieldsHtml();
+      if (isIpContentCapability(id)) {
         return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"), true)
-          + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(id), true)
           + ipDailyAdvancedFieldsHtml("abilityIp");
       }
       if (id === "goal.video.pipeline") {
@@ -7129,6 +8643,112 @@
         + taskFieldHtml("任务要求", taskTextareaHtml("abilityGenericPrompt", "填写要执行的任务参数和要求"), true);
     }
 
+    const MOMENTS_CIRCLE_UI = {
+      "": { title: "今天，想让谁记住什么？", description: "不需要写得完整。把发生的事、对方的顾虑或一个变化告诉我，教练会先判断该发哪一种朋友圈。", eyebrow: "从真实素材出发", visible: ["happened", "problem", "question", "desired", "change"], labels: { happened: "今天发生了什么", problem: "她之前卡在哪里", question: "她问过什么", desired: "她真正想要的结果", change: "现在有什么进展" } },
+      "生活圈": { title: "生活圈", description: "用你的日常，将你打造成为朋友圈之星。", eyebrow: "生活圈", visible: ["happened"], labels: { happened: "谁做了什么事" } },
+      "咨询圈": { title: "咨询圈", description: "消除客户疑问，让客户自动下单。", eyebrow: "咨询圈", visible: ["question", "problem"], labels: { question: "客户问了什么问题", problem: "你的判断或建议" } },
+      "反馈圈": { title: "反馈圈", description: "用一个客户反馈，刺激井喷式订单。", eyebrow: "反馈圈", visible: ["problem", "desired", "change"], labels: { problem: "客户之前什么状态", desired: "报名的课程 / 使用的产品", change: "现在有什么变化" } },
+      "收款圈": { title: "收款圈", description: "用一个收款，引爆收款。", eyebrow: "收款圈", visible: ["problem", "desired", "change"], labels: { problem: "客户情况", desired: "报名的课程 / 购买的产品", change: "我能带他拿到的结果" } },
+      "促成交圈": { title: "促成交", description: "让用户忍不住立刻给你付钱。", eyebrow: "促成交圈", visible: ["desired", "problem", "change"], labels: { desired: "用户想获得什么结果", problem: "产品和优惠", change: "截止或名额" } },
+    };
+    function updateMomentsCoachCircleUi(value) {
+      const cfg = MOMENTS_CIRCLE_UI[value] || MOMENTS_CIRCLE_UI[""];
+      const title = $("momentsCoachTitle"); const eyebrow = $("momentsCoachEyebrow"); const introTitle = $("momentsCoachCircleTitle"); const intro = $("momentsCoachCircleIntro"); const description = $("momentsCoachCircleDescription");
+      if (title) title.textContent = cfg.title; if (eyebrow) eyebrow.textContent = cfg.eyebrow; if (introTitle) introTitle.textContent = cfg.title; if (intro) intro.textContent = cfg.eyebrow; if (description) description.textContent = cfg.description;
+      document.querySelectorAll("[data-moments-circle-field]").forEach((el) => { const key = el.dataset.momentsCircleField; el.classList.toggle("circle-field-hidden", !cfg.visible.includes(key)); const label = el.querySelector("span"); if (label) label.textContent = cfg.labels[key] || MOMENTS_CIRCLE_UI[""].labels[key]; });
+      const optional = document.querySelector("[data-moments-circle-optional]"); if (optional) optional.classList.toggle("circle-field-hidden", !!value);
+    }
+
+    function momentsCoachFieldsHtml() {
+      return `<div class="moments-coach-embedded-loading">正在打开朋友圈印钞机…</div>`;
+      /* Legacy inline form retained below for reference; the workbench now injects
+         the standalone coach markup so its original interaction remains intact. */
+      return `<section class="moments-coach-app">
+        <header class="moments-coach-topbar"><div><p>朋友圈成交文案教练</p><h3>把真实经历，写成让人愿意靠近的朋友圈</h3></div><div class="moments-coach-top-actions"><span>仅生成草稿，发布前需确认</span><button type="button" id="momentsCoachGuideOpen">微信浮窗</button></div></header>
+        <div class="moments-coach-guide hidden" id="momentsCoachGuide"><div><strong>添加到微信浮窗</strong><span>在微信内打开本页，点右上角“…”后选择“添加到浮窗”。下次从浮窗回来会恢复当前草稿。</span></div><button type="button" id="momentsCoachGuideClose" aria-label="关闭浮窗引导">关闭</button></div>
+        <nav class="moments-coach-nav" role="tablist"><button type="button" class="active" data-moments-tab="write"><b>01</b>写一条</button><button type="button" data-moments-tab="materials"><b>02</b>素材库</button><button type="button" data-moments-tab="plan"><b>03</b>一周排期</button><button type="button" data-moments-tab="history"><b>04</b>历史草稿</button><button type="button" data-moments-tab="settings"><b>05</b>我的设定</button></nav>
+        <div data-moments-panel="write" class="moments-coach-screen">
+          <section class="moments-coach-intro"><div><span id="momentsCoachCircleIntro">从真实素材出发</span><h4 id="momentsCoachCircleTitle">今天，想让谁记住什么？</h4><p id="momentsCoachCircleDescription">不需要写得完整。把发生的事、对方的顾虑或一个变化告诉我，教练会先判断该发哪一种朋友圈。</p></div><div class="moments-coach-circle-picker" id="momentsCoachCirclePicker"><span>本条方向</span><select id="momentsCoachCircle"><option value="">让 AI 判断</option><option>生活圈</option><option>咨询圈</option><option>反馈圈</option><option>收款圈</option><option>促成交圈</option></select></div></section>
+          <div class="moments-coach-compose">
+            <section class="moments-coach-source"><div class="moments-coach-section-title"><div><span id="momentsCoachEyebrow">真实素材</span><h4 id="momentsCoachTitle">把事情说出来</h4></div><small>至少填写一项</small></div><label class="moments-coach-primary-field" data-moments-circle-field="happened"><span>今天发生了什么</span><textarea id="momentsCoachHappened" placeholder="例如：一位客户把拖了很久的方案重新拿出来聊，原来她不是不想做，而是担心自己坚持不下来。"></textarea></label><div class="moments-coach-field-grid"><label data-moments-circle-field="problem"><span>她之前卡在哪里</span><textarea id="momentsCoachProblem" placeholder="客户原来的困扰"></textarea></label><label data-moments-circle-field="question"><span>她问过什么</span><textarea id="momentsCoachQuestion" placeholder="保留真实问法"></textarea></label><label data-moments-circle-field="desired"><span>她真正想要的结果</span><textarea id="momentsCoachDesired" placeholder="不是产品功能，是她希望发生的变化"></textarea></label><label data-moments-circle-field="change"><span>现在有什么进展</span><textarea id="momentsCoachChange" placeholder="真实变化、反馈或阶段结果"></textarea></label></div><div class="moments-coach-bottom-fields" data-moments-circle-optional><label><span>这条想完成什么</span><select id="momentsCoachPurpose"><option value="建立信任">建立信任</option><option value="消除疑虑">消除疑虑</option><option value="展示变化">展示变化</option><option value="推动行动">推动行动</option></select></label><label><span>配图 / 截图地址</span><textarea id="momentsCoachImages" placeholder="每行一个图片链接；也可以先不填"></textarea></label></div><div class="moments-coach-compose-actions"><button type="button" id="momentsCoachSaveMaterial">保存到素材库</button><button type="button" id="momentsCoachGenerate">开始生成 3 个版本</button></div></section>
+            <aside class="moments-coach-rules"><span>写作边界</span><h4>真实，才会有成交感</h4><ul><li>一条朋友圈只表达一件事</li><li>不编造成交、客户反馈或结果</li><li>不暴露客户身份和聊天隐私</li><li>不使用保证、第一、100% 等词</li></ul><div><b>五种内容节奏</b><p>生活建立信任，咨询消除顾虑，反馈展示变化，收款传递价值，促成交给出行动理由。</p></div></aside>
+          </div><div id="momentsCoachResults" class="moments-coach-results"></div>
+        </div>
+        <div data-moments-panel="materials" class="moments-coach-screen hidden"><section class="moments-coach-list-head"><div><span>真实素材</span><h4>你的内容储备</h4><p>把客户问题、日常片段和真实变化存下来，需要发圈时直接取用。</p></div><button type="button" id="momentsCoachSaveMaterialTop">保存当前素材</button></section><div id="momentsCoachMaterialList" class="moments-coach-list">正在读取素材库…</div></div>
+        <div data-moments-panel="plan" class="moments-coach-screen hidden"><section class="moments-coach-list-head"><div><span>发布节奏</span><h4>一周排期</h4><p>建议每周穿插生活、专业与成交内容，不把朋友圈写成广告栏。</p></div><button type="button" id="momentsCoachSavePlan">将当前草稿存为排期</button></section><div class="moments-coach-plan-guide"><b>推荐七日结构</b><span>生活 2 条</span><span>咨询 1 条</span><span>反馈 1 条</span><span>收款 1 条</span><span>促成交 1 条</span><span>轻收尾 1 条</span></div><div id="momentsCoachPlanList" class="moments-coach-list">正在读取排期…</div></div>
+        <div data-moments-panel="history" class="moments-coach-screen hidden"><section class="moments-coach-list-head"><div><span>已生成内容</span><h4>历史草稿</h4><p>历史文案保留生成时的人设与素材快照。</p></div></section><div id="momentsCoachHistoryList" class="moments-coach-list">正在读取历史记录…</div></div>
+        <div data-moments-panel="settings" class="moments-coach-screen hidden"><section class="moments-coach-list-head"><div><span>写作底色</span><h4>当前 IP 人设</h4><p>教练自动读取当前个人 IP 人设，不需要重复填写基础资料。</p></div></section><div id="momentsCoachPersonaSummary" class="moments-coach-persona">正在读取个人设定…</div></div>
+      </section>`;
+    }
+
+    async function loadEmbeddedMomentsCoach(fields) {
+      if (!fields || (fields.dataset.momentsCoachLoaded === "1" && fields.querySelector("#momentsApp"))) return;
+      fields.dataset.momentsCoachLoaded = "1";
+      try {
+        // The standalone coach page normally loads this stylesheet from its <head>.
+        // When its body is embedded into the workbench, that <head> is not copied,
+        // so explicitly load the product stylesheet before booting its interactions.
+        const coachStyleHref = "/h5-static/moments-coach.css?v=20260905-circle-ui-v2";
+        const coachStyle = document.querySelector('link[href*="moments-coach.css"]') || document.createElement("link");
+        coachStyle.rel = "stylesheet";
+        coachStyle.href = coachStyleHref;
+        coachStyle.dataset.momentsCoachStyle = "1";
+        if (!coachStyle.parentNode) document.head.appendChild(coachStyle);
+        if (!document.querySelector('style[data-moments-coach-reset="1"]')) {
+          const reset = document.createElement("style");
+          reset.dataset.momentsCoachReset = "1";
+          reset.textContent = ".moments-app button{box-shadow:none;}";
+          document.head.appendChild(reset);
+        }
+        const brand = encodeURIComponent(String(H5_BRAND_MARK || "bihuo"));
+        const response = await fetch(`/h5-static/moments-coach.html?brand=${brand}&embedded=1&v=20260905-circle-navigation-v1`, { credentials: "include" });
+        if (!response.ok) throw new Error(`加载朋友圈印钞机失败（${response.status}）`);
+        const html = await response.text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        fields.innerHTML = doc.body?.innerHTML || "";
+        const script = document.createElement("script");
+        script.src = `/h5-static/moments-coach.js?brand=${brand}&embedded=1&v=20260905-circle-navigation-v1`;
+        script.async = false;
+        document.body.appendChild(script);
+      } catch (err) {
+        fields.innerHTML = `<div class="moments-coach-embedded-loading">${escapeHtml(err.message || "朋友圈印钞机加载失败")}</div>`;
+        fields.dataset.momentsCoachLoaded = "";
+      }
+    }
+
+    function momentsCoachSnapshotFromFields() {
+      const circle = abilityValue("momentsCoachCircle"); const visible = (MOMENTS_CIRCLE_UI[circle] || MOMENTS_CIRCLE_UI[""]).visible;
+      return { happened: visible.includes("happened") ? abilityValue("momentsCoachHappened") : "", customer_problem: visible.includes("problem") ? abilityValue("momentsCoachProblem") : "", customer_question: visible.includes("question") ? abilityValue("momentsCoachQuestion") : "", desired_result: visible.includes("desired") ? abilityValue("momentsCoachDesired") : "", current_change: visible.includes("change") ? abilityValue("momentsCoachChange") : "", purpose: abilityValue("momentsCoachPurpose"), circle_type: circle, image_urls: splitTextareaList(abilityValue("momentsCoachImages")) };
+    }
+
+    async function momentsCoachGenerate() {
+      const data = await api("/api/moments-coach/generate", { method: "POST", json: momentsCoachSnapshotFromFields() });
+      const box = $("momentsCoachResults"); if (!box) return;
+      box.innerHTML = `<div class="moments-coach-result-heading"><div><span>生成完成</span><h4>选一个最像你会说的话的版本</h4></div><p>每一版都基于同一份真实素材，发布前请自行核对。</p></div><div class="moments-coach-result-grid">${(data.items || []).map((item) => `<article class="moments-coach-result"><header><span>${escapeHtml(item.circle_type || "朋友圈")}</span><strong>${escapeHtml(item.version_type || "文案")}</strong></header><h4>${escapeHtml(item.title || "")}</h4><pre>${escapeHtml(item.body || "")}</pre><div class="moments-coach-result-note"><b>配图建议</b><p>${escapeHtml(item.image_suggestion || "按内容选择真实场景图片")}</p><b>衔接建议</b><p>${escapeHtml(item.transition || "结合上一条内容自然发布")}</p></div><label class="moments-coach-confirm"><input type="checkbox" data-moments-confirm="${escapeHtml(item.record_id || "")}"><span>我已核对素材，确认后发布</span></label><button type="button" data-moments-publish="${escapeHtml(item.record_id || "")}">选择此版并发布</button></article>`).join("")}</div>`;
+      localStorage.setItem("lobster_moments_coach_draft", JSON.stringify(momentsCoachSnapshotFromFields()));
+    }
+
+    async function momentsCoachLoadHistory() {
+      const box = $("momentsCoachHistoryList"); if (!box) return;
+      const data = await api("/api/moments-coach/history");
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-history"><header><span>${escapeHtml(item.circle_type || "朋友圈")}</span><time>${escapeHtml(String(item.created_at || "").replace("T", " ").slice(0, 16))}</time></header><strong>${escapeHtml(item.title || item.version_type || "未命名草稿")}</strong><pre>${escapeHtml(item.body || "")}</pre></article>`).join("") || `<div class="moments-coach-empty">还没有生成过草稿。把今天真实发生的一件事写下来，从第一条开始。</div>`;
+    }
+
+    async function momentsCoachLoadMaterials() {
+      const box = $("momentsCoachMaterialList"); if (!box) return;
+      const data = await api("/api/moments-coach/materials");
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-history" data-moments-material='${escapeHtml(JSON.stringify(item))}'><header><span>真实素材</span><time>${escapeHtml(String(item.created_at || "").replace("T", " ").slice(0, 16))}</time></header><strong>${escapeHtml(item.title || item.happened?.slice(0, 24) || "未命名素材")}</strong><pre>${escapeHtml(item.happened || item.current_change || item.customer_problem || "")}</pre><button type="button" data-moments-use-material="${item.id}">用于写一条</button></article>`).join("") || `<div class="moments-coach-empty">还没有素材。先把一件真实发生的事保存下来。</div>`;
+    }
+
+    async function momentsCoachLoadPlans() {
+      const box = $("momentsCoachPlanList"); if (!box) return;
+      const data = await api("/api/moments-coach/plans");
+      box.innerHTML = (data.items || []).map((item) => `<article class="moments-coach-history"><header><span>已保存排期</span><time>${item.items?.length || 0} 条内容</time></header><strong>${escapeHtml(item.name || "朋友圈一周排期")}</strong><div class="moments-coach-plan-items">${(item.items || []).map((row) => `<span>${escapeHtml(row.circle_type || "朋友圈")}</span>`).join("")}</div></article>`).join("") || `<div class="moments-coach-empty">还没有保存排期。先生成文案，再把适合的一周内容放进来。</div>`;
+    }
+
+    function momentsCoachRestoreDraft() {
+      try { const draft = JSON.parse(localStorage.getItem("lobster_moments_coach_draft") || "null"); if (!draft) return; const map = { happened: "momentsCoachHappened", customer_problem: "momentsCoachProblem", customer_question: "momentsCoachQuestion", desired_result: "momentsCoachDesired", current_change: "momentsCoachChange", purpose: "momentsCoachPurpose", circle_type: "momentsCoachCircle", image_urls: "momentsCoachImages" }; Object.entries(map).forEach(([key, id]) => { const el = $(id); if (el) el.value = Array.isArray(draft[key]) ? draft[key].join("\n") : (draft[key] || ""); }); } catch (_) {} }
+
     function renderAbilityWorkbench(lookup) {
       const box = $("abilityWorkbench");
       if (!box || !lookup) return;
@@ -7159,7 +8779,7 @@
         }
       } else if (node.capabilityId || node.serverTask) {
         html = abilityCapabilityFieldsHtml(node.capabilityId || node.key);
-        if ((node.capabilityId || node.key) === "ip_content_daily") {
+        if (isIpContentCapability(node.capabilityId || node.key)) {
           setTimeout(() => loadIpTemplates(true), 0);
         }
         if ((node.capabilityId || node.key) === "goal.video.pipeline") {
@@ -7193,16 +8813,46 @@
         hideAbilityWorkbench();
         return;
       }
-      if (!node.routeTab) html += abilityScheduleFieldsHtml();
+      if (!node.routeTab && String(node.capabilityId || node.key || "") !== "moments_sales_coach") html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
       box.dataset.workbenchKey = String(node.workQuickKey || node.capabilityId || node.key || "").trim();
       if (title) title.textContent = node.workQuickKey === "publish_center" ? "发布任务" : `${node.label || "能力"}工作台`;
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
+      if (String(node.capabilityId || node.key || "") === "moments_sales_coach") {
+        if (submit) {
+          submit.disabled = true;
+          submit.classList.add("hidden");
+        }
+        loadEmbeddedMomentsCoach(fields);
+        return;
+      }
+      if (String(node.capabilityId || node.key || "") === "moments_sales_coach_legacy") {
+        setTimeout(() => {
+          momentsCoachRestoreDraft();
+          if (localStorage.getItem("lobster_moments_coach_guide_dismissed") !== "1") $("momentsCoachGuide")?.classList.remove("hidden");
+          $("momentsCoachGuideClose")?.addEventListener("click", () => { localStorage.setItem("lobster_moments_coach_guide_dismissed", "1"); $("momentsCoachGuide")?.classList.add("hidden"); });
+          $("momentsCoachGuideOpen")?.addEventListener("click", () => { localStorage.removeItem("lobster_moments_coach_guide_dismissed"); $("momentsCoachGuide")?.classList.remove("hidden"); });
+          $("momentsCoachCircle")?.addEventListener("change", (evt) => updateMomentsCoachCircleUi(evt.target.value));
+          updateMomentsCoachCircleUi($("momentsCoachCircle")?.value || "");
+          $("abilityWorkbenchFields")?.querySelector(".moments-coach-nav")?.addEventListener("click", (evt) => { const tab = evt.target.closest("[data-moments-tab]"); if (!tab) return; const name = tab.dataset.momentsTab; $("abilityWorkbenchFields").querySelectorAll("[data-moments-tab]").forEach((el) => el.classList.toggle("active", el === tab)); $("abilityWorkbenchFields").querySelectorAll("[data-moments-panel]").forEach((el) => el.classList.toggle("hidden", el.dataset.momentsPanel !== name)); if (name === "history") momentsCoachLoadHistory().catch(() => {}); if (name === "materials") momentsCoachLoadMaterials().catch(() => {}); if (name === "plan") momentsCoachLoadPlans().catch(() => {}); });
+          $("momentsCoachGenerate")?.addEventListener("click", () => momentsCoachGenerate().catch((err) => toast(err.message || "生成失败")));
+          const saveMaterial = async () => { try { await api("/api/moments-coach/materials", { method: "POST", json: momentsCoachSnapshotFromFields() }); toast("素材已保存"); momentsCoachLoadMaterials().catch(() => {}); } catch (err) { toast(err.message || "保存失败"); } };
+          $("momentsCoachSaveMaterial")?.addEventListener("click", saveMaterial);
+          $("momentsCoachSaveMaterialTop")?.addEventListener("click", saveMaterial);
+          $("momentsCoachMaterialList")?.addEventListener("click", (evt) => { const btn = evt.target.closest("[data-moments-use-material]"); if (!btn) return; const row = btn.closest("[data-moments-material]"); try { const item = JSON.parse(row?.dataset.momentsMaterial || "{}"); const map = { happened: "momentsCoachHappened", customer_problem: "momentsCoachProblem", customer_question: "momentsCoachQuestion", desired_result: "momentsCoachDesired", current_change: "momentsCoachChange", purpose: "momentsCoachPurpose", image_urls: "momentsCoachImages" }; Object.entries(map).forEach(([key, id]) => { const el = $(id); if (el) el.value = Array.isArray(item[key]) ? item[key].join("\n") : (item[key] || ""); }); document.querySelector('[data-moments-tab="write"]')?.click(); toast("素材已带入写作区"); } catch (_) { toast("素材读取失败"); } });
+          $("momentsCoachSavePlan")?.addEventListener("click", async () => { try { const items = Array.from(document.querySelectorAll(".moments-coach-result")).map((el, index) => ({ draft_record_id: el.querySelector("[data-moments-confirm]")?.dataset.momentsConfirm || "", circle_type: el.querySelector("header span")?.textContent || "生活圈", sort_order: index })); await api("/api/moments-coach/plans", { method: "POST", json: { name: "朋友圈一周排期", items } }); toast("排期已保存"); } catch (err) { toast(err.message || "保存排期失败"); } });
+          $("momentsCoachResults")?.addEventListener("change", (evt) => { if (evt.target.matches("[data-moments-confirm]")) evt.target.closest(".moments-coach-result")?.classList.toggle("confirmed", evt.target.checked); });
+          $("momentsCoachResults")?.addEventListener("click", async (evt) => { const btn = evt.target.closest("[data-moments-publish]"); if (!btn) return; const check = btn.closest(".moments-coach-result")?.querySelector("[data-moments-confirm]"); if (!check?.checked) { toast("请先确认素材真实且已人工核对"); return; } try { await loadPublishAccounts(); const account = (state.publishAccounts || []).find((row) => String(row.platform || "").toLowerCase() === "wechat_moments") || (state.publishAccounts || [])[0]; if (!account) throw new Error("请先绑定微信朋友圈账号"); await api(`/api/moments-coach/${encodeURIComponent(btn.dataset.momentsPublish || "")}/publish-request`, { method: "POST", json: { account_id: publishAccountLocalId(account), account_nickname: account.nickname || account.account_nickname || "", installation_id: account.installation_id || "", image_urls: momentsCoachSnapshotFromFields().image_urls } }); toast("发布任务已提交"); } catch (err) { toast(err.message || "提交发布失败"); } });
+          momentsCoachLoadHistory().catch(() => {});
+          api("/api/moments-coach/config").then((data) => { const el = $("momentsCoachPersonaSummary"); const req = data.persona?.requirements || {}; if (el) el.textContent = req.basic_profile || req.profile || "已绑定当前 IP 人设"; }).catch(() => {});
+        }, 0);
+      }
       initAssetPickerControls(box);
       if (submit) {
         submit.disabled = false;
         submit.textContent = submitText;
+        submit.classList.toggle("hidden", String(node.capabilityId || node.key || "") === "moments_sales_coach");
       }
       setTimeout(updateAbilityScheduleFields, 0);
     }
@@ -7221,9 +8871,12 @@
         ? (node.children || []).map(marketingCreationVisibleNode).filter(Boolean)
         : (node.children || []);
       const visibleChildCount = childNodes.filter((child) => !isPublishCenterNode(child)).length;
+      const isMomentsCoach = String(node.key || node.capabilityId || "") === "moments_sales_coach";
+      document.body.classList.toggle("moments-coach-embedded", isMomentsCoach);
       if (abilityShell) {
         abilityShell.classList.toggle("marketing-category-mode", marketingMode && visibleChildCount > 0);
         abilityShell.classList.toggle("marketing-tool-mode", marketingMode && visibleChildCount === 0);
+        abilityShell.classList.toggle("moments-coach-mode", isMomentsCoach);
       }
       const labels = [displayDepartment.name, ...trail.map((item) => item.label || item.key)];
       $("abilityKicker").textContent = displayDepartment.name || "ABILITY";
@@ -7231,7 +8884,7 @@
       if ($("pageTitle")) $("pageTitle").textContent = node.label || "能力";
       if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
       $("abilityBreadcrumb").innerHTML = `<span>首页</span>${labels.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}`;
-      $("abilityChildren").innerHTML = childNodes.filter((child) => !isPublishCenterNode(child)).map(abilityCardHtml).join("");
+      $("abilityChildren").innerHTML = isMomentsCoach ? "" : childNodes.filter((child) => !isPublishCenterNode(child)).map(abilityCardHtml).join("");
       const routeBtn = $("abilityRouteBtn");
       const dispatchBtn = $("abilityDispatchBtn");
       if (routeBtn) {
@@ -7804,7 +9457,7 @@
 
     function secretaryDepartmentStats(department) {
       const scope = departmentScope(department);
-      const runs = (state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const runs = dedupeScheduledRunsForDisplay(state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
       const tasks = (state.tasks || []).filter((row) => recordMatchesWorkScope(row, scope));
       const jobs = secretaryJobRowsForDepartment(department);
       const now = Date.now();
@@ -7985,7 +9638,7 @@
 
     function secretaryRoleCardHtml() {
       return `<button class="department-role-card secretary-role-card" type="button" data-secretary-role="1" aria-label="秘书中枢">
-        <img class="secretary-role-img" src="/h5-static/h5-secretary-role.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
+        <img class="secretary-role-img" src="/h5-static/h5-secretary-role.jpg?v=20260926-img-slim-v1" alt="" loading="lazy">
         <div class="department-role-meta">
           <div class="department-role-name">秘书</div>
           <div class="department-role-count">工作态势</div>
@@ -8040,19 +9693,36 @@
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
       const roles = [
-        { id: "sales", name: "销售", status: "待命", target: "salesWorkflow", systemTemplateId: "system_sales" },
-        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true, systemTemplateId: "system_customer_service" },
-        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true, systemTemplateId: "system_overseas" },
-        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true, systemTemplateId: "system_hr" },
+        { id: "sales", name: "销售全流程员工", status: "待命", target: "systemWorkflow:system_sales", systemTemplateId: "system_sales" },
+        { id: "short_video_wechat", name: "短视频+微信员工", status: "待命", target: "systemWorkflow:system_short_video_wechat", systemTemplateId: "system_short_video_wechat" },
+        { id: "douyin_leads", name: "抖音获客员工", status: "待命", target: "systemWorkflow:system_douyin_leads", systemTemplateId: "system_douyin_leads" },
       ].map((role) => {
         const active = !role.comingSoon && activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
         return active ? { ...role, status: "启用中", active } : role;
       });
-      const customEmployees = customWorkflowTemplateRows();
+      const catalogRoles = systemWorkflowTemplates().map((template, index) => {
+        const key = workflowSystemTemplateKey(template) || String(template.id || "");
+        const active = activeWorkflowTemplateKey() === key;
+        return {
+          id: `system_${key}`,
+          name: template.name || "系统员工",
+          status: active ? "启用中" : "待命",
+          active,
+          systemTemplateId: key,
+          target: `systemWorkflow:${key}`,
+          catalogIndex: index,
+        };
+      });
+      const ownedEmployees = homeOwnedWorkflowTemplateRows();
+      const hasOwnedEmployees = ownedEmployees.length > 0;
+      const displayRoles = hasOwnedEmployees ? [] : (catalogRoles.length ? catalogRoles : (state.workflowTemplatesLoaded ? [] : roles));
+      // Once a user has a personal employee, show only personal employees on
+      // the home floor; otherwise retain the existing system/authorized view.
+      const customEmployees = hasOwnedEmployees ? ownedEmployees : customWorkflowTemplateRows();
       const sortedCustomEmployees = sortWorkflowTemplatesForDisplay(customEmployees);
       const activeCustomEmployees = sortedCustomEmployees.filter((tpl) => workflowTemplateIsActive(tpl));
       const inactiveCustomEmployees = sortedCustomEmployees.filter((tpl) => !workflowTemplateIsActive(tpl));
-      const totalEmployees = roles.length + customEmployees.length;
+      const totalEmployees = displayRoles.length + customEmployees.length;
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
       if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(totalEmployees);
@@ -8078,7 +9748,7 @@
         overseas: "/h5-static/designer-employee-overseas.jpg",
         hr: "/h5-static/designer-employee-hr.jpg",
       };
-      const roleHtml = roles.map((role, index) => {
+      const roleHtml = displayRoles.map((role, index) => {
         const img = designerRoleAssets[role.id] || employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const activeSystemTemplate = role.active && role.systemTemplateId ? workflowTemplateById(role.systemTemplateId) : null;
@@ -8097,7 +9767,7 @@
         </button>`;
       }).join("");
       const activeTemplateHtml = activeCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, index)).join("");
-      const templateHtml = inactiveCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, activeCustomEmployees.length + roles.length + index)).join("");
+      const templateHtml = inactiveCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, activeCustomEmployees.length + displayRoles.length + index)).join("");
       const employeeScrollLeft = floor.scrollLeft;
       floor.innerHTML = activeTemplateHtml + roleHtml + templateHtml;
       floor.scrollLeft = Math.min(employeeScrollLeft, Math.max(0, floor.scrollWidth - floor.clientWidth));
@@ -8109,9 +9779,16 @@
       return origin === "user_upload" ? "用户上传" : "内容记录";
     }
 
+    function assetPrimaryMediaUrl(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      return String(item.source_url || item.file_url || item.media_url || item.video_url || item.detail_url || item.url || item.preview_url || item.image_url || item.cover_url || "").trim();
+    }
+
     function designerMediaType(asset) {
-      const url = String((asset && asset.source_url) || "").trim();
-      const raw = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
+      const url = assetPrimaryMediaUrl(asset);
+      const raw = String((asset && (asset.media_type || asset.source_type)) || mediaTypeFromUrl(url) || "").toLowerCase();
+      if (raw.includes("video")) return "video";
+      if (raw.includes("image")) return "image";
       if (raw === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) return "video";
       if (raw === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) return "image";
       if (raw === "audio" || /\.(mp3|wav|m4a|aac)(\?|$)/i.test(url)) return "audio";
@@ -8185,13 +9862,53 @@
       }, true);
     }
 
+    function assetThumbnailUrl(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+      const mediaUrl = assetPrimaryMediaUrl(item);
+      const mediaType = designerMediaType(item);
+      const candidates = [
+        item.thumbnail_url,
+        item.poster_url,
+        item.preview_image_url,
+        item.cover_url,
+        item.image_url,
+        meta.thumbnail_url,
+        meta.poster_url,
+        meta.preview_image_url,
+        meta.cover_url,
+        meta.image_url,
+        ...contentRecordImageUrls(item),
+      ];
+      for (const candidate of candidates) {
+        const url = String(candidate || "").trim();
+        if (!url) continue;
+        if (mediaType === "video" && (url === mediaUrl || /\.(mp4|mov|webm|m4v)(?:[?#]|$)/i.test(url))) continue;
+        return url;
+      }
+      return "";
+    }
+
+    function videoFirstFrameUrl(url) {
+      const value = String(url || "").trim();
+      return value && !value.includes("#") ? `${value}#t=0.1` : value;
+    }
+
+    function videoThumbnailSource(source) {
+      if (!source) return source;
+      return { src: videoFirstFrameUrl(source.src), fallback: videoFirstFrameUrl(source.fallback) };
+    }
+
     function assetPreviewHtml(asset, index = 0) {
-      const url = String((asset && asset.source_url) || "").trim();
-      const type = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
+      const url = assetPrimaryMediaUrl(asset);
+      const type = designerMediaType(asset);
       if (!url) return `<img class="asset-library-thumb" src="${designerFallbackMedia(asset, index)}" alt="" loading="lazy">`;
       const source = libraryMediaSource(url, filenameFromUrl(url, asset && asset.filename || "asset"));
       if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
-        return `<video class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} muted playsinline preload="none"></video>`;
+        const thumbnailSource = videoThumbnailSource(source);
+        const posterUrl = assetThumbnailUrl(asset);
+        const poster = posterUrl ? ` poster="${escapeHtml(libraryMediaSource(posterUrl, "video-cover").src)}"` : "";
+        return `<video class="asset-library-thumb" src="${escapeHtml(thumbnailSource.src)}"${libraryMediaFallbackAttr(thumbnailSource)}${poster} muted playsinline preload="metadata"></video>`;
       }
       if (type === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) {
         return `<img class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} alt="" loading="lazy" decoding="async">`;
@@ -8922,7 +10639,8 @@
         if (recordKind === "article" && sourceKind === "ip_daily") {
           const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
           const sourceTask = String(meta.task || "").trim();
-          openContentActionAbility("ip_content_daily", "abilityIpRequirement", () => {
+          const targetIpCapability = sourceTask === "moments_candidate" ? "ip_content_moments" : "ip_content_oral";
+          openContentActionAbility(targetIpCapability, "abilityIpRequirement", () => {
             document.querySelectorAll("[data-ability-ip-daily-task]").forEach((field) => {
               field.checked = !sourceTask || field.getAttribute("data-ability-ip-daily-task") === sourceTask;
             });
@@ -9023,11 +10741,27 @@
       }
     }
 
+    function assetLibraryLabelHtml(asset) {
+      const group = String((asset && (asset.creative_candidate_group || (Array.isArray(asset.creative_candidate_groups) && asset.creative_candidate_groups[0]))) || "").trim();
+      const rawTags = String((asset && asset.tags) || "").trim();
+      const tags = rawTags.startsWith("auto,") ? [] : rawTags.split(/[,，;；\s]+/).map((item) => item.trim()).filter(Boolean).slice(0, 12);
+      const bits = [];
+      if (group) bits.push("备选：" + group);
+      bits.push(...tags);
+      if (!bits.length) return "";
+      return '<span class="asset-library-card-labels">' + bits.map((item) => escapeHtml(item)).join(" · ") + "</span>";
+    }
+
     function assetCardHtml(asset, index = 0) {
       const title = assetTitle(asset);
       const id = String((asset && asset.asset_id) || "");
       const type = String((asset && asset._designer_content_kind) || designerMediaType(asset));
       const actionItem = contentActionItemFromAsset(asset);
+      const libraryMediaType = String((asset && asset.media_type) || "").toLowerCase();
+      const canEditLibraryAsset = asset.asset_origin === "user_upload" && !asset._content_record;
+      const librarySplitBtn = canEditLibraryAsset && libraryMediaType === "video" ? `<button class="ghost" type="button" data-asset-split-id="${escapeHtml(id)}">切片</button>` : "";
+      const libraryAiBtn = canEditLibraryAsset && (libraryMediaType === "image" || libraryMediaType === "video") ? `<button class="ghost" type="button" data-asset-ai-id="${escapeHtml(id)}">AI理解</button>` : "";
+      const libraryEditBtn = canEditLibraryAsset ? `<button class="ghost" type="button" data-asset-edit-id="${escapeHtml(id)}">编辑</button>` : "";
       return `<article class="asset-library-card designer-media-card content-action-card">
         <button class="content-card-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
           <span class="designer-media-thumb">
@@ -9038,9 +10772,10 @@
           <span class="asset-library-card-main designer-media-meta">
             <strong>${escapeHtml(title || "素材")}</strong>
             <span>${escapeHtml(designerMediaTypeLabel(type))}</span>
+            ${assetLibraryLabelHtml(asset)}
           </span>
         </button>
-        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${contentActionMenuHtml(actionItem)}</footer>
+        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${librarySplitBtn}${libraryAiBtn}${libraryEditBtn}${contentActionMenuHtml(actionItem)}</footer>
       </article>`;
     }
 
@@ -9098,11 +10833,18 @@
     function hiflyAvatarCardHtml(row) {
       const id = String((row && row.id) || "");
       const title = String((row && row.title) || "未命名形象");
-      const img = String((row && (row.image_url || row.cover_url || row.detail_url)) || "").trim();
+      const mediaUrl = assetPrimaryMediaUrl(row);
+      const mediaType = designerMediaType(row);
+      const coverUrl = assetThumbnailUrl(row);
       const sourceLabel = String((row && (row.source_label || row.section_label || row.source_type)) || "image");
       let thumb = `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
-      if (img) {
-        const imageSource = libraryMediaSource(img, filenameFromUrl(img, "avatar"));
+      if (mediaUrl && mediaType === "video") {
+        const videoSource = videoThumbnailSource(libraryMediaSource(mediaUrl, filenameFromUrl(mediaUrl, "avatar.mp4")));
+        const poster = coverUrl ? ` poster="${escapeHtml(libraryMediaSource(coverUrl, "avatar-cover").src)}"` : "";
+        thumb = `<video class="asset-library-thumb" src="${escapeHtml(videoSource.src)}"${libraryMediaFallbackAttr(videoSource)}${poster} muted playsinline preload="metadata"></video>`;
+      } else if (coverUrl || mediaUrl) {
+        const imageUrl = coverUrl || mediaUrl;
+        const imageSource = libraryMediaSource(imageUrl, filenameFromUrl(imageUrl, "avatar"));
         thumb = `<img class="asset-library-thumb" src="${escapeHtml(imageSource.src)}"${libraryMediaFallbackAttr(imageSource)} alt="" loading="lazy" decoding="async">`;
       }
       const source = String((row && row.source) || "hifly");
@@ -9140,12 +10882,14 @@
     }
 
     function assetPreviewLargeHtml(asset) {
-      const url = String((asset && asset.source_url) || "").trim();
-      const type = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
+      const url = assetPrimaryMediaUrl(asset);
+      const type = designerMediaType(asset);
       if (!url) return `<div class="asset-preview-large asset-preview-large-empty">暂无可预览文件</div>`;
       const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, asset && asset.filename || "asset"));
       if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
-        return `<video class="asset-preview-large" src="${escapeHtml(src)}" controls playsinline preload="metadata"></video>`;
+        const posterUrl = assetThumbnailUrl(asset);
+        const poster = posterUrl ? ` poster="${escapeHtml(mediaProxyUrl(posterUrl, "inline", filenameFromUrl(posterUrl, "video-cover")))}"` : "";
+        return `<video class="asset-preview-large" src="${escapeHtml(videoFirstFrameUrl(src))}"${poster} controls playsinline preload="metadata"></video>`;
       }
       if (type === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) {
         return `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
@@ -9157,6 +10901,175 @@
       const id = String(assetId || "");
       const rows = [].concat(state.assetLibraryRows.user_upload || [], state.assetLibraryRows.generated || [], state.contentRecordRows || []);
       return rows.find((row) => String(row && row.asset_id || "") === id) || null;
+    }
+
+
+    function libraryAssetGroup(asset) {
+      if (!asset) return "";
+      if (asset.creative_candidate_group) return String(asset.creative_candidate_group);
+      if (Array.isArray(asset.creative_candidate_groups) && asset.creative_candidate_groups[0]) {
+        return String(asset.creative_candidate_groups[0]);
+      }
+      const meta = asset.meta && typeof asset.meta === "object" ? asset.meta : {};
+      if (meta.creative_candidate_group) return String(meta.creative_candidate_group);
+      if (Array.isArray(meta.creative_candidate_groups) && meta.creative_candidate_groups[0]) {
+        return String(meta.creative_candidate_groups[0]);
+      }
+      return "";
+    }
+
+    function askAssetSegmentSeconds() {
+      return new Promise((resolve) => {
+        const old = document.getElementById("h5-asset-split-seconds-modal");
+        if (old) old.remove();
+        const wrap = document.createElement("div");
+        wrap.id = "h5-asset-split-seconds-modal";
+        wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;";
+        wrap.innerHTML = '<div style="background:#fff;color:#111;padding:16px;border-radius:12px;width:min(360px,92vw);">'
+          + '<div style="font-weight:600;margin-bottom:8px;">切片时长</div>'
+          + '<div style="font-size:13px;margin-bottom:8px;">每段多少秒，范围 2 到 60</div>'
+          + '<input id="h5-asset-split-seconds-input" type="number" min="2" max="60" value="3" style="width:100%;box-sizing:border-box;padding:8px;">'
+          + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+          + '<button type="button" id="h5-asset-split-seconds-cancel">取消</button>'
+          + '<button type="button" id="h5-asset-split-seconds-ok">开始切片</button>'
+          + "</div></div>";
+        document.body.appendChild(wrap);
+        const input = document.getElementById("h5-asset-split-seconds-input");
+        const close = (value) => { wrap.remove(); resolve(value); };
+        document.getElementById("h5-asset-split-seconds-cancel").onclick = () => close(null);
+        wrap.addEventListener("click", (event) => { if (event.target === wrap) close(null); });
+        document.getElementById("h5-asset-split-seconds-ok").onclick = () => {
+          const seconds = parseInt(input.value, 10);
+          if (!seconds || seconds < 2 || seconds > 60) {
+            input.focus();
+            return;
+          }
+          close(seconds);
+        };
+        input.focus();
+        input.select();
+      });
+    }
+
+    function aiTagTextFromCompletion(data) {
+      const choices = data && Array.isArray(data.choices) ? data.choices : [];
+      const message = choices[0] && choices[0].message ? choices[0].message : {};
+      const content = message.content;
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        return content.map((item) => (typeof item === "string" ? item : String((item && item.text) || ""))).join("\n");
+      }
+      return "";
+    }
+
+    function parseAiTagText(text) {
+      let raw = String(text || "").trim();
+      const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenced) raw = fenced[1].trim();
+      let data = null;
+      try { data = JSON.parse(raw); } catch (_) {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
+          try { data = JSON.parse(match[0]); } catch (_) { data = null; }
+        }
+      }
+      let tags = null;
+      if (data && !Array.isArray(data) && typeof data === "object") tags = data.tags;
+      else if (Array.isArray(data)) tags = data;
+      let pieces = [];
+      if (typeof tags === "string") pieces = tags.split(/[,，;；\n]+/);
+      else if (Array.isArray(tags)) pieces = tags.flatMap((item) => String(item).split(/[,，;；]+/));
+      else pieces = raw.split(/[,，;；\n]+/);
+      const seen = [];
+      pieces.forEach((part) => {
+        let tag = String(part || "").replace(/\s+/g, " ").trim().replace(/^["'`]|["'`]$/g, "");
+        if (!tag || tag.toLowerCase() === "tags" || tag.toLowerCase() === "json") return;
+        tag = tag.slice(0, 12);
+        if (!seen.includes(tag) && seen.length < 3) seen.push(tag);
+      });
+      if (seen.length < 2) throw new Error("AI 没有返回足够的标签");
+      return seen.join(",");
+    }
+
+    async function imageBlobToDataUrl(blob) {
+      const bitmap = await createImageBitmap(blob);
+      const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+      let quality = 0.82;
+      let url = canvas.toDataURL("image/jpeg", quality);
+      while (url.length > 1500000 * 1.37 && quality > 0.4) {
+        quality -= 0.1;
+        url = canvas.toDataURL("image/jpeg", quality);
+      }
+      if (typeof bitmap.close === "function") bitmap.close();
+      return url;
+    }
+
+    async function understandLibraryImage(asset) {
+      const id = String((asset && asset.asset_id) || "");
+      if (!id) throw new Error("素材不存在");
+      const response = await fetch(apiUrl(`/api/assets/${encodeURIComponent(id)}/content`), { headers: authHeaders() });
+      if (!response.ok) throw new Error("读取图片失败");
+      const tags = parseAiTagText(aiTagTextFromCompletion(await api("/api/sutui-chat/completions", {
+        method: "POST",
+        timeoutMs: 120000,
+        headers: { "X-Lobster-Image-Understand": "1" },
+        json: {
+          model: "gpt-5.6-sol",
+          stream: false,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: "只返回 JSON，不要解释：{\"tags\":[\"标签1\",\"标签2\",\"标签3\"]}。根据素材内容生成 2 到 3 个短中文标签。" },
+              { type: "image_url", image_url: { url: await imageBlobToDataUrl(await response.blob()) } },
+            ],
+          }],
+        },
+      })));
+      await api(`/api/assets/${encodeURIComponent(id)}/labels`, {
+        method: "POST",
+        json: { creative_candidate_group: libraryAssetGroup(asset), tags },
+      });
+    }
+
+    async function splitLibraryAsset(assetId) {
+      const seconds = await askAssetSegmentSeconds();
+      if (!seconds) return;
+      const data = await api(`/api/assets/${encodeURIComponent(assetId)}/split`, {
+        method: "POST",
+        json: { segment_seconds: seconds },
+        timeoutMs: 30000,
+      });
+      if (!data || !data.message_id) throw new Error("没有拿到切片任务");
+      toast("已交给 Online 切片");
+      await monitorOnlineVideoSplit(data.message_id);
+    }
+
+    async function understandLibraryAsset(assetId) {
+      const asset = findAssetInLibrary(assetId);
+      const mediaType = String((asset && asset.media_type) || "").toLowerCase();
+      if (mediaType === "image") {
+        await understandLibraryImage(asset);
+        state.assetLibraryPage.user_upload = 1;
+        state.assetLibraryPageCache = {};
+        state.userUploadAssetCache = {};
+        await loadAssetLibrary("user_upload", { force: true });
+        toast("AI理解完成，已写入标签");
+        return;
+      }
+      const data = await api(`/api/assets/${encodeURIComponent(assetId)}/ai-tags`, {
+        method: "POST",
+        timeoutMs: 30000,
+      });
+      if (!data || !data.message_id) throw new Error("没有拿到理解任务");
+      toast("已交给 Online 理解");
+      await monitorOnlineVideoSplit(data.message_id, "AI理解完成，已写入标签");
     }
 
     function releaseAssetLibraryMedia() {
@@ -9239,7 +11152,7 @@
       const actionItem = contentActionItemFromAsset(row);
       const actions = `<div class="content-record-detail-actions">
         ${contentActionMenuHtml(actionItem, "content-record-detail-action-menu")}
-        ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载 PPT" : "下载内容", row.filename || row.asset_id || "content") : ""}
+        ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载 PPT" : "下载内容", row.filename || row.asset_id || "content", designerMediaType(row)) : ""}
       </div>`;
       if (tab === "info") return metadata;
       if (tab === "actions") return actions;
@@ -9341,12 +11254,12 @@
           </div>
           ${summary ? `<div class="content-record-summary">${escapeHtml(summary)}</div>` : ""}
           ${kind !== "ppt" ? contentRecordArticleBodyHtml(content, imageUrls) : ""}
-          ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载PPT" : "下载文件", asset.filename || asset.source_id || "content") : ""}`;
+          ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载PPT" : "下载文件", asset.filename || asset.source_id || "content", designerMediaType(asset)) : ""}`;
         modal.classList.remove("hidden");
         return;
       }
       const url = String(asset.source_url || "").trim();
-      const actions = url ? mediaActionHtml(url, "下载素材", asset.filename || asset.asset_id || "asset") : "";
+      const actions = url ? mediaActionHtml(url, "下载素材", asset.filename || asset.asset_id || "asset", designerMediaType(asset)) : "";
       body.innerHTML = `
         ${assetPreviewLargeHtml(asset)}
         <div class="asset-preview-meta">
@@ -9392,13 +11305,20 @@
       const sourceLabel = source === "hifly"
         ? `${currentH5BrandShortName()}数字人`
         : String((row && (row.source_label || row.section_label)) || "Online");
-      const mediaUrl = String((isVoice ? row.demo_url : (row.image_url || row.cover_url || row.detail_url)) || "").trim();
+      const mediaUrl = String((isVoice ? row.demo_url : assetPrimaryMediaUrl(row)) || "").trim();
+      const mediaType = isVoice ? "audio" : designerMediaType(row);
+      const coverUrl = isVoice ? "" : assetThumbnailUrl(row);
       let preview = `<div class="asset-preview-large asset-preview-large-empty">${isVoice ? "暂无试听" : "暂无预览"}</div>`;
       if (mediaUrl) {
         const src = mediaProxyUrl(mediaUrl, "inline", filenameFromUrl(mediaUrl, isVoice ? "voice.mp3" : "avatar"));
-        preview = isVoice
-          ? `<audio class="asset-preview-audio" src="${escapeHtml(src)}" controls></audio>`
-          : `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
+        if (isVoice) {
+          preview = `<audio class="asset-preview-audio" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "voice.mp3"))} controls></audio>`;
+        } else if (mediaType === "video") {
+          const poster = coverUrl ? ` poster="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "avatar-cover")))}"` : "";
+          preview = `<video class="asset-preview-large" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "avatar"))}${poster} controls playsinline preload="metadata"></video>`;
+        } else {
+          preview = `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
+        }
       }
       const deleteActions = source === "hifly" || (source === "shanjian" && !isVoice)
         ? `<button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.source_record_id || row.id || ""))}" data-delete-hifly-source="${escapeHtml(source)}">删除</button>`
@@ -9414,6 +11334,7 @@
         </div>
         ${row.message ? `<div class="asset-preview-text">${escapeHtml(row.message)}</div>` : ""}
         <div class="work-dispatch-actions">
+          ${mediaUrl ? mediaActionHtml(mediaUrl, mediaType === "video" ? "下载视频" : (isVoice ? "下载音频" : "下载图片"), `${row.title || (isVoice ? "voice" : "avatar")}${mediaType === "video" ? ".mp4" : (isVoice ? ".mp3" : ".jpg")}`, mediaType) : ""}
           ${deleteActions}
         </div>`;
       modal.classList.remove("hidden");
@@ -9762,7 +11683,7 @@
       }
     }
 
-    async function monitorOnlineVideoSplit(messageId) {
+    async function monitorOnlineVideoSplit(messageId, successText) {
       if (!messageId) return;
       state.onlineVideoSplitMonitors = state.onlineVideoSplitMonitors || new Set();
       if (state.onlineVideoSplitMonitors.has(messageId)) return;
@@ -9777,7 +11698,7 @@
             state.assetLibraryPageCache = {};
             state.userUploadAssetCache = {};
             await loadAssetLibrary("user_upload", { force: true });
-            toast(message.reply_text || "视频切片完成，素材库已更新");
+            toast(successText || message.reply_text || "视频切片完成，素材库已更新");
             return;
           }
           if (["failed", "cancelled"].includes(message.status)) {
@@ -10363,6 +12284,14 @@
           refreshCachedAuthInBackground().catch((err) => {
             recordH5Lifecycle("resume_auth_refresh_failed", err?.message || err);
           });
+          const resumeView = activeViewKey();
+          if (["office", "runList", "workList", "workflow", "department", "secretary"].includes(resumeView)) {
+            loadRuns({
+              reset: true,
+              limit: resumeView === "runList" ? 10 : 20,
+              compact: resumeView !== "runList",
+            }).catch(() => {});
+          }
         } else {
           $("loginPanel")?.classList.remove("hidden");
           $("appPanel")?.classList.add("hidden");
@@ -10456,9 +12385,13 @@
             && item.capabilities.includes("asset_video_split_v1"));
           if (!capable) throw new Error("当前 Online 版本不支持本机视频切片，请升级最新 OTA 后重试");
         }
+        const uploadGroup = String($("assetLibraryUploadGroup")?.value || "").trim();
+        const uploadTags = String($("assetLibraryUploadTags")?.value || "").trim();
         for (let i = 0; i < files.length; i += 1) {
           const fd = new FormData();
           fd.append("file", files[i], files[i].name || "upload");
+          if (uploadGroup) fd.append("creative_candidate_group", uploadGroup);
+          if (uploadTags) fd.append("tags", uploadTags);
           fd.append("split_video", "true");
           const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
           const data = await resp.json().catch(() => ({}));
@@ -10490,6 +12423,54 @@
     function closeAssetUploadModal() {
       $("assetUploadModal")?.classList.add("hidden");
       if ($("assetLibraryUploadStatus")) $("assetLibraryUploadStatus").textContent = "";
+    }
+
+    function closeAssetEditModal() {
+      $("assetEditModal")?.classList.add("hidden");
+      state.assetEditId = "";
+    }
+
+    function openAssetEditModal(assetId) {
+      const asset = findAssetInLibrary(assetId);
+      if (!asset) {
+        toast("素材不存在");
+        return;
+      }
+      state.assetEditId = String(asset.asset_id || assetId || "");
+      const group = String(asset.creative_candidate_group || (Array.isArray(asset.creative_candidate_groups) && asset.creative_candidate_groups[0]) || "").trim();
+      const rawTags = String(asset.tags || "").trim();
+      state.assetEditOriginalTags = rawTags;
+      if ($("assetEditGroup")) $("assetEditGroup").value = group;
+      if ($("assetEditTags")) $("assetEditTags").value = rawTags.startsWith("auto,") ? "" : rawTags;
+      loadCandidateGroups();
+      $("assetEditModal")?.classList.remove("hidden");
+    }
+
+    async function saveAssetEdit(evt) {
+      if (evt) evt.preventDefault();
+      const id = String(state.assetEditId || "");
+      if (!id) return;
+      const group = String($("assetEditGroup")?.value || "").trim();
+      let tags = String($("assetEditTags")?.value || "").trim();
+      const original = String(state.assetEditOriginalTags || "");
+      if (!tags && original.startsWith("auto,")) tags = original;
+      const btn = $("assetEditSave");
+      if (btn) btn.disabled = true;
+      try {
+        await api("/api/assets/" + encodeURIComponent(id) + "/labels", {
+          method: "POST",
+          json: { creative_candidate_group: group, tags },
+        });
+        closeAssetEditModal();
+        state.assetLibraryPageCache = {};
+        await loadCandidateGroups();
+        await loadAssetLibrary(state.assetLibraryOrigin, { force: true });
+        toast("已保存");
+      } catch (err) {
+        toast((err && err.message) || "保存失败");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     function closeAssetAvatarModal() {
@@ -10528,8 +12509,13 @@
         setTimeout(() => $("assetVoiceName")?.focus(), 80);
         return;
       }
+      const keptGroup = String($("assetLibraryUploadGroup")?.value || "");
+      const keptTags = String($("assetLibraryUploadTags")?.value || "");
       if ($("assetUploadForm")) $("assetUploadForm").reset();
+      if ($("assetLibraryUploadGroup")) $("assetLibraryUploadGroup").value = keptGroup;
+      if ($("assetLibraryUploadTags")) $("assetLibraryUploadTags").value = keptTags;
       clearCapturedFilesForInput("assetLibraryUploadInput");
+      loadCandidateGroups();
       $("assetUploadModal")?.classList.remove("hidden");
     }
 
@@ -10585,6 +12571,46 @@
       return data;
     }
 
+    // 数字人 2.0 训练素材分辨率上限（闪剪限制）：在手机本地读，不消耗服务器
+    const SHANJIAN_TRAINING_MAX_EDGE = 2000;
+
+    function readLocalMediaEdge(file) {
+      return new Promise((resolve) => {
+        if (!file || !file.type) return resolve(0);
+        let url = "";
+        try { url = URL.createObjectURL(file); } catch (err) { return resolve(0); }
+        const done = (edge) => {
+          try { URL.revokeObjectURL(url); } catch (err) { /* ignore */ }
+          resolve(Number(edge) || 0);
+        };
+        if (/^image\//i.test(file.type)) {
+          const img = new Image();
+          img.onload = () => done(Math.max(img.naturalWidth || 0, img.naturalHeight || 0));
+          img.onerror = () => done(0);
+          img.src = url;
+          return;
+        }
+        if (/^video\//i.test(file.type)) {
+          const video = document.createElement("video");
+          video.preload = "metadata";
+          video.onloadedmetadata = () => done(Math.max(video.videoWidth || 0, video.videoHeight || 0));
+          video.onerror = () => done(0);
+          video.src = url;
+          return;
+        }
+        done(0);
+      });
+    }
+
+    // 超限素材不在云端压（服务器压力）：直接在手机上提示换素材 / 到 online 提交
+    async function shanjianTrainingMaterialEdgeError(file, label) {
+      const edge = await readLocalMediaEdge(file);
+      if (edge > SHANJIAN_TRAINING_MAX_EDGE) {
+        return `${label}分辨率 ${edge}px 超过 ${SHANJIAN_TRAINING_MAX_EDGE}x${SHANJIAN_TRAINING_MAX_EDGE}：请到 online（本机）里提交（会自动压好副本），或换一个分辨率更小的素材。`;
+      }
+      return "";
+    }
+
     async function submitAssetAvatarForm(evt) {
       evt.preventDefault();
       const selectedFile = selectedFilesForInput("assetAvatarFile")[0] || null;
@@ -10606,6 +12632,10 @@
           return toast(`授权说明必须使用当前品牌“${brandName}”`);
         }
         if (!$("assetAvatarAgree")?.checked) return toast("请先确认已取得形象本人授权");
+        const sourceEdgeError = await shanjianTrainingMaterialEdgeError(file, sourceType === "video" ? "训练视频" : "训练图片");
+        if (sourceEdgeError) return toast(sourceEdgeError);
+        const authEdgeError = await shanjianTrainingMaterialEdgeError(authFile, "授权视频");
+        if (authEdgeError) return toast(authEdgeError);
       }
       const btn = $("assetAvatarSubmit");
       const oldText = btn ? btn.textContent : "";
@@ -10858,9 +12888,25 @@
       }
     }
 
+    const VOICE_CLONE_MAX_BYTES = 10 * 1024 * 1024;
+
     function syncAssetVoiceSelectedFile() {
       const file = $("assetVoiceFile")?.files?.[0] || null;
       if (!file) return;
+      if (Number(file.size || 0) > VOICE_CLONE_MAX_BYTES) {
+        state.assetVoiceRecordedFile = null;
+        $("assetVoiceFile").value = "";
+        cleanupAssetVoiceRecordRuntime();
+        syncAssetVoiceRecordUi();
+        if ($("assetVoiceRecordPreview")) {
+          if (state.assetVoiceRecordPreviewUrl) URL.revokeObjectURL(state.assetVoiceRecordPreviewUrl);
+          state.assetVoiceRecordPreviewUrl = "";
+          $("assetVoiceRecordPreview").removeAttribute("src");
+          $("assetVoiceRecordPreview").classList.add("hidden");
+        }
+        if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "声音样本不能超过 10MB";
+        return toast("声音文件不能超过 10MB");
+      }
       cleanupAssetVoiceRecordRuntime();
       state.assetVoiceRecordedFile = null;
       syncAssetVoiceRecordUi();
@@ -10871,7 +12917,7 @@
       evt.preventDefault();
       const file = state.assetVoiceRecordedFile || ($("assetVoiceFile") && $("assetVoiceFile").files ? $("assetVoiceFile").files[0] : null);
       if (!file) return toast("请选择声音文件");
-      if (Number(file.size || 0) > 20 * 1024 * 1024) return toast("声音文件不能超过 20MB");
+      if (Number(file.size || 0) > VOICE_CLONE_MAX_BYTES) return toast("声音文件不能超过 10MB");
       if (!/\.(mp3|m4a|wav)$/i.test(String(file.name || ""))) return toast("声音文件仅支持 MP3、M4A 或 WAV");
       const title = (($("assetVoiceName") && $("assetVoiceName").value) || file.name || "未命名声音").trim();
       const fd = new FormData();
@@ -11006,7 +13052,7 @@
         time: row.created_at || row.updated_at,
         raw: row,
       }));
-      const douyinRuns = (state.runs || [])
+      const douyinRuns = dedupeScheduledRunsForDisplay(state.runs || [])
         .filter((row) => String(row && row.task_kind || "") === "douyin_leads")
         .map((row) => ({
           type: "douyin",
@@ -11285,6 +13331,95 @@
       return (runs || []).some((row) => String(row && row.task_id || "") === id);
     }
 
+    function scheduledTaskDedupTitle(value) {
+      return String(value || "").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 160);
+    }
+
+    function scheduledTaskDedupKey(task) {
+      if (!task || String(task.task_kind || "").trim() !== "douyin_leads") return "";
+      const scheduleType = String(task.schedule_type || "").trim().toLowerCase();
+      if (scheduleType !== "interval" && scheduleType !== "daily_times") return "";
+      const payload = task.payload && typeof task.payload === "object" ? task.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const action = String(payload.action || params.action || params.sales_action || "").trim().toLowerCase();
+      if (!action) return "";
+      const context = payload.h5_context && typeof payload.h5_context === "object" ? payload.h5_context
+        : (params.h5_context && typeof params.h5_context === "object" ? params.h5_context : {});
+      const contextKey = [
+        context.workflow_template_id,
+        context.workflow_node_id,
+        context.node_id,
+        context.ability_key,
+        context.capability_id,
+      ].map((value) => String(value || "").trim()).join("|") || "-";
+      const config = task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : {};
+      const scheduleKey = scheduleType === "interval"
+        ? `interval:${Math.max(60, Number(task.interval_seconds || config.interval_seconds || 3600) || 3600)}`
+        : `daily_times:${(Array.isArray(config.daily_times) ? config.daily_times : []).map((value) => String(value || "").trim()).filter(Boolean).sort().join(",")}`;
+      const installationKey = (Array.isArray(task.installation_ids) ? task.installation_ids : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .sort()
+        .join(",");
+      return [
+        "douyin_leads",
+        scheduledTaskDedupTitle(task.title),
+        action,
+        contextKey,
+        scheduleKey,
+        installationKey,
+      ].join("|");
+    }
+
+    function dedupeScheduledTasksForDisplay(rows) {
+      const seen = new Set();
+      return (Array.isArray(rows) ? rows : []).filter((task) => {
+        const key = scheduledTaskDedupKey(task);
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function scheduledRunDedupKey(run) {
+      if (!run || String(run.task_kind || "").trim() !== "douyin_leads") return "";
+      const payload = run.payload && typeof run.payload === "object" ? run.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const action = String(payload.action || params.action || params.sales_action || "").trim().toLowerCase();
+      if (!action) return "";
+      const context = payload.h5_context && typeof payload.h5_context === "object" ? payload.h5_context
+        : (params.h5_context && typeof params.h5_context === "object" ? params.h5_context : {});
+      const contextKey = [
+        context.workflow_template_id,
+        context.workflow_node_id,
+        context.node_id,
+        context.ability_key,
+        context.capability_id,
+      ].map((value) => String(value || "").trim()).join("|") || "-";
+      const scheduledMinute = String(run.created_at || run.started_at || run.updated_at || "").slice(0, 16);
+      const installationKey = String(run.installation_id || run.claimed_by_installation_id || "").trim();
+      return [
+        "douyin_run",
+        scheduledTaskDedupTitle(run.title),
+        action,
+        contextKey,
+        scheduledMinute,
+        installationKey,
+      ].join("|");
+    }
+
+    function dedupeScheduledRunsForDisplay(rows) {
+      const seen = new Set();
+      return (Array.isArray(rows) ? rows : []).filter((run) => {
+        const key = scheduledRunDedupKey(run);
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
     function taskIsFutureWork(task, runs) {
       const status = String((task && task.status) || "").toLowerCase();
       if (status === "cancelled") return false;
@@ -11430,6 +13565,7 @@
 
     const IP_TEMPLATE_LANGUAGES = [
       ["zh-CN", "简体中文"],
+      ["zh-TW", "繁體中文"],
       ["en", "English"],
       ["ja", "日本語"],
       ["ko", "한국어"],
@@ -11453,6 +13589,11 @@
         "zh-cn": "zh-CN",
         chinese: "zh-CN",
         "简体中文": "zh-CN",
+        "zh-tw": "zh-TW",
+        "zh-hant": "zh-TW",
+        "繁體中文": "zh-TW",
+        "繁体中文": "zh-TW",
+        "traditional chinese": "zh-TW",
         english: "en",
         japanese: "ja",
         korean: "ko",
@@ -11624,7 +13765,7 @@
       renderWorkScopeBar();
       const scope = state.workListScope || { type: "all", label: "全部记录" };
       const tasks = (state.tasks || []).filter((row) => recordMatchesWorkScope(row, scope));
-      const runs = (state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const runs = dedupeScheduledRunsForDisplay(state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
       const platforms = new Set();
       [...tasks, ...runs].forEach((row) => collectPlatforms(row).forEach((p) => platforms.add(p)));
       const scopedSocialJobs = (state.socialLeadJobs || []).filter((job) => workbenchJobMatchesScope(job, "social", scope));
@@ -12495,6 +14636,62 @@
         add("媒体文件", urls.length ? `${urls.length} 个` : "");
         return rows;
       }
+      function ipContentUpstreamCheck(payload, run) {
+        const source = payload && typeof payload === "object" ? payload : {};
+        const failure = source.failure && typeof source.failure === "object" ? source.failure : {};
+        const progress = run && run.progress && typeof run.progress === "object" ? run.progress : {};
+        const direct = source.upstream_check && typeof source.upstream_check === "object" ? source.upstream_check : null;
+        const nested = failure.upstream_check && typeof failure.upstream_check === "object" ? failure.upstream_check : null;
+        const progressCheck = progress.upstream_check && typeof progress.upstream_check === "object" ? progress.upstream_check : null;
+        if (direct || nested || progressCheck) return direct || nested || progressCheck;
+        const raw = String((run && (run.error || run.result_text)) || source.error || "").trim();
+        if (!raw) return null;
+        if (/524|504|timeout|timed out|超时|上游无响应/i.test(raw)) {
+          return {
+            available: "unknown",
+            retryable: true,
+            reason_code: "upstream_timeout",
+            http_status: /524/.test(raw) ? 524 : 504,
+            advice: "本次上游响应超时，建议稍后重试，或减少单批生成条数/缩短资料。",
+          };
+        }
+        if (/quota|balance|insufficient|余额|额度/i.test(raw)) {
+          return {
+            available: false,
+            retryable: false,
+            reason_code: "upstream_quota_exhausted",
+            advice: "上游余额或额度不足，需要管理员处理后再重试。",
+          };
+        }
+        return null;
+      }
+      function ipContentUpstreamAvailabilityText(value) {
+        if (value === true) return "上游可用";
+        if (value === false) return "上游不可用";
+        if (value === "limited") return "上游限流中";
+        return "上游状态未知，可重试验证";
+      }
+      function ipContentUpstreamNoticeHtml(payload, run) {
+        const check = ipContentUpstreamCheck(payload, run);
+        if (!check) return "";
+        const status = ipContentUpstreamAvailabilityText(check.available);
+        const reasonMap = {
+          upstream_timeout: "本次调用超时",
+          upstream_rate_limited: "上游限流",
+          upstream_auth_failed: "上游鉴权失败",
+          upstream_quota_exhausted: "上游余额或额度不足",
+          request_rejected: "请求被上游拒绝",
+          upstream_error: "上游调用失败",
+        };
+        const reason = reasonMap[String(check.reason_code || "")] || "上游调用异常";
+        const http = check.http_status ? `HTTP ${check.http_status}` : "";
+        const retry = check.retryable === false ? "不建议直接重试" : "可以重试";
+        const advice = String(check.advice || "").trim();
+        return `<div class="task-detail-section task-detail-result-primary">
+          <h4>上游状态</h4>
+          <pre>${escapeHtml([status, reason, http, retry, advice].filter(Boolean).join("\n"))}</pre>
+        </div>`;
+      }
       function readableDetailValue(item, keys) {
         if (!item || typeof item !== "object") return "";
         for (const key of keys) {
@@ -12574,7 +14771,13 @@
         const imageStateText = imageBusy
           ? `图片生成中：${statusText(activeImageRun.status)}，请等待客户端完成。`
           : (lastImageRun ? `最近图片任务：${statusText(lastImageRun.status)}${lastImageRun.result_text ? " · " + lastImageRun.result_text : ""}` : "先选择文案；每条最多使用 3 个配图提示词。");
-        sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
+        const upstreamNotice = ipContentUpstreamNoticeHtml(payload, run);
+        if (upstreamNotice) sections.push(upstreamNotice);
+        // Keep the legacy task kind for execution compatibility, but expose
+        // the split capability name in run details based on the actual task
+        // groups. Mixed/older runs intentionally retain the old label.
+        const ipDetailLabel = ipContentCapabilityLabel(taskCapabilityId(run) || payload.capability_id);
+        sections.push(`<div class="task-detail-section"><h4>${escapeHtml(ipDetailLabel)}</h4>${groups.map((group) => {
           const records = Array.isArray(group.records) ? group.records : [];
           const isMoments = String(group.task || "") === "moments_candidate";
           if (isMoments) {
@@ -12651,6 +14854,29 @@
         .join("");
     }
 
+    function notifyIpContentUpstreamFailure(run) {
+      if (!run || String(run.task_kind || "") !== "ip_content_daily") return;
+      if (!["failed", "error"].includes(String(run.status || "").toLowerCase())) return;
+      const payload = run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const failure = payload.failure && typeof payload.failure === "object" ? payload.failure : {};
+      const progress = run.progress && typeof run.progress === "object" ? run.progress : {};
+      let check = payload.upstream_check && typeof payload.upstream_check === "object" ? payload.upstream_check : null;
+      if (!check && failure.upstream_check && typeof failure.upstream_check === "object") check = failure.upstream_check;
+      if (!check && progress.upstream_check && typeof progress.upstream_check === "object") check = progress.upstream_check;
+      const raw = String(run.error || payload.error || "").trim();
+      if (!check && /524|504|timeout|timed out|超时|上游无响应/i.test(raw)) {
+        check = { available: "unknown", retryable: true, reason_code: "upstream_timeout", http_status: /524/.test(raw) ? 524 : 504, advice: "本次上游响应超时，可以稍后重试。" };
+      }
+      if (!check) return;
+      const key = `${run.id || ""}:${check.reason_code || ""}:${check.http_status || ""}:${raw.slice(0, 40)}`;
+      if (state.ipContentFailureNotified[key]) return;
+      state.ipContentFailureNotified[key] = true;
+      const available = check.available === false ? "上游不可用" : (check.available === "limited" ? "上游限流中" : "上游状态未知");
+      const retry = check.retryable === false ? "暂不建议直接重试" : "可以重试";
+      const http = check.http_status ? `HTTP ${check.http_status}，` : "";
+      toast(`IP日更失败：${available}，${http}${retry}。${check.advice || ""}`);
+    }
+
     async function openRunDetail(runId, backTab = "") {
       if (!runId) return;
       const body = $("runPageBody");
@@ -12665,6 +14891,7 @@
         ? `${statusText(cachedRun.status)} · ${fmtTime(cachedRun.created_at)}`
         : "正在读取结果";
       body.innerHTML = cachedRun ? taskDetailHtml(cachedRun) : `<div class="hint">加载中...</div>`;
+      if (cachedRun) notifyIpContentUpstreamFailure(cachedRun);
       switchTab("runDetail");
       try {
         const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
@@ -12673,6 +14900,7 @@
         $("runPageTitle").textContent = run.title || "执行详情";
         $("runPageSubtitle").textContent = `${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
+        notifyIpContentUpstreamFailure(run);
         if (run.task_kind === "ip_content_daily") {
           loadRuns({ reset: true }).then(() => {
             if (state.currentRunDetailId === runId) body.innerHTML = taskDetailHtml(run);
@@ -13204,16 +15432,122 @@
       state.officeSummaryLoading = null;
     }
 
+    // 「系统设备」是一个逻辑选项：用户不关心哪台，由系统挑空闲设备
+    const SYSTEM_DEVICE_VALUE = "system";
+
+    function selectedIsSystemDevice() {
+      return String(state.selectedInstallationId || "").trim() === SYSTEM_DEVICE_VALUE;
+    }
+
+    function systemDeviceModeActive() {
+      return String(state.deviceSelectionSource || "").trim() === "system" || selectedIsSystemDevice();
+    }
+
+    function isSystemDeviceId(id) {
+      const wanted = String(id || "").trim();
+      if (!wanted) return false;
+      return (state.systemDevices || []).some((device) => String(device.installation_id || "").trim() === wanted);
+    }
+
+    function systemDeviceOption(device) {
+      const item = device && typeof device === "object" ? device : {};
+      const id = String(item.installation_id || "").trim();
+      const name = String(item.name || "").trim() || `系统设备 ${id.slice(0, 8)}`;
+      return Object.assign({}, item, { display_name: name, is_system_device: true });
+    }
+
+    function findDeviceById(id) {
+      const wanted = String(id || "").trim();
+      if (!wanted) return null;
+      if (wanted === SYSTEM_DEVICE_VALUE) {
+        return { installation_id: SYSTEM_DEVICE_VALUE, display_name: "系统设备", name: "系统设备", is_system_device: true, online: true, system_pool: true };
+      }
+      const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
+      if (own) return own;
+      const system = (state.systemDevices || []).find((d) => String(d.installation_id || "") === wanted);
+      return system ? systemDeviceOption(system) : null;
+    }
+
+    function selectableDevice(id) {
+      const wanted = String(id || "").trim();
+      if (!wanted) return false;
+      // 2026-09-30：尊重用户显式选择——槽位只要还在名单里就保留，
+      // 不再因为「离线 / source 不是 system」把选择重置回第一台在线设备。
+      const own = (state.devices || []).find((d) => String(d.installation_id || "") === wanted);
+      if (own) return true;
+      if (wanted === SYSTEM_DEVICE_VALUE) return (state.systemDevices || []).length > 0;
+      const system = (state.systemDevices || []).find((d) => String(d.installation_id || "") === wanted);
+      if (system) return true;
+      return isSystemDeviceId(wanted);
+}
+
+    function persistDeviceSelectionLocal() {
+      const slot = String(state.selectedInstallationId || "").trim();
+      const source = String(state.deviceSelectionSource || "").trim();
+      if (slot) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), slot);
+      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      if (source) localStorage.setItem(brandStorageKey("lobster_h5_device_selection_source"), source);
+      else localStorage.removeItem(brandStorageKey("lobster_h5_device_selection_source"));
+    }
+
+    function applyServerDeviceSelection(selection) {
+      const info = selection && typeof selection === "object" ? selection : {};
+      const slot = String(info.installation_id || "").trim();
+      if (!slot) return;
+      const serverSource = String(info.source || "").trim() === "system" ? "system" : "own";
+      const localSlot = String(state.selectedInstallationId || "").trim();
+      const localSource = String(state.deviceSelectionSource || "").trim();
+      // 本机刚改过、还没保存完时不要被服务端旧值回退
+      if (localSlot && localSource && localSlot !== slot) return;
+      if (localSlot === slot && localSource === serverSource) return;
+      state.selectedInstallationId = slot;
+      state.deviceSelectionSource = serverSource;
+      persistDeviceSelectionLocal();
+      applySystemDeviceMode();
+    }
+
+    async function saveDeviceSelectionToServer(slot, source) {
+      const wanted = String(slot || "").trim();
+      if (!wanted) return;
+      const kind = source === "system" || isSystemDeviceId(wanted) ? "system" : "own";
+      try {
+        const data = await api("/api/h5-chat/device-selection", {
+          method: "POST",
+          json: { installation_id: wanted, source: kind },
+          blocking: false,
+        });
+        if (data && data.marketing_only) {
+          state.deviceSelectionSource = "system";
+          persistDeviceSelectionLocal();
+        }
+      } catch (err) {
+        toast(err.message || "设备选择保存失败");
+      }
+    }
+
+    function applySystemDeviceMode() {
+      const active = systemDeviceModeActive();
+      document.body.classList.toggle("system-device-mode", active);
+      renderHomeQuickGrid();
+      renderProfileDeviceSelect();
+      if (typeof renderWorkflowDeviceSelect === "function") renderWorkflowDeviceSelect();
+      if (active && !state.systemDeviceModeNoticeShown) {
+        state.systemDeviceModeNoticeShown = true;
+        toast("已选中系统设备：只能使用 AI 营销创作");
+      }
+    }
+
     function ensureSelectedInstallationId() {
       const selected = String(state.selectedInstallationId || "").trim();
+      if (selected === SYSTEM_DEVICE_VALUE && (state.systemDevices || []).length) return selected;
       if (!state.devicesLoaded && !(state.devices || []).length) return selected;
-      if (selected && state.devices.some((d) => String(d.installation_id || "") === selected)) return selected;
+      if (selected && selectableDevice(selected)) return selected;
       const previous = state.selectedInstallationId;
-      const preferred = state.devices.find((d) => d.online && d.installation_id) || state.devices.find((d) => d.installation_id);
+      const preferred = state.devices.find((d) => d.online && d.installation_id);
       const next = String((preferred || {}).installation_id || "");
       state.selectedInstallationId = next;
-      if (next) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), next);
-      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      state.deviceSelectionSource = next ? "own" : "";
+      persistDeviceSelectionLocal();
       if (previous !== next) invalidateSelectedDeviceData();
       return next;
     }
@@ -13241,17 +15575,22 @@
       renderWorkList();
     }
 
-    function setSelectedInstallationId(value) {
+    function setSelectedInstallationId(value, explicitSource) {
       const next = String(value || "").trim();
-      const hit = next ? (state.devices || []).find((d) => String(d.installation_id || "") === next) : null;
+      const systemPick = next
+        ? (explicitSource === "system" || isSystemDeviceId(next) || next === SYSTEM_DEVICE_VALUE)
+        : false;
+      const hit = next && !systemPick ? (state.devices || []).find((d) => String(d.installation_id || "") === next) : null;
       const previous = String(state.selectedInstallationId || "").trim();
-      state.selectedInstallationId = hit ? next : "";
-      if (state.selectedInstallationId) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), state.selectedInstallationId);
-      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      const previousSource = String(state.deviceSelectionSource || "").trim();
+      state.selectedInstallationId = hit || (systemPick && (isSystemDeviceId(next) || next === SYSTEM_DEVICE_VALUE)) ? next : "";
+      state.deviceSelectionSource = state.selectedInstallationId ? (systemPick ? "system" : "own") : "";
+      persistDeviceSelectionLocal();
       renderProfileDeviceSelect();
-      if (previous === state.selectedInstallationId) return;
+      applySystemDeviceMode();
+      if (state.selectedInstallationId) saveDeviceSelectionToServer(state.selectedInstallationId, state.deviceSelectionSource).catch(() => {});
+      if (previous === state.selectedInstallationId && previousSource === state.deviceSelectionSource) return;
       invalidateSelectedDeviceData();
-      renderProfileDeviceSelect();
       fillPublishPlatformSelect();
       fillPublishRunPlatformSelect();
       syncRecorderNativeAuth();
@@ -13261,7 +15600,7 @@
 
     function selectedDevice() {
       const id = ensureSelectedInstallationId();
-      return (state.devices || []).find((d) => String(d.installation_id || "") === id) || null;
+      return findDeviceById(id);
     }
 
     function currentInstallationId() {
@@ -14179,7 +16518,9 @@
       }
       if (input) {
         input.disabled = false;
-        input.placeholder = "继续输入下一条指令";
+        input.placeholder = h5ChatDutyMode() === "service"
+          ? "输入客户咨询、售后、价格、话术等客服问题"
+          : "继续输入下一条指令";
       }
       if (send) send.disabled = !!state.chatSubmitPending;
       autosizeMessageInput();
@@ -14265,6 +16606,13 @@
           });
         return;
       }
+      if (key.indexOf("systemWorkflow:") === 0) {
+        const templateId = key.slice("systemWorkflow:".length).trim();
+        loadWorkflowTemplates(true)
+          .then(() => openWorkflowTemplateEditor(templateId))
+          .catch((err) => toast(err.message || "系统员工模板打开失败"));
+        return;
+      }
       if (key === "aiMarketingCreation") {
         openCreationQuickSheet();
         return;
@@ -14283,8 +16631,30 @@
         renderOfficeEmployees();
         return Promise.resolve();
       }
-      state.officeSummaryLoading = loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}).finally(() => {
-        state.officeSummaryLoadedAt = Date.now();
+      state.officeSummaryLoading = loadRuns({
+        reset: true,
+        limit: 20,
+        compact: true,
+        preserveExisting: true,
+      }).then((ok) => {
+        if (ok === true) state.officeSummaryLoadedAt = Date.now();
+        const empty = !(state.runs || []).length;
+        // 首屏这次可能因为设备上下文还没就绪 / 网络抖动而空手而归；
+        // 补一次（同一次进入只补一次，不做定时轮询）。
+        const tries = Number(state.officeSummaryRetryCount || 0);
+        if ((ok !== true || empty) && tries < 3) {
+          state.officeSummaryRetryCount = tries + 1;
+          window.setTimeout(() => {
+            loadRuns({ reset: true, limit: 20, compact: true, preserveExisting: true, force: true })
+              .then(() => {
+                if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+              })
+              .catch(() => {});
+          }, 1200);
+        } else if (ok === true && !empty) {
+          state.officeSummaryRetryCount = 0;
+        }
+      }).catch(() => {}).finally(() => {
         state.officeSummaryLoading = null;
         if (document.querySelector("#officeView.active")) renderOfficeEmployees();
       });
@@ -14797,6 +17167,11 @@
         faqButton.classList.toggle("hidden", row.status !== "completed");
         faqButton.dataset.recorderFaq = String(row.id || "");
       }
+      const customerButton = $("recorderCustomerBtn");
+      if (customerButton) {
+        customerButton.classList.toggle("hidden", row.status !== "completed");
+        customerButton.dataset.recorderCustomer = String(row.id || "");
+      }
       document.querySelectorAll("#recorderDetailView [data-recorder-copy], #recorderDetailView [data-recorder-export]").forEach((button) => {
         button.disabled = row.status !== "completed";
       });
@@ -14965,7 +17340,7 @@
         leadCenter: ["客资线索", ""],
         tutorial: ["教程", ""],
         messages: ["AI 调度助手", "用文字或语音安排工作"],
-        voice: ["龙虾AI语音助手", ""],
+        voice: ["AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
         liveExecutor: ["现场执行台", "拍照、语音和四类现场任务"],
         recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"],
@@ -15058,7 +17433,14 @@
           loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
         ]).then(renderDepartmentDayBoard);
       }
-      if (key === "ability") renderAbilityView();
+      if (key === "ability") {
+        renderAbilityView();
+        loadTaskSkills().then(() => {
+          if (document.querySelector("#abilityView.active") && state.currentAbilityKey) {
+            renderAbilityView();
+          }
+        }).catch(() => {});
+      }
       if (key !== "office") closeEmployeeModal();
       if (key === "personalSettings") loadPersonalSettings(true);
       if (key === "taskList") loadTasks({ reset: true });
@@ -15387,7 +17769,7 @@
         const label = escapeHtml(String(item && item.label || `动作 ${index + 1}`));
         const kind = String(item && item.kind || "");
         const desc = kind === "submit_message"
-          ? "会下发到龙虾盒子中执行，处理完成后再把结果回给你"
+          ? "会下发到本机执行，处理完成后再把结果回给你"
           : "会在当前对话里继续整理和补充，适合先把内容说完整";
         return `
           <button class="voice-action-card voice-secondary-card" type="button" data-voice-action-index="${index}">
@@ -16238,6 +18620,8 @@
       if ($("avatarMini")) $("avatarMini").textContent = firstChar(name);
       if ($("profileAvatar")) $("profileAvatar").textContent = firstChar(name);
       if ($("profileCreditBalance")) $("profileCreditBalance").textContent = compactNumber(user.credits, 2);
+      renderAccountSecurity();
+      $("openDouyinInformationDeskBtn")?.classList.toggle("hidden", !douyinInformationDeskAllowed());
       syncAgentManageEntry();
     }
 
@@ -16254,7 +18638,25 @@
       localStorage.removeItem(H5_USER_CACHE_KEY);
       state.token = "";
       state.user = null;
+      h5CacheWrite("runs", []);
+      h5CacheWrite("devices", []);
+      setH5AuthReady(false);
       renderCurrentUser();
+    }
+
+    function setH5AuthReady(value) {
+      const authenticated = Boolean(value);
+      window.__lobsterH5AuthReady = authenticated;
+      try {
+        window.dispatchEvent(new CustomEvent("lobster-auth-state", {
+          detail: { authenticated },
+        }));
+      } catch {}
+      if (authenticated) {
+        flushPendingRunListReload();
+        // 槽位/设备上下文越早确定，首页那次 runs 请求才带得上 installation_id
+        refreshDeviceStatus().catch(() => {});
+      }
     }
 
     function isAuthFailure(err) {
@@ -16269,6 +18671,7 @@
       } else {
         $("topActions")?.classList.toggle("hidden", activeViewKey() !== "office" || !state.token);
       }
+      maybeOpenSystemWorkflowEditor();
     }
 
     async function showLoginShell() {
@@ -16280,21 +18683,26 @@
 
     async function refreshCurrentUser() {
       state.user = await api("/auth/me");
+      setH5AuthReady(true);
+      if (window.LobsterH5I18n && typeof window.LobsterH5I18n.syncUser === "function") {
+        window.LobsterH5I18n.syncUser(state.user.id, state.user.language);
+      }
       writeCachedH5User(state.user);
       renderCurrentUser();
       return state.user;
     }
 
     async function loadAuthenticatedBootstrapData() {
+      // Keep first paint small. View-specific loaders fetch their own data when
+      // the user opens that view; chat history is especially expensive and is
+      // unrelated to the default office page.
       const jobs = [
-        loadChatSessions(),
-        loadHistory({ includeEvents: false }),
-        loadPendingApprovals(),
         refreshDeviceStatus(),
-        refreshOfficeSummary(),
-        loadTaskSkills(),
         loadHomeHero().catch(() => applyHomeHero("")),
       ];
+      if (activeViewKey() === "messages") {
+        jobs.push(loadChatSessions(), loadHistory({ includeEvents: false }), loadPendingApprovals());
+      }
       const results = await Promise.allSettled(jobs);
       const failed = results.filter((item) => item.status === "rejected");
       if (failed.length) {
@@ -16322,11 +18730,21 @@
     }
 
     async function refreshCachedAuthInBackground() {
-      return validateAuthAndBootstrap({
-        keepCachedShell: true,
-        showLoginOnFailure: true,
-        switchToOffice: false,
-      });
+      // A visibility resume must not replay the full bootstrap bundle. It used
+      // to reload chat history, approvals, task runs and skills on every return,
+      // making the page appear stuck even after the shell was ready.
+      try {
+        await refreshCurrentUser();
+        return true;
+      } catch (err) {
+        if (isAuthFailure(err)) {
+          clearStoredAuth();
+          await showLoginShell();
+          return false;
+        }
+        console.warn("[h5] cached auth refresh failed", err);
+        return Boolean(state.user);
+      }
     }
 
     async function loadMe() {
@@ -16346,25 +18764,33 @@
       const selects = [$("profileHeaderDeviceSelect"), $("profileDeviceSelect")].filter(Boolean);
       if (!selects.length) return;
       ensureSelectedInstallationId();
-      const rows = (state.devices || []).filter((device) => device.installation_id);
-      const options = rows.length
-        ? rows.map((device) => {
-            const id = String(device.installation_id || "");
-            const accountCount = Number(device.publish_account_count || 0);
-            const status = device.online ? "" : " / 离线";
-            const suffix = accountCount ? ` / ${accountCount}个发布账号` : "";
-            return optionHtml(id, `${deviceSelectorLabel(device)}${status}${suffix}`);
-          }).join("")
-        : optionHtml("", "暂无设备");
+      const ownRows = (state.devices || []).filter((device) => device.online && device.installation_id);
+      const ownOptions = ownRows.map((device) => {
+        const id = String(device.installation_id || "");
+        const accountCount = Number(device.publish_account_count || 0);
+        const suffix = accountCount ? ` / ${accountCount}个发布账号` : "";
+        return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
+      }).join("");
+      const systemRows = (state.systemDevices || []).filter((device) => device.installation_id);
+      // 「系统设备」只给一个选项：具体派给哪台由系统挑空闲设备
+      const systemOptions = systemRows.length
+        ? optionHtml(SYSTEM_DEVICE_VALUE, "系统设备（系统自动调度空闲设备 · 仅限 AI 营销创作）")
+        : "";
+      let options = "";
+      if (ownOptions) options += `<optgroup label="我的设备">${ownOptions}</optgroup>`;
+      if (systemOptions) options += `<optgroup label="系统设备（只能用 AI 营销创作）">${systemOptions}</optgroup>`;
+      if (!options) options = optionHtml("", "暂无可用设备");
+      const choiceCount = ownRows.length + systemRows.length;
       selects.forEach((select) => {
         select.innerHTML = options;
         select.value = state.selectedInstallationId || "";
-        select.disabled = !rows.length;
+        select.disabled = !choiceCount;
       });
       const selected = selectedDevice();
+      const modeSuffix = systemDeviceModeActive() ? "（系统设备 · 自动调度空闲设备 · 仅限 AI 营销创作）" : "";
       const text = selected
-        ? `${selected.online ? "在线" : "离线"} / ${deviceSelectorLabel(selected)}`
-        : "暂无设备";
+        ? `${selected.online === false ? "离线" : "在线"} / ${deviceSelectorLabel(selected)}${modeSuffix}`
+        : "暂无可用设备";
       if ($("profileDeviceText")) $("profileDeviceText").textContent = text;
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
@@ -16555,8 +18981,8 @@
     }
 
     function mountedWechatContactRows() {
-      const row = mountedWechatAccountRow();
-      return row && Array.isArray(row.wechat_contacts) ? row.wechat_contacts : [];
+      // 通讯录按需拉取（挂载账号接口不再带明文联系方式）
+      return Array.isArray(wechatContactsCache.rows) ? wechatContactsCache.rows : [];
     }
 
     function closeMountedWechatContactPicker() {
@@ -16593,6 +19019,7 @@
       if (search) search.value = "";
       $("mountedWechatContactModal")?.classList.remove("hidden");
       renderMountedWechatContactPicker();
+      loadWechatContacts().then(() => renderMountedWechatContactPicker()).catch(() => {});
       window.setTimeout(() => search?.focus(), 80);
     }
 
@@ -16667,6 +19094,10 @@
     }
 
     async function loadMountedAccounts(force = false) {
+        return h5CachedRequest("mounted-accounts", force ? 0 : 4000, () => loadMountedAccountsInner(force), { force });
+    }
+
+    async function loadMountedAccountsInner(force = false) {
       if (!state.token) return;
       if (state.mountedAccountsLoading && !force) return;
       if (!force && state.mountedAccountsLoaded) {
@@ -17057,7 +19488,11 @@
       renderChatAvailabilityStatus();
     }
 
-    async function refreshDeviceStatus() {
+    async function refreshDeviceStatus(force = false) {
+        return h5CachedRequest("device-status", force ? 0 : 4000, () => refreshDeviceStatusInner(), { force });
+    }
+
+    async function refreshDeviceStatusInner() {
       if (!state.token) return;
       if (state.deviceStatusPromise) return state.deviceStatusPromise;
       const request = (async () => {
@@ -17068,7 +19503,10 @@
           }
           const data = await api("/api/h5-chat/devices/status");
           state.devices = Array.isArray(data.devices) ? data.devices : [];
+          state.systemDevices = Array.isArray(data.system_devices) ? data.system_devices : [];
+          applyServerDeviceSelection(data.selection);
           state.devicesLoaded = true;
+          h5CacheWrite("devices", state.devices.slice(0, 40));
           const previousInstallationId = String(state.selectedInstallationId || "").trim();
           ensureSelectedInstallationId();
           state.publishAccountsLoaded = false;
@@ -17180,10 +19618,11 @@
       return `<div class="ip-template-select-row">${taskSelectHtml(id, optionHtml("", "模板加载中..."))}<button class="ghost" type="button" data-open-personal-template-settings>配置模板</button></div>`;
     }
 
-    function ipDailyTaskOptionsHtml() {
+    function ipDailyTaskOptionsHtml(capabilityId = "ip_content_daily") {
+      const allowed = new Set(ipContentTasksForCapability(capabilityId));
       return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox ip-daily-task-option">
-          <input type="checkbox" data-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <input type="checkbox" data-ip-daily-task="${escapeHtml(item.value)}"${allowed.has(item.value) ? " checked" : ""}${String(capabilityId) !== "ip_content_daily" ? " disabled" : ""}>
           <span>${escapeHtml(item.label)}</span>
         </label>
       `).join("")}</div>`;
@@ -17228,7 +19667,7 @@
     function seedanceVideoRequestForModel(model) {
       if (seedanceIsXing25Model(model)) return { model: "seedance-2.5", channel: "xing" };
       if (seedanceIsOpenMindGrokModel(model)) return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };
-      if (seedanceIsYunwuVeoModel(model)) return { model: "veo3.1", channel: "yunwu" };
+      if (seedanceIsYunwuVeoModel(model)) return { model: "veo3.1", channel: "openmind" };
       return { model: String(model || "doubao-seedance-2-0-260128").trim(), channel: "" };
     }
 
@@ -17562,7 +20001,53 @@
       }[String(platform || "").trim()] || platform || "-";
     }
 
+    function normalizePersonalDigitalHumanAssetGroups(value) {
+      const raw = Array.isArray(value) ? value : (value ? [value] : []);
+      const seen = [];
+      raw.forEach((item) => {
+        if (seen.length >= 20) return;
+        const name = String(item || "").replace(/\s+/g, " ").trim().slice(0, 40);
+        if (name && !seen.includes(name)) seen.push(name);
+      });
+      return seen;
+    }
+
+    function currentPersonalDigitalHumanAssetGroups() {
+      const select = $("personalDigitalHumanAssetGroups");
+      if (state.personalDigitalHumanAssetGroupsLoaded && select) {
+        return normalizePersonalDigitalHumanAssetGroups(Array.from(select.selectedOptions || []).map((opt) => opt.value));
+      }
+      return normalizePersonalDigitalHumanAssetGroups(state.personalDigitalHumanAssetGroups);
+    }
+
+    function renderPersonalDigitalHumanAssetGroups() {
+      const select = $("personalDigitalHumanAssetGroups");
+      if (!select) return;
+      const selected = normalizePersonalDigitalHumanAssetGroups(state.personalDigitalHumanAssetGroups);
+      const names = [];
+      (state.candidateGroups || []).forEach((row) => {
+        const name = String((row && row.name) || "").trim();
+        if (name && !names.includes(name)) names.push(name);
+      });
+      selected.forEach((name) => {
+        if (!names.includes(name)) names.push(name);
+      });
+      select.innerHTML = names.map((name) => `<option value="${escapeHtml(name)}"${selected.includes(name) ? " selected" : ""}>${escapeHtml(name)}</option>`).join("");
+      if (!select.dataset.boundAssetGroups) {
+        select.dataset.boundAssetGroups = "1";
+        select.addEventListener("change", () => {
+          state.personalDigitalHumanAssetGroups = normalizePersonalDigitalHumanAssetGroups(Array.from(select.selectedOptions || []).map((opt) => opt.value));
+        });
+      }
+    }
+
     function fillCandidateGroupSelect() {
+      renderPersonalDigitalHumanAssetGroups();
+      const datalist = $("assetLibraryUploadGroupOptions");
+      const editList = $("assetEditGroupOptions");
+      const options = (state.candidateGroups || []).map((row) => '<option value="' + escapeHtml(row.name || "") + '"></option>').join("");
+      if (datalist) datalist.innerHTML = options;
+      if (editList) editList.innerHTML = options;
       const selects = [$("taskCandidateGroup"), $("abilityVideoCandidateGroup"), $("workflowParamVideoCandidateGroup")].filter(Boolean);
       if (!selects.length) return;
       selects.forEach((sel) => {
@@ -17580,6 +20065,7 @@
       try {
         const data = await api("/api/assets/creative-candidate-groups");
         state.candidateGroups = Array.isArray(data.groups) ? data.groups : [];
+        state.personalDigitalHumanAssetGroupsLoaded = true;
       } catch {
         state.candidateGroups = [];
       }
@@ -17799,6 +20285,10 @@
     }
 
     async function loadIpTemplates(force = false) {
+        return h5CachedRequest("ip-templates", force ? 0 : 30000, () => loadIpTemplatesInner(force), { force });
+    }
+
+    async function loadIpTemplatesInner(force = false) {
       if (!force && (state.ipTemplatesLoaded || state.ipTemplatesLoading)) {
         fillIpTemplateSelect();
         return;
@@ -18131,13 +20621,21 @@
       return (Array.isArray(data.items) ? data.items : []).filter((row) => !isPersonalDefaultTemplate(row));
     }
 
+    async function loadPersonalSurveys() {
+      const data = await api("/api/ip-content/profile-surveys", { cache: "no-store" }).catch(() => ({ items: [] }));
+      return Array.isArray(data.items) ? data.items : [];
+    }
+
     function fillPersonalSurveyFields(item) {
       const req = (item && item.requirements) || {};
       const profile = req.basic_profile && typeof req.basic_profile === "object" ? req.basic_profile : req.profile || {};
       const business = req.business_description && typeof req.business_description === "object" ? req.business_description : req.business || {};
       setPersonalFieldValue("personalProfileName", req.profile_name || profile.name || "");
       setPersonalFieldValue("personalGender", req.gender || profile.gender || "");
-      setPersonalFieldValue("personalProfilePhoto", req.profile_photo_asset_id || profile.profile_photo_asset_id || req.profile_photo_url || profile.profile_photo_url || "");
+      // Prefer the durable public URL for display. The server may canonicalize
+      // a local Online asset ID to a different asset ID after sync.
+      setPersonalFieldValue("personalProfilePhoto", req.profile_photo_url || profile.profile_photo_url
+        || req.profile_photo_asset_id || profile.profile_photo_asset_id || "");
       setPersonalFieldValue("personalBirthEra", req.birth_era || profile.birth_era || "");
       setPersonalFieldValue("personalCurrentProvince", req.current_province || profile.current_province || "");
       setPersonalFieldValue("personalCurrentCity", req.current_city || profile.current_city || "");
@@ -18154,6 +20652,10 @@
 
     function applyPersonalSurvey(item) {
       state.personalDefault = item || {};
+      const surveyId = String((item && item.survey_id) || "");
+      const survey = (state.personalSurveys || []).find((row) => String(row.id || "") === surveyId);
+      state.personalEditingSurveyId = surveyId;
+      setPersonalFieldValue("personalSurveyName", (survey && survey.name) || "默认资料");
       fillPersonalSurveyFields(state.personalDefault);
     }
 
@@ -18170,7 +20672,16 @@
       (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       state.personalSelectedDigitalHumanTemplate = normalizePersonalDigitalHumanTemplate(meta.digital_human_template);
+      state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(meta.digital_human_resources);
+      state.personalDigitalHumanAssetGroups = normalizePersonalDigitalHumanAssetGroups(meta.digital_human_asset_groups);
+      renderPersonalDigitalHumanAssetGroups();
+      if (item.survey && item.survey.requirements) fillPersonalSurveyFields(item.survey);
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
+      const surveySelect = $("personalTemplateSurvey");
+      if (surveySelect) {
+        surveySelect.innerHTML = `<option value="">不关联</option>` + (state.personalSurveys || []).map((survey) => `<option value="${escapeHtml(String(survey.id))}">${escapeHtml(survey.name || `资料调查 #${survey.id}`)}</option>`).join("");
+        surveySelect.value = item.survey_id ? String(item.survey_id) : "";
+      }
       setPersonalTemplateLanguage(ipTemplateLanguage(item));
     }
 
@@ -18195,17 +20706,20 @@
       }
       state.personalSettingsLoading = true;
       try {
-        const [keywords, competitors, defaults, memories, templates] = await Promise.all([
+        const [keywords, competitors, defaults, memories, templates, surveys] = await Promise.all([
           api("/api/ip-content/keywords").catch(() => ({ items: [] })),
           api("/api/ip-content/competitors").catch(() => ({ items: [] })),
           api("/api/ip-content/personal-default").catch(() => ({ item: null })),
           loadPersonalMemoryDocs().catch(() => []),
           loadPersonalTemplateRows().catch(() => []),
+          loadPersonalSurveys().catch(() => []),
+          loadCandidateGroups().catch(() => []),
         ]);
         state.personalKeywords = Array.isArray(keywords.items) ? keywords.items : [];
         state.personalCompetitors = Array.isArray(competitors.items) ? competitors.items : [];
         state.personalMemoryDocs = Array.isArray(memories) ? memories : [];
         state.personalTemplates = Array.isArray(templates) ? templates : [];
+        state.personalSurveys = Array.isArray(surveys) ? surveys : [];
         applyPersonalSurvey(defaults.item || {});
         state.personalSettingsLoaded = true;
       } finally {
@@ -18549,6 +21063,7 @@
       const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
       const target = $("personalTargetMemorySelect");
       const title = $("personalMemoryTitle");
+      const review = $("personalMemoryReviewText");
       if (target) {
         target.disabled = mode !== "overwrite";
         if (mode !== "overwrite") target.value = "";
@@ -18557,6 +21072,7 @@
         title.disabled = mode === "overwrite";
         if (mode === "overwrite") title.value = "";
       }
+      if (review) review.classList.toggle("hidden", mode !== "overwrite");
     }
 
     function personalTemplateName(row) {
@@ -18589,6 +21105,8 @@
         title.textContent = current ? `编辑模板：${personalTemplateName(current)}` : "新建模板";
       }
       renderPersonalSettings();
+      loadPersonalDigitalHumanResources(true).catch(() => {});
+      loadCandidateGroups().catch(() => {});
       modal.classList.remove("hidden");
       const nameInput = $("personalTemplateName");
       if (nameInput && typeof nameInput.focus === "function") setTimeout(() => nameInput.focus(), 80);
@@ -18596,6 +21114,7 @@
 
     function closePersonalTemplateModal() {
       $("personalTemplateModal")?.classList.add("hidden");
+      closePersonalDigitalHumanResourcePicker();
       closePersonalDigitalHumanTemplatePicker();
       closePersonalDigitalHumanPreview();
     }
@@ -18614,6 +21133,11 @@
       state.personalSelectedMemories = {};
       state.personalSelectedDigitalHumanTemplate = null;
       state.personalDigitalHumanTemplateDraft = null;
+      state.personalDigitalHumanAssetGroups = [];
+      renderPersonalDigitalHumanAssetGroups();
+      state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(
+        state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.digital_human_resources
+      );
       if ($("personalTemplateName")) $("personalTemplateName").value = "";
       personalSetStatus("");
       renderPersonalSettings();
@@ -18651,6 +21175,227 @@
         pack_rules: { ...(normalized.pack_rules || {}) },
         process_rules: { ...(normalized.process_rules || {}) },
       } : null;
+    }
+
+    function digitalHumanResourceKey(item, kind) {
+      item = item && typeof item === "object" ? item : {};
+      const provider = String(item.provider || item.source || "").trim().toLowerCase();
+      const id = kind === "voice"
+        ? String(item.voice || item.voice_id || item.speaker_id || item.speakerId || item.id || "").trim()
+        : String(item.virtualman_id || item.virtualmanId || item.avatar || item.avatar_id || item.avatarId || item.id || "").trim();
+      return `${provider}:${id}`;
+    }
+
+    function normalizePersonalDigitalHumanResources(value) {
+      value = value && typeof value === "object" ? value : {};
+      const normalizeList = (list, kind) => {
+        const seen = new Set();
+        return (Array.isArray(list) ? list : []).map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const row = { ...item };
+          const provider = String(row.provider || row.source || "").trim().toLowerCase()
+            || (kind === "avatar" && (row.virtualman_id || row.virtualmanId) ? "shanjian" : "hifly");
+          row.provider = provider;
+          if (kind === "avatar") {
+            row.virtualman_id = String(row.virtualman_id || row.virtualmanId
+              || (["shanjian", "shanjian_v2", "digital_human"].includes(provider) ? (row.avatar || "") : "")).trim();
+            row.avatar = String(row.avatar || row.avatar_id || row.avatarId || "").trim();
+          } else {
+            row.voice = String(row.voice || row.voice_id || row.speaker_id || row.speakerId || "").trim();
+          }
+          const key = digitalHumanResourceKey(row, kind);
+          if (!key || key.endsWith(":") || seen.has(key)) return null;
+          seen.add(key);
+          row.title = String(row.title || row.name || "未命名资源").trim() || "未命名资源";
+          return row;
+        }).filter(Boolean);
+      };
+      return { avatars: normalizeList(value.avatars, "avatar"), voices: normalizeList(value.voices, "voice") };
+    }
+
+    function clonePersonalDigitalHumanResources(value) {
+      const normalized = normalizePersonalDigitalHumanResources(value);
+      return {
+        avatars: normalized.avatars.map((row) => ({ ...row })),
+        voices: normalized.voices.map((row) => ({ ...row })),
+      };
+    }
+
+    function personalDigitalHumanResourceTitle(row) {
+      return String((row && (row.title || row.name || row.virtualman_id || row.avatar || row.voice)) || "未命名资源");
+    }
+
+    function personalDigitalHumanResourceSubtitle(row, kind) {
+      const id = kind === "voice"
+        ? (row && (row.voice || row.voice_id || row.speaker_id))
+        : (row && (row.virtualman_id || row.avatar || row.avatar_id));
+      const provider = row && (row.provider || row.source);
+      return [id, provider].filter(Boolean).join(" · ");
+    }
+
+    function personalDigitalHumanResourceOptions(kind, value = state.personalDigitalHumanResources) {
+      const resources = normalizePersonalDigitalHumanResources(value);
+      const selectedRows = resources[kind === "avatar" ? "avatars" : "voices"];
+      const loadedRows = kind === "avatar" ? state.personalDigitalHumanAvatarOptions : state.personalDigitalHumanVoiceOptions;
+      const options = [];
+      const seen = new Set();
+      [...loadedRows, ...selectedRows].forEach((row) => {
+        const key = digitalHumanResourceKey(row, kind);
+        if (!key || key.endsWith(":") || seen.has(key)) return;
+        seen.add(key);
+        options.push(row);
+      });
+      return options;
+    }
+
+    function renderPersonalDigitalHumanResources() {
+      const resources = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResources);
+      state.personalDigitalHumanResources = resources;
+      ["avatar", "voice"].forEach((kind) => {
+        const list = $(kind === "avatar" ? "personalDigitalHumanAvatarList" : "personalDigitalHumanVoiceList");
+        const count = $(kind === "avatar" ? "personalDigitalHumanAvatarCount" : "personalDigitalHumanVoiceCount");
+        if (!list) return;
+        const resourceRows = resources[kind === "avatar" ? "avatars" : "voices"];
+        if (count) count.textContent = String(resourceRows.length);
+        if (state.personalDigitalHumanResourcesLoading && !resourceRows.length) {
+          list.innerHTML = `<div class="personal-template-empty">正在加载资源...</div>`;
+          return;
+        }
+        if (!resourceRows.length) {
+          list.innerHTML = `<button class="personal-digital-resource-empty" type="button" data-open-personal-digital-resource="${kind}">尚未选择，点击添加</button>`;
+          return;
+        }
+        const visible = resourceRows.slice(0, 4);
+        list.innerHTML = visible.map((row) => `<div class="personal-template-choice checked personal-digital-resource-summary-item" title="${escapeHtml(personalDigitalHumanResourceTitle(row))}">
+          <span><strong>${escapeHtml(personalDigitalHumanResourceTitle(row))}</strong><em>${escapeHtml(personalDigitalHumanResourceSubtitle(row, kind))}</em></span>
+        </div>`).join("") + (resourceRows.length > visible.length
+          ? `<button class="personal-digital-resource-more" type="button" data-open-personal-digital-resource="${kind}">另有 ${resourceRows.length - visible.length} 个已选择</button>`
+          : "");
+      });
+    }
+
+    const PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE = 20;
+
+    function personalDigitalHumanPickerRows() {
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const rows = personalDigitalHumanResourceOptions(kind, state.personalDigitalHumanResourceDraft);
+      const query = String(state.personalDigitalHumanResourceQuery || "").trim().toLowerCase();
+      if (!query) return rows;
+      return rows.filter((row) => [
+        personalDigitalHumanResourceTitle(row),
+        personalDigitalHumanResourceSubtitle(row, kind),
+        row && row.status,
+      ].some((value) => String(value || "").toLowerCase().includes(query)));
+    }
+
+    function renderPersonalDigitalHumanResourcePicker() {
+      const modal = $("personalDigitalHumanResourceModal");
+      if (!modal || modal.classList.contains("hidden")) return;
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      state.personalDigitalHumanResourceDraft = draft;
+      const selectedRows = draft[kind === "avatar" ? "avatars" : "voices"];
+      const selectedKeys = new Set(selectedRows.map((row) => digitalHumanResourceKey(row, kind)));
+      const filteredRows = personalDigitalHumanPickerRows();
+      const totalPages = Math.max(1, Math.ceil(filteredRows.length / PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE));
+      state.personalDigitalHumanResourcePage = Math.min(Math.max(1, Number(state.personalDigitalHumanResourcePage) || 1), totalPages);
+      const start = (state.personalDigitalHumanResourcePage - 1) * PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE;
+      const pageRows = filteredRows.slice(start, start + PERSONAL_DIGITAL_RESOURCE_PAGE_SIZE);
+      const title = $("personalDigitalHumanResourceTitle");
+      if (title) title.textContent = kind === "avatar" ? "选择数字人形象 / 分身" : "选择声音";
+      const stats = $("personalDigitalHumanResourceStats");
+      if (stats) stats.textContent = `搜索结果 ${filteredRows.length} 个，已选 ${selectedRows.length} 个`;
+      $("personalDigitalHumanResourceTabs")?.querySelectorAll("[data-personal-resource-kind]").forEach((button) => {
+        const buttonKind = button.dataset.personalResourceKind || "avatar";
+        const count = draft[buttonKind === "avatar" ? "avatars" : "voices"].length;
+        button.textContent = `${buttonKind === "avatar" ? "形象 / 分身" : "声音"} (${count})`;
+        button.classList.toggle("active", buttonKind === kind);
+      });
+      const list = $("personalDigitalHumanResourcePickerList");
+      if (list) {
+        list.innerHTML = pageRows.length ? pageRows.map((row) => {
+          const key = digitalHumanResourceKey(row, kind);
+          const checked = selectedKeys.has(key);
+          const cover = kind === "avatar" ? personalDigitalHumanMediaUrl(row.cover_url || row.image_url) : "";
+          const marker = kind === "avatar" ? personalDigitalHumanResourceTitle(row).slice(0, 1) : "声";
+          return `<label class="personal-digital-resource-option${checked ? " selected" : ""}">
+            <input type="checkbox" data-personal-resource-key="${escapeHtml(key)}"${checked ? " checked" : ""}>
+            <span class="personal-digital-resource-thumb">${cover ? `<img src="${escapeHtml(cover)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : escapeHtml(marker)}</span>
+            <span class="personal-digital-resource-copy"><strong>${escapeHtml(personalDigitalHumanResourceTitle(row))}</strong><small>${escapeHtml(personalDigitalHumanResourceSubtitle(row, kind))}</small></span>
+          </label>`;
+        }).join("") : `<div class="personal-template-empty">没有匹配的资源</div>`;
+      }
+      const selectAll = $("personalDigitalHumanResourceSelectAll");
+      if (selectAll) {
+        const allSelected = !!filteredRows.length && filteredRows.every((row) => selectedKeys.has(digitalHumanResourceKey(row, kind)));
+        selectAll.textContent = allSelected ? "取消全选搜索结果" : "全选搜索结果";
+        selectAll.disabled = !filteredRows.length;
+      }
+      const pager = $("personalDigitalHumanResourcePager");
+      if (pager) {
+        pager.innerHTML = `<button class="ghost" type="button" data-personal-resource-page-delta="-1"${state.personalDigitalHumanResourcePage <= 1 ? " disabled" : ""}>上一页</button>
+          <span>${state.personalDigitalHumanResourcePage} / ${totalPages}</span>
+          <button class="ghost" type="button" data-personal-resource-page-delta="1"${state.personalDigitalHumanResourcePage >= totalPages ? " disabled" : ""}>下一页</button>`;
+      }
+    }
+
+    function openPersonalDigitalHumanResourcePicker(kind = "avatar") {
+      state.personalDigitalHumanResourcePickerKind = kind === "voice" ? "voice" : "avatar";
+      state.personalDigitalHumanResourceQuery = "";
+      state.personalDigitalHumanResourcePage = 1;
+      state.personalDigitalHumanResourceDraft = clonePersonalDigitalHumanResources(state.personalDigitalHumanResources);
+      if ($("personalDigitalHumanResourceSearch")) $("personalDigitalHumanResourceSearch").value = "";
+      $("personalDigitalHumanResourceModal")?.classList.remove("hidden");
+      renderPersonalDigitalHumanResourcePicker();
+      loadPersonalDigitalHumanResources(true).then(renderPersonalDigitalHumanResourcePicker).catch(() => {});
+    }
+
+    function closePersonalDigitalHumanResourcePicker() {
+      $("personalDigitalHumanResourceModal")?.classList.add("hidden");
+      state.personalDigitalHumanResourceDraft = null;
+    }
+
+    function confirmPersonalDigitalHumanResources() {
+      state.personalDigitalHumanResources = clonePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      renderPersonalDigitalHumanResources();
+      closePersonalDigitalHumanResourcePicker();
+    }
+
+    async function loadPersonalDigitalHumanResources(force = false) {
+      if (state.personalDigitalHumanResourcesLoading) {
+        renderPersonalDigitalHumanResources();
+        return;
+      }
+      if (!force && state.personalDigitalHumanResourcesLoaded) {
+        renderPersonalDigitalHumanResources();
+        return;
+      }
+      state.personalDigitalHumanResourcesLoading = true;
+      renderPersonalDigitalHumanResources();
+      try {
+        const loadKind = async (kind) => {
+          const rows = [];
+          for (let page = 1; page <= 20; page += 1) {
+            const data = await api(`/api/h5/assets/digital-library?kind=${kind}&page=${page}&size=100`, { cache: "no-store" });
+            const items = Array.isArray(data.items) ? data.items : [];
+            rows.push(...items);
+            const total = Number(data.total || 0);
+            if (!items.length || items.length < 100 || (total > 0 && rows.length >= total)) break;
+          }
+          return rows;
+        };
+        const [avatars, voices] = await Promise.all([
+          loadKind("avatar").catch(() => []),
+          loadKind("voice").catch(() => []),
+        ]);
+        state.personalDigitalHumanAvatarOptions = avatars;
+        state.personalDigitalHumanVoiceOptions = voices;
+        state.personalDigitalHumanResourcesLoaded = true;
+      } finally {
+        state.personalDigitalHumanResourcesLoading = false;
+        renderPersonalDigitalHumanResources();
+        renderPersonalDigitalHumanResourcePicker();
+      }
     }
 
     function renderPersonalDigitalHumanTemplateSummary() {
@@ -18848,7 +21593,7 @@
         const active = isDefault ? " active default" : (id && id === editingId ? " active" : "");
         const grantBtn = own && canManageAgent() ? `<button type="button" data-agent-dispatch-template="${escapeHtml(id)}">下发</button>` : "";
         const defaultBadge = isDefault ? `<span class="personal-template-badge">默认使用</span>` : "";
-        const defaultBtn = isDefault ? "" : `<button type="button" data-use-personal-template="${escapeHtml(id)}">设为默认</button>`;
+        const defaultBtn = isDefault ? "" : `<button type="button" data-use-personal-template="${escapeHtml(id)}">${row.source === "agent" ? "套用" : "设为默认"}</button>`;
         const displaySource = row.source === "agent" ? `代理商：${row.owner_name || ""} · ${languageLabel}` : `语种 ${languageLabel} · 关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
         return `<div class="personal-template-card${active}">
           <div>
@@ -18857,7 +21602,7 @@
           </div>
           <div class="personal-row-actions">
             ${defaultBtn}
-            <button type="button" data-edit-personal-template="${escapeHtml(id)}">${own ? "编辑" : "套用"}</button>
+            ${own ? `<button type="button" data-edit-personal-template="${escapeHtml(id)}">编辑</button>` : ""}
             ${own ? `<button class="danger-text" type="button" data-delete-personal-template="${escapeHtml(id)}">删除</button>` : ""}
             ${grantBtn}
           </div>
@@ -18888,6 +21633,12 @@
 
     function renderPersonalSettings() {
       syncAgentManageEntry();
+      const surveySelect = $("personalTemplateSurvey");
+      if (surveySelect) {
+        const selected = surveySelect.value || String(state.personalDefault?.survey_id || "");
+        surveySelect.innerHTML = `<option value="">不关联</option>` + (state.personalSurveys || []).map((survey) => `<option value="${escapeHtml(String(survey.id))}">${escapeHtml(survey.name || `资料调查 #${survey.id}`)}</option>`).join("");
+        surveySelect.value = selected;
+      }
       setPersonalSettingsTab(state.personalSettingsTab);
       const tpl = $("personalTemplateList");
       if (tpl) {
@@ -18945,6 +21696,7 @@
                 <span>${escapeHtml(personalMemoryTitle(doc))}</span>
                 <div class="personal-row-actions">
                   <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                  <button type="button" data-download-personal-memory="${escapeHtml(id)}">下载</button>
                   <button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>
                 </div>
               </div>`;
@@ -18962,7 +21714,8 @@
               return `<div class="personal-row personal-memory-row">
                 <span>${escapeHtml(personalMemoryTitle(doc))} · ${escapeHtml(tag)}</span>
                 <div class="personal-row-actions">
-                  <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                    <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                    <button type="button" data-download-personal-memory="${escapeHtml(id)}">下载</button>
                   ${readOnly ? "" : `<button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>`}
                 </div>
               </div>`;
@@ -18976,6 +21729,18 @@
       renderPersonalCustomReference();
       renderPersonalGeneratedDocs();
       renderPersonalDigitalHumanTemplateSummary();
+      renderPersonalDigitalHumanResources();
+      const surveyList = $("personalSurveyList");
+      if (surveyList) {
+        const rows = Array.isArray(state.personalSurveys) ? state.personalSurveys : [];
+        const currentId = String(state.personalDefault?.survey_id || "");
+        surveyList.innerHTML = rows.length ? rows.map((row) => {
+          const id = String(row.id || "");
+          const active = id === currentId ? " active" : "";
+          const currentBadge = id === currentId ? `<span class="personal-current-badge">当前</span>` : "";
+          return `<div class="personal-row personal-survey-record${active}"><div class="personal-survey-record-main"><span class="personal-survey-record-icon" aria-hidden="true">资</span><div class="personal-survey-record-copy"><strong>${escapeHtml(row.name || `资料调查 #${id}`)}</strong><small>个人 IP 基础资料</small></div>${currentBadge}</div><div class="personal-row-actions"><button type="button" data-use-personal-survey="${escapeHtml(id)}">编辑</button><button class="is-danger" type="button" data-delete-personal-survey="${escapeHtml(id)}">删除</button></div></div>`;
+        }).join("") : `<div class="personal-empty">暂无资料调查记录</div>`;
+      }
     }
 
     async function savePersonalProfile(btn = null) {
@@ -18983,6 +21748,11 @@
       personalSetBusy(btn, true, "保存中...");
       try {
         const existing = state.personalDefault || {};
+        const editingId = String(state.personalEditingSurveyId || "");
+        const surveyData = await api(editingId ? `/api/ip-content/profile-surveys/${encodeURIComponent(editingId)}` : "/api/ip-content/profile-surveys", {
+          method: editingId ? "PATCH" : "POST",
+          json: { name: personalFieldValue("personalSurveyName") || "默认资料", requirements: personalSurveyRequirements(), meta: { source: "h5_personal_profile" } },
+        });
         const data = await api("/api/ip-content/personal-default", {
           method: "PUT",
           json: {
@@ -18992,10 +21762,14 @@
             memory_doc_ids: Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : [],
             memory_docs: Array.isArray(existing.memory_docs) ? existing.memory_docs : [],
             requirements: personalSurveyRequirements(),
-            meta: { ...(existing.meta || {}), source: "h5_personal_profile" },
+            survey_id: surveyData.item?.id || null,
+            meta: { ...(existing.meta || {}), source: "h5_personal_profile", survey_id: surveyData.item?.id || null },
           },
         });
         state.personalDefault = data.item || { requirements: personalSurveyRequirements() };
+        state.personalEditingSurveyId = String(surveyData.item?.id || "");
+        state.personalSurveys = [surveyData.item, ...(state.personalSurveys || []).filter((row) => String(row.id) !== String(surveyData.item?.id))].filter(Boolean);
+        renderPersonalSettings();
         personalSetStatus("资料调查已保存。");
       } finally {
         personalSetBusy(btn, false);
@@ -19003,6 +21777,9 @@
     }
 
     async function savePersonalDefault(options = {}) {
+      // 模板资料（记忆 / 资料调查 / 当前模板）改了，复刻的检查缓存立即失效
+      wechatArticleRemixTemplateCache.ready = false;
+      wechatArticleRemixTemplateCache.at = 0;
       const name = (($("personalTemplateName") && $("personalTemplateName").value) || "").trim();
       if (!name) throw new Error("请填写模板名称");
       const memoryIds = personalCleanStringIds(state.personalSelectedMemories);
@@ -19012,12 +21789,14 @@
       const language = currentPersonalTemplateLanguage();
       const requirements = templateRequirementsWithLanguage(stripPersonalSurveyRequirements((state.personalDefault || {}).requirements), language);
       const digitalHumanTemplate = clonePersonalDigitalHumanTemplate(state.personalSelectedDigitalHumanTemplate);
+      const digitalHumanResources = clonePersonalDigitalHumanResources(state.personalDigitalHumanResources);
       const payload = {
         name,
         keyword_ids: personalExistingIntIds(personalCleanIntIds(state.personalSelectedKeywords), state.personalKeywords),
         competitor_ids: personalExistingIntIds(personalCleanIntIds(state.personalSelectedCompetitors), state.personalCompetitors),
         memory_doc_ids: memoryIds,
         memory_docs: selectedDocs,
+        survey_id: (($('personalTemplateSurvey') && $('personalTemplateSurvey').value) || state.personalDefault?.survey_id || null),
         requirements,
         meta: {
           ...(state.personalTemplateBaseMeta || {}),
@@ -19025,8 +21804,12 @@
           language,
           target_language: ipTemplateLanguageLabel(language),
           digital_human_template: digitalHumanTemplate,
+          digital_human_resources: digitalHumanResources,
+          digital_human_asset_groups: currentPersonalDigitalHumanAssetGroups(),
         },
       };
+      const currentTemplateId = state.personalDefault && state.personalDefault.meta && state.personalDefault.meta.current_template_id;
+      if (currentTemplateId && !payload.meta.current_template_id) payload.meta.current_template_id = currentTemplateId;
       const editingId = String(state.personalEditingTemplateId || "").trim();
       const data = await api(editingId ? `/api/ip-content/schedule-templates/${encodeURIComponent(editingId)}` : "/api/ip-content/schedule-templates", {
         method: editingId ? "PATCH" : "POST",
@@ -19035,13 +21818,43 @@
       if (data.item && data.item.id) {
         state.personalEditingTemplateId = String(data.item.id);
       }
-      await refreshPersonalDataPreserveSelection({ templates: true });
+      // Saving an agent template creates user-owned resource rows. Refresh
+      // all resource lists so reopening the new template can render them.
+      await refreshPersonalDataPreserveSelection({ keywords: true, competitors: true, memories: true, templates: true });
       if (!options.silent) toast("已保存");
+    }
+
+    async function usePersonalSurvey(id) {
+      const row = (state.personalSurveys || []).find((item) => String(item.id) === String(id));
+      if (!row) return;
+      state.personalEditingSurveyId = String(row.id || "");
+      setPersonalFieldValue("personalSurveyName", row.name || "默认资料");
+      fillPersonalSurveyFields({ requirements: row.requirements || {} });
+      state.personalDefault = { ...(state.personalDefault || {}), survey_id: row.id };
+      renderPersonalSettings();
+    }
+
+    async function deletePersonalSurvey(id) {
+      await api(`/api/ip-content/profile-surveys/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.personalSurveys = (state.personalSurveys || []).filter((row) => String(row.id) !== String(id));
+      if (String(state.personalEditingSurveyId || "") === String(id)) {
+        state.personalEditingSurveyId = "";
+        setPersonalFieldValue("personalSurveyName", "默认资料");
+      }
+      renderPersonalSettings();
     }
 
     async function usePersonalTemplate(templateId, btn = null) {
       const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(templateId || ""));
       if (!row) throw new Error("模板不存在");
+      if (row.source === "agent") {
+        state.personalEditingTemplateId = "";
+        applyPersonalTemplate(row, { editing: false });
+        state.personalTemplateBaseMeta = { ...(row.meta || {}), current_template_id: row.id };
+        openPersonalTemplateModal();
+        personalSetStatus("已填充代理商模板内容，请修改名称后保存为个人模板。");
+        return;
+      }
       personalSetBusy(btn, true, "保存中...");
       try {
         const language = ipTemplateLanguage(row);
@@ -19053,6 +21866,7 @@
             competitor_ids: Array.isArray(row.competitor_ids) ? row.competitor_ids : [],
             memory_doc_ids: Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids : [],
             memory_docs: Array.isArray(row.memory_docs) ? row.memory_docs : [],
+            survey_id: row.survey_id || null,
             requirements: templateRequirementsWithLanguage({
               ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : {}),
               ...stripPersonalSurveyRequirements(row.requirements),
@@ -19064,6 +21878,27 @@
         applyPersonalSurvey(state.personalDefault);
         renderPersonalSettings();
         personalSetStatus("默认模板已更新。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function copyPersonalTemplate(templateId, btn = null) {
+      const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(templateId || ""));
+      if (!row) throw new Error("模板不存在");
+      personalSetBusy(btn, true, "复制中的...");
+      try {
+        const data = await api(`/api/ip-content/schedule-templates/${encodeURIComponent(templateId)}/copy`, {
+          method: "POST",
+          json: {},
+        });
+        await refreshPersonalDataPreserveSelection({ keywords: true, competitors: true, memories: true, templates: true });
+        const copied = data.item || (state.personalTemplates || []).find((item) => String(item.meta?.copied_from_template_id || "") === String(templateId));
+        if (copied) {
+          applyPersonalTemplate(copied, { editing: true });
+          openPersonalTemplateModal();
+        }
+        toast("已复制为个人模板，可继续编辑");
       } finally {
         personalSetBusy(btn, false);
       }
@@ -19132,9 +21967,37 @@
     function updatePersonalCompetitorSearchFields() {
       const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
       const input = $("personalCompetitorKey");
+      const directButton = $("personalAddCompetitorByChannelIdBtn");
+      if (directButton) directButton.hidden = platform !== "wechat_channels";
       if (input) input.placeholder = platform === "wechat_channels" ? "输入昵称、sph开头ID或 username；ID区分0/O和大小写" : "输入昵称或抖音号";
       state.personalCompetitorCandidates = [];
       renderPersonalCompetitorCandidates();
+    }
+
+    async function addPersonalCompetitorByChannelId() {
+      const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      if (platform !== "wechat_channels") return;
+      const input = $("personalCompetitorKey");
+      const channelId = (input && input.value || "").trim();
+      if (!channelId) throw new Error("请先输入视频号公开 ID（sph 开头）。");
+      const tags = ($("personalCompetitorTags") && $("personalCompetitorTags").value || "").trim();
+      const button = $("personalAddCompetitorByChannelIdBtn");
+      personalSetBusy(button, true, "解析并添加中...");
+      try {
+        const data = await api("/api/ip-content/wechat-channels/competitors/by-channel-id", {
+          method: "POST",
+          json: { channel_id: channelId, industry_tags: tags },
+        });
+        if (input) input.value = "";
+        if ($("personalCompetitorTags")) $("personalCompetitorTags").value = "";
+        state.personalCompetitorCandidates = [];
+        renderPersonalCompetitorCandidates();
+        await refreshPersonalDataPreserveSelection({ competitors: true });
+        personalSetStatus("视频号公开 ID 已添加，正在同步公开作品。");
+        if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
+      } finally {
+        personalSetBusy(button, false);
+      }
     }
 
     async function addPersonalCompetitor() {
@@ -19419,6 +22282,47 @@
       return keys.map((key) => `# ${personalDocTypeLabel(key)}\n\n${String(docs[key] || "").trim()}`).filter(Boolean).join("\n\n---\n\n").trim();
     }
 
+    function parseNativeSaveResult(value) {
+      if (value && typeof value === "object") return value;
+      if (typeof value !== "string") return {};
+      try { return JSON.parse(value); } catch (err) { return { ok: value === "ok" }; }
+    }
+
+    async function downloadPersonalTextFile(filename, text) {
+      filename = filename || "个人记忆资料.md";
+      text = String(text || "");
+      if (window.LobsterAndroid && typeof window.LobsterAndroid.saveTextFile === "function") {
+        const result = parseNativeSaveResult(window.LobsterAndroid.saveTextFile(filename, "text/markdown", text));
+        if (!result.ok && !result.cancelled) throw new Error(result.error || "保存失败");
+        return result;
+      }
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_text_file === "function") {
+        const result = parseNativeSaveResult(await window.pywebview.api.save_text_file(filename, text));
+        if (!result.ok && !result.cancelled) throw new Error(result.error || "保存失败");
+        return result;
+      }
+      const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { ok: true, browser_download: true };
+    }
+
+    async function downloadPersonalMemoryDocument(docId, fallbackName) {
+      const iid = currentInstallationId();
+      const resp = await fetch(apiUrl(`/api/personal-settings/memory-documents/${encodeURIComponent(docId)}/download`), {
+        headers: { ...authHeaders({ "X-Installation-Id": iid }) },
+      });
+      if (!resp.ok) throw new Error((await resp.text()) || "下载失败");
+      const text = await resp.text();
+      return downloadPersonalTextFile(fallbackName || "个人记忆资料.md", text);
+    }
+
     function personalGeneratedDocsFromUi() {
       const docs = {};
       const order = [];
@@ -19445,7 +22349,7 @@
         return;
       }
       box.innerHTML = order.map((key) => `<article class="personal-generated-doc">
-        <div class="personal-generated-head"><strong>${escapeHtml(personalDocTypeLabel(key))}</strong><label><input type="checkbox" data-personal-save-doc="${escapeHtml(key)}" checked>保存</label></div>
+        <div class="personal-generated-head"><strong>${escapeHtml(personalDocTypeLabel(key))}</strong><label><input type="checkbox" data-personal-save-doc="${escapeHtml(key)}" checked>保存</label><button type="button" data-download-personal-generated="${escapeHtml(key)}">下载</button></div>
         <textarea data-personal-generated-text="${escapeHtml(key)}" rows="8">${escapeHtml(docs[key])}</textarea>
       </article>`).join("");
       box.querySelectorAll("[data-personal-generated-text]").forEach((textarea) => {
@@ -19453,6 +22357,18 @@
           const key = textarea.dataset.personalGeneratedText || "";
           if (key) state.personalGeneratedDocuments[key] = textarea.value || "";
           if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(state.personalGeneratedDocuments, state.personalGeneratedDocOrder);
+        });
+      });
+      box.querySelectorAll("[data-download-personal-generated]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const key = button.dataset.downloadPersonalGenerated || "";
+          const text = state.personalGeneratedDocuments && state.personalGeneratedDocuments[key] || "";
+          try {
+            const result = await downloadPersonalTextFile(`${personalDocTypeLabel(key)}.md`, `# ${personalDocTypeLabel(key)}\n\n${text}`);
+            if (!result || !result.cancelled) toast(result && result.path ? `已保存至：${result.path}` : "文件已保存");
+          } catch (err) {
+            toast(err.message || "下载失败");
+          }
         });
       });
       if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(docs, order);
@@ -19810,8 +22726,10 @@
       const generatedContent = formatPersonalGeneratedDocs(generated.documents, generated.order);
       const hasPreview = document.querySelectorAll("[data-personal-generated-text]").length > 0;
       if (hasPreview && !Object.keys(generated.documents || {}).length) throw new Error("请至少勾选一个要保存的 AI 理解结果。");
-      let content = generatedContent || (!hasPreview ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim() : "");
       const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
+      let content = mode === "overwrite"
+        ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim()
+        : (generatedContent || (!hasPreview ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim() : ""));
       const title = mode === "new" ? (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() : "";
       const targetDocId = (($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "").trim();
       if (!content) {
@@ -19933,6 +22851,11 @@
     function workQuickItemVisible(item) {
       if (!item) return false;
       if (item.hidden) return false;
+      // 选中可调度系统设备时：只保留 AI 营销创作的入口
+      // 系统设备（可调度设备）下：只拦「需要自有设备」的动作（抖音/个微/私域/发布/海外），
+// AI 营销创作以及图片、视频等生成入口一律保留（服务端也只拦工作流启动与定时任务创建）。
+const OWN_DEVICE_ONLY_DEPARTMENTS = ["抖音", "个微", "私域", "私域销冠", "AI获客", "发布中心", "AI海外平台", "海外平台"];
+if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item.department || "").trim())) return false;
       if (item.always) return true;
       if (item.featureKey) return !!(state.user && state.user.features && state.user.features[item.featureKey]);
       if (!state.taskSkillsLoaded) return false;
@@ -20083,9 +23006,9 @@
       const multiple = !!opts.multiple;
       return `<div class="asset-picker" data-asset-picker="${escapeHtml(id)}" data-asset-media-type="${escapeHtml(mediaType)}" data-asset-output="${escapeHtml(output)}" data-asset-multiple="${multiple ? "1" : "0"}">
         <input id="${escapeHtml(id)}" type="hidden">
-        <input id="${escapeHtml(id)}File" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" ${multiple ? "multiple" : ""} hidden>
+        <input id="${escapeHtml(id)}File" class="asset-picker-file-input" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" ${multiple ? "multiple" : ""}>
         <div class="asset-picker-row">
-          <button class="ghost" type="button" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</button>
+          <label class="ghost asset-picker-upload-trigger" for="${escapeHtml(id)}File" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</label>
           <button class="ghost" type="button" data-asset-picker-open="${escapeHtml(id)}">${escapeHtml(selectText)}</button>
         </div>
         <div class="asset-picker-preview" id="${escapeHtml(id)}Preview"></div>
@@ -20319,7 +23242,8 @@
       if (preview) preview.innerHTML = "<span>上传中...</span>";
       const fd = new FormData();
       fd.append("file", file, file.name || "upload");
-      const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
+      const uploadHeaders = { ...authHeaders(), "X-Asset-Purpose": id === "personalProfilePhotoPicker" ? "profile_photo" : "" };
+      const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: uploadHeaders, body: fd }, "正在上传素材");
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
       const item = addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
@@ -20555,6 +23479,7 @@
       const audioMode = workflowParamValue("workflowParamHiflyDriveMode") === "audio";
       $("workflowParamHiflyAudioField")?.classList.toggle("hidden", !audioMode);
       $("workflowParamHiflyScript")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      $("workflowParamHiflyScriptSources")?.closest(".field")?.classList.toggle("hidden", audioMode);
       $("workflowParamVoice")?.closest(".field")?.classList.toggle("hidden", audioMode);
       const longVideo = workflowParamValue("workflowParamHiflyDurationMode") === "long";
       $("workflowParamHiflyTargetDurationField")?.classList.toggle("hidden", !longVideo);
@@ -20777,6 +23702,27 @@
       }).filter(Boolean).slice(0, 20);
     }
 
+    function workflowParamMulti(id) {
+      const el = document.getElementById(id);
+      if (!el) return [];
+      return Array.prototype.slice.call(el.selectedOptions || []).map((opt) => opt.value).filter(Boolean);
+    }
+    function workflowOralSourceMultiHtml(id) {
+      const picked = workflowParamMulti(id);
+      const list = picked.length ? picked : ["ip_daily_industry_hot_oral"];
+      return `<select id="${id}" multiple size="2" style="width:100%;">`
+        + optionHtml("ip_daily_industry_hot_oral", "行业口播")
+        + optionHtml("ip_daily_professional_ip_oral", "IP 口播")
+        + "</select>";
+    }
+    function setHiflyOralSources(values) {
+      const el = document.getElementById("workflowParamHiflyScriptSources");
+      if (!el) return;
+      const picked = (Array.isArray(values) ? values : []).map(String);
+      const list = picked.length ? picked : ["ip_daily_industry_hot_oral"];
+      Array.prototype.forEach.call(el.options || [], (opt) => { opt.selected = list.indexOf(opt.value) >= 0; });
+    }
+
     function workflowDigitalHumanFieldsHtml() {
       return taskFieldHtml("数字人", taskSelectHtml("workflowParamAvatar", optionHtml("", "加载中...")))
         + taskFieldHtml("驱动方式", taskSelectHtml("workflowParamHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
@@ -20786,7 +23732,8 @@
         + `<div class="field hidden" id="workflowParamHiflyTargetDurationField"><label>预计视频时长</label><div class="work-duration-input"><input id="workflowParamHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div></div>`
         + taskFieldHtml("剪辑方式", taskSelectHtml("workflowParamHiflyTemplateMode", optionHtml("none", "不套模板") + optionHtml("template", "套用模板")))
         + `<div class="field hidden" id="workflowParamHiflyTemplateField"><label>剪辑模板</label>${taskSelectHtml("workflowParamHiflyTemplate", optionHtml("", "模板加载中..."))}</div>`
-        + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "填写要让数字人口播的完整文案"), true)
+        + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "留空则按下面选的口播来源自动生成"), true)
+        + taskFieldHtml("口播来源（可多选，都选则每次随机一种）", workflowOralSourceMultiHtml("workflowParamHiflyScriptSources"), true)
         + `<div class="field full hidden" id="workflowParamHiflyAudioField"><label>驱动音频</label>${assetPickerControlHtml("workflowParamHiflyAudio", { mediaType: "audio", output: "url", accept: "audio/*,.mp3,.m4a,.wav", uploadText: "上传音频", selectText: "选择音频" })}</div>`
         + taskAdvancedFieldsHtml(
           taskFieldHtml("语速", workInputHtml("workflowParamHiflyRate", "number", "1", 'min="0.5" max="2" step="0.1"'))
@@ -21072,7 +24019,7 @@
           );
       }
       if (key === "douyin_leads") {
-        return taskFieldHtml("采集关键词", taskTextareaHtml("workDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
+        return taskFieldHtml("采集关键词（可选）", taskTextareaHtml("workDouyinKeyword", "留空使用当前设备 Online 已配置的全部关键词；手动填写可用逗号或换行分隔"), true)
           + taskFieldHtml("地区", workInputHtml("workDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workDouyinMaxResults", "number", "50", 'min="10" max="100"'))
           + taskFieldHtml("搜索方式", taskSelectHtml("workDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
@@ -21255,20 +24202,20 @@
       }
       if (key === "douyin_leads") {
         const keyword = workValue("workDouyinKeyword");
-        if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workValue("workDouyinRegions"));
+        const collectionParams = {
+          max_results: workNumber(workValue("workDouyinMaxResults"), 50, 10, 100),
+          regions: regions.length ? regions : ["全国"],
+          mode: workValue("workDouyinMode") || "script",
+        };
+        if (keyword) collectionParams.keyword = keyword;
         return {
-          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          title: keyword ? `抖音获客 - ${keyword.slice(0, 24)}` : "抖音获客 - Online 全部关键词",
           taskKind: "douyin_leads",
           content: "H5 安排工作：抖音获客采集客户",
           payload: {
             action: "search_collect",
-            params: {
-              keyword,
-              max_results: workNumber(workValue("workDouyinMaxResults"), 50, 10, 100),
-              regions: regions.length ? regions : ["全国"],
-              mode: workValue("workDouyinMode") || "script",
-            },
+            params: collectionParams,
           },
         };
       }
@@ -21358,18 +24305,18 @@
 
     function collectAbilityCapabilityPlan(node) {
       const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
-      if (capabilityId === "ip_content_daily") {
+      if (isIpContentCapability(capabilityId)) {
         const templateId = parseInt(abilityValue("abilityIpTemplate") || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedAbilityIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
         return {
-          title: node.label || "IP日更文案",
+          title: node.label || ipContentCapabilityLabel(capabilityId),
           taskKind: "ip_content_daily",
-          content: "H5 能力工作台：IP日更文案",
+          content: `H5 能力工作台：${ipContentCapabilityLabel(capabilityId)}`,
           payload: {
             template_id: templateId,
-            tasks,
+            tasks: tasks.length ? tasks : ipContentTasksForCapability(capabilityId),
             sync_before: !!($("abilityIpSyncBefore") && $("abilityIpSyncBefore").checked),
             requirements: ipDailyRequirementsFromFields("abilityIp", templateId),
             industry_count: abilityNumber("abilityIpIndustryCount", 5, 1, 5),
@@ -21677,11 +24624,13 @@
       const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);
       const installationId = serverSide ? "" : targetInstallationIdFromPlan(plan, currentInstallationId());
       if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 客户端保持登录");
+      const payload = attachH5ContextToPayload(plan.payload || {}, plan.h5Context);
+      await ensureWechatArticleRemixMaterial(payload);
       const body = {
         title: plan.title || "安排工作",
         task_kind: taskKind,
         content: plan.content || "H5 安排工作",
-        payload: attachH5ContextToPayload(plan.payload || {}, plan.h5Context),
+        payload,
         schedule_type: scheduleType,
         interval_seconds: scheduleOptions.interval_seconds || 60,
         start_at: scheduleType === "daily_times" ? "" : (scheduleOptions.start_at || ""),
@@ -21732,6 +24681,10 @@
     }
 
     async function loadTaskSkills(force = false) {
+        return h5CachedRequest("task-skills", force ? 0 : 30000, () => loadTaskSkillsInner(force), { force });
+    }
+
+    async function loadTaskSkillsInner(force = false) {
       if (!state.token) return;
       if (!force && (state.taskSkillsLoaded || state.taskSkillsLoading)) {
         renderTaskAbilityBoard();
@@ -21758,15 +24711,18 @@
         state.taskSkillsLoading = false;
         renderTaskAbilityBoard();
         renderHomeQuickGrid();
+        if (document.querySelector("#abilityView.active") && state.currentAbilityKey) {
+          renderAbilityView();
+        }
       }
     }
 
     function renderTaskParamFields() {
       const host = $("taskParamFields");
       if (!host) return;
-      if (state.taskAbility === "ip_content_daily") {
+      if (isIpContentCapability(state.taskAbility)) {
         host.innerHTML = taskFieldHtml("关键词和同行模板", ipTemplateSelectControl("taskIpTemplate"), true)
-          + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(state.taskAbility), true)
           + ipDailyAdvancedFieldsHtml("taskIp");
         loadIpTemplates(true);
         return;
@@ -21795,14 +24751,14 @@
         return;
       }
       if (state.taskAbility === "ppt.create") {
-        host.innerHTML = taskFieldHtml("PPT主题", taskTextareaHtml("taskPptTopic", "例如：必火AI龙虾盒子招商路演PPT"), true)
+        host.innerHTML = taskFieldHtml("PPT主题", taskTextareaHtml("taskPptTopic", "例如：AI盒子招商路演PPT"), true)
           + taskFieldHtml("页数", `<input id="taskPptSlideCount" type="number" min="1" max="80" value="10" />`)
           + taskFieldHtml("风格要求", `<input id="taskPptInstructions" placeholder="例如：科技感、适合招商、案例更具体" />`)
           + taskFieldHtml("生成模式", taskSelectHtml("taskPptMode", optionHtml("ai", "AI视觉页") + optionHtml("outline", "结构化大纲")));
         return;
       }
       if (state.taskAbility === "create.video.pipeline") {
-        host.innerHTML = taskFieldHtml("视频主题", taskTextareaHtml("taskCreateVideoPrompt", "例如：给必火AI龙虾盒子生成一个30秒招商宣传视频"), true)
+        host.innerHTML = taskFieldHtml("视频主题", taskTextareaHtml("taskCreateVideoPrompt", "例如：给AI盒子生成一个30秒招商宣传视频"), true)
           + taskFieldHtml("时长秒数", `<input id="taskCreateVideoDuration" type="number" min="3" max="60" value="8" />`)
           + taskFieldHtml("分镜数量", `<input id="taskCreateVideoSceneCount" type="number" min="1" max="6" value="1" />`)
           + taskFieldHtml("画幅", taskSelectHtml("taskCreateVideoAspect", optionHtml("16:9", "16:9 横屏") + optionHtml("9:16", "9:16 竖屏") + optionHtml("1:1", "1:1 方图")));
@@ -22007,7 +24963,7 @@
     }
 
     function collectCapabilityPayload() {
-      if (state.taskAbility === "ip_content_daily") {
+      if (isIpContentCapability(state.taskAbility)) {
         const templateId = parseInt(($("taskIpTemplate") && $("taskIpTemplate").value) || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedIpDailyTasks();
@@ -22284,7 +25240,7 @@
             </div>
           </div>
           <div class="douyin-field full">
-            <div class="douyin-field-note">筛选规则按照龙虾盒子上的设置执行。</div>
+            <div class="douyin-field-note">筛选规则按照本机设备的设置执行。</div>
           </div>
         `;
       } else if (action === "comment_collect") {
@@ -22716,6 +25672,7 @@
       const optimisticRunId = shouldOptimisticRun ? addOptimisticRun(body, title, serverSide) : "";
       btn.disabled = true;
       try {
+        await ensureWechatArticleRemixMaterial(taskPayload);
         const data = await api("/api/scheduled-tasks/tasks", {
           method: "POST",
           json: body,
@@ -22742,6 +25699,12 @@
     }
 
     async function loadTasks(options = {}) {
+        if (!state.token) return;
+        const key = `tasks:${options.limit || 40}:${options.reset === false ? 0 : 1}:${currentInstallationId() || "-"}`;
+        return h5CachedRequest(key, options.force ? 0 : 1500, () => loadTasksInner(options), options);
+    }
+
+    async function loadTasksInner(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
       const pageSize = Math.max(1, Math.min(200, parseInt(options.limit || "200", 10) || 200));
@@ -22764,7 +25727,7 @@
         const pagination = data.pagination || {};
         state.taskListOffset = offset + rows.length;
         state.taskListHasNext = !!pagination.has_next;
-        state.tasks = append ? (state.tasks || []).concat(rows) : rows;
+        state.tasks = dedupeScheduledTasksForDisplay(append ? (state.tasks || []).concat(rows) : rows);
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
@@ -23155,6 +26118,32 @@
         .replace(/\[([^\]\n]{1,120})\]\s*\n\s*\((https?:\/\/[^\s)]+)\)/g, "[$1]($2)");
     }
 
+    // 起播/预览用：公开 https 直链直接用（少一跳代理，起播和拖动都快），
+    // 非 https / 内网地址仍然走同源代理；失败时按 data-library-media-fallback 回退到代理。
+    function libraryMediaSourceHtml(url, filename) {
+      const source = libraryMediaSource(url, filename);
+      return `src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)}`;
+    }
+
+    // 自己 TOS CDN 上的公开地址：直接给直链（下载/预览都快），不再绕云端代理。
+    const DIRECT_MEDIA_URL_RE = /^https:\/\/[^/]+\.tos-cn-[a-z0-9-]+\.volces\.com\//i;
+
+    function isDirectMediaUrl(url) {
+      return DIRECT_MEDIA_URL_RE.test(String(url || "").trim());
+    }
+
+    function mediaViewUrl(url, filename) {
+      const value = String(url || "").trim();
+      if (isDirectMediaUrl(value)) return value;
+      return mediaProxyUrl(value, "inline", filename);
+    }
+
+    function mediaDownloadHref(url, filename) {
+      const value = String(url || "").trim();
+      if (isDirectMediaUrl(value)) return value;
+      return mediaProxyUrl(value, "attachment", filename);
+    }
+
     function mediaProxyUrl(url, disposition, filename) {
       const params = new URLSearchParams({
         url,
@@ -23208,10 +26197,232 @@
       return textEl;
     }
 
+    const RICH_URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
+    const RICH_KINDS = [
+      [/\.(png|jpe?g|gif|webp|bmp|avif|svg)(?:[?#].*)?$/i, "image"],
+      [/\.(mp4|webm|mov|m4v|avi|mkv)(?:[?#].*)?$/i, "video"],
+      [/\.(mp3|wav|m4a|aac|ogg|flac)(?:[?#].*)?$/i, "audio"],
+      [/\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|csv|txt|md|json)(?:[?#].*)?$/i, "file"],
+    ];
+
+    function richUrlKind(url) {
+      const clean = String(url || "").trim();
+      if (!/^https?:\/\//i.test(clean)) return "";
+      for (let i = 0; i < RICH_KINDS.length; i += 1) {
+        if (RICH_KINDS[i][0].test(clean)) return RICH_KINDS[i][1];
+      }
+      return "link";
+    }
+
+    function richHost(url) {
+      try { return new URL(url).host.replace(/^www\./i, ""); } catch (e) { return "链接"; }
+    }
+
+    function richIsAlone(line) {
+      const value = String(line || "").trim();
+      return /^https?:\/\/\S+$/i.test(value) ? value : "";
+    }
+
+    let lightboxItems = [];
+    let lightboxIndex = 0;
+
+    function lightboxCollect(url) {
+      const found = [];
+      document.querySelectorAll(".rich-media-item img, .bubble-attachment-zoomable, img.bubble-attachment-zoomable, .bubble-attachment img").forEach(function (node) {
+        const src = String(node.getAttribute("src") || "").trim();
+        if (src && found.indexOf(src) < 0) found.push(src);
+      });
+      if (url && found.indexOf(url) < 0) found.push(url);
+      return found;
+    }
+
+    function richLightboxShow(index) {
+      const box = document.getElementById("richLightbox");
+      if (!box || !lightboxItems.length) return;
+      lightboxIndex = (index + lightboxItems.length) % lightboxItems.length;
+      const img = box.querySelector("img");
+      if (img) img.src = lightboxItems[lightboxIndex];
+      const counter = box.querySelector(".rich-lightbox-counter");
+      if (counter) counter.textContent = `${lightboxIndex + 1} / ${lightboxItems.length}`;
+      const multi = lightboxItems.length > 1;
+      const prev = box.querySelector(".rich-lightbox-prev");
+      const next = box.querySelector(".rich-lightbox-next");
+      if (prev) prev.style.display = multi ? "" : "none";
+      if (next) next.style.display = multi ? "" : "none";
+      if (counter) counter.style.display = multi ? "" : "none";
+    }
+
+    function richLightbox(url) {
+      let box = document.getElementById("richLightbox");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "richLightbox";
+        box.className = "rich-lightbox hidden";
+        box.innerHTML = [
+          '<button type="button" class="rich-lightbox-back">\u8fd4\u56de</button>',
+          '<button type="button" class="rich-lightbox-prev" aria-label="\u4e0a\u4e00\u5f20">\u2039</button>',
+          '<img alt="" />',
+          '<button type="button" class="rich-lightbox-next" aria-label="\u4e0b\u4e00\u5f20">\u203a</button>',
+          '<span class="rich-lightbox-counter"></span>',
+        ].join("");
+        const close = function () { box.classList.add("hidden"); };
+        box.addEventListener("click", function (event) {
+          const target = event.target;
+          if (target === box) close();
+        });
+        box.querySelector(".rich-lightbox-back").addEventListener("click", function (event) {
+          event.stopPropagation();
+          close();
+        });
+        box.querySelector(".rich-lightbox-prev").addEventListener("click", function (event) {
+          event.stopPropagation();
+          richLightboxShow(lightboxIndex - 1);
+        });
+        box.querySelector(".rich-lightbox-next").addEventListener("click", function (event) {
+          event.stopPropagation();
+          richLightboxShow(lightboxIndex + 1);
+        });
+        document.addEventListener("keydown", function (event) {
+          if (box.classList.contains("hidden")) return;
+          if (event.key === "Escape") close();
+          else if (event.key === "ArrowLeft") richLightboxShow(lightboxIndex - 1);
+          else if (event.key === "ArrowRight") richLightboxShow(lightboxIndex + 1);
+        });
+        document.body.appendChild(box);
+      }
+      lightboxItems = lightboxCollect(url);
+      richLightboxShow(Math.max(0, lightboxItems.indexOf(url)));
+      box.classList.remove("hidden");
+    }
+
+    function richImageGrid(urls) {
+      const host = document.createElement("div");
+      host.className = "rich-media-grid" + (urls.length > 1 ? " is-multi" : "");
+      urls.forEach(function (url) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "rich-media-item";
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "\u56fe\u7247";
+        img.loading = "lazy";
+        button.appendChild(img);
+        button.addEventListener("click", function () { richLightbox(url); });
+        host.appendChild(button);
+      });
+      return host;
+    }
+
+    function richMediaGroup(urls, kind) {
+      if (kind === "image") return richImageGrid(urls);
+      const host = document.createElement("div");
+      host.className = "rich-media-block";
+      urls.forEach(function (url) {
+        let node;
+        if (kind === "video") {
+          node = document.createElement("video");
+          node.controls = true;
+          node.playsInline = true;
+          node.preload = "metadata";
+        } else if (kind === "audio") {
+          node = document.createElement("audio");
+          node.controls = true;
+          node.preload = "metadata";
+        } else {
+          node = document.createElement("a");
+          node.className = "rich-file-row";
+          node.href = mediaProxyUrl(url, "inline", filenameFromUrl(url, "\u6587\u4ef6"));
+          node.target = "_blank";
+          node.rel = "noopener noreferrer";
+          node.textContent = "\u6587\u4ef6\uff1a" + filenameFromUrl(url, "\u4e0b\u8f7d");
+        }
+        if (node.tagName !== "A") node.src = url;
+        host.appendChild(node);
+      });
+      return host;
+    }
+
+    function richLinkCard(url) {
+      const card = document.createElement("a");
+      card.className = "rich-link-card";
+      card.href = url;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      const host = document.createElement("span");
+      host.className = "rich-link-host";
+      host.textContent = richHost(url);
+      const path = document.createElement("span");
+      path.className = "rich-link-path";
+      path.textContent = decodeURIComponent(String(url).replace(/^https?:\/\/[^/]+/i, "") || "/").slice(0, 80);
+      card.appendChild(host);
+      card.appendChild(path);
+      return card;
+    }
+
+    function renderRichText(host, raw) {
+      host.textContent = "";
+      const lines = String(raw || "").split(/\r?\n/);
+      let buffer = [];
+      function flush() {
+        if (!buffer.length) return;
+        const block = document.createElement("div");
+        block.className = "rich-paragraph";
+        block.innerHTML = linkifyText(buffer.join("\n"));
+        host.appendChild(block);
+        buffer = [];
+      }
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const trimmed = line.trim();
+        if (/^```/.test(trimmed)) {
+          const code = [];
+          index += 1;
+          while (index < lines.length && !/^```/.test(lines[index].trim())) {
+            code.push(lines[index]);
+            index += 1;
+          }
+          flush();
+          const pre = document.createElement("pre");
+          pre.className = "rich-code";
+          const codeEl = document.createElement("code");
+          codeEl.textContent = code.join("\n");
+          pre.appendChild(codeEl);
+          host.appendChild(pre);
+          continue;
+        }
+        const url = richIsAlone(trimmed);
+        if (!url) {
+          buffer.push(line);
+          continue;
+        }
+        const kind = richUrlKind(url);
+        flush();
+        if (kind === "link") {
+          host.appendChild(richLinkCard(url));
+          continue;
+        }
+        const group = [url];
+        while (index + 1 < lines.length) {
+          const next = richIsAlone(lines[index + 1]);
+          if (!next || richUrlKind(next) !== kind) break;
+          group.push(next);
+          index += 1;
+        }
+        host.appendChild(richMediaGroup(group, kind));
+      }
+      flush();
+      if (!host.childNodes.length && String(raw || "").trim()) {
+        const block = document.createElement("div");
+        block.className = "rich-paragraph";
+        block.innerHTML = linkifyText(String(raw || ""));
+        host.appendChild(block);
+      }
+    }
+
     function renderBubbleText(bubble) {
       const textEl = ensureBubbleTextElement(bubble);
       if (!textEl) return;
-      textEl.innerHTML = linkifyText(bubble._rawText || "");
+      renderRichText(textEl, bubble._rawText || "");
     }
 
     function collectMediaUrls(payload) {
@@ -23327,10 +26538,12 @@
       const actions = document.createElement("div");
       actions.className = "media-actions";
       const filename = filenameFromUrl(url, fallbackName);
+      const mediaKind = mediaPreviewKind(url, filename);
       const open = document.createElement("button");
       open.type = "button";
       open.dataset.mediaPreviewUrl = mediaProxyUrl(url, "inline", filename);
       open.dataset.mediaPreviewName = filename;
+      open.dataset.mediaPreviewKind = mediaKind;
       open.textContent = "打开";
       actions.appendChild(open);
       if (IS_WECHAT) {
@@ -23347,37 +26560,46 @@
         download.download = filename;
         download.dataset.mediaDownloadUrl = download.href;
         download.dataset.mediaDownloadName = filename;
-        download.textContent = IS_IOS ? "下载到文件" : downloadLabel;
+        download.dataset.mediaDownloadKind = mediaKind;
+        download.textContent = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
         download.addEventListener("click", onIosDownloadClick);
         actions.appendChild(download);
       }
       return actions;
     }
 
-    function mediaActionHtml(url, downloadLabel, fallbackName) {
+    function mediaActionHtml(url, downloadLabel, fallbackName, mediaKindHint = "") {
       const filename = filenameFromUrl(url, fallbackName);
-      const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
-      const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
+      const mediaKind = ["image", "video", "audio", "document"].includes(String(mediaKindHint || "").toLowerCase())
+        ? String(mediaKindHint).toLowerCase()
+        : mediaPreviewKind(url, filename);
+      const openSource = libraryMediaSource(url, filename);
+      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaViewUrl(url, filename));
+      const downloadUrl = escapeHtml(mediaDownloadHref(url, filename));
       const safeName = escapeHtml(filename);
       if (IS_WECHAT) {
-        return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
+        return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
       }
-      const label = IS_IOS ? "下载到文件" : downloadLabel;
+      const label = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
       const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
-      return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}"${iosAttr}>${escapeHtml(label)}</a></div>`;
+      return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}" data-media-download-kind="${escapeHtml(mediaKind)}"${iosAttr}>${escapeHtml(label)}</a></div>`;
     }
 
-    function runMediaToolbarHtml(url, downloadLabel, fallbackName, actionMenu = "") {
+    function runMediaToolbarHtml(url, downloadLabel, fallbackName, actionMenu = "", mediaKindHint = "") {
       const filename = filenameFromUrl(url, fallbackName);
-      const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
+      const mediaKind = ["image", "video", "audio", "document"].includes(String(mediaKindHint || "").toLowerCase())
+        ? String(mediaKindHint).toLowerCase()
+        : mediaPreviewKind(url, filename);
+      const openSource = libraryMediaSource(url, filename);
+      const openUrl = escapeHtml(["video", "audio"].includes(mediaKind) ? openSource.src : mediaViewUrl(url, filename));
       const safeName = escapeHtml(filename);
       const primaryActions = IS_WECHAT
-        ? `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button>`
+        ? `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button>`
         : (() => {
-          const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
-          const label = IS_IOS ? "下载到文件" : downloadLabel;
+          const downloadUrl = escapeHtml(mediaDownloadHref(url, filename));
+          const label = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
           const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
-          return `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}"${iosAttr}>${escapeHtml(label)}</a>`;
+          return `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}" data-media-download-kind="${escapeHtml(mediaKind)}"${iosAttr}>${escapeHtml(label)}</a>`;
         })();
       return `<div class="run-media-toolbar">${primaryActions}${actionMenu || ""}</div>`;
     }
@@ -23401,7 +26623,9 @@
         let fallbackName = "lobster-media";
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
           el = document.createElement("video");
-          el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4"));
+          const videoSource = libraryMediaSource(url, filenameFromUrl(url, "lobster-video.mp4"));
+          el.src = videoSource.src;
+          if (videoSource.fallback && videoSource.fallback !== videoSource.src) el.setAttribute("data-library-media-fallback", videoSource.fallback);
           el.controls = true;
           el.playsInline = true;
           el.preload = "metadata";
@@ -23409,7 +26633,9 @@
           fallbackName = "lobster-video.mp4";
         } else if (/\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/.test(low)) {
           el = document.createElement("audio");
-          el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3"));
+          const audioSource = libraryMediaSource(url, filenameFromUrl(url, "lobster-audio.mp3"));
+          el.src = audioSource.src;
+          if (audioSource.fallback && audioSource.fallback !== audioSource.src) el.setAttribute("data-library-media-fallback", audioSource.fallback);
           el.controls = true;
           downloadLabel = "下载音频";
           fallbackName = "lobster-audio.mp3";
@@ -23963,10 +27189,7 @@
       el.appendChild(textEl);
       renderBubbleText(el);
       if (role === "bot") {
-        const steps = document.createElement("div");
-        steps.className = "steps";
-        el.appendChild(steps);
-        el._steps = steps;
+        el._steps = createChatProcessPanel(el);
       }
       $("messages").appendChild(el);
       $("messages").scrollTop = $("messages").scrollHeight;
@@ -23989,6 +27212,24 @@
           const img = document.createElement("img");
           img.src = url;
           img.alt = name;
+          img.className = "bubble-attachment-zoomable";
+          img.classList.add("rich-pending");
+          img.addEventListener("load", function () { img.classList.remove("rich-pending"); });
+          img.addEventListener("error", function () {
+            // 生成中显示骨架；失败给可点重试的占位，避免整块空白
+            img.classList.remove("rich-pending");
+            img.classList.add("rich-media-failed");
+            img.title = "\u52a0\u8f7d\u5931\u8d25\uff0c\u70b9\u51fb\u91cd\u8bd5";
+          });
+          img.addEventListener("click", function () {
+            if (img.classList.contains("rich-media-failed")) {
+              img.classList.remove("rich-media-failed");
+              img.classList.add("rich-pending");
+              img.src = url + (url.indexOf("?") < 0 ? "?" : "&") + "_retry=" + Date.now();
+              return;
+            }
+            richLightbox(url);
+          });
           card.appendChild(img);
         } else if (type === "video" && url) {
           const video = document.createElement("video");
@@ -24028,12 +27269,165 @@
     function addStep(bubble, text) {
       if (!SHOW_INTERNAL_STEPS || !bubble || !bubble._steps || !text) return;
       const existing = Array.from(bubble._steps.children || []);
-      if (existing.length && existing[existing.length - 1].textContent === text) return;
-      const s = document.createElement("span");
-      s.className = "step";
-      s.textContent = text;
-      bubble._steps.appendChild(s);
-      while (bubble._steps.children.length > 6) bubble._steps.firstElementChild?.remove();
+      const panel = bubble._processPanel;
+      const isRepeat = existing.length && existing[existing.length - 1].textContent === text;
+      if (!isRepeat) {
+        const s = document.createElement("span");
+        s.className = "step";
+        s.textContent = text;
+        bubble._steps.appendChild(s);
+        while (bubble._steps.children.length > 60) bubble._steps.firstElementChild?.remove();
+      }
+      if (panel) {
+        panel.classList.add("is-running");
+        panel.classList.remove("is-done");
+        const current = panel.querySelector(".chat-process-current");
+        if (current) current.textContent = text;
+        const count = panel.querySelector(".chat-process-count");
+        const total = bubble._steps.children.length;
+        if (count) count.textContent = total > 1 ? `${total} 步` : "";
+      }
+    }
+
+    // 过程面板：执行中只有一行"当前步骤"在更新（不刷屏），
+    // 结束后折叠成"过程 · N 步"，点开可以看完整步骤。
+    function createChatProcessPanel(bubble) {
+      const panel = document.createElement("div");
+      panel.className = "chat-process is-running";
+      panel.innerHTML = [
+        '<button type="button" class="chat-process-head">',
+        '<span class="chat-process-dot" aria-hidden="true"></span>',
+        '<span class="chat-process-current">正在处理…</span>',
+        '<span class="chat-process-count"></span>',
+        '<span class="chat-process-chevron" aria-hidden="true"></span>',
+        "</button>",
+        '<div class="chat-process-steps hidden"></div>',
+      ].join("");
+      const head = panel.querySelector(".chat-process-head");
+      const steps = panel.querySelector(".chat-process-steps");
+      head?.addEventListener("click", () => {
+        const willOpen = steps.classList.contains("hidden");
+        steps.classList.toggle("hidden", !willOpen);
+        panel.classList.toggle("is-open", willOpen);
+      });
+      bubble.appendChild(panel);
+      bubble._processPanel = panel;
+      return steps;
+    }
+
+    function finishChatProcess(bubble) {
+      const panel = bubble && bubble._processPanel;
+      if (!panel) return;
+      panel.classList.remove("is-running", "is-open");
+      panel.classList.add("is-done");
+      panel.querySelector(".chat-process-steps")?.classList.add("hidden");
+      const count = panel.querySelector(".chat-process-count");
+      const total = bubble._steps ? bubble._steps.children.length : 0;
+      if (count && total) count.textContent = `${total} 步`;
+    }
+
+    // 后台任务进度卡：确认执行后挂在原消息上，离开页面再回来也能看到最新状态（2026-09-20）
+    function renderTaskCard(bubble, payload, messageId) {
+      if (!bubble || !payload || typeof payload !== "object") return;
+      let box = bubble._taskCardEl;
+      if (!box || !box.isConnected) {
+        box = document.createElement("div");
+        box.className = "chat-task-card";
+        bubble.appendChild(box);
+        bubble._taskCardEl = box;
+      }
+      const status = String(payload.status || "running").toLowerCase();
+      const label = String(payload.status_label || "").trim()
+        || ({ queued: "排队中", running: "执行中", done: "已完成", failed: "失败", cancelled: "已取消" }[status] || "进行中");
+      const title = String(payload.title || "后台任务").trim();
+      const text = String(payload.text || "").trim();
+      const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts.filter(Boolean) : [];
+      const items = Array.isArray(payload.items) ? payload.items.filter((item) => item && typeof item === "object") : [];
+      const cancellable = !!payload.cancellable && !!messageId && (status === "queued" || status === "running");
+      const stamp = String(payload.updated_at || "").replace("T", " ").slice(5, 16);
+      box.dataset.status = status;
+      box.innerHTML = "";
+      const head = document.createElement("div");
+      head.className = "chat-task-card-head";
+      const name = document.createElement("strong");
+      name.textContent = title;
+      const badge = document.createElement("span");
+      badge.className = "chat-task-card-badge";
+      badge.dataset.status = status;
+      badge.textContent = label;
+      head.appendChild(name);
+      head.appendChild(badge);
+      if (cancellable) {
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "chat-task-card-cancel";
+        cancelBtn.textContent = "取消任务";
+        cancelBtn.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = "正在取消…";
+          try {
+            const data = await api(`/api/mastra-chat/tasks/${encodeURIComponent(messageId)}/cancel`, { method: "POST" });
+            if (data && data.card) renderTaskCard(bubble, data.card, messageId);
+            else cancelBtn.textContent = "已取消";
+          } catch (err) {
+            cancelBtn.disabled = false;
+            cancelBtn.textContent = "取消任务";
+            const tip = document.createElement("div");
+            tip.className = "chat-task-card-time";
+            tip.style.color = "var(--danger)";
+            tip.textContent = `取消失败：${(err && err.message) || err}`;
+            box.appendChild(tip);
+          }
+        });
+        head.appendChild(cancelBtn);
+      }
+      box.appendChild(head);
+      if (text) {
+        const body = document.createElement("div");
+        body.className = "chat-task-card-text";
+        body.textContent = text;
+        box.appendChild(body);
+      }
+      if (items.length > 1) {
+        const list = document.createElement("div");
+        list.className = "chat-task-card-items";
+        items.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "chat-task-card-item";
+          row.dataset.status = String(item.status || "");
+          const itemName = document.createElement("span");
+          itemName.className = "chat-task-card-item-name";
+          itemName.textContent = String(item.title || "任务");
+          const itemBadge = document.createElement("span");
+          itemBadge.className = "chat-task-card-badge";
+          itemBadge.dataset.status = String(item.status || "");
+          itemBadge.textContent = String(item.status_label || "");
+          row.appendChild(itemName);
+          row.appendChild(itemBadge);
+          list.appendChild(row);
+        });
+        box.appendChild(list);
+      }
+      if (artifacts.length) {
+        const list = document.createElement("div");
+        list.className = "chat-task-card-artifacts";
+        artifacts.forEach((url) => {
+          const link = document.createElement("a");
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = filenameFromUrl(url, "查看产物");
+          list.appendChild(link);
+        });
+        box.appendChild(list);
+      }
+      if (stamp) {
+        const foot = document.createElement("div");
+        foot.className = "chat-task-card-time";
+        foot.textContent = `更新于 ${stamp}`;
+        box.appendChild(foot);
+      }
     }
 
     function setBubbleText(bubble, text) {
@@ -24230,6 +27624,7 @@
           if (ev.type === "final") {
             msg.status = "completed";
             msg.reply_text = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || msg.reply_text;
+            if (h5ChatDutyMode() === "service" && msg.reply_text) msg.reply_text = cleanH5ServiceReply(msg.reply_text);
             msg.finished_at = ev.created_at || new Date().toISOString();
           }
           if (ev.type === "error") {
@@ -24264,13 +27659,18 @@
         bubble._placeholder = false;
         setBubbleText(bubble, ev.payload.reply_text);
       }
+      if (ev.type === "task_card" && ev.payload) {
+        renderTaskCard(bubble, ev.payload, messageId);
+      }
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       renderPublishDraftActions(bubble, ev.payload || {});
       if (ev.type === "final") {
-        const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
+        let reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
+        if (h5ChatDutyMode() === "service") reply = cleanH5ServiceReply(reply);
         setBubbleText(bubble, reply);
         renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
         renderPublishDraftActions(bubble, ev.payload || {});
+        finishChatProcess(bubble);
         if (!historical) {
           closeStream(messageId);
           ensureConversationComposerReady();
@@ -24282,6 +27682,7 @@
       if (ev.type === "error") {
         bubble.classList.add("err");
         setBubbleText(bubble, (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败");
+        finishChatProcess(bubble);
         if (!historical) {
           closeStream(messageId);
           ensureConversationComposerReady();
@@ -24290,6 +27691,7 @@
       if (ev.type === "cancelled") {
         bubble.classList.remove("err");
         setBubbleText(bubble, (ev.payload && ev.payload.text) || "已停止当前任务");
+        finishChatProcess(bubble);
         if (!historical) {
           closeStream(messageId);
           ensureConversationComposerReady({ scroll: false });
@@ -24304,8 +27706,12 @@
       if (state.pollers.has(messageId)) return;
       let last = lastEventId;
       const timer = setInterval(async () => {
+        if (document.visibilityState === "hidden") return;
         try {
-          const data = await api(`/api/h5-chat/messages/${messageId}?after_event_id=${last}`);
+          // SSE fallback is a safety net, not a realtime transport. Avoid the
+          // previous 1.4-second loop and do not multiply each poll with the
+          // global GET retry policy.
+          const data = await api(`/api/h5-chat/messages/${messageId}?after_event_id=${last}`, { maxAttempts: 1 });
           for (const ev of data.events || []) {
             last = Math.max(last, ev.id || 0);
             handleEvent(ev, bubble, messageId);
@@ -24340,7 +27746,7 @@
           closeStream(messageId);
           ensureConversationComposerReady();
         }
-      }, 1400);
+      }, 5000);
       state.pollers.set(messageId, timer);
     }
 
@@ -24787,20 +28193,28 @@
       const reject = $("chatApprovalReject");
       if (approve) approve.disabled = true;
       if (reject) reject.disabled = true;
+      let decided = false;
       try {
         await api(`/api/mastra-chat/approvals/${encodeURIComponent(id)}/decision`, {
           method: "POST",
           json: { decision },
         });
+        decided = true;
         state.pendingApprovals = (state.pendingApprovals || []).filter((row) => row.id !== id);
         state.activeApprovalId = "";
+        // 确认后先给明确反馈再关弹窗：与 Online 一致，避免用户以为没生效又去对话里重复确认
+        const reason = $("chatApprovalReason");
+        if (reason && decision === "approve") reason.textContent = "已确认，任务已下发，等待执行…";
         $("chatApprovalModal")?.classList.add("hidden");
         if (decision === "approve") toast("已确认，正在执行");
         ensureConversationComposerReady({ scroll: false });
         setTimeout(showNextPendingApproval, 80);
       } finally {
-        if (approve) approve.disabled = false;
-        if (reject) reject.disabled = false;
+        // 成功时不恢复按钮：保持不可重复点击，等这次执行结束再走新一轮确认
+        if (!decided) {
+          if (approve) approve.disabled = false;
+          if (reject) reject.disabled = false;
+        }
       }
     }
 
@@ -24887,16 +28301,16 @@
         const low = url.toLowerCase();
         const mediaType = String(entry.media_type || "").trim().toLowerCase();
         if (mediaType.includes("video") || /\.(mp4|webm|mov|m4v)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item content-action-host"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${runMediaToolbarHtml(url, "下载视频", "lobster-video.mp4", actionMenu)}</div>`;
+          return `<div class="run-media-item content-action-host"><video controls playsinline preload="metadata" ${libraryMediaSourceHtml(url, filenameFromUrl(url, "lobster-video.mp4"))}></video>${runMediaToolbarHtml(url, "下载视频", "lobster-video.mp4", actionMenu, "video")}</div>`;
         }
         if (mediaType.includes("image") || /\.(png|jpe?g|webp|gif|bmp|avif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
           const rawPreviewName = filenameFromUrl(url, "lobster-image.png");
           const previewName = escapeHtml(rawPreviewName);
-          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}"><img src="${previewUrl}" alt="预览"></button>${runMediaToolbarHtml(url, "下载图片", "lobster-image.png", actionMenu)}</div>`;
+          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}" data-media-preview-kind="image"><img ${libraryMediaSourceHtml(url, "lobster-image.png")} alt="预览"></button>${runMediaToolbarHtml(url, "下载图片", "lobster-image.png", actionMenu, "image")}</div>`;
         }
         if (mediaType.includes("audio") || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item content-action-host"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${runMediaToolbarHtml(url, "下载音频", "lobster-audio.mp3", actionMenu)}</div>`;
+          return `<div class="run-media-item content-action-host"><audio controls ${libraryMediaSourceHtml(url, filenameFromUrl(url, "lobster-audio.mp3"))}></audio>${runMediaToolbarHtml(url, "下载音频", "lobster-audio.mp3", actionMenu, "audio")}</div>`;
         }
         const rawPreviewName = filenameFromUrl(url, "lobster-media");
         const previewName = escapeHtml(rawPreviewName);
@@ -24922,6 +28336,16 @@
     }
 
     async function loadRuns(options = {}) {
+        if (!state.token || !window.__lobsterH5AuthReady) {
+          // 未就绪时不进缓存，否则补加载会命中这次的空返回
+          state.runsPendingReload = true;
+          return false;
+        }
+        const key = `runs:${options.limit || 10}:${options.compact ? 1 : 0}:${options.append ? 1 : 0}:${options.reset === false ? 0 : 1}:${currentInstallationId() || "-"}`;
+        return h5CachedRequest(key, options.force ? 0 : 1500, () => loadRunsInner(options), options);
+    }
+
+    async function loadRunsInner(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
       const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
@@ -24929,8 +28353,13 @@
       const preserveExisting = !!options.preserveExisting;
       const silent = !!options.silent;
       const box = $("runList");
-      if (!state.token) return;
+      if (!state.token || !window.__lobsterH5AuthReady) {
+        // 首屏可能在鉴权就绪前就切到首页：记一笔，等就绪后补一次，避免列表空白
+        state.runsPendingReload = true;
+        return false;
+      }
       if (state.runListLoading) return false;
+      state.runsPendingReload = false;
       const installationId = currentInstallationId();
       const requestId = ++state.runListRequestSeq;
       state.runListLoading = true;
@@ -24960,6 +28389,7 @@
           if (row && row.id) rowsById.set(String(row.id), { ...(rowsById.get(String(row.id)) || {}), ...row });
         });
         state.runs = Array.from(rowsById.values()).sort((a, b) => itemTimeMs(b.updated_at, b.created_at) - itemTimeMs(a.updated_at, a.created_at));
+        h5CacheWrite("runs", state.runs.slice(0, 40));
         captureRunStatusSnapshot(state.runs, { announce: true });
         if (activeViewKey() === "office") renderOfficeEmployees();
         if (activeViewKey() === "workList") renderWorkList();
@@ -25007,6 +28437,39 @@
           syncWorkListLoadState();
         }
       }
+    }
+
+    function flushPendingRunListReload() {
+      if (!window.__lobsterH5AuthReady || !state.token) return false;
+      if (!state.runsPendingReload) return false;
+      state.runsPendingReload = false;
+      const onRunList = activeViewKey() === "runList";
+      loadRuns({
+        reset: true,
+        limit: onRunList ? 10 : 20,
+        compact: !onRunList,
+        preserveExisting: true,
+        force: true,
+      })
+        .then((ok) => {
+          if (activeViewKey() === "office") renderOfficeEmployees();
+          const empty = !(state.runs || []).length;
+          const tries = Number(state.officeSummaryRetryCount || 0);
+          if ((ok !== true || empty) && tries < 3) {
+            state.officeSummaryRetryCount = tries + 1;
+            window.setTimeout(() => {
+              loadRuns({ reset: true, limit: 20, compact: true, preserveExisting: true, force: true })
+                .then(() => {
+                  if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+                })
+                .catch(() => {});
+            }, 1200);
+          } else if (ok === true && !empty) {
+            state.officeSummaryRetryCount = 0;
+          }
+        })
+        .catch(() => {});
+      return true;
     }
 
     async function loadWorkflowRunsForDate(dateKey, options = {}) {
@@ -25235,6 +28698,51 @@
       const id = Number(button.dataset.recorderFaq || state.recorderDetailId || 0);
       if (id) useRecorderForFaq(id, button).catch((err) => toast(err.message || "百问百答资料准备失败"));
     });
+    function closeRecorderCustomerModal() {
+      const modal = $("recorderCustomerModal");
+      if (modal) modal.classList.add("hidden");
+    }
+    async function openRecorderCustomerModal(recordingId) {
+      const modal = $("recorderCustomerModal");
+      const select = $("recorderCustomerSelect");
+      if (!modal || !select) return;
+      modal.classList.remove("hidden");
+      select.innerHTML = '<option value="">正在加载客户…</option>';
+      try {
+        const data = await api("/api/customers?page=1&page_size=100");
+        const items = Array.isArray(data.items) ? data.items : [];
+        select.innerHTML = items.length
+          ? '<option value="">请选择客户</option>' + items.map((item) => `<option value="${escapeHtml(String(item.id))}">${escapeHtml(item.name)}${item.company ? ` · ${escapeHtml(item.company)}` : ""}</option>`).join("")
+          : '<option value="">暂无客户，请先添加</option>';
+        modal.dataset.recordingId = String(recordingId || "");
+      } catch (err) {
+        select.innerHTML = `<option value="">${escapeHtml(err.message || "客户加载失败")}</option>`;
+      }
+    }
+    $("recorderCustomerBtn")?.addEventListener("click", (event) => {
+      openRecorderCustomerModal(Number(event.currentTarget.dataset.recorderCustomer || state.recorderDetailId || 0)).catch((err) => toast(err.message || "客户加载失败"));
+    });
+    $("recorderCustomerClose")?.addEventListener("click", closeRecorderCustomerModal);
+    $("recorderCustomerCancel")?.addEventListener("click", closeRecorderCustomerModal);
+    $("recorderCustomerBackdrop")?.addEventListener("click", closeRecorderCustomerModal);
+    $("recorderCustomerForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const modal = $("recorderCustomerModal");
+      const customerId = Number($("recorderCustomerSelect")?.value || 0);
+      const recordingId = Number(modal?.dataset.recordingId || state.recorderDetailId || 0);
+      if (!customerId || !recordingId) return toast("请选择客户", "error");
+      const note = $("recorderCustomerNote")?.value?.trim() || "";
+      try {
+        await api(`/api/customers/${encodeURIComponent(customerId)}/communications`, {
+          method: "POST",
+          body: JSON.stringify({ communication_type: "recording", content: note, recording_id: recordingId }),
+        });
+        closeRecorderCustomerModal();
+        toast("录音已关联到客户");
+      } catch (err) {
+        toast(err.message || "关联客户失败", "error");
+      }
+    });
     if ($("recorderStartBtn")) $("recorderStartBtn").addEventListener("click", () => {
       const native = recorderNative();
       if (!native || typeof native.startRecorderRecording !== "function") return toast("请更新到最新版 APK 后使用设备录音控制");
@@ -25306,16 +28814,13 @@
     $("topBackBtn").addEventListener("click", () => {
       const activeView = document.querySelector(".view.active");
       const activeId = activeView ? String(activeView.id || "") : "";
+      if (activeId === "abilityView" && document.body.classList.contains("moments-coach-embedded") && typeof window.__momentsCoachBack === "function") {
+        if (window.__momentsCoachBack()) return;
+      }
       if (activeId === "abilityView") {
-        const lookup = activeAbilityLookup();
-        if (String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID) {
-          if (lookup && lookup.trail.length > 1) {
-            const parent = lookup.trail[lookup.trail.length - 2];
-            if (parent && parent.key) {
-              openAbilityView(parent.key, AI_MARKETING_CREATION_ID);
-              return;
-            }
-          }
+        // 用 isMarketingCreationMode()：部门 id 可能是 ai_marketing_creation 也可能是 marketing
+        if (isMarketingCreationMode()) {
+          // AI营销创作：工作台返回直接回首页，不再经过已废弃的二级页
           switchTab("office");
           return;
         }
@@ -25423,7 +28928,7 @@
       if (!btn) return;
       const department = departmentById(btn.dataset.secretaryDept || "");
       if (!department) return;
-      openWorkHistory(departmentScope(department), { tab: "secretary" });
+      openWorkHistory(null, { tab: "secretary" });
     });
     $("abilityChildren")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-ability-key]");
@@ -25587,8 +29092,8 @@
       }
       openContextChat(context);
     });
-    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId))));
-    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup())));
+    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(null, viewTargetFromCurrent("office")));
+    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(null, viewTargetFromCurrent("office")));
     $("scrollTopBtn")?.addEventListener("click", () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
     window.addEventListener("scroll", () => syncScrollTopButton(), { passive: true });
     setupWorkListInfiniteScroll();
@@ -25637,6 +29142,19 @@
         if (input) input.value = "";
       });
     });
+    $("openDouyinInformationDeskBtn")?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      openDouyinInformationDesk();
+    });
+    $("douyinInformationDeskBackdrop")?.addEventListener("click", closeDouyinInformationDesk);
+    $("douyinInformationDeskCloseBtn")?.addEventListener("click", closeDouyinInformationDesk);
+    $("douyinInformationDeskTabs")?.addEventListener("click", (evt) => {
+      const tab = evt.target.closest("[data-douyin-information-category]");
+      if (!tab) return;
+      douyinInformationDeskCategory = String(tab.dataset.douyinInformationCategory || "");
+      loadDouyinInformationDesk();
+    });
     document.querySelectorAll("[data-home-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const target = String(btn.dataset.homeTarget || "").trim();
@@ -25681,8 +29199,14 @@
         openLiveExecutorTaskResult(taskCard.dataset.liveTaskId || "").catch((err) => toast(err.message || "结果读取失败"));
       }
     });
+
     $("liveExecutorResultBackdrop")?.addEventListener("click", closeLiveExecutorResultModal);
     $("liveExecutorResultClose")?.addEventListener("click", closeLiveExecutorResultModal);
+    window.addEventListener("message", (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.source !== "moments-coach" || event.data?.type !== "moments-coach-back") return;
+      $("topBackBtn")?.click();
+    });
     $("creationQuickBackdrop")?.addEventListener("click", closeCreationQuickSheet);
     $("creationQuickClose")?.addEventListener("click", closeCreationQuickSheet);
     $("creationQuickGrid")?.addEventListener("click", (evt) => {
@@ -25741,6 +29265,12 @@
     $("assetUploadBackdrop")?.addEventListener("click", closeAssetUploadModal);
     $("assetUploadClose")?.addEventListener("click", closeAssetUploadModal);
     $("assetUploadCancel")?.addEventListener("click", closeAssetUploadModal);
+    $("assetEditBackdrop")?.addEventListener("click", closeAssetEditModal);
+    $("assetEditClose")?.addEventListener("click", closeAssetEditModal);
+    $("assetEditCancel")?.addEventListener("click", closeAssetEditModal);
+    $("assetEditForm")?.addEventListener("submit", (evt) => {
+      saveAssetEdit(evt).catch((err) => toast(err.message || "保存失败"));
+    });
     $("assetLibraryUploadInput")?.addEventListener("change", () => syncNativeInputFiles("assetLibraryUploadInput", true));
     $("assetUploadForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
@@ -26163,6 +29693,27 @@
         openHiflyAssetPreview(hiflyBtn.dataset.hiflyAssetKind || "", hiflyBtn.dataset.hiflyAssetId || "");
         return;
       }
+      const splitBtn = evt.target.closest("[data-asset-split-id]");
+      if (splitBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        splitLibraryAsset(splitBtn.dataset.assetSplitId || "").catch((err) => toast(err.message || "切片失败"));
+        return;
+      }
+      const aiBtn = evt.target.closest("[data-asset-ai-id]");
+      if (aiBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        understandLibraryAsset(aiBtn.dataset.assetAiId || "").catch((err) => toast(err.message || "AI理解失败"));
+        return;
+      }
+      const editBtn = evt.target.closest("[data-asset-edit-id]");
+      if (editBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openAssetEditModal(editBtn.dataset.assetEditId || "");
+        return;
+      }
       const btn = evt.target.closest("[data-asset-preview-id]");
       if (!btn) return;
       openAssetPreview(btn.dataset.assetPreviewId || "").catch((err) => toast(err.message || "详情加载失败"));
@@ -26179,7 +29730,16 @@
     });
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
-    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
+    // 下发成功 -> 查看工作历史：和首页「全部」一样落到全部记录（不再带部门/能力的筛选 tab，避免两个入口长得不一样）
+    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, viewTargetFromCurrent("profile")));
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      const btn = target && target.closest ? target.closest("[data-article-field-tab]") : null;
+      if (!btn) return;
+      event.preventDefault();
+      setArticleFieldTab(btn.getAttribute("data-article-tab-prefix") || "",
+                         btn.getAttribute("data-article-field-tab") || "compose");
+    });
     $("personalTemplateHelpBtn")?.addEventListener("click", openPersonalTemplateHelpDialog);
     $("personalTemplateHelpBackdrop")?.addEventListener("click", closePersonalTemplateHelpDialog);
     $("personalTemplateHelpCloseBtn")?.addEventListener("click", closePersonalTemplateHelpDialog);
@@ -26199,14 +29759,18 @@
       if (preview) {
         evt.preventDefault();
         evt.stopPropagation();
-        openMobileMediaPreview(preview.dataset.mediaPreviewUrl || "", preview.dataset.mediaPreviewName || "");
+        openMobileMediaPreview(preview.dataset.mediaPreviewUrl || "", preview.dataset.mediaPreviewName || "", preview.dataset.mediaPreviewKind || "");
         return;
       }
       const download = evt.target.closest("[data-media-download-url]");
       if (download && (IS_ANDROID || download.id === "mobileMediaPreviewDownloadBtn")) {
         evt.preventDefault();
         evt.stopPropagation();
-        startMediaDownload(download.dataset.mediaDownloadUrl || download.href || "", download.dataset.mediaDownloadName || download.download || "");
+        startMediaDownload(
+          download.dataset.mediaDownloadUrl || download.href || "",
+          download.dataset.mediaDownloadName || download.download || "",
+          download.dataset.mediaDownloadKind || "",
+        );
         return;
       }
       const btn = evt.target.closest("[data-open-personal-template-settings]");
@@ -26236,6 +29800,9 @@
       }
       const btn = evt.target.closest("[data-asset-upload-trigger]");
       if (!btn) return;
+      // Labels activate the file input natively, which is more reliable than
+      // a programmatic click in Android WebView file choosers.
+      if (btn.tagName === "LABEL") return;
       evt.preventDefault();
       const id = btn.dataset.assetUploadTrigger || "";
       const input = id ? $(`${id}File`) : null;
@@ -26435,6 +30002,18 @@
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
     $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
+    $("personalNewSurveyBtn")?.addEventListener("click", () => {
+      state.personalEditingSurveyId = "";
+      setPersonalFieldValue("personalSurveyName", "默认资料");
+      ["personalProfileName", "personalGender", "personalProfilePhoto", "personalBirthEra", "personalCurrentProvince", "personalCurrentCity", "personalHometown", "personalRole", "personalShareTopic", "personalVideoStyle", "personalAfterViewAction", "personalBusinessProduct", "personalTargetCustomer", "personalAdvantages"].forEach((id) => setPersonalFieldValue(id, ""));
+      renderPersonalSurveyWizard();
+    });
+    $("personalSurveyList")?.addEventListener("click", (evt) => {
+      const use = evt.target.closest("[data-use-personal-survey]");
+      if (use) { usePersonalSurvey(use.dataset.usePersonalSurvey).catch((err) => toast(err.message || "读取资料调查失败")); return; }
+      const del = evt.target.closest("[data-delete-personal-survey]");
+      if (del) deletePersonalSurvey(del.dataset.deletePersonalSurvey).catch((err) => toast(err.message || "删除失败"));
+    });
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().then(closePersonalTemplateModal).catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", startNewPersonalTemplate);
     $("personalTemplateBackdrop")?.addEventListener("click", closePersonalTemplateModal);
@@ -26442,6 +30021,76 @@
     $("personalTemplateCancel")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateLanguage")?.addEventListener("change", (evt) => setPersonalTemplateLanguage(evt.target.value || "zh-CN"));
     $("personalDigitalHumanTemplateChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanTemplatePicker("personal"));
+    $("personalDigitalHumanAvatarChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanResourcePicker("avatar"));
+    $("personalDigitalHumanVoiceChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanResourcePicker("voice"));
+    $("personalDigitalHumanAvatarList")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-open-personal-digital-resource]");
+      if (button) openPersonalDigitalHumanResourcePicker(button.dataset.openPersonalDigitalResource || "avatar");
+    });
+    $("personalDigitalHumanVoiceList")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-open-personal-digital-resource]");
+      if (button) openPersonalDigitalHumanResourcePicker(button.dataset.openPersonalDigitalResource || "voice");
+    });
+    $("personalDigitalHumanResourceBackdrop")?.addEventListener("click", closePersonalDigitalHumanResourcePicker);
+    $("personalDigitalHumanResourceClose")?.addEventListener("click", closePersonalDigitalHumanResourcePicker);
+    $("personalDigitalHumanResourceCancel")?.addEventListener("click", closePersonalDigitalHumanResourcePicker);
+    $("personalDigitalHumanResourceConfirm")?.addEventListener("click", confirmPersonalDigitalHumanResources);
+    $("personalDigitalHumanResourceTabs")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-personal-resource-kind]");
+      if (!button) return;
+      state.personalDigitalHumanResourcePickerKind = button.dataset.personalResourceKind === "voice" ? "voice" : "avatar";
+      state.personalDigitalHumanResourceQuery = "";
+      state.personalDigitalHumanResourcePage = 1;
+      if ($("personalDigitalHumanResourceSearch")) $("personalDigitalHumanResourceSearch").value = "";
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourceSearch")?.addEventListener("input", (evt) => {
+      state.personalDigitalHumanResourceQuery = evt.target.value || "";
+      state.personalDigitalHumanResourcePage = 1;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourcePickerList")?.addEventListener("change", (evt) => {
+      const input = evt.target.closest("[data-personal-resource-key]");
+      if (!input) return;
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const listKey = kind === "avatar" ? "avatars" : "voices";
+      const key = input.dataset.personalResourceKey || "";
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      const current = draft[listKey].filter((row) => digitalHumanResourceKey(row, kind) !== key);
+      if (input.checked) {
+        const picked = personalDigitalHumanResourceOptions(kind, draft).find((row) => digitalHumanResourceKey(row, kind) === key);
+        if (picked) current.push({ ...picked });
+      }
+      draft[listKey] = current;
+      state.personalDigitalHumanResourceDraft = draft;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourceSelectAll")?.addEventListener("click", () => {
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const listKey = kind === "avatar" ? "avatars" : "voices";
+      const rows = personalDigitalHumanPickerRows();
+      const keys = new Set(rows.map((row) => digitalHumanResourceKey(row, kind)));
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      const currentKeys = new Set(draft[listKey].map((row) => digitalHumanResourceKey(row, kind)));
+      const allSelected = !!rows.length && rows.every((row) => currentKeys.has(digitalHumanResourceKey(row, kind)));
+      const kept = draft[listKey].filter((row) => !keys.has(digitalHumanResourceKey(row, kind)));
+      draft[listKey] = allSelected ? kept : [...kept, ...rows.map((row) => ({ ...row }))];
+      state.personalDigitalHumanResourceDraft = draft;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourceClear")?.addEventListener("click", () => {
+      const kind = state.personalDigitalHumanResourcePickerKind === "voice" ? "voice" : "avatar";
+      const draft = normalizePersonalDigitalHumanResources(state.personalDigitalHumanResourceDraft);
+      draft[kind === "avatar" ? "avatars" : "voices"] = [];
+      state.personalDigitalHumanResourceDraft = draft;
+      renderPersonalDigitalHumanResourcePicker();
+    });
+    $("personalDigitalHumanResourcePager")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-personal-resource-page-delta]");
+      if (!button || button.disabled) return;
+      state.personalDigitalHumanResourcePage += Number(button.dataset.personalResourcePageDelta || 0);
+      renderPersonalDigitalHumanResourcePicker();
+    });
     $("personalDigitalHumanTemplateSummary")?.addEventListener("click", (evt) => {
       if (!evt.target.closest("[data-clear-personal-dh-template]")) return;
       state.personalSelectedDigitalHumanTemplate = null;
@@ -26529,7 +30178,9 @@
     });
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => personalSetStatus(err.message || "搜索失败", true)));
+    $("personalAddCompetitorByChannelIdBtn")?.addEventListener("click", () => addPersonalCompetitorByChannelId().catch((err) => personalSetStatus(err.message || "按照视频号公开 ID 添加失败", true)));
     $("personalCompetitorPlatform")?.addEventListener("change", updatePersonalCompetitorSearchFields);
+    updatePersonalCompetitorSearchFields();
     $("personalCompetitorKey")?.addEventListener("keydown", (evt) => {
       if (evt.key !== "Enter") return;
       evt.preventDefault();
@@ -26544,6 +30195,17 @@
       const text = state.personalMemoryDetailText || $("personalMemoryPreview")?.textContent || "";
       const ok = await copyText(text);
       toast(ok ? "已复制记忆内容" : "复制失败，请长按内容复制");
+    });
+    $("personalMemoryDetailDownloadBtn")?.addEventListener("click", async () => {
+      const id = String(state.personalMemoryDetailId || "").trim();
+      if (!id) return;
+      const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id) || {};
+      try {
+        const result = await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+        if (!result || !result.cancelled) toast(result && result.path ? `已保存至：${result.path}` : "文件已保存");
+      } catch (err) {
+        toast(err.message || "下载失败");
+      }
     });
     $("personalMemoryGenerateBackdrop")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalMemoryGenerateClose")?.addEventListener("click", closePersonalMemoryGenerateModal);
@@ -26607,8 +30269,10 @@
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
       const competitorSyncBtn = evt.target.closest("[data-sync-personal-competitor]");
       const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
+      const downloadMemoryBtn = evt.target.closest("[data-download-personal-memory]");
       const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       const editTemplateBtn = evt.target.closest("[data-edit-personal-template]");
+      const copyTemplateBtn = evt.target.closest("[data-copy-personal-template]");
       const deleteTemplateBtn = evt.target.closest("[data-delete-personal-template]");
       const useTemplateBtn = evt.target.closest("[data-use-personal-template]");
       const dispatchTemplateBtn = evt.target.closest("[data-agent-dispatch-template]");
@@ -26629,12 +30293,23 @@
           }
           return;
         }
+        if (copyTemplateBtn) {
+          await copyPersonalTemplate(copyTemplateBtn.dataset.copyPersonalTemplate || "", copyTemplateBtn);
+          return;
+        }
         if (deleteTemplateBtn) {
           await deletePersonalTemplate(deleteTemplateBtn.dataset.deletePersonalTemplate || "", deleteTemplateBtn);
           return;
         }
         if (previewMemoryBtn) {
           await previewPersonalMemory(previewMemoryBtn.dataset.previewPersonalMemory || "");
+          return;
+        }
+        if (downloadMemoryBtn) {
+          const id = downloadMemoryBtn.dataset.downloadPersonalMemory || "";
+          const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id) || {};
+          const result = await downloadPersonalMemoryDocument(id, `${personalMemoryTitle(doc)}.md`);
+          if (!result || !result.cancelled) toast(result && result.path ? `已保存至：${result.path}` : "文件已保存");
           return;
         }
         if (deleteMemoryBtn) {
@@ -26686,9 +30361,9 @@
     $("agentSaveGrantBtn")?.addEventListener("click", (evt) => saveAgentGrants(evt.currentTarget).catch((err) => toast(err.message || "授权失败")));
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
-    $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));
+    $("refreshRunsBtn").addEventListener("click", () => { h5InvalidateCachedRequest("runs:"); loadRuns({ reset: true, force: true }); });
     $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
-    $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
+    $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false, force: true }));
     $("officeWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, "office"));
     $("departmentCalendarDays")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-department-date]");
@@ -27143,6 +30818,11 @@
     });
     $("abilityWorkbenchForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
+      // The embedded moments coach owns its own navigation and actions. Its
+      // buttons live inside this outer form, but must never dispatch a generic
+      // ability task when a user enters a second-level page.
+      const activeAbility = activeAbilityLookup();
+      if (String(activeAbility?.node?.capabilityId || activeAbility?.node?.key || "") === "moments_sales_coach" || evt.target?.querySelector?.("#momentsApp")) return;
       submitAbilityWorkbench().catch((err) => toast(err.message || "提交失败"));
     });
 
@@ -27502,6 +31182,77 @@
       }
     });
 
+    // ---- AI 调度助手处理范围：工作 / 客服（客服模式下只把客服问题交给 AI）----
+    const H5_CHAT_DUTY_MODE_KEY = "lobster_h5_chat_duty_mode";
+    const H5_DUTY_SERVICE_PLACEHOLDER = "输入客户咨询、售后、价格、话术等客服问题";
+    let h5DutyPlaceholderBackup = "";
+    const H5_CHAT_DUTY_SERVICE_HINT = "客服模式：按客服百问百答回答（咨询 / 售后 / 价格 / 使用 / 话术）";
+
+    function cleanH5ServiceReply(text) {
+      // 客服模式的答复只保留「可直接发给客户」的那段：去掉标记，砍掉内部提示部分
+      let value = String(text || "");
+      if (!value) return value;
+      const markers = ["【内部提示】", "内部提示：", "内部提示:", "【内部】", "（内部提示）", "【仅内部】"];
+      for (const marker of markers) {
+        const idx = value.indexOf(marker);
+        if (idx >= 0) value = value.slice(0, idx);
+      }
+      const labels = ["【可直接发给客户】", "【可直接发给客户的答复】", "【客户答复】", "【可发给客户】", "可直接发给客户：", "【答复】"];
+      const out = [];
+      value.split("\n").forEach((line) => {
+        let stripped = line.trim();
+        if (!stripped) { out.push(""); return; }
+        labels.forEach((label) => {
+          if (stripped.indexOf(label) === 0) stripped = stripped.slice(label.length).trim();
+        });
+        if (stripped) out.push(stripped);
+      });
+      return out.join("\n").trim();
+    }
+
+    function h5ChatDutyMode() {
+      const sel = $("h5ChatDutyMode");
+      let value = sel && sel.value ? String(sel.value) : "";
+      if (!value) {
+        try { value = String(localStorage.getItem(H5_CHAT_DUTY_MODE_KEY) || ""); } catch (e) { value = ""; }
+      }
+      return value === "service" ? "service" : "work";
+    }
+
+    function applyH5DutyModeToContent(content) {
+      // 客服模式不在前端做判断/隔离：duty_mode 交给服务端，由服务端注入客服百问百答。
+      return String(content || "");
+    }
+
+    function syncH5ChatDutyModeUi() {
+      // 只改客服模式的文案；切回「工作」恢复原 placeholder，工作模式行为不变。
+      const input = $("messageInput");
+      if (!input) return;
+      if (h5ChatDutyMode() === "service") {
+        if (input.getAttribute("placeholder") !== H5_DUTY_SERVICE_PLACEHOLDER) {
+          h5DutyPlaceholderBackup = input.getAttribute("placeholder") || "随心输入";
+          input.setAttribute("placeholder", H5_DUTY_SERVICE_PLACEHOLDER);
+        }
+      } else if (input.getAttribute("placeholder") === H5_DUTY_SERVICE_PLACEHOLDER) {
+        input.setAttribute("placeholder", h5DutyPlaceholderBackup || "随心输入");
+        h5DutyPlaceholderBackup = "";
+      }
+    }
+
+    function initH5ChatDutyMode() {
+      const sel = $("h5ChatDutyMode");
+      if (!sel) return;
+      let saved = "";
+      try { saved = String(localStorage.getItem(H5_CHAT_DUTY_MODE_KEY) || ""); } catch (e) { saved = ""; }
+      if (saved === "service" || saved === "work") sel.value = saved;
+      sel.addEventListener("change", () => {
+        try { localStorage.setItem(H5_CHAT_DUTY_MODE_KEY, h5ChatDutyMode()); } catch (e) {}
+        syncH5ChatDutyModeUi();
+        toast(h5ChatDutyMode() === "service" ? H5_CHAT_DUTY_SERVICE_HINT : "已切回工作模式");
+      });
+      syncH5ChatDutyModeUi();
+    }
+
     async function submitChatMessage(rawContent = null, options = {}) {
       const input = $("messageInput");
       const fromComposer = rawContent === null;
@@ -27529,7 +31280,7 @@
       }
       state.chatSubmitPending = true;
       $("sendBtn").disabled = true;
-      const messageContent = buildMessageContent(content);
+      const messageContent = buildMessageContent(applyH5DutyModeToContent(content));
       const userBubble = addBubble("user", content || `已添加 ${attachments.length} 个素材`);
       renderBubbleAttachments(userBubble, attachments);
       const bot = addBubble("bot", queueMode === "steer"
@@ -27547,6 +31298,7 @@
             attachments,
             queue_mode: queueMode,
             target_message_id: targetMessageId,
+            ...(h5ChatDutyMode() === "service" ? { duty_mode: "service" } : {}),
           },
         });
         const msg = data.message || {};
@@ -27582,6 +31334,8 @@
       evt.preventDefault();
       await submitChatMessage();
     });
+
+    initH5ChatDutyMode();
 
     $("chatQueueSummary")?.addEventListener("click", () => {
       state.chatQueueExpanded = !state.chatQueueExpanded;
@@ -27628,32 +31382,152 @@
       await submitChatMessage(null, { queueMode: "steer", targetMessageId });
     });
 
+    function h5PhoneFromEmail(email) {
+      const value = String(email || "").trim().toLowerCase();
+      const at = value.indexOf("@");
+      if (at < 0) return "";
+      const domain = value.slice(at + 1);
+      if (domain !== "sms.lobster.local") return "";
+      let local = value.slice(0, at);
+      const tag = local.indexOf("+brand-");
+      if (tag >= 0) local = local.slice(0, tag);
+      return /^1[3-9]\d{9}$/.test(local) ? local : "";
+    }
+
+    function h5MaskPhone(phone) {
+      const value = String(phone || "");
+      return value.length === 11 ? `${value.slice(0, 3)}****${value.slice(-4)}` : value;
+    }
+
+    function setAccountSecurityMsg(text, isErr) {
+      const node = $("asMsg");
+      if (!node) return;
+      node.textContent = text || "";
+      node.classList.toggle("ok", Boolean(text) && !isErr);
+      node.classList.toggle("err", Boolean(text) && Boolean(isErr));
+    }
+
+    function renderAccountSecurity() {
+      const user = state.user || {};
+      const node = $("accountSecurityCurrent");
+      if (!node) return;
+      const phone = h5PhoneFromEmail(user.email);
+      node.textContent = phone ? `当前账号：${h5MaskPhone(phone)}` : `当前账号：${String(user.email || "--")}`;
+    }
+
+    async function submitH5PasswordChange() {
+      const oldPassword = ($("asOldPassword") || {}).value || "";
+      const newPassword = ($("asNewPassword") || {}).value || "";
+      const confirmPassword = ($("asConfirmPassword") || {}).value || "";
+      if (!oldPassword) return setAccountSecurityMsg("请输入当前密码", true);
+      if (!newPassword || newPassword.length < 6) return setAccountSecurityMsg("新密码至少 6 位", true);
+      if (newPassword !== confirmPassword) return setAccountSecurityMsg("两次输入的新密码不一致", true);
+      const btn = $("asChangePasswordBtn");
+      if (btn) btn.disabled = true;
+      setAccountSecurityMsg("正在保存新密码…", false);
+      try {
+        await api("/auth/password/change", {
+          method: "POST",
+          json: { old_password: oldPassword, new_password: newPassword },
+          blocking: "正在保存新密码",
+        });
+        ["asOldPassword", "asNewPassword", "asConfirmPassword"].forEach((id) => {
+          const el = $(id);
+          if (el) el.value = "";
+        });
+        // 服务端已失效旧会话：本地也清掉 token，回登录页重新登录
+        setAccountSecurityMsg("密码已修改，请用新密码重新登录…", false);
+        clearStoredAuth();
+        setTimeout(() => window.location.reload(), 1200);
+      } catch (err) {
+        setAccountSecurityMsg(`修改密码失败：${(err && err.message) || "未知错误"}`, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function submitH5PhoneCodeSend() {
+      const password = ($("asPhonePassword") || {}).value || "";
+      const newPhone = (($("asNewPhone") || {}).value || "").trim();
+      if (!password) return setAccountSecurityMsg("请输入当前密码", true);
+      if (!/^1[3-9]\d{9}$/.test(newPhone)) return setAccountSecurityMsg("请输入正确的 11 位手机号", true);
+      const btn = $("asSendPhoneCodeBtn");
+      if (btn) btn.disabled = true;
+      setAccountSecurityMsg("正在发送验证码…", false);
+      try {
+        await api("/auth/phone/change/send-code", {
+          method: "POST",
+          json: { password: password, new_phone: newPhone },
+          blocking: "正在发送验证码",
+        });
+        setAccountSecurityMsg(`验证码已发送到 ${h5MaskPhone(newPhone)}，请查收`, false);
+      } catch (err) {
+        setAccountSecurityMsg(`发送验证码失败：${(err && err.message) || "未知错误"}`, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function submitH5PhoneChange() {
+      const password = ($("asPhonePassword") || {}).value || "";
+      const newPhone = (($("asNewPhone") || {}).value || "").trim();
+      const code = (($("asPhoneCode") || {}).value || "").trim();
+      if (!password) return setAccountSecurityMsg("请输入当前密码", true);
+      if (!/^1[3-9]\d{9}$/.test(newPhone)) return setAccountSecurityMsg("请输入正确的 11 位手机号", true);
+      if (!code) return setAccountSecurityMsg("请输入短信验证码", true);
+      const btn = $("asChangePhoneBtn");
+      if (btn) btn.disabled = true;
+      setAccountSecurityMsg("正在换绑手机号…", false);
+      try {
+        await api("/auth/phone/change", {
+          method: "POST",
+          json: { password: password, new_phone: newPhone, code: code },
+          blocking: "正在换绑手机号",
+        });
+        ["asPhonePassword", "asNewPhone", "asPhoneCode"].forEach((id) => {
+          const el = $(id);
+          if (el) el.value = "";
+        });
+        setAccountSecurityMsg(`换绑成功，新手机号 ${h5MaskPhone(newPhone)} 已生效`, false);
+        await loadMe();
+      } catch (err) {
+        setAccountSecurityMsg(`换绑失败：${(err && err.message) || "未知错误"}`, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function bindAccountSecurity() {
+      const entry = $("accountSecurityEntryBtn");
+      if (entry) {
+        entry.addEventListener("click", () => {
+          const panel = $("accountSecurityPanel");
+          if (!panel) return;
+          panel.classList.toggle("hidden");
+          renderAccountSecurity();
+        });
+      }
+      const close = $("accountSecurityCloseBtn");
+      if (close) close.addEventListener("click", () => $("accountSecurityPanel")?.classList.add("hidden"));
+      const pwdBtn = $("asChangePasswordBtn");
+      if (pwdBtn) pwdBtn.addEventListener("click", submitH5PasswordChange);
+      const sendBtn = $("asSendPhoneCodeBtn");
+      if (sendBtn) sendBtn.addEventListener("click", submitH5PhoneCodeSend);
+      const phoneBtn = $("asChangePhoneBtn");
+      if (phoneBtn) phoneBtn.addEventListener("click", submitH5PhoneChange);
+    }
+
     (async function init() {
       loadH5Branding().catch(() => {});
       setAuthTab("sms");
+      bindAccountSecurity();
       setTaskAbility("comfly.seedance.tvc.pipeline");
       const ok = await loadMe();
       if (!ok) {
         await showLoginShell();
       }
       markH5PageReady("boot_ready");
-      setInterval(() => {
-        if (!state.token || document.visibilityState === "hidden") return;
-        if (["assetLibrary", "mountedAccounts"].includes(activeViewKey())) return;
-        refreshDeviceStatus();
-      }, 7000);
-      setInterval(() => {
-        if (!state.token) return;
-        if (document.visibilityState === "hidden") return;
-        if (!["office", "workflow", "workList", "runList", "runDetail", "department", "secretary"].includes(activeViewKey())) return;
-        const activeStatuses = new Set(["pending", "claimed", "processing", "running"]);
-        if (!(state.runs || []).some((row) => activeStatuses.has(String(row && row.status || "").toLowerCase()))) return;
-        loadRuns({
-          reset: false,
-          limit: 20,
-          compact: true,
-          preserveExisting: true,
-          silent: true,
-        });
-      }, 15000);
+          // 2026-09-30：设备状态不再定时轮询（首页刷新 / 切到「我的」时各取一次即可）；
+    // 需要持续轮询的只有「正在执行中的任务」，那部分走各自的 poller。
+
     })();

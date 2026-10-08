@@ -1,14 +1,22 @@
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
+from backend.app.api import h5_workflows as workflow_api
 from backend.app.api.h5_workflows import (
+    WorkflowActivateIn,
     WorkflowTemplateIn,
+    _accessible_template,
     _template_payload,
+    activate_workflow_template,
     create_workflow_template,
     delete_workflow_template,
     update_workflow_template,
     _clean_nodes,
+    _is_system_catalog_template,
 )
-from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, ScheduledTask
+from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, H5WorkflowTemplateGrant, ScheduledTask
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +58,91 @@ def _douyin_private_body(params: dict | None = None) -> WorkflowTemplateIn:
     )
 
 
+@pytest.mark.parametrize("template_key", ("system_sales", "system_short_video_wechat", "system_douyin_leads"))
+def test_zero_owner_system_catalog_template_is_recognized(template_key):
+    row = H5WorkflowTemplate(
+        owner_user_id=0,
+        name="系统模板",
+        nodes=[],
+        status="active",
+        meta={"source": "system_catalog", "system_template_key": template_key},
+    )
+
+    assert _is_system_catalog_template(row)
+
+
+def test_granted_workflow_can_activate_on_recipient_device_and_stays_read_only(
+    db_session, test_user, other_user, monkeypatch
+):
+    source = H5WorkflowTemplate(
+        owner_user_id=test_user.id,
+        installation_id="agent-device",
+        name="代理商员工",
+        nodes=_sales_body("代理商任务").nodes,
+        status="active",
+        meta={},
+    )
+    db_session.add(source)
+    db_session.commit()
+    db_session.refresh(source)
+    db_session.add(
+        H5WorkflowTemplateGrant(
+            template_id=source.id,
+            owner_user_id=test_user.id,
+            target_user_id=other_user.id,
+            status="active",
+        )
+    )
+    db_session.commit()
+
+    assert _accessible_template(db_session, source.id, other_user.id).id == source.id
+
+    captured = {}
+
+    def fake_activate_nodes_for_device(**kwargs):
+        captured.update(kwargs)
+        activation = type(
+            "Activation",
+            (),
+            {
+                "id": 1,
+                "user_id": other_user.id,
+                "installation_id": "recipient-device",
+                "template_id": source.id,
+                "status": "active",
+                "scheduled_task_ids": [],
+                "started_at": None,
+                "stopped_at": None,
+                "updated_at": None,
+                "template_snapshot": {"source": "granted"},
+            },
+        )()
+        return activation, [], []
+
+    monkeypatch.setattr(workflow_api, "online_user_for_mobile_user", lambda db, user: user)
+    monkeypatch.setattr(workflow_api, "_assert_workflow_feature_permissions", lambda db, user_id, nodes: None)
+    monkeypatch.setattr(workflow_api, "_activate_nodes_for_device", fake_activate_nodes_for_device)
+
+    result = activate_workflow_template(
+        WorkflowActivateIn(template_id=source.id, installation_id="recipient-device"),
+        current_user=other_user,
+        db=db_session,
+    )
+
+    assert captured["installation_id"] == "recipient-device"
+    assert captured["template_owner_user_id"] == test_user.id
+    assert result["activation"]["template_source"] == "granted"
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_workflow_template(
+            source.id,
+            WorkflowTemplateIn(name="不应修改", nodes=_sales_body("不应修改").nodes),
+            current_user=other_user,
+            db=db_session,
+        )
+    assert exc_info.value.status_code == 404
+
+
 def test_douyin_private_switch_is_explicitly_stored_and_returned(db_session, test_user):
     created = create_workflow_template(
         _douyin_private_body({"wechat_add_friend_enabled": False}),
@@ -75,7 +168,7 @@ def test_douyin_private_reply_mode_is_server_owned(db_session, test_user):
     assert params["reply_mode"] == "ai_lead"
 
 
-def test_legacy_douyin_followup_nodes_fold_into_collection_properties():
+def test_legacy_douyin_followup_nodes_are_removed_from_collection():
     def node(node_id: str, time: str, label: str, action: str) -> dict:
         return {
             "id": node_id,
@@ -104,12 +197,7 @@ def test_legacy_douyin_followup_nodes_fold_into_collection_properties():
 
     assert [item["id"] for item in cleaned] == ["collect"]
     params = cleaned[0]["plan"]["payload"]["params"]
-    assert params["followup_actions"] == [
-        "reply_comments",
-        "mention_comment",
-        "follow_comment",
-        "direct_message",
-    ]
+    assert params["followup_actions"] == []
     assert params["customer_scope"] == "current_collection_batch"
 
 
@@ -147,8 +235,54 @@ def test_douyin_collection_editor_params_survive_server_normalization():
     assert params["regions"] == ["深圳", "东莞"]
     assert params["max_results"] == 80
     assert params["mode"] == "api"
-    assert params["followup_actions"] == ["reply_comments", "direct_message"]
+    assert params["followup_actions"] == []
     assert params["customer_scope"] == "current_collection_batch"
+
+
+def test_precise_touch_editor_keeps_selected_actions_with_custom_note():
+    raw = {
+        "id": "touch",
+        "time": "10:00",
+        "department_id": "sales",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音精准用户触达",
+        "note": "重点客户跟进",
+        "sales_preset": True,
+        "plan": {
+            "title": "抖音精准用户触达",
+            "task_kind": "douyin_leads",
+            "payload": {
+                "action": "precise_touch",
+                "params": {"touch_actions": ["direct_message"], "max_users": 8},
+            },
+        },
+    }
+
+    params = _clean_nodes([raw])[0]["plan"]["payload"]["params"]
+
+    assert params["touch_actions"] == ["direct_message"]
+    assert params["max_users"] == 8
+
+
+def test_precise_touch_editor_preserves_explicit_empty_actions():
+    raw = {
+        "id": "touch-empty",
+        "time": "10:00",
+        "department_id": "sales",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音精准用户触达",
+        "note": "抖音精准用户触达",
+        "sales_preset": True,
+        "plan": {
+            "title": "抖音精准用户触达",
+            "task_kind": "douyin_leads",
+            "payload": {"action": "precise_touch", "params": {"touch_actions": []}},
+        },
+    }
+
+    params = _clean_nodes([raw])[0]["plan"]["payload"]["params"]
+
+    assert params["touch_actions"] == []
 
 
 def test_legacy_sales_action_children_fold_into_parent_properties():
@@ -193,6 +327,60 @@ def test_legacy_sales_action_children_fold_into_parent_properties():
     assert not douyin.get("children")
     assert douyin["plan"]["payload"]["action"] == "stranger_message"
     assert douyin["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is True
+
+
+def _add_friend_and_douyin_nodes(source_mode=""):
+    add_params = {"account_id": "pc-wechat-default"}
+    if source_mode:
+        add_params["source_mode"] = source_mode
+    return [
+        {
+            "id": "sales_add_friend_0800",
+            "time": "08:00",
+            "ability_key": "native_wechat_add_friend",
+            "ability_label": "个微自动加好友",
+            "plan": {
+                "task_kind": "client_workflow",
+                "payload": {"action": "native_wechat_add_friend", "params": add_params},
+            },
+        },
+        {
+            "id": "sales_douyin",
+            "time": "08:30",
+            "ability_key": "douyin_leads",
+            "ability_label": "抖音私信接管",
+            "plan": {"task_kind": "douyin_leads", "payload": {"action": "stranger_message", "params": {}}},
+        },
+    ]
+
+
+def test_top_level_add_friend_node_survives_save_and_read():
+    """管理后台配的 8 点「个微自动加好友」不能被抖音节点连坐删掉。
+
+    2026-08-21 的折叠逻辑把所有一级加好友节点都 continue 掉了，而 2026-09-28
+    Online 已改成「只折叠来源=上级抖音私信结果的」；服务端没跟上，于是终端读
+    接口拿不到这个节点，只有管理后台（读原始行）能看到。
+    """
+    nodes = _add_friend_and_douyin_nodes("server_reported_pool")
+
+    cleaned = _clean_nodes(nodes)
+
+    assert [node["id"] for node in cleaned] == ["sales_add_friend_0800", "sales_douyin"]
+    assert cleaned[0]["plan"]["payload"]["params"]["source_mode"] == "server_reported_pool"
+    assert cleaned[1]["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is False
+
+    row = H5WorkflowTemplate(owner_user_id=1, name="销售员工", nodes=nodes)
+    payload_nodes = _template_payload(row)["nodes"]
+    assert [node["id"] for node in payload_nodes] == ["sales_add_friend_0800", "sales_douyin"]
+
+
+def test_douyin_sourced_top_level_add_friend_node_still_folds():
+    nodes = _add_friend_and_douyin_nodes("douyin_private_message_phone")
+
+    cleaned = _clean_nodes(nodes)
+
+    assert [node["id"] for node in cleaned] == ["sales_douyin"]
+    assert cleaned[0]["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is True
 
 
 def test_legacy_douyin_private_switch_defaults_to_false_in_server_payload():
@@ -404,6 +592,9 @@ def test_existing_workflow_payload_hides_legacy_placeholder_nodes():
 def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    editor = script.split("function openWorkflowTemplateEditor", 1)[1].split(
+        "async function loadWorkflowTemplates", 1
+    )[0]
 
     assert 'meta: { copied_from: String(tpl.id || ""), copied_source: tpl.source || "" }' in script
     assert 'system_template_key: "system_sales"' in script
@@ -414,10 +605,12 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "workflowTemplateIsSales(tpl)" in script
     assert "plan_day: Number(planDay)" in script
     assert "function customWorkflowTemplateRows()" in script
-    assert "const mirrors = new Map();" in script
+    assert "const mergedIds = new Set(systemRows.map((tpl) => String(tpl && tpl.id || \"\")));" in script
     assert "return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);" in script
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
+    assert 'openCustomEmployeeDetail(id);' in editor
+    assert 'else if (!workflowTemplateCanEdit(tpl))' in editor
     assert 'meta.system_template_key || state.workflowViewingTemplateKey' not in script
     assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
     assert "20260730-workflow-menu-v2" in html
@@ -432,15 +625,17 @@ def test_custom_workflow_with_local_bestseller_requests_plan_day():
     assert "workflowTemplateIsSales(tpl)" not in activation
 
 
-def test_workflow_template_drawer_keeps_four_system_slots_and_restores_personal_sales():
+def test_workflow_template_drawer_uses_three_server_system_templates_and_restores_personal_sales():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     system_templates = script.split("function systemWorkflowTemplates()", 1)[1].split("function closeWorkflowOverlays", 1)[0]
     drawer = script.split("function renderWorkflowTemplates()", 1)[1].split("function userWorkflowTemplateRows", 1)[0]
     restore = script.split("function restoreSystemWorkflowTemplate", 1)[1].split("function resetWorkflowDraft", 1)[0]
 
-    for template_id in ("system_sales", "system_customer_service", "system_overseas", "system_hr"):
-        assert f'id: "{template_id}"' in script
+    for template_id in ("system_sales", "system_short_video_wechat", "system_douyin_leads"):
+        assert template_id in script
+    for legacy_template_id in ("system_customer_service", "system_overseas", "system_hr"):
+        assert legacy_template_id not in system_templates
     assert ".filter((tpl) => workflowTemplateNodeCount(tpl) > 0)" not in system_templates
     assert "const rows = systemWorkflowTemplates();" in drawer
     assert "workflowTemplateRows()" not in drawer
@@ -600,27 +795,62 @@ def test_workflow_day_dialog_and_template_drawer_stay_above_page_content():
     assert "20260803-workflow-dialog-keyboard-v2" in html
 
 
-def test_moments_workflow_node_selects_paginated_contacts_by_wechat_id():
+def test_moments_workflow_node_does_not_keep_contacts():
+    """朋友圈互动联系人不在节点里选：到 Online微信协议助手-通讯录确认，节点只下发任务。"""
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
-    styles = (ROOT / "h5_static" / "h5-app.css").read_text(encoding="utf-8")
 
+    # 字段还在（只是提示），但不再有选择器 / 不再存名单
     assert 'id="workflowNodeMomentField"' in html
     assert 'id="workflowActionMomentField"' in html
-    assert 'id="workflowNodeMomentPrev"' in html
-    assert 'id="workflowNodeMomentNext"' in html
-    assert 'function workflowMomentContacts(scope = "param")' in script
-    assert "if (isNativeWechatWorkflowKey(key)) return false;" in script
-    assert "async function refreshWorkflowMomentContactSource()" in script
-    assert 'renderWorkflowMomentPicker("param")' in script
-    assert 'workflowActionMomentAction") && $("workflowActionMomentAction").value' in script
-    assert 'remark: "已保存的微信号"' in script
-    assert "const pageSize = 20;" in script
-    assert "contact_wx_nos: wxNos" in script
-    assert "targets: wxNos" in script
-    assert 'throw new Error("请选择至少一个朋友圈联系人")' in script
-    assert 'workflowParamNativeWechatMomentField' in script
-    assert 'workflowParamNativeWechatMomentContacts' in script
-    assert 'workflowMomentSelectedValues("param")' in script
-    assert 'String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage"' in script
-    assert ".workflow-moment-list" in styles
+    assert 'id="workflowNodeMomentPrev"' not in html
+    assert 'id="workflowActionMomentPrev"' not in html
+    assert "确认为朋友圈互动联系人" in html
+    assert "contact_wx_nos: wxNos" not in script
+    assert "targets: wxNos" not in script
+    assert 'throw new Error("请选择至少一个朋友圈联系人")' not in script
+    assert 'initializeWorkflowMomentPicker("param"' not in script
+    assert 'initializeWorkflowMomentPicker("action"' not in script
+    # 互动动作仍然保留
+    assert '$("workflowNodeMomentAction")' in script or "workflowNodeMomentAction" in script
+    assert "workflowActionMomentAction" in script
+
+
+def test_sales_activation_context_is_resolved_for_the_device_slot(db_session, test_user, monkeypatch):
+    """回归：启动校验必须按设备槽位解析个人默认资源。
+
+    传空槽位会回落到账号级（installation_id=""）的空壳行，导致明明在槽位模板里
+    选好了同行账号/关键词/记忆文件，启动时仍报"缺少 1 个同行账号"。
+    """
+    seen: list[str] = []
+    original = workflow_api._h5_dh_context_params
+
+    def spy(db, user_id, installation_id=""):
+        seen.append(str(installation_id))
+        return original(db, user_id, installation_id)
+
+    monkeypatch.setattr(workflow_api, "_h5_dh_context_params", spy)
+    nodes = [
+        {
+            "id": "sales_1",
+            "time": "06:00",
+            "department_id": "sales",
+            "ability_label": "创作同城爆款视频",
+            "plan": {
+                "task_kind": "client_workflow",
+                "payload": {"action": "local_bestseller_daily_video"},
+            },
+        }
+    ]
+
+    with pytest.raises(HTTPException):
+        workflow_api._prepare_sales_workflow_nodes(
+            db=db_session,
+            owner=test_user,
+            installation_id="slot-under-test",
+            template_name="销售24小时员工",
+            nodes=nodes,
+            snapshot_extra={"system_template_key": "system_sales"},
+        )
+
+    assert seen == ["slot-under-test"]
