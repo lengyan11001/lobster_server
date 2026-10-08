@@ -526,6 +526,7 @@ body{background:#edf2f7}
   .template-config-grid,.template-form-grid{grid-template-columns:1fr}
   .template-tab{flex:1;text-align:center;padding:9px 10px}
 }
+.template-memory-download{margin-left:6px;color:#2563eb;text-decoration:underline;font-size:12px}
 </style>
 </head>
 <body>
@@ -3678,7 +3679,37 @@ function templateCompetitorLabel(row) {
 }
 
 function templateMemoryLabel(row) {
-  return '<strong>' + escapeHtml(row.title || row.filename || row.doc_id) + '</strong><div class="template-choice-meta">' + escapeHtml(row.filename || row.doc_id || '') + '</div>';
+  const docId = String(row.doc_id || '');
+  return '<strong>' + escapeHtml(row.title || row.filename || docId) + '</strong>'
+    + '<div class="template-choice-meta">' + escapeHtml(row.filename || docId)
+    + ' <a class="template-memory-download" href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();downloadMemoryDoc(\'' + escapeHtml(docId) + '\')">下载</a>'
+    + '</div>';
+}
+
+async function downloadMemoryDoc(docId) {
+  if (!docId) return;
+  try {
+    const headers = { 'X-Lobster-Brand': BRAND_MARK };
+    if (TOKEN) headers['X-Admin-Token'] = TOKEN;
+    const res = await fetch(API + '/admin/api/openclaw-memory/documents/' + encodeURIComponent(docId) + '/download', { headers });
+    if (!res.ok) {
+      let detail = '下载失败';
+      try { detail = (await res.json()).detail || detail; } catch(e) {}
+      throw new Error(detail);
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get('Content-Disposition') || '';
+    let filename = 'memory-' + docId + '.md';
+    const m = /filename\*=UTF-8''([^;]+)/i.exec(disp);
+    if (m) { try { filename = decodeURIComponent(m[1]); } catch(e) {} }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
+  } catch(e) {
+    toast(e.message, 'error');
+  }
 }
 
 function renderTemplateManageLists(selectedKeywords, selectedCompetitors, selectedMemories) {
@@ -3708,6 +3739,7 @@ function renderTemplateManageLists(selectedKeywords, selectedCompetitors, select
       const id = String(row.doc_id || '');
       return '<div class="template-manage-item"><div class="template-manage-top">'
         + '<label class="template-choice-card" style="margin:0;flex:1"><input type="checkbox" data-template-memory="' + escapeHtml(id) + '"' + (selectedMemories.has(id) ? ' checked' : '') + ' onchange="syncTemplateChoice(\'memory\', \'' + escapeHtml(id) + '\', this.checked)"><span>' + templateMemoryLabel(row) + '</span></label>'
+        + '<button class="btn btn-outline btn-sm" onclick="downloadMemoryDoc(\'' + escapeHtml(id) + '\')">下载</button>'
         + '<button class="btn btn-outline btn-sm" onclick="deleteTemplateMemory(\'' + escapeHtml(id) + '\')">删除</button>'
         + '</div></div>';
     }).join('') : '<div class="empty">暂无记忆文件</div>';

@@ -16,9 +16,11 @@ import re
 import zipfile
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -582,6 +584,28 @@ def admin_openclaw_memory_documents(
         q = q.filter(OpenClawMemoryDocument.status == "active")
     rows = q.order_by(OpenClawMemoryDocument.updated_at.desc()).limit(200).all()
     return {"ok": True, "documents": [_doc_summary(r) for r in rows]}
+
+
+@router.get("/admin/api/openclaw-memory/documents/{doc_id}/download", summary="管理后台下载记忆文件")
+def admin_openclaw_memory_download(
+    doc_id: str,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """把记忆文件正文按 md 下载（管理后台「模板配置 → 记忆文件」用）。"""
+    _require_memory_operator(ctx, db)
+    row = db.query(OpenClawMemoryDocument).filter(OpenClawMemoryDocument.doc_id == str(doc_id)).first()
+    if not row or str(row.status or "") == "deleted":
+        raise HTTPException(status_code=404, detail="记忆文件不存在")
+    _ensure_target_allowed(ctx, db, int(row.target_user_id))
+    title = str(row.title or row.filename or "个人记忆资料").strip() or "个人记忆资料"
+    filename = f"{title}.md"
+    disposition = f'attachment; filename="memory.md"; filename*=UTF-8\'\'{quote(filename)}'
+    return Response(
+        content=str(row.content_text or "").encode("utf-8"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": disposition, "Cache-Control": "no-store"},
+    )
 
 
 @router.post("/admin/api/openclaw-memory/upload")
