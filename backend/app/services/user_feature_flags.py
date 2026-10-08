@@ -43,6 +43,7 @@ IP_CONTENT_ORAL_SKILL_ID = "ip_content_oral_skill"
 IP_CONTENT_MOMENTS_SKILL_ID = "ip_content_moments_skill"
 DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID = "douyin_platform_information_desk"
 DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY = "douyin_platform_information_desk_access"
+LIEPIN_RECRUIT_SKILL_ID = "liepin_recruit_skill"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
 HOMEPAGE_ENTRY_SEEDED_MARKER = "__homepage_entry_permissions_seeded_v1"
 RETIRED_PACKAGE_IDS = frozenset({
@@ -79,6 +80,15 @@ HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
 )
 
 FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
+    {
+        "id": LIEPIN_RECRUIT_SKILL_ID,
+        "name": "猎聘招聘",
+        "store_visibility": "技能权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 11,
+        "feature_key": LIEPIN_RECRUIT_SKILL_ID,
+    },
     {
         "id": DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
         "name": "抖音平台信息台",
