@@ -3539,6 +3539,9 @@ def _granted_template_for_user(db: Session, user_id: int, template_id: Any) -> O
         return None
     if int(row.user_id) == int(user_id):
         return row
+    # 2026-10-08：系统模板对所有用户开放复制（Online 教程页「套用到我的模板」）
+    if bool(getattr(row, "is_system", False)):
+        return row
     grant = (
         db.query(H5AgentTemplateGrant.id)
         .filter(
@@ -7374,11 +7377,34 @@ def list_system_templates(
         .all()
     )
     items = []
+    doc_ids: list[str] = []
+    for row in rows:
+        doc_ids.extend([str(x) for x in (row.memory_doc_ids or []) if str(x).strip()])
+    doc_map: dict[str, Any] = {}
+    if doc_ids:
+        for doc in (
+            db.query(OpenClawMemoryDocument)
+            .filter(OpenClawMemoryDocument.doc_id.in_(doc_ids))
+            .all()
+        ):
+            doc_map[str(doc.doc_id)] = doc
     for row in rows:
         req = row.requirements or {}
+        files = []
+        for doc_id in (row.memory_doc_ids or []):
+            key = str(doc_id)
+            doc = doc_map.get(key)
+            files.append({
+                "doc_id": key,
+                "title": str(getattr(doc, "title", "") or ""),
+                "filename": str(getattr(doc, "filename", "") or ""),
+                "size": int(getattr(doc, "size", 0) or 0),
+                "download_url": "/api/ip-content/system-templates/%d/memory/%s/download" % (int(row.id), key),
+            })
         items.append({
             "id": int(row.id),
             "name": row.name or "",
+            "memory_files": files,
             "oral": str(req.get("oral") or req.get("ip_oral") or req.get("industry_oral") or ""),
             "moments": str(req.get("moments") or ""),
             "image": str(req.get("image") or ""),
@@ -7388,6 +7414,49 @@ def list_system_templates(
             "download_url": "/api/ip-content/system-templates/%d/download" % int(row.id),
         })
     return {"items": items}
+
+
+@router.get("/api/ip-content/system-templates/{template_id}/memory/{doc_id}/download",
+            summary="下载系统模板关联的记忆文件")
+def download_system_template_memory(
+    template_id: int,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from urllib.parse import quote
+
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.id == int(template_id),
+            IPContentScheduleTemplate.status == "active",
+            IPContentScheduleTemplate.is_system.is_(True),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="系统模板不存在")
+    allowed = {str(x) for x in (row.memory_doc_ids or [])}
+    if str(doc_id) not in allowed:
+        raise HTTPException(status_code=404, detail="该文件不属于这个系统模板")
+    doc = (
+        db.query(OpenClawMemoryDocument)
+        .filter(OpenClawMemoryDocument.doc_id == str(doc_id))
+        .first()
+    )
+    if not doc or str(doc.status or "") == "deleted":
+        raise HTTPException(status_code=404, detail="记忆文件不存在")
+    title = str(doc.title or doc.filename or "资料").strip() or "资料"
+    filename = quote("%s.md" % title)
+    return Response(
+        content=str(doc.content_text or "").encode("utf-8"),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": "attachment; filename=\"memory.md\"; filename*=UTF-8''%s" % filename,
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/api/ip-content/system-templates/{template_id}/download", summary="下载系统模板文件")
