@@ -1070,6 +1070,8 @@ def _h5_static_media_type(path: Path) -> str:
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
         ".js": "application/javascript; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8",
+        ".txt": "text/plain; charset=utf-8",
     }.get(path.suffix.lower(), _image_media_type(path))
 
 
@@ -1351,7 +1353,7 @@ def h5_static_asset(filename: str):
     safe = _safe_upload_filename(filename)
     path = (_H5_STATIC_DIR / safe).resolve()
     root = _H5_STATIC_DIR.resolve()
-    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".html", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
+    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".html", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js", ".md", ".txt"}:
         raise HTTPException(status_code=404, detail="文件不存在")
     # 静态资源在 index.html 里带 ?v= 版本号，可以长缓存；
     # 但 html（尤其 index.html）必须不缓存，否则手机/WebView 会拿 24h 前的页面
