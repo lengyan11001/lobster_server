@@ -640,6 +640,20 @@ def canvas_task_meta(db: Session, task_id: str) -> Dict[str, str]:
     return {"model": str(mapping.get("model") or ""), "prompt": str(mapping.get("prompt") or "")}
 
 
+_VIDEO_HINTS = (".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv")
+
+
+def media_type_from_url(url: str, media_type: str = "") -> str:
+    """产物类型尽量以 URL 为准：历史上出现过「视频被记成 image」导致内容记录里看不到/显示为空。"""
+    u = str(url or "").strip().lower()
+    path = u.split("?", 1)[0]
+    if any(path.endswith(ext) for ext in _VIDEO_HINTS) or any(h in u for h in _VIDEO_HINTS):
+        return "video"
+    if media_type in ("video", "audio", "image"):
+        return media_type
+    return "image"
+
+
 def register_content_record(db: Session, user_id: int, url: str, *, media_type: str = "image",
                             title: str = "", task_id: str = "", model: str = "",
                             prompt: str = "", extra: Optional[Dict[str, Any]] = None) -> bool:
@@ -652,6 +666,7 @@ def register_content_record(db: Session, user_id: int, url: str, *, media_type: 
         return False
     from ..models import UserContentRecord
 
+    media_type = media_type_from_url(url, media_type)
     source_id = str(task_id or url)[:128]
     if not str(model or "").strip() or not str(prompt or "").strip():
         task_meta = canvas_task_meta(db, task_id)
@@ -689,6 +704,14 @@ def register_content_record(db: Session, user_id: int, url: str, *, media_type: 
             row.file_url = url
             row.status = "completed"
             row.meta = meta
+            # 幂等更新时也要把 kind / cover 跟产物类型对齐（历史脏数据在同一任务被再次登记时自愈）
+            want_kind = "video" if media_type == "video" else ("audio" if media_type == "audio" else "image")
+            if str(row.kind or "") != want_kind:
+                logger.info("[canvas] 修正内容记录 kind: uid=%s %s -> %s (%s)",
+                            user_id, row.kind, want_kind, url[:60])
+                row.kind = want_kind
+            if media_type == "image" and not str(row.cover_url or "").strip():
+                row.cover_url = url
             # 顺手把历史脏标题（接口路径 / 空）修成新口径
             if not str(row.title or "").strip() or _looks_like_api_path(str(row.title or "")):
                 row.title = record_title
@@ -703,6 +726,65 @@ def register_content_record(db: Session, user_id: int, url: str, *, media_type: 
     except Exception as exc:  # noqa: BLE001 记内容失败不影响生成
         logger.warning("[canvas] 写入内容记录失败: %s", exc, exc_info=True)
         return False
+
+
+def repair_canvas_record_kinds(db: Session, *, user_id: int = 0, limit: int = 5000) -> int:
+    """把「kind 与产物类型不一致」的画布内容记录修正（视频被记成 image 等）。返回修正条数。"""
+    from ..models import UserContentRecord
+
+    # 只动画布记录！2026-10-08 事故：这里漏了 source 过滤，把 online_ppt / online_wechat_article
+    # 的 kind 一并改写成了 image（已恢复数据）。以后任何修复函数都必须限定 source。
+    query = db.query(UserContentRecord).filter(UserContentRecord.source == "canvas")
+    if user_id:
+        query = query.filter(UserContentRecord.user_id == int(user_id))
+    fixed = 0
+    for row in query.order_by(UserContentRecord.id.desc()).limit(max(1, int(limit))).all():
+        if str(row.kind or "") not in ("image", "video"):
+            continue
+        url = str(row.file_url or row.cover_url or "")
+        if not url:
+            continue
+        want = media_type_from_url(url, "")
+        want_kind = "video" if want == "video" else "image"
+        if str(row.kind or "") != want_kind:
+            logger.info("[canvas] repair kind: id=%s uid=%s %s -> %s", row.id, row.user_id, row.kind, want_kind)
+            row.kind = want_kind
+            fixed += 1
+        if want == "image" and not str(row.cover_url or "").strip():
+            row.cover_url = url
+    if fixed:
+        db.commit()
+    return fixed
+
+
+def backfill_missing_canvas_records(db: Session, *, user_id: int = 0, limit: int = 200) -> int:
+    """已完成、有产物、但内容记录里缺这条的画布任务，补登记一次。返回补登记条数。"""
+    from ..models import UserContentRecord
+
+    sql = ("select user_id, task_id, model, prompt, result_url from canvas_task "
+           "where status = 'completed' and result_url is not null and task_id is not null")
+    params: Dict[str, Any] = {}
+    if user_id:
+        sql += " and user_id = :uid"
+        params["uid"] = int(user_id)
+    sql += " order by id desc limit :limit"
+    params["limit"] = max(1, int(limit))
+    added = 0
+    for r in db.execute(text(sql), params).fetchall():
+        m = dict(r._mapping)
+        tid = str(m.get("task_id") or "")
+        exists = (db.query(UserContentRecord)
+                    .filter(UserContentRecord.user_id == m["user_id"],
+                            UserContentRecord.source == "canvas",
+                            UserContentRecord.source_id == tid)
+                    .first())
+        if exists:
+            continue
+        if register_content_record(db, int(m["user_id"]), str(m["result_url"]),
+                                   task_id=tid, model=str(m.get("model") or ""),
+                                   prompt=str(m.get("prompt") or "")):
+            added += 1
+    return added
 
 
 def repair_canvas_record_titles(db: Session, *, user_id: int = 0, limit: int = 500) -> int:
