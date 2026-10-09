@@ -253,7 +253,17 @@ async def device_audio(
         raise HTTPException(status_code=502, detail="转写失败或结果为空")
     if transcribe_only:
         return {"ok": True, "text": text_out, "audio_url": audio_url}
-    reply = _submit_to_orchestrator(request, db, device, text_out, session_id)
+    try:
+        reply = _submit_to_orchestrator(request, db, device, text_out, session_id)
+    except HTTPException as exc:
+        logger.warning("[device] audio orchestrator HTTP %s: %s", exc.status_code, str(exc.detail)[:300])
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[device] audio orchestrator failed: %s: %s", type(exc).__name__, str(exc)[:400], exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="送 AI 调度失败：%s: %s" % (type(exc).__name__, str(exc)[:300]),
+        ) from exc
     return {"ok": True, "text": text_out, "audio_url": audio_url, **reply}
 
 
