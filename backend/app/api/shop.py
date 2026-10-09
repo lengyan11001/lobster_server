@@ -1180,7 +1180,8 @@ def _build_submission_preview(row: "ShopProductSubmission") -> Path:
     target = _submission_preview_target(row)
     if target.exists() and target.stat().st_size > 0:
         return target
-    media = str(row.media_type or "").lower()
+    # 用统一判断（含 URL 后缀兜底）：老数据把 mp4 标成 image，之前会走 PIL 去开视频 → 422 → 前台封面全黑
+    media = _submission_kind(row)
     if "video" in media:
         tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         tmp.close()
