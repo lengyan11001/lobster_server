@@ -291,7 +291,7 @@ function startLiveScan() {
         try {
           if (video.videoWidth) {
             var vw = video.videoWidth, vh = video.videoHeight, side = Math.max(vw, vh) || 1;
-            var scale = Math.min(1, 720 / side);
+            var scale = Math.min(1, 1440 / side);
             canvas.width = Math.max(1, Math.round(vw * scale));
             canvas.height = Math.max(1, Math.round(vh * scale));
             var ctx = canvas.getContext('2d');
