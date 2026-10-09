@@ -264,7 +264,7 @@
 
   // 拍照扫码：带 capture 直接拉起摄像头；从相册选：去掉 capture 打开图库
 // 实时扫码：点击「拍照扫码」直接拉起摄像头（WebView/浏览器都可能给相机权限）
-var live = { stream: null, raf: 0, lastIgnored: '' };
+var live = { stream: null, raf: 0, lastIgnored: '', startedAt: 0, hinted: false };
 function stopLiveScan() {
   if (live.stream) { try { live.stream.getTracks().forEach(function (tr) { tr.stop(); }); } catch (e) {} live.stream = null; }
   if (live.raf) { cancelAnimationFrame(live.raf); live.raf = 0; }
@@ -275,6 +275,8 @@ function startLiveScan() {
   return navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
     .then(function (stream) {
       live.stream = stream;
+      live.startedAt = Date.now();
+      live.hinted = false;
       var video = $('camVideo');
       video.srcObject = stream;
       $('camBox').style.display = 'block';
@@ -288,11 +290,14 @@ function startLiveScan() {
         var video = $('camVideo');
         try {
           if (video.videoWidth) {
-            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            var vw = video.videoWidth, vh = video.videoHeight, side = Math.max(vw, vh) || 1;
+            var scale = Math.min(1, 720 / side);
+            canvas.width = Math.max(1, Math.round(vw * scale));
+            canvas.height = Math.max(1, Math.round(vh * scale));
             var ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'dontInvert' }) : null;
+            var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' }) : null;
             if (res && res.data) {
               var qrText = String(res.data).trim();
               if (/pair\?/i.test(qrText) && /(?:^|[?&])code=/i.test(qrText)) {
@@ -307,6 +312,10 @@ function startLiveScan() {
             }
           }
         } catch (e) {}
+        if (!live.hinted && live.startedAt && Date.now() - live.startedAt > 8000) {
+          live.hinted = true;
+          log('识别有点慢：靠近一点、避开反光，或改用「从相册选」拍一张');
+        }
         live.raf = requestAnimationFrame(tick);
       }
       live.raf = requestAnimationFrame(tick);
