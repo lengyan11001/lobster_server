@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import os
 import secrets
@@ -28,6 +30,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from ..db import get_db
+from ..core.config import settings
 from ..models import User
 from ..services import shop_commission as sc
 from ..services import shop_submission_billing as ssb
@@ -728,7 +731,7 @@ def _submission_payload(
     url = _submission_public_url(row, request)
     accepted = bool(getattr(row, "accepted_at", None))
     price = int(row.price_credits or 0) or int(ssb.price_credits(row.media_type))
-    preview_url = "" if expose_original else ("/api/shop-cms/submissions/%d/preview" % int(row.id))
+    preview_url = "" if expose_original else _submission_preview_url(row)
     data: Dict[str, Any] = {
         "id": int(row.id),
         "product_id": int(row.product_id),
@@ -1046,6 +1049,22 @@ def cms_submissions(
     }
 
 
+_PREVIEW_TOKEN_TTL = 86400  # 预览图签名有效期（秒）
+
+
+def _submission_preview_token(submission_id: int, merchant_id: int, expiry_ts: int) -> str:
+    """预览图给 <img> 用，不能带 Authorization 头，所以走 URL 签名（和素材文件同一套 HMAC）。"""
+    raw = "shop-submission:%d:%d:%d" % (int(submission_id), int(merchant_id), int(expiry_ts))
+    return hmac.new(settings.secret_key.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _submission_preview_url(row: "ShopProductSubmission", request: Optional[Request] = None) -> str:
+    expiry = int(time.time()) + _PREVIEW_TOKEN_TTL
+    token = _submission_preview_token(int(row.id), int(row.merchant_id), expiry)
+    return "/api/shop-cms/submissions/%d/preview?token=%s&expiry=%d" % (int(row.id), token, expiry)
+
+
+
 def _submission_preview_target(row: "ShopProductSubmission") -> Path:
     folder = Path(tempfile.gettempdir()) / "shop_submission_previews"
     folder.mkdir(parents=True, exist_ok=True)
@@ -1267,11 +1286,25 @@ def cms_download_submission(
 @cms_router.get("/api/shop-cms/submissions/{submission_id}/preview", summary="预览投稿素材（带水印，不提供原文件）")
 def cms_submission_preview(
     submission_id: int,
-    current_user: User = Depends(get_current_user),
+    request: Request,
+    token: str = "",
+    expiry: int = 0,
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    merchant = _merchant_of(db, current_user)
-    row = _merchant_submission(db, merchant, submission_id)
+    row = db.query(ShopProductSubmission).filter(ShopProductSubmission.id == int(submission_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="投稿记录不存在")
+    if token and expiry:
+        expect = _submission_preview_token(int(row.id), int(row.merchant_id), int(expiry))
+        if int(expiry) < int(time.time()) or not hmac.compare_digest(token, expect):
+            raise HTTPException(status_code=401, detail="预览链接无效或已过期")
+    else:
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="未授权")
+        merchant = _merchant_of(db, current_user)
+        if merchant is None or int(row.merchant_id) != int(merchant.id):
+            raise HTTPException(status_code=404, detail="投稿记录不存在")
     path = _build_submission_preview(row)
     return Response(content=path.read_bytes(), media_type="image/jpeg",
                     headers={"Cache-Control": "no-store"})

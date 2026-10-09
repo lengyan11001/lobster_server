@@ -102,6 +102,7 @@ def _current_user():
 
 app.dependency_overrides[get_db] = _get_db
 app.dependency_overrides[shop_api.get_current_user] = _current_user
+app.dependency_overrides[shop_api.get_optional_user] = _current_user
 client = TestClient(app)
 
 
@@ -148,7 +149,12 @@ def test_merchant_cannot_see_or_download_original_before_accept():
     assert item["url"] == "", "未采纳时不能把原素材地址给商家"
     assert item["accepted"] is False
     assert item["price_credits"] == 100
-    assert item["preview_url"].endswith("/preview")
+    assert "/preview" in item["preview_url"]
+    # 预览图给 <img> 用：不带 Authorization 头也能加载（URL 签名）
+    r = client.get(item["preview_url"])
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/jpeg"), r.text
+    # 篡改签名 -> 401
+    assert client.get(item["preview_url"].replace("token=", "token=x")).status_code == 401
 
     r = client.get("/api/shop-cms/submissions/%d/download" % sid)
     assert r.status_code == 403, r.text
