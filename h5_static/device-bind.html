@@ -320,9 +320,10 @@ function startLiveScan() {
             var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' }) : null;
             if (res && res.data) {
               var qrText = String(res.data).trim();
-              if (/^https?:\/\/[^\s]+?\/pair\?code=[A-Za-z0-9_-]+/i.test(qrText)) {
+              var parsedQr = parseQr(qrText);
+              if (parsedQr) {
                 stopLiveScan();
-                applyParsed(qrText);
+                applyParsed(parsedQr);
                 return;
               }
               if (qrText !== live.lastIgnored) {
