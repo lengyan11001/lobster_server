@@ -744,6 +744,8 @@ def _submission_payload(
             (row.thumb_url or url) if str(row.media_type or "") != "video" else (row.thumb_url or "")
         )),
         "preview_url": preview_url,
+        "preview_kind": ("" if expose_original else ("video" if "video" in str(row.media_type or "").lower() else "image")),
+        "poster_url": ((preview_url + "&poster=1") if (not expose_original and "video" in str(row.media_type or "").lower()) else ""),
         "accepted": accepted,
         "price_credits": price,
         "accepted_at": row.accepted_at.isoformat() if getattr(row, "accepted_at", None) else None,
@@ -1141,6 +1143,41 @@ def _build_submission_preview(row: "ShopProductSubmission") -> Path:
     return target
 
 
+_VIDEO_PREVIEW_SECONDS = 20  # 水印预览只给前 20 秒
+_VIDEO_PREVIEW_FONTS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+)
+
+
+def _build_submission_video_preview(row: "ShopProductSubmission") -> Path:
+    """视频预览：低清 + 水印的可播放 mp4（采纳前商家只能看到这一段）。"""
+    src = str(row.url or "").strip()
+    if not src.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="这条投稿没有可预览的地址")
+    target = _submission_preview_target(row).with_suffix(".mp4")
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    from .assets import _find_asset_ffmpeg  # noqa: PLC0415
+
+    vf = "scale='min(720,iw)':-2,drawtext=text='PREVIEW - shop.bhzn.top':fontcolor=white@0.38:fontsize=26:x=(w-text_w)/2:y=(h-text_h)/2"
+    for font in _VIDEO_PREVIEW_FONTS:
+        if os.path.exists(font):
+            vf += ":fontfile=" + font
+            break
+    cmd = [
+        _find_asset_ffmpeg(), "-y", "-loglevel", "error", "-i", src,
+        "-t", str(_VIDEO_PREVIEW_SECONDS), "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-an",
+        "-movflags", "+faststart", str(target),
+    ]
+    try:
+        subprocess.run(cmd, timeout=240, check=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail="视频预览生成失败，请稍后重试") from exc
+    return target
+
+
 def _merchant_submission(db: Session, merchant: "ShopMerchant", submission_id: int) -> "ShopProductSubmission":
     row = (
         db.query(ShopProductSubmission)
@@ -1305,6 +1342,12 @@ def cms_submission_preview(
         merchant = _merchant_of(db, current_user)
         if merchant is None or int(row.merchant_id) != int(merchant.id):
             raise HTTPException(status_code=404, detail="投稿记录不存在")
+    wants_poster = str(request.query_params.get("poster") or "") in ("1", "true")
+    is_video = "video" in str(row.media_type or "").lower()
+    if is_video and not wants_poster:
+        vpath = _build_submission_video_preview(row)
+        return Response(content=vpath.read_bytes(), media_type="video/mp4",
+                        headers={"Cache-Control": "no-store"})
     path = _build_submission_preview(row)
     return Response(content=path.read_bytes(), media_type="image/jpeg",
                     headers={"Cache-Control": "no-store"})
