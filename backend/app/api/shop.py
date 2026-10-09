@@ -1135,6 +1135,39 @@ def _watermarked_preview(img: Any) -> Any:
             draw.text((x, y), text, font=font, fill=(255, 255, 255, 130))
     return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
+_POSTER_OFFSETS = (1.0, 2.5, 5.0, 0.0)
+
+
+def _write_best_video_frame(ffmpeg: str, src: str, out_path: str) -> None:
+    """取视频封面：依次抽 1s/2.5s/5s 的帧，选最亮的一张（避免开头是黑帧/淡入）。"""
+    from PIL import Image  # noqa: PLC0415
+
+    best_img = None
+    best_score = -1.0
+    for offset in _POSTER_OFFSETS:
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-ss", str(offset), "-i", src,
+                 "-frames:v", "1", "-vf", "scale=720:-2", out_path],
+                timeout=90,
+                check=True,
+            )
+            img = Image.open(out_path)
+            img.load()
+            thumb = img.convert("L").resize((32, 32))
+            score = sum(thumb.getdata()) / float(32 * 32)
+        except Exception:  # noqa: BLE001
+            continue
+        if score > best_score:
+            best_img = img
+            best_score = score
+        if best_score >= 55:  # 已经够亮，不用再试
+            break
+    if best_img is None:
+        raise RuntimeError("无法从视频中取到可用帧")
+    best_img.save(out_path, "JPEG", quality=90)
+
+
 def _build_submission_preview(row: "ShopProductSubmission") -> Path:
     """生成带水印的预览图（图片缩放；视频取首帧），只给商家「看」，不给原文件。"""
     from io import BytesIO
@@ -1157,7 +1190,7 @@ def _build_submission_preview(row: "ShopProductSubmission") -> Path:
             ffmpeg = _find_asset_ffmpeg()
             subprocess.run(
                 # 取第 1 秒处的帧：很多视频开头是黑帧，直接取首帧会得到全黑封面
-                [ffmpeg, "-y", "-loglevel", "error", "-ss", "1", "-i", src, "-frames:v", "1", "-vf", "scale=720:-2", tmp.name],
+                _write_best_video_frame(ffmpeg, src, tmp.name),
                 timeout=90,
                 check=True,
             )
