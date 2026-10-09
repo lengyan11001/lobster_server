@@ -170,18 +170,47 @@
     flushDiag('');
   }
 
+  // 图片解码：多尺度 + 灰度对比度拉伸 + 正反色，尽量把模糊/反光照片也解出来
   function decodePhoto(file) {
     return new Promise(function (resolve, reject) {
       var img = new Image();
       img.onload = function () {
-        var canvas = document.createElement('canvas');
-        canvas.width = img.width; canvas.height = img.height;
-        var ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        if (typeof window.jsQR !== 'function') { reject(new Error('二维码解析库未加载')); return; }
-        var res = window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'dontInvert' });
-        resolve(res ? res.data : '');
+        try {
+          if (typeof window.jsQR !== 'function') { reject(new Error('二维码解析库未加载')); return; }
+          var target = Math.min(2200, Math.max(1000, img.width || 1000));
+          var scale = target / (img.width || target);
+          var cw = Math.max(1, Math.round((img.width || target) * scale));
+          var ch = Math.max(1, Math.round((img.height || target) * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = cw; canvas.height = ch;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, cw, ch);
+
+          var tries = [];
+          tries.push(ctx.getImageData(0, 0, cw, ch));
+          // 灰度 + 对比度拉伸（对屏幕反光/发灰的照片帮助最大）
+          var gray = ctx.getImageData(0, 0, cw, ch);
+          var d = gray.data, min = 255, max = 0, i, v;
+          for (i = 0; i < d.length; i += 4) {
+            v = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+            d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+          var range = Math.max(1, max - min);
+          for (i = 0; i < d.length; i += 4) {
+            v = Math.round((d[i] - min) * 255 / range);
+            d[i] = d[i + 1] = d[i + 2] = v;
+          }
+          tries.push(gray);
+
+          for (var k = 0; k < tries.length; k += 1) {
+            var data = tries[k];
+            var res = window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' });
+            if (res && res.data) { resolve(String(res.data)); return; }
+          }
+          resolve('');
+        } catch (e) { reject(e); }
       };
       img.onerror = function () { reject(new Error('图片读取失败')); };
       img.src = URL.createObjectURL(file);
