@@ -276,43 +276,58 @@
   }
 
   async function doBind() {
-    if (!state.base || !state.code) { alert('请先扫描或粘贴二维码'); return; }
+    if (!state.code) { alert('请先扫描或粘贴二维码'); return; }
     $('btnBind').disabled = true;
     try {
-      setBadge('取票据中…', 'wait');
-      var info = await bindTicket(origin());
-      state.ticket = info.ticket; state.expiresAt = info.expires_at;
-      log('已取到绑定票据 ' + String(info.ticket).slice(0, 14) + '… 有效期 ' + info.expires_in + 's');
-      var payload = {
-        bind_ticket: info.ticket,
-        user_token: findToken(),
-        expires_at: info.expires_at,
-        api_base_url: info.api_base_url || origin(),
-        code: state.code,
-      };
-      var url = state.base + '/api/device/bind';
-      var r = await lanRequest(url, 'POST', { 'Content-Type': 'application/json' }, JSON.stringify(payload), 10000);
-      if (!r.ok && r.error === 'no_bridge') {
-        log('⚠️ 当前没有原生局域网桥：WebView 里直接请求局域网 http 会被拦，请用最新版 App（或本页在浏览器里打开测试）');
-        setBadge('缺少局域网桥', 'bad');
-        return;
-      }
-      log('设备返回：' + JSON.stringify(r).slice(0, 200));
-      setBadge('等待设备回报…', 'wait');
-      var tries = 0;
-      clearInterval(state.timer);
-      state.timer = setInterval(async function () {
-        tries++;
-        var s = await pollStatus().catch(function () { return null; });
-        if (s) { renderStatus(s); }
-        if ((s && s.bind_status === 'bound') || tries > 30) { clearInterval(state.timer); }
-      }, 2000);
+      var token = findToken();
+      if (!token) throw new Error('未登录：请先在 App 里登录');
+      setBadge('提交配对码…', 'wait');
+      var res = await fetch(origin() + '/api/device/pair/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ code: state.code })
+      });
+      var info = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error((info && info.detail) || ('HTTP ' + res.status));
+      state.ticket = info.ticket;
+      log('已把配对码提交到服务器（' + state.code + '），等设备来取票…');
+      setBadge('等待设备连接…', 'wait');
+      await waitForBound();
     } catch (e) {
-      setBadge(String(e && e.message || e), 'bad');
-      log('绑定失败：' + String(e && e.message || e));
+      setBadge('绑定失败：' + ((e && e.message) || e), 'bad');
+      log('绑定失败：' + ((e && e.message) || e));
     } finally {
       $('btnBind').disabled = false;
     }
+  }
+
+  function waitForBound() {
+    return new Promise(function (resolve) {
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries += 1;
+        fetch(origin() + '/api/device/bind/status?ticket=' + encodeURIComponent(state.ticket || ''))
+          .then(function (r) { return r.json().catch(function () { return {}; }); })
+          .then(function (s) {
+            renderStatus(s);
+            if (s && s.bind_status === 'bound') {
+              clearInterval(timer);
+              setBadge('绑定成功', 'ok');
+              log('绑定成功：设备 ' + (s.device_id || '') + ' 已上线');
+              try { flushDiag('bound'); } catch (e) {}
+              resolve();
+              return;
+            }
+            if (s && s.bind_status === 'expired') {
+              clearInterval(timer);
+              setBadge('配对码已过期，请让设备刷新二维码后重扫', 'bad');
+              resolve();
+            }
+          })
+          .catch(function () {});
+        if (tries > 90) { clearInterval(timer); setBadge('等待超时：请确认设备能访问服务器后重试', 'bad'); resolve(); }
+      }, 2000);
+    });
   }
 
   // 拍照扫码：带 capture 直接拉起摄像头；从相册选：去掉 capture 打开图库

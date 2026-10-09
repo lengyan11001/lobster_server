@@ -352,3 +352,28 @@ void loop() {
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1.0 | 2026-10-08 | 首版：配对绑定、文本、音频转写、回复、命令下发、心跳 |
+
+---
+
+## 11. 服务器中转绑定（推荐，无需同一 WiFi）
+
+设备屏幕显示：`https://bhzn.top/pair?code=<设备生成的配对码>`（字母数字，建议 32 位，5 分钟有效）。
+
+```
+设备                          服务器                        手机 App
+ │ 显示二维码 code=XXXX                                   │ 扫到 code
+ │                             │ ◀── POST /api/device/pair/claim {code}   （App 登录态）
+ │                             │ ──▶ {ok, ticket, expires_in:300}
+ │ GET /api/device/pair/poll?code=XXXX&wait=25   （无需 token，轮询）
+ │ ───────────────────────────▶ │
+ │ ◀── {ok, status:"issued", bind_ticket:"bt_x", api_base_url:"https://bhzn.top"}
+ │ POST /api/device/report {ticket, device_id, name}      ← 与局域网方式同一接口
+ │ ◀── {device_token:"dev_x"}                             ← 绑定完成
+```
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/api/device/pair/claim` | App 登录态 | body `{code, device_id?}` → 把票据挂到该 code；返回 `ticket/expires_in` |
+| GET | `/api/device/pair/poll` | 无 | query `code`、可选 `wait`(0–25 秒长轮询)；`status`：`issued`（拿到票据，只发一次）/`waiting` /`consumed` /`expired` /`unknown` |
+
+设备侧只需：二维码里放 `https://bhzn.top/pair?code=<码>`；启动后轮询 `pair/poll`；拿到 `bind_ticket` 后照旧调 `/api/device/report`。**不再需要设备与手机在同一局域网。**

@@ -43,6 +43,20 @@ _DDL = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS device_pair_sessions (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(64) UNIQUE NOT NULL,
+        user_id INTEGER NOT NULL,
+        ticket VARCHAR(64) DEFAULT '',
+        device_id VARCHAR(128) DEFAULT '',
+        status VARCHAR(16) DEFAULT 'pending',
+        expires_at BIGINT NOT NULL,
+        claimed_at TIMESTAMP DEFAULT NOW(),
+        consumed_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS bound_devices (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -266,3 +280,112 @@ def list_devices(
         {"u": int(current_user.id)},
     ).fetchall()
     return {"ok": True, "items": [dict(r._mapping) for r in rows]}
+
+# ────────────────────────── 服务器中转绑定（2026-10-09） ──────────────────────────
+# 手机不需要和设备在同一 WiFi：设备屏幕上显示 https://bhzn.top/pair?code=XXXX，
+# 手机扫到后把票据挂到这个 code 上；设备自己轮询 /api/device/pair/poll 领走票据。
+
+
+def _norm_code(raw: str) -> str:
+    return "".join(ch for ch in str(raw or "").strip().upper() if ch.isalnum())[:64]
+
+
+class PairClaimIn(BaseModel):
+    code: str
+    device_id: str = ""
+
+
+@router.post("/pair/claim", summary="App：把绑定票据挂到设备二维码里的配对码上（服务器中转，无需同一 WiFi）")
+def pair_claim(
+    request: Request,
+    body: PairClaimIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ensure_tables(db)
+    code = _norm_code(body.code)
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少配对码 code")
+    ticket = "bt_" + secrets.token_urlsafe(24)
+    expires_at = int(_now()) + TICKET_TTL_SECONDS
+    api_base = _api_base(request)
+    db.execute(
+        text(
+            "INSERT INTO device_bind_tickets (ticket, user_id, brand, api_base_url, expires_at)"
+            " VALUES (:t, :u, :b, :a, :e)"
+        ),
+        {"t": ticket, "u": int(current_user.id), "b": _brand_of(request), "a": api_base, "e": expires_at},
+    )
+    db.execute(
+        text(
+            "INSERT INTO device_pair_sessions (code, user_id, ticket, device_id, status, expires_at, claimed_at, consumed_at)"
+            " VALUES (:c, :u, :t, :d, 'pending', :e, NOW(), NULL)"
+            " ON CONFLICT (code) DO UPDATE SET user_id = :u, ticket = :t, device_id = :d, status = 'pending',"
+            " expires_at = :e, claimed_at = NOW(), consumed_at = NULL"
+        ),
+        {"c": code, "u": int(current_user.id), "t": ticket, "d": str(body.device_id or "")[:128], "e": expires_at},
+    )
+    db.commit()
+    logger.info("[device] pair claim uid=%s code=%s", current_user.id, code[:8])
+    return {
+        "ok": True,
+        "code": code,
+        "ticket": ticket,
+        "expires_at": expires_at,
+        "expires_in": TICKET_TTL_SECONDS,
+        "api_base_url": api_base,
+    }
+
+
+@router.get("/pair/poll", summary="设备：按配对码轮询领取绑定票据（无需 token）")
+def pair_poll(
+    request: Request,
+    code: str,
+    wait: int = 0,
+    db: Session = Depends(get_db),
+):
+    ensure_tables(db)
+    clean = _norm_code(code)
+    if not clean:
+        raise HTTPException(status_code=400, detail="缺少配对码 code")
+    deadline = _now() + max(0, min(int(wait or 0), 25))
+    api_base = _api_base(request)
+    while True:
+        row = db.execute(
+            text("SELECT ticket, status, expires_at FROM device_pair_sessions WHERE code = :c"),
+            {"c": clean},
+        ).first()
+        if row is None:
+            return {"ok": True, "status": "unknown"}
+        ticket, status, expires_at = str(row[0] or ""), str(row[1] or ""), int(row[2] or 0)
+        if expires_at and expires_at < int(_now()):
+            if status == "pending":
+                db.execute(
+                    text("UPDATE device_pair_sessions SET status = 'expired' WHERE code = :c AND status = 'pending'"),
+                    {"c": clean},
+                )
+                db.commit()
+            return {"ok": True, "status": "expired"}
+        if status == "pending" and ticket:
+            updated = db.execute(
+                text(
+                    "UPDATE device_pair_sessions SET status = 'consumed', consumed_at = NOW()"
+                    " WHERE code = :c AND status = 'pending'"
+                ),
+                {"c": clean},
+            )
+            db.commit()
+            if updated.rowcount:
+                logger.info("[device] pair poll consumed code=%s", clean[:8])
+                return {
+                    "ok": True,
+                    "status": "issued",
+                    "bind_ticket": ticket,
+                    "api_base_url": api_base,
+                    "expires_at": expires_at,
+                    "expires_in": max(0, expires_at - int(_now())),
+                }
+        if _now() >= deadline:
+            return {"ok": True, "status": "consumed" if status == "consumed" else "waiting"}
+        time.sleep(0.6)
+
