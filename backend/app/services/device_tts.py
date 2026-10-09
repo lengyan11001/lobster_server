@@ -67,7 +67,8 @@ def price_for(text: str) -> Decimal:
         return Decimal("0")
     raw = (Decimal(chars) / Decimal(1000)) * credits_per_1k()
     value = quantize_credits(raw)
-    return value if value and value > 0 else quantize_credits(Decimal("1"))
+    minimum = quantize_credits(Decimal("1"))  # 起步 1 积分
+    return value if value and value > minimum else minimum
 
 
 def _headers(token: str) -> Dict[str, str]:

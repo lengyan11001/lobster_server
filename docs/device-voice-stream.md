@@ -139,3 +139,42 @@ auto rep = httpGet("https://bhzn.top/api/device/message/" + r.message_id + "?wai
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1.0 | 2026-10-09 | 首版：实时流式语音识别（start/stop/ping + PCM 推流 + partial/final/intent） |
+
+---
+
+## 10. 语音回包 TTS（可选，设备开关控制）
+
+默认**只回文本**；设备上做一个开关，打开时在请求里带 `tts=1`，云端才会把 AI 回复合成语音。
+
+### 10.1 怎么开
+
+| 位置 | 示例 | 说明 |
+|---|---|---|
+| 提交文本 | `POST /api/device/message` body `{"text":"今天天气怎么样","tts":1}` | 也可用 query：`/api/device/message?tts=1` |
+| 取回复（**权威**） | `GET /api/device/message/{id}?wait=20&tts=1` | 只要取回复时带 `tts=1` 就一定会合成 |
+
+取值：`1/true/yes/on` = 开；`0/false/空/不传` = 关。
+
+### 10.2 返回字段
+
+```json
+{"ok":true,"status":"completed","reply_text":"今天晴，26 度…",
+ "reply_audio_url":"https://bhzn.top/api/device/audio/tts_<消息id>.mp3",
+ "tts_credits":1,                 // 本次扣了多少积分（缓存命中时为 0）
+ "tts_cached":false,              // 是否复用了已合成的音频
+ "tts_error":""}                  // 合成失败时的原因（此时上面的 url 为空）
+```
+- 音频：**mp3 / 16k 单声道**，直接 GET 播放（公开地址，无需鉴权）；
+- **同一条消息只合成一次**：重复查询复用文件，`tts_cached=true`、`tts_credits=0`；
+- **合成失败不影响文本**：`reply_text` 照常返回，只是 `reply_audio_url` 为空并带 `tts_error`；
+- **计费**：从**绑定该设备的账号**扣积分，`20 积分/1000 字符`（Turbo），**起步 1 积分**，单条最多合成前 **300 字**；余额不足 → 只回文本 + `tts_error:"算力不足…"`。
+
+### 10.3 设备侧伪代码
+
+```cpp
+bool ttsOn = settings.ttsEnabled();               // 设备上的开关
+auto url = String("/api/device/message/") + msgId + "?wait=20" + (ttsOn ? "&tts=1" : "");
+auto rep = httpGet(url, bearer(devToken));
+if (rep.reply_audio_url.length()) player.play(rep.reply_audio_url);   // 有音频就播
+else if (rep.reply_text.length()) speaker.tts(rep.reply_text);        // 没音频就本地播报
+```
