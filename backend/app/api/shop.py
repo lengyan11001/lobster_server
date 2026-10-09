@@ -1147,8 +1147,8 @@ def _write_best_video_frame(ffmpeg: str, src: str, out_path: str) -> None:
     for offset in _POSTER_OFFSETS:
         try:
             subprocess.run(
-                [ffmpeg, "-y", "-loglevel", "error", "-ss", str(offset), "-i", src,
-                 "-frames:v", "1", "-vf", "scale=720:-2", out_path],
+                [ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                 "-ss", str(offset), "-frames:v", "1", "-vf", "scale=720:-2", out_path],
                 timeout=90,
                 check=True,
             )
@@ -1191,7 +1191,7 @@ def _build_submission_preview(row: "ShopProductSubmission") -> Path:
             ffmpeg = _find_asset_ffmpeg()
             subprocess.run(
                 # 取第 1 秒处的帧：很多视频开头是黑帧，直接取首帧会得到全黑封面
-                _write_best_video_frame(ffmpeg, src, tmp.name),
+                _write_best_video_frame(ffmpeg, str(_build_submission_video_preview(row)), tmp.name),
                 timeout=90,
                 check=True,
             )
