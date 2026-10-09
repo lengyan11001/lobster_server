@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -1156,7 +1156,8 @@ def _build_submission_preview(row: "ShopProductSubmission") -> Path:
 
             ffmpeg = _find_asset_ffmpeg()
             subprocess.run(
-                [ffmpeg, "-y", "-loglevel", "error", "-i", src, "-frames:v", "1", "-vf", "scale=720:-2", tmp.name],
+                # 取第 1 秒处的帧：很多视频开头是黑帧，直接取首帧会得到全黑封面
+                [ffmpeg, "-y", "-loglevel", "error", "-ss", "1", "-i", src, "-frames:v", "1", "-vf", "scale=720:-2", tmp.name],
                 timeout=90,
                 check=True,
             )
@@ -1386,11 +1387,12 @@ def cms_submission_preview(
     is_video = _submission_kind(row) == "video"
     if is_video and not wants_poster:
         vpath = _build_submission_video_preview(row)
-        return Response(content=vpath.read_bytes(), media_type="video/mp4",
-                        headers={"Cache-Control": "no-store"})
+        # FileResponse 支持 Range 请求（拖动进度条/边下边播），整块 read_bytes 会让播放卡顿
+        return FileResponse(str(vpath), media_type="video/mp4",
+                            headers={"Cache-Control": "public, max-age=60"})
     path = _build_submission_preview(row)
-    return Response(content=path.read_bytes(), media_type="image/jpeg",
-                    headers={"Cache-Control": "no-store"})
+    return FileResponse(str(path), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=60"})
 
 
 @router.get("/api/shop/submissions/pricing", summary="投稿被采纳能拿多少积分")
