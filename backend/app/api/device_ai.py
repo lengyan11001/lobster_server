@@ -178,8 +178,6 @@ def _submit_to_orchestrator(request: Request, db: Session, device: Dict[str, Any
         {"sub": str(owner.id), "email": getattr(owner, "email", "") or ""},
         expires_delta=timedelta(minutes=10),
     )
-    claims = {"authorization": "Bearer " + internal_token}
-    request._headers = None  # 不修改原始请求；仅用于下方透传
     result = create_mastra_message(
         body=MastraMessageCreate(content=content, session_id=session_id or "", installation_id=None),
         request=request,
