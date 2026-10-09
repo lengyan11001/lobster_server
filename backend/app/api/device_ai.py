@@ -114,7 +114,42 @@ def _owner(db: Session, device: Dict[str, Any]) -> User:
 
 
 def _public_base(request: Request) -> str:
+    """音频/文件给上游（火山 STT 等）拉取用的公网基址。
+
+    必须是对外可访问的地址：nginx 反代时 request.base_url 往往是 127.0.0.1:8000，
+    上游拿这个地址去下载音频必然失败（火山报 Invalid audio URI / audio download failed）。
+    优先级：环境变量 PUBLIC_BASE_URL / LOBSTER_PUBLIC_BASE_URL → 转发头 → request.base_url。
+    """
+    for key in ("PUBLIC_BASE_URL", "LOBSTER_PUBLIC_BASE_URL"):
+        value = str(os.environ.get(key) or "").strip().rstrip("/")
+        if value:
+            return value
+    try:
+        cfg = _custom_public_base()
+        if cfg:
+            return cfg
+    except Exception:  # noqa: BLE001
+        pass
+    host = str(request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
+    proto = str(request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip() or "https"
+    if host and "127.0.0.1" not in host and "localhost" not in host:
+        return "%s://%s" % (proto, host)
     return str(request.base_url).rstrip("/")
+
+
+def _custom_public_base() -> str:
+    """从 custom_configs.json 里取 public_base_url（有就用，运维不用改代码换域名）。"""
+    try:
+        from ..custom_config import load_custom_configs  # type: ignore
+
+        data = load_custom_configs() or {}
+        for key in ("public_base_url", "PUBLIC_BASE_URL"):
+            value = str((data.get("configs") or {}).get(key) or data.get(key) or "").strip().rstrip("/")
+            if value:
+                return value
+    except Exception:  # noqa: BLE001
+        return ""
+    return ""
 
 
 # ---------------- 1) 文本提交（= AI 调度助手发消息） ----------------
