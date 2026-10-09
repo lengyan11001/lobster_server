@@ -247,7 +247,7 @@ async def device_audio(
     name = "dev_%s_%s%s" % (int(device["user_id"]), uuid.uuid4().hex[:12], suffix)
     path = _DEVICE_UPLOAD_DIR / name
     path.write_bytes(raw)
-    audio_url = _public_base(request) + "/h5-static/device-audio/" + name
+    audio_url = _public_base(request) + "/api/device/audio/" + name
     text_out = transcribe_audio_url(db, int(device["user_id"]), audio_url)
     if not text_out:
         raise HTTPException(status_code=502, detail="转写失败或结果为空")
@@ -255,6 +255,27 @@ async def device_audio(
         return {"ok": True, "text": text_out, "audio_url": audio_url}
     reply = _submit_to_orchestrator(request, db, device, text_out, session_id)
     return {"ok": True, "text": text_out, "audio_url": audio_url, **reply}
+
+
+@router.get("/audio/{name}", summary="设备音频文件（给上游 STT 拉取，无需 token）")
+def device_audio_file(name: str):
+    from fastapi.responses import FileResponse  # noqa: PLC0415
+
+    safe = Path(str(name or "")).name
+    if not safe or "/" in safe or ".." in safe:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    root = _DEVICE_UPLOAD_DIR.resolve()
+    path = (root / safe).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    media = "audio/wav"
+    if safe.endswith(".mp3"):
+        media = "audio/mpeg"
+    elif safe.endswith(".m4a"):
+        media = "audio/mp4"
+    elif safe.endswith(".ogg") or safe.endswith(".opus"):
+        media = "audio/ogg"
+    return FileResponse(str(path), media_type=media, headers={"Cache-Control": "no-store"})
 
 
 def transcribe_audio_url(db: Session, user_id: int, audio_url: str) -> str:
