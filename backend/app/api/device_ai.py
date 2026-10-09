@@ -279,16 +279,42 @@ def device_audio_file(name: str):
 
 
 def transcribe_audio_url(db: Session, user_id: int, audio_url: str) -> str:
-    """复用速推 STT（cutcli_templates 里的私有流程）把公网音频转成文本。"""
-    from .cutcli_templates import _load_sutui_token_for_stt, _stt_create_task, _stt_poll_task
+    """复用速推 STT 把公网音频转成文本。
+
+    失败时把上游原文塞进 502 的 detail（设备端日志能直接看到原因），并写一条服务器日志。
+    """
+    from .cutcli_templates import (  # noqa: PLC0415
+        AutoCaptionJobError,
+        _load_sutui_token_for_stt,
+        _stt_create_task,
+        _stt_poll_task,
+    )
 
     token, _source = _load_sutui_token_for_stt(db, int(user_id))
     db.commit()
     job_dir = _DEVICE_UPLOAD_DIR / "stt"
     job_dir.mkdir(parents=True, exist_ok=True)
-    created = _stt_create_task(token, audio_url, job_dir=job_dir)
-    stt_data = _stt_poll_task(token, created["task_id"], job_dir=job_dir)
-    return extract_stt_text(stt_data)
+    try:
+        created = _stt_create_task(token, audio_url, job_dir=job_dir)
+        stt_data = _stt_poll_task(token, created["task_id"], job_dir=job_dir)
+    except AutoCaptionJobError as exc:
+        logger.warning("[device] audio STT failed url=%s err=%s", audio_url, str(exc)[:500])
+        raise HTTPException(status_code=502, detail="转写失败（上游）：%s" % str(exc)[:400]) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[device] audio STT error url=%s err=%s", audio_url, str(exc)[:500])
+        raise HTTPException(status_code=502, detail="转写失败（异常）：%s" % str(exc)[:400]) from exc
+    text = extract_stt_text(stt_data)
+    if not text:
+        snippet = ""
+        try:
+            snippet = json.dumps(stt_data, ensure_ascii=False)[:400]
+        except Exception:  # noqa: BLE001
+            snippet = str(stt_data)[:400]
+        logger.warning("[device] audio STT empty url=%s payload=%s", audio_url, snippet)
+        raise HTTPException(status_code=502, detail="转写结果为空（上游返回）：%s" % snippet)
+    return text
 
 
 def extract_stt_text(stt_data: Any) -> str:
