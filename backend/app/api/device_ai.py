@@ -14,6 +14,8 @@ import time
 import uuid
 from datetime import timedelta
 from pathlib import Path
+import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -331,6 +333,38 @@ def device_heartbeat(
     )
     db.commit()
     return {"ok": True, "server_time": int(time.time()), "device_id": device["device_id"]}
+
+
+class DeviceDiagIn(BaseModel):
+    lines: List[str] = Field(default_factory=list)
+    build: str = ""
+    ua: str = ""
+    url: str = ""
+    raw: str = ""
+
+
+@router.post("/diag", summary="设备绑定页日志上报（排查用，无需登录）")
+def device_diag(body: DeviceDiagIn, request: Request, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    import json as _json
+
+    folder = Path(os.environ.get("LOBSTER_RUNTIME_DIR", "/tmp")) / "device_diag"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / (datetime.utcnow().strftime("%Y%m%d") + ".jsonl")
+        rec = {
+            "ts": datetime.utcnow().isoformat(),
+            "ip": request.client.host if request.client else "",
+            "build": (body.build or "")[:64],
+            "ua": (body.ua or "")[:300],
+            "page": (body.url or "")[:300],
+            "raw": (body.raw or "")[:500],
+            "lines": [(x or "")[:300] for x in (body.lines or [])][-40:],
+        }
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True}
 
 
 def _loads(raw: Any) -> Any:

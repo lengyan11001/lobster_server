@@ -89,7 +89,26 @@
   var $ = function (id) { return document.getElementById(id); };
   var state = { base: '', code: '', ticket: '', expiresAt: 0, timer: null };
 
+  var DIAG_BUILD = 'device-bind-2026-10-09d';
+  var diagQueue = [];
+  function reportDiag(line) {
+    try {
+      diagQueue.push(String(line || ''));
+      if (diagQueue.length >= 6) flushDiag();
+    } catch (e) {}
+  }
+  function flushDiag(raw) {
+    if (!diagQueue.length && !raw) return;
+    var payload = { lines: diagQueue.slice(-40), build: DIAG_BUILD, ua: navigator.userAgent || '', url: location.href || '', raw: raw || '' };
+    diagQueue = [];
+    try {
+      fetch(origin() + '/api/device/diag', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(function () {});
+    } catch (e) {}
+  }
+  setInterval(function () { flushDiag(); }, 5000);
+
   function log(msg) {
+    reportDiag((new Date()).toLocaleTimeString('zh-CN') + ' ' + String(msg || ''));
     var el = $('log');
     el.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n' + el.textContent;
   }
@@ -144,6 +163,7 @@
     $('vBridge').textContent = hasBridge() ? '可用（LobsterAndroid.lanHttp）' : '不可用（浏览器/未更新 App）';
     setBadge('已解析，可以绑定', 'wait');
     log('已解析二维码：' + p.base + ' code=' + p.code);
+    flushDiag('');
   }
 
   function decodePhoto(file) {
