@@ -168,7 +168,7 @@ LEGACY_PORT_CLEANUP
   fi
   if [ -n "$H5_UNIT" ]; then
     echo "[重启] H5 服务最后切换 ..."
-    sudo systemctl restart "$H5_UNIT"
+    sudo systemctl restart ${SHOP_UNITS:-lobster-shop lobster-shopcms} "$H5_UNIT"
     H5_OK=0
     for i in 1 2 3 4 5 6 7 8 9 10; do
       if curl --fail --silent "http://127.0.0.1:8010/api/branding?brand=bihuo" >/dev/null 2>&1; then
@@ -199,7 +199,7 @@ LEGACY_PORT_CLEANUP
       exit 1
     fi
   fi
-  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support $MASTRA_UNIT $BG_UNIT $H5_UNIT $MANAGE_UNIT --no-pager || true
+  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support lobster-shop lobster-shopcms $MASTRA_UNIT $BG_UNIT $H5_UNIT $MANAGE_UNIT --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."
