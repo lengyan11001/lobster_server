@@ -133,8 +133,43 @@ async def h5_voice_session(
     brand: str = Query(""),
     installation_id: str = Query(""),
     resolve_intent: bool = Query(True),
+    device_token: str = Query(""),
 ):
     await websocket.accept()
+
+    # 设备侧（ESP32 等）没有用户 JWT，只持有 device_token；WebSocket 又不能带 Authorization 头，
+    # 所以这里允许用 ?device_token=dev_xxx 连：查绑定表拿到所属账号，换成短期内部 JWT 继续走同一条链路。
+    if not str(token or "").strip() and str(device_token or "").strip():
+        try:
+            import hashlib as _hashlib
+            from datetime import timedelta as _timedelta
+
+            from sqlalchemy import text as _sqltext
+
+            from ..db import SessionLocal as _SessionLocal
+            from .auth import create_access_token as _mk_token
+            from .device_ai import ensure_tables as _ensure_device_tables
+
+            _s = _SessionLocal()
+            try:
+                _ensure_device_tables(_s)
+                _h = _hashlib.sha256(str(device_token).strip().encode("utf-8")).hexdigest()
+                _row = _s.execute(
+                    _sqltext("SELECT user_id FROM bound_devices WHERE device_token_hash = :h"),
+                    {"h": _h},
+                ).first()
+                if _row:
+                    token = _mk_token(
+                        {"sub": str(int(_row[0])), "email": ""},
+                        expires_delta=_timedelta(minutes=10),
+                    )
+            finally:
+                try:
+                    _s.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     db = SessionLocal()
     try:
