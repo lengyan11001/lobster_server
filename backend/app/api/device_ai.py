@@ -286,6 +286,28 @@ def device_audio_file(name: str):
     return FileResponse(str(path), media_type=media, headers={"Cache-Control": "no-store"})
 
 
+def _stt_error_text(exc: Any) -> str:
+    """从上游异常里只抽真正的错误正文（output.error / result.error），避免被参数部分挤掉。"""
+    raw = str(exc or "")
+    data: Any = None
+    try:
+        start = raw.find("{")
+        if start >= 0:
+            data = json.loads(raw[start:])
+    except Exception:  # noqa: BLE001
+        data = None
+    if isinstance(data, dict):
+        for container in ("output", "result"):
+            node = data.get(container)
+            if isinstance(node, dict) and node.get("error"):
+                return str(node["error"])[:300]
+        if data.get("error"):
+            return str(data["error"])[:300]
+        if data.get("message"):
+            return str(data["message"])[:300]
+    return raw[:300]
+
+
 def transcribe_audio_url(db: Session, user_id: int, audio_url: str) -> str:
     """复用速推 STT 把公网音频转成文本。
 
@@ -306,8 +328,9 @@ def transcribe_audio_url(db: Session, user_id: int, audio_url: str) -> str:
         created = _stt_create_task(token, audio_url, job_dir=job_dir)
         stt_data = _stt_poll_task(token, created["task_id"], job_dir=job_dir)
     except AutoCaptionJobError as exc:
-        logger.warning("[device] audio STT failed url=%s err=%s", audio_url, str(exc)[:500])
-        raise HTTPException(status_code=502, detail="转写失败（上游）：%s" % str(exc)[:400]) from exc
+        reason = _stt_error_text(exc)
+        logger.warning("[device] audio STT failed url=%s reason=%s", audio_url, reason)
+        raise HTTPException(status_code=502, detail="转写失败（上游）：%s" % reason) from exc
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
