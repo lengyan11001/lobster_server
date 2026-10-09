@@ -36,7 +36,8 @@
   <div class="card">
     <h2>1. 扫描设备上的二维码</h2>
     <div class="row">
-      <button id="btnPhoto">拍照 / 选二维码图片</button>
+      <button id="btnPhoto">拍照扫码</button>
+      <button id="btnAlbum" class="ghost">从相册选</button>
       <button id="btnManual" class="ghost">手动粘贴</button>
       <input type="file" id="fileQr" accept="image/*" capture="environment" />
     </div>
@@ -245,7 +246,19 @@
     }
   }
 
-  $('btnPhoto').addEventListener('click', function () { $('fileQr').click(); });
+  // 拍照扫码：带 capture 直接拉起摄像头；从相册选：去掉 capture 打开图库
+$('btnPhoto').addEventListener('click', function () {
+  var input = $('fileQr');
+  input.value = '';
+  input.setAttribute('capture', 'environment');
+  input.click();
+});
+$('btnAlbum').addEventListener('click', function () {
+  var input = $('fileQr');
+  input.value = '';
+  input.removeAttribute('capture');
+  input.click();
+});
   $('fileQr').addEventListener('change', async function (ev) {
     var f = ev.target.files && ev.target.files[0];
     if (!f) return;
