@@ -253,7 +253,7 @@
 
   // 拍照扫码：带 capture 直接拉起摄像头；从相册选：去掉 capture 打开图库
 // 实时扫码：点击「拍照扫码」直接拉起摄像头（WebView/浏览器都可能给相机权限）
-var live = { stream: null, raf: 0 };
+var live = { stream: null, raf: 0, lastIgnored: '' };
 function stopLiveScan() {
   if (live.stream) { try { live.stream.getTracks().forEach(function (tr) { tr.stop(); }); } catch (e) {} live.stream = null; }
   if (live.raf) { cancelAnimationFrame(live.raf); live.raf = 0; }
@@ -282,7 +282,18 @@ function startLiveScan() {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
             var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'dontInvert' }) : null;
-            if (res && res.data) { stopLiveScan(); applyParsed(String(res.data)); return; }
+            if (res && res.data) {
+              var qrText = String(res.data).trim();
+              if (/pair\?/i.test(qrText) && /(?:^|[?&])code=/i.test(qrText)) {
+                stopLiveScan();
+                applyParsed(qrText);
+                return;
+              }
+              if (qrText !== live.lastIgnored) {
+                live.lastIgnored = qrText;
+                log('识别到非设备二维码，已忽略：' + qrText.slice(0, 40));
+              }
+            }
           }
         } catch (e) {}
         live.raf = requestAnimationFrame(tick);
