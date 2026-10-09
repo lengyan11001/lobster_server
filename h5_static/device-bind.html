@@ -300,14 +300,14 @@ function startLiveScan() {
             var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' }) : null;
             if (res && res.data) {
               var qrText = String(res.data).trim();
-              if (/pair\?/i.test(qrText) && /(?:^|[?&])code=/i.test(qrText)) {
+              if (/^https?:\/\/[^\s]+?\/pair\?code=[A-Za-z0-9_-]+/i.test(qrText)) {
                 stopLiveScan();
                 applyParsed(qrText);
                 return;
               }
               if (qrText !== live.lastIgnored) {
                 live.lastIgnored = qrText;
-                log('识别到非设备二维码，已忽略：' + qrText.slice(0, 40));
+                log('这帧没解全（' + qrText.slice(0, 40) + '），继续对准二维码…');
               }
             }
           }
