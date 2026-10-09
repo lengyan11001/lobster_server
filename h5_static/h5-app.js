@@ -8021,7 +8021,20 @@ async function api(path, options = {}) {
     }
 
     function syncAgentManageEntry() {
-      const btn = $("profileAgentManageEntry");
+      const deviceBindEntry = $("profileDeviceBindEntry");
+    if (deviceBindEntry && !deviceBindEntry.dataset.bound) {
+      deviceBindEntry.dataset.bound = "1";
+      deviceBindEntry.addEventListener("click", function () {
+        const url = "/h5-static/device-bind.html";
+        try {
+          const opened = window.open(url, "_blank");
+          if (!opened) window.location.href = url;
+        } catch (err) {
+          window.location.href = url;
+        }
+      });
+    }
+    const btn = $("profileAgentManageEntry");
       if (!btn) return;
       const allowed = canManageAgent();
       btn.classList.toggle("agent-locked", !allowed);
