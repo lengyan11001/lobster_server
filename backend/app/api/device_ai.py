@@ -318,25 +318,38 @@ def transcribe_audio_url(db: Session, user_id: int, audio_url: str) -> str:
 
 
 def extract_stt_text(stt_data: Any) -> str:
-    data = stt_data.get("data") if isinstance(stt_data, dict) and isinstance(stt_data.get("data"), dict) else stt_data
-    if not isinstance(data, dict):
+    """从速推 STT 的返回里取文本。
+
+    实测返回形如 {"status":"completed","output":{"text":"..."},"result":{"text":"..."}}，
+    文本在 output/result 里，不在顶层 —— 老实现只看顶层，导致转写成功也被判成"结果为空"。
+    """
+    if not isinstance(stt_data, dict):
         return ""
-    for key in ("text", "result", "transcription", "full_text", "asr_text"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    for key in ("utterances", "sentences", "segments"):
-        items = data.get(key)
-        if isinstance(items, list):
-            parts = []
-            for item in items:
-                if isinstance(item, dict):
-                    parts.append(str(item.get("text") or item.get("sentence") or ""))
-                elif isinstance(item, str):
-                    parts.append(item)
-            joined = "".join(parts).strip()
-            if joined:
-                return joined
+    candidates: list[Any] = [stt_data]
+    for key in ("data", "output", "result"):
+        value = stt_data.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+            for sub in ("data", "output", "result"):
+                if isinstance(value.get(sub), dict):
+                    candidates.append(value[sub])
+    for data in candidates:
+        for key in ("text", "full_text", "transcription", "asr_text"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for key in ("utterances", "sentences", "segments"):
+            items = data.get(key)
+            if isinstance(items, list) and items:
+                parts = []
+                for item in items:
+                    if isinstance(item, dict):
+                        piece = str(item.get("text") or item.get("sentence") or "").strip()
+                        if piece:
+                            parts.append(piece)
+                joined = "".join(parts).strip()
+                if joined:
+                    return joined
     return ""
 
 
