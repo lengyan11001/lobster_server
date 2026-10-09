@@ -42,6 +42,11 @@
       <input type="file" id="fileQr" accept="image/*" capture="environment" />
     </div>
     <img id="photo" alt="" />
+    <div id="camBox" style="display:none;margin-top:10px">
+      <video id="camVideo" playsinline muted autoplay style="width:100%;max-width:420px;border-radius:10px;background:#000"></video>
+      <div class="row" style="margin-top:8px"><button id="btnCamClose" class="ghost">关闭摄像头</button></div>
+      <div class="muted">把设备屏幕上的二维码放进取景框，识别到会自动继续</div>
+    </div>
     <div id="manualBox" class="row" style="margin-top:10px;display:none">
       <input type="text" id="manualInput" placeholder="粘贴二维码内容，例如 http://192.168.1.105:8080/pair?code=8F4C92D7" />
       <button id="btnManualParse">解析</button>
@@ -247,12 +252,58 @@
   }
 
   // 拍照扫码：带 capture 直接拉起摄像头；从相册选：去掉 capture 打开图库
+// 实时扫码：点击「拍照扫码」直接拉起摄像头（WebView/浏览器都可能给相机权限）
+var live = { stream: null, raf: 0 };
+function stopLiveScan() {
+  if (live.stream) { try { live.stream.getTracks().forEach(function (tr) { tr.stop(); }); } catch (e) {} live.stream = null; }
+  if (live.raf) { cancelAnimationFrame(live.raf); live.raf = 0; }
+  var box = $('camBox'); if (box) box.style.display = 'none';
+}
+function startLiveScan() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.resolve(false);
+  return navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+    .then(function (stream) {
+      live.stream = stream;
+      var video = $('camVideo');
+      video.srcObject = stream;
+      $('camBox').style.display = 'block';
+      log('摄像头已打开，对准二维码即可');
+      return video.play().catch(function () {});
+    })
+    .then(function () {
+      var canvas = document.createElement('canvas');
+      function tick() {
+        if (!live.stream) return;
+        var video = $('camVideo');
+        try {
+          if (video.videoWidth) {
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'dontInvert' }) : null;
+            if (res && res.data) { stopLiveScan(); applyParsed(String(res.data)); return; }
+          }
+        } catch (e) {}
+        live.raf = requestAnimationFrame(tick);
+      }
+      live.raf = requestAnimationFrame(tick);
+      return true;
+    })
+    .catch(function (err) { stopLiveScan(); log('摄像头没打开（' + (err && err.message || err) + '），改用拍照/相册'); return false; });
+}
 $('btnPhoto').addEventListener('click', function () {
-  var input = $('fileQr');
-  input.value = '';
-  input.setAttribute('capture', 'environment');
-  input.click();
+  startLiveScan().then(function (ok) {
+    if (ok) return;
+    var input = $('fileQr');
+    input.value = '';
+    input.setAttribute('capture', 'environment');
+    input.click();
+  });
 });
+var camClose = $('btnCamClose');
+if (camClose) camClose.addEventListener('click', stopLiveScan);
+
 $('btnAlbum').addEventListener('click', function () {
   var input = $('fileQr');
   input.value = '';
