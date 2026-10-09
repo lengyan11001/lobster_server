@@ -703,6 +703,25 @@ def _masked_phone(value: str) -> str:
     return text
 
 
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".flv", ".ts")
+
+
+def _submission_kind(row: Any, raw: Any = None) -> str:
+    """投稿素材类型：先看 media_type，再用 URL 后缀兜底。
+
+    历史数据里出现过"视频文件被标成 image"（客户端猜错），导致商家后台按图片去预览 → 裂图。
+    """
+    text = str(raw if raw is not None else getattr(row, "media_type", "") or "").lower()
+    if "video" in text:
+        return "video"
+    url = str(getattr(row, "url", "") or "").lower().split("?")[0]
+    if url.endswith(_VIDEO_SUFFIXES):
+        return "video"
+    if "image" in text:
+        return "image"
+    return "image"
+
+
 def _submission_public_url(row: "ShopProductSubmission", request: Optional[Request]) -> str:
     """给商家/投稿人一个可访问地址：优先公开源地址，否则现签一个素材文件地址。"""
     url = str(row.url or "").strip()
@@ -744,8 +763,8 @@ def _submission_payload(
             (row.thumb_url or url) if str(row.media_type or "") != "video" else (row.thumb_url or "")
         )),
         "preview_url": preview_url,
-        "preview_kind": ("" if expose_original else ("video" if "video" in str(row.media_type or "").lower() else "image")),
-        "poster_url": ((preview_url + "&poster=1") if (not expose_original and "video" in str(row.media_type or "").lower()) else ""),
+        "preview_kind": ("" if expose_original else _submission_kind(row)),
+        "poster_url": ((preview_url + "&poster=1") if (not expose_original and _submission_kind(row) == "video") else ""),
         "accepted": accepted,
         "price_credits": price,
         "accepted_at": row.accepted_at.isoformat() if getattr(row, "accepted_at", None) else None,
@@ -1343,7 +1362,7 @@ def cms_submission_preview(
         if merchant is None or int(row.merchant_id) != int(merchant.id):
             raise HTTPException(status_code=404, detail="投稿记录不存在")
     wants_poster = str(request.query_params.get("poster") or "") in ("1", "true")
-    is_video = "video" in str(row.media_type or "").lower()
+    is_video = _submission_kind(row) == "video"
     if is_video and not wants_poster:
         vpath = _build_submission_video_preview(row)
         return Response(content=vpath.read_bytes(), media_type="video/mp4",
