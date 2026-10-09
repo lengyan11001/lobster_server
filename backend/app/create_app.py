@@ -1752,9 +1752,18 @@ def create_app() -> FastAPI:
             host = (request.headers.get("host") or "").lower()
             path = request.url.path or "/"
             if host.startswith("h5.") or path.startswith("/h5-static"):
-                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-                response.headers["Pragma"] = "no-cache"
-                response.headers["Expires"] = "0"
+                query = request.url.query or ""
+                is_doc = path.endswith("/") or path.endswith(".html") or path in ("", "/")
+                if is_doc:
+                    # 页面本体永不缓存：重启/刷新一定拿到最新页面
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                    response.headers["Pragma"] = "no-cache"
+                    response.headers["Expires"] = "0"
+                elif "v=" in query:
+                    # 带 ?v= 的 js/css/图片是版本化资源：长缓存，避免每次都重下 1.5MB
+                    response.headers["Cache-Control"] = "public, max-age=604800"
+                else:
+                    response.headers["Cache-Control"] = "public, max-age=60, must-revalidate"
         except Exception:
             pass
         return response
