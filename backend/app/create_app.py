@@ -1744,6 +1744,21 @@ def create_app() -> FastAPI:
             )
         return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
+    @app.middleware("http")
+    async def _h5_no_store_middleware(request, call_next):
+        """H5 站点与 /h5-static/ 一律禁缓存：客户端重启/刷新必须拿到最新页面。"""
+        response = await call_next(request)
+        try:
+            host = (request.headers.get("host") or "").lower()
+            path = request.url.path or "/"
+            if host.startswith("h5.") or path.startswith("/h5-static"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+        except Exception:
+            pass
+        return response
+
     app.include_router(health_router, prefix="")
     app.include_router(privacy_policy_router, prefix="")
     app.include_router(oauth_public_pages_router, prefix="")
