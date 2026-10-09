@@ -1189,12 +1189,8 @@ def _build_submission_preview(row: "ShopProductSubmission") -> Path:
             from .assets import _find_asset_ffmpeg  # noqa: PLC0415
 
             ffmpeg = _find_asset_ffmpeg()
-            subprocess.run(
-                # 取第 1 秒处的帧：很多视频开头是黑帧，直接取首帧会得到全黑封面
-                _write_best_video_frame(ffmpeg, str(_build_submission_video_preview(row)), tmp.name),
-                timeout=90,
-                check=True,
-            )
+            # 直接从原始视频取帧（多帧取最亮）；helper 内部自己写文件，不能包在 subprocess.run 里（返回 None → TypeError → 422 → 前台黑封面）
+            _write_best_video_frame(ffmpeg, src, tmp.name)
             img = Image.open(tmp.name)
             img.load()
         except Exception as exc:  # noqa: BLE001
