@@ -43,7 +43,11 @@
     </div>
     <img id="photo" alt="" />
     <div id="camBox" style="display:none;margin-top:10px">
-      <video id="camVideo" playsinline muted autoplay style="width:100%;max-width:420px;border-radius:10px;background:#000"></video>
+      <div style="position:relative;display:inline-block;max-width:420px;width:100%">
+        <video id="camVideo" playsinline muted autoplay style="width:100%;border-radius:10px;background:#000;display:block"></video>
+        <div style="position:absolute;left:19%;top:19%;width:62%;height:62%;border:2px solid #38bdf8;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.25);pointer-events:none"></div>
+        <div style="position:absolute;left:0;right:0;bottom:8px;text-align:center;color:#e0f2fe;font-size:12px;text-shadow:0 1px 2px rgba(0,0,0,.8);pointer-events:none">把二维码放进蓝框里</div>
+      </div>
       <div class="row" style="margin-top:8px"><button id="btnCamClose" class="ghost">关闭摄像头</button></div>
       <div class="muted">把设备屏幕上的二维码放进取景框，识别到会自动继续</div>
     </div>
@@ -310,14 +314,29 @@ function startLiveScan() {
         var video = $('camVideo');
         try {
           if (video.videoWidth) {
-            var vw = video.videoWidth, vh = video.videoHeight, side = Math.max(vw, vh) || 1;
-            var scale = Math.min(1, 1440 / side);
-            canvas.width = Math.max(1, Math.round(vw * scale));
-            canvas.height = Math.max(1, Math.round(vh * scale));
+            var vw = video.videoWidth, vh = video.videoHeight;
             var ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var res = (typeof window.jsQR === 'function') ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' }) : null;
+            var res = null;
+            if (typeof window.jsQR === 'function') {
+              // 第一优先：中间取景框（对屏幕上的小码最有效，等于把码放大）
+              var bw = Math.round(vw * 0.62), bh = Math.round(vh * 0.62);
+              var bx = Math.round((vw - bw) / 2), by = Math.round((vh - bh) / 2);
+              var cscale = Math.min(1, 1200 / (Math.max(bw, bh) || 1));
+              canvas.width = Math.max(1, Math.round(bw * cscale));
+              canvas.height = Math.max(1, Math.round(bh * cscale));
+              ctx.drawImage(video, bx, by, bw, bh, 0, 0, canvas.width, canvas.height);
+              var cdata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              res = window.jsQR(cdata.data, cdata.width, cdata.height, { inversionAttempts: 'attemptBoth' });
+              if (!res) {
+                // 第二优先：整幅画面（防止用户的码不在中间）
+                var fscale = Math.min(1, 1440 / (Math.max(vw, vh) || 1));
+                canvas.width = Math.max(1, Math.round(vw * fscale));
+                canvas.height = Math.max(1, Math.round(vh * fscale));
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                var fdata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                res = window.jsQR(fdata.data, fdata.width, fdata.height, { inversionAttempts: 'attemptBoth' });
+              }
+            }
             if (res && res.data) {
               var qrText = String(res.data).trim();
               var parsedQr = parseQr(qrText);
