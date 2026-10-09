@@ -98,7 +98,18 @@
     el.textContent = text;
     el.className = 'badge' + (cls ? ' ' + cls : '');
   }
-  function origin() { return location.origin; }
+  // 设备接口只在主站提供（h5.bhzn.top 不代理 /api/device/*，直接调会 404），
+  // 所以这里优先用配置的 API 基址，否则 *.bhzn.top 一律回主站。
+  function origin() {
+    try {
+      var fromStorage = localStorage.getItem('lobster_api_base');
+      if (fromStorage) return String(fromStorage).replace(/\/$/, '');
+      if (window.__LOBSTER_API_BASE) return String(window.__LOBSTER_API_BASE).replace(/\/$/, '');
+    } catch (e) {}
+    var host = String(location.hostname || '').toLowerCase();
+    if (host === 'bhzn.top' || host.slice(-9) === '.bhzn.top') return 'https://bhzn.top';
+    return location.origin;
+  }
 
   function findToken() {
     try {
