@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..services.credits_amount import credits_json_float
 from ..models import H5ChatMessage, H5ChatSession, User
 from .auth import create_access_token
 from .installation_slots import optional_installation_id_from_request
@@ -164,8 +165,20 @@ def device_message(
     if not text_in:
         raise HTTPException(status_code=400, detail="缺少 text")
     session_id = str((payload or {}).get("session_id") or "").strip()
+    want_tts = _as_flag((payload or {}).get("tts")) or _as_flag(request.query_params.get("tts"))
     reply = _submit_to_orchestrator(request, db, device, text_in, session_id)
+    if want_tts and reply.get("message_id"):
+        _TTS_WANT[str(reply["message_id"])] = True
     return {"ok": True, **reply}
+
+
+_TTS_WANT: Dict[str, bool] = {}
+
+
+def _as_flag(value: Any) -> bool:
+    """tts 开关：1/true/yes/on/y 视为开，其它（含 None、0、false、"0"）为关。"""
+    text = str(value if value is not None else "").strip().lower()
+    return text in ("1", "true", "yes", "on", "y")
 
 
 def _submit_to_orchestrator(request: Request, db: Session, device: Dict[str, Any], content: str,
@@ -195,10 +208,63 @@ def _submit_to_orchestrator(request: Request, db: Session, device: Dict[str, Any
 
 
 # ---------------- 2) 回复查询（长轮询） ----------------
+def _tts_payload_for_message(*, request, db: Session, row: Any, text: str) -> Dict[str, Any]:
+    """按需合成设备语音回包：同一条消息只合成一次（文件缓存），失败不影响文本返回。"""
+    import urllib.request  # noqa: PLC0415
+
+    from ..services import device_tts  # noqa: PLC0415
+
+    name = "tts_%s.mp3" % str(row.id)
+    path = _DEVICE_UPLOAD_DIR / name
+    if path.exists() and path.stat().st_size > 0:
+        return {"reply_audio_url": "/api/device/audio/" + name, "tts_credits": 0, "tts_cached": True}
+    owner = db.query(User).filter(User.id == int(row.user_id)).first()
+    if owner is None:
+        return {"reply_audio_url": "", "tts_error": "找不到归属账号"}
+    try:
+        from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
+
+        token, _source = _load_sutui_token_for_stt(db, int(owner.id))
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        return {"reply_audio_url": "", "tts_error": "取速推 token 失败：%s" % str(exc)[:120]}
+    price = device_tts.price_for(text)
+    try:
+        device_tts.ensure_balance(db, owner, price)
+        audio_url = device_tts.synthesize(text, token=token)
+        with urllib.request.urlopen(audio_url, timeout=90) as resp:  # noqa: S310
+            data = resp.read(20 * 1024 * 1024)
+        if not data:
+            raise HTTPException(status_code=502, detail="TTS 音频为空")
+        _DEVICE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        charged = device_tts.charge(
+            db, owner, price,
+            ref_id=str(row.id),
+            description="设备语音回包(TTS) 消息 #%s，%d 字" % (str(row.id)[:12], len(text)),
+        )
+        db.commit()
+        logger.info("[device] tts ok msg=%s chars=%s credits=%s", str(row.id)[:12], len(text), charged)
+        return {
+            "reply_audio_url": "/api/device/audio/" + name,
+            "tts_credits": credits_json_float(charged),
+            "tts_cached": False,
+        }
+    except HTTPException as exc:
+        db.rollback()
+        logger.warning("[device] tts failed msg=%s: %s", str(row.id)[:12], str(exc.detail)[:200])
+        return {"reply_audio_url": "", "tts_error": str(exc.detail)[:200]}
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.warning("[device] tts error msg=%s: %s", str(row.id)[:12], str(exc)[:200])
+        return {"reply_audio_url": "", "tts_error": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
+
+
 @router.get("/message/{message_id}", summary="查询设备消息的回复")
 def device_message_status(
     message_id: str,
     wait: int = Query(0, ge=0, le=60, description="长轮询秒数，0=立即返回"),
+    tts: int = Query(0, ge=0, le=1, description="1=需要语音回包（设备开关打开时带 1）"),
     device: Dict[str, Any] = Depends(current_device),
     db: Session = Depends(get_db),
 ):
@@ -210,13 +276,17 @@ def device_message_status(
         status = str(row.status or "")
         reply_text = str(row.reply_text or "")
         if reply_text or status in ("completed", "failed", "error"):
-            return {
+            payload: Dict[str, Any] = {
                 "ok": True,
                 "message_id": row.id,
                 "status": status,
                 "reply_text": reply_text,
                 "reply_audio_url": getattr(row, "reply_audio_url", "") or "",
             }
+            want_tts = bool(int(tts or 0)) or bool(_TTS_WANT.get(str(row.id)))
+            if want_tts and reply_text and status == "completed":
+                payload.update(_tts_payload_for_message(request=None, db=db, row=row, text=reply_text))
+            return payload
         if time.time() >= deadline:
             return {"ok": True, "message_id": row.id, "status": status or "pending", "reply_text": "", "timeout": True}
         db.commit()
