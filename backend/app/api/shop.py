@@ -1093,109 +1093,47 @@ def _submission_preview_target(row: "ShopProductSubmission") -> Path:
     return folder / ("submission_%d_%s.jpg" % (int(row.id), stamp))
 
 
+_WATERMARK_FONTS = (
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+)
+
+
+def _watermark_font(size: int):
+    """优先中文字体；服务器没装中文字体就退回默认字体，此时水印用英文（避免方块乱码）。"""
+    from PIL import ImageFont  # noqa: PLC0415
+
+    for path in _WATERMARK_FONTS:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size), True
+            except Exception:  # noqa: BLE001
+                continue
+    try:
+        return ImageFont.load_default(size=size), False
+    except Exception:  # noqa: BLE001
+        return ImageFont.load_default(), False
+
+
 def _watermarked_preview(img: Any) -> Any:
-    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
+    from PIL import Image, ImageDraw  # noqa: PLC0415
 
     img = img.convert("RGB")
     if img.width > 720:
         img = img.resize((720, max(1, int(img.height * 720 / img.width))))
     overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
-    try:
-        font = ImageFont.load_default(size=max(13, img.width // 26))
-    except Exception:  # noqa: BLE001
-        font = ImageFont.load_default()
-    text = "投稿预览 · 未采纳"
+    font, has_cjk = _watermark_font(max(13, img.width // 26))
+    text = "投稿预览 · 未采纳" if has_cjk else "PREVIEW - shop.bhzn.top"
     step_x = max(150, img.width // 2)
     step_y = max(70, img.height // 4)
     for y in range(0, img.height + step_y, step_y):
         for x in range(-step_x // 2, img.width + step_x, step_x):
             draw.text((x, y), text, font=font, fill=(255, 255, 255, 130))
     return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-
-
-def _build_submission_preview(row: "ShopProductSubmission") -> Path:
-    """生成带水印的预览图（图片缩放；视频取首帧），只给商家「看」，不给原文件。"""
-    from io import BytesIO
-
-    from PIL import Image  # noqa: PLC0415
-
-    src = str(row.url or "").strip()
-    if not src.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="这条投稿没有可预览的地址")
-    target = _submission_preview_target(row)
-    if target.exists() and target.stat().st_size > 0:
-        return target
-    media = str(row.media_type or "").lower()
-    if "video" in media:
-        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-        tmp.close()
-        try:
-            from .assets import _find_asset_ffmpeg  # noqa: PLC0415
-
-            ffmpeg = _find_asset_ffmpeg()
-            subprocess.run(
-                [ffmpeg, "-y", "-loglevel", "error", "-i", src, "-frames:v", "1", "-vf", "scale=720:-2", tmp.name],
-                timeout=90,
-                check=True,
-            )
-            img = Image.open(tmp.name)
-            img.load()
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=422, detail="视频预览生成失败，请稍后重试") from exc
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except Exception:  # noqa: BLE001
-                pass
-    else:
-        try:
-            req = urllib.request.Request(src, headers={"User-Agent": "lobster-preview/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
-                data = resp.read(30 * 1024 * 1024)
-            img = Image.open(BytesIO(data))
-            img.load()
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=422, detail="素材预览生成失败，请稍后重试") from exc
-    out = _watermarked_preview(img)
-    out.save(target, "JPEG", quality=82)
-    return target
-
-
-_VIDEO_PREVIEW_SECONDS = 20  # 水印预览只给前 20 秒
-_VIDEO_PREVIEW_FONTS = (
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-)
-
-
-def _build_submission_video_preview(row: "ShopProductSubmission") -> Path:
-    """视频预览：低清 + 水印的可播放 mp4（采纳前商家只能看到这一段）。"""
-    src = str(row.url or "").strip()
-    if not src.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="这条投稿没有可预览的地址")
-    target = _submission_preview_target(row).with_suffix(".mp4")
-    if target.exists() and target.stat().st_size > 0:
-        return target
-    from .assets import _find_asset_ffmpeg  # noqa: PLC0415
-
-    vf = "scale='min(720,iw)':-2,drawtext=text='PREVIEW - shop.bhzn.top':fontcolor=white@0.38:fontsize=26:x=(w-text_w)/2:y=(h-text_h)/2"
-    for font in _VIDEO_PREVIEW_FONTS:
-        if os.path.exists(font):
-            vf += ":fontfile=" + font
-            break
-    cmd = [
-        _find_asset_ffmpeg(), "-y", "-loglevel", "error", "-i", src,
-        "-t", str(_VIDEO_PREVIEW_SECONDS), "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-an",
-        "-movflags", "+faststart", str(target),
-    ]
-    try:
-        subprocess.run(cmd, timeout=240, check=True)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=422, detail="视频预览生成失败，请稍后重试") from exc
-    return target
-
 
 def _merchant_submission(db: Session, merchant: "ShopMerchant", submission_id: int) -> "ShopProductSubmission":
     row = (
