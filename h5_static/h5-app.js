@@ -4876,6 +4876,15 @@ async function api(path, options = {}) {
 
     function workflowFieldsHtmlForNode(node, workflowNode = null, lookup = null) {
       if (!node) return "";
+      // 公众号文章节点：不管走销售预设还是能力清单，都直接渲染它自己的参数表单
+      const savedAbilityKey = String(
+        (workflowNode && (workflowNode.ability_key || workflowNode.key))
+        || (node && (node.capabilityId || node.key))
+        || ""
+      ).trim();
+      if (savedAbilityKey === "wewrite.article.pipeline") {
+        return workflowCapabilityFieldsHtml("wewrite.article.pipeline");
+      }
       if (workflowNodeUsesPersonaDefaults(workflowNode)) return "";
       const platform = socialPlatformFromAbilityKey(node.key);
       if (platform) return workflowSocialFieldsHtml(platform);
@@ -5769,8 +5778,9 @@ async function api(path, options = {}) {
         plan = workflowPlanForLookup(lookup, note);
       }
       // 公众号文章：写作依据 / 草稿箱 / 主题直接从表单读，写进节点计划（否则勾选会被丢掉）
+      const articleFormPresent = !!document.getElementById("workflowParamArticleSendDraft");
       const nodeCapabilityId = String((lookup.node && (lookup.node.capabilityId || lookup.node.key)) || "").trim();
-      if (nodeCapabilityId === "wewrite.article.pipeline" && plan && plan.payload && typeof plan.payload === "object") {
+      if ((articleFormPresent || nodeCapabilityId === "wewrite.article.pipeline") && plan && plan.payload && typeof plan.payload === "object") {
         const formOral = [];
         if (workflowParamChecked("workflowParamArticleOralIndustry")) formOral.push("ip_daily_industry_hot_oral");
         if (workflowParamChecked("workflowParamArticleOralIp")) formOral.push("ip_daily_professional_ip_oral");
