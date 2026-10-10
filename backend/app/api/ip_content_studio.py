@@ -3121,14 +3121,22 @@ def _template_payload(
 ) -> dict[str, Any]:
     memory_docs = row.memory_docs or []
     memory_doc_ids = _clean_memory_doc_ids(row.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    # 已删除的关键词/同行会留在模板的 id 列表里，直接回传原始 id 会让前端计数
+    # （“已选 N 个”）比实际可选条目多。传入资源行时以真实存在的条目为准。
+    keyword_ids = _clean_int_ids(row.keyword_ids, 50)
+    competitor_ids = _clean_int_ids(row.competitor_ids, 50)
+    if keywords is not None:
+        keyword_ids = [int(item.id) for item in keywords]
+    if competitors is not None:
+        competitor_ids = [int(item.id) for item in competitors]
     payload = {
         "id": row.id,
         "user_id": row.user_id,
         "owner_user_id": row.user_id,
         "owner_name": owner.email if owner else "",
         "name": row.name,
-        "keyword_ids": _clean_int_ids(row.keyword_ids, 50),
-        "competitor_ids": _clean_int_ids(row.competitor_ids, 50),
+        "keyword_ids": keyword_ids,
+        "competitor_ids": competitor_ids,
         "memory_doc_ids": memory_doc_ids,
         "memory_docs": memory_docs,
         "survey_id": int(getattr(row, "survey_id", 0) or 0) or None,
@@ -3270,6 +3278,36 @@ def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tupl
     return _template_resource_rows_for_ids(db, int(row.user_id), row.keyword_ids, row.competitor_ids)
 
 
+def _repair_template_resource_refs(db: Session, rows: list[IPContentScheduleTemplate]) -> int:
+    """清掉模板里残留的已删关键词/同行 id。
+
+    删除关键词/同行的接口只清理调用者自己的模板，历史数据（以及管理后台/
+    脚本侧的删除）仍会留下悬空 id，导致“已选 N 个”比真实条目多。这里在读取
+    模板列表时顺手自愈，写回真实存在的 id 列表。
+    """
+    changed = 0
+    for row in rows:
+        try:
+            keywords, competitors = _template_resource_rows(db, row)
+            live_kw = [int(item.id) for item in keywords]
+            live_cp = [int(item.id) for item in competitors]
+            if _clean_int_ids(row.keyword_ids, 50) == live_kw and _clean_int_ids(row.competitor_ids, 50) == live_cp:
+                continue
+            row.keyword_ids = live_kw
+            row.competitor_ids = live_cp
+            changed += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("[ip-content] 模板资源引用自愈失败 template=%s", getattr(row, "id", None))
+    if changed:
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("[ip-content] 模板资源引用自愈提交失败")
+            return 0
+    return changed
+
+
 def _template_payload_with_resources(
     db: Session,
     row: IPContentScheduleTemplate,
@@ -3354,6 +3392,9 @@ def _personal_default_template_payload_with_resources(db: Session, row: Optional
     payload = _personal_default_template_payload(row)
     if row is None:
         return payload
+    keywords, competitors = _template_resource_rows(db, row)
+    payload["keyword_ids"] = [int(item.id) for item in keywords]
+    payload["competitor_ids"] = [int(item.id) for item in competitors]
     survey = _survey_for_template(db, row)
     payload["survey"] = _profile_survey_payload(survey)
     payload["survey_id"] = int(getattr(row, "survey_id", 0) or 0) or None
@@ -6286,6 +6327,9 @@ def list_schedule_templates(
         for grant in grants:
             grant_map.setdefault(int(grant.template_id), []).append(int(grant.target_user_id))
 
+    repaired = _repair_template_resource_refs(db, rows)
+    if repaired:
+        logger.info("[ip-content] 已修复 %d 个模板的悬空关键词/同行引用 user=%s", repaired, current_user.id)
     items = [_template_payload_with_resources(db, row, source="own", grants=grant_map.get(int(row.id), [])) for row in rows]
 
     granted = (
