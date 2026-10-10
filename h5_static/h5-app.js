@@ -15083,6 +15083,17 @@ if (articleField) articleField.classList.toggle("hidden", !showArticleFields);
         reference_asset_ids: Array.isArray(source.selected_asset_ids) ? source.selected_asset_ids : [],
         reference_image_urls: Array.isArray(source.selected_image_urls) ? source.selected_image_urls : [],
       });
+      // 回显：写作依据（口播来源）+ 是否发送到草稿箱（只有该界面上确实有这些控件时才写，避免影响其它界面）
+      const oralSaved = Array.isArray(source.script_sources) ? source.script_sources.map(String) : [];
+      if (document.getElementById(`${prefix}OralIndustry`)) {
+        setFieldValue(`${prefix}OralIndustry`, oralSaved.indexOf("ip_daily_industry_hot_oral") >= 0);
+      }
+      if (document.getElementById(`${prefix}OralIp`)) {
+        setFieldValue(`${prefix}OralIp`, oralSaved.indexOf("ip_daily_professional_ip_oral") >= 0);
+      }
+      if (document.getElementById(`${prefix}SendDraft`)) {
+        setFieldValue(`${prefix}SendDraft`, source.send_to_draft === true);
+      }
     }
 
     function setHiflyMaterialPickerRows(id, materials) {
