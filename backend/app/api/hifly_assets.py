@@ -656,7 +656,8 @@ async def _qwen_tts_audio(
         },
     }
     instruction_text = _qwen_instructions(instructions)
-    if instruction_text:
+    if instruction_text and not is_cosyvoice_voice:
+        # cosyvoice-v2 不支持 instruction 字段（带了直接 400 [cosyvoice]Engine return error code: 428）
         body["input"]["instruction"] = instruction_text
     async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
         resp = await client.post(
@@ -680,7 +681,7 @@ async def _qwen_tts_audio(
         "audio_url": audio_url,
         "usage": usage,
         "tts_text": clean_text,
-        "instructions": instruction_text,
+        "instructions": instruction_text if not is_cosyvoice_voice else "",
         "request_body": body,
         "raw": {k: v for k, v in payload.items() if k != "output"},
     }
