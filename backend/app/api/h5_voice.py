@@ -130,7 +130,8 @@ async def _send_json_safe(websocket: WebSocket, payload: Dict[str, Any]) -> None
 
 # ── 流式回复（设备 ask）：回复增量 + 逐句语音 ─────────────────────────
 _ASK_FINAL_STATUSES = {"completed", "failed", "error", "cancelled"}
-_ASK_POLL_SECONDS = 0.5
+_ASK_POLL_SECONDS = 0.25
+_ASK_AUDIO_CONCURRENCY = 3
 _ASK_MAX_SECONDS = 600
 
 
@@ -290,6 +291,51 @@ async def _run_ask_stream(
     total_credits = 0.0
     status = "pending"
     error_text = ""
+    # 逐句语音：合成丢到后台线程并发跑（不阻塞正文增量推送），下发严格按句顺序
+    synth_queue: List[Tuple[int, str, str, asyncio.Task]] = []
+
+    async def drain_audio(*, wait_head: bool = False) -> None:
+        nonlocal total_credits
+        while synth_queue:
+            index, key, sentence, task = synth_queue[0]
+            if not task.done():
+                if not wait_head:
+                    return
+                await asyncio.wait([task])
+            synth_queue.pop(0)
+            try:
+                result = task.result()
+            except Exception as exc:  # noqa: BLE001
+                result = {"error": "%s: %s" % (type(exc).__name__, str(exc)[:140])}
+            if result.get("error"):
+                await _send_json_safe(
+                    websocket,
+                    {
+                        "type": "reply_audio_error",
+                        "message_id": message_id,
+                        "seq": seq,
+                        "index": index,
+                        "text": sentence,
+                        "error": result["error"],
+                    },
+                )
+                continue
+            segment_keys.append(key)
+            total_credits += float(result.get("credits") or 0)
+            await _send_json_safe(
+                websocket,
+                {
+                    "type": "reply_audio",
+                    "message_id": message_id,
+                    "seq": seq,
+                    "index": index,
+                    "text": sentence,
+                    "chars": len(sentence),
+                    "credits": result.get("credits", 0),
+                    "cached": bool(result.get("cached")),
+                    **_audio_urls(str(result.get("audio_url") or ""), audio_base),
+                },
+            )
 
     try:
         while True:
@@ -330,46 +376,31 @@ async def _run_ask_stream(
                     consumed = pos + len(sentence)
                     if len(sentence) < floor:
                         continue  # 太短：不单独合成（并入收尾的整段音频）
+                    while len(synth_queue) >= _ASK_AUDIO_CONCURRENCY:
+                        # 到并发上限就等队首完成并下发（保证按句顺序、又不会无限堆积）
+                        await drain_audio(wait_head=True)
                     closed_index += 1
                     key = "%s_%d" % (message_id, closed_index)
-                    result = await asyncio.to_thread(
-                        _synth_sentence,
-                        user_id,
-                        sentence,
-                        key,
-                        "设备逐句语音(TTS) 消息 #%s 第 %d 句，%d 字"
-                        % (message_id[:12], closed_index, len(sentence)),
-                    )
-                    if result.get("error"):
-                        await _send_json_safe(
-                            websocket,
-                            {
-                                "type": "reply_audio_error",
-                                "message_id": message_id,
-                                "seq": seq,
-                                "index": closed_index,
-                                "text": sentence,
-                                "error": result["error"],
-                            },
+                    synth_queue.append(
+                        (
+                            closed_index,
+                            key,
+                            sentence,
+                            asyncio.create_task(
+                                asyncio.to_thread(
+                                    _synth_sentence,
+                                    user_id,
+                                    sentence,
+                                    key,
+                                    "设备逐句语音(TTS) 消息 #%s 第 %d 句，%d 字"
+                                    % (message_id[:12], closed_index, len(sentence)),
+                                )
+                            ),
                         )
-                        continue
-                    segment_keys.append(key)
-                    total_credits += float(result.get("credits") or 0)
-                    await _send_json_safe(
-                        websocket,
-                        {
-                            "type": "reply_audio",
-                            "message_id": message_id,
-                            "seq": seq,
-                            "index": closed_index,
-                            "text": sentence,
-                            "chars": len(sentence),
-                            "credits": result.get("credits", 0),
-                            "cached": bool(result.get("cached")),
-                            **_audio_urls(str(result.get("audio_url") or ""), audio_base),
-                        },
                     )
                 cursor += consumed
+                # 合成在后台跑：这里只把已经好的按序下发，不阻塞正文
+                await drain_audio()
             if status in _ASK_FINAL_STATUSES and full_text == last_text:
                 break
             if asyncio.get_running_loop().time() >= deadline:
@@ -385,6 +416,9 @@ async def _run_ask_stream(
             websocket, {"type": "reply_error", "message_id": message_id, "message": str(exc)[:200]}
         )
         return
+
+    while synth_queue:
+        await drain_audio(wait_head=True)
 
     if status in ("failed", "error"):
         await _send_json_safe(
