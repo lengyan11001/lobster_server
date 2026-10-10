@@ -1133,6 +1133,8 @@
       const id = String(node.id || "");
       const key = String(node.ability_key || node.key || "");
       if (isNativeWechatWorkflowKey(key) || key === "native_whatsapp_poll") return false;
+      // 公众号文章节点有自己必须配置的参数（写作依据 / 草稿箱），不能走人设默认值把参数区整块隐藏
+      if (key === "wewrite.article.pipeline") return false;
       if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
       if (key === "douyin_leads" && isSalesDouyinCollectionNode(node)) return false;
       if (key === "douyin_leads" && isSalesDouyinPreciseTouchNode(node)) return false;
@@ -5765,6 +5767,20 @@ async function api(path, options = {}) {
         };
       } else {
         plan = workflowPlanForLookup(lookup, note);
+      }
+      // 公众号文章：写作依据 / 草稿箱 / 主题直接从表单读，写进节点计划（否则勾选会被丢掉）
+      const nodeCapabilityId = String((lookup.node && (lookup.node.capabilityId || lookup.node.key)) || "").trim();
+      if (nodeCapabilityId === "wewrite.article.pipeline" && plan && plan.payload && typeof plan.payload === "object") {
+        const formOral = [];
+        if (workflowParamChecked("workflowParamArticleOralIndustry")) formOral.push("ip_daily_industry_hot_oral");
+        if (workflowParamChecked("workflowParamArticleOralIp")) formOral.push("ip_daily_professional_ip_oral");
+        const formIdea = String(workflowParamValue("workflowParamArticleIdea") || "").trim();
+        plan.payload = Object.assign({}, plan.payload, {
+          script_sources: formOral.length ? formOral : ["ip_daily_industry_hot_oral"],
+          script_source: (formOral.length ? formOral : ["ip_daily_industry_hot_oral"])[0],
+          send_to_draft: workflowParamChecked("workflowParamArticleSendDraft"),
+        });
+        if (formIdea) plan.payload.idea = formIdea;
       }
       const salesPreset = lookup.optionId != null;
       const scheduledPlan = withWorkflowSchedule(plan, time, endTime);
