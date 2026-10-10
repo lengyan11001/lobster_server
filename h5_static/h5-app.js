@@ -4774,11 +4774,17 @@ if (articleField) articleField.classList.toggle("hidden", !showArticleFields);
         return articleFieldsHtml("workflowParamArticle")
           + taskFieldHtml(
             "写作依据（口播来源）",
-            `<label style="margin-right:14px;"><input id="workflowParamArticleOralIndustry" type="checkbox"> 行业口播</label>`
-            + `<label><input id="workflowParamArticleOralIp" type="checkbox"> IP 口播</label>`
-            + `<div style="font-size:12px;opacity:.7;margin-top:4px;">文章按所选口播来源产出的文案 + 主题来写；都选则每次随机一种。</div>`
+            workCheckboxGroupHtml([
+              { id: "workflowParamArticleOralIndustry", label: "行业口播" },
+              { id: "workflowParamArticleOralIp", label: "IP 口播" },
+            ]),
+            true
           )
-          + taskFieldHtml("草稿箱", workCheckboxHtml("workflowParamArticleSendDraft", "生成后发送到公众号草稿箱（用「公众号文章」里配置好的公众号）", false));
+          + taskFieldHtml(
+            "草稿箱",
+            workCheckboxGroupHtml([{ id: "workflowParamArticleSendDraft", label: "生成后发送到公众号草稿箱" }]),
+            true
+          );
       }
       if (id === "ppt.create") {
         return taskFieldHtml("任务名称", workInputHtml("workflowParamPptTitle", "text", "PPT生成"))
