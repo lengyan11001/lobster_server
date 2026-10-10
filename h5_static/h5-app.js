@@ -4533,13 +4533,6 @@ async function api(path, options = {}) {
         + `<div data-article-prefix="${prefix}" data-article-panel="remix" class="${mode === "remix" ? "" : "hidden"}">${articleRemixFieldsHtml(prefix)}</div>`
         + `<div data-article-compose-only="${prefix}" class="${mode === "compose" ? "" : "hidden"}">`
         + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
-        + taskFieldHtml(
-          "写作依据（口播来源）",
-          `<label style="margin-right:14px;"><input id="${prefix}OralIndustry" type="checkbox"> 行业口播</label>`
-          + `<label><input id="${prefix}OralIp" type="checkbox"> IP 口播</label>`
-          + `<div style="font-size:12px;opacity:.7;margin-top:4px;">文章用所选口播来源产出的文案 + 主题来写；都选则每次随机一种。</div>`
-        )
-        + taskFieldHtml("草稿箱", workCheckboxHtml(`${prefix}SendDraft`, "生成后发送到公众号草稿箱（用「公众号文章」里配置好的公众号）", false))
         + articleAdvancedFieldsHtml(prefix)
         + `</div>`
         + `</div>`;
@@ -4772,7 +4765,15 @@ async function api(path, options = {}) {
           + taskFieldHtml("画幅", taskSelectHtml("workflowParamCreateVideoAspect", optionHtml("16:9", "16:9 横屏") + optionHtml("9:16", "9:16 竖屏") + optionHtml("1:1", "1:1 方图")));
       }
       if (id === "wewrite.article.pipeline") {
-        return articleFieldsHtml("workflowParamArticle");
+        // 只有工作流节点弹窗才有：写作依据（口播来源）+ 是否发送到公众号草稿箱
+        return articleFieldsHtml("workflowParamArticle")
+          + taskFieldHtml(
+            "写作依据（口播来源）",
+            `<label style="margin-right:14px;"><input id="workflowParamArticleOralIndustry" type="checkbox"> 行业口播</label>`
+            + `<label><input id="workflowParamArticleOralIp" type="checkbox"> IP 口播</label>`
+            + `<div style="font-size:12px;opacity:.7;margin-top:4px;">文章按所选口播来源产出的文案 + 主题来写；都选则每次随机一种。</div>`
+          )
+          + taskFieldHtml("草稿箱", workCheckboxHtml("workflowParamArticleSendDraft", "生成后发送到公众号草稿箱（用「公众号文章」里配置好的公众号）", false));
       }
       if (id === "ppt.create") {
         return taskFieldHtml("任务名称", workInputHtml("workflowParamPptTitle", "text", "PPT生成"))
