@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -409,6 +410,34 @@ def _media_item_key(capability_id: str, task_id: str) -> str:
 # ── 进度卡聚合 ───────────────────────────────────────────────────
 
 
+_CARD_PROGRESS_MIN_INTERVAL = 0.3
+_card_progress_written: Dict[str, Tuple[str, float]] = {}
+
+
+def _publish_card_progress(db: Session, *, message_id: str, text: str) -> None:
+    """把进度卡文案增量落到原消息 reply_text（同一事务，由调用方 commit）。
+
+    只在原消息还没有正文时写：已经流式下发的方案正文后面还要参与
+    「Online 执行结果」的合并，不能被进度卡覆盖。节流 0.3s。
+    """
+    body = str(text or "").strip()
+    if not body or not message_id:
+        return
+    now = time.monotonic()
+    previous = _card_progress_written.get(message_id)
+    if previous is not None:
+        if previous[0] == body:
+            return
+        if now - previous[1] < _CARD_PROGRESS_MIN_INTERVAL:
+            return
+    row = db.query(H5ChatMessage).filter(H5ChatMessage.id == message_id).first()
+    if row is None or (row.reply_text or "").strip():
+        return
+    row.reply_text = body
+    row.updated_at = datetime.utcnow()
+    _card_progress_written[message_id] = (body, now)
+
+
 def _rebuild_root_card(
     db: Session,
     *,
@@ -463,7 +492,7 @@ def _rebuild_root_card(
         detail = [str(item.get("text") or "") for item in items if str(item.get("status")) == "done" and item.get("text")]
         if detail:
             full_text = text + "\n" + "\n".join(detail[:3])
-    return upsert_task_card(
+    changed = upsert_task_card(
         db,
         message_id=root_id,
         user_id=user_id,
@@ -474,6 +503,10 @@ def _rebuild_root_card(
         items=items,
         source="watch",
     )
+    if changed and full_text:
+        # 增量落库：设备/H5 轮询 reply_text 也能看到后台任务推进（仅在还没有正文时写）
+        _publish_card_progress(db, message_id=root_id, text=full_text)
+    return changed
 
 
 # ── 主循环 ───────────────────────────────────────────────────────

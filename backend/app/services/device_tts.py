@@ -29,6 +29,10 @@ _DEFAULT_CREDITS_PER_1K = Decimal("20")
 _DEFAULT_MAX_CHARS = 300
 _voice_cache: Dict[str, str] = {}
 
+# 逐句 TTS（设备流式回复）：短于这个字数的句子不单独合成
+SENTENCE_MIN_CHARS = 20
+SENTENCE_END_CHARS = "。！？!?…\n；;"
+
 
 def _base() -> str:
     return str(
@@ -199,3 +203,42 @@ def charge(db: Session, user: Any, credits: Decimal, *, ref_id: str, description
         ref_id=str(ref_id),
     )
     return amount
+
+
+# ── 逐句朗读：把回复切成「够长就切」的片段（设备流式回复用） ────────────
+def sentence_min_chars() -> int:
+    """低于这个字数的句子不单独合成语音（可用 DEVICE_TTS_SENTENCE_MIN_CHARS 覆盖）。"""
+    try:
+        return max(1, int(os.environ.get("DEVICE_TTS_SENTENCE_MIN_CHARS") or SENTENCE_MIN_CHARS))
+    except Exception:  # noqa: BLE001
+        return SENTENCE_MIN_CHARS
+
+
+def split_sentences(text: str, *, min_chars: int = 0) -> list:
+    """把一条回复切成适合逐句朗读的片段。
+
+    规则（左到右贪心，保证「前缀稳定」：同一段文字多切几次结果一致，
+    流式增量时才能放心把已经封口的句子拿去合成）：
+    - 遇到句末标点（。！？!?… 换行 ；;）且这一句已攒够 min_chars 字 → 切开；
+    - 一直没遇到标点 → 攒到 max_chars()（上游单次合成上限 300）强制切开；
+    - 末尾不足 min_chars 的残句照常返回，由调用方决定要不要单独合成。
+    """
+    clean = str(text or "").strip()
+    if not clean:
+        return []
+    floor = max(1, int(min_chars or sentence_min_chars()))
+    limit = max(1, max_chars())
+    out: list = []
+    buf = ""
+    for ch in clean:
+        buf += ch
+        if ch in SENTENCE_END_CHARS and len(buf.strip()) >= floor:
+            out.append(buf.strip())
+            buf = ""
+        elif len(buf) >= limit:
+            out.append(buf.strip())
+            buf = ""
+    tail = buf.strip()
+    if tail:
+        out.append(tail)
+    return [item for item in out if item]

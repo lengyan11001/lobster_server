@@ -677,6 +677,35 @@ def _media_saved_assets(
     return out[:12]
 
 
+_PARTIAL_REPLY_MIN_INTERVAL = 0.3
+
+
+def _update_partial_reply_sync(message_id: str, text: str) -> None:
+    """把流式增量写进 reply_text（设备/H5 轮询 reply_text 就能「边说边出字」）。
+
+    只在消息还没终结时写；最终由 _complete_sync 覆盖成清洗后的完整正文。
+    节流由调用方按 _PARTIAL_REPLY_MIN_INTERVAL 负责。
+    """
+    body = str(text or "")
+    if not body:
+        return
+    db = SessionLocal()
+    try:
+        row = db.query(H5ChatMessage).filter(H5ChatMessage.id == message_id).first()
+        if row is None or row.status in _FINAL_STATUSES:
+            return
+        if (row.reply_text or "") == body:
+            return
+        row.reply_text = body
+        row.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.debug("[dispatch-stream] partial reply write failed message=%s", message_id, exc_info=True)
+    finally:
+        db.close()
+
+
 def _complete_sync(
     message_id: str,
     reply: str,
@@ -1072,6 +1101,7 @@ async def _run_job_request(job: MastraChatJob) -> None:
     timeout = httpx.Timeout(connect=8.0, read=900.0, write=30.0, pool=8.0)
     delta_buffer = ""
     last_delta_flush = asyncio.get_running_loop().time()
+    last_partial_flush = 0.0
     final_received = False
     # 已经流式发给用户的正文（用于"final 是占位句但正文已经给过"的情况）
     streamed_parts: List[str] = []
@@ -1091,7 +1121,7 @@ async def _run_job_request(job: MastraChatJob) -> None:
                 observed_media_tasks[task["capability_id"]] = task
 
     async def flush_delta() -> None:
-        nonlocal delta_buffer, last_delta_flush
+        nonlocal delta_buffer, last_delta_flush, last_partial_flush
         if not delta_buffer:
             return
         text = delta_buffer
@@ -1105,6 +1135,15 @@ async def _run_job_request(job: MastraChatJob) -> None:
                 return
             streamed_parts.append(cleaned)
             await _append_event(job.message_id, "delta", {"text": cleaned})
+            # 增量落库：设备/H5 轮询 reply_text 就能「边说边出字」（节流 0.3s）
+            now_ts = asyncio.get_running_loop().time()
+            if now_ts - last_partial_flush >= _PARTIAL_REPLY_MIN_INTERVAL:
+                last_partial_flush = now_ts
+                await asyncio.to_thread(
+                    _update_partial_reply_sync,
+                    job.message_id,
+                    "".join(streamed_parts),
+                )
 
     attempts = _stream_retry_attempts()
     for attempt in range(1, attempts + 1):

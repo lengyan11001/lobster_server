@@ -2,8 +2,8 @@
 
 | 项 | 值 |
 |---|---|
-| 文档版本 | v1.0 |
-| 更新日期 | 2026-10-09 |
+| 文档版本 | v1.1 |
+| 更新日期 | 2026-10-10 |
 | 适用对象 | 智能语音终端等嵌入式设备厂商（示例机型 `ESP32_A1B2C3`） |
 | 服务地址 | `https://bhzn.top`（必须 HTTPS / WSS） |
 | 协议 | WebSocket（`wss://`） + JSON 控制帧 + 16bit PCM 二进制音频帧 |
@@ -178,3 +178,71 @@ auto rep = httpGet(url, bearer(devToken));
 if (rep.reply_audio_url.length()) player.play(rep.reply_audio_url);   // 有音频就播
 else if (rep.reply_text.length()) speaker.tts(rep.reply_text);        // 没音频就本地播报
 ```
+
+
+---
+
+## 11. 流式回复 + 逐句语音（设备 ask，2026-10-10 新增）
+
+原来设备只能「先提交文本，再轮询整段回复」。现在同一条语音 WS 上可以直接发一条 `ask`，
+云端在**模型还在生成**时就把回复增量推回来，并按句返回语音地址 —— 设备可以边收边显示、边收边播。
+
+### 11.1 怎么用
+
+```json
+{"type":"ask","text":"帮我看看今天有什么安排","tts":1,"session_id":"可选，缺省沿用设备默认会话"}
+```
+
+- `text`：要问的内容（必填，空字符串会回 `error`）；
+- `tts`：`1/true/yes/on/y` 才逐句合成语音（费用从绑定该设备的账号扣）；
+- 同一条连接上再发 `ask` 会**取消上一条未完成的流**，以最新一条为准；
+- 连接断开时未完成的流自动取消。
+
+### 11.2 事件（云端 → 设备，按顺序）
+
+| 事件 | 何时到 | 关键字段 |
+|---|---|---|
+| `reply_accepted` | 已送进 AI 调度（拿到 message_id） | `message_id` / `session_id` / `status` / `tts` |
+| `reply_delta` | 正文有新增（通常 0.3~0.5s 内首字） | `seq`（从 1 递增）/ `delta`（本次新增）/ `text`（当前全文）/ `chars` |
+| `reply_audio` | 某一句**已经封口**（≥20 字）且合成成功 | `index`（第几句）/ `text` / `chars` / `credits` / `cached` / `url`（`/api/device/audio/xxx.mp3`）/ `abs_url`（有公网基址时） |
+| `reply_audio_error` | 该句合成失败（文本照常返回） | `index` / `text` / `error` |
+| `reply_audio_full` | 收尾：整段合并音频 | `url` / `abs_url` / `segments` / `chars` |
+| `reply_done` | 本条流结束（成功或失败） | `status` / `text` / `segments` / `credits` / `audio_full_url` / `timeout` |
+| `reply_error` | 提交失败 / 消息不存在 / 异常 / 任务 failed | `message`（`message_id` 可能有） |
+
+约定：
+
+- **首字 < 1.5s**：delta 来自服务端流式落库（节流 0.3s），不是等整段结束；
+- **逐句语音 ≥20 字才合成**：更短的句子不单独合成，会并入收尾的 `reply_audio_full`；
+- **同句只合成一次**：按 `消息ID_句序号` 缓存到 `h5_static/device-audio/tts_*.mp3`，重发不会重复扣费；
+- `reply_audio_full` 是**按序拼接**各句音频（不额外扣费）；整条回复都不足 20 字时改为整段合成一次；
+- 音频地址走 `/api/device/audio/<名>`（无需 token，设备直接 GET 播放即可）。
+
+### 11.3 设备侧伪代码
+
+```c
+ws_send("{\"type\":\"ask\",\"text\":\"今天天气怎么样\",\"tts\":1}");
+while (1) {
+    msg = ws_recv_json();
+    switch (msg.type) {
+    case "reply_delta":       ui_append(msg.delta); break;          // 边收边显示
+    case "reply_audio":       play_url(msg.abs_url ? msg.abs_url : base_url + msg.url); break;
+    case "reply_audio_error": log_warn(msg.error); break;           // 只影响语音，不影响文字
+    case "reply_audio_full":  save_last_audio(msg.url); break;      // 需要重播整段时用
+    case "reply_done":        ui_finish(msg.status); goto done;
+    case "reply_error":       ui_error(msg.message); goto done;
+    default:                  break;
+    }
+}
+done:
+```
+
+> 说明：`seq` 只在本次 `ask` 内递增；`index` 是句序号。设备只要按到达顺序播放即可，
+> 语音与文字不要求帧级对齐（合成有网络耗时）。
+
+### 11.4 与「轮询 `GET /api/device/message/{id}`」的关系
+
+- 老路径不变：`POST /api/device/message` + 长轮询仍然可用（`tts=1` 时整段合成回包）；
+- 新路径只是把同一条回复**增量**推给设备；`reply_text` 现在会在生成过程中逐步更新，
+  轮询侧看到的也是同一份内容（只是粒度粗一些）；
+- H5 / Online 的 `GET /api/h5-chat/messages/{id}/events`（SSE）同样受益：正文变成真流式。

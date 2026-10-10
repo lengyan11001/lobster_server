@@ -114,12 +114,13 @@ def _owner(db: Session, device: Dict[str, Any]) -> User:
     return user
 
 
-def _public_base(request: Request) -> str:
+def public_base(request: Optional[Request] = None) -> str:
     """音频/文件给上游（火山 STT 等）拉取用的公网基址。
 
     必须是对外可访问的地址：nginx 反代时 request.base_url 往往是 127.0.0.1:8000，
     上游拿这个地址去下载音频必然失败（火山报 Invalid audio URI / audio download failed）。
     优先级：环境变量 PUBLIC_BASE_URL / LOBSTER_PUBLIC_BASE_URL → 转发头 → request.base_url。
+    request 传 None（WS / 后台任务）时只走环境变量与 custom_configs，取不到返回 ""。
     """
     for key in ("PUBLIC_BASE_URL", "LOBSTER_PUBLIC_BASE_URL"):
         value = str(os.environ.get(key) or "").strip().rstrip("/")
@@ -131,11 +132,40 @@ def _public_base(request: Request) -> str:
             return cfg
     except Exception:  # noqa: BLE001
         pass
+    if request is None:
+        return ""
     host = str(request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
     proto = str(request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip() or "https"
     if host and "127.0.0.1" not in host and "localhost" not in host:
         return "%s://%s" % (proto, host)
     return str(request.base_url).rstrip("/")
+
+
+def public_base_from_headers(headers: Any, *, default: str = "") -> str:
+    """WebSocket 等没有 Request 的场景：用连接 headers（x-forwarded-host / host）拼公网基址。"""
+    configured = public_base(None)
+    if configured:
+        return configured
+    host = ""
+    proto = "https"
+    try:
+        host = str(headers.get("x-forwarded-host") or headers.get("host") or "").split(",")[0].strip()
+        proto = str(headers.get("x-forwarded-proto") or "https").split(",")[0].strip() or "https"
+    except Exception:  # noqa: BLE001
+        host, proto = "", "https"
+    if host and "127.0.0.1" not in host and "localhost" not in host:
+        return "%s://%s" % (proto, host)
+    return default
+
+
+# 兼容旧调用名
+_public_base = public_base
+
+
+def device_audio_dir() -> Path:
+    """设备音频落地目录（h5_static/device-audio），不存在时自动创建。"""
+    _DEVICE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    return _DEVICE_UPLOAD_DIR
 
 
 def _custom_public_base() -> str:
@@ -166,7 +196,7 @@ def device_message(
         raise HTTPException(status_code=400, detail="缺少 text")
     session_id = str((payload or {}).get("session_id") or "").strip()
     want_tts = _as_flag((payload or {}).get("tts")) or _as_flag(request.query_params.get("tts"))
-    reply = _submit_to_orchestrator(request, db, device, text_in, session_id)
+    reply = submit_to_orchestrator(request, db, device, text_in, session_id)
     if want_tts and reply.get("message_id"):
         _TTS_WANT[str(reply["message_id"])] = True
     return {"ok": True, **reply}
@@ -181,7 +211,7 @@ def _as_flag(value: Any) -> bool:
     return text in ("1", "true", "yes", "on", "y")
 
 
-def _submit_to_orchestrator(request: Request, db: Session, device: Dict[str, Any], content: str,
+def submit_to_orchestrator(request: Any, db: Session, device: Dict[str, Any], content: str,
                             session_id: str = "") -> Dict[str, Any]:
     """把设备文本塞进 AI 调度助手的同一条管线（内部用所属用户的短期 token）。"""
     from .mastra_chat import MastraMessageCreate, create_mastra_message
@@ -207,57 +237,119 @@ def _submit_to_orchestrator(request: Request, db: Session, device: Dict[str, Any
     }
 
 
+# 兼容旧调用名
+_submit_to_orchestrator = submit_to_orchestrator
+
+
 # ---------------- 2) 回复查询（长轮询） ----------------
-def _tts_payload_for_message(*, request, db: Session, row: Any, text: str) -> Dict[str, Any]:
-    """按需合成设备语音回包：同一条消息只合成一次（文件缓存），失败不影响文本返回。"""
+def _safe_audio_key(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isalnum() or ch in "-_")[:64]
+
+
+def synth_and_store_audio(*, db: Session, user_id: int, text: str, cache_key: str,
+                          description: str = "") -> Dict[str, Any]:
+    """合成一段语音并落到 device-audio（按 cache_key 缓存），轮询回包与 WS 逐句语音共用。
+
+    返回 {"audio_url", "credits", "cached"}；失败返回 {"error": "..."}（不抛异常）。
+    费用从「绑定该设备的账号」扣，走 credit_ledger。
+    """
     import urllib.request  # noqa: PLC0415
 
     from ..services import device_tts  # noqa: PLC0415
 
-    name = "tts_%s.mp3" % str(row.id)
-    path = _DEVICE_UPLOAD_DIR / name
+    clean = str(text or "").strip()
+    if not clean:
+        return {"error": "TTS 文本为空"}
+    safe = _safe_audio_key(cache_key)
+    if not safe:
+        return {"error": "TTS 缓存键为空"}
+    name = "tts_%s.mp3" % safe
+    path = device_audio_dir() / name
     if path.exists() and path.stat().st_size > 0:
-        return {"reply_audio_url": "/api/device/audio/" + name, "tts_credits": 0, "tts_cached": True}
-    owner = db.query(User).filter(User.id == int(row.user_id)).first()
+        return {"audio_url": "/api/device/audio/" + name, "credits": 0, "cached": True}
+    owner = db.query(User).filter(User.id == int(user_id)).first()
     if owner is None:
-        return {"reply_audio_url": "", "tts_error": "找不到归属账号"}
+        return {"error": "找不到归属账号"}
     try:
         from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
 
         token, _source = _load_sutui_token_for_stt(db, int(owner.id))
         db.commit()
     except Exception as exc:  # noqa: BLE001
-        return {"reply_audio_url": "", "tts_error": "取速推 token 失败：%s" % str(exc)[:120]}
-    price = device_tts.price_for(text)
+        return {"error": "取速推 token 失败：%s" % str(exc)[:120]}
+    price = device_tts.price_for(clean)
     try:
         device_tts.ensure_balance(db, owner, price)
-        audio_url = device_tts.synthesize(text, token=token)
+        audio_url = device_tts.synthesize(clean, token=token)
         with urllib.request.urlopen(audio_url, timeout=90) as resp:  # noqa: S310
             data = resp.read(20 * 1024 * 1024)
         if not data:
             raise HTTPException(status_code=502, detail="TTS 音频为空")
-        _DEVICE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         charged = device_tts.charge(
             db, owner, price,
-            ref_id=str(row.id),
-            description="设备语音回包(TTS) 消息 #%s，%d 字" % (str(row.id)[:12], len(text)),
+            ref_id=safe,
+            description=description or ("设备语音(TTS) %d 字" % len(clean)),
         )
         db.commit()
-        logger.info("[device] tts ok msg=%s chars=%s credits=%s", str(row.id)[:12], len(text), charged)
+        logger.info("[device] tts ok key=%s chars=%s credits=%s", safe, len(clean), charged)
         return {
-            "reply_audio_url": "/api/device/audio/" + name,
-            "tts_credits": credits_json_float(charged),
-            "tts_cached": False,
+            "audio_url": "/api/device/audio/" + name,
+            "credits": credits_json_float(charged),
+            "cached": False,
         }
     except HTTPException as exc:
         db.rollback()
-        logger.warning("[device] tts failed msg=%s: %s", str(row.id)[:12], str(exc.detail)[:200])
-        return {"reply_audio_url": "", "tts_error": str(exc.detail)[:200]}
+        logger.warning("[device] tts failed key=%s: %s", safe, str(exc.detail)[:200])
+        return {"error": str(exc.detail)[:200]}
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        logger.warning("[device] tts error msg=%s: %s", str(row.id)[:12], str(exc)[:200])
-        return {"reply_audio_url": "", "tts_error": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
+        logger.warning("[device] tts error key=%s: %s", safe, str(exc)[:200])
+        return {"error": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
+
+
+def concat_audio_segments(*, keys: Any, out_key: str) -> str:
+    """按顺序把已落盘的分句音频拼成一个「整段」音频（不再扣费），返回可访问路径。"""
+    safe_out = _safe_audio_key(out_key)
+    if not safe_out:
+        return ""
+    root = device_audio_dir()
+    out_path = root / ("tts_%s.mp3" % safe_out)
+    try:
+        written = 0
+        with open(out_path, "wb") as fh:
+            for key in keys or []:
+                safe = _safe_audio_key(key)
+                if not safe:
+                    continue
+                part = root / ("tts_%s.mp3" % safe)
+                if not part.is_file() or part.stat().st_size <= 0:
+                    continue
+                fh.write(part.read_bytes())
+                written += 1
+        if written and out_path.stat().st_size > 0:
+            return "/api/device/audio/" + out_path.name
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[device] tts merge failed out=%s: %s", safe_out, str(exc)[:200])
+    return ""
+
+
+def _tts_payload_for_message(*, request, db: Session, row: Any, text: str) -> Dict[str, Any]:
+    """按需合成设备语音回包：同一条消息只合成一次（文件缓存），失败不影响文本返回。"""
+    result = synth_and_store_audio(
+        db=db,
+        user_id=int(row.user_id),
+        text=text,
+        cache_key=str(row.id),
+        description="设备语音回包(TTS) 消息 #%s，%d 字" % (str(row.id)[:12], len(str(text or ""))),
+    )
+    if result.get("error"):
+        return {"reply_audio_url": "", "tts_error": result["error"]}
+    return {
+        "reply_audio_url": result.get("audio_url") or "",
+        "tts_credits": result.get("credits", 0),
+        "tts_cached": bool(result.get("cached")),
+    }
 
 
 @router.get("/message/{message_id}", summary="查询设备消息的回复")
@@ -311,18 +403,18 @@ async def device_audio(
     suffix = Path(file.filename or "").suffix.lower() or ".wav"
     if suffix not in (".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".amr", ".pcm", ".silk"):
         suffix = ".wav"
-    _DEVICE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    upload_dir = device_audio_dir()
     name = "dev_%s_%s%s" % (int(device["user_id"]), uuid.uuid4().hex[:12], suffix)
-    path = _DEVICE_UPLOAD_DIR / name
+    path = upload_dir / name
     path.write_bytes(raw)
-    audio_url = _public_base(request) + "/api/device/audio/" + name
+    audio_url = public_base(request) + "/api/device/audio/" + name
     text_out = transcribe_audio_url(db, int(device["user_id"]), audio_url)
     if not text_out:
         raise HTTPException(status_code=502, detail="转写失败或结果为空")
     if transcribe_only:
         return {"ok": True, "text": text_out, "audio_url": audio_url}
     try:
-        reply = _submit_to_orchestrator(request, db, device, text_out, session_id)
+        reply = submit_to_orchestrator(request, db, device, text_out, session_id)
     except HTTPException as exc:
         logger.warning("[device] audio orchestrator HTTP %s: %s", exc.status_code, str(exc.detail)[:300])
         raise
