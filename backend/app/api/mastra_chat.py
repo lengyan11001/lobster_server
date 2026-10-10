@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import io
 import json
@@ -27,8 +28,9 @@ from ..models import (
     ScheduledTaskRun,
     User,
 )
-from .auth import get_current_user
+from .auth import brand_mark_for_jwt_claim, get_current_user
 from .capabilities import _read_capability_catalog_json
+from ..services import ai_identity
 from ..services.device_presence import DEVICE_ONLINE_TTL_SECONDS
 from ..services.h5_chat_sessions import (
     backfill_system_task_session,
@@ -60,6 +62,7 @@ from .publish import SUPPORTED_PLATFORMS
 from .skills import user_can_use_capability
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class MastraAttachment(BaseModel):
@@ -961,6 +964,55 @@ def _recent_chat_text(db: Session, user_id: int, session_id: str, limit: int = 6
     return "\n".join(parts[-8:])
 
 
+def _is_first_session_turn(db: Session, user_id: int, session_id: str) -> bool:
+    """这个会话里此前一条消息都没有 → 视为「初次对话」。"""
+    if not session_id:
+        return False
+    try:
+        return (
+            db.query(H5ChatMessage)
+            .filter(
+                H5ChatMessage.user_id == int(user_id),
+                H5ChatMessage.session_id == str(session_id),
+            )
+            .count()
+            == 0
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _create_identity_reply(db: Session, *, request: Request, body: MastraMessageCreate,
+                           owner: User, session: H5ChatSession, text: str, reply: str) -> H5ChatMessage:
+    """把固定自我介绍作为一条已完成消息落库（不派发模型任务、不计费）。"""
+    now = datetime.utcnow()
+    row = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner.id,
+        session_id=session.id,
+        installation_id=_selected_installation(request, body.installation_id),
+        parent_message_id=None,
+        mode="mastra",
+        queue_mode="normal",
+        queue_priority=0,
+        content=text,
+        attachments=None,
+        status="completed",
+        reply_text=reply,
+        created_at=now,
+        updated_at=now,
+        finished_at=now,
+    )
+    db.add(row)
+    session.last_message_at = now
+    session.updated_at = now
+    _add_event(db, row, "final", {"reply_text": reply, "identity_intro": True})
+    db.commit()
+    db.refresh(row)
+    logger.info("[identity] 固定自我介绍 user=%s session=%s", owner.id, session.id)
+    return row
+
+
 @router.post("/api/mastra-chat/messages", summary="创建 AI 调度会话消息")
 def create_mastra_message(
     body: MastraMessageCreate,
@@ -970,7 +1022,9 @@ def create_mastra_message(
 ):
     owner = online_user_for_mobile_user(db, current_user)
     session = _ensure_chat_session(db, owner.id, body.session_id)
-    content = (body.content or "").strip()
+    # 固定话术只看用户原话，不看后面拼接的能力目录
+    user_text = (body.content or "").strip()
+    content = user_text
     # 工作模式：先把「简要目录」（可用能力 + 我的记忆文件）预取注入，省掉它先调工具问目录的那一轮
     if content and (body.duty_mode or "").strip().lower() != "service":
         content = maybe_attach_brief(content, db, owner.id, str(body.installation_id or ""))
@@ -987,6 +1041,19 @@ def create_mastra_message(
     queue_mode = (body.queue_mode or "normal").strip().lower()
     if queue_mode not in ("normal", "steer"):
         raise HTTPException(status_code=400, detail="queue_mode 必须是 normal 或 steer")
+    # ── 系统级角色（身份）：身份问答 / 会话首次问候 → 固定自我介绍 ──
+    # 不走模型、不计费：这条硬要求不能依赖模型是否听话（Mastra 侧另有同一份身份设定）。
+    if user_text and not attachments:
+        intro = ai_identity.fixed_reply(
+            user_text,
+            brand_mark=brand_mark_for_jwt_claim(getattr(owner, "brand_mark", None)),
+            is_first_turn=_is_first_session_turn(db, owner.id, session.id),
+        )
+        if intro:
+            row = _create_identity_reply(
+                db, request=request, body=body, owner=owner, session=session, text=user_text, reply=intro
+            )
+            return {"ok": True, "message": _serialize_message(row), "events": []}
     # User confirmed via the card and then typed a confirmation again: while the same
     # session already has an executing / just-finished approval, answer with a notice
     # instead of dispatching a second generation (this shipped two images in the past).

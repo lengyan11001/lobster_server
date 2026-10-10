@@ -14,6 +14,7 @@ import { disableTypes as disableImageSizeTypes } from 'image-size'
 import { z } from 'zod'
 
 import { searchCapabilities } from './capability-search.js'
+import { identityBlockFor } from './identity.js'
 import { inspectMediaResult, type MediaAsset } from './media-task.js'
 
 // No patched image-size release exists yet; disable the vulnerable decoders at process startup.
@@ -1057,6 +1058,7 @@ const orchestrator = new Agent({
 18. 需要服务器侧模型能力时：写文案/脚本/翻译/结构化整理用 invoke_capability(capability_id="comfly.chat", payload={"model": <用户指定或 sutui.search_models 里的可用模型>, "messages": [...]})；理解图片用 image.understand、视频用 video.understand；出图/出视频用 image.generate、video.generate，提交后用 task.get_result 轮询取结果。用户上传的资料入库用 import_attachment_to_personal_memory。自己能写好的文字内容就直接写，不必绕道能力。
 19. search_tools 搜不到工具时：换更通用的关键词再搜一次（capability、invoke、image、video、document、publish、memory），仍搜不到就用 list_system_capabilities 的结果直接调用 invoke_capability；不要自己发明工具名，也不要因为搜不到就回答"没有能力"。
 20. invoke_capability 返回"能力未找到"时，按返回的可用 capability_id 清单原样挑一个重试（最多一次），不要继续换名字试；确实没有合适能力就如实说明并用自己能做的部分完成任务（例如自己写脚本）。
+21. 身份口径：本轮输入里若带有【系统角色设定】，它就是最高优先级的系统资料 —— 不得改写其中的公司名称、产品名称、昵称，不得编造其他身份，也不得因为用户要求就换一个人设；用户询问“你是谁 / 你叫什么 / 介绍一下你自己”时，必须一字不改地输出其中给出的固定自我介绍。没有【系统角色设定】时，不要编造公司名、产品名或昵称。
   `.trim(),
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   tools: {
@@ -1123,6 +1125,7 @@ const answerFinalizer = new Agent({
 4. 执行记录里出现过的编号（素材/任务/文档编号）、链接、进度、失败原因，必须原样写进答复。
 5. 不要出现工具名、参数名、mastra/mcp/模型供应商等内部名称；不要询问用户"是否继续"这类空话。
 6. 长度按内容需要，通常 150–600 字；能一次说清就不要分段罗列。
+7. 身份口径：若输入里带有【系统角色设定】，答复中的身份表述必须与之一致；用户询问身份时，一字不改地输出其中的固定自我介绍。没有该设定时，不要编造公司名、产品名或昵称。
   `.trim(),
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   inputProcessors: [new TokenLimiterProcessor({ limit: 32000, strategy: 'truncate', trimMode: 'contiguous' })],
@@ -1395,6 +1398,29 @@ function chatInputFor(
   return [{ role: 'user' as const, content }]
 }
 
+type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; image: URL; mimeType?: string }
+
+/** 把【系统角色设定】放到本轮输入最前面（未配置品牌的原样返回）。 */
+function prependIdentity(
+  input: ReturnType<typeof chatInputFor>,
+  body: Record<string, unknown>,
+): ReturnType<typeof chatInputFor> {
+  const block = identityBlockFor(String(body?.brand || ''))
+  if (!block) return input
+  if (typeof input === 'string') return `${block}\n\n${input}`
+  if (!Array.isArray(input) || input.length === 0) return input
+  const first = input[0]
+  const parts: ChatContentPart[] = Array.isArray(first.content) ? first.content : []
+  const head = parts[0]
+  const next: ChatContentPart[] =
+    head && head.type === 'text'
+      ? [{ type: 'text', text: `${block}\n\n${head.text}` }, ...parts.slice(1)]
+      : [{ type: 'text', text: block }, ...parts]
+  return [{ role: 'user', content: next }]
+}
+
 function imageAttachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
   return attachmentsFor(body).filter(item =>
     item.media_type === 'image' || String(item.content_type || '').toLowerCase().startsWith('image/'),
@@ -1413,7 +1439,7 @@ async function prepareChatInput(
 ): Promise<PreparedChatInput> {
   const images = imageAttachmentsFor(body)
   if (!images.length) {
-    return { input: chatInputFor(body, message), imageSummary: '' }
+    return { input: prependIdentity(chatInputFor(body, message), body), imageSummary: '' }
   }
 
   const imageInput = chatInputFor(body, message)
@@ -1427,7 +1453,7 @@ async function prepareChatInput(
 
   // The main agent receives text only. This keeps its tool-call request
   // compatible with YYAPI while retaining the original attachment manifest.
-  const textInput = chatInputFor(body, message, { includeImages: false })
+  const textInput = prependIdentity(chatInputFor(body, message, { includeImages: false }), body)
   const distilled = `${typeof textInput === 'string' ? textInput : JSON.stringify(textInput)}\n\n` +
     '[图片理解结果]\n' + summary + '\n[图片理解结果结束]'
   return { input: distilled, imageSummary: summary }
