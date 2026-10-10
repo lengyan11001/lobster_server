@@ -62,13 +62,18 @@ _HIFLY_AUDIO_CAPABILITY_ID = "hifly.video.create_by_audio"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
 _QWEN_PROVIDER = "qwen"
-_QWEN_TTS_MODEL = "qwen-audio-3.0-tts-flash"
+# 2026-10-10：上游 qwen-audio-3.0-tts-flash 合成开始稳定返回
+# 400 [cosyvoice:]Engine error [411]: TTS speak operation failed（实测系统音色也失败），
+# 改用现在可用的 qwen3-tts-flash（走多模态 generation 入口）。
+_QWEN_TTS_MODEL = "qwen3-tts-flash"
+_QWEN_TTS_ENDPOINT = "/api/v1/services/aigc/multimodal-generation/generation"
+# 已下线模型家族产出的音色：合成前需按保存的样本重新复刻到当前模型
+_QWEN_LEGACY_VOICE_PREFIXES = ("qwen-tts-vc-", "qwen-audio-3.0-tts-flash-")
 _QWEN_VOICE_ENROLL_MODEL = "voice-enrollment"
 _QWEN_TTS_AUDIO_FORMAT = "mp3"
 _QWEN_TTS_SAMPLE_RATE = 24000
 # 2026-10 起 DashScope 下线 qwen3-tts-vc 系列复刻合成模型（404 Model not exist），
 # 旧音色 ID 需按已保存的样本重新复刻到 qwen-audio-3.0-tts-flash 才能继续合成。
-_QWEN_LEGACY_VOICE_PREFIX = "qwen-tts-vc-"
 _QWEN_DEFAULT_INSTRUCTIONS = "普通话自然口播，语速适中，情绪亲切，像真人日常分享，不要播音腔，不要太夸张。"
 _QWEN_TRANSLATE_MODEL = "gpt-5.4"
 _VOICE_PARAM_PREVIEW_TEXT = "那我来给大家推荐一款T恤，这款呢真的是超级好看，这个颜色呢很显气质，而且呢也是搭配的绝佳单品。"
@@ -646,7 +651,7 @@ async def _qwen_tts_audio(
         body["input"]["instruction"] = instruction_text
     async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
         resp = await client.post(
-            f"{_dashscope_base_url()}/api/v1/services/audio/tts/SpeechSynthesizer",
+            f"{_dashscope_base_url()}{_QWEN_TTS_ENDPOINT}",
             headers=_qwen_headers(),
             json=body,
         )
@@ -855,7 +860,7 @@ async def _preview_tts_audio(
     for index, segment in enumerate(segments):
         if provider == _QWEN_PROVIDER:
             result = await _qwen_tts_audio(
-                voice_id=_qwen_voice_id_from_row(row),
+                voice_id=await _qwen_preview_voice_id(row),
                 text=segment,
                 instructions=instructions,
             )
@@ -2964,7 +2969,8 @@ def _qwen_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: s
 
 
 def _qwen_voice_is_legacy(voice_id: str) -> bool:
-    return str(voice_id or "").strip().lower().startswith(_QWEN_LEGACY_VOICE_PREFIX)
+    cleaned = str(voice_id or "").strip().lower()
+    return cleaned.startswith(_QWEN_LEGACY_VOICE_PREFIXES)
 
 
 def _qwen_legacy_clone_source_url(row: Optional[UserHiflyVoiceAsset]) -> str:
@@ -2977,6 +2983,22 @@ def _qwen_legacy_clone_source_url(row: Optional[UserHiflyVoiceAsset]) -> str:
         elif isinstance(holder, str) and holder.strip().startswith("http"):
             return holder.strip()
     return ""
+
+
+async def _qwen_preview_voice_id(row: UserHiflyVoiceAsset) -> str:
+    """试听用的 voice id：旧版（已下线模型）音色按保存的样本自动重新复刻一次，转成能用的音色。"""
+    voice_id = _qwen_voice_id_from_row(row)
+    if not _qwen_voice_is_legacy(voice_id):
+        return voice_id
+    db = SessionLocal()
+    try:
+        fresh = None
+        row_id = getattr(row, "id", None)
+        if row_id is not None:
+            fresh = db.query(UserHiflyVoiceAsset).filter(UserHiflyVoiceAsset.id == row_id).first()
+        return await _qwen_ensure_voice_id(db, fresh or row, voice_id)
+    finally:
+        db.close()
 
 
 async def _qwen_ensure_voice_id(db: Session, row: Optional[UserHiflyVoiceAsset], fallback_voice: str = "") -> str:

@@ -187,7 +187,8 @@ class Settings(BaseSettings):
     hifly_voice_tts_provider: str = "qwen"
     dashscope_api_key: Optional[str] = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com"
-    qwen_tts_model: str = "qwen-audio-3.0-tts-flash"
+    # 2026-10-10：上游 qwen-audio-3.0-tts-flash 合成开始报 cosyvoice Engine error [411]，
+    qwen_tts_model: str = "qwen3-tts-flash"
     qwen_voice_enroll_model: str = "voice-enrollment"
     hifly_voice_translate_model: str = "gpt-5.4"
     # 预留：大陆 API 转发 Messenger CRUD 至海外（未实现 HTTP 转发时勿依赖）
