@@ -67,6 +67,12 @@ _QWEN_PROVIDER = "qwen"
 # 改用现在可用的 qwen3-tts-flash（走多模态 generation 入口）。
 _QWEN_TTS_MODEL = "qwen3-tts-flash"
 _QWEN_TTS_ENDPOINT = "/api/v1/services/aigc/multimodal-generation/generation"
+# 复刻出来的音色属于 cosyvoice 家族（qwen3-tts-flash 不支持复刻：preprocess service not found），
+# 合成时按 voice id 前缀路由：cosyvoice-* 走 cosyvoice-v2，其它（系统音色）走 qwen3-tts-flash。
+_COSYVOICE_TTS_MODEL = "cosyvoice-v2"
+_COSYVOICE_TTS_ENDPOINT = "/api/v1/services/audio/tts/SpeechSynthesizer"
+_COSYVOICE_CLONE_TARGET_MODEL = "cosyvoice-v2"
+_COSYVOICE_VOICE_PREFIXES = ("cosyvoice-", "cosyvoice_")
 # 已下线模型家族产出的音色：合成前需按保存的样本重新复刻到当前模型
 _QWEN_LEGACY_VOICE_PREFIXES = ("qwen-tts-vc-", "qwen-audio-3.0-tts-flash-")
 _QWEN_VOICE_ENROLL_MODEL = "voice-enrollment"
@@ -379,7 +385,7 @@ def _voice_provider(row: Optional[UserHiflyVoiceAsset]) -> str:
     if str(meta.get("minimax_voice_id") or "").strip():
         return _MINIMAX_PROVIDER
     voice_id = str(row.hifly_voice_id if row else "" or "").strip().lower()
-    if voice_id.startswith(("qwen-", "qwen_", "qwen3-", "qwen3_")):
+    if voice_id.startswith(("qwen-", "qwen_", "qwen3-", "qwen3_")) or voice_id.startswith(_COSYVOICE_VOICE_PREFIXES):
         return _QWEN_PROVIDER
     if voice_id.startswith(("minimax_", "minimax-", "lobster_u")):
         return _MINIMAX_PROVIDER
@@ -599,7 +605,7 @@ async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str, audio_url:
         "model": _qwen_voice_enroll_model(),
         "input": {
             "action": "create_voice",
-            "target_model": _qwen_tts_model(),
+            "target_model": _COSYVOICE_CLONE_TARGET_MODEL,
             "prefix": preferred_name,
             "url": source_url,
         },
@@ -636,8 +642,11 @@ async def _qwen_tts_audio(
     clean_text = str(text or "").strip()
     if not clean_text:
         raise HTTPException(status_code=400, detail="千问语音合成文本不能为空")
+    is_cosyvoice_voice = str(voice_id or "").strip().lower().startswith(_COSYVOICE_VOICE_PREFIXES)
+    tts_model = _COSYVOICE_TTS_MODEL if is_cosyvoice_voice else _qwen_tts_model()
+    tts_endpoint = _COSYVOICE_TTS_ENDPOINT if is_cosyvoice_voice else _QWEN_TTS_ENDPOINT
     body = {
-        "model": _qwen_tts_model(),
+        "model": tts_model,
         "input": {
             "text": clean_text,
             "voice": voice_id,
@@ -651,7 +660,7 @@ async def _qwen_tts_audio(
         body["input"]["instruction"] = instruction_text
     async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
         resp = await client.post(
-            f"{_dashscope_base_url()}{_QWEN_TTS_ENDPOINT}",
+            f"{_dashscope_base_url()}{tts_endpoint}",
             headers=_qwen_headers(),
             json=body,
         )
