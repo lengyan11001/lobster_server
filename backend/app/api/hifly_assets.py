@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import Asset, ShanjianDigitalHumanProfile, User, UserHiflyAvatarAsset, UserHiflyVideoAsset, UserHiflyVoiceAsset
 from .assets import (
     _resolve_asset_public_base,
