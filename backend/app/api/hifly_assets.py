@@ -62,8 +62,13 @@ _HIFLY_AUDIO_CAPABILITY_ID = "hifly.video.create_by_audio"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
 _QWEN_PROVIDER = "qwen"
-_QWEN_TTS_MODEL = "qwen3-tts-vc-2026-01-22"
-_QWEN_VOICE_ENROLL_MODEL = "qwen-voice-enrollment"
+_QWEN_TTS_MODEL = "qwen-audio-3.0-tts-flash"
+_QWEN_VOICE_ENROLL_MODEL = "voice-enrollment"
+_QWEN_TTS_AUDIO_FORMAT = "mp3"
+_QWEN_TTS_SAMPLE_RATE = 24000
+# 2026-10 起 DashScope 下线 qwen3-tts-vc 系列复刻合成模型（404 Model not exist），
+# 旧音色 ID 需按已保存的样本重新复刻到 qwen-audio-3.0-tts-flash 才能继续合成。
+_QWEN_LEGACY_VOICE_PREFIX = "qwen-tts-vc-"
 _QWEN_DEFAULT_INSTRUCTIONS = "普通话自然口播，语速适中，情绪亲切，像真人日常分享，不要播音腔，不要太夸张。"
 _QWEN_TRANSLATE_MODEL = "gpt-5.4"
 _VOICE_PARAM_PREVIEW_TEXT = "那我来给大家推荐一款T恤，这款呢真的是超级好看，这个颜色呢很显气质，而且呢也是搭配的绝佳单品。"
@@ -576,20 +581,22 @@ def _minimax_naturalize_text(text: str) -> str:
     return "<#0.22#>\n".join(out)
 
 
-async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str) -> Dict[str, Any]:
-    if not raw:
+async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str, audio_url: str = "") -> Dict[str, Any]:
+    source_url = str(audio_url or "").strip()
+    if not raw and not source_url:
         raise HTTPException(status_code=400, detail="千问声音复刻上传文件为空")
+    if not source_url:
+        raise HTTPException(status_code=400, detail="声音样本缺少可访问地址，请重新提交克隆")
     media_type = mimetypes.guess_type(filename or "voice.mp3")[0] or "audio/mpeg"
-    audio_b64 = base64.b64encode(raw).decode("ascii")
-    preferred_name = f"lv{uuid.uuid4().hex[:10]}"
+    # DashScope 复刻接口要求 prefix <= 10 个字符
+    preferred_name = f"lv{uuid.uuid4().hex[:8]}"
     body = {
         "model": _qwen_voice_enroll_model(),
         "input": {
-            "action": "create",
+            "action": "create_voice",
             "target_model": _qwen_tts_model(),
-            "preferred_name": preferred_name,
-            "audio": {"data": f"data:{media_type};base64,{audio_b64}"},
-            "language": "zh",
+            "prefix": preferred_name,
+            "url": source_url,
         },
     }
     async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
@@ -597,7 +604,9 @@ async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str) -> Dict[st
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"千问声音复刻失败 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     payload = resp.json() if resp.content else {}
-    voice_id = str(((payload.get("output") or {}) if isinstance(payload, dict) else {}).get("voice") or "").strip()
+    output = payload.get("output") if isinstance(payload, dict) else {}
+    output = output if isinstance(output, dict) else {}
+    voice_id = str(output.get("voice_id") or output.get("voice") or "").strip()
     if not voice_id:
         raise HTTPException(status_code=502, detail=f"千问声音复刻未返回 voice: {str(payload)[:500]}")
     return {
@@ -605,6 +614,8 @@ async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str) -> Dict[st
         "preferred_name": preferred_name,
         "clone_raw": payload,
         "request_body": {k: v for k, v in body.items() if k != "input"},
+        "media_type": media_type,
+        "source_url": source_url,
         "source_filename": filename,
         "source_title": title,
     }
@@ -625,16 +636,17 @@ async def _qwen_tts_audio(
         "input": {
             "text": clean_text,
             "voice": voice_id,
+            "format": _QWEN_TTS_AUDIO_FORMAT,
+            "sample_rate": _QWEN_TTS_SAMPLE_RATE,
             "language_type": language_type or "Chinese",
         },
     }
     instruction_text = _qwen_instructions(instructions)
     if instruction_text:
-        body["input"]["instructions"] = instruction_text
-        body["input"]["optimize_instructions"] = True
+        body["input"]["instruction"] = instruction_text
     async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
         resp = await client.post(
-            f"{_dashscope_base_url()}/api/v1/services/aigc/multimodal-generation/generation",
+            f"{_dashscope_base_url()}/api/v1/services/audio/tts/SpeechSynthesizer",
             headers=_qwen_headers(),
             json=body,
         )
@@ -2312,7 +2324,7 @@ async def create_my_voice_upload(
     file_id_value = str(uploaded["file_id"])
     try:
         if provider == _QWEN_PROVIDER:
-            cloned = await _qwen_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
+            cloned = await _qwen_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value, audio_url=str(uploaded.get("source_url") or ""))
             task_id = f"qwen_voice_{uuid.uuid4().hex}"
             voice_id = str(cloned.get("voice_id") or "").strip()
             clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
@@ -2594,6 +2606,8 @@ async def edit_my_voice_params(
     provider = _voice_provider(row)
     is_minimax_voice = provider == _MINIMAX_PROVIDER
     is_qwen_voice = provider == _QWEN_PROVIDER
+    if is_qwen_voice:
+        await _qwen_ensure_voice_id(db, row, voice_id)
     rate = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
     volume = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
     pitch = _voice_param_text(body.pitch, "0" if (is_minimax_voice or is_qwen_voice) else "1.0", -12.0 if (is_minimax_voice or is_qwen_voice) else 0.1, 12.0 if (is_minimax_voice or is_qwen_voice) else 2.0, "语调")
@@ -2947,6 +2961,64 @@ def _qwen_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: s
     if fallback:
         return fallback
     raise HTTPException(status_code=400, detail="当前声音缺少可用于合成的 voice id，请重新创建声音")
+
+
+def _qwen_voice_is_legacy(voice_id: str) -> bool:
+    return str(voice_id or "").strip().lower().startswith(_QWEN_LEGACY_VOICE_PREFIX)
+
+
+def _qwen_legacy_clone_source_url(row: Optional[UserHiflyVoiceAsset]) -> str:
+    meta = row.meta if row and isinstance(row.meta, dict) else {}
+    for holder in (meta.get("upload_meta"), meta.get("demo_asset"), meta.get("source_asset"), meta.get("source_url")):
+        if isinstance(holder, dict):
+            url = str(holder.get("source_url") or holder.get("url") or "").strip()
+            if url.startswith("http"):
+                return url
+        elif isinstance(holder, str) and holder.strip().startswith("http"):
+            return holder.strip()
+    return ""
+
+
+async def _qwen_ensure_voice_id(db: Session, row: Optional[UserHiflyVoiceAsset], fallback_voice: str = "") -> str:
+    """把已下线的 qwen3-tts-vc 旧音色按保存的样本重新复刻到新模型，返回可合成的新 voice id。"""
+    voice_id = _qwen_voice_id_for_tts(row, fallback_voice)
+    if not _qwen_voice_is_legacy(voice_id):
+        return voice_id
+    if row is None:
+        raise HTTPException(status_code=400, detail="当前声音是旧版音色，请重新录制声音后再提交任务")
+    source_url = _qwen_legacy_clone_source_url(row)
+    if not source_url:
+        raise HTTPException(status_code=400, detail="当前声音是旧版音色，请重新录制声音后再提交任务")
+    cloned = await _qwen_clone_voice(
+        raw=b"",
+        filename=str(row.title or "voice.m4a"),
+        title=str(row.title or ""),
+        audio_url=source_url,
+    )
+    new_voice_id = str(cloned.get("voice_id") or "").strip()
+    if not new_voice_id:
+        raise HTTPException(status_code=502, detail="旧版声音重新复刻失败，请重新录制声音后再提交任务")
+    meta = dict(row.meta or {})
+    meta["qwen_voice_id"] = new_voice_id
+    meta["qwen_legacy_voice_id"] = voice_id
+    meta["qwen_tts_model"] = _qwen_tts_model()
+    meta["qwen_voice_enroll_model"] = _qwen_voice_enroll_model()
+    meta["qwen_voice_remap"] = {
+        "at": datetime.utcnow().isoformat() + "Z",
+        "from": voice_id,
+        "sample_url": source_url,
+        "clone_raw": cloned.get("clone_raw"),
+    }
+    row.meta = meta
+    try:
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("[hifly] 旧版千问音色重新复刻写库失败 voice=%s", voice_id)
+    logger.info("[hifly] qwen 旧版音色已重新复刻 old=%s new=%s", voice_id, new_voice_id)
+    return new_voice_id
 
 
 def _minimax_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: str) -> str:
@@ -3403,7 +3475,7 @@ async def create_my_video_by_tts(
         translation_result = await _translate_tts_text_for_language(body.text.strip(), speech_language)
         if is_qwen_voice:
             instructions = voice_params.get("instructions") or _QWEN_DEFAULT_INSTRUCTIONS
-            tts_voice_id = _qwen_voice_id_for_tts(voice_row, voice_value)
+            tts_voice_id = await _qwen_ensure_voice_id(db, voice_row, voice_value)
             tts_result = await _qwen_tts_audio(
                 voice_id=tts_voice_id,
                 text=translation_result.get("text") or body.text.strip(),
