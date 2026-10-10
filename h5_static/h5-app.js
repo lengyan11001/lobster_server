@@ -16887,12 +16887,25 @@ async function api(path, options = {}) {
       const row = state.recorderDetailRecord;
       const value = kind === "transcript" ? recorderTranscriptText(row) : recorderSummaryText(row);
       if (!value) return toast("当前没有可导出的内容");
+      const baseName = String(row?.display_name || row?.file_name || "音频转写").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80);
+      const filename = `${baseName}-${kind === "transcript" ? "完整转写" : "AI摘要"}.txt`;
+      // APK 里 blob 链接不会触发下载监听：必须走原生桥保存，否则用户点了没反应
+      if (window.LobsterAndroid && typeof window.LobsterAndroid.saveTextFile === "function") {
+        const saved = parseNativeSaveResult(window.LobsterAndroid.saveTextFile(filename, "text/plain", `\uFEFF${value}`));
+        if (saved && saved.ok) {
+          toast("已保存：" + filename);
+          return;
+        }
+        if (saved && !saved.cancelled && saved.error) {
+          toast(saved.error);
+          return;
+        }
+      }
       const blob = new Blob([`\uFEFF${value}`], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-      const baseName = String(row?.display_name || row?.file_name || "音频转写").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80);
       anchor.href = url;
-      anchor.download = `${baseName}-${kind === "transcript" ? "完整转写" : "AI摘要"}.txt`;
+      anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
