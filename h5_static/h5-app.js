@@ -4363,6 +4363,11 @@ async function api(path, options = {}) {
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
       $("workflowNodeNativeWhatsappField")?.classList.toggle("hidden", !showWhatsapp);
+const articleLookup = workflowSelectedNodeLookup();
+const articleKey = String((articleLookup && articleLookup.node && (articleLookup.node.capabilityId || articleLookup.node.key)) || "").trim();
+const showArticleFields = articleKey === "wewrite.article.pipeline";
+const articleField = $("workflowNodeArticleField");
+if (articleField) articleField.classList.toggle("hidden", !showArticleFields);
       $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
       // 精准获客AI 的关键词全部由 AI 生成，不需要用户填、也不从 Online 取，
       // 所以这个节点直接隐藏“精准获客参数”输入框。
@@ -5792,6 +5797,15 @@ async function api(path, options = {}) {
           send_to_draft: workflowParamChecked("workflowParamArticleSendDraft"),
         });
         if (formIdea) plan.payload.idea = formIdea;
+      }
+      const articleFieldEl = $("workflowNodeArticleField");
+      if (articleFieldEl && !articleFieldEl.classList.contains("hidden") && plan && plan.payload && typeof plan.payload === "object") {
+        const pickedOral = [];
+        if ($("workflowNodeArticleOralIndustry") && $("workflowNodeArticleOralIndustry").checked) pickedOral.push("ip_daily_industry_hot_oral");
+        if ($("workflowNodeArticleOralIp") && $("workflowNodeArticleOralIp").checked) pickedOral.push("ip_daily_professional_ip_oral");
+        plan.payload.script_sources = pickedOral.length ? pickedOral : ["ip_daily_industry_hot_oral"];
+        plan.payload.script_source = plan.payload.script_sources[0];
+        plan.payload.send_to_draft = !!($("workflowNodeArticleSendDraft") && $("workflowNodeArticleSendDraft").checked);
       }
       const salesPreset = lookup.optionId != null;
       const scheduledPlan = withWorkflowSchedule(plan, time, endTime);
