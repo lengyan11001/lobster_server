@@ -4531,6 +4531,13 @@ async function api(path, options = {}) {
         + `<div data-article-prefix="${prefix}" data-article-panel="remix" class="${mode === "remix" ? "" : "hidden"}">${articleRemixFieldsHtml(prefix)}</div>`
         + `<div data-article-compose-only="${prefix}" class="${mode === "compose" ? "" : "hidden"}">`
         + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
+        + taskFieldHtml(
+          "写作依据（口播来源）",
+          `<label style="margin-right:14px;"><input id="${prefix}OralIndustry" type="checkbox"> 行业口播</label>`
+          + `<label><input id="${prefix}OralIp" type="checkbox"> IP 口播</label>`
+          + `<div style="font-size:12px;opacity:.7;margin-top:4px;">文章用所选口播来源产出的文案 + 主题来写；都选则每次随机一种。</div>`
+        )
+        + taskFieldHtml("草稿箱", workCheckboxHtml(`${prefix}SendDraft`, "生成后发送到公众号草稿箱（用「公众号文章」里配置好的公众号）", false))
         + articleAdvancedFieldsHtml(prefix)
         + `</div>`
         + `</div>`;
@@ -4638,6 +4645,13 @@ async function api(path, options = {}) {
       return true;
     }
 
+    function articleOralSourcesFromFields(prefix) {
+      const picked = [];
+      if (workflowParamChecked(`${prefix}OralIndustry`)) picked.push("ip_daily_industry_hot_oral");
+      if (workflowParamChecked(`${prefix}OralIp`)) picked.push("ip_daily_professional_ip_oral");
+      return picked.length ? picked : ["ip_daily_industry_hot_oral"];
+    }
+
     function articlePayloadFromFields(prefix) {
       const mode = ARTICLE_FIELD_TABS[prefix] === "remix" ? "remix" : "compose";
       const idea = mode === "remix" ? "" : workflowParamValue(`${prefix}Idea`);
@@ -4664,6 +4678,9 @@ async function api(path, options = {}) {
         selected_image_urls: selectedValues.filter((value) => /^https?:\/\//i.test(String(value || "").trim())),
         selected_asset_ids: selectedValues.filter((value) => !/^https?:\/\//i.test(String(value || "").trim())),
         upload_article_images: workflowParamChecked(`${prefix}UploadArticleImages`),
+        script_sources: articleOralSourcesFromFields(prefix),
+        script_source: articleOralSourcesFromFields(prefix)[0],
+        send_to_draft: workflowParamChecked(`${prefix}SendDraft`),
       };
     }
 
@@ -5577,7 +5594,15 @@ async function api(path, options = {}) {
         if (capabilityId === "comfly.daihuo.pipeline" || capabilityId === "comfly.seedance.tvc.pipeline") {
           payload = { action: "start_pipeline", task_text: prompt, prompt, auto_save: true };
         }
-        if (capabilityId === "wewrite.article.pipeline") payload = { idea: prompt, style: "", include_images: true, image_count: 3, image_aspect_ratio: "16:9" };
+        if (capabilityId === "wewrite.article.pipeline") {
+          const articleNodeParams = node && node.params && typeof node.params === "object" ? node.params : {};
+          const articleNodeOral = (Array.isArray(articleNodeParams.script_sources) ? articleNodeParams.script_sources : [])
+            .filter((value) => value === "ip_daily_industry_hot_oral" || value === "ip_daily_professional_ip_oral");
+          payload = Object.assign(
+            { idea: prompt, style: "", include_images: true, image_count: 3, image_aspect_ratio: "16:9", send_to_draft: !!articleNodeParams.send_to_draft },
+            articleNodeOral.length ? { script_sources: articleNodeOral, script_source: articleNodeOral[0] } : {}
+          );
+        }
         if (capabilityId === "ppt.create") payload = { mode: "ai", topic: prompt, slide_count: 10, instructions: "", language: "zh-CN" };
         if (capabilityId === "comfly.ecommerce.detail_pipeline") payload = { action: "start_pipeline", task_text: prompt, page_count: 12, auto_save: true };
         return buildCapabilityTaskPlan({
