@@ -2191,7 +2191,13 @@
     }
 
     function startMediaDownload(url, filename, mediaKind = "") {
-      const source = String(url || "").trim();
+      let source = String(url || "").trim();
+      // 相对地址补成绝对地址，否则原生下载会判「下载地址无效」
+      if (source.startsWith("/")) source = location.origin + source;
+      if (source.startsWith("blob:")) {
+        toast("该素材还没生成可下载链接，请刷新后重试");
+        return false;
+      }
       const safeName = String(filename || filenameFromUrl(source, "lobster-media")).trim() || "lobster-media";
       if (!source) return false;
       const kind = ["image", "video"].includes(String(mediaKind || "").toLowerCase())
