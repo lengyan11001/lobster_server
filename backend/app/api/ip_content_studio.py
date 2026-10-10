@@ -1450,6 +1450,149 @@ def _response_cache_url(payload: Any) -> str:
     return ""
 
 
+def _strip_trailing_commas(raw: str) -> str:
+    """去掉对象/数组最后一个字段后面的逗号（模型常见手误）。"""
+    return re.sub(r",(\s*[}\]])", r"\1", raw)
+
+
+def _escape_unescaped_inner_quotes(raw: str) -> str:
+    """把「字符串值内部没转义的英文双引号」补上转义。
+
+    模型写中文正文时经常在值里直接写 "干活"、显示"今日任务已完成" —— 这在 JSON 里非法，
+    整段就解析不出来。判定：字符串内部遇到 `"`，向后跳过空白后紧跟 , : } ] 或已到结尾
+    才算字符串结束，否则当成正文里的引号补成 \"。
+    """
+    out: list[str] = []
+    in_string = False
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if not in_string:
+            out.append(ch)
+            if ch == '"':
+                in_string = True
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(raw[i : i + 2])
+            i += 2
+            continue
+        if ch != '"':
+            out.append(ch)
+            i += 1
+            continue
+        j = i + 1
+        while j < n and raw[j] in " \t\r\n":
+            j += 1
+        nxt = raw[j] if j < n else ""
+        if nxt in ("", ",", "}", "]", ":"):
+            out.append(ch)
+            in_string = False
+        else:
+            out.append('\\"')
+        i += 1
+    return "".join(out)
+
+
+def _json_object_from_text(raw: str) -> dict[str, Any]:
+    """按「原样 → 去尾逗号 → 补内层引号 → 截取 {…} 片段」逐个尝试，尽量把模型 JSON 救回来。"""
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    start = text.find("{")
+    end = text.rfind("}")
+    sliced = text[start : end + 1] if start >= 0 and end > start else ""
+    candidates = [text, _strip_trailing_commas(text)]
+    if sliced:
+        candidates.extend([sliced, _strip_trailing_commas(sliced)])
+    escaped = _escape_unescaped_inner_quotes(text)
+    candidates.append(escaped)
+    candidates.append(_strip_trailing_commas(escaped))
+    if sliced:
+        escaped_slice = _escape_unescaped_inner_quotes(sliced)
+        candidates.extend([escaped_slice, _strip_trailing_commas(escaped_slice)])
+    for candidate in candidates:
+        if not candidate or candidate[0] not in "{[":
+            continue
+        try:
+            obj = json.loads(candidate)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return {}
+
+
+_JSON_ENVELOPE_RE = re.compile(r'^\s*[\{\[]\s*[\{\[]?\s*"(?:items|drafts|scripts|records|data)"\s*:', re.S)
+_INNER_BODY_RE = re.compile(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', re.S)
+_INNER_TITLE_RE = re.compile(r'"title"\s*:\s*"((?:[^"\\]|\\.)*)"', re.S)
+
+
+def _looks_like_json_envelope(text: str) -> bool:
+    """这段文本本身是一坨 JSON（{"items": [...]} 之类），不是给人看/发的文案。"""
+    body = (text or "").strip()
+    if not body or body[0] not in "{[":
+        return False
+    head = body[:400]
+    return bool(_JSON_ENVELOPE_RE.match(head)) or '"body"' in body[:2000] or '"items"' in head
+
+
+def _json_unescape(value: str) -> str:
+    try:
+        return json.loads('"%s"' % value)
+    except Exception:  # noqa: BLE001
+        return value.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
+
+
+def _recover_drafts_from_json_text(text: str, count: int) -> list[dict[str, str]]:
+    """从「解析失败 / 已经退化成 JSON 原文」的文本里救出可读文案（宁可少，也绝不发 JSON）。"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    parsed = _json_object_from_text(raw)
+    items: Any = None
+    if parsed:
+        items = parsed.get("items") or parsed.get("drafts") or parsed.get("scripts")
+        if isinstance(items, dict):
+            items = list(items.values())
+    recovered: list[dict[str, str]] = []
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            pieces = [str(item.get(key) or "").strip() for key in ("hook", "body", "cta")]
+            body = "\n\n".join(piece for piece in pieces if piece).strip()
+            if not body:
+                body = str(item.get("full_text") or item.get("text") or "").strip()
+            if len(body) < 10:
+                continue
+            recovered.append(
+                {
+                    "title": str(item.get("title") or "").strip()[:160],
+                    "body": body[:6000],
+                    "image_prompt": "",
+                    "image_prompts": [],
+                }
+            )
+    if recovered:
+        return recovered[:count]
+    bodies = [_json_unescape(match.group(1)).strip() for match in _INNER_BODY_RE.finditer(raw)]
+    titles = [_json_unescape(match.group(1)).strip() for match in _INNER_TITLE_RE.finditer(raw)]
+    for index, body in enumerate(bodies):
+        if len(body) < 10:
+            continue
+        recovered.append(
+            {
+                "title": (titles[index] if index < len(titles) else "")[:160],
+                "body": body[:6000],
+                "image_prompt": "",
+                "image_prompts": [],
+            }
+        )
+    return recovered[:count]
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
     raw = (text or "").strip()
     if not raw:
@@ -1457,20 +1600,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if raw.startswith("```"):
         raw = raw.strip("`")
         raw = raw.replace("json\n", "", 1).replace("JSON\n", "", 1).strip()
-    try:
-        obj = json.loads(raw)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        pass
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start >= 0 and end > start:
-        try:
-            obj = json.loads(raw[start : end + 1])
-            return obj if isinstance(obj, dict) else {}
-        except Exception:
-            return {}
-    return {}
+    return _json_object_from_text(raw)
 
 
 def _public_url(raw: Any) -> str:
@@ -1989,6 +2119,7 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
             "必须给出 3 条贴合该文案但创意明显不同的配图提示，放到 image_prompts 数组；image_prompt 可放第一条或整体摘要。"
             "3 条配图提示要分别从不同场景/主体/隐喻切入，不能只是换视角或换形容词；必须让 3 张图看起来是同主题的三套创意方案。"
             f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
+            "输出必须是合法 JSON：英文双引号只能用于 JSON 结构本身，字符串值内部需要引用时用中文引号“”或「」，不要在值里出现英文双引号，也不要输出 Markdown 代码块。"
         )
     if plat == "douyin":
         return f"生成 {count} 条抖音口播/标题文案，强开头、强节奏、适合评论互动。"
@@ -2018,6 +2149,13 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
             pieces = [x for x in (hook, body, cta) if x]
             full_text = "\n\n".join(pieces) if pieces else _clean_long_text(item.get("full_text") or item.get("text"), 6000)
             full_text = _strip_embedded_image_prompt(full_text, 6000)
+            if full_text and _looks_like_json_envelope(full_text):
+                recovered = _recover_drafts_from_json_text(full_text, 1)
+                if not recovered:
+                    logger.warning("[ip-content] 丢弃一条 JSON 原文草稿（无法还原成文案）")
+                    continue
+                full_text = recovered[0]["body"]
+                title = title or recovered[0]["title"]
             drafts.append(
                 {
                     "title": title or (full_text[:40] if full_text else "未命名文案"),
@@ -2028,6 +2166,15 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
             )
     if not drafts:
         text = fallback_text.strip()
+        if _looks_like_json_envelope(text):
+            recovered = _recover_drafts_from_json_text(text, count)
+            if recovered:
+                logger.warning(
+                    "[ip-content] 模型只回了 JSON 原文，已还原 %d 条文案（不再把 JSON 当文案）", len(recovered)
+                )
+                return recovered[:count]
+            logger.warning("[ip-content] 模型只回了 JSON 原文且无法还原，丢弃本轮草稿")
+            return []
         parts = [p.strip() for p in re.split(r"\n\s*(?:\d+[\.\、]|[-*])\s*", text) if p.strip()]
         if len(parts) <= 1:
             parts = [text] if text else []

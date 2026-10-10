@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 import uuid
@@ -18,6 +19,7 @@ from ..models import IPContentDraftRecord, ScheduledTaskRun, User, UserContentRe
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # 2026-10-05：画布/生成类的图片、视频也落在 user_content_records（kind=image/video/audio），
 # 客户端「内容记录·生成」的图片/视频 tab 现在直接读这个接口；以前这里只放行 article/ppt，
@@ -753,6 +755,21 @@ def request_content_record_publish(
         or item.get("summary"),
         300000,
     )
+    if description:
+        # 兜底：历史上生成失败时会把模型 JSON 原文当文案存下来，这里绝不能再把它发出去
+        from .ip_content_studio import _looks_like_json_envelope, _recover_drafts_from_json_text  # noqa: PLC0415
+
+        if _looks_like_json_envelope(description):
+            recovered = _recover_drafts_from_json_text(description, 1)
+            if not recovered:
+                raise HTTPException(
+                    status_code=400,
+                    detail="这条文案是异常数据（模型返回的 JSON 原文），已拦下未发布；请重新生成文案后再发。",
+                )
+            logger.warning("[content-records] 发布文案疑似 JSON 原文，已还原为正文 user=%s", owner.id)
+            description = recovered[0]["body"]
+            if not title:
+                title = recovered[0]["title"]
     title = _clean_text(body.title or incoming.get("title") or item.get("title"), 500)
     if not description and not title and not image_urls and not image_asset_ids:
         raise HTTPException(status_code=400, detail="The content record has no publishable copy or image")
