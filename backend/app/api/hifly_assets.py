@@ -71,7 +71,11 @@ _QWEN_TTS_ENDPOINT = "/api/v1/services/aigc/multimodal-generation/generation"
 # 合成时按 voice id 前缀路由：cosyvoice-* 走 cosyvoice-v2，其它（系统音色）走 qwen3-tts-flash。
 _COSYVOICE_TTS_MODEL = "cosyvoice-v2"
 _COSYVOICE_TTS_ENDPOINT = "/api/v1/services/audio/tts/SpeechSynthesizer"
-_COSYVOICE_CLONE_TARGET_MODEL = "cosyvoice-v2"
+# 复刻目标模型：qwen-audio-3.1-tts-flash 支持复刻（实测 200），且合成走 SpeechSynthesizer 正常；
+# qwen3-tts-flash 不支持复刻（preprocess service not found），只用于系统音色合成。
+_QWEN31_TTS_MODEL = "qwen-audio-3.1-tts-flash"
+_QWEN31_VOICE_PREFIX = "qwen-audio-3.1-tts-flash-"
+_QWEN_CLONE_TARGET_MODEL = "qwen-audio-3.1-tts-flash"
 _COSYVOICE_VOICE_PREFIXES = ("cosyvoice-", "cosyvoice_")
 # 已下线模型家族产出的音色：合成前需按保存的样本重新复刻到当前模型
 _QWEN_LEGACY_VOICE_PREFIXES = ("qwen-tts-vc-", "qwen-audio-3.0-tts-flash-")
@@ -605,7 +609,7 @@ async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str, audio_url:
         "model": _qwen_voice_enroll_model(),
         "input": {
             "action": "create_voice",
-            "target_model": _COSYVOICE_CLONE_TARGET_MODEL,
+            "target_model": _QWEN_CLONE_TARGET_MODEL,
             "prefix": preferred_name,
             "url": source_url,
         },
@@ -642,9 +646,17 @@ async def _qwen_tts_audio(
     clean_text = str(text or "").strip()
     if not clean_text:
         raise HTTPException(status_code=400, detail="千问语音合成文本不能为空")
-    is_cosyvoice_voice = str(voice_id or "").strip().lower().startswith(_COSYVOICE_VOICE_PREFIXES)
-    tts_model = _COSYVOICE_TTS_MODEL if is_cosyvoice_voice else _qwen_tts_model()
-    tts_endpoint = _COSYVOICE_TTS_ENDPOINT if is_cosyvoice_voice else _QWEN_TTS_ENDPOINT
+    voice_key = str(voice_id or "").strip().lower()
+    is_cosyvoice_voice = voice_key.startswith(_COSYVOICE_VOICE_PREFIXES)
+    is_qwen31_voice = voice_key.startswith(_QWEN31_VOICE_PREFIX)
+    if is_cosyvoice_voice:
+        tts_model, tts_endpoint = _COSYVOICE_TTS_MODEL, _COSYVOICE_TTS_ENDPOINT
+    elif is_qwen31_voice:
+        tts_model, tts_endpoint = _QWEN31_TTS_MODEL, _COSYVOICE_TTS_ENDPOINT
+    else:
+        tts_model, tts_endpoint = _qwen_tts_model(), _QWEN_TTS_ENDPOINT
+    # 只有 qwen3-tts-flash（系统音色）认 instruction；cosyvoice / 3.1 带上会 400
+    supports_instruction = not (is_cosyvoice_voice or is_qwen31_voice)
     body = {
         "model": tts_model,
         "input": {
@@ -656,8 +668,8 @@ async def _qwen_tts_audio(
         },
     }
     instruction_text = _qwen_instructions(instructions)
-    if instruction_text and not is_cosyvoice_voice:
-        # cosyvoice-v2 不支持 instruction 字段（带了直接 400 [cosyvoice]Engine return error code: 428）
+    if instruction_text and supports_instruction:
+        # cosyvoice 带 instruction 会 400 [cosyvoice]Engine 428；3.1 同样只按文本合成
         body["input"]["instruction"] = instruction_text
     async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
         resp = await client.post(
@@ -681,7 +693,7 @@ async def _qwen_tts_audio(
         "audio_url": audio_url,
         "usage": usage,
         "tts_text": clean_text,
-        "instructions": instruction_text if not is_cosyvoice_voice else "",
+        "instructions": instruction_text if supports_instruction else "",
         "request_body": body,
         "raw": {k: v for k, v in payload.items() if k != "output"},
     }
