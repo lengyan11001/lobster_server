@@ -1153,6 +1153,16 @@ body{background:#edf2f7}
         + '<option value="ip_daily_professional_ip_oral"' + (oralPicked.indexOf('ip_daily_professional_ip_oral') >= 0 ? ' selected' : '') + '>IP 口播</option>'
         + '</select></label>');
     }
+    if (p.key === 'wewrite.article.pipeline') {
+      var articleOralPicked = Array.isArray(params.script_sources) && params.script_sources.length
+        ? params.script_sources.map(String)
+        : [String(params.script_source || 'ip_daily_industry_hot_oral')];
+      fields.push('<label class="sw-f">写作依据（口播来源，可多选，都选则每次随机一种）<select class="sw-p" data-k="script_sources" multiple size="2">'
+        + '<option value="ip_daily_industry_hot_oral"' + (articleOralPicked.indexOf('ip_daily_industry_hot_oral') >= 0 ? ' selected' : '') + '>行业口播</option>'
+        + '<option value="ip_daily_professional_ip_oral"' + (articleOralPicked.indexOf('ip_daily_professional_ip_oral') >= 0 ? ' selected' : '') + '>IP 口播</option>'
+        + '</select></label>');
+      fields.push('<label class="sw-f"><span><input type="checkbox" class="sw-p" data-k="send_to_draft"' + (params.send_to_draft === true || params.send_to_draft === 'true' ? ' checked' : '') + '> 生成后发送到公众号草稿箱（用「公众号文章」里配置的公众号）</span></label>');
+    }
     // 抖音采集节点：和 Online 的「精准获客参数」一一对应
     var douyinCollection = p.key === 'douyin_leads' && (p.label.indexOf('关键词') >= 0 || p.label.indexOf('AI') >= 0);
     var douyinAi = douyinCollection && p.label.indexOf('AI') >= 0;
