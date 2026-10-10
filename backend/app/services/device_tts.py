@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
@@ -27,6 +28,7 @@ from .credits_amount import credits_json_float, quantize_credits, user_balance_d
 _DEFAULT_MODEL = "speech-2.8-turbo"
 _DEFAULT_CREDITS_PER_1K = Decimal("20")
 _DEFAULT_MAX_CHARS = 300
+_DEFAULT_TIMEOUT_SECONDS = 45
 _voice_cache: Dict[str, str] = {}
 
 # 逐句 TTS（设备流式回复）：短于这个字数的句子不单独合成
@@ -51,6 +53,51 @@ def max_chars() -> int:
         return max(1, int(os.environ.get("DEVICE_TTS_MAX_CHARS") or _DEFAULT_MAX_CHARS))
     except Exception:  # noqa: BLE001
         return _DEFAULT_MAX_CHARS
+
+
+_MD_NOISE = [
+    (re.compile(r"!\[[^\]]*\]\([^)]*\)"), ""),          # 图片 ![alt](url)
+    (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),      # 链接 [text](url) -> text
+    (re.compile(r"https?://\S+"), ""),                      # 裸链
+    # 先剥强调/行内代码，再做行首规则（否则 "**3.** xxx" 会留下 "3." 念出来）
+    (re.compile(r"(\*\*|__|`{1,3}|~~)"), ""),
+    (re.compile(r"(?<![0-9A-Za-z])\*(?=\S)"), ""),          # 单个 *emphasis*
+    (re.compile(r"^\s{0,3}#{1,6}\s*", re.M), ""),          # 标题 #
+    (re.compile(r"^\s{0,3}>\s?", re.M), ""),               # 引用 >
+    (re.compile(r"^\s{0,3}(?:[-*+]|\d{1,2}[.、)])\s+", re.M), ""),  # 列表项
+    (re.compile(r"[ \t\u00a0]+"), " "),                     # 连续空白
+]
+_EMOJI_RANGES = (
+    (0x1F300, 0x1FAFF),
+    (0x1F000, 0x1F2FF),
+    (0x2600, 0x27BF),
+    (0x2B00, 0x2BFF),
+    (0xFE0F, 0xFE0F),
+    (0x200D, 0x200D),
+    (0x2190, 0x21FF),
+)
+
+
+def _is_noise_char(ch: str) -> bool:
+    code = ord(ch)
+    return any(low <= code <= high for low, high in _EMOJI_RANGES)
+
+
+def clean_for_tts(text: str) -> str:
+    """去掉 Markdown 标记 / 链接 / emoji —— 上游对这些会直接 400，念出来也是噪音。"""
+    body = str(text or "")
+    for pattern, repl in _MD_NOISE:
+        body = pattern.sub(repl, body)
+    body = "".join(ch for ch in body if not _is_noise_char(ch))
+    return " ".join(body.split()).strip()
+
+
+def timeout_seconds() -> float:
+    """单次合成的 HTTP 超时（上游卡住时别把整条流拖死）。"""
+    try:
+        return max(5.0, float(os.environ.get("DEVICE_TTS_TIMEOUT_SECONDS") or _DEFAULT_TIMEOUT_SECONDS))
+    except Exception:  # noqa: BLE001
+        return _DEFAULT_TIMEOUT_SECONDS
 
 
 def credits_per_1k() -> Decimal:
@@ -144,7 +191,7 @@ def synthesize(text: str, *, token: str, voice_id: str = "") -> str:
         raise HTTPException(status_code=502, detail="TTS 音色不可用（请配置 DEVICE_TTS_VOICE_ID）")
     body = {"text": clean[: max_chars()], "voice_id": voice, "model": model_name(), "speed": 1.0}
     try:
-        with httpx.Client(timeout=120) as client:
+        with httpx.Client(timeout=timeout_seconds()) as client:
             resp = client.post(
                 _base() + "/api/v3/minimax/t2a",
                 json=body,

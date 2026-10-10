@@ -257,9 +257,9 @@ def synth_and_store_audio(*, db: Session, user_id: int, text: str, cache_key: st
 
     from ..services import device_tts  # noqa: PLC0415
 
-    clean = str(text or "").strip()
+    clean = device_tts.clean_for_tts(text)
     if not clean:
-        return {"error": "TTS 文本为空"}
+        return {"error": "TTS 文本为空（清洗后）"}
     safe = _safe_audio_key(cache_key)
     if not safe:
         return {"error": "TTS 缓存键为空"}
