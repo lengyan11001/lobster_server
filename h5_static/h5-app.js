@@ -16539,7 +16539,59 @@ async function api(path, options = {}) {
       if (/insufficient|余额不足|积分不足|quota|balance/i.test(raw)) {
         return "生成失败：上游模型余额或额度不足，请稍后切换模型或联系管理员处理。";
       }
+      const article = liveExecutorArticlePayload(run);
+      if (article && article.title) {
+        return `公众号文章已生成：${article.title}`;
+      }
       return raw || runDisplayResult(run) || "任务执行完成。";
+    }
+
+    function liveExecutorArticlePayload(run) {
+      const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const inner = payload.payload && typeof payload.payload === "object" ? payload.payload : payload;
+      const images = inner.image && typeof inner.image === "object" ? inner.image : {};
+      const urls = (Array.isArray(images.urls) ? images.urls : (Array.isArray(inner.image_urls) ? inner.image_urls : []))
+        .map((item) => String(item || "").trim())
+        .filter((item) => /^https?:\/\//i.test(item));
+      const article = {
+        title: String(inner.title || payload.title || "").trim(),
+        markdown: String(inner.markdown || payload.markdown || "").trim(),
+        html: String(inner.html || payload.html || "").trim(),
+        urls,
+        pushStatus: String(inner.push_status || payload.push_status || "").trim(),
+        pushed: inner.pushed === true || payload.pushed === true,
+      };
+      const looksLikeArticle = !!(article.title && (article.markdown || article.html || article.urls.length))
+        || /wewrite|article/i.test(String(payload.capability_id || inner.capability_id || ""));
+      return looksLikeArticle ? article : null;
+    }
+
+    function liveExecutorSafeArticleHtml(html) {
+      return String(html || "")
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+    }
+
+    function liveExecutorArticleHtml(run) {
+      const article = liveExecutorArticlePayload(run);
+      if (!article) return "";
+      const statusText = article.pushed
+        ? "已推送到公众号草稿箱"
+        : (article.pushStatus === "skipped" ? "按节点设置：仅生成本地草稿，未推送" : "已生成，草稿箱未推送成功（检查「公众号文章」里的公众号配置）");
+      const bodyHtml = article.html
+        ? liveExecutorSafeArticleHtml(article.html)
+        : (article.markdown ? `<div class="live-executor-result-pre">${escapeHtml(article.markdown)}</div>` : "");
+      return [
+        article.title ? `<h3 style="margin:0 0 6px;">${escapeHtml(article.title)}</h3>` : "",
+        `<div class="hint">${escapeHtml(statusText)}</div>`,
+        article.urls.length
+          ? `<div style="display:flex;flex-direction:column;gap:8px;margin:10px 0;">${article.urls
+              .map((url) => `<img src="${escapeHtml(url)}" alt="" style="max-width:100%;border-radius:10px;display:block;">`)
+              .join("")}</div>`
+          : "",
+        bodyHtml ? `<div style="line-height:1.75;">${bodyHtml}</div>` : "",
+      ].filter(Boolean).join("");
     }
 
     async function openLiveExecutorTaskResult(taskId) {
@@ -16569,6 +16621,11 @@ async function api(path, options = {}) {
       const run = liveExecutorTaskRun(task);
       if (!run) {
         body.innerHTML = `<div class="live-executor-result-pre">${escapeHtml(task.detail || task.error || "暂未同步到执行结果")}</div>`;
+        return;
+      }
+      const articleHtml = liveExecutorArticleHtml(run);
+      if (articleHtml) {
+        body.innerHTML = articleHtml;
         return;
       }
       const payload = run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
