@@ -86,7 +86,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
     });
   }
-  var state = { submissions: [], subProduct: 0, subStatus: '', subKeyword: '', view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], authMode: 'login', authNotice: '' };
+  var state = { submissions: [], subProduct: 0, subStatus: '', subKeyword: '', subSyncListing: false, view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], listingEditing: null, listingCover: '', listingGallery: [], listingDetail: [], listingSubs: [], listingLoading: false, authMode: 'login', authNotice: '' };
 
   function loginView() {
     if (state.authMode === 'register') {
@@ -144,12 +144,16 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     return '<span class="tag' + (on ? ' on' : '') + '">' + esc(on ? '在售' : (s === 'off_shelf' ? '已下架' : s || '-')) + '</span>';
   }
 
-  function loadProducts() {
+  function productsQueryUrl() {
     var kw = String(state.productKeyword || '').trim();
     var st = String(state.productStatus || '').trim();
-    return jfetch('/api/shop-cms/products?size=100' +
+    return '/api/shop-cms/products?size=100' +
       (kw ? '&keyword=' + encodeURIComponent(kw) : '') +
-      (st ? '&status=' + encodeURIComponent(st) : ''))
+      (st ? '&status=' + encodeURIComponent(st) : '');
+  }
+
+  function loadProducts() {
+    return jfetch(productsQueryUrl())
       .then(function (d) {
         state.products = d.items || [];
         state.productTotal = Number(d.total || state.products.length);
@@ -175,14 +179,18 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 
   function productsView() {
     var rows = state.products.map(function (p) {
+      var listing = p.listing || {};
+      var listingSet = !!(listing.from_listing && ((listing.gallery || []).length || listing.cover));
       return '<tr>' +
-        '<td>' + esc(p.title) + '<div class="muted">' + esc(p.subtitle || '') + '</div></td>' +
+        '<td>' + esc(p.title) + '<div class="muted">' + esc(p.subtitle || '') + '</div>' +
+        '<div class="muted">独立站素材：' + (listingSet ? '已单独设置' : '沿用商家自己上传的图') + '</div></td>' +
         '<td>' + yuan(p.price_cents) + '</td>' +
         '<td>' + (Number(p.commission_bp || 0) / 100) + '%<div class="muted">预计 ' + yuan(p.commission_estimate_cents) + '</div></td>' +
         '<td>' + Number(p.stock || 0) + '</td>' +
-        '<td>' + statusTag(p.status) + '</td>' +
+        '<td>' + statusTag(p.status) + '<div class="muted">' + (p.ready_for_earn ? '可给 online 赚钱用' : '资料未完善') + '</div></td>' +
         '<td>' +
-        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">编辑</button> ' +
+        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">商品资料</button> ' +
+        '<button class="btn mini ghost" data-listing="' + p.id + '" type="button">上架到独立站</button> ' +
         '<button class="btn mini" data-toggle="' + p.id + '" data-on="' + (p.status === 'on_sale' ? '0' : '1') + '" type="button">' + (p.status === 'on_sale' ? '下架' : '上架') + '</button>' +
         '</td></tr>';
     }).join('');
@@ -194,6 +202,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '</tbody></table>',
       '<div style="margin-top:16px"><button class="btn" id="new-product" type="button">新建商品</button></div>',
       state.editing ? productForm(state.editing) : '',
+      state.listingEditing ? listingForm(state.listingEditing) : '',
       '</div>'
     ].join('');
   }
@@ -246,7 +255,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<div><label>关键词</label><input id="f-keywords" value="' + esc(p.keywords || '') + '"></div>',
       '<div><label>状态</label><select id="f-status">' + statusOptions(p.status || 'draft') + '</select></div>',
       '</div>',
-      '<label>商品图片（点下面选图上传，第一张自动作为主图）</label>',
+      '<div class="hint">入口①「商品资料」：标题 / 价格 / 佣金 + <b>商家自己上传的图</b>。这些图是给 online 赚钱、投稿、图片工作台选素材用的原始资料；独立站买家看到的素材在下面「上架到独立站」里单独设置（没设置就沿用这里的图）。</div>',
+      '<label>商品图片（商家自己上传的图，第一张自动作为主图）</label>',
       '<div class="upload"><input type="file" id="f-gallery" accept="image/*" multiple><span class="hint" id="f-gallery-tip">支持 jpg / png / webp / gif，单张不超过 8MB</span></div>',
       '<div class="thumbs">' + thumbsHtml(gallery, 'gallery') + '</div>',
       '<label>细节图（选填，可多张）</label>',
@@ -260,6 +270,160 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<div style="margin-top:14px"><button class="btn" id="save-product" type="button">保存</button> <button class="btn ghost" id="cancel-product" type="button">取消</button></div>',
       '</div>'
     ].join('');
+  }
+
+  // ── 入口②「上架到独立站」：独立站素材（listing_media），与商家自己上传的图分开存 ──
+  function sourceThumbsHtml(p) {
+    var urls = (p.gallery || []).concat(p.detail_images || []);
+    if (!urls.length) return '<div class="muted" style="font-size:12px">商品资料里还没有商家自己上传的图（先去「商品资料」上传）</div>';
+    return '<div class="thumbs">' + urls.slice(0, 12).map(function (u) {
+      return '<div class="thumb"><img src="' + esc(u) + '" alt=""></div>';
+    }).join('') + '</div>';
+  }
+
+  function listingForm(p) {
+    var cover = state.listingCover || '';
+    var gallery = state.listingGallery || [];
+    var detail = state.listingDetail || [];
+    var subs = state.listingSubs || [];
+    var subHtml = state.listingLoading
+      ? '<div class="muted" style="font-size:12px">正在加载这个商品已采纳的投稿素材…</div>'
+      : (subs.length
+        ? '<div class="thumbs">' + subs.map(function (it, i) {
+          var picked = !!cover && cover === it.url;
+          var inGallery = gallery.indexOf(it.url) >= 0;
+          return '<div class="thumb"><img src="' + esc(it.thumb_url || it.preview_url || it.url) + '" alt="">' +
+            '<button class="btn mini' + (picked ? '' : ' ghost') + '" type="button" data-sub-pick="' + i + '">' + (picked ? '当前封面' : '设为封面') + '</button>' +
+            '<button class="btn mini' + (inGallery ? '' : ' ghost') + '" type="button" data-sub-gallery="' + i + '">' + (inGallery ? '已在图集' : '加入图集') + '</button>' +
+            '</div>';
+        }).join('') + '</div>'
+        : '<div class="muted" style="font-size:12px">这个商品还没有已采纳的投稿素材（去「素材投稿」采纳，或勾上「同时设为独立站素材」）。</div>');
+    return [
+      '<div class="panel" style="border-color:var(--brand)"><h3>上架到独立站 · #' + p.id + ' ' + esc(p.title || '') + '</h3>',
+      '<div class="hint">这里存的是<b>独立站买家真正看到的素材</b>（封面 / 图集 / 详情图），跟「商品资料」里商家自己上传的图分开存。商品<b>已上架也能改</b>，保存后店铺页立刻用新素材，不用下架重上。</div>',
+      '<label>独立站封面 URL（留空则用图集第一张）</label>',
+      '<input id="l-cover" value="' + esc(cover) + '" placeholder="https://... 或用下面的本地上传 / 从采纳里选">',
+      '<label>本地上传（只进独立站素材，不动商品资料）</label>',
+      '<div class="upload"><input type="file" id="l-upload" accept="image/*" multiple><span class="hint" id="l-upload-tip">支持 jpg / png / webp / gif，单张不超过 8MB</span></div>',
+      '<label>独立站图集（最多 60 张，第 1 张作封面）</label>',
+      '<div class="thumbs">' + thumbsHtml(gallery, 'listing_gallery') + '</div>',
+      '<label>独立站详情图（选填）</label>',
+      '<div class="thumbs">' + thumbsHtml(detail, 'listing_detail') + '</div>',
+      '<label>从「素材投稿」已采纳的投稿里选</label>',
+      subHtml,
+      '<label>商家自己上传的图（商品资料，只读）</label>',
+      sourceThumbsHtml(p),
+      '<div style="margin-top:16px">',
+      '<button class="btn" id="save-listing" type="button">保存独立站素材</button> ',
+      '<button class="btn ghost" id="copy-source" type="button">一键复制商家自己上传的图</button> ',
+      '<button class="btn ghost" id="cancel-listing" type="button">取消</button>',
+      '</div>',
+      '<div class="hint">「一键复制」= 把商品资料里的封面 / 图集 / 详情图复制成独立站素材；之后商家再改自己的图，独立站素材不会被带着变（要同步就再点一次复制）。</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function loadListingSubs(productId) {
+    state.listingSubs = [];
+    state.listingLoading = true;
+    render();
+    return jfetch('/api/shop-cms/submissions?size=100&status=used&product_id=' + Number(productId || 0))
+      .then(function (d) {
+        state.listingSubs = (d.items || []).filter(function (it) { return String(it.url || '').trim(); });
+      })
+      .catch(function (e) { state.msg = '加载已采纳素材失败：' + e.message; })
+      .then(function () { state.listingLoading = false; render(); });
+  }
+
+  function openListing(p) {
+    var listing = (p || {}).listing || {};
+    state.editing = null;
+    state.listingEditing = p;
+    state.listingCover = String(listing.cover || '');
+    state.listingGallery = (listing.gallery || []).slice();
+    state.listingDetail = (listing.detail_images || []).slice();
+    loadListingSubs(p.id);
+  }
+
+  function uploadListingFiles(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    if (!files.length) return;
+    var tip = $('#l-upload-tip');
+    var chain = Promise.resolve();
+    files.forEach(function (f) {
+      chain = chain.then(function () {
+        return uploadImage(f, tip).then(function (d) {
+          state.listingGallery.push(d.url);
+          if (!state.listingCover) state.listingCover = d.url;
+        });
+      });
+    });
+    chain.then(function () {
+      state.msg = '已上传 ' + files.length + ' 张到独立站素材，记得点「保存独立站素材」';
+      render();
+    }).catch(function (e) { state.msg = '上传失败：' + e.message; render(); });
+  }
+
+  function saveListing(fromSource) {
+    var p = state.listingEditing;
+    if (!p || !p.id) return;
+    var gallery = (state.listingGallery || []).slice();
+    var detail = (state.listingDetail || []).slice();
+    var cover = String(state.listingCover || '').trim();
+    if (!fromSource) {
+      if (cover && gallery.indexOf(cover) < 0) gallery = [cover].concat(gallery);
+      if (!cover && gallery.length) cover = gallery[0];
+      if (!cover) { state.msg = '独立站素材至少要有一张图（本地上传 / 从采纳里选 / 一键复制商家图）'; render(); return; }
+    } else {
+      cover = ''; gallery = []; detail = [];
+    }
+    var btn = $(fromSource ? '#copy-source' : '#save-listing');
+    if (btn) btn.disabled = true;
+    jfetch('/api/shop-cms/products/' + p.id + '/listing', {
+      method: 'POST',
+      body: JSON.stringify({ cover: cover, gallery: gallery, detail_images: detail, from_source: !!fromSource })
+    }).then(function () {
+      state.msg = fromSource ? '已把商家自己上传的图复制成独立站素材' : '已保存独立站素材（上架状态没变）';
+      state.listingEditing = null;
+      state.listingSubs = [];
+      return loadProducts();
+    }).catch(function (e) {
+      if (btn) btn.disabled = false;
+      state.msg = '保存独立站素材失败：' + e.message;
+      render();
+    });
+  }
+
+  function bindListingForm() {
+    if (!state.listingEditing) return;
+    var up = $('#l-upload');
+    if (up) up.addEventListener('change', function () { uploadListingFiles(up); });
+    var lc = $('#l-cover');
+    if (lc) lc.addEventListener('input', function () { state.listingCover = String(lc.value || '').trim(); });
+    var save = $('#save-listing');
+    if (save) save.addEventListener('click', function () { saveListing(false); });
+    var copy = $('#copy-source');
+    if (copy) copy.addEventListener('click', function () { saveListing(true); });
+    var cancel = $('#cancel-listing');
+    if (cancel) cancel.addEventListener('click', function () { state.listingEditing = null; state.listingSubs = []; render(); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-pick]'), function (b) {
+      b.addEventListener('click', function () {
+        var it = (state.listingSubs || [])[Number(b.getAttribute('data-sub-pick'))];
+        if (!it) return;
+        state.listingCover = String(it.url || '');
+        render();
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-gallery]'), function (b) {
+      b.addEventListener('click', function () {
+        var it = (state.listingSubs || [])[Number(b.getAttribute('data-sub-gallery'))];
+        if (!it) return;
+        var url = String(it.url || '');
+        var idx = state.listingGallery.indexOf(url);
+        if (idx >= 0) state.listingGallery.splice(idx, 1); else state.listingGallery.push(url);
+        render();
+      });
+    });
   }
 
   function ordersTable(items) {
@@ -309,11 +473,12 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       + [['', '全部'], ['new', '待处理'], ['used', '已使用'], ['rejected', '已忽略']].map(function (s) {
           return '<option value="' + s[0] + '"' + (state.subStatus === s[0] ? ' selected' : '') + '>' + s[1] + '</option>';
         }).join('') + '</select></div>'
+      + '<div><label>采纳时</label><label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px"><input type="checkbox" id="sub-sync-listing" style="width:auto"' + (state.subSyncListing ? ' checked' : '') + '> 同时设为独立站素材</label></div>'
       + '<div><button class="btn" id="sub-search" type="button">查询</button></div>'
       + '</div>'
       + '<table><thead><tr><th>素材</th><th>标题</th><th>商品</th><th>投稿人</th><th>时间</th><th>状态</th><th>操作</th></tr></thead><tbody>'
       + (rows || '<tr><td colspan="7" class="muted">暂无投稿素材</td></tr>') + '</tbody></table>'
-      + '<div class="hint">未采纳时只能看带水印预览，下载不了；点「采纳」才会从你的积分里扣钱（图片 100 / 视频 300），并把同样积分给投稿人，素材同时进商品素材；采纳后才能下载原素材。</div>'
+      + '<div class="hint">未采纳时只能看带水印预览，下载不了；点「采纳」才会从你的积分里扣钱（图片 100 / 视频 300），并把同样积分给投稿人，素材同时进商品素材；采纳后才能下载原素材。勾上「同时设为独立站素材」，采纳当场就把这条素材写进独立站（上架中的商品也能直接换素材，不用先下架重上）。</div>'
       + '</div>';
   }
 
@@ -365,7 +530,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function loadAll() {
     return Promise.all([
       jfetch('/api/shop-cms/merchants/me'),
-      jfetch('/api/shop-cms/products?size=100'),
+      jfetch(productsQueryUrl()),
       jfetch('/api/shop-cms/orders?size=50'),
       jfetch('/api/shop-cms/commissions/summary')
     ]).then(function (r) {
@@ -501,7 +666,10 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       b.addEventListener('click', function () {
         var kind = b.getAttribute('data-img-del');
         var idx = Number(b.getAttribute('data-img-index'));
-        var list = kind === 'detail_images' ? state.formDetailImages : state.formGallery;
+        var list = kind === 'detail_images' ? state.formDetailImages
+          : kind === 'listing_gallery' ? state.listingGallery
+            : kind === 'listing_detail' ? state.listingDetail
+              : state.formGallery;
         list.splice(idx, 1);
         render();
       });
@@ -520,7 +688,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function bindApp() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) {
       b.addEventListener('click', function () {
-        state.view = b.getAttribute('data-view'); state.editing = null; state.msg = '';
+        state.view = b.getAttribute('data-view'); state.editing = null; state.listingEditing = null; state.msg = '';
         if (state.view === 'submissions') { loadSubmissions().then(render).catch(function (e) { state.msg = '加载失败：' + e.message; render(); }); return; }
         render();
       });
@@ -556,17 +724,20 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     var np = $('#new-product');
     if (np) np.addEventListener('click', function () {
       state.formGallery = []; state.formDetailImages = [];
+      state.listingEditing = null;
       state.editing = { status: 'draft', commission_bp_own: 1000 };
       render();
     });
     bindProductForm();
+    bindListingForm();
     Array.prototype.forEach.call(document.querySelectorAll('[data-sub-accept]'), function (b) {
       b.addEventListener('click', function () {
         var id = Number(b.getAttribute('data-sub-accept'));
         b.disabled = true;
-        jfetch('/api/shop-cms/submissions/' + id + '/accept', { method: 'POST', body: JSON.stringify({}) })
-          .then(function (d) { state.msg = '已采纳：扣 ' + Number(d.charged_credits || 0) + ' 积分（余额 ' + Number(d.credits_balance || 0) + '），素材已进商品素材'; return jfetch('/api/shop-cms/merchants/me').then(function (m) { state.credits = m.credits || 0; state.me = m.merchant; }); })
-          .then(function () { return Promise.all([loadSubmissions(), jfetch('/api/shop-cms/products?size=100').then(function (d) { state.products = d.items || []; })]); })
+        var syncListing = !!state.subSyncListing;
+        jfetch('/api/shop-cms/submissions/' + id + '/accept' + (syncListing ? '?sync_listing=true' : ''), { method: 'POST', body: JSON.stringify({}) })
+          .then(function (d) { state.msg = '已采纳：扣 ' + Number(d.charged_credits || 0) + ' 积分（余额 ' + Number(d.credits_balance || 0) + '），素材已进商品素材' + (syncListing ? '，并已写进独立站素材（不用下架重上）' : ''); return jfetch('/api/shop-cms/merchants/me').then(function (m) { state.credits = m.credits || 0; state.me = m.merchant; }); })
+          .then(function () { return Promise.all([loadSubmissions(), jfetch(productsQueryUrl()).then(function (d) { state.products = d.items || []; })]); })
           .then(render)
           .catch(function (e) { b.disabled = false; state.msg = '采纳失败：' + e.message; render(); });
       });
@@ -599,6 +770,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       state.subStatus = st ? st.value : '';
       loadSubmissions().then(render).catch(function (e) { state.msg = '加载失败：' + e.message; render(); });
     });
+    var ssl = $('#sub-sync-listing');
+    if (ssl) ssl.addEventListener('change', function () { state.subSyncListing = !!ssl.checked; });
     var cp = $('#cancel-product');
     if (cp) cp.addEventListener('click', function () { state.editing = null; render(); });
     Array.prototype.forEach.call(document.querySelectorAll('[data-edit]'), function (b) {
@@ -606,9 +779,18 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         var id = Number(b.getAttribute('data-edit'));
         var found = state.products.filter(function (p) { return p.id === id; })[0] || null;
         state.editing = found;
+        state.listingEditing = null;
         state.formGallery = found && found.gallery ? found.gallery.slice() : [];
         state.formDetailImages = found && found.detail_images ? found.detail_images.slice() : [];
         render();
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-listing]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-listing'));
+        var found = state.products.filter(function (p) { return p.id === id; })[0] || null;
+        if (!found) return;
+        openListing(found);
       });
     });
     Array.prototype.forEach.call(document.querySelectorAll('[data-toggle]'), function (b) {

@@ -162,72 +162,157 @@
       document.body.dataset.storeError = 'missing_slug';
       return Promise.resolve();
     }
-    return api('/api/shop/store/' + encodeURIComponent(slug)).then(function (data) {
-      var store = data.store || {};
-      var items = data.items || [];
-      var theme = data.theme || {};
-      applyTheme(data.theme_css, theme);
-      document.title = (store.company_name || '独立站') + ' · 独立商城';
-      document.body.dataset.slug = store.slug || slug;
+    var params = new URLSearchParams(location.search);
+    var state = {
+      keyword: (params.get('keyword') || '').trim(),
+      category: (params.get('category') || '').trim(),
+      sort: (params.get('sort') || 'heat').trim(),
+      page: 1,
+      size: 60
+    };
+    var currentSlug = slug;
 
-      var intro = String(store.intro || '').split(/\n+/).filter(Boolean);
-      var hero = [
-        '<section class="hero"><div class="art"></div><div class="inner">',
-        '<div class="kicker">INDEPENDENT STORE</div>',
-        '<h1>' + esc(store.company_name || '独立商城') + '</h1>',
-        intro.length ? '<p class="lede">' + esc(intro[0]) + '</p>' : '<p class="lede">商家直发 · 平台担保 · 推广者按单计佣</p>',
-        '<div class="cta"><a class="btn" href="#goods">立即选购</a><a class="btn line" href="#story">了解店铺</a></div>',
-        '</div>',
-        store.banner_url ? '<img class="banner" src="' + attr(store.banner_url) + '" alt="">' : '',
-        '</section>'
-      ].join('');
+    function syncUrl() {
+      try {
+        var p = new URLSearchParams();
+        p.set('slug', currentSlug);
+        if (state.keyword) p.set('keyword', state.keyword);
+        if (state.category) p.set('category', state.category);
+        if (state.sort && state.sort !== 'heat') p.set('sort', state.sort);
+        history.replaceState(null, '', location.pathname + '?' + p.toString());
+      } catch (e) { /* 忽略 */ }
+    }
 
-      var hot = items.slice(0, 3);
-      var hotSection = hot.length ? [
-        '<section id="hot"><div class="title"><h2>热销精选</h2><span>Hot · ' + hot.length + ' items</span></div>',
-        '<div class="grid">' + hot.map(cardHtml).join('') + '</div></section>'
-      ].join('') : '';
+    function filterBar(categories) {
+      var catOptions = ['<option value="">全部类目</option>'].concat(categories.map(function (c) {
+        return '<option value="' + attr(c) + '"' + (c === state.category ? ' selected' : '') + '>' + esc(c) + '</option>';
+      })).join('');
+      var sortOptions = [['heat', '按热度'], ['new', '按最新'], ['price_asc', '价格从低到高'], ['price_desc', '价格从高到低']].map(function (it) {
+        return '<option value="' + it[0] + '"' + (state.sort === it[0] ? ' selected' : '') + '>' + it[1] + '</option>';
+      }).join('');
+      var dirty = !!(state.keyword || state.category || state.sort !== 'heat');
+      return '<form id="store-filter" class="filters" data-store-filter="1">' +
+        '<input id="store-q" placeholder="搜商品名 / 关键词，回车或点筛选" value="' + attr(state.keyword) + '">' +
+        '<select id="store-cat">' + catOptions + '</select>' +
+        '<select id="store-sort">' + sortOptions + '</select>' +
+        '<button class="btn" type="submit">筛选</button>' +
+        (dirty ? '<button class="btn line" type="button" id="store-reset">重置</button>' : '') +
+        '</form>';
+    }
 
-      var story = [
-        '<section id="story"><div class="title"><h2>店铺介绍</h2><span>Why us</span></div>',
-        '<div class="story"><div class="art"></div><div>',
-        intro.length
-          ? intro.map(function (t) { return '<p>' + esc(t) + '</p>'; }).join('')
-          : '<p>本店商品由 ' + esc(store.company_name || '商家') + ' 直发，价格与佣金以商家后台配置为准。</p>',
-        '<p class="gold">本店由 shop.bhzn.top 提供独立站能力，主题风格：' + esc(theme.label || theme.preset || '默认') + '。</p>',
-        '</div></div></section>'
-      ].join('');
+    function load(scrollToGoods) {
+      var url = '/api/shop/store/' + encodeURIComponent(slug) +
+        '?sort=' + encodeURIComponent(state.sort) + '&page=' + state.page + '&size=' + state.size +
+        (state.keyword ? '&keyword=' + encodeURIComponent(state.keyword) : '') +
+        (state.category ? '&category=' + encodeURIComponent(state.category) : '');
+      return api(url).then(function (data) {
+        var store = data.store || {};
+        var items = data.items || [];
+        var theme = data.theme || {};
+        var categories = data.categories || [];
+        var total = Number(data.total == null ? items.length : data.total);
+        applyTheme(data.theme_css, theme);
+        document.title = (store.company_name || '独立站') + ' · 独立商城';
+        document.body.dataset.slug = store.slug || slug;
+        currentSlug = store.slug || slug;
 
-      var trust = [
-        '<div class="trust">',
-        '<div><b>平台担保</b>订单由 shop.bhzn.top 承接</div>',
-        '<div><b>7 天无理由</b>不影响二次销售可退</div>',
-        '<div><b>到付 / 线下</b>当前下单通道，商家联系发货</div>',
-        '<div><b>佣金透明</b>推广者按订单实付计佣</div>',
-        '</div>'
-      ].join('');
+        var intro = String(store.intro || '').split(/\n+/).filter(Boolean);
+        var hero = [
+          '<section class="hero"><div class="art"></div><div class="inner">',
+          '<div class="kicker">INDEPENDENT STORE</div>',
+          '<h1>' + esc(store.company_name || '独立商城') + '</h1>',
+          intro.length ? '<p class="lede">' + esc(intro[0]) + '</p>' : '<p class="lede">商家直发 · 平台担保 · 推广者按单计佣</p>',
+          '<div class="cta"><a class="btn" href="#goods">立即选购</a><a class="btn line" href="#story">了解店铺</a></div>',
+          '</div>',
+          store.banner_url ? '<img class="banner" src="' + attr(store.banner_url) + '" alt="">' : '',
+          '</section>'
+        ].join('');
 
-      var all = [
-        '<section id="goods"><div class="title"><h2>全部商品</h2><span>All · ' + items.length + ' items</span></div>',
-        items.length ? '<div class="grid">' + items.map(cardHtml).join('') + '</div>' : '<div class="empty"><b>该店铺暂无上架商品</b></div>',
-        trust,
-        '</section>'
-      ].join('');
+        var filtered = !!(state.keyword || state.category || state.sort !== 'heat');
+        var hot = filtered ? [] : items.slice(0, 3);
+        var hotSection = hot.length ? [
+          '<section id="hot"><div class="title"><h2>热销精选</h2><span>Hot · ' + hot.length + ' items</span></div>',
+          '<div class="grid">' + hot.map(cardHtml).join('') + '</div></section>'
+        ].join('') : '';
 
-      root.innerHTML = hero + hotSection + story + all;
-      document.body.dataset.storeReady = JSON.stringify({
-        slug: store.slug || slug,
-        company_name: store.company_name || '',
-        preset: theme.preset || '',
-        items: items.length,
-        first_title: items.length ? items[0].title : '',
-        first_href: items.length ? withRef('/p/' + items[0].id) : ''
+        var story = [
+          '<section id="story"><div class="title"><h2>店铺介绍</h2><span>Why us</span></div>',
+          '<div class="story"><div class="art"></div><div>',
+          intro.length
+            ? intro.map(function (t) { return '<p>' + esc(t) + '</p>'; }).join('')
+            : '<p>本店商品由 ' + esc(store.company_name || '商家') + ' 直发，价格与佣金以商家后台配置为准。</p>',
+          '<p class="gold">本店由 shop.bhzn.top 提供独立站能力，主题风格：' + esc(theme.label || theme.preset || '默认') + '。</p>',
+          '</div></div></section>'
+        ].join('');
+
+        var trust = [
+          '<div class="trust">',
+          '<div><b>平台担保</b>订单由 shop.bhzn.top 承接</div>',
+          '<div><b>7 天无理由</b>不影响二次销售可退</div>',
+          '<div><b>到付 / 线下</b>当前下单通道，商家联系发货</div>',
+          '<div><b>佣金透明</b>推广者按订单实付计佣</div>',
+          '</div>'
+        ].join('');
+
+        var all = [
+          '<section id="goods"><div class="title"><h2>' + (filtered ? '筛选结果' : '全部商品') + '</h2><span>共 ' + total + ' 个商品</span></div>',
+          filterBar(categories),
+          items.length ? '<div class="grid">' + items.map(cardHtml).join('') + '</div>' : '<div class="empty"><b>' + (filtered ? '没有符合条件的商品' : '该店铺暂无上架商品') + '</b></div>',
+          trust,
+          '</section>'
+        ].join('');
+
+        root.innerHTML = hero + hotSection + story + all;
+        document.body.dataset.storeReady = JSON.stringify({
+          slug: store.slug || slug,
+          company_name: store.company_name || '',
+          preset: theme.preset || '',
+          items: items.length,
+          total: total,
+          first_title: items.length ? items[0].title : '',
+          first_href: items.length ? withRef('/p/' + items[0].id) : ''
+        });
+        document.body.dataset.storeFilter = JSON.stringify({
+          keyword: state.keyword,
+          category: state.category,
+          sort: state.sort,
+          total: total,
+          categories: categories
+        });
+
+        var form = document.getElementById('store-filter');
+        if (form) {
+          form.addEventListener('submit', function (ev) {
+            ev.preventDefault();
+            var q = document.getElementById('store-q');
+            var cat = document.getElementById('store-cat');
+            var sortEl = document.getElementById('store-sort');
+            state.keyword = q ? String(q.value || '').trim() : '';
+            state.category = cat ? String(cat.value || '') : '';
+            state.sort = sortEl ? String(sortEl.value || 'heat') : 'heat';
+            state.page = 1;
+            syncUrl();
+            load(true);
+          });
+          var reset = document.getElementById('store-reset');
+          if (reset) reset.addEventListener('click', function () {
+            state.keyword = ''; state.category = ''; state.sort = 'heat'; state.page = 1;
+            syncUrl();
+            load(true);
+          });
+        }
+        if (scrollToGoods) {
+          var box = document.getElementById('goods');
+          if (box && box.scrollIntoView) box.scrollIntoView({ block: 'start' });
+        }
+        if (loadRef().code) trackClick(items.length ? items[0].id : 0);
+      }).catch(function (e) {
+        root.innerHTML = emptyState('店铺加载失败', e.message);
+        document.body.dataset.storeError = e.message;
       });
-      if (loadRef().code) trackClick(items.length ? items[0].id : 0);
-    }).catch(function (e) {
-      root.innerHTML = emptyState('店铺加载失败', e.message);
-      document.body.dataset.storeError = e.message;
-    });
+    }
+
+    return load(false);
   }
 
   // ── 商品详情页 ──
