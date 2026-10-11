@@ -8,12 +8,15 @@
   wan2.7-videoedit 720P = 0.6 元/秒、1080P = 1 元/秒（华北2 北京，50 秒免费额度，失败不计费）。
   计费公式：计费秒数 = 输入秒数 + 输出秒数。
 - TikHub：我们每天采集的 10 个抖音榜单端点，每个 0.001 USD，合计 0.01 USD/天（≈0.075 元/天）；
-  做同款取原视频 fetch_one_video_v2 = 0.001 USD/次；**榜单搜索走本地快照，零上游成本**。
+  做同款取原视频 fetch_one_video_v2 = 0.001 USD/次；
+  **2026-10-11 起：信息台搜索默认改成拿用户关键词实时问 TikHub**（`POST /api/v1/douyin/search/fetch_video_search_v2`，
+  0.01 USD/次 ≈ 7.5 算力/次，按关键词个数计次）；`source=snapshot` 的本地快照搜索仍是零上游成本。
 
 我方定价（都可用环境变量改）：
 - 做同款：credits = ceil(输入+输出秒数) × 单价(0.6 元/秒) × 100 算力/元 × 倍率(1.5)
   → 15 秒片 ≈ 2700 算力（27 元），5 秒片 ≈ 900 算力（9 元）。失败全额退（上游也不计费）。
-- 搜索：DOUYIN_DESK_SEARCH_CREDITS 默认 1 算力/次（0 = 免费）。
+- 搜索：TikHub 实时搜索按上游价 7.5 算力/次（0.01 USD × 7.5 × 100）扣费，实际扣 = 单价 × 调用次数；
+  本地快照搜索（source=snapshot）按 DOUYIN_DESK_SEARCH_CREDITS，默认 1 算力/次（0 = 免费）。
 """
 from __future__ import annotations
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import desc
@@ -14,7 +15,9 @@ from ..services.credits_amount import credits_json_float
 from ..services import douyin_desk_billing as billing
 from ..services.douyin_imitation_video import (_max_seconds, fetch_video_bytes, prepare_imitation,
                                               query_imitation, store_generated_video)
-from ..services.douyin_platform_information_desk import information_desk_response, search_information_desk
+from ..services.douyin_platform_information_desk import (VIDEO_SEARCH_MAX_KEYWORDS, information_desk_response,
+                                                        search_information_desk, search_tikhub_douyin_videos,
+                                                        tikhub_video_search_price)
 from ..services.user_feature_flags import (
     DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
     DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
@@ -297,19 +300,77 @@ async def get_information_desk_imitation(
     return result
 
 
-@router.get("/api/douyin/platform-information-desk/search", summary="按关键词搜自己关注的榜单数据")
-def search_douyin_platform_information_desk(
+@router.get("/api/douyin/platform-information-desk/search", summary="按关键词搜抖音（默认实时走 TikHub）")
+async def search_douyin_platform_information_desk(
     q: str = Query(..., min_length=1, max_length=120, description="关键词，逗号 / 空格分隔多个"),
     limit: int = Query(60, ge=1, le=200),
-    days: int = Query(7, ge=1, le=30, description="检索最近几天的榜单快照（默认 7 天）"),
+    days: int = Query(7, ge=1, le=30, description="snapshot 模式：检索最近几天的榜单快照"),
+    source: str = Query("tikhub", description="tikhub=实时搜抖音（TikHub，按次计费）；snapshot=只搜服务端已入库快照"),
+    sort_type: str = Query("0", description="0 综合 / 1 最多点赞 / 2 最新发布（tikhub 模式）"),
+    publish_time: str = Query("0", description="0 不限 / 1 最近一天 / 7 最近一周 / 180 最近半年（tikhub 模式）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """只检索服务器已入库的最新快照（内容榜 + 热点榜），不再额外请求 TikHub。"""
+    """2026-10-11：搜索改成「拿用户关键词实时问 TikHub」，而不是只翻服务端当天快照。
+
+    - tikhub（默认）：`POST /api/v1/douyin/search/fetch_video_search_v2`，每个关键词 1 次请求（0.01 USD/次），
+      按上游真实成本扣费（≈7.5 算力/次）；结果自带 aweme_id，卡片上可以直接「跟创」。
+    - snapshot：沿用本地已入库快照（1 算力/次），作为上游不可用时的兜底。
+    """
     _require_information_desk_access(current_user, db)
     keywords = [part for part in q.replace(",", " ").replace("，", " ").split(" ") if part.strip()]
-    charged = billing.deduct(db, current_user, billing.search_credits(), reason="douyin_desk_search")
-    payload = search_information_desk(db, keywords, limit, days)
-    payload["billing"] = {"credits_charged": credits_json_float(charged),
-                          "unit_price_credits": credits_json_float(billing.search_credits())}
+    mode = "snapshot" if str(source or "").strip().lower() == "snapshot" else "tikhub"
+
+    if mode == "snapshot":
+        charged = billing.deduct(db, current_user, billing.search_credits(), reason="douyin_desk_search")
+        payload = search_information_desk(db, keywords, limit, days)
+        payload["source"] = "snapshot"
+        payload["billing"] = {"credits_charged": credits_json_float(charged),
+                              "unit_price_credits": credits_json_float(billing.search_credits())}
+        return payload
+
+    price = tikhub_video_search_price()
+    per_call = Decimal(str(price.get("lobster_credits") or 0))
+    cap = min(VIDEO_SEARCH_MAX_KEYWORDS, max(1, len(keywords)))
+    billing.check_balance(db, current_user, per_call * cap)      # 先确认余额够，别白跑上游
+    live = await search_tikhub_douyin_videos(keywords, limit=limit, sort_type=sort_type, publish_time=publish_time)
+    calls = int(live.get("calls") or 0)
+
+    if calls <= 0:
+        # 没配 TIKHUB_API_KEY / 关键词为空：回退本地快照，别让用户点了没反应
+        charged = billing.deduct(db, current_user, billing.search_credits(), reason="douyin_desk_search")
+        payload = search_information_desk(db, keywords, limit, days)
+        payload["source"] = "snapshot"
+        payload["notice"] = "；".join(str(item) for item in (live.get("errors") or [])) or "TikHub 不可用，已回退本地快照"
+        payload["billing"] = {"credits_charged": credits_json_float(charged),
+                              "unit_price_credits": credits_json_float(billing.search_credits())}
+        return payload
+
+    charged = billing.deduct(db, current_user, per_call * calls, reason="douyin_desk_search_tikhub")
+    payload = {
+        "source": "tikhub",
+        "endpoint": live.get("endpoint"),
+        "keywords": live.get("keywords"),
+        "snapshot_date": None,
+        "days": days,
+        "count": int(live.get("count") or 0),
+        "items": live.get("items") or [],
+        "provider_calls": calls,
+        "provider_cost_usd": live.get("provider_cost_usd"),
+        "errors": live.get("errors") or [],
+        "paging": live.get("paging") or {},
+    }
+    if not payload["items"]:
+        # 抖音搜不到：拿本地快照给推荐词 + 当天热榜兜底（本地检索不额外花钱）
+        local = search_information_desk(db, keywords, limit, days)
+        payload["snapshot_date"] = local.get("snapshot_date")
+        payload["fallback_items"] = local.get("fallback_items") or []
+        payload["suggestions"] = local.get("suggestions") or []
+        payload["fallback_reason"] = "抖音实时搜索没有匹配「%s」的作品" % "、".join(live.get("keywords") or keywords)
+    payload["billing"] = {
+        "credits_charged": credits_json_float(charged),
+        "unit_price_credits": credits_json_float(per_call),
+        "provider_calls": calls,
+        "provider_cost_usd": live.get("provider_cost_usd"),
+    }
     return payload

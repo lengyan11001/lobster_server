@@ -569,6 +569,190 @@ def _match_text(item: dict[str, Any]) -> str:
 SEARCH_DEFAULT_DAYS = 7
 
 
+# 关键词实时搜抖音：拿用户输入的关键词直接问 TikHub（fetch_video_search_v2，0.01 USD/次）。
+# 2026-10-11 实测：body 里 cursor 是 integer，sort_type/publish_time/filter_duration/content_type 是 string；
+# 作品藏在 data.business_data[].data.aweme_info。
+TIKHUB_VIDEO_SEARCH_PATH = "/api/v1/douyin/search/fetch_video_search_v2"
+VIDEO_SEARCH_MAX_KEYWORDS = 3          # 每个关键词 1 次 TikHub 请求（0.01 USD），最多 3 个词
+VIDEO_SEARCH_LIMIT = 60
+
+
+def tikhub_video_search_price() -> dict[str, Any]:
+    """关键词搜视频的单价（算力/次），给接口层做扣费与余额预检。"""
+    return tikhub_price_breakdown("douyin_video_search", TIKHUB_VIDEO_SEARCH_PATH)
+
+
+def _video_search_cards(payload: Any) -> list[dict[str, Any]]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    cards = data.get("business_data") if isinstance(data, dict) else None
+    if isinstance(cards, list):
+        return [card for card in cards if isinstance(card, dict)]
+    return [row for row in _extract_items(payload) if isinstance(row, dict)]
+
+
+def _video_search_awemes(payload: Any) -> list[dict[str, Any]]:
+    """搜索结果是「卡片」列表：作品在 card['data']['aweme_info']（图文/直播卡没有 aweme_info）。"""
+    out: list[dict[str, Any]] = []
+    for card in _video_search_cards(payload):
+        node = card.get("data") if isinstance(card.get("data"), dict) else card
+        if not isinstance(node, dict):
+            continue
+        aweme = node.get("aweme_info")
+        if isinstance(aweme, dict):
+            out.append(aweme)
+            continue
+        for key in ("aweme_list", "item_list", "items", "list"):
+            rows = node.get(key)
+            if isinstance(rows, list):
+                out.extend(row for row in rows if isinstance(row, dict))
+    return out
+
+
+def _search_result_item(aweme: dict[str, Any], index: int, keyword: str) -> dict[str, Any] | None:
+    """TikHub 搜索到的作品 → 信息台卡片同款结构（id 就是 aweme_id，可以直接跟创）。"""
+    item_id = str(aweme.get("aweme_id") or aweme.get("awemeId") or aweme.get("item_id") or "").strip()[:128]
+    author = aweme.get("author") if isinstance(aweme.get("author"), dict) else {}
+    video = aweme.get("video") if isinstance(aweme.get("video"), dict) else {}
+    stats = aweme.get("statistics") if isinstance(aweme.get("statistics"), dict) else {}
+    title = _clip_string(aweme.get("desc") or aweme.get("title") or "")
+    nickname = _clip_string(author.get("nickname") or author.get("nick_name") or author.get("unique_id") or "")
+    if not title and nickname:
+        title = f"{nickname} 的视频"
+    cover = ""
+    for node in (video.get("cover"), video.get("origin_cover"), video.get("dynamic_cover"), aweme.get("cover")):
+        if not isinstance(node, dict):
+            continue
+        urls = node.get("url_list")
+        if isinstance(urls, list) and urls:
+            candidate = _clip_string(urls[0], 1000)
+            if candidate.startswith(("http://", "https://")):
+                cover = candidate
+                break
+    metrics: dict[str, int | float] = {}
+    for key in ("play_count", "digg_count", "comment_count", "collect_count", "share_count"):
+        number = _number(stats.get(key))
+        if number not in (None, 0):   # 抖音搜索结果的播放量基本是 0，展示「播放 0」是噪音
+            metrics[key] = number
+    duration = _number(video.get("duration"))
+    if duration is not None:
+        metrics["duration_ms"] = duration
+    created = _number(aweme.get("create_time"))
+    item: dict[str, Any] = {"rank": index + 1, "section_title": "关键词搜索", "detail": f"关键词={keyword}"}
+    if item_id:
+        item["id"] = item_id
+        item["item_id"] = item_id
+        item["url"] = f"https://www.douyin.com/video/{quote(item_id, safe='')}"
+    if title:
+        item["title"] = title
+    if nickname:
+        item["author"] = nickname
+    if cover:
+        item["cover_url"] = cover
+    if metrics:
+        item["metrics"] = dict(list(metrics.items())[:MAX_METRICS])
+    if created:
+        try:
+            item["published_at"] = datetime.fromtimestamp(created, SHANGHAI_TZ).isoformat()
+        except (OverflowError, OSError, ValueError):
+            pass
+    item["keyword"] = keyword
+    if not item.get("id") and not item.get("title"):
+        return None          # 没有作品 id 也没有文案的卡片直接丢，别展示空壳
+    return item
+
+
+async def search_tikhub_douyin_videos(
+    keywords: list[str],
+    *,
+    limit: int = VIDEO_SEARCH_LIMIT,
+    sort_type: str = "0",
+    publish_time: str = "0",
+) -> dict[str, Any]:
+    """拿用户关键词去 TikHub 实时搜抖音视频（每个词 1 次请求，0.01 USD/次）。
+
+    2026-10-11：信息台搜索原来只翻服务端当天快照，用户搜「探店」=0 条；
+    现在默认实时搜抖音，命中结果自带 aweme_id，可以直接「跟创」。
+    """
+    words = [str(word or "").strip() for word in (keywords or [])]
+    words = [word for word in dict.fromkeys(words) if word][:VIDEO_SEARCH_MAX_KEYWORDS]
+    pricing = tikhub_video_search_price()
+    unit_cost = float(pricing.get("provider_cost_usd") or 0)
+    result: dict[str, Any] = {
+        "source": "tikhub",
+        "endpoint": TIKHUB_VIDEO_SEARCH_PATH,
+        "keywords": words,
+        "items": [],
+        "count": 0,
+        "calls": 0,
+        "errors": [],
+        "paging": {},
+        "provider_cost_usd": 0.0,
+        "credits_per_call": float(pricing.get("lobster_credits") or 0),
+    }
+    if not words:
+        result["errors"] = ["没有可用关键词"]
+        return result
+    key = _tikhub_key()
+    if not key:
+        result["errors"] = ["服务端未配置 TIKHUB_API_KEY"]
+        return result
+    max_items = max(1, min(200, int(limit or VIDEO_SEARCH_LIMIT)))
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    headers = {"Authorization": f"Bearer {key}"}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0), headers=headers, trust_env=False) as client:
+        for keyword in words:
+            body = {
+                "keyword": keyword,
+                "cursor": 0,
+                "sort_type": str(sort_type or "0"),
+                "publish_time": str(publish_time or "0"),
+                "filter_duration": "0",
+                "content_type": "0",
+                "search_id": "",
+                "backtrace": "",
+            }
+            try:
+                response = await client.post(_tikhub_base() + TIKHUB_VIDEO_SEARCH_PATH, json=body)
+                status_code = int(response.status_code)
+                payload = response.json()
+            except Exception as exc:  # noqa: BLE001 上游异常不该让整个搜索 500
+                result["calls"] += 1
+                result["provider_cost_usd"] = round(unit_cost * result["calls"], 6)
+                result["errors"].append(f"{keyword}: {type(exc).__name__} {str(exc)[:120]}")
+                continue
+            result["calls"] += 1
+            result["provider_cost_usd"] = round(unit_cost * result["calls"], 6)
+            if not _payload_success(payload, status_code):
+                result["errors"].append(f"{keyword}: {_payload_message(payload) or ('TikHub HTTP %s' % status_code)}")
+                continue
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(data, dict):
+                result["paging"][keyword] = {
+                    "cursor": data.get("cursor"),
+                    "has_more": data.get("has_more"),
+                    "search_id": data.get("search_id"),
+                    "backtrace": data.get("backtrace"),
+                }
+            for aweme in _video_search_awemes(payload):
+                item = _search_result_item(aweme, len(items), keyword)
+                if not item:
+                    continue
+                dedupe = str(item.get("id") or item.get("title") or "")
+                if dedupe and dedupe in seen:
+                    continue
+                if dedupe:
+                    seen.add(dedupe)
+                items.append(item)
+                if len(items) >= max_items:
+                    break
+            if len(items) >= max_items:
+                break
+    result["items"] = items
+    result["count"] = len(items)
+    return result
+
+
 def _item_dedupe_key(item: dict[str, Any]) -> str:
     for key in ("item_id", "aweme_id", "id", "url", "share_url"):
         value = str(item.get(key) or "").strip()
