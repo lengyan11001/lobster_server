@@ -51,6 +51,13 @@ def main() -> int:
             ai_used += result["ai_used"]
             ai_failed += result["ai_failed"]
         db.commit()
+        # 体检结果顺手推一条到飞书（没配 MANAGE_FEISHU_WEBHOOK / FEISHU_APP_* 时静默跳过）
+        try:
+            from backend.app.services import manage_notify
+            for company in companies:
+                asyncio.run(manage_notify.send_checkup_summary(db, company, [], today=today))
+        except Exception:
+            logger.warning("[MANAGE-CHECKUP] feishu summary skipped", exc_info=True)
         logger.info("[MANAGE-CHECKUP] slot=%s date=%s companies=%s created=%s ai=%s ai_failed=%s",
                     slot, today, len(companies), created, ai_used, ai_failed)
     except Exception:
