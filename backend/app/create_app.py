@@ -167,6 +167,8 @@ def _startup_db_lock():
 def _migrate_shop_product_listing_media():
     """2026-10-11：商品拆两套素材 —— media=商家自己上传的图（online 赚钱用），
     listing_media=独立站真正渲染的素材（上架后也能继续改）。"""
+    from sqlalchemy import inspect, text
+
     try:
         insp = inspect(engine)
         if "shop_products" not in insp.get_table_names():
