@@ -47,7 +47,41 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 .thumb .btn{width:100%;margin-top:6px}
 .spec-row{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;margin-top:8px;align-items:center}
 @media(max-width:860px){.grid{grid-template-columns:repeat(2,1fr)}.row{grid-template-columns:1fr 1fr}}
-</style>
+.modal{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:18px}
+.modal-mask{position:absolute;inset:0;background:rgba(6,8,12,.66)}
+.modal-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;width:min(94vw,620px);max-height:88vh;overflow:auto;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.modal-card.wide{width:min(96vw,980px)}
+.modal-card h3{margin:0 0 12px;font-size:16px;letter-spacing:1px}
+.modal-x{position:absolute;top:8px;right:14px;border:0;background:none;color:var(--dim);font-size:22px;line-height:1;cursor:pointer}
+.mtabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:0 0 14px;flex-wrap:wrap}
+.mtab{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--dim);padding:8px 12px;font:inherit;font-weight:600;cursor:pointer}
+.mtab.on{color:var(--ink);border-bottom-color:var(--brand)}
+.mfoot{display:flex;gap:10px;align-items:center;border-top:1px solid var(--line);margin-top:16px;padding-top:12px;flex-wrap:wrap}
+.pickbar{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
+.thumb{position:relative;width:118px;border:1px solid var(--line);border-radius:12px;padding:6px;background:#0c0e12}
+.thumb img{width:100%;height:92px;object-fit:cover;border-radius:8px;display:block;cursor:zoom-in}
+.thumb-acts{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;align-items:center}
+.thumb-acts .btn{flex:1;padding:3px 6px;font-size:11px}
+.thumb.pk{cursor:pointer}
+.thumb.pk.on{border-color:var(--brand)}
+.pk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:10px;margin-top:8px}
+.pv-overlay{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out}
+.pv-overlay img{max-width:92vw;max-height:84vh;border-radius:10px}
+.pv-tip{color:#cbd3e1;font-size:12px;margin-top:10px}
+.pv-grid{display:grid;grid-template-columns:300px 1fr;gap:18px;align-items:start;margin-top:8px}
+.pv-card{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#0c0e12}
+.pv-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;cursor:zoom-in}
+.pv-ph{aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px}
+.pv-body{padding:12px 14px}
+.pv-name{font-weight:600}
+.pv-sub{color:var(--dim);font-size:12px;margin-top:4px}
+.pv-price{color:#7fd8a2;font-weight:700;margin-top:8px}
+.pv-price.big{font-size:22px;margin-top:6px}
+.pv-comm{color:var(--dim);font-size:12px;margin-top:4px}
+.pv-detail{border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.pv-detail-title{font-size:18px;font-weight:600}
+.pv-detail-sub{color:var(--dim);font-size:13px;margin-top:4px}
+@media(max-width:860px){.pv-grid{grid-template-columns:1fr}}</style>
 </head><body>
 <div class="top"><div class="wrap bar">
   <div class="brand">商家后台<small>shopcms.bhzn.top</small></div>
@@ -86,7 +120,10 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
     });
   }
-  var state = { submissions: [], subProduct: 0, subStatus: '', subKeyword: '', subSyncListing: false, view: 'overview', products: [], orders: [], me: null, summary: {}, editing: null, msg: '', formGallery: [], formDetailImages: [], listingEditing: null, listingCover: '', listingGallery: [], listingDetail: [], listingSubs: [], listingLoading: false, authMode: 'login', authNotice: '' };
+  var state = { submissions: [], subProduct: 0, subStatus: '', subKeyword: '', subSyncListing: false, view: 'overview',
+    products: [], orders: [], me: null, summary: {}, msg: '',
+    draft: null, picker: null, preview: null, acceptedItems: [],
+    authMode: 'login', authNotice: '' };
 
   function loginView() {
     if (state.authMode === 'register') {
@@ -177,20 +214,554 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<div class="hint">上架到独立站 = 买家能下单、能生成推广链接；给 online 赚钱用 = 商品资料完善即可（图片工作台/投稿可选用它的素材）。</div>';
   }
 
+  function statusOptions(cur) {
+    return [['draft', '草稿'], ['on_sale', '直接上架'], ['off_shelf', '下架']].map(function (it) {
+      return '<option value="' + it[0] + '"' + (cur === it[0] ? ' selected' : '') + '>' + it[1] + '</option>';
+    }).join('');
+  }
+
+  // ── 商品：列表 + 弹窗（①商品资料 / ②独立站上架素材 / ③上架效果预览）─────────────
+
+  function newDraft() {
+    return {
+      id: 0, title: '', subtitle: '', category: '', brand: '', price: '', market: '', stock: '0', bp: '10',
+      tags: '', keywords: '', status: 'draft', detailText: '',
+      specs: [{ k: '', v: '' }],
+      gallery: [], detail: [],
+      cover: '', listingGallery: [], listingDetail: [], listingTouched: false,
+      tab: 'info'
+    };
+  }
+
+  function draftFromProduct(p) {
+    var d = newDraft();
+    d.id = p.id;
+    d.title = p.title || ''; d.subtitle = p.subtitle || ''; d.category = p.category || ''; d.brand = p.brand || '';
+    d.price = String(Number(p.price_cents || 0) / 100);
+    d.market = String(Number(p.market_price_cents || 0) / 100);
+    d.stock = String(Number(p.stock || 0));
+    d.bp = String(Number(p.commission_bp_own || p.commission_bp || 0) / 100);
+    d.tags = (p.tags || []).join ? (p.tags || []).join(',') : (p.tags || '');
+    d.keywords = p.keywords || ''; d.status = p.status || 'draft'; d.detailText = p.detail_text || '';
+    var keys = Object.keys(p.specs || {});
+    d.specs = keys.length ? keys.map(function (k) { return { k: k, v: p.specs[k] }; }) : [{ k: '', v: '' }];
+    d.gallery = (p.gallery || []).slice();
+    d.detail = (p.detail_images || []).slice();
+    var listing = p.listing || {};
+    d.cover = String(listing.cover || '');
+    d.listingGallery = (listing.gallery || []).slice();
+    d.listingDetail = (listing.detail_images || []).slice();
+    d.listingTouched = !!(listing.from_listing && (d.cover || d.listingGallery.length || d.listingDetail.length));
+    return d;
+  }
+
+  function openProduct(p) {
+    state.draft = p ? draftFromProduct(p) : newDraft();
+    state.picker = null; state.preview = null; state.msg = '';
+    render();
+    if (state.draft.id) loadAcceptedForDraft(state.draft.id);
+  }
+
+  function closeProduct() {
+    state.draft = null; state.picker = null; state.preview = null; render();
+  }
+
+  function captureDraft() {
+    var d = state.draft;
+    if (!d) return;
+    function v(id) { var el = document.getElementById(id); return el ? el.value : null; }
+    var x;
+    if ((x = v('f-title')) !== null) d.title = x;
+    if ((x = v('f-subtitle')) !== null) d.subtitle = x;
+    if ((x = v('f-category')) !== null) d.category = x;
+    if ((x = v('f-brand')) !== null) d.brand = x;
+    if ((x = v('f-price')) !== null) d.price = x;
+    if ((x = v('f-market')) !== null) d.market = x;
+    if ((x = v('f-stock')) !== null) d.stock = x;
+    if ((x = v('f-bp')) !== null) d.bp = x;
+    if ((x = v('f-tags')) !== null) d.tags = x;
+    if ((x = v('f-keywords')) !== null) d.keywords = x;
+    if ((x = v('f-status')) !== null) d.status = x;
+    if ((x = v('f-detail-text')) !== null) d.detailText = x;
+    var rows = document.querySelectorAll('#f-spec-rows [data-spec-row]');
+    if (rows.length) {
+      d.specs = Array.prototype.map.call(rows, function (r) {
+        var k = r.querySelector('.spec-k'), vv = r.querySelector('.spec-v');
+        return { k: k ? k.value : '', v: vv ? vv.value : '' };
+      });
+    }
+  }
+
+  function listOf(target) {
+    var d = state.draft;
+    if (!d) return null;
+    if (target === 'gallery') return d.gallery;
+    if (target === 'detail') return d.detail;
+    if (target === 'listingGallery') return d.listingGallery;
+    if (target === 'listingDetail') return d.listingDetail;
+    return null;
+  }
+
+  function specRowsHtml(specs) {
+    var rows = (specs && specs.length) ? specs : [{ k: '', v: '' }];
+    return rows.map(function (r) {
+      return '<div class="spec-row" data-spec-row>' +
+        '<input class="spec-k" placeholder="规格名，如 产地" value="' + esc(r.k || '') + '">' +
+        '<input class="spec-v" placeholder="规格值，如 甘肃天水" value="' + esc(r.v || '') + '">' +
+        '<button class="btn mini ghost" type="button" data-spec-del>删除</button>' +
+        '</div>';
+    }).join('');
+  }
+
+  function thumbsHtml(urls, kind) {
+    if (!urls || !urls.length) return '<div class="muted" style="font-size:12px">还没选图</div>';
+    var canCover = (kind === 'gallery' || kind === 'listingGallery');
+    return urls.map(function (u, i) {
+      return '<div class="thumb"><img src="' + esc(u) + '" alt="" data-pv="' + esc(u) + '">' +
+        '<div class="thumb-acts">' +
+        (canCover && i > 0 ? '<button class="btn mini ghost" type="button" data-cover="' + kind + '" data-idx="' + i + '">设封面</button>' : '') +
+        (canCover && i === 0 ? '<span class="tag on">封面/主图</span>' : '') +
+        '<button class="btn mini ghost" type="button" data-del="' + kind + '" data-idx="' + i + '">删</button>' +
+        '</div></div>';
+    }).join('');
+  }
+  function tabInfoHtml(d) {
+    return [
+      '<div class="hint">① 商品资料 = <b>商家自己上传的原始资料</b>（给 online 赚钱、投稿、图片工作台选素材用）。独立站买家看到的图在 ② 里单独放，两边互不影响。</div>',
+      '<div class="row">',
+      '<div><label>标题</label><input id="f-title" value="' + esc(d.title) + '"></div>',
+      '<div><label>副标题</label><input id="f-subtitle" value="' + esc(d.subtitle) + '"></div>',
+      '<div><label>类目</label><input id="f-category" value="' + esc(d.category) + '"></div>',
+      '<div><label>品牌</label><input id="f-brand" value="' + esc(d.brand) + '"></div>',
+      '</div><div class="row">',
+      '<div><label>售价（元）</label><input id="f-price" value="' + esc(d.price) + '"></div>',
+      '<div><label>划线价（元）</label><input id="f-market" value="' + esc(d.market) + '"></div>',
+      '<div><label>库存</label><input id="f-stock" value="' + esc(d.stock) + '"></div>',
+      '<div><label>佣金（%）</label><input id="f-bp" value="' + esc(d.bp) + '"></div>',
+      '</div><div class="row">',
+      '<div><label>标签（逗号分隔）</label><input id="f-tags" value="' + esc(d.tags) + '"></div>',
+      '<div><label>关键词</label><input id="f-keywords" value="' + esc(d.keywords) + '"></div>',
+      '<div><label>状态</label><select id="f-status">' + statusOptions(d.status) + '</select></div>',
+      '</div>',
+      '<label>商品图片（商家自己上传的图，第一张自动作主图）</label>',
+      '<div class="pickbar"><button class="btn mini" type="button" data-pick="gallery">选择图片（本地 / 已采纳素材）</button>' +
+      '<span class="muted">共 ' + d.gallery.length + ' 张</span></div>',
+      '<div class="thumbs">' + thumbsHtml(d.gallery, 'gallery') + '</div>',
+      '<label>细节图（选填）</label>',
+      '<div class="pickbar"><button class="btn mini" type="button" data-pick="detail">选择图片</button>' +
+      '<span class="muted">共 ' + d.detail.length + ' 张</span></div>',
+      '<div class="thumbs">' + thumbsHtml(d.detail, 'detail') + '</div>',
+      '<label>规格参数（一行一个）</label>',
+      '<div id="f-spec-rows">' + specRowsHtml(d.specs) + '</div>',
+      '<div style="margin-top:8px"><button class="btn mini ghost" id="f-spec-add" type="button">添加一行</button></div>',
+      '<label>商品详情（纯文字，换行分段）</label>',
+      '<textarea id="f-detail-text" rows="4" placeholder="卖点、规格说明、发货说明…">' + esc(d.detailText) + '</textarea>'
+    ].join('');
+  }
+
+  function tabListingHtml(d) {
+    var cover = d.cover || '';
+    var fallback = !(d.cover || d.listingGallery.length || d.listingDetail.length);
+    return [
+      '<div class="hint">② 独立站上架素材 = <b>买家在店铺页真正看到的图</b>（封面 / 图集 / 详情图）。商品<b>已上架也能改</b>，保存后店铺页立刻生效，不用下架重上。' +
+      (fallback ? '<br>现在还没单独放素材 → 独立站会<b>沿用 ① 商品资料里的图</b>。' : '') + '</div>',
+      '<label>封面（不选就用图集第一张）</label>',
+      '<div class="pickbar"><button class="btn mini" type="button" data-pick="listingCover">选择封面</button>' +
+      (cover ? '<button class="btn mini ghost" type="button" data-clear-cover="1">清除封面</button>' : '') +
+      '<span class="muted">' + (cover ? '已选' : '未单独设置') + '</span></div>',
+      '<div class="thumbs">' + (cover
+        ? '<div class="thumb"><img src="' + esc(cover) + '" alt="" data-pv="' + esc(cover) + '"><div class="thumb-acts"><span class="tag on">封面</span></div></div>'
+        : '<div class="muted" style="font-size:12px">未设置</div>') + '</div>',
+      '<label>图集（最多 60 张）</label>',
+      '<div class="pickbar"><button class="btn mini" type="button" data-pick="listingGallery">选择图片（本地 / 已采纳素材）</button>' +
+      '<span class="muted">共 ' + d.listingGallery.length + ' 张</span></div>',
+      '<div class="thumbs">' + thumbsHtml(d.listingGallery, 'listingGallery') + '</div>',
+      '<label>详情图（选填）</label>',
+      '<div class="pickbar"><button class="btn mini" type="button" data-pick="listingDetail">选择图片</button>' +
+      '<span class="muted">共 ' + d.listingDetail.length + ' 张</span></div>',
+      '<div class="thumbs">' + thumbsHtml(d.listingDetail, 'listingDetail') + '</div>',
+      '<div class="hint">点缩略图可放大预览；「设封面」把那张提到图集第一位。这些图与 ① 里的商家原图分开存，互不覆盖。</div>'
+    ].join('');
+  }
+  function tabEffectHtml(d) {
+    var priceCents = Math.round(Number(d.price || 0) * 100);
+    var bp = Number(d.bp || 0);
+    var est = Math.round(priceCents * (bp * 100) / 10000);
+    var fromListing = !!(d.cover || d.listingGallery.length || d.listingDetail.length);
+    var gallery = (d.listingGallery.length ? d.listingGallery : d.gallery).slice();
+    var detailImgs = (d.listingDetail.length ? d.listingDetail : d.detail).slice();
+    var cover = d.cover || gallery[0] || '';
+    var specs = (d.specs || []).filter(function (r) { return String(r.k || '').trim(); });
+    return [
+      '<div class="hint">买家在独立站看到的效果（素材来源：<b>' + (fromListing ? '② 独立站专属素材' : '① 商品资料里的图（还没单独设置）') + '</b>）。' +
+      (d.id ? '<a href="https://shop.bhzn.top/p/' + d.id + '" target="_blank" rel="noopener">在独立站打开商品页</a>' : '保存后可在独立站打开') + '</div>',
+      '<div class="pv-grid">',
+      '<div><div class="muted" style="font-size:12px;margin-bottom:6px">店铺页商品卡</div>',
+      '<div class="pv-card">' + (cover
+        ? '<img src="' + esc(cover) + '" alt="" data-pv="' + esc(cover) + '">'
+        : '<div class="pv-ph">还没有图</div>') +
+      '<div class="pv-body"><div class="pv-name">' + esc(d.title || '（未填标题）') + '</div>' +
+      '<div class="pv-sub">' + esc(d.subtitle || '') + '</div>' +
+      '<div class="pv-price">' + yuan(priceCents) +
+      (Number(d.market || 0) > Number(d.price || 0) ? ' <s style="color:var(--dim);font-weight:400;font-size:12px">' + yuan(Math.round(Number(d.market) * 100)) + '</s>' : '') +
+      '</div><div class="pv-comm">预计佣金 ' + yuan(est) + ' · ' + bp + '%</div></div></div></div>',
+      '<div><div class="muted" style="font-size:12px;margin-bottom:6px">商品详情页</div>',
+      '<div class="pv-detail"><div class="pv-detail-title">' + esc(d.title || '（未填标题）') + '</div>' +
+      '<div class="pv-detail-sub">' + esc(d.subtitle || '') + '</div>' +
+      '<div class="pv-price big">' + yuan(priceCents) + '</div>' +
+      '<div class="pv-comm">推广者预计佣金 ' + yuan(est) + '（' + bp + '%）</div>' +
+      (gallery.length ? '<div class="thumbs">' + gallery.slice(0, 8).map(function (u) {
+        return '<div class="thumb"><img src="' + esc(u) + '" alt="" data-pv="' + esc(u) + '"></div>';
+      }).join('') + '</div>' : '') +
+      (specs.length ? '<table style="margin-top:12px"><tbody>' + specs.map(function (r) {
+        return '<tr><th style="width:120px">' + esc(r.k) + '</th><td>' + esc(r.v) + '</td></tr>';
+      }).join('') + '</tbody></table>' : '') +
+      (detailImgs.length ? '<label>详情图</label><div class="thumbs">' + detailImgs.map(function (u) {
+        return '<div class="thumb"><img src="' + esc(u) + '" alt="" data-pv="' + esc(u) + '"></div>';
+      }).join('') + '</div>' : '') +
+      (d.detailText ? '<div class="hint" style="white-space:pre-wrap">' + esc(d.detailText) + '</div>' : '') +
+      '</div></div>',
+      '</div>'
+    ].join('');
+  }
+
+  function productModal() {
+    var d = state.draft;
+    if (!d) return '';
+    var tabs = [['info', '① 商品资料'], ['listing', '② 独立站上架素材'], ['effect', '③ 上架效果预览']];
+    var body = d.tab === 'listing' ? tabListingHtml(d) : d.tab === 'effect' ? tabEffectHtml(d) : tabInfoHtml(d);
+    return '<div class="modal" id="pm"><div class="modal-mask" data-close-product="1"></div>' +
+      '<div class="modal-card wide" role="dialog" aria-modal="true">' +
+      '<button class="modal-x" type="button" data-close-product="1" aria-label="关闭">×</button>' +
+      '<h3>' + (d.id ? '编辑商品 #' + d.id : '新建商品') + '</h3>' +
+      '<div class="mtabs">' + tabs.map(function (x) {
+        return '<button class="mtab' + (d.tab === x[0] ? ' on' : '') + '" type="button" data-mtab="' + x[0] + '">' + x[1] + '</button>';
+      }).join('') + '</div>' +
+      body +
+      '<div class="mfoot">' +
+      (state.msg ? '<span class="hint" style="flex:1;margin:0">' + esc(state.msg) + '</span>' : '<span style="flex:1"></span>') +
+      '<button class="btn ghost" type="button" data-close-product="1">取消</button>' +
+      '<button class="btn" type="button" id="save-product">保存</button>' +
+      '</div></div></div>';
+  }
+
+  function pickerModal() {
+    var pk = state.picker;
+    if (!pk) return '';
+    var names = { gallery: '商品图片', detail: '商品细节图', listingGallery: '独立站图集', listingDetail: '独立站详情图', listingCover: '独立站封面' };
+    var items = pk.items || [];
+    var grid = items.map(function (it, i) {
+      var on = pk.picked.indexOf(it.url) >= 0;
+      return '<div class="thumb pk' + (on ? ' on' : '') + '" data-pk="' + i + '">' +
+        '<img src="' + esc(it.thumb_url || it.preview_url || it.url) + '" alt="">' +
+        '<div class="thumb-acts"><span class="tag' + (on ? ' on' : '') + '">' + (on ? '已选' : '点选') + '</span>' +
+        '<button class="btn mini ghost" type="button" data-pv="' + esc(it.url) + '">预览</button></div></div>';
+    }).join('');
+    var localPane = '<div class="upload"><input type="file" id="pk-file" accept="image/*" multiple>' +
+      '<span class="hint" id="pk-tip">支持 jpg / png / webp / gif，单张不超过 8MB；选完自动进下面「已选」</span></div>';
+    var acceptedPane = pk.loading ? '<div class="muted">正在加载已采纳素材…</div>'
+      : (items.length ? '<div class="pk-grid">' + grid + '</div>'
+        : '<div class="muted">这个商品还没有已采纳的投稿素材' + (state.draft && state.draft.id ? '（去「素材投稿」采纳后再来选）' : '（先保存商品，才有已采纳素材）') + '。</div>');
+    return '<div class="modal" id="pk"><div class="modal-mask" data-close-picker="1"></div>' +
+      '<div class="modal-card wide"><button class="modal-x" type="button" data-close-picker="1" aria-label="关闭">×</button>' +
+      '<h3>选择素材 → ' + (names[pk.target] || '') + '</h3>' +
+      '<div class="mtabs">' +
+      '<button class="mtab' + (pk.tab === 'local' ? ' on' : '') + '" type="button" data-pktab="local">本地上传</button>' +
+      '<button class="mtab' + (pk.tab === 'accepted' ? ' on' : '') + '" type="button" data-pktab="accepted">已采纳素材' + (items.length ? '（' + items.length + '）' : '') + '</button>' +
+      '</div>' +
+      (pk.tab === 'local' ? localPane : acceptedPane) +
+      '<label>已选 ' + pk.picked.length + ' 张（点图放大预览）</label>' +
+      '<div class="thumbs">' + (pk.picked.length ? pk.picked.map(function (u, i) {
+        return '<div class="thumb"><img src="' + esc(u) + '" alt="">' +
+          '<div class="thumb-acts"><button class="btn mini ghost" type="button" data-pv="' + esc(u) + '">预览</button>' +
+          '<button class="btn mini ghost" type="button" data-pk-rm="' + i + '">移除</button></div></div>';
+      }).join('') : '<div class="muted" style="font-size:12px">还没选</div>') + '</div>' +
+      '<div class="mfoot"><span style="flex:1"></span>' +
+      '<button class="btn ghost" type="button" data-close-picker="1">取消</button>' +
+      '<button class="btn" type="button" id="pk-ok"' + (pk.picked.length ? '' : ' disabled') + '>确定加入（' + pk.picked.length + '）</button>' +
+      '</div></div></div>';
+  }
+
+  function previewOverlay() {
+    if (!state.preview) return '';
+    return '<div class="pv-overlay" data-close-preview="1"><img src="' + esc(state.preview) + '" alt="">' +
+      '<div class="pv-tip">点任意位置关闭</div></div>';
+  }
+  function loadAcceptedForDraft(productId) {
+    return jfetch('/api/shop-cms/submissions?size=100&status=used&product_id=' + Number(productId || 0))
+      .then(function (d) { state.acceptedItems = (d.items || []).filter(function (it) { return String(it.url || '').trim(); }); })
+      .catch(function () { state.acceptedItems = []; })
+      .then(function () {
+        if (state.picker) { state.picker.items = (state.acceptedItems || []).slice(); state.picker.loading = false; }
+        render();
+      });
+  }
+
+  function openPicker(target) {
+    captureDraft();
+    var d = state.draft;
+    var pk = { target: target, tab: 'local', items: (state.acceptedItems || []).slice(), picked: [], loading: false };
+    if (target === 'listingCover') pk.picked = d.cover ? [d.cover] : [];
+    else { var list = listOf(target) || []; pk.picked = list.slice(); }
+    state.picker = pk;
+    state.preview = null;
+    render();
+    if (d.id && !state.acceptedItems.length) { pk.loading = true; loadAcceptedForDraft(d.id); }
+  }
+
+  function togglePick(url) {
+    var pk = state.picker;
+    if (!pk) return;
+    if (pk.target === 'listingCover') { pk.picked = pk.picked[0] === url ? [] : [url]; render(); return; }
+    var i = pk.picked.indexOf(url);
+    if (i >= 0) pk.picked.splice(i, 1); else pk.picked.push(url);
+    render();
+  }
+
+  function pickerConfirm() {
+    var pk = state.picker, d = state.draft;
+    if (!pk || !d) return;
+    if (pk.target === 'listingCover') {
+      d.cover = pk.picked[0] || '';
+      d.listingTouched = true;
+    } else {
+      var list = listOf(pk.target);
+      list.length = 0;
+      pk.picked.forEach(function (u) { if (u && list.indexOf(u) < 0) list.push(u); });
+      if (pk.target === 'listingGallery' || pk.target === 'listingDetail') d.listingTouched = true;
+    }
+    state.picker = null;
+    render();
+  }
+
+  function pickerUpload(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    if (!files.length) return;
+    var tip = $('#pk-tip');
+    var chain = Promise.resolve();
+    files.forEach(function (f) {
+      chain = chain.then(function () {
+        return uploadImage(f, tip).then(function (d) {
+          if (state.picker && state.picker.picked.indexOf(d.url) < 0) state.picker.picked.push(d.url);
+        });
+      });
+    });
+    chain.then(function () {
+      state.msg = '已上传 ' + files.length + ' 张，点「确定加入」写入';
+      render();
+    }).catch(function (e) { state.msg = '上传失败：' + e.message; render(); });
+  }
+
+  function saveProduct() {
+    captureDraft();
+    var d = state.draft;
+    if (!d) return;
+    if (!String(d.title || '').trim()) { d.tab = 'info'; state.msg = '标题不能为空'; render(); return; }
+    if (!d.gallery.length) { d.tab = 'info'; state.msg = '「① 商品资料」里至少要有 1 张图'; render(); return; }
+    if (!(Number(d.bp || 0) > 0)) { d.tab = 'info'; state.msg = '请填商品佣金（%）'; render(); return; }
+    var specs = {};
+    (d.specs || []).forEach(function (r) {
+      var k = String(r.k || '').trim();
+      if (k) specs[k] = String(r.v || '').trim();
+    });
+    var payload = {
+      title: String(d.title).trim(),
+      subtitle: String(d.subtitle || '').trim(),
+      category: String(d.category || '').trim(),
+      brand: String(d.brand || '').trim(),
+      keywords: String(d.keywords || '').trim(),
+      price_cents: Math.round(Number(d.price || 0) * 100),
+      market_price_cents: Math.round(Number(d.market || 0) * 100),
+      stock: parseInt(d.stock || '0', 10) || 0,
+      commission_bp: Math.round(Number(d.bp || 0) * 100),
+      commission_type: 'percent',
+      tags: String(d.tags || '').trim(),
+      cover_url: d.gallery[0],
+      gallery: d.gallery.slice(),
+      detail_images: d.detail.slice(),
+      detail_text: d.detailText || '',
+      specs: specs,
+      status: d.status
+    };
+    var btn = $('#save-product');
+    if (btn) btn.disabled = true;
+    var isNew = !d.id;
+    jfetch(isNew ? '/api/shop-cms/products' : ('/api/shop-cms/products/' + d.id),
+      { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(payload) })
+      .then(function (r) {
+        var pid = (r.product && r.product.id) || d.id;
+        d.id = pid;
+        state.msg = '已保存商品 #' + pid;
+        var needListing = !!(d.listingTouched || d.cover || d.listingGallery.length || d.listingDetail.length);
+        if (needListing) {
+          return jfetch('/api/shop-cms/products/' + pid + '/listing', {
+            method: 'POST',
+            body: JSON.stringify({
+              cover: d.cover || d.listingGallery[0] || '',
+              gallery: d.listingGallery.slice(),
+              detail_images: d.listingDetail.slice(),
+              from_source: false
+            })
+          }).then(function () { state.msg = '已保存商品 #' + pid + '（含独立站上架素材）'; });
+        }
+      })
+      .then(function () {
+        if (payload.status === 'on_sale' && d.id) {
+          return jfetch('/api/shop-cms/products/' + d.id + '/publish?on=true', { method: 'POST' });
+        }
+      })
+      .then(function () {
+        state.draft = null; state.picker = null; state.preview = null;
+        return loadProducts();
+      })
+      .catch(function (e) {
+        if (btn) btn.disabled = false;
+        state.msg = '保存失败：' + e.message;
+        render();
+      });
+  }
+  function bindProducts() {
+    var np = $('#new-product');
+    if (np) np.addEventListener('click', function () { openProduct(null); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-edit]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-edit'));
+        var found = state.products.filter(function (p) { return p.id === id; })[0] || null;
+        if (found) openProduct(found);
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-toggle]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = Number(b.getAttribute('data-toggle')), on = b.getAttribute('data-on') === '1';
+        b.disabled = true;
+        jfetch('/api/shop-cms/products/' + id + '/publish?on=' + (on ? 'true' : 'false'), { method: 'POST' })
+          .then(function () { state.msg = '商品 #' + id + (on ? ' 已上架' : ' 已下架'); return loadProducts(); })
+          .catch(function (e) { b.disabled = false; state.msg = '操作失败：' + e.message; render(); });
+      });
+    });
+
+    var pm = $('#pm');
+    if (pm) {
+      pm.addEventListener('input', captureDraft);
+      pm.addEventListener('change', captureDraft);
+      Array.prototype.forEach.call(pm.querySelectorAll('[data-close-product]'), function (b) {
+        b.addEventListener('click', function () { closeProduct(); });
+      });
+      Array.prototype.forEach.call(pm.querySelectorAll('[data-mtab]'), function (b) {
+        b.addEventListener('click', function () {
+          captureDraft(); state.draft.tab = b.getAttribute('data-mtab'); render();
+        });
+      });
+      var add = $('#f-spec-add');
+      if (add) add.addEventListener('click', function () {
+        captureDraft(); state.draft.specs.push({ k: '', v: '' }); render();
+      });
+      Array.prototype.forEach.call(pm.querySelectorAll('[data-spec-del]'), function (b) {
+        b.addEventListener('click', function () {
+          var row = b.closest('[data-spec-row]');
+          var rows = Array.prototype.slice.call(pm.querySelectorAll('#f-spec-rows [data-spec-row]'));
+          var idx = rows.indexOf(row);
+          captureDraft();
+          if (idx >= 0) {
+            state.draft.specs.splice(idx, 1);
+            if (!state.draft.specs.length) state.draft.specs = [{ k: '', v: '' }];
+          }
+          render();
+        });
+      });
+      Array.prototype.forEach.call(pm.querySelectorAll('[data-pick]'), function (b) {
+        b.addEventListener('click', function () { openPicker(b.getAttribute('data-pick')); });
+      });
+      Array.prototype.forEach.call(pm.querySelectorAll('[data-del]'), function (b) {
+        b.addEventListener('click', function () {
+          var kind = b.getAttribute('data-del');
+          var idx = Number(b.getAttribute('data-idx'));
+          captureDraft();
+          var list = listOf(kind);
+          if (!list) return;
+          list.splice(idx, 1);
+          if (kind === 'listingGallery' || kind === 'listingDetail') state.draft.listingTouched = true;
+          render();
+        });
+      });
+      Array.prototype.forEach.call(pm.querySelectorAll('[data-cover]'), function (b) {
+        b.addEventListener('click', function () {
+          var kind = b.getAttribute('data-cover');
+          var idx = Number(b.getAttribute('data-idx'));
+          captureDraft();
+          var list = listOf(kind);
+          if (!list || !list[idx]) return;
+          var url = list.splice(idx, 1)[0];
+          list.unshift(url);
+          if (kind === 'listingGallery') state.draft.cover = url;
+          render();
+        });
+      });
+      var cc = pm.querySelector('[data-clear-cover]');
+      if (cc) cc.addEventListener('click', function () {
+        captureDraft(); state.draft.cover = ''; state.draft.listingTouched = true; render();
+      });
+      var sp = $('#save-product');
+      if (sp) sp.addEventListener('click', saveProduct);
+    }
+
+    var pkEl = $('#pk');
+    if (pkEl) {
+      Array.prototype.forEach.call(pkEl.querySelectorAll('[data-close-picker]'), function (b) {
+        b.addEventListener('click', function () { state.picker = null; render(); });
+      });
+      Array.prototype.forEach.call(pkEl.querySelectorAll('[data-pktab]'), function (b) {
+        b.addEventListener('click', function () {
+          state.picker.tab = b.getAttribute('data-pktab');
+          state.picker.loading = state.picker.tab === 'accepted' && !state.picker.items.length && !!(state.draft && state.draft.id);
+          render();
+        });
+      });
+      var f = $('#pk-file');
+      if (f) f.addEventListener('change', function () { pickerUpload(f); });
+      Array.prototype.forEach.call(pkEl.querySelectorAll('[data-pk]'), function (b) {
+        b.addEventListener('click', function () {
+          var it = (state.picker.items || [])[Number(b.getAttribute('data-pk'))];
+          if (!it || !it.url) return;
+          togglePick(String(it.url));
+        });
+      });
+      Array.prototype.forEach.call(pkEl.querySelectorAll('[data-pk-rm]'), function (b) {
+        b.addEventListener('click', function () {
+          state.picker.picked.splice(Number(b.getAttribute('data-pk-rm')), 1);
+          render();
+        });
+      });
+      var ok = $('#pk-ok');
+      if (ok) ok.addEventListener('click', pickerConfirm);
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-pv]'), function (el) {
+      el.addEventListener('click', function (ev) {
+        var url = el.getAttribute('data-pv');
+        if (!url) return;
+        ev.stopPropagation();
+        ev.preventDefault();
+        state.preview = url;
+        render();
+      });
+    });
+    var ov = document.querySelector('[data-close-preview]');
+    if (ov) ov.addEventListener('click', function () { state.preview = null; render(); });
+  }
   function productsView() {
     var rows = state.products.map(function (p) {
       var listing = p.listing || {};
       var listingSet = !!(listing.from_listing && ((listing.gallery || []).length || listing.cover));
       return '<tr>' +
         '<td>' + esc(p.title) + '<div class="muted">' + esc(p.subtitle || '') + '</div>' +
-        '<div class="muted">独立站素材：' + (listingSet ? '已单独设置' : '沿用商家自己上传的图') + '</div></td>' +
+        '<div class="muted">独立站素材：' + (listingSet ? '已单独设置' : '沿用商品资料里的图') + '</div></td>' +
         '<td>' + yuan(p.price_cents) + '</td>' +
         '<td>' + (Number(p.commission_bp || 0) / 100) + '%<div class="muted">预计 ' + yuan(p.commission_estimate_cents) + '</div></td>' +
         '<td>' + Number(p.stock || 0) + '</td>' +
         '<td>' + statusTag(p.status) + '<div class="muted">' + (p.ready_for_earn ? '可给 online 赚钱用' : '资料未完善') + '</div></td>' +
         '<td>' +
-        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">商品资料</button> ' +
-        '<button class="btn mini ghost" data-listing="' + p.id + '" type="button">上架到独立站</button> ' +
+        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">编辑</button> ' +
         '<button class="btn mini" data-toggle="' + p.id + '" data-on="' + (p.status === 'on_sale' ? '0' : '1') + '" type="button">' + (p.status === 'on_sale' ? '下架' : '上架') + '</button>' +
         '</td></tr>';
     }).join('');
@@ -201,231 +772,9 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       rows || '<tr><td colspan="6" class="muted">还没有商品，点下面「新建商品」</td></tr>',
       '</tbody></table>',
       '<div style="margin-top:16px"><button class="btn" id="new-product" type="button">新建商品</button></div>',
-      state.editing ? productForm(state.editing) : '',
-      state.listingEditing ? listingForm(state.listingEditing) : '',
       '</div>'
     ].join('');
   }
-
-  function specRowsHtml(specs) {
-    var keys = Object.keys(specs || {});
-    if (!keys.length) keys = [''];
-    return keys.map(function (k) {
-      return '<div class="spec-row" data-spec-row>' +
-        '<input class="spec-k" placeholder="规格名，如 产地" value="' + esc(k) + '">' +
-        '<input class="spec-v" placeholder="规格值，如 甘肃天水" value="' + esc(k && specs ? specs[k] : '') + '">' +
-        '<button class="btn mini ghost" type="button" data-spec-del>删除</button>' +
-        '</div>';
-    }).join('');
-  }
-
-  function thumbsHtml(urls, kind) {
-    if (!urls || !urls.length) return '<div class="muted" style="font-size:12px">还没上传图片</div>';
-    return urls.map(function (u, i) {
-      return '<div class="thumb"><img src="' + esc(u) + '" alt="">' +
-        '<button class="btn mini ghost" type="button" data-img-del="' + kind + '" data-img-index="' + i + '">删除</button></div>';
-    }).join('');
-  }
-
-  function statusOptions(cur) {
-    return [['draft', '草稿'], ['on_sale', '直接上架'], ['off_shelf', '下架']].map(function (it) {
-      return '<option value="' + it[0] + '"' + (cur === it[0] ? ' selected' : '') + '>' + it[1] + '</option>';
-    }).join('');
-  }
-
-  function productForm(p) {
-    var isNew = !p.id;
-    var gallery = state.formGallery || [];
-    var detailImages = state.formDetailImages || [];
-    return [
-      '<div class="panel" style="border-color:var(--brand)"><h3>' + (isNew ? '新建商品' : '编辑商品 #' + p.id) + '</h3>',
-      '<div class="row">',
-      '<div><label>标题</label><input id="f-title" value="' + esc(p.title || '') + '"></div>',
-      '<div><label>副标题</label><input id="f-subtitle" value="' + esc(p.subtitle || '') + '"></div>',
-      '<div><label>类目</label><input id="f-category" value="' + esc(p.category || '') + '"></div>',
-      '<div><label>品牌</label><input id="f-brand" value="' + esc(p.brand || '') + '"></div>',
-      '</div><div class="row">',
-      '<div><label>售价（元）</label><input id="f-price" value="' + (Number(p.price_cents || 0) / 100) + '"></div>',
-      '<div><label>划线价（元）</label><input id="f-market" value="' + (Number(p.market_price_cents || 0) / 100) + '"></div>',
-      '<div><label>库存</label><input id="f-stock" value="' + Number(p.stock || 0) + '"></div>',
-      '<div><label>佣金（%）</label><input id="f-bp" value="' + (Number(p.commission_bp_own || p.commission_bp || 0) / 100) + '">' +
-      '<div class="hint">佣金按商品设置：推广者按这个比例拿佣</div></div>',
-      '</div><div class="row">',
-      '<div><label>标签（逗号分隔）</label><input id="f-tags" value="' + esc((p.tags || []).join ? (p.tags || []).join(',') : (p.tags || '')) + '"></div>',
-      '<div><label>关键词</label><input id="f-keywords" value="' + esc(p.keywords || '') + '"></div>',
-      '<div><label>状态</label><select id="f-status">' + statusOptions(p.status || 'draft') + '</select></div>',
-      '</div>',
-      '<div class="hint">入口①「商品资料」：标题 / 价格 / 佣金 + <b>商家自己上传的图</b>。这些图是给 online 赚钱、投稿、图片工作台选素材用的原始资料；独立站买家看到的素材在下面「上架到独立站」里单独设置（没设置就沿用这里的图）。</div>',
-      '<label>商品图片（商家自己上传的图，第一张自动作为主图）</label>',
-      '<div class="upload"><input type="file" id="f-gallery" accept="image/*" multiple><span class="hint" id="f-gallery-tip">支持 jpg / png / webp / gif，单张不超过 8MB</span></div>',
-      '<div class="thumbs">' + thumbsHtml(gallery, 'gallery') + '</div>',
-      '<label>细节图（选填，可多张）</label>',
-      '<div class="upload"><input type="file" id="f-detail-images" accept="image/*" multiple><span class="hint" id="f-detail-images-tip">展示在商品详情里</span></div>',
-      '<div class="thumbs">' + thumbsHtml(detailImages, 'detail_images') + '</div>',
-      '<label>规格参数（一行一个，不用写 JSON）</label>',
-      '<div id="f-spec-rows">' + specRowsHtml(p.specs) + '</div>',
-      '<div style="margin-top:8px"><button class="btn mini ghost" id="f-spec-add" type="button">添加一行</button></div>',
-      '<label>商品详情（纯文字，换行分段，不用写 HTML）</label>',
-      '<textarea id="f-detail-text" rows="4" placeholder="卖点、规格说明、发货说明…">' + esc(p.detail_text || '') + '</textarea>',
-      '<div style="margin-top:14px"><button class="btn" id="save-product" type="button">保存</button> <button class="btn ghost" id="cancel-product" type="button">取消</button></div>',
-      '</div>'
-    ].join('');
-  }
-
-  // ── 入口②「上架到独立站」：独立站素材（listing_media），与商家自己上传的图分开存 ──
-  function sourceThumbsHtml(p) {
-    var urls = (p.gallery || []).concat(p.detail_images || []);
-    if (!urls.length) return '<div class="muted" style="font-size:12px">商品资料里还没有商家自己上传的图（先去「商品资料」上传）</div>';
-    return '<div class="thumbs">' + urls.slice(0, 12).map(function (u) {
-      return '<div class="thumb"><img src="' + esc(u) + '" alt=""></div>';
-    }).join('') + '</div>';
-  }
-
-  function listingForm(p) {
-    var cover = state.listingCover || '';
-    var gallery = state.listingGallery || [];
-    var detail = state.listingDetail || [];
-    var subs = state.listingSubs || [];
-    var subHtml = state.listingLoading
-      ? '<div class="muted" style="font-size:12px">正在加载这个商品已采纳的投稿素材…</div>'
-      : (subs.length
-        ? '<div class="thumbs">' + subs.map(function (it, i) {
-          var picked = !!cover && cover === it.url;
-          var inGallery = gallery.indexOf(it.url) >= 0;
-          return '<div class="thumb"><img src="' + esc(it.thumb_url || it.preview_url || it.url) + '" alt="">' +
-            '<button class="btn mini' + (picked ? '' : ' ghost') + '" type="button" data-sub-pick="' + i + '">' + (picked ? '当前封面' : '设为封面') + '</button>' +
-            '<button class="btn mini' + (inGallery ? '' : ' ghost') + '" type="button" data-sub-gallery="' + i + '">' + (inGallery ? '已在图集' : '加入图集') + '</button>' +
-            '</div>';
-        }).join('') + '</div>'
-        : '<div class="muted" style="font-size:12px">这个商品还没有已采纳的投稿素材（去「素材投稿」采纳，或勾上「同时设为独立站素材」）。</div>');
-    return [
-      '<div class="panel" style="border-color:var(--brand)"><h3>上架到独立站 · #' + p.id + ' ' + esc(p.title || '') + '</h3>',
-      '<div class="hint">这里存的是<b>独立站买家真正看到的素材</b>（封面 / 图集 / 详情图），跟「商品资料」里商家自己上传的图分开存。商品<b>已上架也能改</b>，保存后店铺页立刻用新素材，不用下架重上。</div>',
-      '<label>独立站封面 URL（留空则用图集第一张）</label>',
-      '<input id="l-cover" value="' + esc(cover) + '" placeholder="https://... 或用下面的本地上传 / 从采纳里选">',
-      '<label>本地上传（只进独立站素材，不动商品资料）</label>',
-      '<div class="upload"><input type="file" id="l-upload" accept="image/*" multiple><span class="hint" id="l-upload-tip">支持 jpg / png / webp / gif，单张不超过 8MB</span></div>',
-      '<label>独立站图集（最多 60 张，第 1 张作封面）</label>',
-      '<div class="thumbs">' + thumbsHtml(gallery, 'listing_gallery') + '</div>',
-      '<label>独立站详情图（选填）</label>',
-      '<div class="thumbs">' + thumbsHtml(detail, 'listing_detail') + '</div>',
-      '<label>从「素材投稿」已采纳的投稿里选</label>',
-      subHtml,
-      '<label>商家自己上传的图（商品资料，只读）</label>',
-      sourceThumbsHtml(p),
-      '<div style="margin-top:16px">',
-      '<button class="btn" id="save-listing" type="button">保存独立站素材</button> ',
-      '<button class="btn ghost" id="copy-source" type="button">一键复制商家自己上传的图</button> ',
-      '<button class="btn ghost" id="cancel-listing" type="button">取消</button>',
-      '</div>',
-      '<div class="hint">「一键复制」= 把商品资料里的封面 / 图集 / 详情图复制成独立站素材；之后商家再改自己的图，独立站素材不会被带着变（要同步就再点一次复制）。</div>',
-      '</div>'
-    ].join('');
-  }
-
-  function loadListingSubs(productId) {
-    state.listingSubs = [];
-    state.listingLoading = true;
-    render();
-    return jfetch('/api/shop-cms/submissions?size=100&status=used&product_id=' + Number(productId || 0))
-      .then(function (d) {
-        state.listingSubs = (d.items || []).filter(function (it) { return String(it.url || '').trim(); });
-      })
-      .catch(function (e) { state.msg = '加载已采纳素材失败：' + e.message; })
-      .then(function () { state.listingLoading = false; render(); });
-  }
-
-  function openListing(p) {
-    var listing = (p || {}).listing || {};
-    state.editing = null;
-    state.listingEditing = p;
-    state.listingCover = String(listing.cover || '');
-    state.listingGallery = (listing.gallery || []).slice();
-    state.listingDetail = (listing.detail_images || []).slice();
-    loadListingSubs(p.id);
-  }
-
-  function uploadListingFiles(input) {
-    var files = Array.prototype.slice.call(input.files || []);
-    if (!files.length) return;
-    var tip = $('#l-upload-tip');
-    var chain = Promise.resolve();
-    files.forEach(function (f) {
-      chain = chain.then(function () {
-        return uploadImage(f, tip).then(function (d) {
-          state.listingGallery.push(d.url);
-          if (!state.listingCover) state.listingCover = d.url;
-        });
-      });
-    });
-    chain.then(function () {
-      state.msg = '已上传 ' + files.length + ' 张到独立站素材，记得点「保存独立站素材」';
-      render();
-    }).catch(function (e) { state.msg = '上传失败：' + e.message; render(); });
-  }
-
-  function saveListing(fromSource) {
-    var p = state.listingEditing;
-    if (!p || !p.id) return;
-    var gallery = (state.listingGallery || []).slice();
-    var detail = (state.listingDetail || []).slice();
-    var cover = String(state.listingCover || '').trim();
-    if (!fromSource) {
-      if (cover && gallery.indexOf(cover) < 0) gallery = [cover].concat(gallery);
-      if (!cover && gallery.length) cover = gallery[0];
-      if (!cover) { state.msg = '独立站素材至少要有一张图（本地上传 / 从采纳里选 / 一键复制商家图）'; render(); return; }
-    } else {
-      cover = ''; gallery = []; detail = [];
-    }
-    var btn = $(fromSource ? '#copy-source' : '#save-listing');
-    if (btn) btn.disabled = true;
-    jfetch('/api/shop-cms/products/' + p.id + '/listing', {
-      method: 'POST',
-      body: JSON.stringify({ cover: cover, gallery: gallery, detail_images: detail, from_source: !!fromSource })
-    }).then(function () {
-      state.msg = fromSource ? '已把商家自己上传的图复制成独立站素材' : '已保存独立站素材（上架状态没变）';
-      state.listingEditing = null;
-      state.listingSubs = [];
-      return loadProducts();
-    }).catch(function (e) {
-      if (btn) btn.disabled = false;
-      state.msg = '保存独立站素材失败：' + e.message;
-      render();
-    });
-  }
-
-  function bindListingForm() {
-    if (!state.listingEditing) return;
-    var up = $('#l-upload');
-    if (up) up.addEventListener('change', function () { uploadListingFiles(up); });
-    var lc = $('#l-cover');
-    if (lc) lc.addEventListener('input', function () { state.listingCover = String(lc.value || '').trim(); });
-    var save = $('#save-listing');
-    if (save) save.addEventListener('click', function () { saveListing(false); });
-    var copy = $('#copy-source');
-    if (copy) copy.addEventListener('click', function () { saveListing(true); });
-    var cancel = $('#cancel-listing');
-    if (cancel) cancel.addEventListener('click', function () { state.listingEditing = null; state.listingSubs = []; render(); });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-pick]'), function (b) {
-      b.addEventListener('click', function () {
-        var it = (state.listingSubs || [])[Number(b.getAttribute('data-sub-pick'))];
-        if (!it) return;
-        state.listingCover = String(it.url || '');
-        render();
-      });
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-sub-gallery]'), function (b) {
-      b.addEventListener('click', function () {
-        var it = (state.listingSubs || [])[Number(b.getAttribute('data-sub-gallery'))];
-        if (!it) return;
-        var url = String(it.url || '');
-        var idx = state.listingGallery.indexOf(url);
-        if (idx >= 0) state.listingGallery.splice(idx, 1); else state.listingGallery.push(url);
-        render();
-      });
-    });
-  }
-
   function ordersTable(items) {
     var rows = (items || []).map(function (o) {
       return '<tr><td>' + esc(o.order_no) + '</td><td>' + esc(o.status) + '</td><td>' + yuan(o.pay_amount_cents) + '</td><td>' + yuan(o.commission_cents) + '</td><td>' + esc(o.commission_status || '-') + '</td><td class="muted">' + esc((o.created_at || '').replace('T', ' ').slice(0, 19)) + '</td></tr>';
@@ -521,7 +870,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     app.innerHTML = '<div class="tabs">' + tabs.map(function (t) {
       return '<button class="tab' + (state.view === t[0] ? ' on' : '') + '" data-view="' + t[0] + '" type="button">' + t[1] + '</button>';
     }).join('') + '<button class="tab" id="logout" type="button">退出登录</button></div>' +
-      (state.msg ? '<div class="panel" style="border-color:var(--brand)">' + esc(state.msg) + '</div>' : '') + body;
+      (state.msg && !state.draft ? '<div class="panel" style="border-color:var(--brand)">' + esc(state.msg) + '</div>' : '') + body +
+      productModal() + pickerModal() + previewOverlay();
     $('#who').textContent = state.me ? (state.me.company_name + ' · ' + state.me.slug) : '';
     if (state.me) { $('#who').textContent += ' · 积分 ' + Number(state.credits || 0); }
     bindApp();
@@ -613,82 +963,10 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     });
   }
 
-  function uploadFiles(input, kind) {
-    var files = Array.prototype.slice.call(input.files || []);
-    if (!files.length) return;
-    var tip = $(kind === 'detail_images' ? '#f-detail-images-tip' : '#f-gallery-tip');
-    var chain = Promise.resolve();
-    files.forEach(function (f) {
-      chain = chain.then(function () {
-        return uploadImage(f, tip).then(function (d) {
-          if (kind === 'detail_images') state.formDetailImages.push(d.url);
-          else state.formGallery.push(d.url);
-        });
-      });
-    });
-    chain.then(function () {
-      state.msg = '图片已上传（' + files.length + ' 张）';
-      render();
-    }).catch(function (e) {
-      state.msg = '图片上传失败：' + e.message;
-      render();
-    });
-  }
-
-  function collectSpecs() {
-    var out = {};
-    Array.prototype.forEach.call(document.querySelectorAll('#f-spec-rows [data-spec-row]'), function (row) {
-      var k = (row.querySelector('.spec-k').value || '').trim();
-      var v = (row.querySelector('.spec-v').value || '').trim();
-      if (k) out[k] = v;
-    });
-    return out;
-  }
-
-  function bindProductForm() {
-    var g = $('#f-gallery');
-    if (g) g.addEventListener('change', function () { uploadFiles(g, 'gallery'); });
-    var di = $('#f-detail-images');
-    if (di) di.addEventListener('change', function () { uploadFiles(di, 'detail_images'); });
-    var add = $('#f-spec-add');
-    if (add) add.addEventListener('click', function () {
-      var host = $('#f-spec-rows');
-      if (!host) return;
-      var div = document.createElement('div');
-      div.className = 'spec-row';
-      div.setAttribute('data-spec-row', '');
-      div.innerHTML = '<input class="spec-k" placeholder="规格名"><input class="spec-v" placeholder="规格值"><button class="btn mini ghost" type="button" data-spec-del>删除</button>';
-      host.appendChild(div);
-      bindSpecDelete(div);
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('#f-spec-rows [data-spec-row]'), bindSpecDelete);
-    Array.prototype.forEach.call(document.querySelectorAll('[data-img-del]'), function (b) {
-      b.addEventListener('click', function () {
-        var kind = b.getAttribute('data-img-del');
-        var idx = Number(b.getAttribute('data-img-index'));
-        var list = kind === 'detail_images' ? state.formDetailImages
-          : kind === 'listing_gallery' ? state.listingGallery
-            : kind === 'listing_detail' ? state.listingDetail
-              : state.formGallery;
-        list.splice(idx, 1);
-        render();
-      });
-    });
-  }
-
-  function bindSpecDelete(scope) {
-    Array.prototype.forEach.call(scope.querySelectorAll('[data-spec-del]'), function (b) {
-      b.addEventListener('click', function () {
-        var row = b.closest('[data-spec-row]');
-        if (row) row.remove();
-      });
-    });
-  }
-
   function bindApp() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) {
       b.addEventListener('click', function () {
-        state.view = b.getAttribute('data-view'); state.editing = null; state.listingEditing = null; state.msg = '';
+        state.view = b.getAttribute('data-view'); state.draft = null; state.picker = null; state.preview = null; state.msg = '';
         if (state.view === 'submissions') { loadSubmissions().then(render).catch(function (e) { state.msg = '加载失败：' + e.message; render(); }); return; }
         render();
       });
@@ -721,15 +999,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       state.productStatus = String(pstatus.value || '');
       loadProducts();
     });
-    var np = $('#new-product');
-    if (np) np.addEventListener('click', function () {
-      state.formGallery = []; state.formDetailImages = [];
-      state.listingEditing = null;
-      state.editing = { status: 'draft', commission_bp_own: 1000 };
-      render();
-    });
-    bindProductForm();
-    bindListingForm();
+    bindProducts();
     Array.prototype.forEach.call(document.querySelectorAll('[data-sub-accept]'), function (b) {
       b.addEventListener('click', function () {
         var id = Number(b.getAttribute('data-sub-accept'));
@@ -772,78 +1042,6 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     });
     var ssl = $('#sub-sync-listing');
     if (ssl) ssl.addEventListener('change', function () { state.subSyncListing = !!ssl.checked; });
-    var cp = $('#cancel-product');
-    if (cp) cp.addEventListener('click', function () { state.editing = null; render(); });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-edit]'), function (b) {
-      b.addEventListener('click', function () {
-        var id = Number(b.getAttribute('data-edit'));
-        var found = state.products.filter(function (p) { return p.id === id; })[0] || null;
-        state.editing = found;
-        state.listingEditing = null;
-        state.formGallery = found && found.gallery ? found.gallery.slice() : [];
-        state.formDetailImages = found && found.detail_images ? found.detail_images.slice() : [];
-        render();
-      });
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-listing]'), function (b) {
-      b.addEventListener('click', function () {
-        var id = Number(b.getAttribute('data-listing'));
-        var found = state.products.filter(function (p) { return p.id === id; })[0] || null;
-        if (!found) return;
-        openListing(found);
-      });
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-toggle]'), function (b) {
-      b.addEventListener('click', function () {
-        var id = Number(b.getAttribute('data-toggle')), on = b.getAttribute('data-on') === '1';
-        b.disabled = true;
-        jfetch('/api/shop-cms/products/' + id + '/publish?on=' + (on ? 'true' : 'false'), { method: 'POST' })
-          .then(function () { state.msg = '商品 #' + id + (on ? ' 已上架' : ' 已下架'); return loadAll(); })
-          .then(render)
-          .catch(function (e) { b.disabled = false; state.msg = '操作失败：' + e.message; render(); });
-      });
-    });
-    var sp = $('#save-product');
-    if (sp) sp.addEventListener('click', function () {
-      var bpPct = Number($('#f-bp').value || 0);
-      var gallery = (state.formGallery || []).slice();
-      if (!gallery.length) { state.msg = '请先上传至少一张商品图片'; render(); return; }
-      if (!(bpPct > 0)) { state.msg = '请填商品佣金（%）：佣金按商品设置'; render(); return; }
-      var payload = {
-        title: $('#f-title').value.trim(),
-        subtitle: $('#f-subtitle').value.trim(),
-        category: $('#f-category').value.trim(),
-        brand: $('#f-brand').value.trim(),
-        keywords: $('#f-keywords').value.trim(),
-        price_cents: Math.round(Number($('#f-price').value || 0) * 100),
-        market_price_cents: Math.round(Number($('#f-market').value || 0) * 100),
-        stock: parseInt($('#f-stock').value || '0', 10) || 0,
-        commission_bp: Math.round(bpPct * 100),
-        commission_type: 'percent',
-        tags: $('#f-tags').value.trim(),
-        cover_url: gallery[0],
-        gallery: gallery,
-        detail_images: (state.formDetailImages || []).slice(),
-        detail_text: $('#f-detail-text').value,
-        specs: collectSpecs(),
-        status: $('#f-status').value
-      };
-      if (!payload.title) { state.msg = '标题不能为空'; render(); return; }
-      sp.disabled = true;
-      var url = state.editing && state.editing.id ? ('/api/shop-cms/products/' + state.editing.id) : '/api/shop-cms/products';
-      jfetch(url, { method: state.editing && state.editing.id ? 'PUT' : 'POST', body: JSON.stringify(payload) })
-        .then(function (r) {
-          var pid = r.product ? r.product.id : (state.editing || {}).id;
-          state.editing = null;
-          state.msg = '已保存商品 #' + pid;
-          if (payload.status === 'on_sale' && pid) {
-            return jfetch('/api/shop-cms/products/' + pid + '/publish?on=true', { method: 'POST' }).then(loadAll);
-          }
-          return loadAll();
-        })
-        .then(function () { state.view = 'products'; render(); })
-        .catch(function (e) { sp.disabled = false; state.msg = '保存失败：' + e.message; render(); });
-    });
     var ss = $('#save-settings');
     if (ss) ss.addEventListener('click', function () {
       var theme = $('#s-theme').value;
