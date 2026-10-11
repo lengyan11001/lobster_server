@@ -37,6 +37,7 @@ from .mobile_identity import online_user_for_mobile_user
 from ..services import dispatch_devices
 from .scheduled_tasks import (
     ScheduledTaskCreate,
+    _compute_next_daily_time,
     _SERVER_SIDE_TASK_KINDS,
     _cancel_unfinished_runs_for_task,
     _create_task_row,
@@ -3575,6 +3576,115 @@ def workflow_demo_plan(
     }
 
 
+def _refresh_template_scheduled_tasks(db: Session, *, template: H5WorkflowTemplate) -> Dict[str, int]:
+    """模板保存后，刷新该模板「启用中」的定时任务 payload（2026-10-11）。
+
+    背景：启用工作流（_activate…）会把每个节点的 plan **冻结**成一条 ScheduledTask；
+    之后编辑模板（例如新勾「写作依据 = 行业/IP 口播」、改草稿箱、改主题）都不会生效，
+    用户必须停用再启用才会重建定时任务 —— 线上就踩到过：模板 10-10 13:43 已保存
+    script_sources，10-11 06:00 跑的仍是 10-09 启用时冻结的旧 payload。
+
+    这里按 workflow_node_id 对齐，用最新节点重建 payload/title/content/时间：
+    - 只处理 status=active 的激活记录；暂停/已完成的不动；
+    - payload 用「新节点 spec」覆盖，但保留 schedule_config（含 daily_times）；
+    - 节点时间变了就同步 daily_times 并重算 next_run_at；
+    - 同步刷新 activation.template_snapshot，保持快照与模板一致。
+    """
+    activations = (
+        db.query(H5WorkflowActivation)
+        .filter(
+            H5WorkflowActivation.template_id == int(template.id),
+            H5WorkflowActivation.template_owner_user_id == int(template.owner_user_id),
+            H5WorkflowActivation.status == "active",
+        )
+        .all()
+    )
+    if not activations:
+        return {"activations": 0, "tasks": 0, "refreshed": 0}
+
+    nodes = template.nodes if isinstance(template.nodes, list) else []
+    specs: Dict[str, tuple] = {}
+    for node, parent_node in _workflow_nodes_with_actions(nodes):
+        if _is_workflow_placeholder(node):
+            continue
+        node_id = _clean_text(node.get("id"), 64)
+        if node_id:
+            specs[node_id] = (node, parent_node)
+
+    now = datetime.utcnow()
+    touched = 0
+    refreshed = 0
+    for activation in activations:
+        snapshot = activation.template_snapshot if isinstance(activation.template_snapshot, dict) else {}
+        snapshot_extra = {key: value for key, value in snapshot.items() if key not in ("name", "nodes")}
+        task_ids = [int(item) for item in (activation.scheduled_task_ids or []) if str(item).isdigit()]
+        if task_ids:
+            for task in db.query(ScheduledTask).filter(ScheduledTask.id.in_(task_ids)).all():
+                row_payload = task.payload if isinstance(task.payload, dict) else {}
+                context = row_payload.get("h5_context") if isinstance(row_payload.get("h5_context"), dict) else {}
+                node_id = _clean_text(context.get("workflow_node_id"), 64)
+                entry = specs.get(node_id)
+                if not entry:
+                    continue
+                node, parent_node = entry
+                spec = _workflow_node_task_spec(
+                    node,
+                    parent_node,
+                    installation_id=_clean_text(activation.installation_id, 128),
+                    template_id=int(template.id),
+                    template_name=str(template.name or ""),
+                    snapshot_extra=snapshot_extra,
+                )
+                touched += 1
+                merged = dict(row_payload)
+                schedule = merged.get("schedule_config") if isinstance(merged.get("schedule_config"), dict) else {}
+                merged.update(spec["payload"])
+                if schedule:
+                    schedule = dict(schedule)
+                    node_time = _clean_text(node.get("time"), 16)
+                    if node_time:
+                        schedule["daily_times"] = [node_time]
+                        try:
+                            timezone_offset = int(schedule.get("timezone_offset_minutes") or 480)
+                        except (TypeError, ValueError):
+                            timezone_offset = 480
+                        task.next_run_at = _compute_next_daily_time(
+                            now_utc=now,
+                            daily_times=[node_time],
+                            timezone_offset_minutes=timezone_offset,
+                        )
+                    merged["schedule_config"] = schedule
+                if merged != row_payload:
+                    refreshed += 1
+                task.payload = merged
+                task.title = str(spec["title"])[:160]
+                task.task_kind = str(spec["task_kind"])[:32]
+                task.content = str(spec["content"])
+                task.updated_at = now
+        activation.template_snapshot = {"name": str(template.name or ""), "nodes": nodes, **snapshot_extra}
+        activation.updated_at = now
+
+    db.commit()
+    result = {"activations": len(activations), "tasks": touched, "refreshed": refreshed}
+    if touched:
+        logger.info(
+            "[h5-workflows] 模板 %s 保存后刷新定时任务: %s", template.id, result
+        )
+    return result
+
+
+def _refresh_template_scheduled_tasks_safely(db: Session, *, template: H5WorkflowTemplate) -> None:
+    """包一层：刷新失败不能影响模板保存本身。"""
+    try:
+        _refresh_template_scheduled_tasks(db, template=template)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("[h5-workflows] 刷新定时任务失败 template=%s: %s", template.id, exc)
+
+
 @router.get("/api/h5-workflows/templates", summary="H5 工作流模板列表")
 def list_workflow_templates(
     installation_id: str = Query("", max_length=128),
@@ -3618,6 +3728,7 @@ def create_workflow_template(
             db.commit()
             db.refresh(existing)
             _clear_workflow_template_cache()
+            _refresh_template_scheduled_tasks_safely(db, template=existing)
             return {"ok": True, "created": False, "template": _template_payload(existing, source="own")}
     row = H5WorkflowTemplate(
         owner_user_id=owner.id,
@@ -3633,6 +3744,7 @@ def create_workflow_template(
     db.commit()
     db.refresh(row)
     _clear_workflow_template_cache()
+    _refresh_template_scheduled_tasks_safely(db, template=row)
     return {"ok": True, "created": True, "template": _template_payload(row, source="own")}
 
 
@@ -3684,6 +3796,8 @@ def update_workflow_template(
     db.commit()
     db.refresh(row)
     _clear_workflow_template_cache()
+    # 保存即生效：把已启用工作流的定时任务 payload 刷新成最新节点参数
+    _refresh_template_scheduled_tasks_safely(db, template=row)
     return {"ok": True, "template": _template_payload(row, source="own")}
 
 
