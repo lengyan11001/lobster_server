@@ -566,39 +566,102 @@ def _match_text(item: dict[str, Any]) -> str:
     return " ".join(parts).lower()
 
 
-def search_information_desk(db: Any, keywords: list[str], limit: int = 60) -> dict[str, Any]:
-    """在最新快照的两个榜里按关键词搜（本地检索，不再请求 TikHub）。"""
+SEARCH_DEFAULT_DAYS = 7
+
+
+def _item_dedupe_key(item: dict[str, Any]) -> str:
+    for key in ("item_id", "aweme_id", "id", "url", "share_url"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return str(item.get("title") or item.get("name") or "")[:60]
+
+
+def _search_fallback(snapshot: dict[str, Any], limit: int) -> dict[str, Any]:
+    """一个词都没命中时给的兜底：当天最热的总榜 + 可点的推荐词，避免用户看到一片空白。"""
+    top: list[dict[str, Any]] = []
+    suggestions: list[str] = []
+    for section in snapshot.get("sections") or []:
+        key = str((section or {}).get("key") or "")
+        items = (section or {}).get("items") or []
+        if key in ("hot_total", "hot_video", "hot_rise"):
+            top.extend(item for item in items if isinstance(item, dict))
+        if key in ("hot_search_words", "hot_content_words", "hot_topic", "rising_search_words", "hot_challenge"):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                word = str(item.get("title") or item.get("name") or item.get("keyword") or "").strip()
+                if word and word not in suggestions:
+                    suggestions.append(word)
+    return {"items": top[:limit], "suggestions": suggestions[:12]}
+
+
+def search_information_desk(db: Any, keywords: list[str], limit: int = 60,
+                            days: int = SEARCH_DEFAULT_DAYS) -> dict[str, Any]:
+    """在最近 N 天的榜单快照里按关键词搜（本地检索，不额外请求 TikHub）。
+
+    2026-10-11 改动：原来只搜「当天」快照（一天约 165 条），很多关键词直接 0 结果
+    （生产实测「探店」=0、「火锅」=1）；改为默认检索最近 7 天，同一作品只保留最近一天的那条，
+    仍然一个都没命中时返回当天最热的总榜（fallback_items）和推荐词（suggestions）。
+    """
     words = [str(word or "").strip().lower() for word in (keywords or [])]
     words = [word for word in dict.fromkeys(words) if word]
-    row = (db.query(DouyinPlatformSnapshot)
-           .order_by(DouyinPlatformSnapshot.snapshot_date.desc(), DouyinPlatformSnapshot.id.desc())
-           .first())
-    snapshot = _snapshot_payload(row)
-    if snapshot is None or not words:
-        return {"keywords": words, "snapshot_date": None, "count": 0, "items": []}
+    span = max(1, min(30, int(days or SEARCH_DEFAULT_DAYS)))
+    rows = (
+        db.query(DouyinPlatformSnapshot)
+        .filter(DouyinPlatformSnapshot.status == "success")
+        .order_by(DouyinPlatformSnapshot.snapshot_date.desc(), DouyinPlatformSnapshot.id.desc())
+        .limit(span)
+        .all()
+    )
+    if not rows or not words:
+        return {"keywords": words, "snapshot_date": None, "days": span, "count": 0, "items": []}
+    latest = rows[0]
+    latest_payload = _snapshot_payload(latest) or {}
     hits: list[dict[str, Any]] = []
-    for section in snapshot.get("sections") or []:
-        for item in section.get("items") or []:
-            haystack = _match_text(item)
-            if not haystack:
-                continue
-            matched = [word for word in words if word in haystack]
-            if not matched:
-                continue
-            hits.append({
-                **item,
-                "section_key": section.get("key") or "",
-                "section_title": section.get("title") or "",
-                "category": section.get("category") or "",
-                "matched": matched,
-            })
+    seen: set[str] = set()
+    for row in rows:
+        snapshot = _snapshot_payload(row)
+        if not snapshot:
+            continue
+        day = str(snapshot.get("snapshot_date") or getattr(row, "snapshot_date", "") or "")
+        for section in snapshot.get("sections") or []:
+            for item in (section or {}).get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                haystack = _match_text(item)
+                if not haystack:
+                    continue
+                matched = [word for word in words if word in haystack]
+                if not matched:
+                    continue
+                dedupe = _item_dedupe_key(item)
+                if dedupe and dedupe in seen:
+                    continue  # 同一作品多天都在榜：只留最近那一天
+                if dedupe:
+                    seen.add(dedupe)
+                hits.append({
+                    **item,
+                    "snapshot_date": day,
+                    "section_key": (section or {}).get("key") or "",
+                    "section_title": (section or {}).get("title") or "",
+                    "category": (section or {}).get("category") or "",
+                    "matched": matched,
+                })
     hits.sort(key=lambda row_: (-len(row_.get("matched") or []), str(row_.get("category") or ""), row_.get("rank") or 999))
-    return {
+    result: dict[str, Any] = {
         "keywords": words,
-        "snapshot_date": snapshot.get("snapshot_date"),
+        "snapshot_date": latest_payload.get("snapshot_date") or str(getattr(latest, "snapshot_date", "") or ""),
+        "days": span,
         "count": len(hits),
         "items": hits[: max(1, min(200, int(limit or 60)))],
     }
+    if not hits:
+        fallback = _search_fallback(latest_payload, min(20, max(1, int(limit or 60))))
+        result["fallback_items"] = fallback["items"]
+        result["suggestions"] = fallback["suggestions"]
+        result["fallback_reason"] = "最近 %d 天的榜单里没有匹配「%s」的内容" % (span, "、".join(words))
+    return result
 
 
 async def collect_douyin_platform_snapshot(snapshot_date: str | None = None, force: bool = False) -> dict[str, Any]:

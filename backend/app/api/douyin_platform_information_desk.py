@@ -301,6 +301,7 @@ async def get_information_desk_imitation(
 def search_douyin_platform_information_desk(
     q: str = Query(..., min_length=1, max_length=120, description="关键词，逗号 / 空格分隔多个"),
     limit: int = Query(60, ge=1, le=200),
+    days: int = Query(7, ge=1, le=30, description="检索最近几天的榜单快照（默认 7 天）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -308,7 +309,7 @@ def search_douyin_platform_information_desk(
     _require_information_desk_access(current_user, db)
     keywords = [part for part in q.replace(",", " ").replace("，", " ").split(" ") if part.strip()]
     charged = billing.deduct(db, current_user, billing.search_credits(), reason="douyin_desk_search")
-    payload = search_information_desk(db, keywords, limit)
+    payload = search_information_desk(db, keywords, limit, days)
     payload["billing"] = {"credits_charged": credits_json_float(charged),
                           "unit_price_credits": credits_json_float(billing.search_credits())}
     return payload
