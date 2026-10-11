@@ -105,6 +105,45 @@ def _apply_product_media(product: ShopProduct, body: "ProductReq") -> None:
         product.cover_url = str(body.cover_url).strip()
 
 
+def _normalized_listing_media(product: ShopProduct) -> Dict[str, Any]:
+    """独立站渲染用素材：listing_media 优先，空则回退商家自己上传的图（老商品不炸）。"""
+    listing = product.listing_media if isinstance(product.listing_media, dict) else {}
+    media = product.media or {}
+    cover = str(listing.get("cover") or "").strip() or str(product.cover_url or "").strip()
+    gallery = [str(u).strip() for u in (listing.get("gallery") or []) if str(u or "").strip()]
+    if not gallery:
+        gallery = [str(u).strip() for u in (media.get("gallery") or []) if str(u or "").strip()]
+    detail = [str(u).strip() for u in (listing.get("detail_images") or []) if str(u or "").strip()]
+    if not detail:
+        detail = [str(u).strip() for u in (media.get("detail_images") or []) if str(u or "").strip()]
+    return {
+        "cover": cover,
+        "gallery": gallery,
+        "detail_images": detail,
+        "updated_at": str(listing.get("updated_at") or ""),
+        "from_listing": bool(listing),
+    }
+
+
+def _product_ready_for_earn(product: ShopProduct) -> bool:
+    """资料完善（能给 online 赚钱/投稿用）：有标题 + 有价格 + 至少 1 张图。与独立站是否上架无关。"""
+    if not str(product.title or "").strip():
+        return False
+    if int(product.price_cents or 0) <= 0:
+        return False
+    listing = _normalized_listing_media(product)
+    return bool(listing["gallery"] or listing["cover"])
+
+
+class ProductListingReq(BaseModel):
+    """独立站素材（入口②）：封面 / 图集 / 详情图，可从商家自己上传的图里复制（from_source）。"""
+
+    cover: str = Field("", max_length=512)
+    gallery: List[str] = Field(default_factory=list)
+    detail_images: List[str] = Field(default_factory=list)
+    from_source: bool = False
+
+
 def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = None, *, promoter_view: bool = False) -> Dict[str, Any]:
     data: Dict[str, Any] = {
         "id": product.id,
@@ -116,6 +155,9 @@ def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = No
         "media": product.media or {},
         "gallery": (product.media or {}).get("gallery", []),
         "detail_images": (product.media or {}).get("detail_images", []),
+        # 2026-10-11：商家自己上传的素材池 + 独立站真正用的素材分开给
+        "listing": _normalized_listing_media(product),
+        "ready_for_earn": _product_ready_for_earn(product),
         "detail_text": (product.media or {}).get("detail_text", ""),
         "detail_html": product.detail_html or "",
         "specs": product.specs or {},
@@ -363,6 +405,44 @@ def cms_product_publish(
     return {"ok": True, "status": product.status}
 
 
+@cms_router.post("/api/shop-cms/products/{product_id}/listing", summary="保存独立站素材（上架到独立站用）")
+def cms_product_listing_save(
+    product_id: int,
+    body: ProductListingReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """入口②「上架到独立站」用的素材：封面 / 图集 / 详情图。
+
+    - from_source=True：直接把商家自己上传的图复制过来当独立站素材；
+    - 否则用传进来的 URL（本地上传的图，或从「采纳」里挑的投稿素材）；
+    - 商品已上架也能改，改完店铺页立刻用新素材，不用下架重上。
+    """
+    merchant = _merchant_of(db, current_user)
+    product = db.query(ShopProduct).filter(ShopProduct.id == product_id, ShopProduct.merchant_id == merchant.id).first()
+    if product is None:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    if body.from_source:
+        media = product.media or {}
+        listing = {
+            "cover": str(product.cover_url or "").strip(),
+            "gallery": [str(u).strip() for u in (media.get("gallery") or []) if str(u or "").strip()][:60],
+            "detail_images": [str(u).strip() for u in (media.get("detail_images") or []) if str(u or "").strip()][:60],
+        }
+    else:
+        listing = {
+            "cover": str(body.cover or "").strip(),
+            "gallery": [str(u).strip() for u in (body.gallery or []) if str(u or "").strip()][:60],
+            "detail_images": [str(u).strip() for u in (body.detail_images or []) if str(u or "").strip()][:60],
+        }
+    listing["updated_at"] = datetime.utcnow().isoformat()
+    product.listing_media = listing
+    flag_modified(product, "listing_media")
+    db.commit()
+    db.refresh(product)
+    return {"ok": True, "product": _product_payload(product, merchant)}
+
+
 @cms_router.post("/api/shop-cms/uploads", summary="商品图片上传（商家后台）")
 async def cms_upload_image(
     file: UploadFile = File(...),
@@ -434,17 +514,48 @@ def cms_commission_summary(current_user: User = Depends(get_current_user), db: S
 # ────────────────────────── 独立站 /api/shop ──────────────────────────
 
 @router.get("/api/shop/store/{slug}", summary="店铺首页数据")
-def store_home(slug: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def store_home(
+    slug: str,
+    category: str = "",
+    keyword: str = "",
+    sort: str = "heat",
+    page: int = 1,
+    size: int = 60,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """店铺首页（独立站）。2026-10-11：渲染 listing_media（独立站素材），并支持分类/关键词/排序筛选。"""
     merchant = db.query(ShopMerchant).filter(ShopMerchant.slug == slug).first()
     if merchant is None:
         raise HTTPException(status_code=404, detail="店铺不存在")
+    base = db.query(ShopProduct).filter(ShopProduct.merchant_id == merchant.id, ShopProduct.status == ON_SALE)
+    categories = sorted({str(row.category or "").strip() for row in base.all() if str(row.category or "").strip()})
+    query = base
+    if str(category or "").strip():
+        query = query.filter(ShopProduct.category == str(category).strip())
+    text_kw = str(keyword or "").strip()
+    if text_kw:
+        like = f"%{text_kw}%"
+        query = query.filter(ShopProduct.title.ilike(like) | ShopProduct.keywords.ilike(like))
+    order = ShopProduct.heat.desc() if sort == "heat" else ShopProduct.id.desc()
+    if sort == "price_asc":
+        order = ShopProduct.price_cents.asc()
+    elif sort == "price_desc":
+        order = ShopProduct.price_cents.desc()
+    total = query.count()
     products = (
-        db.query(ShopProduct)
-        .filter(ShopProduct.merchant_id == merchant.id, ShopProduct.status == ON_SALE)
-        .order_by(ShopProduct.heat.desc(), ShopProduct.id.desc())
-        .limit(60)
+        query.order_by(order)
+        .offset(max(0, (page - 1) * size))
+        .limit(min(size, 100))
         .all()
     )
+    items = []
+    for row in products:
+        payload = _product_payload(row, merchant)
+        listing = _normalized_listing_media(row)
+        payload["cover_url"] = listing["cover"] or payload.get("cover_url", "")
+        payload["gallery"] = listing["gallery"]
+        payload["detail_images"] = listing["detail_images"]
+        items.append(payload)
     return {
         "ok": True,
         "theme": resolve_theme(merchant.theme, category=(products[0].category if products else "")),
@@ -457,7 +568,10 @@ def store_home(slug: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
             "banner_url": merchant.banner_url,
             "theme": merchant.theme or {},
         },
-        "items": [_product_payload(row, merchant) for row in products],
+        "items": items,
+        "total": total,
+        "categories": categories,
+        "filters": {"category": category, "keyword": text_kw, "sort": sort, "page": page, "size": size},
     }
 
 
@@ -468,6 +582,10 @@ def product_detail(product_id: int, db: Session = Depends(get_db)) -> Dict[str, 
         raise HTTPException(status_code=404, detail="商品不存在或未上架")
     merchant = db.query(ShopMerchant).filter(ShopMerchant.id == product.merchant_id).first()
     data = _product_payload(product, merchant, promoter_view=True)
+    listing = _normalized_listing_media(product)
+    data["cover_url"] = listing["cover"] or data.get("cover_url", "")
+    data["gallery"] = listing["gallery"]
+    data["detail_images"] = listing["detail_images"]
     data["detail_html"] = product.detail_html or ""
     data["specs"] = product.specs or {}
     data["buy_url"] = f"{SHOP_BASE_URL}/p/{product.id}"
@@ -481,22 +599,41 @@ def plaza(
     sort: str = "heat",
     page: int = 1,
     size: int = 24,
+    scope: str = "store",
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Online 选品/赚钱广场。
+
+    scope=store（默认，旧行为）：只出独立站已上架商品（能下单、能生成推广链接）。
+    scope=earn（2026-10-11）：出「资料完善」的商家商品，用于投稿 / 图片工作台选商家素材，
+    不要求已上架 —— 商家上架到独立站和给 online 赚钱用是两个入口。
+    """
+    earn_scope = str(scope or "store").strip().lower() == "earn"
     query = (
         db.query(ShopProduct, ShopMerchant)
         .join(ShopMerchant, ShopMerchant.id == ShopProduct.merchant_id)
-        .filter(ShopProduct.status == ON_SALE, ShopMerchant.status == "active")
+        .filter(ShopMerchant.status == "active")
     )
+    if earn_scope:
+        query = query.filter(ShopProduct.status.in_([ON_SALE, "draft", "reviewing"]))
+    else:
+        query = query.filter(ShopProduct.status == ON_SALE)
     if category:
         query = query.filter(ShopProduct.category == category)
     if keyword:
         like = f"%{keyword}%"
         query = query.filter(ShopProduct.title.ilike(like) | ShopProduct.keywords.ilike(like))
     order = ShopProduct.heat.desc() if sort == "heat" else ShopProduct.id.desc()
+    if earn_scope:
+        # JSON 里有没有图没法跨库用 SQL 过滤：多取一些再按「资料完善」过滤
+        rows = query.order_by(order).offset(max(0, (page - 1) * size)).limit(min(size, 100) * 3).all()
+        rows = [(product, merchant) for product, merchant in rows if _product_ready_for_earn(product)][: min(size, 100)]
+        return {"ok": True, "total": len(rows), "scope": "earn",
+                "items": [_product_payload(product, merchant) for product, merchant in rows]}
     total = query.count()
     rows = query.order_by(order).offset(max(0, (page - 1) * size)).limit(min(size, 100)).all()
-    return {"ok": True, "total": total, "items": [_product_payload(product, merchant) for product, merchant in rows]}
+    return {"ok": True, "total": total, "scope": "store",
+            "items": [_product_payload(product, merchant) for product, merchant in rows]}
 
 
 class PlazaLinkReq(BaseModel):
@@ -1263,7 +1400,8 @@ def _merchant_submission(db: Session, merchant: "ShopMerchant", submission_id: i
     return row
 
 
-def _attach_submission_material(db: Session, merchant: "ShopMerchant", row: "ShopProductSubmission", request: Request) -> "ShopProduct":
+def _attach_submission_material(db: Session, merchant: "ShopMerchant", row: "ShopProductSubmission", request: Request,
+                               also_listing: bool = False) -> "ShopProduct":
     product = (
         db.query(ShopProduct)
         .filter(ShopProduct.id == int(row.product_id), ShopProduct.merchant_id == int(merchant.id))
@@ -1287,13 +1425,26 @@ def _attach_submission_material(db: Session, merchant: "ShopMerchant", row: "Sho
     media["materials"] = materials[:200]
     product.media = media
     flag_modified(product, "media")
+    if also_listing:
+        listing = dict(product.listing_media or {})
+        gallery = [str(u).strip() for u in (listing.get("gallery") or []) if str(u or "").strip()]
+        if url and url not in gallery:
+            gallery.append(url)
+        listing["gallery"] = gallery[:60]
+        listing["updated_at"] = datetime.utcnow().isoformat()
+        product.listing_media = listing
+        flag_modified(product, "listing_media")
     return product
 
 
 def _accept_submission(db: Session, merchant: "ShopMerchant", row: "ShopProductSubmission", request: Request,
-                       current_user: User) -> Dict[str, Any]:
-    """采纳：商家扣积分、投稿人加积分、素材进商品素材；同一条只扣一次。"""
-    product = _attach_submission_material(db, merchant, row, request)
+                       current_user: User, sync_listing: bool = False) -> Dict[str, Any]:
+    """采纳：商家扣积分、投稿人加积分、素材进商品素材；同一条只扣一次。
+
+    2026-10-11：sync_listing=True 时同时把这条素材写进独立站素材（listing_media），
+    上架中商品也能直接换素材，不需要下架重上。
+    """
+    product = _attach_submission_material(db, merchant, row, request, also_listing=sync_listing)
     already = bool(getattr(row, "accepted_at", None))
     charged = Decimal("0")
     # 扣费必须落在当前请求的 session 上（跨 session 的 User 对象不会被提交）
@@ -1342,12 +1493,13 @@ def cms_accept_submission(
     submission_id: int,
     request: Request,
     body: Optional[SubmissionAcceptReq] = None,
+    sync_listing: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     merchant = _merchant_of(db, current_user)
     row = _merchant_submission(db, merchant, submission_id)
-    return _accept_submission(db, merchant, row, request, current_user)
+    return _accept_submission(db, merchant, row, request, current_user, sync_listing=sync_listing)
 
 
 @cms_router.post("/api/shop-cms/submissions/{submission_id}/use", summary="采纳（旧入口，等价 accept）")

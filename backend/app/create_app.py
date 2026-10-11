@@ -164,6 +164,21 @@ def _startup_db_lock():
                 logger.warning("startup db advisory unlock failed: %s", e)
         conn.close()
 
+def _migrate_shop_product_listing_media():
+    """2026-10-11：商品拆两套素材 —— media=商家自己上传的图（online 赚钱用），
+    listing_media=独立站真正渲染的素材（上架后也能继续改）。"""
+    try:
+        insp = inspect(engine)
+        if "shop_products" not in insp.get_table_names():
+            return
+        cols = [c["name"] for c in insp.get_columns("shop_products")]
+        with engine.begin() as conn:
+            if "listing_media" not in cols:
+                conn.execute(text("ALTER TABLE shop_products ADD COLUMN listing_media JSON"))
+        logger.info("Migration shop_products.listing_media ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration shop_products.listing_media skipped: %s", e)
+
 
 def _migrate_user_password_version():
     """users.password_version：改密码后旧 token 失效（老库补列）。"""
@@ -1649,6 +1664,7 @@ def create_app() -> FastAPI:
         _migrate_device_labels()
         _migrate_customer_authorizations()
         _migrate_manage_ai_employee_columns()
+        _migrate_shop_product_listing_media()
         _migrate_h5_chat_mastra_columns()
         _migrate_h5_home_preference_columns()
         _ensure_default_user()

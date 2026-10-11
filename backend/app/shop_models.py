@@ -65,7 +65,9 @@ class ShopProduct(Base):
     keywords: Mapped[str] = mapped_column(String(300), default="")
     brand: Mapped[str] = mapped_column(String(64), default="")
     cover_url: Mapped[str] = mapped_column(String(512), default="")
-    media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # {gallery:[], video:"", detail:[]}
+    media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 商家自己上传的图 {gallery:[], video:"", detail:[]}（给 online 赚钱用）
+    # 2026-10-11：独立站真正渲染的素材，单独存一份；上架后也能继续采纳新素材改这里，不影响商品资料
+    listing_media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # {cover, gallery:[], detail_images:[], updated_at}
     detail_html: Mapped[str] = mapped_column(Text, default="")
     specs: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     price_cents: Mapped[int] = mapped_column(BigInteger, default=0)
