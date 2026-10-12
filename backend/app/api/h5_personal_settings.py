@@ -980,10 +980,12 @@ def _transcribe_audio_attachment(
     filename: str,
     suffix: str,
     data: bytes,
+    container_suffix: str = "",
 ) -> tuple[str, str]:
     with tempfile.TemporaryDirectory(prefix="lobster-h5-audio-") as tmp:
         tmp_dir = Path(tmp)
-        src = tmp_dir / ("source" + (suffix if suffix in AUDIO_SUFFIXES else ".audio"))
+        container = container_suffix or (suffix if suffix in AUDIO_SUFFIXES else ".audio")
+        src = tmp_dir / ("source" + container)
         wav = tmp_dir / "audio.wav"
         src.write_bytes(data)
         try:
@@ -1112,10 +1114,30 @@ async def _collect_sources(
                 parts.append(f"【图片】{filename}")
             elif suffix in VIDEO_SUFFIXES:
                 frames = (
-                    await _run_personal_source_io(_extract_video_frames, data, filename, max_frames=3)
+                    await _run_personal_source_io(_extract_video_frames, data, filename, max_frames=6)
                     if len(data) <= MAX_VIDEO_BYTES
                     else []
                 )
+                # 口播转写：视频里说的话才是内容主体（与「AI调度助手」理解素材同一口径）
+                video_transcript = ""
+                if len(data) <= MAX_VIDEO_BYTES:
+                    try:
+                        stt_token, _stt_source = _load_sutui_token_for_stt(db, stt_user.id)
+                        video_transcript, _audio_url = await _run_personal_source_io(
+                            _transcribe_audio_attachment,
+                            token=stt_token,
+                            installation_id=installation_id,
+                            filename=filename,
+                            suffix=suffix,
+                            data=data,
+                            container_suffix=suffix,
+                        )
+                    except HTTPException as exc:
+                        logger.warning("[记忆解析] 视频口播转写失败 %s: %s", filename, str(exc.detail)[:200])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("[记忆解析] 视频口播转写异常 %s: %s", filename, str(exc)[:200])
+                if video_transcript.strip():
+                    parts.append(f"【视频口播】{filename}\n{video_transcript.strip()[:8000]}")
                 if frames:
                     parts.append(f"【视频】{filename}\n已抽取 {len(frames)} 张关键帧用于理解。")
                     for frame_name, frame_data in frames:
