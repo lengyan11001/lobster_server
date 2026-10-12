@@ -388,3 +388,43 @@ def test_member_lines_matches_real_owner_kind_human(db_session, feishu_company):
     db_session.commit()
     assert "草稿里的任务" not in "\n".join(manage_notify.member_lines(db_session, company, worker))
     assert "草稿里的任务" not in "\n".join(manage_notify.digest_lines(db_session, company)["lines"])
+
+
+@pytest.mark.asyncio
+async def test_send_overdue_digest_private_and_project_summary(monkeypatch, db_session, feishu_company):
+    """17:05 逾期：逾期任务负责人各收一条私聊；项目负责人再收一条汇总。"""
+    monkeypatch.setenv("MANAGE_FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/TEST")
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "sec_test")
+    feishu_company["project"].owner_membership_id = feishu_company["idle"].id
+    db_session.commit()
+
+    client = _Client(open_ids={"worker@test.local": "ou_worker", "idle@test.local": "ou_idle"})
+    res = await manage_notify.send_overdue_digest(db_session, feishu_company["company"], client=client)
+
+    assert res["overdue"] == 1
+    assert res["private"] == 1 and res["project_summary"] == 1
+    msgs = [c for c in client.calls if "/im/v1/messages" in c["url"]]
+    assert len(msgs) == 2, [c["url"] for c in client.calls]
+    got = {}
+    for c in msgs:
+        content = json.loads(c["json"]["content"])
+        assert content["header"]["template"] == "red"
+        got[c["json"]["receive_id"]] = content["elements"][0]["text"]["content"]
+    assert "逾期" in got["ou_worker"] and "首条爆款脚本" in got["ou_worker"]      # 本人逾期清单
+    assert "逾期" in got["ou_idle"] and "首条爆款脚本" in got["ou_idle"]        # 项目汇总
+
+
+@pytest.mark.asyncio
+async def test_send_overdue_digest_skips_and_sends_nothing(monkeypatch, db_session, feishu_company):
+    monkeypatch.setenv("MANAGE_FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/TEST")
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "sec_test")
+    node = feishu_company["overdue"]
+    node.end_at = _day(5)
+    node.status = "not_started"
+    db_session.commit()
+    client = _Client(open_ids={"worker@test.local": "ou_worker"})
+    res = await manage_notify.send_overdue_digest(db_session, feishu_company["company"], client=client)
+    assert res["ok"] is False and res["skipped"] == "no overdue"
+    assert client.calls == []

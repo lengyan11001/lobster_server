@@ -318,17 +318,110 @@ async def send_daily_digest(db: Session, company: MCompany, *, today: str = "",
     return result
 
 
-async def notify_overdue_only(db: Session, company: MCompany, *, today: str = "",
-                              client=None) -> Dict[str, Any]:
-    """只发逾期清单；没有逾期就跳过（17:00 档用，避免刷屏）。"""
+def overdue_nodes(db: Session, company, *, today: str = "", limit: int = 200) -> List[MPlanNode]:
+    """公司里逾期的任务（已确认项目 + 未完成 + 截止日早于今天）。"""
+    day = today or today_str()
+    company_id = int(company.id) if hasattr(company, "id") else int(company)
+    rows = open_nodes(db, [company_id], today=day, limit=max(1, int(limit)))
+    return [n for n in rows if is_overdue(n, day)]
+
+
+def project_owner_membership(db: Session, company: MCompany, project: Optional[MProject]) -> Optional[MMembership]:
+    """项目负责人；项目没设负责人就回退到公司老板（owner_user_id 对应的成员）。"""
+    if project is not None and getattr(project, "owner_membership_id", None):
+        row = db.query(MMembership).filter(MMembership.id == int(project.owner_membership_id)).first()
+        if row is not None:
+            return row
+    owner_user_id = int(getattr(company, "owner_user_id", 0) or 0)
+    if owner_user_id:
+        return (db.query(MMembership)
+                .filter(MMembership.company_id == int(company.id), MMembership.user_id == owner_user_id)
+                .first())
+    return None
+
+
+async def _send_overdue_private(db: Session, cfg, member: MMembership, title: str, lines: List[str], *,
+                                client=None) -> Dict[str, Any]:
+    """给一个人发逾期卡片；统一返回 {ok, member, reason, hint}（不抛错）。"""
+    name = str(getattr(member, "display_name", "") or "")
+    oid = await member_open_id(db, member, cfg, client=client)
+    if not oid:
+        return {"ok": False, "member": name, "reason": "飞书里查不到该手机号/邮箱", "hint": ""}
+    try:
+        ok = await _send_private(cfg, oid, title, lines, template="red", client=client, raise_on_error=True)
+    except Exception as exc:
+        return {"ok": False, "member": name, "reason": str(exc)[:200], "hint": feishu_bot.hint_for(exc)}
+    return {"ok": bool(ok), "member": name, "reason": "" if ok else "未发送", "hint": ""}
+
+
+async def send_overdue_digest(db: Session, company: MCompany, *, today: str = "", client=None) -> Dict[str, Any]:
+    """逾期提醒：① 按负责人单发 ② 给项目负责人一条汇总 ③ 配了群 webhook 才发群。
+
+    2026-10-12：原来只往群里丢一条，而多数公司没配群机器人 → 17:05 那班等于没发。
+    """
     day = today or today_str()
     cfg = company_feishu_config(db, company)
-    payload = digest_lines(db, company, today=day)
-    if not payload["counts"]["overdue"]:
-        return {"ok": False, "skipped": "no overdue", "company_id": int(company.id)}
-    lines = ["逾期 %d 条，请尽快跟进：" % payload["counts"]["overdue"]] + payload["lines"]
-    return await _send_group(cfg, "逾期提醒 · %s · %s" % (str(company.name or "公司"), day), lines,
-                             template="red", client=client)
+    nodes = overdue_nodes(db, company, today=day)
+    result: Dict[str, Any] = {"company_id": int(company.id), "today": day, "overdue": len(nodes),
+                              "group": None, "private": 0, "project_summary": 0,
+                              "unreachable": 0, "private_failed": []}
+    if not nodes:
+        result["ok"] = False
+        result["skipped"] = "no overdue"
+        return result
+    result["group"] = await _send_group(
+        cfg, "逾期提醒 · %s · %s" % (str(company.name or "公司"), day),
+        ["逾期 %d 条，请尽快跟进：" % len(nodes)] + [task_line(n, today=day) for n in nodes[:20]],
+        template="red", client=client)
+    if not _can_private(cfg):
+        result["ok"] = bool((result.get("group") or {}).get("ok"))
+        return result
+
+    by_owner: Dict[int, List[MPlanNode]] = {}
+    for node in nodes:
+        if getattr(node, "owner_membership_id", None):
+            by_owner.setdefault(int(node.owner_membership_id), []).append(node)
+    for membership_id, rows in by_owner.items():
+        member = db.query(MMembership).filter(MMembership.id == membership_id).first()
+        if member is None:
+            continue
+        lines = ["你有 %d 条逾期任务：" % len(rows)] + ["- " + task_line(n, today=day) for n in rows[:20]]
+        one = await _send_overdue_private(db, cfg, member, "逾期提醒 · %s" % day, lines, client=client)
+        if one["ok"]:
+            result["private"] += 1
+        else:
+            result["private_failed"].append({"member": one["member"], "reason": one["reason"], "hint": one.get("hint", "")})
+            if one["reason"] == "飞书里查不到该手机号/邮箱":
+                result["unreachable"] += 1
+
+    by_project: Dict[int, List[MPlanNode]] = {}
+    for node in nodes:
+        by_project.setdefault(int(node.project_id), []).append(node)
+    projects = {int(p.id): p for p in db.query(MProject).filter(MProject.id.in_(list(by_project))).all()}
+    for project_id, rows in by_project.items():
+        project = projects.get(project_id)
+        owner = project_owner_membership(db, company, project)
+        if owner is None:
+            continue
+        title = "项目逾期汇总 · %s · %s" % (str(company.name or "公司"), day)
+        lines = ["**%s** 逾期 %d 条（需要你盯一下）：" % (
+            str(project.name if project is not None else "项目 #%d" % project_id), len(rows))]
+        lines += ["- " + task_line(n, today=day) for n in rows[:20]]
+        one = await _send_overdue_private(db, cfg, owner, title, lines, client=client)
+        if one["ok"]:
+            result["project_summary"] += 1
+        else:
+            result["private_failed"].append({"member": one["member"] + "（项目负责人）",
+                                             "reason": one["reason"], "hint": one.get("hint", "")})
+    result["ok"] = (bool((result.get("group") or {}).get("ok"))
+                    or result["private"] > 0 or result["project_summary"] > 0)
+    return result
+
+
+async def notify_overdue_only(db: Session, company: MCompany, *, today: str = "",
+                              client=None) -> Dict[str, Any]:
+    """17:00 档入口：有逾期才发；①按负责人单发 ②项目负责人汇总 ③配了群 webhook 才发群。"""
+    return await send_overdue_digest(db, company, today=today, client=client)
 
 
 async def send_checkup_summary(db: Session, company: MCompany, created: Sequence[Any] = (),
