@@ -4501,7 +4501,7 @@ def _feishu_payload(db: Session, company: MCompany, actor: Any = None) -> Dict[s
         "ok": True,
         "company": {"id": int(company.id), "name": company.name},
         "config": {
-            "enabled": bool(row.enabled) if row is not None else False,
+            "enabled": bool(row.enabled) if row is not None else True,   # 新建配置时表单默认勾上
             "app_id": str(row.app_id or "") if row is not None else "",
             "app_secret_set": bool(secret),
             "app_secret_mask": integration_secrets.mask(secret),
@@ -4561,12 +4561,20 @@ async def test_feishu_config(company_id: int = Query(...), send: bool = Query(Tr
 
     company = _require_company(db, company_id, actor)
     _require_plan_admin(db, company, actor)
-    cfg = manage_notify.company_feishu_config(db, company)
+    # 自检要能验证「已保存但没勾开启推送」的配置，所以忽略开关
+    cfg = manage_notify.company_feishu_config(db, company, ignore_enabled=True)
     steps: List[Dict[str, Any]] = []
-    if not manage_notify._can_send(cfg):
+    has_creds = bool((cfg.get("app_id") and cfg.get("app_secret")) or cfg.get("webhook"))
+    if not has_creds:
         return {"ok": False, "source": cfg.get("source"), "steps": [{
             "name": "配置", "ok": False,
-            "detail": "这个公司既没有群 webhook，也没有 App ID / App Secret"}]}
+            "detail": "这个公司既没有群 webhook，也没有 App ID / App Secret",
+            "hint": "在表单里填 App ID + App Secret（飞书开放平台建的「企业自建应用」）或群机器人 webhook，保存后再自检"}]}
+    if cfg.get("source") == "company":
+        steps.append({"name": "配置已保存", "ok": True,
+                      "detail": "App ID %s%s" % (cfg.get("app_id") or "(未填)",
+                                                 "；已勾选开启推送" if cfg.get("enabled") else "；⚠️ 没勾「开启推送」，定时播报不会发，自检仍可用")}),
+
     token = ""
     if cfg.get("app_id") and cfg.get("app_secret"):
         try:

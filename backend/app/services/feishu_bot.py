@@ -34,7 +34,7 @@ def api_base() -> str:
 ERROR_HINTS = {
     "10003": "app_id 不存在或不是这个企业的应用（确认用本企业账号建的应用）",
     "10014": "app_secret 不正确",
-    "99991672": "权限未开通：开发者后台 → 权限管理 → 勾 im:message（+ contact:user.id:readonly）→ 创建版本并发布",
+    "99991672": "权限未开通：开发者后台 → 权限管理 → 勾 im:message（发消息）与 contact:user.id:readonly（手机号/邮箱换 open_id）→ 创建版本并发布 → 管理员审批",
     "99991663": "应用未发布/未通过管理员审批，或可用范围不含该用户",
     "230002": "接收人不在应用可用范围内（开发者后台 → 版本与可用范围）",
     "230013": "接收人不在应用可用范围内",
@@ -186,6 +186,17 @@ async def resolve_open_id(identifier: str = "", *, kind: str = "email", app_toke
     key = "mobiles" if str(kind or "").strip().lower() in ("mobile", "phone") else "emails"
     resp = await _post(url, json_body={key: [text]},
                        headers={"Authorization": "Bearer " + token}, client=client)
+    # 2026-10-12：飞书用 400 + code=99991672 报「权限没开」，不能当成"查不到人"吞掉，
+    # 否则自检只会说"这个人不在飞书组织里"，让人查错方向。
+    raw = resp.text or ""
+    if resp.status_code >= 400:
+        raise RuntimeError("resolve_open_id HTTP %s: %s" % (resp.status_code, raw[:300]))
+    try:
+        pre = resp.json() if resp.content else {}
+    except Exception:
+        pre = {}
+    if isinstance(pre, dict) and pre.get("code") not in (None, 0):
+        raise RuntimeError("resolve_open_id returned code=%s: %s" % (pre.get("code"), str(pre)[:300]))
     try:
         body = resp.json() if resp.content else {}
     except Exception:

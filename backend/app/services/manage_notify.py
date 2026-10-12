@@ -51,14 +51,17 @@ def get_integration(db: Session, company_id: int) -> Optional[MIntegration]:
             .first())
 
 
-def company_feishu_config(db: Session, company) -> Dict[str, Any]:
-    """公司自己的飞书配置；没配/没开就回退服务端 env。company 可传对象或 company_id。"""
+def company_feishu_config(db: Session, company, *, ignore_enabled: bool = False) -> Dict[str, Any]:
+    """公司自己的飞书配置；没配/没开就回退服务端 env。company 可传对象或 company_id。
+
+    ignore_enabled=True 用于「自检」：即使没勾「开启推送」，也要能验证已保存的凭证。
+    """
     company_id = int(company.id) if hasattr(company, "id") else int(company)
     row = get_integration(db, company_id)
-    if row is not None and bool(row.enabled):
+    if row is not None and (bool(row.enabled) or ignore_enabled):
         secret = integration_secrets.decrypt(str(row.app_secret_enc or ""))
         if str(row.app_id or "").strip() or str(row.webhook or "").strip():
-            return {"source": "company", "enabled": True,
+            return {"source": "company", "enabled": bool(row.enabled), "disabled_saved": not bool(row.enabled),
                     "app_id": str(row.app_id or "").strip(), "app_secret": secret,
                     "webhook": str(row.webhook or "").strip()}
     env_app = feishu_bot._env("FEISHU_APP_ID")

@@ -224,3 +224,4 @@ async def test_test_endpoint_requires_config(db_session, company_env, test_user,
     out = await manage_api.test_feishu_config(company_id=company_env["company"].id, send=False,
                                               actor=test_user, db=db_session)
     assert out["ok"] is False and "既没有群 webhook" in out["steps"][0]["detail"]
+    assert "App ID + App Secret" in out["steps"][0]["hint"]

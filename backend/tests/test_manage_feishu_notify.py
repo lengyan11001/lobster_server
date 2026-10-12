@@ -307,3 +307,16 @@ def test_status_and_overdue_helpers():
     assert manage_notify.is_overdue(late, today) and manage_notify.overdue_days(late, today) == 3
     assert not manage_notify.is_overdue(future, today)
     assert manage_notify.task_line(late, today=today).startswith("⚠️")
+
+@pytest.mark.asyncio
+async def test_resolve_open_id_surfaces_permission_error(monkeypatch):
+    """飞书用 400+99991672 报权限没开时，必须抛错并带出处置提示，不能静默成"查不到人"。"""
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "sec_test")
+    denied = _Resp({"code": 99991672, "msg": "Access denied. One of the following scopes is required: [contact:user.id:readonly]"}, status_code=400)
+    client = _Client(resp=denied)
+    with pytest.raises(RuntimeError) as exc:
+        await feishu_bot.resolve_open_id("15829455388", kind="mobile", client=client)
+    assert "99991672" in str(exc.value)
+    hint = feishu_bot.hint_for(exc.value)
+    assert "contact:user.id:readonly" in hint and "im:message" in hint
