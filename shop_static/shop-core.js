@@ -102,6 +102,22 @@
   function placeholder(label, kind, cls) {
     return '<div class="ph ' + (cls || '') + '"><span>' + esc(label || '商品主图位') + '</span><span>' + esc(kind || 'cover_url') + '</span></div>';
   }
+  // 独立站商品详情：规格选择 / 主图切换（内联调用，避免改原有事件绑定）
+  window.__yuan = window.__yuan || function (cents) { return (Number(cents || 0) / 100).toFixed(2); };
+  window.__pickSku = function (btn, priceCents) {
+    var row = btn.parentNode;
+    Array.prototype.forEach.call(row.querySelectorAll('.sku'), function (x) { x.classList.remove('on'); });
+    btn.classList.add('on');
+    var box = btn.closest('.pinfo') || document;
+    var price = box.querySelector('.price');
+    if (Number(priceCents) > 0 && price) { price.innerHTML = '\uffe5' + window.__yuan(priceCents); }
+  };
+  window.__pickThumbImg = function (img) {
+    var media = img.closest('.pmedia');
+    var main = media && media.querySelector('.cover');
+    if (main) main.setAttribute('src', img.getAttribute('src'));
+  };
+
   function coverOf(p) {
     var gallery = (p.media && p.media.gallery) || [];
     var url = p.cover_url || gallery[0] || '';
@@ -322,7 +338,13 @@
     return api('/api/shop/products/' + encodeURIComponent(id)).then(function (data) {
       box.p = data.product || {};
       box.m = box.p.merchant || {};
-      document.title = (box.p.title || '商品详情');
+      var __tbSeo = (box.p.specs && box.p.specs._taobao) || {};
+      document.title = __tbSeo.seoTitle || box.p.title || '商品详情';
+      if (__tbSeo.seoDesc) {
+        var __md = document.querySelector('meta[name="description"]');
+        if (!__md) { __md = document.createElement('meta'); __md.setAttribute('name', 'description'); document.head.appendChild(__md); }
+        __md.setAttribute('content', __tbSeo.seoDesc);
+      }
       return trackClick(box.p.id);
     }).then(function () {
       var p = box.p, m = box.m;
@@ -344,7 +366,7 @@
         ' / <span>' + esc(p.title || '') + '</span></nav>',
         '<div class="pwrap">',
         '<div class="pmedia">' + coverOf(p),
-        gallery.length > 1 ? '<div class="thumbs">' + gallery.slice(0, 6).map(function (u) { return '<img src="' + attr(u) + '" alt="" loading="lazy">'; }).join('') + '</div>' : '',
+        gallery.length > 1 ? '<div class="thumbs">' + gallery.slice(0, 6).map(function (u) { return '<img src="' + attr(u) + '" alt="" loading="lazy" onclick="window.__pickThumbImg(this)">'; }).join('') + '</div>' : '',
         (p.media && p.media.video) ? '<div class="ph"><span>商品视频位</span><span>' + attr(p.media.video) + '</span></div>' : '',
         '</div>',
         '<div class="pinfo">',
@@ -354,6 +376,26 @@
         priceLine(p, true),
         '<div class="meta">' + meta + '</div>',
         commissionLine(p),
+        (function () {
+          var tb = (p.specs && p.specs._taobao) || {};
+          var skus = Array.isArray(tb.sku) ? tb.sku.filter(function (r) { return r && (r.n || r.p); }) : [];
+          var promises = Array.isArray(tb.promises) ? tb.promises : [];
+          var out = [];
+          if (skus.length) {
+            out.push('<div class="skus"><div class="muted">\u9009\u62e9\u89c4\u683c</div>' + skus.map(function (r, i) {
+              var cents = Math.round(Number(r.p || 0) * 100);
+              return '<button type="button" class="sku' + (i === 0 ? ' on' : '') + '" data-old="' + cents + '" onclick="window.__pickSku(this,' + cents + ')">' +
+                esc(r.n || ('\u89c4\u683c ' + (i + 1))) + (cents > 0 ? ' \u00b7 ' + yuan(cents) : '') +
+                (r.s ? ' \u00b7 \u5e93\u5b58 ' + esc(r.s) : '') + '</button>';
+            }).join('') + '</div>');
+          }
+          if (promises.length) {
+            out.push('<div class="promises">' + promises.map(function (t) { return '<span class="badge">' + esc(t) + '</span>'; }).join('') + '</div>');
+          }
+          var ship = [tb.shipDays, tb.shipping].filter(Boolean).join(' \u00b7 ');
+          if (ship) out.push('<div class="ship">' + esc(ship) + '</div>');
+          return out.join('');
+        })(),
         m.company_name ? '<div class="merchant">商家 ' + esc(m.company_name) + (storeHref ? ' · <a href="' + attr(storeHref) + '">进店逛逛</a>' : '') + '</div>' : '',
         '<form id="order-form" class="order">',
         '<div class="row"><label for="qty">数量</label><input id="qty" type="number" min="1" max="' + Math.max(1, stock) + '" value="1"></div>',
