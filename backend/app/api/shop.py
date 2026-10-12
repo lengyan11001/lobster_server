@@ -946,7 +946,12 @@ def _submission_payload(
     url = _submission_public_url(row, request)
     accepted = bool(getattr(row, "accepted_at", None))
     price = int(row.price_credits or 0) or int(ssb.price_credits(row.media_type))
-    preview_url = "" if expose_original else _submission_preview_url(row)
+    kind = _submission_kind(row)
+    # 已采纳 = 商家已经把这条素材买下来了：直接把原图/原始封面给它，不再挂水印预览。
+    # 以前「已采纳」也返回水印预览 URL，导致：图片看着带水印；视频那条更惨——预览接口对视频
+    # 返回的是 mp4（要加 &poster=1 才是封面），前端塞进 <img> 直接裂图。
+    masked = (not expose_original) and (not accepted)
+    preview_url = _submission_preview_url(row) if masked else ""
     data: Dict[str, Any] = {
         "id": int(row.id),
         "product_id": int(row.product_id),
@@ -955,12 +960,10 @@ def _submission_payload(
         "media_type": row.media_type or "",
         "title": row.title or "",
         "url": url if (expose_original or accepted) else "",
-        "thumb_url": (preview_url if not expose_original else (
-            (row.thumb_url or url) if str(row.media_type or "") != "video" else (row.thumb_url or "")
-        )),
+        "thumb_url": (preview_url if masked else ((row.thumb_url or url) if kind != "video" else (row.thumb_url or ""))),
         "preview_url": preview_url,
-        "preview_kind": ("" if expose_original else _submission_kind(row)),
-        "poster_url": ((preview_url + "&poster=1") if (not expose_original and _submission_kind(row) == "video") else ""),
+        "preview_kind": (kind if masked else ""),
+        "poster_url": ((preview_url + "&poster=1") if (masked and kind == "video") else ""),
         "accepted": accepted,
         "price_credits": price,
         "accepted_at": row.accepted_at.isoformat() if getattr(row, "accepted_at", None) else None,

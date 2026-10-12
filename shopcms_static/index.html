@@ -71,6 +71,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 .thumb-acts{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;align-items:center}
 .thumb-acts .btn{flex:1;padding:3px 6px;font-size:11px}
 .thumb.pk{cursor:pointer}
+.thumb.noimg img{display:none}
+.thumb.vid{border-color:rgba(224,168,74,.45)}
 .thumb.pk.on{border-color:var(--brand)}
 .pk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:10px;margin-top:8px}
 .pv-overlay{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out}
@@ -514,15 +516,19 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     var items = pk.items || [];
     var grid = items.map(function (it, i) {
       var on = pk.picked.indexOf(it.url) >= 0;
-      return '<div class="thumb pk' + (on ? ' on' : '') + '" data-pk="' + i + '">' +
-        '<img src="' + esc(it.thumb_url || it.preview_url || it.url) + '" alt="">' +
+      var vid = itemIsVideo(it);
+      var thumb = itemThumbUrl(it);
+      return '<div class="thumb pk' + (on ? ' on' : '') + (vid ? ' vid' : '') + '" data-pk="' + i + '">' +
+        (thumb ? '<img src="' + esc(thumb) + '" alt="">'
+               : '<div class="pv-ph" style="height:92px">' + (vid ? '视频' : '无预览') + '</div>') +
         '<div class="thumb-acts"><span class="tag' + (on ? ' on' : '') + '">' + (on ? '已选' : '点选') + '</span>' +
+        (vid ? '<span class="tag">视频</span>' : '') +
         '<button class="btn mini ghost" type="button" data-pv="' + esc(it.url) + '">预览</button></div></div>';
     }).join('');
     var localPane = '<div class="upload"><input type="file" id="pk-file" accept="image/*" multiple>' +
       '<span class="hint" id="pk-tip">支持 jpg / png / webp / gif，单张不超过 8MB；选完自动进下面「已选」</span></div>'
       + (items.length ? '<div class="pk-grid">' + grid + '</div>' : '');
-    var acceptedPane = '<div class="muted" style="font-size:12px">你在「素材投稿」里点过「采纳」的素材（图片工作台 / 分镜台生成后投稿的作品也在这里），可以直接拿来当独立站封面 / 图集。</div>'
+    var acceptedPane = '<div class="muted" style="font-size:12px">你在「素材投稿」里点过「采纳」的素材（图片工作台 / 分镜台生成后投稿的作品也在这里），可以直接拿来当独立站封面 / 图集。<b>带「视频」标签的不能用</b>——独立站封面/图集是图片位，放视频会裂。</div>'
       + (pk.loading ? '<div class="hint">读取中…</div>' : '')
       + (items.length ? '<div class="pk-grid">' + grid + '</div>'
         : (pk.loading ? '' : '<div class="hint">还没有采纳过的素材：去「素材投稿」点「采纳」，或在图片工作台 / 分镜台里投稿。</div>'));
@@ -540,7 +546,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
           '<div class="thumb-acts"><button class="btn mini ghost" type="button" data-pv="' + esc(u) + '">预览</button>' +
           '<button class="btn mini ghost" type="button" data-pk-rm="' + i + '">移除</button></div></div>';
       }).join('') : '<div class="muted" style="font-size:12px">还没选</div>') + '</div>' +
-      '<div class="mfoot"><span style="flex:1"></span>' +
+      '<div class="mfoot">' + (state.msg ? '<span class="hint" style="flex:1;margin:0">' + esc(state.msg) + '</span>' : '<span style="flex:1"></span>') +
       '<button class="btn ghost" type="button" data-close-picker="1">取消</button>' +
       '<button class="btn" type="button" id="pk-ok"' + (pk.picked.length ? '' : ' disabled') + '>确定加入（' + pk.picked.length + '）</button>' +
       '</div></div></div>';
@@ -573,6 +579,23 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     });
   }
 
+  var VIDEO_RE = /\.(mp4|mov|m4v|webm|mkv|avi|flv|ts)(\?|#|$)/i;
+  function itemIsVideo(it) {
+    if (!it) return false;
+    var k = String(it.preview_kind || it.media_type || '').toLowerCase();
+    if (k.indexOf('video') >= 0) return true;
+    return VIDEO_RE.test(String(it.url || ''));
+  }
+  function itemThumbUrl(it) {
+    var vid = itemIsVideo(it);
+    var src = String(it.thumb_url || '');
+    var looksImage = /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(src);
+    // 视频的预览接口返回的是 mp4（要 &poster=1 才是封面），塞进 <img> 必裂
+    if (vid && (!src || !looksImage)) src = String(it.poster_url || '');
+    if (!src || VIDEO_RE.test(src)) return '';
+    return src;
+  }
+
   function loadAcceptedForPicker() {
     var d = state.draft || {};
     var qs = '/api/shop-cms/submissions?size=100&status=used';   // 采纳列表：不按商品过滤，其他商品采纳过的也能拿来用
@@ -594,7 +617,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if (target === 'listingCover') pk.picked = d.cover ? [d.cover] : [];
     else { var list = listOf(target) || []; pk.picked = list.slice(); }
     state.picker = pk;
-    state.preview = null;
+    state.preview = null; state.msg = '';
     render();
     pk.loading = true; loadMerchantUploadsForPicker();
   }
@@ -602,6 +625,12 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function togglePick(url) {
     var pk = state.picker;
     if (!pk) return;
+    var it = (pk.items || []).filter(function (x) { return String(x.url || '') === String(url); })[0];
+    var isListing = (pk.target === 'listingCover' || pk.target === 'listingGallery' || pk.target === 'listingDetail');
+    if (it && itemIsVideo(it) && isListing) {
+      state.msg = '这条是视频：独立站的封面 / 图集是图片位，视频放上去店铺页会裂图，换一张图片素材。';
+      render(); return;
+    }
     if (pk.target === 'listingCover') { pk.picked = pk.picked[0] === url ? [] : [url]; render(); return; }
     var i = pk.picked.indexOf(url);
     if (i >= 0) pk.picked.splice(i, 1); else pk.picked.push(url);
@@ -891,6 +920,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         if (!url) return;
         ev.stopPropagation();
         ev.preventDefault();
+        if (VIDEO_RE.test(url)) { state.msg = '视频不能在预览小窗里看，请到独立站商品页播放。'; render(); return; }
         state.preview = url;
         render();
       });
@@ -1333,7 +1363,21 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       if (done || failed) render();
     });
   });
+  // 图片裂了不要再显示破图：统一换成占位（error 事件不冒泡，所以用捕获阶段）
+  document.addEventListener('error', function (ev) {
+    var el = ev.target;
+    if (!el || String(el.tagName || '').toUpperCase() !== 'IMG') return;
+    var box = el.closest ? el.closest('.thumb') : null;
+    if (!box || box.getAttribute('data-broken') === '1') return;
+    box.setAttribute('data-broken', '1');
+    box.classList.add('noimg');
+    var ph = document.createElement('div');
+    ph.className = 'pv-ph';
+    ph.style.height = '92px';
+    ph.textContent = '预览不可用';
+    box.insertBefore(ph, el);
+  }, true);
 
-})();
+  })();
 </script>
 </body></html>
