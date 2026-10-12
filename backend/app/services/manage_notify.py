@@ -1,31 +1,35 @@
 """manage（项目 / 任务）→ 飞书播报：把任务情况和进度推给员工。
 
-数据来源就是 manage 自己的表：
-  m_project（项目：name/status/progress）+ m_plan_node（节点＝任务：status/progress/owner/start_at/end_at）
-  + m_membership（员工：display_name/dept/email）。
+多租户：**每个公司用老板自己配的飞书自建应用**（m_integration，App Secret 加密存储）；
+没配就回退到服务端 .env 的凭证（FEISHU_APP_ID / FEISHU_APP_SECRET / MANAGE_FEISHU_WEBHOOK）。
 
-播报三类：
-  1) 每日 09:00 今日任务（按项目分组，逾期高亮）；配了自建应用就给每个员工单独发他自己的那份；
-  2) 每日 17:00 / 项目体检后：收口提醒（逾期 + 停滞的节点）；
-  3) 派活瞬间：负责人收到「你有新任务」（阶段2 需要 open_id）。
+身份：员工用手机号登录，所以成员 → users.phone →（mobiles→open_id）发私聊；
+带邮箱的成员用邮箱兜底。
 
-没配 MANAGE_FEISHU_WEBHOOK / FEISHU_APP_* 时全部静默跳过，不影响业务。
+播报四类：
+  1) 每日 09:00 今日任务（按项目分组、逾期高亮）；配了应用再给每个员工私聊自己那份；
+  2) 每日 17:00 逾期提醒（没有逾期不发）；
+  3) 项目体检后收口卡片；
+  4) 派活 / 换负责人的新任务卡片。
 """
 from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
-from ..manage_models import MCompany, MMembership, MPlanNode, MProject
-from . import feishu_bot
+from ..manage_models import MCompany, MIntegration, MMembership, MPlanNode, MProject
+from ..models import User
+from .brand_context import phone_from_account_email
+from . import feishu_bot, integration_secrets
 
 logger = logging.getLogger(__name__)
 
 BEIJING = timezone(timedelta(hours=8))
 MANAGE_HOME = "https://manage.bhzn.top"
+FEISHU_KIND = "feishu"
 DONE_STATUSES = {"completed", "done", "cancelled"}
 STATUS_TEXT = {
     "not_started": "未开始", "in_progress": "进行中", "blocked": "受阻",
@@ -38,6 +42,75 @@ _MAX_LINES = 40
 def today_str() -> str:
     return datetime.now(BEIJING).date().isoformat()
 
+
+# ── 公司级飞书配置 ──
+
+def get_integration(db: Session, company_id: int) -> Optional[MIntegration]:
+    return (db.query(MIntegration)
+            .filter(MIntegration.company_id == int(company_id), MIntegration.kind == FEISHU_KIND)
+            .first())
+
+
+def company_feishu_config(db: Session, company) -> Dict[str, Any]:
+    """公司自己的飞书配置；没配/没开就回退服务端 env。company 可传对象或 company_id。"""
+    company_id = int(company.id) if hasattr(company, "id") else int(company)
+    row = get_integration(db, company_id)
+    if row is not None and bool(row.enabled):
+        secret = integration_secrets.decrypt(str(row.app_secret_enc or ""))
+        if str(row.app_id or "").strip() or str(row.webhook or "").strip():
+            return {"source": "company", "enabled": True,
+                    "app_id": str(row.app_id or "").strip(), "app_secret": secret,
+                    "webhook": str(row.webhook or "").strip()}
+    env_app = feishu_bot._env("FEISHU_APP_ID")
+    env_secret = feishu_bot._env("FEISHU_APP_SECRET")
+    env_hook = feishu_bot.webhook_url()
+    if env_app or env_hook:
+        return {"source": "env", "enabled": True, "app_id": env_app, "app_secret": env_secret,
+                "webhook": env_hook}
+    return {"source": "none", "enabled": False, "app_id": "", "app_secret": "", "webhook": ""}
+
+
+def _can_send(cfg: Dict[str, Any]) -> bool:
+    return bool(cfg.get("enabled")) and bool(cfg.get("webhook") or cfg.get("app_id"))
+
+
+def _can_private(cfg: Dict[str, Any]) -> bool:
+    return bool(cfg.get("app_id") and cfg.get("app_secret"))
+
+
+def member_identifier(db: Session, member: MMembership) -> tuple:
+    """员工身份：优先绑定的 open_id > 登录账号手机号 > 邮箱。返回 (值, 类型)。"""
+    bound = str(getattr(member, "feishu_open_id", "") or "").strip()
+    if bound:
+        return bound, "open_id"
+    phone = ""
+    if getattr(member, "user_id", None):
+        user = db.query(User).filter(User.id == int(member.user_id)).first()
+        # 手机号登录：账号邮箱形如 13800000000@sms.lobster.local（见 brand_context.phone_from_account_email）
+        phone = phone_from_account_email(str(getattr(user, "email", "") or "")) if user is not None else ""
+    if phone:
+        return phone, "mobile"
+    email = str(getattr(member, "email", "") or "").strip()
+    if email:
+        return email, "email"
+    return "", ""
+
+
+async def member_open_id(db: Session, member: MMembership, cfg: Dict[str, Any], *, client=None) -> str:
+    """把员工换成 open_id（已经是 open_id 的直接返回）。"""
+    ident, kind = member_identifier(db, member)
+    if not ident:
+        return ""
+    if kind == "open_id":
+        return ident
+    try:
+        return await feishu_bot.resolve_open_id(ident, kind=kind, app_id=cfg.get("app_id", ""),
+                                                app_secret=cfg.get("app_secret", ""), client=client)
+    except Exception as exc:
+        logger.warning("[manage-notify] 身份转换失败 member=%s kind=%s: %s", member.id, kind, exc)
+        return ""
+
+# ── 任务口径 ──
 
 def _status_text(node: MPlanNode) -> str:
     raw = str(node.status or "").strip().lower()
@@ -61,21 +134,18 @@ def _parse_day(value: Any) -> Optional[date]:
 def is_overdue(node: MPlanNode, today: str) -> bool:
     if is_done(node):
         return False
-    end = _parse_day(node.end_at)
-    start = _parse_day(today)
+    end, start = _parse_day(node.end_at), _parse_day(today)
     return bool(end and start and end < start)
 
 
 def overdue_days(node: MPlanNode, today: str) -> int:
-    end = _parse_day(node.end_at)
-    start = _parse_day(today)
+    end, start = _parse_day(node.end_at), _parse_day(today)
     if not (end and start):
         return 0
     return max(0, (start - end).days)
 
 
 def task_line(node: MPlanNode, *, today: str) -> str:
-    """一行任务：⚠️ **标题**（负责人）· 进行中 40% · 截止 10-09（逾期 2 天）"""
     pieces = ["**%s**" % str(node.title or "").strip()]
     owner = str(node.owner_name or "").strip()
     if owner:
@@ -96,29 +166,24 @@ def task_line(node: MPlanNode, *, today: str) -> str:
 
 def open_nodes(db: Session, company_ids: Sequence[int], *, today: str = "",
                limit: int = _MAX_LINES) -> List[MPlanNode]:
-    """未完成的任务，逾期 / 快到期排前面。"""
     ids = [int(c) for c in company_ids if c is not None]
     if not ids:
         return []
-    rows = (
-        db.query(MPlanNode)
-        .filter(MPlanNode.company_id.in_(ids))
-        .filter(~MPlanNode.status.in_(list(DONE_STATUSES)))
-        .order_by(MPlanNode.end_at.asc(), MPlanNode.project_id.asc(), MPlanNode.order_index.asc())
-        .all()
-    )
+    rows = (db.query(MPlanNode)
+            .filter(MPlanNode.company_id.in_(ids))
+            .filter(~MPlanNode.status.in_(list(DONE_STATUSES)))
+            .order_by(MPlanNode.end_at.asc(), MPlanNode.project_id.asc(), MPlanNode.order_index.asc())
+            .all())
     return list(rows)[: max(1, int(limit))]
 
 
 def digest_lines(db: Session, company: MCompany, *, today: str = "", limit: int = _MAX_LINES) -> Dict[str, Any]:
-    """一张「今日任务」卡片的内容：按项目分组 + 合计。"""
     day = today or today_str()
     nodes = open_nodes(db, [int(company.id)], today=day, limit=limit)
     projects = {int(p.id): p for p in db.query(MProject).filter(MProject.company_id == int(company.id)).all()}
     groups: Dict[int, List[MPlanNode]] = {}
     for node in nodes:
         groups.setdefault(int(node.project_id), []).append(node)
-
     lines: List[str] = []
     overdue = 0
     for pid in sorted(groups.keys()):
@@ -150,97 +215,106 @@ def digest_lines(db: Session, company: MCompany, *, today: str = "", limit: int 
 
 def member_lines(db: Session, company: MCompany, membership: MMembership, *, today: str = "",
                  limit: int = 20) -> List[str]:
-    """某个员工自己的任务（对应 /api/manage/tasks/mine 的口径）。"""
     day = today or today_str()
-    rows = (
-        db.query(MPlanNode)
-        .filter(MPlanNode.company_id == int(company.id))
-        .filter(MPlanNode.owner_kind == "member")
-        .filter(MPlanNode.owner_membership_id == int(membership.id))
-        .filter(~MPlanNode.status.in_(list(DONE_STATUSES)))
-        .order_by(MPlanNode.end_at.asc())
-        .limit(max(1, int(limit)))
-        .all()
-    )
+    rows = (db.query(MPlanNode)
+            .filter(MPlanNode.company_id == int(company.id))
+            .filter(MPlanNode.owner_kind == "member")
+            .filter(MPlanNode.owner_membership_id == int(membership.id))
+            .filter(~MPlanNode.status.in_(list(DONE_STATUSES)))
+            .order_by(MPlanNode.end_at.asc())
+            .limit(max(1, int(limit))).all())
     if not rows:
         return []
-    lines = ["你手上未完成 %d 条：" % len(rows)]
-    lines += ["- " + task_line(n, today=day) for n in rows]
-    return lines
+    return ["你手上未完成 %d 条：" % len(rows)] + ["- " + task_line(n, today=day) for n in rows]
+
+
+# ── 发送 ──
+
+async def _send_group(cfg, title, lines, *, template="blue", note="", link=MANAGE_HOME,
+                      link_text="打开管理台", client=None):
+    if not cfg.get("webhook"):
+        return {"ok": False, "skipped": "公司/服务端未配置群 webhook"}
+    try:
+        return await feishu_bot.send_card(title, lines, template=template, note=note, link=link,
+                                          link_text=link_text, webhook=cfg["webhook"], client=client)
+    except Exception as exc:
+        logger.warning("[manage-notify] 群卡片失败: %s", exc)
+        return {"ok": False, "error": str(exc)[:200], "hint": feishu_bot.hint_for(exc)}
+
+
+async def _send_private(cfg, open_id, title, lines, *, template="blue", client=None):
+    if not _can_private(cfg) or not open_id:
+        return False
+    try:
+        card = feishu_bot.build_card(title, lines, template=template,
+                                     note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME)
+        await feishu_bot.send_card_to_user(open_id, card, app_id=cfg.get("app_id", ""),
+                                           app_secret=cfg.get("app_secret", ""), client=client)
+        return True
+    except Exception as exc:
+        logger.warning("[manage-notify] 私聊失败 open_id=%s: %s", open_id, exc)
+        return False
 
 
 async def send_daily_digest(db: Session, company: MCompany, *, today: str = "",
                             client=None) -> Dict[str, Any]:
-    """群里发一张今日任务卡片；如配了自建应用，再给每个有飞书身份的成员发他自己那份。"""
+    """群里发今日任务卡片；配了（公司的）自建应用再给每个有任务的成员私聊他自己那份。"""
     day = today or today_str()
+    cfg = company_feishu_config(db, company)
     payload = digest_lines(db, company, today=day)
-    result: Dict[str, Any] = {"company_id": int(company.id), "group": None, "private": 0}
-    try:
-        result["group"] = await feishu_bot.send_card(
-            payload["title"], payload["lines"], template=payload["template"],
-            note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME, link_text="打开管理台", client=client)
-    except Exception as exc:  # 推送失败不能影响主流程
-        logger.warning("[manage-notify] group card failed: %s", exc)
-        result["group"] = {"ok": False, "error": str(exc)[:200]}
-
-    if not feishu_bot.app_enabled():
+    result: Dict[str, Any] = {"company_id": int(company.id), "source": cfg["source"],
+                              "group": None, "private": 0, "unreachable": 0}
+    result["group"] = await _send_group(cfg, payload["title"], payload["lines"],
+                                        template=payload["template"], client=client)
+    if not _can_private(cfg):
         return result
     members = (db.query(MMembership)
                .filter(MMembership.company_id == int(company.id))
                .filter(MMembership.status == "active").all())
-    sent = 0
     for member in members:
         lines = member_lines(db, company, member, today=day)
         if not lines:
             continue
-        try:
-            receive_id, id_type = await _member_receive_id(member, client=client)
-            if not receive_id:
-                continue
-            card = feishu_bot.build_card(
-                "你的任务 · %s · %s" % (str(company.name or "公司"), day), lines,
-                template="blue", note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME)
-            await feishu_bot.send_card_to_user(receive_id, card, receive_id_type=id_type, client=client)
-            sent += 1
-        except Exception as exc:
-            logger.warning("[manage-notify] private card failed member=%s: %s", member.id, exc)
-    result["private"] = sent
+        oid = await member_open_id(db, member, cfg, client=client)
+        if not oid:
+            result["unreachable"] += 1
+            continue
+        if await _send_private(cfg, oid, "你的任务 · %s · %s" % (str(company.name or "公司"), day),
+                               lines, client=client):
+            result["private"] += 1
     return result
 
 
-async def _member_receive_id(member: MMembership, *, client=None):
-    """员工飞书身份：优先用绑定的 open_id 列，其次用邮箱换。"""
-    oid = str(getattr(member, "feishu_open_id", "") or "").strip()
-    if oid:
-        return oid, "open_id"
-    email = str(getattr(member, "email", "") or "").strip()
-    if email:
-        oid = await feishu_bot.resolve_open_id(email, client=client)
-        if oid:
-            return oid, "open_id"
-    return "", "open_id"
+async def notify_overdue_only(db: Session, company: MCompany, *, today: str = "",
+                              client=None) -> Dict[str, Any]:
+    """只发逾期清单；没有逾期就跳过（17:00 档用，避免刷屏）。"""
+    day = today or today_str()
+    cfg = company_feishu_config(db, company)
+    payload = digest_lines(db, company, today=day)
+    if not payload["counts"]["overdue"]:
+        return {"ok": False, "skipped": "no overdue", "company_id": int(company.id)}
+    lines = ["逾期 %d 条，请尽快跟进：" % payload["counts"]["overdue"]] + payload["lines"]
+    return await _send_group(cfg, "逾期提醒 · %s · %s" % (str(company.name or "公司"), day), lines,
+                             template="red", client=client)
 
 
 async def send_checkup_summary(db: Session, company: MCompany, created: Sequence[Any] = (),
                                *, today: str = "", client=None) -> Dict[str, Any]:
     """项目体检后发一条收口提醒（逾期 + 停滞）。"""
     day = today or today_str()
+    cfg = company_feishu_config(db, company)
     payload = digest_lines(db, company, today=day, limit=20)
-    title = "项目收口 · %s · %s" % (str(company.name or "公司"), day)
     lines = ["本轮体检生成 %d 条记录。" % len(list(created or ()))] + payload["lines"]
-    try:
-        return await feishu_bot.send_card(title, lines, template=payload["template"],
-                                          note="来自 manage.bhzn.top 项目体检", link=MANAGE_HOME,
-                                          client=client)
-    except Exception as exc:
-        logger.warning("[manage-notify] checkup card failed: %s", exc)
-        return {"ok": False, "error": str(exc)[:200]}
+    return await _send_group(cfg, "项目收口 · %s · %s" % (str(company.name or "公司"), day), lines,
+                             template=payload["template"], note="来自 manage.bhzn.top 项目体检",
+                             client=client)
 
 
 async def notify_task_assigned(db: Session, node: MPlanNode, *, project: Optional[MProject] = None,
                                actor_name: str = "", client=None) -> Dict[str, Any]:
-    """派活 / 换负责人：群播报 + （阶段2）给负责人私聊。"""
+    """派活 / 换负责人：群播报 +（配了应用）给负责人私聊。"""
     project = project or db.query(MProject).filter(MProject.id == int(node.project_id)).first()
+    cfg = company_feishu_config(db, node.company_id)
     lines = []
     if project is not None:
         lines.append("**项目**：%s" % str(project.name or ""))
@@ -256,45 +330,30 @@ async def notify_task_assigned(db: Session, node: MPlanNode, *, project: Optiona
     if actor_name:
         lines.append("**派单人**：%s" % actor_name)
     title = "新任务派发 · %s" % (str(project.name) if project is not None else "项目")
-    try:
-        return await feishu_bot.send_card(title, lines, template="green",
-                                          note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME,
-                                          client=client)
-    except Exception as exc:
-        logger.warning("[manage-notify] assign card failed: %s", exc)
-        return {"ok": False, "error": str(exc)[:200]}
+    out = await _send_group(cfg, title, lines, template="green", client=client)
+    if _can_private(cfg) and getattr(node, "owner_membership_id", None):
+        member = (db.query(MMembership)
+                  .filter(MMembership.id == int(node.owner_membership_id)).first())
+        if member is not None:
+            oid = await member_open_id(db, member, cfg, client=client)
+            if await _send_private(cfg, oid, "你有新任务 · %s" % (str(node.title or "")), lines,
+                                   template="green", client=client):
+                out["private"] = True
+    return out
 
 
 async def notify_all_daily(db: Session, *, today: str = "", client=None) -> Dict[str, Any]:
-    """遍历所有在用公司发今日任务（cron 用）。"""
+    """遍历所有在用公司发今日任务（cron 用）。每个公司用自己的飞书凭证。"""
     day = today or today_str()
     companies = db.query(MCompany).filter(MCompany.status == "active").all()
     out = {"date": day, "companies": len(companies), "sent": 0, "skipped": 0, "results": []}
     for company in companies:
-        if not feishu_bot.webhook_enabled() and not feishu_bot.app_enabled():
+        cfg = company_feishu_config(db, company)
+        if not _can_send(cfg):
             out["skipped"] += 1
             continue
-        res = await send_daily_digest(db, company, today=day, client=client)
         out["sent"] += 1
-        out["results"].append(res)
+        out["results"].append(await send_daily_digest(db, company, today=day, client=client))
     logger.info("[manage-notify] daily digest date=%s companies=%s sent=%s skipped=%s",
                 day, len(companies), out["sent"], out["skipped"])
     return out
-
-
-async def notify_overdue_only(db: Session, company: MCompany, *, today: str = "",
-                              client=None) -> Dict[str, Any]:
-    """只发逾期清单；没有逾期就跳过（17:00 档用，避免刷屏）。"""
-    day = today or today_str()
-    payload = digest_lines(db, company, today=day)
-    if not payload["counts"]["overdue"]:
-        return {"ok": False, "skipped": "no overdue", "company_id": int(company.id)}
-    lines = ["逾期 %d 条，请尽快跟进：" % payload["counts"]["overdue"]] + payload["lines"]
-    try:
-        return await feishu_bot.send_card("逾期提醒 · %s · %s" % (str(company.name or "公司"), day),
-                                          lines, template="red",
-                                          note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME,
-                                          client=client)
-    except Exception as exc:
-        logger.warning("[manage-notify] overdue card failed: %s", exc)
-        return {"ok": False, "error": str(exc)[:200]}

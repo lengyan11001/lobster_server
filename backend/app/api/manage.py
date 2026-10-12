@@ -1,4 +1,4 @@
-﻿"""manage（项目管理与 AI 赋能）独立站的 API。
+"""manage（项目管理与 AI 赋能）独立站的 API。
 
 与主站共用 users 与同一套 JWT：登录直接复用 api/auth 的 router，
 本文件只提供 manage 自己的业务接口（/api/manage/*）。
@@ -22,24 +22,25 @@ from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..manage_models import (
     MAiEmployee,
-    MDeliveryLog,
     MAuditLog,
-    MCustomer,
-    MCustomerLog,
-    MDelivery,
-    MDispatch,
-    MPlanVersion,
-    MWorkLog,
     MCheckup,
     MCompany,
     MCondition,
+    MCustomer,
+    MCustomerLog,
+    MDelivery,
+    MDeliveryLog,
+    MDispatch,
     MFinanceEntry,
+    MIntegration,
     MInventoryItem,
     MMembership,
     MMembershipRole,
     MPlanNode,
+    MPlanVersion,
     MProduct,
     MProject,
+    MWorkLog,
 )
 from ..services import device_labels, document_scan
 from ..shop_models import ShopCommission, ShopMerchant, ShopOrder, ShopProduct
@@ -4475,3 +4476,148 @@ def update_shop_merchant_status(
     return result
 
 
+
+# ────────────────────────── 飞书通知配置（按公司：每个老板配自己的 App ID / Secret）──────────────────────────
+
+class FeishuConfigIn(BaseModel):
+    company_id: int
+    app_id: str = Field("", max_length=128)
+    app_secret: str = Field("", max_length=512)   # 留空 = 不修改；clear_secret=True 才清空
+    webhook: str = Field("", max_length=512)
+    enabled: bool = True
+    clear_secret: bool = False
+
+
+def _feishu_payload(db: Session, company: MCompany, actor: Any = None) -> Dict[str, Any]:
+    from ..services import integration_secrets, manage_notify
+
+    row = manage_notify.get_integration(db, int(company.id))
+    cfg = manage_notify.company_feishu_config(db, company)
+    members = (db.query(MMembership)
+               .filter(MMembership.company_id == int(company.id), MMembership.status == "active").all())
+    reachable = sum(1 for m in members if manage_notify.member_identifier(db, m)[0])
+    secret = integration_secrets.decrypt(str(row.app_secret_enc or "")) if row is not None else ""
+    return {
+        "ok": True,
+        "company": {"id": int(company.id), "name": company.name},
+        "config": {
+            "enabled": bool(row.enabled) if row is not None else False,
+            "app_id": str(row.app_id or "") if row is not None else "",
+            "app_secret_set": bool(secret),
+            "app_secret_mask": integration_secrets.mask(secret),
+            "webhook": str(row.webhook or "") if row is not None else "",
+            "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else "",
+            "source": cfg.get("source", "none"),
+            "effective": {"webhook": bool(cfg.get("webhook")),
+                          "app": bool(cfg.get("app_id") and cfg.get("app_secret"))},
+        },
+        "members": {"total": len(members), "reachable": reachable, "unreachable": len(members) - reachable},
+        "note": "员工用手机号登录 → 用手机号换飞书 open_id；既没手机号也没邮箱的成员推不到。",
+    }
+
+
+@router.get("/feishu", summary="飞书通知配置（按公司；老板/管理员可见）")
+def get_feishu_config(company_id: int = Query(...), actor: Any = Depends(current_actor),
+                      db: Session = Depends(get_db)) -> Dict[str, Any]:
+    company = _require_company(db, company_id, actor)
+    _require_plan_admin(db, company, actor)
+    return _feishu_payload(db, company, actor)
+
+
+@router.put("/feishu", summary="保存本公司的飞书 App ID / App Secret / 群 webhook")
+def put_feishu_config(body: FeishuConfigIn, actor: Any = Depends(current_actor),
+                      db: Session = Depends(get_db)) -> Dict[str, Any]:
+    from ..services import integration_secrets, manage_notify
+
+    company = _require_company(db, body.company_id, actor, write=True)
+    _require_plan_admin(db, company, actor)
+    row = manage_notify.get_integration(db, int(company.id))
+    if row is None:
+        row = MIntegration(company_id=int(company.id), kind="feishu")
+        db.add(row)
+        db.flush()
+    row.app_id = str(body.app_id or "").strip()
+    row.webhook = str(body.webhook or "").strip()
+    row.enabled = bool(body.enabled)
+    secret = str(body.app_secret or "").strip()
+    if body.clear_secret:
+        row.app_secret_enc = ""
+    elif secret:
+        row.app_secret_enc = integration_secrets.encrypt(secret)
+    row.updated_by = int(getattr(actor, "id", 0) or 0)
+    db.commit()
+    db.refresh(row)
+    _audit(db, int(company.id), int(getattr(actor, "id", 0) or 0), "feishu.config.save",
+           "integration", "feishu",
+           {"app_id": row.app_id[:16], "has_secret": bool(row.app_secret_enc), "enabled": row.enabled})
+    return _feishu_payload(db, company, actor)
+
+
+@router.post("/feishu/test", summary="飞书配置自检：换 token / 手机号换 open_id / 可选发一条给当前登录人")
+async def test_feishu_config(company_id: int = Query(...), send: bool = Query(True),
+                             actor: Any = Depends(current_actor),
+                             db: Session = Depends(get_db)) -> Dict[str, Any]:
+    from ..services import feishu_bot, manage_notify
+
+    company = _require_company(db, company_id, actor)
+    _require_plan_admin(db, company, actor)
+    cfg = manage_notify.company_feishu_config(db, company)
+    steps: List[Dict[str, Any]] = []
+    if not manage_notify._can_send(cfg):
+        return {"ok": False, "source": cfg.get("source"), "steps": [{
+            "name": "配置", "ok": False,
+            "detail": "这个公司既没有群 webhook，也没有 App ID / App Secret"}]}
+    token = ""
+    if cfg.get("app_id") and cfg.get("app_secret"):
+        try:
+            token = await feishu_bot.fetch_tenant_access_token(app_id=cfg["app_id"], app_secret=cfg["app_secret"])
+            steps.append({"name": "换取 tenant_access_token", "ok": True, "detail": "凭证有效（%s…）" % token[:8]})
+        except Exception as exc:
+            steps.append({"name": "换取 tenant_access_token", "ok": False, "detail": str(exc)[:200],
+                          "hint": feishu_bot.hint_for(exc)})
+    else:
+        steps.append({"name": "换取 tenant_access_token", "ok": False,
+                      "detail": "未配置 App ID / App Secret（只能发群，不能发个人）"})
+
+    ident, kind = manage_notify.member_identifier(
+        db, MMembership(company_id=int(company.id), display_name="(当前登录人)", user_id=int(getattr(actor, "id", 0) or 0)))
+    if not ident:
+        ident = str(getattr(actor, "phone", "") or "").strip()
+        kind = "mobile" if ident else ""
+    oid = ""
+    if ident and token:
+        try:
+            oid = await feishu_bot.resolve_open_id(ident, kind=kind, app_token=token)
+            steps.append({"name": "手机号/邮箱换 open_id", "ok": bool(oid),
+                          "detail": ("%s → %s" % (ident, oid)) if oid else "没查到这个人在飞书组织里",
+                          "hint": "" if oid else "确认他加入了飞书组织、且企业通讯录权限已开"})
+        except Exception as exc:
+            steps.append({"name": "手机号/邮箱换 open_id", "ok": False, "detail": str(exc)[:200],
+                          "hint": feishu_bot.hint_for(exc)})
+    else:
+        steps.append({"name": "手机号/邮箱换 open_id", "ok": False,
+                      "detail": "缺少身份（当前登录账号没有手机号）或没有可用应用凭证"})
+
+    if send and oid:
+        try:
+            card = feishu_bot.build_card("飞书接入自检 · %s" % company.name, [
+                "这条是 manage.bhzn.top 的自检消息。",
+                "收到说明该公司的飞书应用 + 单聊已通。"],
+                link="https://manage.bhzn.top", link_text="打开管理台")
+            await feishu_bot.send_card_to_user(oid, card, app_id=cfg.get("app_id", ""),
+                                               app_secret=cfg.get("app_secret", ""))
+            steps.append({"name": "给你发一条测试私聊", "ok": True, "detail": "已发送，去看飞书"})
+        except Exception as exc:
+            steps.append({"name": "给你发一条测试私聊", "ok": False, "detail": str(exc)[:200],
+                          "hint": feishu_bot.hint_for(exc)})
+
+    if send and cfg.get("webhook"):
+        try:
+            await feishu_bot.send_card("飞书接入自检 · %s · 群" % company.name,
+                                       ["群机器人链路自检。"], webhook=cfg["webhook"])
+            steps.append({"name": "群机器人发一条测试", "ok": True, "detail": "已发送到群"})
+        except Exception as exc:
+            steps.append({"name": "群机器人发一条测试", "ok": False, "detail": str(exc)[:200],
+                          "hint": feishu_bot.hint_for(exc)})
+
+    return {"ok": all(s.get("ok") for s in steps), "source": cfg.get("source"), "steps": steps}

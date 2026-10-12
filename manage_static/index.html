@@ -305,6 +305,7 @@ body.overlay-open #drawer{z-index:501}
     <button data-go="s-cond"><span class="ic">✦</span>条件</button>
       <button data-go="s-fin"><span class="ic">◎</span>财务</button>
       <button data-go="s-stats"><span class="ic">▤</span>数据</button>
+    <button data-go="s-feishu"><span class="ic">✈</span>飞书</button>
     <button data-go="s-metrics" class="hide"><span class="ic">▶</span>发布数据</button>
     <button data-go="s-my" class="hide"><span class="ic">✓</span>我的任务</button>
   </aside>
@@ -337,6 +338,7 @@ body.overlay-open #drawer{z-index:501}
       <section id="s-cond" class="view hide"></section>
       <section id="s-fin" class="view hide"></section>
     <section id="s-stats" class="view hide"></section>
+      <section id="s-feishu" class="view hide"></section>
       <section id="s-metrics" class="view hide"></section>
       <section id="s-my" class="view hide"></section>
     </div>
@@ -745,6 +747,7 @@ body.overlay-open #drawer{z-index:501}
     "s-cond": ["达成条件", "AI 以「把项目做成」为目标反推所需条件与补位动作"],
     "s-fin": ["财务", "收入 · 开销 · 应收 · 现金流"],
     "s-stats": ["数据面板", "虚拟员工产出：视频 · 发布 · 精准客户 · 个微回复"],
+    "s-feishu": ["飞书通知", "每个公司配自己的飞书自建应用：任务与进度按人私聊推给员工"],
     "s-metrics": ["发布数据", "online 客户端每天凌晨 02:00-06:00 错峰采集抖音 / 视频号播放量，云端汇总（朋友圈不做）"],
     "s-my": ["我的任务", "派给自己的任务（真实员工登录只看自己的）· 每条可让 AI 出思路与执行方案"],
   };
@@ -753,12 +756,13 @@ body.overlay-open #drawer{z-index:501}
       $$(".rail button").forEach(function(x){ x.classList.remove("on"); });
       b.classList.add("on");
       var id = b.dataset.go;
-      ["s-brief","s-proj","s-org","s-prod","s-inv","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-metrics","s-my"].forEach(function(x){
+      ["s-brief","s-proj","s-org","s-prod","s-inv","s-crm","s-deliv","s-ai","s-cond","s-fin","s-stats","s-feishu","s-metrics","s-my"].forEach(function(x){
         document.getElementById(x).classList.toggle("hide", x !== id);
       });
       if (id === "s-metrics") loadMetrics();
       if (id === "s-my") loadMyTasks();
       if (id === "s-stats") loadStats();
+      if (id === "s-feishu") loadFeishu();
       $("#pgTitle").textContent = TITLES[id][0];
       $("#pgSub").textContent = TITLES[id][1];
     });
@@ -770,6 +774,78 @@ body.overlay-open #drawer{z-index:501}
     loadBrief(); loadProjects(); loadOrg(); loadProducts(); loadInv(); loadCrm(); loadDeliv(); loadAi(); loadCond(); loadFin();
     loadMyTasks();
     loadStats();
+  }
+
+  /* ================= 飞书通知（每个公司自己配） ================= */
+  function fsInput(id, label, val, ph){
+    return '<div style="min-width:250px;flex:1"><label style="font-size:12px;opacity:.75">' + label + '</label>'
+      + '<input id="' + id + '" value="' + esc(val || "") + '" placeholder="' + esc(ph || "") + '" style="width:100%"></div>';
+  }
+  function loadFeishu(){
+    var box = document.getElementById("s-feishu");
+    if (!box) return;
+    if (!ACTIVE){ box.innerHTML = '<div class="glass card"><h3>飞书通知</h3><div class="dim">先选一个公司。</div></div>'; return; }
+    box.innerHTML = '<div class="glass card"><h3>飞书通知设置</h3><div class="dim" style="font-size:12.5px">加载中…</div></div>';
+    api("/api/manage/feishu?company_id=" + ACTIVE).then(function(d){
+      var c = d.config || {}, m = d.members || {};
+      var src = c.source === "company" ? "本公司配置" : (c.source === "env" ? "服务端默认（未配本公司）" : "未配置");
+      box.innerHTML =
+        '<div class="glass card"><h3>飞书通知设置</h3>'
+        + '<div class="dim" style="font-size:12.5px;line-height:1.75">'
+        + '每个公司用<b>自己</b>的飞书「企业自建应用」给员工发消息（任务派发 / 进度 / 逾期 / 每日今日任务）。<br />'
+        + '员工用<b>手机号</b>登录 → 系统用手机号换飞书 open_id 私聊推送；没手机号也没邮箱的成员推不到。<br />'
+        + '当前生效来源：<b>' + src + '</b>。没配本公司就回退服务端默认（仅平台内部用）。</div>'
+        + '<div class="row" style="gap:12px;flex-wrap:wrap;margin-top:12px">'
+        + fsInput("fs_app_id", "App ID", c.app_id || "", "cli_xxxxxxxxxxxxxxxx")
+        + fsInput("fs_secret", "App Secret（留空=不改）", "", c.app_secret_set ? ("已保存 " + (c.app_secret_mask || "")) : "还没配")
+        + fsInput("fs_hook", "群机器人 webhook（可选，只发群）", c.webhook || "", "https://open.feishu.cn/open-apis/bot/v2/hook/…")
+        + '</div>'
+        + '<div class="row" style="gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">'
+        + '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px"><input type="checkbox" id="fs_enabled"' + (c.enabled ? " checked" : "") + ' /> 开启推送</label>'
+        + '<span class="grow"></span>'
+        + '<button class="btn sm ghost" id="fsTest">自检并给我发一条</button>'
+        + '<button class="btn sm" id="fsSave">保存</button>'
+        + '</div>'
+        + '<div class="dim" style="font-size:12px;margin-top:9px">成员可达：' + (m.reachable || 0) + ' / ' + (m.total || 0)
+        + '（没手机号也没邮箱的推不到）· 更新时间 ' + (c.updated_at ? String(c.updated_at).slice(0, 19).replace("T", " ") : "—") + '</div>'
+        + '<div id="fsOut" style="margin-top:11px;font-size:12.5px;line-height:1.8"></div>'
+        + '</div>';
+      bindFeishu();
+    }).catch(function(e){
+      box.innerHTML = '<div class="glass card"><h3>飞书通知设置</h3>'
+        + '<div style="color:#fda4af;font-size:12.5px">' + esc(e.message || String(e)) + '</div>'
+        + '<div class="dim" style="font-size:12px;margin-top:8px">只有公司老板 / 平台管理员能看到这个页面。</div></div>';
+    });
+  }
+  function bindFeishu(){
+    var save = document.getElementById("fsSave"), test = document.getElementById("fsTest");
+    if (save) save.addEventListener("click", function(){
+      save.disabled = true;
+      api("/api/manage/feishu", { method:"PUT", body: {
+        company_id: ACTIVE,
+        app_id: (document.getElementById("fs_app_id") || {}).value || "",
+        app_secret: (document.getElementById("fs_secret") || {}).value || "",
+        webhook: (document.getElementById("fs_hook") || {}).value || "",
+        enabled: !!(document.getElementById("fs_enabled") || {}).checked
+      }}).then(function(){ toast("飞书配置已保存"); loadFeishu(); })
+        .catch(function(e){ save.disabled = false; toast(e.message || String(e), true); });
+    });
+    if (test) test.addEventListener("click", function(){
+      test.disabled = true;
+      var out = document.getElementById("fsOut");
+      out.innerHTML = '<span class="dim">自检中：换 token → 手机号换 open_id → 给你发一条…</span>';
+      api("/api/manage/feishu/test?company_id=" + ACTIVE + "&send=true", { method:"POST" }).then(function(d){
+        test.disabled = false;
+        out.innerHTML = (d.steps || []).map(function(s){
+          return '<div>' + (s.ok ? '<span class="tag ok">PASS</span> ' : '<span class="tag bd">FAIL</span> ')
+            + esc(s.name || "") + '：' + esc(s.detail || "")
+            + (s.hint ? '<div class="dim" style="margin-left:24px">→ ' + esc(s.hint) + '</div>' : "") + '</div>';
+        }).join("");
+      }).catch(function(e){
+        test.disabled = false;
+        out.innerHTML = '<span style="color:#fda4af">' + esc(e.message || String(e)) + '</span>';
+      });
+    });
   }
 
   /* ================= 简报 ================= */

@@ -378,3 +378,26 @@ class MInventoryItem(Base):
     note = Column(Text, default="", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MIntegration(Base):
+    """公司级第三方集成凭证（目前是飞书）：每个老板配自己公司的 App ID / Secret。
+
+    飞书自建应用是「按企业」的，所以每个公司一套凭证；员工用手机号（或邮箱）换 open_id。
+    app_secret 用 settings.secret_key 派生的密钥加密后存 app_secret_enc，接口只回掩码。
+    """
+
+    __tablename__ = "m_integration"
+    __table_args__ = (UniqueConstraint("company_id", "kind", name="uq_m_integration_company_kind"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, nullable=False, index=True)
+    kind = Column(String(24), nullable=False, default="feishu", index=True)
+    app_id = Column(String(128), default="", nullable=False)
+    app_secret_enc = Column(Text, default="", nullable=False)
+    webhook = Column(String(512), default="", nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    extra = Column(JSON, default=dict, nullable=True)
+    updated_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

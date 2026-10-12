@@ -31,6 +31,25 @@ def api_base() -> str:
     return (_env("FEISHU_API_BASE") or _DEFAULT_API_BASE).rstrip("/")
 
 
+ERROR_HINTS = {
+    "10003": "app_id 不存在或不是这个企业的应用（确认用本企业账号建的应用）",
+    "10014": "app_secret 不正确",
+    "99991672": "权限未开通：开发者后台 → 权限管理 → 勾 im:message（+ contact:user.id:readonly）→ 创建版本并发布",
+    "99991663": "应用未发布/未通过管理员审批，或可用范围不含该用户",
+    "230002": "接收人不在应用可用范围内（开发者后台 → 版本与可用范围）",
+    "230013": "接收人不在应用可用范围内",
+}
+
+
+def hint_for(err: object) -> str:
+    """把飞书错误码翻译成一句可执行的处置建议（认不出来就返回空串）。"""
+    text = str(err or "")
+    for code, msg in ERROR_HINTS.items():
+        if code in text:
+            return msg
+    return ""
+
+
 def _env(name: str, default: str = "") -> str:
     return str(os.environ.get(name, default) or "").strip()
 
@@ -131,13 +150,18 @@ async def send_card(title: str, lines: List[str], *, template: str = "blue", not
     return {"ok": True, "response": body}
 
 
-async def fetch_tenant_access_token(*, client: Optional[httpx.AsyncClient] = None) -> str:
-    creds = app_credentials()
-    if not creds:
-        raise RuntimeError("飞书自建应用未配置（FEISHU_APP_ID / FEISHU_APP_SECRET）")
-    app_id, app_secret = creds
+async def fetch_tenant_access_token(*, app_id: str = "", app_secret: str = "",
+                                    client: Optional[httpx.AsyncClient] = None) -> str:
+    """换取 tenant_access_token。传公司自己的凭证就用公司的，否则回退到服务端 env。"""
+    aid = str(app_id or "").strip()
+    secret = str(app_secret or "").strip()
+    if not (aid and secret):
+        creds = app_credentials()
+        if not creds:
+            raise RuntimeError("飞书自建应用未配置（公司配置或 FEISHU_APP_ID / FEISHU_APP_SECRET）")
+        aid, secret = creds
     url = api_base() + "/auth/v3/tenant_access_token/internal"
-    resp = await _post(url, json_body={"app_id": app_id, "app_secret": app_secret}, client=client)
+    resp = await _post(url, json_body={"app_id": aid, "app_secret": secret}, client=client)
     try:
         body = resp.json() if resp.content else {}
     except Exception:
@@ -150,15 +174,17 @@ async def fetch_tenant_access_token(*, client: Optional[httpx.AsyncClient] = Non
     return token
 
 
-async def resolve_open_id(email: str, *, app_token: str = "",
+async def resolve_open_id(identifier: str = "", *, kind: str = "email", app_token: str = "",
+                          app_id: str = "", app_secret: str = "",
                           client: Optional[httpx.AsyncClient] = None) -> str:
-    """用企业邮箱换 open_id（员工绑定用）。batch_get_id 支持邮箱/手机号。"""
-    em = str(email or "").strip()
-    if not em:
+    """用手机号 / 企业邮箱换 open_id（员工身份用手机号登录，所以手机号是主路径）。"""
+    text = str(identifier or "").strip()
+    if not text:
         return ""
-    token = app_token or await fetch_tenant_access_token(client=client)
+    token = app_token or await fetch_tenant_access_token(app_id=app_id, app_secret=app_secret, client=client)
     url = api_base() + "/contact/v3/users/batch_get_id?user_id_type=open_id"
-    resp = await _post(url, json_body={"emails": [em]},
+    key = "mobiles" if str(kind or "").strip().lower() in ("mobile", "phone") else "emails"
+    resp = await _post(url, json_body={key: [text]},
                        headers={"Authorization": "Bearer " + token}, client=client)
     try:
         body = resp.json() if resp.content else {}
@@ -173,12 +199,13 @@ async def resolve_open_id(email: str, *, app_token: str = "",
 
 async def send_card_to_user(receive_id: str, card: Dict[str, Any], *,
                             receive_id_type: str = "open_id", app_token: str = "",
+                            app_id: str = "", app_secret: str = "",
                             client: Optional[httpx.AsyncClient] = None) -> Dict[str, Any]:
     """给单个员工发私聊卡片。receive_id_type: open_id | user_id | email | union_id。"""
     rid = str(receive_id or "").strip()
     if not rid:
         raise RuntimeError("receive_id 为空")
-    token = app_token or await fetch_tenant_access_token(client=client)
+    token = app_token or await fetch_tenant_access_token(app_id=app_id, app_secret=app_secret, client=client)
     url = api_base() + "/im/v1/messages?receive_id_type=" + receive_id_type
     payload = {"receive_id": rid, "msg_type": str(card.get("msg_type") or "interactive"),
                "content": json.dumps(card.get("card") or {}, ensure_ascii=False)}
