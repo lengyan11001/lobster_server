@@ -629,6 +629,7 @@ def store_home(
         "items": items,
         "total": total,
         "categories": categories,
+        "categories": sorted({str(row.category or '').strip() for row in db.query(ShopProduct.category).filter(ShopProduct.status == ON_SALE).all() if str(row.category or '').strip()}),
         "filters": {"category": category, "keyword": text_kw, "sort": sort, "page": page, "size": size},
     }
 
