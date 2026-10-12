@@ -820,7 +820,7 @@ body.overlay-open #drawer{z-index:501}
         + '<button class="btn sm" id="fsSave">保存</button>'
         + '</div>'
         + (c.enabled === false && (c.app_id || c.webhook) ? '<div style="color:#fcd34d;font-size:12px;margin-top:8px">已保存配置，但「开启推送」没勾上：定时播报不会发（自检仍可用）。</div>' : '')
-        + '<div class="dim" style="font-size:12px;margin-top:9px">成员可达：' + (m.reachable || 0) + ' / ' + (m.total || 0)
+        + '<div class="dim" style="font-size:12px;margin-top:9px">填了手机号/邮箱的成员：' + (m.reachable || 0) + ' / ' + (m.total || 0) + '（飞书实际能推到几个，点自检看「飞书实际可达成员」）'
         + '（没手机号也没邮箱的推不到）· 更新时间 ' + (c.updated_at ? String(c.updated_at).slice(0, 19).replace("T", " ") : "—") + '</div>'
         + '<div id="fsOut" style="margin-top:11px;font-size:12.5px;line-height:1.8"></div>'
         + '</div>';

@@ -4608,6 +4608,28 @@ async def test_feishu_config(company_id: int = Query(...), send: bool = Query(Tr
         steps.append({"name": "手机号/邮箱换 open_id", "ok": False,
                       "detail": "缺少身份（当前登录账号没有手机号）或没有可用应用凭证"})
 
+    # 飞书实际可达：把公司在用成员的手机号/邮箱一次性批量解析，给出真实数字（页面上的「成员可达」只代表填了号码）
+    if token:
+        members_all = (db.query(MMembership)
+                       .filter(MMembership.company_id == int(company.id), MMembership.status == "active").all())
+        mobs, mails, names = [], [], {}
+        for mem in members_all:
+            ident, kind = manage_notify.member_identifier(db, mem)
+            if not ident:
+                continue
+            names[ident] = str(mem.display_name or "")
+            (mobs if kind == "mobile" else mails).append(ident)
+        try:
+            found = await feishu_bot.batch_resolve_open_ids(mobiles=mobs, emails=mails, app_token=token)
+            miss = [names.get(x, x) + "(" + x + ")" for x in (mobs + mails) if x not in found]
+            steps.append({"name": "飞书实际可达成员", "ok": not miss,
+                          "detail": "%d / %d 能推到%s" % (len(found), len(mobs) + len(mails),
+                                                          ("；推不到：" + "、".join(miss[:8])) if miss else ""),
+                          "hint": "" if not miss else "推不到的这几位：在飞书管理后台「成员与部门」按号码搜一下——搜不到=不在本企业；搜得到=飞书里登记的手机号与这里不一致"})
+        except Exception as exc:
+            steps.append({"name": "飞书实际可达成员", "ok": False, "detail": str(exc)[:200],
+                          "hint": feishu_bot.hint_for(exc)})
+
     if send and oid:
         try:
             card = feishu_bot.build_card("飞书接入自检 · %s" % company.name, [

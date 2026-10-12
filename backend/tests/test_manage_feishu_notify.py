@@ -320,3 +320,42 @@ async def test_resolve_open_id_surfaces_permission_error(monkeypatch):
     assert "99991672" in str(exc.value)
     hint = feishu_bot.hint_for(exc.value)
     assert "contact:user.id:readonly" in hint and "im:message" in hint
+
+
+@pytest.mark.asyncio
+async def test_batch_resolve_open_ids_parses_real_payload():
+    """用 2026-10-12 生产抓到的真实返回：8 个手机号里 5 个有 user_id、3 个只有 mobile。"""
+    real = {
+        "code": 0, "msg": "success",
+        "data": {"user_list": [
+            {"mobile": "15829455388", "user_id": "ou_22d8bc1386075a1ea7f0bd9f06d0feda"},
+            {"mobile": "13060158503"},
+            {"mobile": "17877109975", "user_id": "ou_52b3c3f55347626db104a6207cb5a57f"},
+            {"mobile": "18665877911", "user_id": "ou_583c66b7473113e5c7adfdc4fb204182"},
+            {"mobile": "13927485337", "user_id": "ou_20d69b4a35b0a8c4e96f4d2df230b585"},
+            {"mobile": "18711047715"},
+            {"mobile": "15683020857", "user_id": "ou_c9018722670c2c3ed90b4a37a8a7774e"},
+            {"mobile": "18038025066"},
+        ]},
+    }
+    client = _Client(resp=_Resp(real))
+    found = await feishu_bot.batch_resolve_open_ids(
+        mobiles=["15829455388", "13060158503", "17877109975", "18665877911",
+                 "13927485337", "18711047715", "15683020857", "18038025066"], client=client)
+    assert len(found) == 5
+    assert found["15829455388"].startswith("ou_22d8")
+    assert "13060158503" not in found and "18711047715" not in found and "18038025066" not in found
+    body = client.calls[0]["json"]
+    assert body["mobiles"][0] == "15829455388" and len(body["mobiles"]) == 8
+    assert "include_resigned" not in body          # 不带离职，避免拿到重复/离职账号
+
+
+@pytest.mark.asyncio
+async def test_batch_resolve_open_ids_empty_and_error(monkeypatch):
+    assert await feishu_bot.batch_resolve_open_ids() == {}
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_x")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "sec_x")
+    denied = _Resp({"code": 99991672, "msg": "scope required: contact:user.id:readonly"}, status_code=400)
+    with pytest.raises(RuntimeError) as exc:
+        await feishu_bot.batch_resolve_open_ids(mobiles=["15829455388"], client=_Client(resp=denied))
+    assert "99991672" in str(exc.value)

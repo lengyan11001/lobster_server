@@ -208,6 +208,44 @@ async def resolve_open_id(identifier: str = "", *, kind: str = "email", app_toke
     return ""
 
 
+async def batch_resolve_open_ids(*, mobiles=(), emails=(), app_token: str = "", app_id: str = "",
+                                 app_secret: str = "",
+                                 client: Optional[httpx.AsyncClient] = None) -> Dict[str, str]:
+    """一次请求把多个手机号/邮箱换成 open_id（飞书 batch_get_id，单次上限 50）。
+
+    返回 {原始手机号或邮箱: open_id}；查不到的不会出现在结果里（飞书就是这么返回的）。
+    权限没开等错误会抛出来（附 hint_for），不静默。
+    """
+    mob = [str(x).strip() for x in (mobiles or []) if str(x or "").strip()][:50]
+    eml = [str(x).strip() for x in (emails or []) if str(x or "").strip()][:50]
+    if not mob and not eml:
+        return {}
+    token = app_token or await fetch_tenant_access_token(app_id=app_id, app_secret=app_secret, client=client)
+    url = api_base() + "/contact/v3/users/batch_get_id?user_id_type=open_id"
+    payload: Dict[str, Any] = {}
+    if mob:
+        payload["mobiles"] = mob
+    if eml:
+        payload["emails"] = eml
+    resp = await _post(url, json_body=payload, headers={"Authorization": "Bearer " + token}, client=client)
+    raw = resp.text or ""
+    if resp.status_code >= 400:
+        raise RuntimeError("batch_get_id HTTP %s: %s" % (resp.status_code, raw[:300]))
+    try:
+        body = resp.json() if resp.content else {}
+    except Exception:
+        body = {}
+    if isinstance(body, dict) and body.get("code") not in (None, 0):
+        raise RuntimeError("batch_get_id returned code=%s: %s" % (body.get("code"), str(body)[:300]))
+    out: Dict[str, str] = {}
+    for row in ((body.get("data") or {}).get("user_list") or []):
+        key = str((row or {}).get("mobile") or (row or {}).get("email") or "").strip()
+        oid = str((row or {}).get("user_id") or "").strip()
+        if key and oid and key not in out:
+            out[key] = oid
+    return out
+
+
 async def send_card_to_user(receive_id: str, card: Dict[str, Any], *,
                             receive_id_type: str = "open_id", app_token: str = "",
                             app_id: str = "", app_secret: str = "",
