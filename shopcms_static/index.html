@@ -53,6 +53,12 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 .modal-card.wide{width:min(96vw,980px)}
 .modal-card h3{margin:0 0 12px;font-size:16px;letter-spacing:1px}
 .hint.is-error{color:#dc2626}
+.filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 6px}
+.filterbar>input,.filterbar>select{width:auto;flex:0 1 auto}
+.filterbar>input{flex:0 1 320px;min-width:180px}
+.filterbar>select{min-width:118px}
+.filterbar>.btn{width:auto;flex:0 0 auto}
+.filterbar>.muted{font-size:12px;white-space:nowrap}
 .mhint{font-size:12.5px;color:var(--dim,#6b7280);background:rgba(91,124,255,.06);border:1px solid rgba(91,124,255,.18);border-radius:10px;padding:6px 9px;margin:0 0 10px}
 .modal-x{position:absolute;top:8px;right:14px;border:0;background:none;color:var(--dim);font-size:22px;line-height:1;cursor:pointer}
 .mtabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:0 0 14px;flex-wrap:wrap}
@@ -206,12 +212,13 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       .map(function (it) {
         return '<option value="' + it[0] + '"' + ((String(state.productStatus || '') === it[0]) ? ' selected' : '') + '>' + it[1] + '</option>';
       }).join('');
-    return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 4px">' +
-      '<input id="prod-keyword" placeholder="搜商品名 / SPU / 关键词（回车搜索）" value="' + esc(state.productKeyword || '') + '" style="min-width:260px">' +
-      '<select id="prod-status">' + options + '</select>' +
+    var filtering = !!(String(state.productKeyword || '').trim() || String(state.productStatus || '').trim());
+    return '<div class="filterbar">' +
+      '<input id="prod-keyword" placeholder="搜商品名 / SPU / 关键词（回车搜索）" value="' + esc(state.productKeyword || '') + '">' +
+      '<select id="prod-status" title="按上架状态筛选">' + options + '</select>' +
       '<button class="btn mini" id="prod-search" type="button">搜索</button>' +
-      '<button class="btn mini ghost" id="prod-reset" type="button">重置</button>' +
-      '<span class="muted">共 ' + Number(state.productTotal || state.products.length || 0) + ' 个商品</span>' +
+      (filtering ? '<button class="btn mini ghost" id="prod-reset" type="button" title="清掉上面的关键词和状态，恢复显示全部商品">清空筛选</button>' : '') +
+      '<span class="muted">共 ' + Number(state.productTotal || state.products.length || 0) + ' 个商品' + (filtering ? '（筛选中）' : '') + '</span>' +
       '</div>' +
       '<div class="hint">上架到独立站 = 买家能下单、能生成推广链接；给 online 赚钱用 = 商品资料完善即可（图片工作台/投稿可选用它的素材）。</div>';
   }
@@ -265,7 +272,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
 
   function openProduct(p) {
     state.draft = p ? draftFromProduct(p) : newDraft();
-    state.picker = null; state.preview = null; state.msg = '';
+    state.picker = null; state.preview = null; state.msg = ''; state.uploadStatus = null;
     render();
     if (state.draft.id) loadAcceptedForDraft(state.draft.id);
   }
@@ -392,7 +399,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<label>商品图片（第一张为封面，可上移/下移/设封面）</label>',
       '<div class="pickbar"><input type="file" id="f-gallery-upload" accept="image/*" multiple style="display:none">' +
       '<button class="btn mini" type="button" id="f-gallery-upload-btn">上传商品图片</button>' +
-      '<span class="hint" id="f-gallery-tip" style="margin-left:6px"></span>' +
+      '<span class="hint' + (state.uploadStatus && state.uploadStatus.cls ? ' ' + state.uploadStatus.cls : '') + '" id="f-gallery-tip" style="margin-left:6px">' + esc((state.uploadStatus && state.uploadStatus.text) || '') + '</span>' +
       '<button class="btn mini ghost" type="button" data-pick="gallery">从已上传图片里选</button>' +
       '<span class="muted">共 ' + d.gallery.length + ' 张</span></div>',
       '<div class="thumbs" id="f-gallery-uploads"></div>',
@@ -827,26 +834,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
           render();
         });
       });
-      var gu = $('#f-gallery-upload');
-      var gub = $('#f-gallery-upload-btn');
-      if (gub) gub.addEventListener('click', function () { if (gu) gu.click(); });
-      if (gu) gu.addEventListener('change', function () {
-        var files = Array.prototype.slice.call(gu.files || []);
-        gu.value = '';
-        if (!files.length) return;
-        var chain = Promise.resolve();
-        files.forEach(function (f) {
-          chain = chain.then(function () {
-            return uploadImage(f, null).then(function (d) {
-              var draft = state.draft;
-              if (draft && d && d.url && draft.gallery.indexOf(d.url) < 0) draft.gallery.push(d.url);
-              if (draft && !draft.cover && d && d.url) draft.cover = d.url;
-            });
-          });
-        });
-        chain.then(function () { state.msg = '已上传 ' + files.length + ' 张商品图片'; render(); })
-          .catch(function (e) { state.msg = '上传失败：' + e.message; render(); });
-      });
+      // 上传商品图片统一走文件末尾的「文档级委托」：这里不再重复绑定 change，
+      // 否则元素级回调先跑并把 input.value 清空，委托那段拿不到文件、占位卡/状态就不出现。
     }
 
     var pkEl = $('#pk');
@@ -915,24 +904,31 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<table><thead><tr><th>商品</th><th>价格</th><th>佣金</th><th>库存</th><th>状态</th><th>操作</th></tr></thead><tbody>',
       rows || '<tr><td colspan="6" class="muted">还没有商品，点下面「新建商品」</td></tr>',
       '</tbody></table>',
-      '<div style="margin-top:16px"><button class="btn" id="new-product" type="button">新建商品</button> <button class="btn ghost" id="shop-profile" type="button">店铺信息</button></div>',
+      '<div style="margin-top:16px"><button class="btn" id="new-product" type="button">新建商品</button> <button class="btn ghost" id="shop-profile" type="button" title="打开店铺设置：店铺名 / 主题 / 归因天数 / 店铺介绍">店铺信息 / 设置</button></div>',
       '</div>'
     ].join('');
   }
   function listingView() {
     var rows = (state.products || []).map(function (p) {
       var l = p.listing || {};
-      var onSite = !!(l.from_listing && ((l.gallery || []).length || l.cover));
+      var onSale = p.status === 'on_sale';
+      var listingSet = !!(l.from_listing && ((l.gallery || []).length || l.cover));
+      var shots = (l.gallery || []).length || (l.cover ? 1 : 0);
       return '<tr><td>' + esc(p.title) + '<div class="muted">' + esc(p.subtitle || '') + '</div></td>'
-        + '<td>' + (onSite ? '<span class="tag on">已上架</span>' : '<span class="muted">未上架</span>') + '</td>'
-        + '<td>' + ((l.gallery || []).length || (l.cover ? 1 : 0)) + ' 张素材</td>'
+        + '<td>' + statusTag(p.status) + '</td>'
+        + '<td>' + (listingSet ? '<span class="tag on">已单独配置</span>' : '<span class="muted">沿用商品资料里的图</span>')
+        + '<div class="muted">' + shots + ' 张图</div></td>'
         + '<td>' + yuan(p.price_cents) + ' · 佣金 ' + (Number(p.commission_bp || 0) / 100) + '%</td>'
-        + '<td><button class="btn mini" data-listing-edit="' + p.id + '" type="button">配置上架</button></td></tr>';
+        + '<td><button class="btn mini" data-toggle="' + p.id + '" data-on="' + (onSale ? '0' : '1') + '" type="button">'
+        + (onSale ? '下架' : '上架到独立站') + '</button> '
+        + '<button class="btn mini ghost" data-listing-edit="' + p.id + '" type="button">配置详情</button> '
+        + '<a class="btn mini ghost" href="https://shop.bhzn.top/p/' + p.id + '" target="_blank" rel="noopener" style="text-decoration:none">看商品页</a></td></tr>';
     }).join('');
+    var onSaleCount = (state.products || []).filter(function (p) { return p.status === 'on_sale'; }).length;
     return [
       '<div class="panel"><h3>独立站上架</h3>',
-      '<div class="hint">这里专门给独立站（shop.bhzn.top）配置：封面/图库/详情图、slug、SEO、价格/划线价、SKU 规格、库存、运费、发货时效、服务承诺。上架后独立站才会展示。</div>',
-      '<table><thead><tr><th>商品</th><th>状态</th><th>上架素材</th><th>价格/佣金</th><th>操作</th></tr></thead><tbody>',
+      '<div class="hint">上架 = 买家能下单、能生成推广链接（上架后独立站才展示）。「配置详情」只管素材与设置：封面/图集/详情图、slug、SEO、价格/划线价、SKU、库存、运费、发货时效、服务承诺；已上架也能改，保存立刻生效，不用下架重上。当前在售 ' + onSaleCount + ' / ' + (state.products || []).length + ' 个。</div>',
+      '<table><thead><tr><th>商品</th><th>上架状态</th><th>独立站素材</th><th>价格/佣金</th><th>操作</th></tr></thead><tbody>',
       rows || '<tr><td colspan="5" class="muted">还没有商品，先去「我的商品与底图」新建。</td></tr>',
       '</tbody></table></div>'
     ].join('');
@@ -1016,7 +1012,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '</div>',
       '<div class="hint">佣金不在这里设置：进「商品」编辑每个商品时填佣金%。</div>',
       '<label>店铺介绍（独立站「店铺介绍」段落，换行分段）</label><textarea id="s-intro" rows="3">' + esc(m.intro || '') + '</textarea>',
-      '<div style="margin-top:14px"><button class="btn" id="save-settings" type="button">保存设置</button></div>',
+      '<div style="margin-top:14px"><button class="btn" id="save-settings" type="button">保存设置</button> <button class="btn ghost" id="back-products" type="button">返回商品列表</button></div>',
       '</div>'
     ].join('');
   }
@@ -1163,6 +1159,14 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       state.productStatus = String(pstatus.value || '');
       loadProducts();
     });
+    var sprof = $('#shop-profile');
+    if (sprof) sprof.addEventListener('click', function () {
+      state.view = 'settings'; state.draft = null; state.picker = null; state.preview = null; state.msg = ''; render();
+    });
+    var backProd = $('#back-products');
+    if (backProd) backProd.addEventListener('click', function () {
+      state.view = 'products'; state.draft = null; state.msg = ''; render();
+    });
     bindProducts();
     Array.prototype.forEach.call(document.querySelectorAll('[data-sub-accept]'), function (b) {
       b.addEventListener('click', function () {
@@ -1239,6 +1243,12 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       if (inp) inp.click();
     }
   });
+  function setUploadStatus(text, cls) {
+    state.uploadStatus = { text: text || '', cls: cls || '' };
+    var tip = document.getElementById('f-gallery-tip');
+    if (tip) { tip.className = 'hint' + (cls ? ' ' + cls : ''); tip.textContent = state.uploadStatus.text; }
+  }
+
   document.addEventListener('change', function (ev) {
     if (!ev.target || ev.target.id !== 'f-gallery-upload') return;
     var files = Array.prototype.slice.call(ev.target.files || []);
@@ -1258,9 +1268,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       if (box) box.appendChild(el);
       slots.push(el);
     });
-    var tip = document.getElementById('f-gallery-tip');
-    if (tip) { tip.className = 'hint'; tip.textContent = '正在上传 ' + files.length + ' 张…'; }
-    var done = 0, failed = 0;
+    setUploadStatus('正在上传 ' + files.length + ' 张…', '');
+    var done = 0, failed = 0, firstErr = '';
     var chain = Promise.resolve();
     files.forEach(function (f, i) {
       chain = chain.then(function () {
@@ -1272,23 +1281,23 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
             if (!state.draft.cover) state.draft.cover = res.url;
           }
           done += 1;
-          var label = slots[i].querySelector('.hint');
-          if (label) { label.textContent = '已上传'; label.className = 'hint ok'; label.style.color = '#16a34a'; }
+          var label = slots[i] ? slots[i].querySelector('.hint') : null;
+          if (label) { label.textContent = '已上传'; label.className = 'hint ok'; }
         }).catch(function (e) {
           failed += 1;
-          var label = slots[i].querySelector('.hint');
           var msg = (e && e.message) ? String(e.message) : '失败';
+          if (!firstErr) firstErr = msg.slice(0, 60);
+          var label = slots[i] ? slots[i].querySelector('.hint') : null;
           if (label) { label.textContent = '失败：' + msg.slice(0, 40); label.className = 'hint is-error'; }
         });
       });
     });
     chain.then(function () {
-      var t2 = document.getElementById('f-gallery-tip');
-      if (t2) {
-        t2.className = 'hint' + (failed ? ' is-error' : '');
-        t2.textContent = failed ? ('已上传 ' + done + ' 张，失败 ' + failed + ' 张') : ('已上传 ' + done + ' 张');
-      }
-      if (done) render();   // 真正的图片进「商品图片」列表
+      var text = failed
+        ? ('已上传 ' + done + ' 张，失败 ' + failed + ' 张' + (firstErr ? '（' + firstErr + '）' : ''))
+        : ('已上传 ' + done + ' 张');
+      setUploadStatus(text, failed ? 'is-error' : 'ok');
+      if (done || failed) render();
     });
   });
 
