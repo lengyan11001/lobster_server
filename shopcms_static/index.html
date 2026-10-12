@@ -489,7 +489,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function productModal() {
     var d = state.draft;
     if (!d) return '';
-    var tabs = [['overview', '概览'], ['settings', '商家资料'], ['products', '商品管理'], ['submissions', '素材投稿'], ['orders', '订单'], ['commissions', '佣金']];
+    var tabs = [['info', '商品资料'], ['listing', '独立站上架素材'], ['effect', '上架效果预览']];
     var body = d.tab === 'listing' ? tabListingHtml(d) : d.tab === 'effect' ? tabEffectHtml(d) : tabInfoHtml(d);
     return '<div class="modal" id="pm"><div class="modal-mask" data-close-product="1"></div>' +
       '<div class="modal-card wide" role="dialog" aria-modal="true">' +
@@ -991,7 +991,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function render() {
     var app = $('#app');
     if (!token()) { app.innerHTML = loginView(); bindLogin(); return; }
-    var tabs = [['overview', '概览'], ['products', '商品'], ['submissions', '素材投稿'], ['orders', '订单'], ['commissions', '佣金'], ['settings', '设置']];
+    var tabs = [['overview', '概览'], ['settings', '商家资料'], ['products', '商品管理'], ['submissions', '素材投稿'], ['orders', '订单'], ['commissions', '佣金']];
     var body = state.view === 'submissions' ? submissionsView()
       : state.view === 'products' ? productsView()
       : state.view === 'orders' ? '<div class="panel"><h3>订单</h3>' + ordersTable(state.orders) + '</div>'
