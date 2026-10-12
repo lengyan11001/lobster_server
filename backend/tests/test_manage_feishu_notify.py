@@ -341,7 +341,8 @@ async def test_batch_resolve_open_ids_parses_real_payload():
     client = _Client(resp=_Resp(real))
     found = await feishu_bot.batch_resolve_open_ids(
         mobiles=["15829455388", "13060158503", "17877109975", "18665877911",
-                 "13927485337", "18711047715", "15683020857", "18038025066"], client=client)
+                 "13927485337", "18711047715", "15683020857", "18038025066"],
+        app_token="t-test", client=client)   # 直接给 token，别再去换（假客户端只备了一份响应）
     assert len(found) == 5
     assert found["15829455388"].startswith("ou_22d8")
     assert "13060158503" not in found and "18711047715" not in found and "18038025066" not in found
