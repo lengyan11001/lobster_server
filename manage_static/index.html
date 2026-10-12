@@ -231,10 +231,10 @@ body.overlay-open #drawer{z-index:501}
 <body>
 
 <div class="bg">
-  <video id="bgv" autoplay muted loop playsinline preload="auto" poster="media/hero.png">
+  <video id="bgv" autoplay muted loop playsinline preload="metadata" poster="media/hero.webp">
     <source src="media/hero-loop.mp4" type="video/mp4" />
   </video>
-  <img class="poster" id="poster" src="media/hero.png" alt="" />
+  <img class="poster" id="poster" src="media/hero.webp" alt="" decoding="async" />
   <div class="aurora a1"></div><div class="aurora a2"></div>
   <div class="grid"></div>
   <div class="veil"></div>
@@ -282,7 +282,7 @@ body.overlay-open #drawer{z-index:501}
     <div class="winwrap">
       <div class="win">
         <div class="bar"><i></i><i></i><i></i><span class="url">manage.bhzn.top</span></div>
-        <img src="media/shot-dashboard.png" alt="AIMS 工作台" />
+        <img src="media/shot-dashboard.webp" alt="AIMS 工作台" loading="lazy" decoding="async" />
       </div>
       <div class="chip c1"><span class="dot" style="color:var(--accent)"></span><span><span class="t">AI 日检</span><br /><span class="v">09:00 · 17:00</span></span></div>
       <div class="chip c2"><span class="dot" style="color:var(--accent)"></span><span><span class="t">达成条件</span><br /><span class="v" id="chipCond">— 项待补位</span></span></div>
