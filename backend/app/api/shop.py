@@ -617,8 +617,8 @@ def product_detail(product_id: int, db: Session = Depends(get_db)) -> Dict[str, 
         raise HTTPException(status_code=404, detail="商品不存在或未上架")
     merchant = db.query(ShopMerchant).filter(ShopMerchant.id == product.merchant_id).first()
     data = _product_payload(product, merchant, promoter_view=True)
-    listing = _normalized_listing_media(product)
-    data["cover_url"] = listing["cover"] or data.get("cover_url", "")
+    listing = _abs_listing_media(_normalized_listing_media(product))
+    data["cover_url"] = _abs_media_url(listing["cover"]) or data.get("cover_url", "")
     data["gallery"] = listing["gallery"]
     data["detail_images"] = listing["detail_images"]
     data["detail_html"] = product.detail_html or ""
