@@ -227,6 +227,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       id: 0, title: '', subtitle: '', category: '', brand: '', price: '', market: '', stock: '0', bp: '10',
       tags: '', keywords: '', status: 'draft', detailText: '',
       specs: [{ k: '', v: '' }],
+      sku: [{ n: '', p: '', s: '' }], promises: ['7天无理由'], shipping: '', shipDays: '', seoTitle: '', seoDesc: '', slug: '',
       gallery: [], detail: [],
       cover: '', listingGallery: [], listingDetail: [], listingTouched: false,
       tab: 'info'
@@ -245,6 +246,11 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     d.keywords = p.keywords || ''; d.status = p.status || 'draft'; d.detailText = p.detail_text || '';
     var keys = Object.keys(p.specs || {});
     d.specs = keys.length ? keys.map(function (k) { return { k: k, v: p.specs[k] }; }) : [{ k: '', v: '' }];
+    var tb = (p.specs && p.specs._taobao) || {};
+    d.sku = Array.isArray(tb.sku) && tb.sku.length ? tb.sku.map(function (r) { return { n: r.n || '', p: r.p || '', s: r.s || '' }; }) : [{ n: '', p: '', s: '' }];
+    d.promises = Array.isArray(tb.promises) ? tb.promises.slice() : ['7天无理由'];
+    d.shipping = tb.shipping || ''; d.shipDays = tb.shipDays || '';
+    d.seoTitle = tb.seoTitle || ''; d.seoDesc = tb.seoDesc || ''; d.slug = tb.slug || '';
     d.gallery = (p.gallery || []).slice();
     d.detail = (p.detail_images || []).slice();
     var listing = p.listing || {};
@@ -283,6 +289,22 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if ((x = v('f-keywords')) !== null) d.keywords = x;
     if ((x = v('f-status')) !== null) d.status = x;
     if ((x = v('f-detail-text')) !== null) d.detailText = x;
+    if ((x = v('f-slug')) !== null) d.slug = x;
+    if ((x = v('f-ship-days')) !== null) d.shipDays = x;
+    if ((x = v('f-seo-title')) !== null) d.seoTitle = x;
+    if ((x = v('f-seo-desc')) !== null) d.seoDesc = x;
+    if ((x = v('f-shipping')) !== null) d.shipping = x;
+    var skuRows = document.querySelectorAll('#f-sku-rows [data-sku-row]');
+    if (skuRows.length) {
+      d.sku = Array.prototype.map.call(skuRows, function (r) {
+        var n = r.querySelector('.sku-n'), p2 = r.querySelector('.sku-p'), s2 = r.querySelector('.sku-s');
+        return { n: n ? n.value : '', p: p2 ? p2.value : '', s: s2 ? s2.value : '' };
+      });
+    }
+    var promiseBoxes = document.querySelectorAll('.f-promise');
+    if (promiseBoxes.length) {
+      d.promises = Array.prototype.filter.call(promiseBoxes, function (b) { return b.checked; }).map(function (b) { return b.value; });
+    }
     var rows = document.querySelectorAll('#f-spec-rows [data-spec-row]');
     if (rows.length) {
       d.specs = Array.prototype.map.call(rows, function (r) {
@@ -300,6 +322,26 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if (target === 'listingGallery') return d.listingGallery;
     if (target === 'listingDetail') return d.listingDetail;
     return null;
+  }
+
+  var PROMISES = ['7天无理由', '正品保证', '极速发货', '支持退换货'];
+  function skuRowsHtml(rows) {
+    var list = (rows && rows.length) ? rows : [{ n: '', p: '', s: '' }];
+    return list.map(function (r) {
+      return '<div class="spec-row" data-sku-row>' +
+        '<input class="sku-n" placeholder="规格名（如：红色 M）" value="' + esc(r.n || '') + '">' +
+        '<input class="sku-p" placeholder="售价（元）" value="' + esc(r.p || '') + '">' +
+        '<input class="sku-s" placeholder="库存" value="' + esc(r.s || '') + '">' +
+        '<button class="btn mini ghost" type="button" data-sku-del>删除</button></div>';
+    }).join('');
+  }
+  function promiseChecksHtml(list) {
+    var picked = list && list.length ? list : ['7天无理由'];
+    return PROMISES.map(function (p) {
+      var on = picked.indexOf(p) >= 0;
+      return '<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400">' +
+        '<input type="checkbox" class="f-promise" value="' + esc(p) + '" style="width:auto"' + (on ? ' checked' : '') + '>' + esc(p) + '</label>';
+    }).join('');
   }
 
   function specRowsHtml(specs) {
@@ -320,6 +362,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       return '<div class="thumb"><img src="' + esc(u) + '" alt="" data-pv="' + esc(u) + '">' +
         '<div class="thumb-acts">' +
         (canCover && i > 0 ? '<button class="btn mini ghost" type="button" data-cover="' + kind + '" data-idx="' + i + '">设封面</button>' : '') +
+        (canCover && i > 0 ? '<button class="btn mini ghost" type="button" data-up="' + kind + '" data-idx="' + i + '">上移</button>' : '') +
+        (canCover && i < urls.length - 1 ? '<button class="btn mini ghost" type="button" data-down="' + kind + '" data-idx="' + i + '">下移</button>' : '') +
         (canCover && i === 0 ? '<span class="tag on">封面/主图</span>' : '') +
         '<button class="btn mini ghost" type="button" data-del="' + kind + '" data-idx="' + i + '">删</button>' +
         '</div></div>';
@@ -343,7 +387,22 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<div><label>关键词</label><input id="f-keywords" value="' + esc(d.keywords) + '"></div>',
       '<div><label>状态</label><select id="f-status">' + statusOptions(d.status) + '</select></div>',
       '</div>',
-      '<label>商品图片（商家自己上传的图，第一张自动作主图）</label>',
+      '<label>规格库存 SKU（名称 / 售价元 / 库存）</label>',
+      '<div id="f-sku-rows">' + skuRowsHtml(d.sku) + '</div>',
+      '<div style="margin-top:8px"><button class="btn mini ghost" id="f-sku-add" type="button">添加一个规格</button></div>',
+      '<label>独立站与服务</label>',
+      '<div class="row">',
+      '<div><label>独立站 slug</label><input id="f-slug" placeholder="留空自动生成" value="' + esc(d.slug || '') + '"></div>',
+      '<div><label>发货时效</label><input id="f-ship-days" placeholder="例：48 小时内发货" value="' + esc(d.shipDays || '') + '"></div>',
+      '</div>',
+      '<div class="row">',
+      '<div><label>SEO 标题</label><input id="f-seo-title" value="' + esc(d.seoTitle || '') + '"></div>',
+      '<div><label>SEO 描述</label><input id="f-seo-desc" value="' + esc(d.seoDesc || '') + '"></div>',
+      '</div>',
+      '<label>运费说明</label><input id="f-shipping" placeholder="例：全国包邮，偏远地区另计" value="' + esc(d.shipping || '') + '">',
+      '<label>服务承诺</label>',
+      '<div class="row" id="f-promise-row">' + promiseChecksHtml(d.promises) + '</div>',
+      '<label>商品图片（第一张为封面，可上移/下移/设封面）</label>',
       '<div class="pickbar"><input type="file" id="f-gallery-upload" accept="image/*" multiple style="display:none">' +
       '<button class="btn mini" type="button" id="f-gallery-upload-btn">上传商品图片</button>' +
       '<button class="btn mini ghost" type="button" data-pick="gallery">从已上传图片里选</button>' +
@@ -430,7 +489,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
   function productModal() {
     var d = state.draft;
     if (!d) return '';
-    var tabs = [['info', '① 商品资料'], ['listing', '② 独立站上架素材'], ['effect', '③ 上架效果预览']];
+    var tabs = [['overview', '概览'], ['settings', '商家资料'], ['products', '商品管理'], ['submissions', '素材投稿'], ['orders', '订单'], ['commissions', '佣金']];
     var body = d.tab === 'listing' ? tabListingHtml(d) : d.tab === 'effect' ? tabEffectHtml(d) : tabInfoHtml(d);
     return '<div class="modal" id="pm"><div class="modal-mask" data-close-product="1"></div>' +
       '<div class="modal-card wide" role="dialog" aria-modal="true">' +
@@ -571,6 +630,17 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if (!d.gallery.length) { d.tab = 'info'; state.msg = '请先在「商品图片」点『上传商品图片』（或从已上传图片里选），至少 1 张'; render(); return; }
     if (!(Number(d.bp || 0) > 0)) { d.tab = 'info'; state.msg = '请填商品佣金（%）'; render(); return; }
     var specs = {};
+    specs._taobao = {
+      sku: (d.sku || []).map(function (r) {
+        return { n: String(r.n || '').trim(), p: String(r.p || '').trim(), s: String(r.s || '').trim() };
+      }).filter(function (r) { return r.n || r.p || r.s; }),
+      promises: d.promises || [],
+      shipping: String(d.shipping || '').trim(),
+      shipDays: String(d.shipDays || '').trim(),
+      seoTitle: String(d.seoTitle || '').trim(),
+      seoDesc: String(d.seoDesc || '').trim(),
+      slug: String(d.slug || '').trim()
+    };
     (d.specs || []).forEach(function (r) {
       var k = String(r.k || '').trim();
       if (k) specs[k] = String(r.v || '').trim();
@@ -714,6 +784,35 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
       var sp = $('#save-product');
       if (sp) sp.addEventListener('click', saveProduct);
+      var skuAdd = $('#f-sku-add');
+      if (skuAdd) skuAdd.addEventListener('click', function () {
+        captureDraft();
+        state.draft.sku = (state.draft.sku || []).concat([{ n: '', p: '', s: '' }]);
+        render();
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-sku-del]'), function (b) {
+        b.addEventListener('click', function () {
+          captureDraft();
+          var i = Array.prototype.indexOf.call(document.querySelectorAll('#f-sku-rows [data-sku-row]'), b.parentNode);
+          state.draft.sku.splice(i, 1);
+          if (!state.draft.sku.length) state.draft.sku = [{ n: '', p: '', s: '' }];
+          render();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-up],[data-down]'), function (b) {
+        b.addEventListener('click', function () {
+          captureDraft();
+          var kind = b.getAttribute('data-up') || b.getAttribute('data-down');
+          var i = Number(b.getAttribute('data-idx'));
+          var list = listOf(kind);
+          if (!list) return;
+          var j = b.getAttribute('data-up') ? i - 1 : i + 1;
+          if (j < 0 || j >= list.length) return;
+          var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+          if (kind === 'gallery') state.draft.gallery = list;
+          render();
+        });
+      });
       var gu = $('#f-gallery-upload');
       var gub = $('#f-gallery-upload-btn');
       if (gub) gub.addEventListener('click', function () { if (gu) gu.click(); });
