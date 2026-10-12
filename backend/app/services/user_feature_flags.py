@@ -475,15 +475,32 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
     for package_id in RETIRED_PACKAGE_IDS:
         flags.setdefault(package_id, False)
     if user_role == "admin":
-        # 管理员拥有全部权限（管理后台也是「不用配权限」）：所有在用功能位直接置真，
-        # 否则会出现「后台说不用配权限、客户端却看不到入口」（如 canvas_studio_entry 灵感画布）。
-        for package_id in FEATURE_FLAG_PACKAGES:
-            for key in (package_id.get("id"), package_id.get("feature_key")):
-                name = str(key or "").strip()
-                if name and name not in RETIRED_PACKAGE_IDS:
-                    flags[name] = True
-        for key in (DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID, DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY):
-            flags[key] = True
+        # 管理员全显示：首页功能包 + 该账号显式可见的包 + 技能商店目录里的全部技能包。
+        # 注意不能只放行 FEATURE_FLAG_PACKAGES，否则会把管理员原本能看到的
+        # 商店技能包（如 goal_video_pipeline_skill / hifly_digital_human_skill）挤掉。
+        admin_keys: set = {
+            DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID,
+            DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY,
+        }
+        for package in FEATURE_FLAG_PACKAGES:
+            admin_keys.add(str(package.get("id") or "").strip())
+            admin_keys.add(str(package.get("feature_key") or "").strip())
+        admin_keys.update(str(item or "").strip() for item in visible)
+        try:
+            from ..api.skills import _load_registry
+
+            for pkg in (_load_registry().get("packages") or []):
+                if isinstance(pkg, dict):
+                    pid = str(pkg.get("id") or pkg.get("package_id") or "").strip()
+                else:
+                    pid = str(pkg).strip()
+                if pid:
+                    admin_keys.add(pid)
+        except Exception:  # noqa: BLE001
+            logger.warning("[features] 读取技能商店目录失败，管理员仅按功能包+可见包放行", exc_info=True)
+        for key in admin_keys:
+            if key and key not in RETIRED_PACKAGE_IDS:
+                flags[key] = True
         return flags
     for package_id in visible:
         key = str(package_id or "").strip()
