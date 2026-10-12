@@ -3291,10 +3291,24 @@ def _repair_template_resource_refs(db: Session, rows: list[IPContentScheduleTemp
             keywords, competitors = _template_resource_rows(db, row)
             live_kw = [int(item.id) for item in keywords]
             live_cp = [int(item.id) for item in competitors]
-            if _clean_int_ids(row.keyword_ids, 50) == live_kw and _clean_int_ids(row.competitor_ids, 50) == live_cp:
+            # 记忆文件同样自愈：已删/失效文档不能继续留在模板里
+            mem_ids, mem_docs = _canonical_template_memory_selection(
+                db,
+                int(getattr(row, "user_id", 0) or 0),
+                row.memory_doc_ids,
+                row.memory_docs or [],
+            )
+            stored_mem_ids = _clean_memory_doc_ids(row.memory_doc_ids, 50) or _memory_doc_ids_from_docs(row.memory_docs or [], 50)
+            if (
+                _clean_int_ids(row.keyword_ids, 50) == live_kw
+                and _clean_int_ids(row.competitor_ids, 50) == live_cp
+                and stored_mem_ids == list(mem_ids)
+            ):
                 continue
             row.keyword_ids = live_kw
             row.competitor_ids = live_cp
+            row.memory_doc_ids = list(mem_ids)
+            row.memory_docs = list(mem_docs) if mem_docs else []
             changed += 1
         except Exception:  # noqa: BLE001
             logger.exception("[ip-content] 模板资源引用自愈失败 template=%s", getattr(row, "id", None))
