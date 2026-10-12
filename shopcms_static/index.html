@@ -220,7 +220,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       (filtering ? '<button class="btn mini ghost" id="prod-reset" type="button" title="清掉上面的关键词和状态，恢复显示全部商品">清空筛选</button>' : '') +
       '<span class="muted">共 ' + Number(state.productTotal || state.products.length || 0) + ' 个商品' + (filtering ? '（筛选中）' : '') + '</span>' +
       '</div>' +
-      '<div class="hint">上架到独立站 = 买家能下单、能生成推广链接；给 online 赚钱用 = 商品资料完善即可（图片工作台/投稿可选用它的素材）。</div>';
+      '<div class="hint">这一页只管商品资料 + 底图（给 online 赚钱 / 投稿 / 图片工作台选素材用）。<b>上架、下架、独立站素材与 SEO/SKU 都在「独立站上架」那一页</b>。</div>';
   }
 
   function statusOptions(cur) {
@@ -894,8 +894,8 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         '<td>' + Number(p.stock || 0) + '</td>' +
         '<td>' + statusTag(p.status) + '<div class="muted">' + (p.ready_for_earn ? '可给 online 赚钱用' : '资料未完善') + '</div></td>' +
         '<td>' +
-        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">编辑</button> ' +
-        '<button class="btn mini" data-toggle="' + p.id + '" data-on="' + (p.status === 'on_sale' ? '0' : '1') + '" type="button">' + (p.status === 'on_sale' ? '下架' : '上架') + '</button>' +
+        '<button class="btn mini ghost" data-edit="' + p.id + '" type="button">编辑商品资料</button> ' +
+        '<button class="btn mini ghost" data-go-listing="' + p.id + '" type="button" title="上下架、独立站素材、SEO/SKU 都在「独立站上架」里改">去独立站上架</button>' +
         '</td></tr>';
     }).join('');
     return [
@@ -1158,6 +1158,11 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if (pstatus) pstatus.addEventListener('change', function () {
       state.productStatus = String(pstatus.value || '');
       loadProducts();
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-go-listing]'), function (b) {
+      b.addEventListener('click', function () {
+        state.view = 'listing'; state.draft = null; state.picker = null; state.preview = null; state.msg = ''; render();
+      });
     });
     var sprof = $('#shop-profile');
     if (sprof) sprof.addEventListener('click', function () {
