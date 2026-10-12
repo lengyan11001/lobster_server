@@ -525,9 +525,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     return '<div class="modal" id="pk"><div class="modal-mask" data-close-picker="1"></div>' +
       '<div class="modal-card wide"><button class="modal-x" type="button" data-close-picker="1" aria-label="关闭">×</button>' +
       '<h3>选择素材 → ' + (names[pk.target] || '') + '</h3>' +
-      '<div class="mtabs">' +
-      '<button class="mtab on" type="button" data-pktab="local">本地上传</button>' +
-      '</div>' +
+
       (pk.tab === 'local' ? localPane : acceptedPane) +
       '<label>已选 ' + pk.picked.length + ' 张（点图放大预览）</label>' +
       '<div class="thumbs">' + (pk.picked.length ? pk.picked.map(function (u, i) {
