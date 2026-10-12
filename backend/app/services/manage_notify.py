@@ -261,16 +261,19 @@ async def _send_group(cfg, title, lines, *, template="blue", note="", link=MANAG
         return {"ok": False, "error": str(exc)[:200], "hint": feishu_bot.hint_for(exc)}
 
 
-async def _send_private(cfg, open_id, title, lines, *, template="blue", client=None):
+async def _send_private(cfg, open_id, title, lines, *, template="blue", client=None,
+                        raise_on_error: bool = False):
     if not _can_private(cfg) or not open_id:
         return False
+    card = feishu_bot.build_card(title, lines, template=template,
+                                 note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME)
     try:
-        card = feishu_bot.build_card(title, lines, template=template,
-                                     note="来自 manage.bhzn.top 项目看板", link=MANAGE_HOME)
         await feishu_bot.send_card_to_user(open_id, card, app_id=cfg.get("app_id", ""),
                                            app_secret=cfg.get("app_secret", ""), client=client)
         return True
     except Exception as exc:
+        if raise_on_error:
+            raise
         logger.warning("[manage-notify] 私聊失败 open_id=%s: %s", open_id, exc)
         return False
 
@@ -282,7 +285,8 @@ async def send_daily_digest(db: Session, company: MCompany, *, today: str = "",
     cfg = company_feishu_config(db, company)
     payload = digest_lines(db, company, today=day)
     result: Dict[str, Any] = {"company_id": int(company.id), "source": cfg["source"],
-                              "group": None, "private": 0, "unreachable": 0}
+                              "group": None, "private": 0, "unreachable": 0,
+                              "private_failed": []}
     result["group"] = await _send_group(cfg, payload["title"], payload["lines"],
                                         template=payload["template"], client=client)
     if not _can_private(cfg):
@@ -297,9 +301,19 @@ async def send_daily_digest(db: Session, company: MCompany, *, today: str = "",
         oid = await member_open_id(db, member, cfg, client=client)
         if not oid:
             result["unreachable"] += 1
+            result["private_failed"].append({"member": str(member.display_name or ""), "reason": "飞书里查不到该手机号/邮箱"})
             continue
-        if await _send_private(cfg, oid, "你的任务 · %s · %s" % (str(company.name or "公司"), day),
-                               lines, client=client):
+        try:
+            ok_sent = await _send_private(cfg, oid, "你的任务 · %s · %s" % (str(company.name or "公司"), day),
+                                          lines, client=client, raise_on_error=True)
+        except Exception as exc:
+            # 230013「Bot has NO availability to this user」= 应用可用范围没放开（不是权限、也不是查不到人）
+            reason = str(exc)[:200]
+            result["private_failed"].append({"member": str(member.display_name or ""), "reason": reason,
+                                             "hint": feishu_bot.hint_for(exc)})
+            logger.warning("[manage-notify] 私聊失败 %s：%s", member.display_name, reason)
+            continue
+        if ok_sent:
             result["private"] += 1
     return result
 
