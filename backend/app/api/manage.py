@@ -4598,7 +4598,9 @@ async def test_feishu_config(company_id: int = Query(...), send: bool = Query(Tr
             oid = await feishu_bot.resolve_open_id(ident, kind=kind, app_token=token)
             steps.append({"name": "手机号/邮箱换 open_id", "ok": bool(oid),
                           "detail": ("%s → %s" % (ident, oid)) if oid else "没查到这个人在飞书组织里",
-                          "hint": "" if oid else "确认他加入了飞书组织、且企业通讯录权限已开"})
+                          "hint": ("手机号在飞书查不到 user_id，通常是：① 开发者后台「可用范围（数据可见范围）」没包含这个成员"
+                                   "（最常见，默认只有应用创建者）；② 这人不在本企业飞书组织里（个人版/别的公司）；"
+                                   "③ 飞书里登记的手机号与这里不同。可用范围改成「全员」并重新发布版本后立刻生效。") if not oid else ""})
         except Exception as exc:
             steps.append({"name": "手机号/邮箱换 open_id", "ok": False, "detail": str(exc)[:200],
                           "hint": feishu_bot.hint_for(exc)})
