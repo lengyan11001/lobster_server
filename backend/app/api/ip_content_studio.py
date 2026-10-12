@@ -6242,6 +6242,92 @@ def list_competitors(
     return {"items": [_competitor_payload(row) for row in rows]}
 
 
+class ProfileExtractBody(BaseModel):
+    text: str = Field("", max_length=200000)
+    title: str = Field("", max_length=200)
+
+
+# 与「个人IP设置 · 资料调查」一致的字段（key 用 requirements 里的正式键名）
+_PROFILE_EXTRACT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("profile_name", "你的名字/称呼"),
+    ("gender", "性别（只能是 male 或 female，没提到就留空）"),
+    ("birth_era", "出生年代（如 80后/90后/00后）"),
+    ("current_province", "现在居住的省份"),
+    ("current_city", "现在居住的城市"),
+    ("hometown", "籍贯/家乡"),
+    ("role", "职业或对外身份（你是做什么的）"),
+    ("share_topic", "账号主要想分享的内容方向"),
+    ("video_style", "希望呈现的视频风格"),
+    ("after_view_action", "希望观众看完后做什么"),
+    ("product", "在做的产品或服务（含卖点、价格带、交付方式）"),
+    ("target_customer", "最想服务的客户类型（身份/年龄/地区/痛点）"),
+    ("advantages", "比同行好在哪里（资历/案例/服务/价格）"),
+)
+
+
+@router.post("/api/ip-content/profile-extract", summary="AI 从记录内容里提取个人资料字段")
+async def extract_profile_from_text(
+    request: Request,
+    body: ProfileExtractBody,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    text = _clean_long_text(body.text, 60000)
+    if not str(text or "").strip():
+        raise HTTPException(status_code=400, detail="没有可提取的内容")
+    field_lines = "\n".join(f"- {key}: {label}" for key, label in _PROFILE_EXTRACT_FIELDS)
+    system_prompt = (
+        "你是资料整理助手。请只输出一个 JSON 对象，不要输出任何解释、markdown 或代码块。\n"
+        "JSON 的 key 固定为下面这些英文名，value 用中文填写：\n" + field_lines + "\n"
+        "要求：只写原文明确出现或可以直接推断的信息；原文没提到的字段 value 用空字符串 ""；"
+        "不要把猜测写成事实；gender 只能是 male / female / ""；不要输出额外字段。"
+    )
+    user_prompt = f"【素材标题】{_clean_text(body.title, 200)}\n【素材正文】\n{text}"
+    token = (request.headers.get("Authorization") or request.headers.get("authorization") or "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少登录凭证")
+    if not token.lower().startswith("bearer "):
+        token = f"Bearer {token}"
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": token}
+    brand = (request.headers.get("X-Lobster-Brand") or request.headers.get("x-lobster-brand") or "").strip().lower()
+    if brand:
+        headers["X-Lobster-Brand"] = brand
+    xi = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
+    if xi:
+        headers["X-Installation-Id"] = xi
+    data = await _post_llm_with_retry(
+        payload={
+            "model": (os.environ.get("IP_CONTENT_STUDIO_MODEL") or "deepseek-chat").strip() or "deepseek-chat",
+            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            "stream": False,
+            "temperature": 0.2,
+        },
+        headers=headers,
+        attempts=2,
+        timeout_seconds=120.0,
+    )
+    try:
+        raw = str(data["choices"][0]["message"]["content"] or "")
+    except Exception:
+        raw = json.dumps(data, ensure_ascii=False)
+    parsed = _extract_json_object(raw)
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="AI 返回不是合法 JSON，请重试")
+    answers: dict[str, str] = {}
+    for key, _label in _PROFILE_EXTRACT_FIELDS:
+        value = parsed.get(key)
+        text_value = _clean_long_text(value, 2000) if isinstance(value, str) else ""
+        if key == "gender":
+            lowered = str(value or "").strip().lower()
+            if lowered in {"male", "m", "男", "男性", "1"}:
+                text_value = "male"
+            elif lowered in {"female", "f", "女", "女性", "0"}:
+                text_value = "female"
+            else:
+                text_value = ""
+        answers[key] = text_value
+    return {"ok": True, "answers": answers, "fields": [{"key": k, "label": l} for k, l in _PROFILE_EXTRACT_FIELDS]}
+
+
 @router.get("/api/ip-content/profile-surveys", summary="资料调查记录列表")
 def list_profile_surveys(
     current_user: User = Depends(get_current_user),
