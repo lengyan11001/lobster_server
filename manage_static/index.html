@@ -174,6 +174,23 @@ table.tb{width:100%;border-collapse:separate;border-spacing:0 5px;font-size:12.5
   #remoteModal iframe{flex:1;min-width:0;border:0;background:#04060d}
 #remoteModal .dsec{margin-bottom:12px}
 #remoteModal .dsec h4{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted)}
+#fsGuideModal{position:fixed;inset:0;z-index:420;display:flex;align-items:center;justify-content:center;padding:22px}
+#fsGuideModal.hide{display:none}
+#fsGuideModal .fgBack{position:absolute;inset:0;background:rgba(3,6,12,.74)}
+#fsGuideModal .fgCard{position:relative;width:min(880px,94vw);max-height:88vh;border-radius:16px;display:flex;flex-direction:column;overflow:hidden}
+#fsGuideModal .fgHead{display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--w-line)}
+#fsGuideModal .fgBody{padding:16px 20px 22px;overflow:auto;font-size:13px;line-height:1.85}
+#fsGuideModal .fgBody h4{margin:16px 0 6px;font-size:13.5px}
+#fsGuideModal .fgBody ol,#fsGuideModal .fgBody ul{margin:6px 0 0;padding-left:20px}
+#fsGuideModal .fgBody li{margin:3px 0}
+#fsGuideModal .fgBody code{background:rgba(255,255,255,.08);border-radius:5px;padding:1px 5px;font-size:12px}
+#fsGuideModal .fgBody table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12.5px}
+#fsGuideModal .fgBody th,#fsGuideModal .fgBody td{border-bottom:1px solid var(--w-line);padding:7px 8px;text-align:left;vertical-align:top}
+#fsGuideModal .fgBody th{color:var(--muted);font-weight:500}
+#fsGuideModal .warn{border-left:3px solid #f0b429;padding:7px 10px;margin:9px 0;background:rgba(240,180,41,.08);border-radius:6px}
+#fsGuideModal .ok{border-left:3px solid #4cc38a;padding:7px 10px;margin:9px 0;background:rgba(76,195,138,.08);border-radius:6px}
+.fs-guide-btn{width:26px;height:26px;border-radius:50%;border:1px solid var(--w-line);background:transparent;color:var(--muted);font-size:14px;line-height:1;cursor:pointer;padding:0}
+.fs-guide-btn:hover{color:var(--ink);border-color:var(--accent)}
 /* 时间线二级界面（项目列表 → 时间线） */
 #tlModal{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:22px}
 #tlModal.hide{display:none}
@@ -397,6 +414,90 @@ body.overlay-open #drawer{z-index:501}
   </div>
 </div>
 
+<div id="fsGuideModal" class="hide">
+  <div class="fgBack" id="fsGuideBack"></div>
+  <div class="fgCard glass">
+    <div class="fgHead">
+      <div style="flex:1;min-width:0">
+        <div class="dim" style="font-size:11px">飞书接入 · 配置攻略</div>
+        <div style="font-size:14.5px;font-weight:600;margin-top:4px">从零到「员工能收到推送」</div>
+      </div>
+      <button class="btn sm" id="fsGuideClose">关闭</button>
+    </div>
+    <div class="fgBody">
+      <div class="warn">飞书里有 <b>两个范围开关</b>，只改一个会踩坑：<br />
+        ①「<b>通讯录权限范围（数据可见范围）</b>」决定<b>能不能查到这个人</b>（手机号 → open_id）；<br />
+        ②「<b>应用可用范围（生效范围）</b>」决定<b>机器人能不能给他发消息</b>。<br />
+        只改①不改② → 查得到人但发不出去，报 <code>230013 Bot has NO availability to this user</code>。</div>
+
+      <h4>一、建应用（管理员用公司账号登录 open.feishu.cn）</h4>
+      <ol>
+        <li>开发者后台 → 创建应用 → <b>企业自建应用</b>（个人飞书号建的不属于公司，发不到员工）。</li>
+        <li>记下 <b>App ID</b> / <b>App Secret</b>（第六步要填到本页）。</li>
+      </ol>
+
+      <h4>二、加权限（权限管理）</h4>
+      <ul>
+        <li><code>im:message</code> —— 给员工发消息（<b>必需</b>）</li>
+        <li><code>contact:user.id:readonly</code> —— 手机号/邮箱换 open_id（<b>必需</b>；员工用手机号登录就靠它）</li>
+        <li>可选 <code>contact:contact.base:readonly</code> —— 只有想让 OA 同步员工名单/部门时才要</li>
+      </ul>
+
+      <h4>三、两个范围都设成「全部成员」</h4>
+      <ul>
+        <li><b>通讯录权限范围（数据可见范围）</b>：权限管理里 → 全部成员（决定"查得到人"）</li>
+        <li><b>应用可用范围（生效范围）</b>：<b>版本管理与发布</b>里 → 全部成员（决定"bot 能发给谁"，漏了报 230013）</li>
+      </ul>
+
+      <h4>四、创建版本 → 发布 → 管理员审批</h4>
+      <ol>
+        <li>版本管理与发布 → <b>创建版本</b> → 提交发布。</li>
+        <li>飞书<b>管理后台 → 应用管理</b>由管理员<b>审批通过</b>。</li>
+        <li class="dim">改了权限/范围<b>必须重新发版</b>才生效：只勾选、不发版，接口还是老样子。</li>
+      </ol>
+
+      <h4>五、员工必须在同一个飞书企业里</h4>
+      <ul>
+        <li>「手机号能登飞书」≠「在你们企业里」：可能用个人飞书或别的公司组织。管理后台 → <b>成员与部门</b>按号码搜，搜不到就邀请进来。</li>
+        <li>飞书里登记的手机号，要和 manage 组织架构里的<b>手机号一致</b>（本系统按手机号找人）。</li>
+      </ul>
+
+      <h4>六、回本页配置 + 自检</h4>
+      <ol>
+        <li>填 <b>App ID / App Secret</b> → <b>保存</b>。</li>
+        <li>勾上 <b>「开启推送」</b>（不勾只有自检能发，定时播报不发）。</li>
+        <li>点 <b>「自检并给我发一条」</b>：①配置已保存 ②换 tenant_access_token ③手机号换 open_id ④给你发一条私聊，四条 PASS 即通。</li>
+        <li>看 <b>「飞书实际可达成员 N/M」</b>：这才是"真正能收到"的人数，推不到的会列出来。</li>
+      </ol>
+
+      <h4>七、可选：群里也播报</h4>
+      <ul>
+        <li>飞书群 → 设置 → 群机器人 → 添加「自定义机器人」→ 把 webhook 填到本页（只发群，不影响个人私聊）。</li>
+      </ul>
+
+      <h4>八、自动推送节奏</h4>
+      <table>
+        <tr><th>时间</th><th>内容</th><th>发给谁</th></tr>
+        <tr><td>每天 09:00</td><td>「你的任务」：未完成任务（按项目分组、截止日、逾期高亮）</td><td>任务负责人（私聊）</td></tr>
+        <tr><td>每天 17:05</td><td>逾期提醒（需配群机器人；未配则不发）</td><td>群</td></tr>
+        <tr><td>派活即时</td><td>新任务派发</td><td>负责人（私聊）</td></tr>
+      </table>
+
+      <h4>九、常见错误码</h4>
+      <table>
+        <tr><th>错误码</th><th>含义 / 怎么修</th></tr>
+        <tr><td><code>10003 / 10014</code></td><td>App ID / App Secret 不对，或不是这个企业的应用</td></tr>
+        <tr><td><code>99991672</code></td><td>权限没开：勾 <code>im:message</code> 与 <code>contact:user.id:readonly</code> 后<b>重新发版</b></td></tr>
+        <tr><td><code>99991663</code></td><td>应用没发布 / 没通过审批，或可用范围不含该员工</td></tr>
+        <tr><td><code>230002 / 230013</code></td><td>接收人不在<b>应用可用范围</b>内 → 版本管理与发布改成全部成员并重新发版</td></tr>
+        <tr><td>手机号换不到 open_id</td><td>通讯录数据范围没放开 / 人不在本企业 / 飞书里手机号与这里不一致</td></tr>
+      </table>
+
+      <div class="ok">排错顺序：<b>能查到人吗</b>（自检第 3 步）→ 能发出去吗（第 4 步）→ 实际可达几个（「飞书实际可达成员」）→ 09:00 就按这个名单发。</div>
+    </div>
+  </div>
+</div>
+
 <div id="remoteModal" class="hide">
   <div class="rmBack" id="remoteBack"></div>
   <div class="rmCard glass">
@@ -576,6 +677,16 @@ body.overlay-open #drawer{z-index:501}
 
   $("#toast").addEventListener("click", function(){ this.classList.remove("on"); clearTimeout(this._t); });
   document.getElementById("remoteClose").addEventListener("click", closeRemote);
+  (function(){
+    var gm = document.getElementById("fsGuideModal");
+    if (!gm) return;
+    function hideGuide(){ gm.classList.add("hide"); }
+    ["fsGuideClose", "fsGuideBack"].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.addEventListener("click", hideGuide);
+    });
+    document.addEventListener("keydown", function(ev){ if (ev.key === "Escape") hideGuide(); });
+  })();
   document.getElementById("remoteBack").addEventListener("click", closeRemote);
   document.getElementById("remoteReload").addEventListener("click", function(){
     var f = document.getElementById("remoteFrame");
@@ -803,7 +914,7 @@ body.overlay-open #drawer{z-index:501}
       var c = d.config || {}, m = d.members || {};
       var src = c.source === "company" ? "本公司配置" : (c.source === "env" ? "服务端默认（未配本公司）" : "未配置");
       box.innerHTML =
-        '<div class="glass card"><h3>飞书通知设置</h3>'
+        '<div class="glass card"><div class="row" style="align-items:center;gap:8px"><h3 style="flex:1;margin:0">飞书通知设置</h3><button class="fs-guide-btn" id="fsGuide" type="button" title="配置攻略：从零到员工能收到推送">?</button></div>'
         + '<div class="dim" style="font-size:12.5px;line-height:1.75">'
         + '每个公司用<b>自己</b>的飞书「企业自建应用」给员工发消息（任务派发 / 进度 / 逾期 / 每日今日任务）。<br />'
         + '员工用<b>手机号</b>登录 → 系统用手机号换飞书 open_id 私聊推送；没手机号也没邮箱的成员推不到。<br />'
@@ -849,6 +960,11 @@ body.overlay-open #drawer{z-index:501}
   }
   function bindFeishu(){
     var save = document.getElementById("fsSave"), test = document.getElementById("fsTest");
+    var guide = document.getElementById("fsGuide");
+    if (guide) guide.addEventListener("click", function(){
+      var gm = document.getElementById("fsGuideModal");
+      if (gm) gm.classList.remove("hide");
+    });
     if (save) save.addEventListener("click", function(){
       save.disabled = true;
       saveFeishu(false).then(function(){ loadFeishu(); })
