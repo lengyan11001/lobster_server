@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -62,6 +63,28 @@ ON_SALE = "on_sale"
 
 
 # ────────────────────────── 公共小工具 ──────────────────────────
+
+def _abs_media_url(url: Any) -> str:
+    """商品图在库里存的是相对路径（/shop-uploads/...），只有商城域名能访问；
+    返回给客户端/商家后台前统一补成绝对地址，否则其它站点渲染就是裂图。"""
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    if re.match(r"^(https?:)?//", text) and not text.startswith("//"):
+        return text
+    if text.startswith("//"):
+        return "https:" + text
+    if re.match(r"^(data|blob):", text, re.I):
+        return text
+    base = SHOP_BASE_URL.rstrip("/")
+    return base + (text if text.startswith("/") else "/" + text)
+
+
+def _abs_media_list(values: Any) -> list:
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [_abs_media_url(item) for item in values if str(item or "").strip()]
+
 
 def _slug_of(name: str) -> str:
     base = "".join(ch for ch in (name or "") if ch.isalnum()).lower()[:24] or "shop"
@@ -144,6 +167,14 @@ class ProductListingReq(BaseModel):
     from_source: bool = False
 
 
+def _abs_listing_media(listing: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(listing or {})
+    data["cover"] = _abs_media_url(data.get("cover"))
+    data["gallery"] = _abs_media_list(data.get("gallery"))
+    data["detail_images"] = _abs_media_list(data.get("detail_images"))
+    return data
+
+
 def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = None, *, promoter_view: bool = False) -> Dict[str, Any]:
     data: Dict[str, Any] = {
         "id": product.id,
@@ -151,12 +182,16 @@ def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = No
         "subtitle": product.subtitle,
         "category": product.category,
         "brand": product.brand,
-        "cover_url": product.cover_url,
-        "media": product.media or {},
-        "gallery": (product.media or {}).get("gallery", []),
-        "detail_images": (product.media or {}).get("detail_images", []),
+        "cover_url": _abs_media_url(product.cover_url),
+        "media": {
+            **(product.media or {}),
+            "gallery": _abs_media_list((product.media or {}).get("gallery")),
+            "detail_images": _abs_media_list((product.media or {}).get("detail_images")),
+        },
+        "gallery": _abs_media_list((product.media or {}).get("gallery")),
+        "detail_images": _abs_media_list((product.media or {}).get("detail_images")),
         # 2026-10-11：商家自己上传的素材池 + 独立站真正用的素材分开给
-        "listing": _normalized_listing_media(product),
+        "listing": _abs_listing_media(_normalized_listing_media(product)),
         "ready_for_earn": _product_ready_for_earn(product),
         "detail_text": (product.media or {}).get("detail_text", ""),
         "detail_html": product.detail_html or "",
@@ -171,7 +206,7 @@ def _product_payload(product: ShopProduct, merchant: Optional[ShopMerchant] = No
         "merchant_id": product.merchant_id,
     }
     if merchant is not None:
-        data["merchant"] = {"slug": merchant.slug, "company_name": merchant.company_name, "logo_url": merchant.logo_url}
+        data["merchant"] = {"slug": merchant.slug, "company_name": merchant.company_name, "logo_url": _abs_media_url(merchant.logo_url)}
         data["commission_bp"] = sc.effective_rate_bp(product.commission_bp, merchant.commission_default_bp, commission_type=product.commission_type)
         data["commission_estimate_cents"] = sc.compute_commission(
             pay_amount_cents=int(product.price_cents or 0),
