@@ -6245,6 +6245,7 @@ def list_competitors(
 class ProfileExtractBody(BaseModel):
     text: str = Field("", max_length=200000)
     title: str = Field("", max_length=200)
+    targets: list[str] = Field(default_factory=list)
 
 
 # 与「个人IP设置 · 资料调查」一致的字段（key 用 requirements 里的正式键名）
@@ -6274,7 +6275,22 @@ async def extract_profile_from_text(
     text = _clean_long_text(body.text, 60000)
     if not str(text or "").strip():
         raise HTTPException(status_code=400, detail="没有可提取的内容")
-    field_lines = "\n".join(f"- {key}: {label}" for key, label in _PROFILE_EXTRACT_FIELDS)
+    targets = [str(t or "").strip().lower() for t in (body.targets or []) if str(t or "").strip()]
+    if not targets:
+        targets = ["profile", "keywords", "competitors", "memory"]
+    targets = [t for t in ("profile", "keywords", "competitors", "memory") if t in targets]
+    if not targets:
+        raise HTTPException(status_code=400, detail="没有要提取的类型")
+    groups: list[str] = []
+    if "profile" in targets:
+        groups.append("\n".join(f"- {key}: {label}" for key, label in _PROFILE_EXTRACT_FIELDS))
+    if "keywords" in targets:
+        groups.append('- keywords: 数组，每项 {"keyword": "行业词/热点词/自家关键词", "display_name": "可选简称"}（最多 10 条，原文没提到就空数组）')
+    if "competitors" in targets:
+        groups.append('- competitors: 数组，每项 {"platform": "douyin|channels|xiaohongshu|kuaishou|other", "account": "账号名或 ID", "nickname": "昵称", "note": "备注"}（最多 10 条）')
+    if "memory" in targets:
+        groups.append('- memory: 对象，key 固定为 brand_product_intro / product_service_faq / short_video_scripts，value 是按原文整理的正文（原文没提到就空字符串）')
+    field_lines = "\n".join(groups)
     system_prompt = (
         "你是资料整理助手。请只输出一个 JSON 对象，不要输出任何解释、markdown 或代码块。\n"
         "JSON 的 key 固定为下面这些英文名，value 用中文填写：\n" + field_lines + "\n"
@@ -6312,6 +6328,30 @@ async def extract_profile_from_text(
     parsed = _extract_json_object(raw)
     if not isinstance(parsed, dict):
         raise HTTPException(status_code=502, detail="AI 返回不是合法 JSON，请重试")
+    result: dict[str, Any] = {
+        "ok": True,
+        "targets": targets,
+        "profile": {},
+        "keywords": [],
+        "competitors": [],
+        "memory": {},
+        "fields": [{"key": k, "label": l} for k, l in _PROFILE_EXTRACT_FIELDS],
+    }
+    for target in ("keywords", "competitors"):
+        rows = parsed.get(target)
+        if isinstance(rows, list):
+            for row in rows[:10]:
+                if isinstance(row, dict):
+                    result[target].append({str(k): _clean_long_text(v, 400) for k, v in row.items() if str(v or "").strip()})
+    mem = parsed.get("memory")
+    if isinstance(mem, dict):
+        for doc_type in ("brand_product_intro", "product_service_faq", "short_video_scripts"):
+            value = _clean_long_text(mem.get(doc_type), 20000)
+            if value:
+                result["memory"][doc_type] = value
+    if "profile" not in targets:
+        result.pop("fields", None)
+        return result
     answers: dict[str, str] = {}
     for key, _label in _PROFILE_EXTRACT_FIELDS:
         value = parsed.get(key)
@@ -6325,7 +6365,9 @@ async def extract_profile_from_text(
             else:
                 text_value = ""
         answers[key] = text_value
-    return {"ok": True, "answers": answers, "fields": [{"key": k, "label": l} for k, l in _PROFILE_EXTRACT_FIELDS]}
+    result["profile"] = answers
+    result["answers"] = answers
+    return result
 
 
 @router.get("/api/ip-content/profile-surveys", summary="资料调查记录列表")
