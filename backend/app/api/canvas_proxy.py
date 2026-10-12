@@ -820,7 +820,79 @@ async def transfer_media_url(url: str, kind: str = "image") -> str:
     return url
 
 
-async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
+# 海螺 H3（minimax/h3）等模型的参考音频：上游要求 2~15 秒，超长直接 400/任务失败
+_AUDIO_MIN_SECONDS = 2.0
+_AUDIO_MAX_SECONDS = 15.0
+_AUDIO_TRIM_SECONDS = 14.9
+
+
+async def normalize_reference_audio(url: str, user_id: int = 0) -> str:
+    """参考音频规范化：<2 秒直接报错；>15 秒自动裁到 15 秒内再提交（上游硬限制）。"""
+    if not isinstance(url, str) or not url.startswith("http"):
+        return url
+    import asyncio
+    import subprocess
+    import tempfile
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0, trust_env=False, follow_redirects=True) as client:
+            resp = await client.get(url)
+        if resp.status_code >= 400 or not resp.content:
+            logger.info("[canvas] 参考音频下载失败 HTTP %s，按原样提交", resp.status_code)
+            return await transfer_media_url(url, "audio")
+        raw = resp.content
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[canvas] 参考音频下载异常，按原样提交: %s", exc)
+        return await transfer_media_url(url, "audio")
+
+    ffprobe = _shutil.which("ffprobe") or "ffprobe"
+    ffmpeg = _shutil.which("ffmpeg") or "ffmpeg"
+    with tempfile.TemporaryDirectory(prefix="canvas_ref_audio_") as tmp:
+        src = _Path(tmp) / "source.bin"
+        src.write_bytes(raw)
+        duration = 0.0
+        try:
+            probe = await asyncio.to_thread(
+                subprocess.run,
+                [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(src)],
+                capture_output=True, text=True, timeout=90,
+            )
+            duration = float((probe.stdout or "").strip() or 0.0)
+        except Exception:  # noqa: BLE001
+            duration = 0.0
+        if duration and duration < _AUDIO_MIN_SECONDS:
+            raise HTTPException(status_code=400, detail="参考音频时长需在 2~15 秒之间（当前 %.1f 秒），请更换音频" % duration)
+        if duration <= _AUDIO_MAX_SECONDS:
+            return await transfer_media_url(url, "audio")
+        out = _Path(tmp) / "trimmed.mp3"
+        try:
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                [ffmpeg, "-y", "-i", str(src), "-t", str(_AUDIO_TRIM_SECONDS), "-vn", "-c:a", "libmp3lame", "-q:a", "4", str(out)],
+                capture_output=True, text=True, timeout=240,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[canvas] 参考音频裁剪异常")
+            raise HTTPException(status_code=400, detail="参考音频超过 15 秒，自动裁剪失败，请换一段 2~15 秒的音频") from exc
+        if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+            logger.warning("[canvas] 参考音频裁剪失败 rc=%s err=%s", proc.returncode, (proc.stderr or "")[-200:])
+            raise HTTPException(status_code=400, detail="参考音频超过 15 秒，自动裁剪失败，请换一段 2~15 秒的音频")
+        try:
+            from . import canvas_hub
+
+            new_url = canvas_hub.store_upload(int(user_id or 0), "reference_audio.mp3", "audio/mpeg", out.read_bytes())
+            if isinstance(new_url, str) and new_url.startswith("http"):
+                logger.info("[canvas] 参考音频 %.2f 秒 -> 已裁到 %.1f 秒: %s", duration, _AUDIO_TRIM_SECONDS, new_url[:70])
+                return new_url
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[canvas] 参考音频裁剪后保存失败")
+            raise HTTPException(status_code=400, detail="参考音频超过 15 秒，自动裁剪后上传失败，请稍后重试") from exc
+    raise HTTPException(status_code=400, detail="参考音频超过 15 秒，自动裁剪失败，请换一段 2~15 秒的音频")
+
+
+async def prepare_params(model: str, params: Dict[str, Any], user_id: int = 0) -> Dict[str, Any]:
     """提交前把素材链接换成 apiz 可访问的，并按模型需要调整参数结构。"""
     import copy as _copy
     import re as _re
@@ -829,6 +901,14 @@ async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
     # 媒体链接转存
     if isinstance(params.get("content"), list):
         for item in params["content"]:
+            if isinstance(item, dict) and item.get("type") == "audio_url":
+                holder = item.get("audio_url")
+                audio_url = holder.get("url") if isinstance(holder, dict) else holder
+                new_audio = await normalize_reference_audio(str(audio_url or ""), user_id)
+                if isinstance(holder, dict):
+                    holder["url"] = new_audio
+                else:
+                    item["audio_url"] = {"url": new_audio}
             if isinstance(item, dict) and item.get("type") == "image_url":
                 holder = item.get("image_url")
                 if isinstance(holder, dict) and holder.get("url"):
@@ -1181,7 +1261,7 @@ async def canvas_proxy(
             if mapped != body_json.get("model"):
                 logger.info("[canvas] 模型映射 %s -> %s（我们的 key 对该模型无权限）", body_json.get("model"), mapped)
                 body_json["model"] = mapped
-            body_json["params"] = await prepare_params(mapped, body_json["params"])
+            body_json["params"] = await prepare_params(mapped, body_json["params"], int(getattr(user, "id", 0) or 0))
         except Exception as exc:  # noqa: BLE001 适配失败就原样提交
             logger.info("[canvas] 参数适配失败（原样提交）: %s", exc)
 
