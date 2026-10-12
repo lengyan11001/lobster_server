@@ -360,3 +360,31 @@ async def test_batch_resolve_open_ids_empty_and_error(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         await feishu_bot.batch_resolve_open_ids(mobiles=["15829455388"], client=_Client(resp=denied))
     assert "99991672" in str(exc.value)
+
+
+def test_member_lines_matches_real_owner_kind_human(db_session, feishu_company):
+    """线上 owner_kind 是 human（不是 member）：按 owner_membership_id 认人，且只算已确认项目。"""
+    from backend.app.manage_models import MPlanNode, MProject
+    company, worker = feishu_company["company"], feishu_company["worker"]
+
+    # 线上真实形态：owner_kind=human
+    feishu_company["overdue"].owner_kind = "human"
+    feishu_company["soon"].owner_kind = "human"
+    db_session.commit()
+    lines = manage_notify.member_lines(db_session, company, worker)
+    text = "\n".join(lines)
+    assert "首条爆款脚本" in text and "本周成片交付" in text, text
+
+    # 草稿（未确认）项目里的任务不推送
+    draft = MProject(company_id=company.id, name="还没确认的项目", arrangement_status="draft",
+                     status="planning", start_at=_day(-1), end_at=_day(10))
+    db_session.add(draft)
+    db_session.flush()
+    db_session.add(MPlanNode(company_id=company.id, project_id=draft.id, node_type="task",
+                             title="草稿里的任务", owner_kind="human",
+                             owner_membership_id=worker.id, owner_name=worker.display_name,
+                             start_at=_day(-1), end_at=_day(1), status="not_started",
+                             progress=0, weight=1, order_index=0))
+    db_session.commit()
+    assert "草稿里的任务" not in "\n".join(manage_notify.member_lines(db_session, company, worker))
+    assert "草稿里的任务" not in "\n".join(manage_notify.digest_lines(db_session, company)["lines"])

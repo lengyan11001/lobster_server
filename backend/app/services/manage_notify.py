@@ -31,6 +31,8 @@ BEIJING = timezone(timedelta(hours=8))
 MANAGE_HOME = "https://manage.bhzn.top"
 FEISHU_KIND = "feishu"
 DONE_STATUSES = {"completed", "done", "cancelled"}
+# 与 manage.py 同一口径：只有「已确认/有变更」的项目才算派活
+CONFIRMED_ARRANGEMENT = ("confirmed", "changed")
 STATUS_TEXT = {
     "not_started": "未开始", "in_progress": "进行中", "blocked": "受阻",
     "completed": "已完成", "done": "已完成", "cancelled": "已取消",
@@ -172,8 +174,14 @@ def open_nodes(db: Session, company_ids: Sequence[int], *, today: str = "",
     ids = [int(c) for c in company_ids if c is not None]
     if not ids:
         return []
+    confirmed = [int(pid) for (pid,) in db.query(MProject.id)
+                 .filter(MProject.company_id.in_(ids),
+                         MProject.arrangement_status.in_(list(CONFIRMED_ARRANGEMENT))).all()]
+    if not confirmed:
+        return []
     rows = (db.query(MPlanNode)
             .filter(MPlanNode.company_id.in_(ids))
+            .filter(MPlanNode.project_id.in_(confirmed))
             .filter(~MPlanNode.status.in_(list(DONE_STATUSES)))
             .order_by(MPlanNode.end_at.asc(), MPlanNode.project_id.asc(), MPlanNode.order_index.asc())
             .all())
@@ -219,9 +227,17 @@ def digest_lines(db: Session, company: MCompany, *, today: str = "", limit: int 
 def member_lines(db: Session, company: MCompany, membership: MMembership, *, today: str = "",
                  limit: int = 20) -> List[str]:
     day = today or today_str()
+    # 2026-10-12：原来错filter了 owner_kind == "member"（线上实际是 human）→ 个人播报一个人都发不出去；
+    # 口径对齐 manage 的 /tasks/mine：只看 owner_membership_id，且只算「已确认」项目的任务。
+    company_id = int(company.id)
+    confirmed = [int(pid) for (pid,) in db.query(MProject.id)
+                 .filter(MProject.company_id == company_id,
+                         MProject.arrangement_status.in_(list(CONFIRMED_ARRANGEMENT))).all()]
+    if not confirmed:
+        return []
     rows = (db.query(MPlanNode)
-            .filter(MPlanNode.company_id == int(company.id))
-            .filter(MPlanNode.owner_kind == "member")
+            .filter(MPlanNode.company_id == company_id)
+            .filter(MPlanNode.project_id.in_(confirmed))
             .filter(MPlanNode.owner_membership_id == int(membership.id))
             .filter(~MPlanNode.status.in_(list(DONE_STATUSES)))
             .order_by(MPlanNode.end_at.asc())
