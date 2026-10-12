@@ -502,6 +502,29 @@ async def cms_upload_image(
     return {"ok": True, "url": f"{SHOP_UPLOADS_URL}/m{merchant.id}/{filename}", "bytes": len(raw)}
 
 
+@cms_router.get("/api/shop-cms/uploads", summary="商家已上传的图片（选已有图片用）")
+def cms_list_uploads(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """列出该商家上传过的图片，供「选择已有图片」（商家自己上传的商品图，不是别人投稿生成的素材）。"""
+    merchant = _merchant_of(db, current_user)
+    folder = SHOP_UPLOADS_DIR / f"m{merchant.id}"
+    items: list = []
+    if folder.is_dir():
+        for path in sorted(folder.iterdir(), key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True):
+            if not path.is_file():
+                continue
+            ext = path.suffix.lower().lstrip(".")
+            if ext not in SHOP_IMAGE_EXTENSIONS:
+                continue
+            rel = f"{SHOP_UPLOADS_URL}/m{merchant.id}/{path.name}"
+            items.append({"url": _abs_media_url(rel), "name": path.name, "size": path.stat().st_size})
+            if len(items) >= 300:
+                break
+    return {"ok": True, "items": items, "total": len(items)}
+
+
 @cms_router.get("/api/shop-cms/orders", summary="订单列表")
 def cms_orders(
     status: str = "",

@@ -556,6 +556,18 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
   }
 
+  function loadMerchantUploadsForPicker() {
+    jfetch('/api/shop-cms/uploads').then(function (d) {
+      var items = (d && d.items) || [];
+      if (state.picker) { state.picker.items = items; state.picker.loading = false; }
+      render();
+    }).catch(function (e) {
+      if (state.picker) { state.picker.items = []; state.picker.loading = false; }
+      state.msg = '读取已上传图片失败：' + e.message;
+      render();
+    });
+  }
+
   function openPicker(target) {
     captureDraft();
     var d = state.draft;
@@ -565,7 +577,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     state.picker = pk;
     state.preview = null;
     render();
-    // 选图只列商家自己上传的图片：不再拉取「已采纳投稿素材」（那是别人生成的）
+    pk.loading = true; loadMerchantUploadsForPicker();
   }
 
   function togglePick(url) {
