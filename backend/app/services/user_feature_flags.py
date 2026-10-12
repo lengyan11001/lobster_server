@@ -474,6 +474,17 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             flags.setdefault(feature_key, False)
     for package_id in RETIRED_PACKAGE_IDS:
         flags.setdefault(package_id, False)
+    if user_role == "admin":
+        # 管理员拥有全部权限（管理后台也是「不用配权限」）：所有在用功能位直接置真，
+        # 否则会出现「后台说不用配权限、客户端却看不到入口」（如 canvas_studio_entry 灵感画布）。
+        for package_id in FEATURE_FLAG_PACKAGES:
+            for key in (package_id.get("id"), package_id.get("feature_key")):
+                name = str(key or "").strip()
+                if name and name not in RETIRED_PACKAGE_IDS:
+                    flags[name] = True
+        for key in (DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID, DOUYIN_PLATFORM_INFORMATION_DESK_ACCESS_KEY):
+            flags[key] = True
+        return flags
     for package_id in visible:
         key = str(package_id or "").strip()
         if not key or key in RETIRED_PACKAGE_IDS:
