@@ -400,7 +400,6 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       '<div class="pickbar"><input type="file" id="f-gallery-upload" accept="image/*" multiple style="display:none">' +
       '<button class="btn mini" type="button" id="f-gallery-upload-btn">上传商品图片</button>' +
       '<span class="hint' + (state.uploadStatus && state.uploadStatus.cls ? ' ' + state.uploadStatus.cls : '') + '" id="f-gallery-tip" style="margin-left:6px">' + esc((state.uploadStatus && state.uploadStatus.text) || '') + '</span>' +
-      '<button class="btn mini ghost" type="button" data-pick="gallery">从已上传图片里选</button>' +
       '<span class="muted">共 ' + d.gallery.length + ' 张</span></div>',
       '<div class="thumbs" id="f-gallery-uploads"></div>',
       '<div class="thumbs">' + thumbsHtml(d.gallery, 'gallery') + '</div>',
@@ -442,7 +441,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         ? '<div class="thumb"><img src="' + esc(cover) + '" alt="" data-pv="' + esc(cover) + '"><div class="thumb-acts"><span class="tag on">封面</span></div></div>'
         : '<div class="muted" style="font-size:12px">未设置</div>') + '</div>',
       '<label>图集（最多 60 张）</label>',
-      '<div class="pickbar"><button class="btn mini" type="button" data-pick="listingGallery">选择图片（本地 / 已采纳素材）</button>' +
+      '<div class="pickbar"><button class="btn mini" type="button" data-pick="listingGallery">选图（我上传的底图 / 已采纳素材）</button>' +
       '<span class="muted">共 ' + d.listingGallery.length + ' 张</span></div>',
       '<div class="thumbs">' + thumbsHtml(d.listingGallery, 'listingGallery') + '</div>',
       '<div class="hint">点缩略图可放大预览；「设封面」把那张提到图集第一位。这些图与 ① 里的商家原图分开存，互不覆盖。</div>'
@@ -521,13 +520,19 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
         '<button class="btn mini ghost" type="button" data-pv="' + esc(it.url) + '">预览</button></div></div>';
     }).join('');
     var localPane = '<div class="upload"><input type="file" id="pk-file" accept="image/*" multiple>' +
-      '<span class="hint" id="pk-tip">支持 jpg / png / webp / gif，单张不超过 8MB；选完自动进下面「已选」</span></div>';
-    var acceptedPane = '<div class="muted" style="font-size:12px">这里只列商家自己上传的商品图片（别人投稿生成的素材不参与选图）。</div>'
+      '<span class="hint" id="pk-tip">支持 jpg / png / webp / gif，单张不超过 8MB；选完自动进下面「已选」</span></div>'
       + (items.length ? '<div class="pk-grid">' + grid + '</div>' : '');
+    var acceptedPane = '<div class="muted" style="font-size:12px">你在「素材投稿」里点过「采纳」的素材（图片工作台 / 分镜台生成后投稿的作品也在这里），可以直接拿来当独立站封面 / 图集。</div>'
+      + (pk.loading ? '<div class="hint">读取中…</div>' : '')
+      + (items.length ? '<div class="pk-grid">' + grid + '</div>'
+        : (pk.loading ? '' : '<div class="hint">还没有采纳过的素材：去「素材投稿」点「采纳」，或在图片工作台 / 分镜台里投稿。</div>'));
+    var pkTabs = '<div class="mtabs">' +
+      '<button class="mtab' + (pk.tab === 'local' ? ' on' : '') + '" type="button" data-pktab="local">我上传的底图</button>' +
+      '<button class="mtab' + (pk.tab === 'accepted' ? ' on' : '') + '" type="button" data-pktab="accepted">已采纳素材</button>' +
+      '</div>';
     return '<div class="modal" id="pk"><div class="modal-mask" data-close-picker="1"></div>' +
       '<div class="modal-card wide"><button class="modal-x" type="button" data-close-picker="1" aria-label="关闭">×</button>' +
-      '<h3>选择素材 → ' + (names[pk.target] || '') + '</h3>' +
-
+      '<h3>选择素材 → ' + (names[pk.target] || '') + '</h3>' + pkTabs +
       (pk.tab === 'local' ? localPane : acceptedPane) +
       '<label>已选 ' + pk.picked.length + ' 张（点图放大预览）</label>' +
       '<div class="thumbs">' + (pk.picked.length ? pk.picked.map(function (u, i) {
@@ -564,6 +569,20 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     }).catch(function (e) {
       if (state.picker) { state.picker.items = []; state.picker.loading = false; }
       state.msg = '读取已上传图片失败：' + e.message;
+      render();
+    });
+  }
+
+  function loadAcceptedForPicker() {
+    var d = state.draft || {};
+    var qs = '/api/shop-cms/submissions?size=100&status=used' + (d.id ? '&product_id=' + Number(d.id) : '');
+    jfetch(qs).then(function (r) {
+      var list = (r.items || []).filter(function (it) { return String(it.url || '').trim(); });
+      if (state.picker) { state.picker.items = list; state.picker.loading = false; }
+      render();
+    }).catch(function (e) {
+      if (state.picker) { state.picker.items = []; state.picker.loading = false; }
+      state.msg = '读取已采纳素材失败：' + e.message;
       render();
     });
   }
@@ -641,7 +660,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     var d = state.draft;
     if (!d) return;
     if (!String(d.title || '').trim()) { d.tab = 'info'; state.msg = '标题不能为空'; render(); return; }
-    if (!d.gallery.length) { d.tab = 'info'; state.msg = '请先在「商品图片」点『上传商品图片』（或从已上传图片里选），至少 1 张'; render(); return; }
+    if (!d.gallery.length) { d.tab = 'info'; state.msg = '请先在「商品图片」点『上传商品图片』，至少 1 张'; render(); return; }
     if (!(Number(d.bp || 0) > 0)) { d.tab = 'info'; state.msg = '请填商品佣金（%）'; render(); return; }
     var specs = {};
     specs._taobao = {
@@ -838,9 +857,13 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
       Array.prototype.forEach.call(pkEl.querySelectorAll('[data-pktab]'), function (b) {
         b.addEventListener('click', function () {
-          state.picker.tab = b.getAttribute('data-pktab');
-          state.picker.loading = state.picker.tab === 'accepted' && !state.picker.items.length && !!(state.draft && state.draft.id);
+          var tab = b.getAttribute('data-pktab');
+          if (state.picker.tab === tab) return;
+          state.picker.tab = tab;
+          state.picker.items = [];
+          state.picker.loading = true;
           render();
+          if (tab === 'accepted') loadAcceptedForPicker(); else loadMerchantUploadsForPicker();
         });
       });
       var f = $('#pk-file');
