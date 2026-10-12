@@ -1,15 +1,15 @@
 {
-    "schema_version":  1,
-    "brand":  "jinghai",
-    "package_name":  "com.bihuo.lobsterh5.jinghai",
-    "version_code":  10,
-    "version_name":  "1.1.8",
-    "apk_url":  "/client/oem/jinghai/android-1.1.8.apk",
-    "sha256":  "ee367f24202a9241e140df57f6b38d659fc175409e15f604b86b4f2650902736",
-    "size":  119843,
-    "published_at":  "2026-08-18T09:52:33Z",
-    "force_update":  false,
-    "min_supported_version_code":  1,
-    "title":  "发现新版本",
-    "notes":  "1.1.8 新版，包含应用内升级能力"
+    "schema_version": 1,
+    "brand": "jinghai",
+    "package_name": "com.bihuo.lobsterh5.jinghai",
+    "version_code": 27,
+    "version_name": "1.1.25",
+    "apk_url": "/client/oem/jinghai/android-1.1.25.apk",
+    "sha256": "f5f3e37f9ecc5a27ffebffbbde448888ee58523a0f363b6171ce26c38a5f0f2a",
+    "size": 132215,
+    "published_at": "2026-10-10T05:44:39Z",
+    "force_update": false,
+    "min_supported_version_code": 1,
+    "title": "发现新版本",
+    "notes": "1.1.25：统一保存/下载管线（相册与下载目录兼容各安卓版本与 ROM）；素材保存到相册修复；下载失败显示真实原因；启动即检查升级；启动页显示版本号"
 }

@@ -1,15 +1,15 @@
 {
-    "schema_version":  1,
-    "brand":  "hikong",
-    "package_name":  "com.bihuo.lobsterh5.hikong",
-    "version_code":  10,
-    "version_name":  "1.1.8",
-    "apk_url":  "/client/oem/hikong/android-1.1.8.apk",
-    "sha256":  "91bb8818fe8d29a4b028c47b711acf270420a6c9c588c1e00d4352ddeb84d75d",
-    "size":  185382,
-    "published_at":  "2026-08-18T09:52:35Z",
-    "force_update":  false,
-    "min_supported_version_code":  1,
-    "title":  "发现新版本",
-    "notes":  "1.1.8 新版，包含应用内升级能力"
+    "schema_version": 1,
+    "brand": "hikong",
+    "package_name": "com.bihuo.lobsterh5.hikong",
+    "version_code": 27,
+    "version_name": "1.1.25",
+    "apk_url": "/client/oem/hikong/android-1.1.25.apk",
+    "sha256": "26065eee2abba84042477e41ea9c78e6cd41b5953497769e02b54caecd561b03",
+    "size": 197750,
+    "published_at": "2026-10-10T05:44:40Z",
+    "force_update": false,
+    "min_supported_version_code": 1,
+    "title": "发现新版本",
+    "notes": "1.1.25：统一保存/下载管线（相册与下载目录兼容各安卓版本与 ROM）；素材保存到相册修复；下载失败显示真实原因；启动即检查升级；启动页显示版本号"
 }

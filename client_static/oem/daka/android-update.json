@@ -1,15 +1,15 @@
 {
-    "schema_version":  1,
-    "brand":  "daka",
-    "package_name":  "com.bihuo.lobsterh5.daka",
-    "version_code":  10,
-    "version_name":  "1.1.8",
-    "apk_url":  "/client/oem/daka/android-1.1.8.apk",
-    "sha256":  "ff97f661b7d6706c156b49b55af670c64f75a61b9199bd6271a8e29e2d3f9513",
-    "size":  402467,
-    "published_at":  "2026-08-18T09:52:31Z",
-    "force_update":  false,
-    "min_supported_version_code":  1,
-    "title":  "发现新版本",
-    "notes":  "1.1.8 新版，包含应用内升级能力"
+    "schema_version": 1,
+    "brand": "daka",
+    "package_name": "com.bihuo.lobsterh5.daka",
+    "version_code": 27,
+    "version_name": "1.1.25",
+    "apk_url": "/client/oem/daka/android-1.1.25.apk",
+    "sha256": "28af4896a8a65a8cc98d7a16a7586be71d442116f9878dd1c7e01b9b4dd2f21d",
+    "size": 410743,
+    "published_at": "2026-10-10T05:44:39Z",
+    "force_update": false,
+    "min_supported_version_code": 1,
+    "title": "发现新版本",
+    "notes": "1.1.25：统一保存/下载管线（相册与下载目录兼容各安卓版本与 ROM）；素材保存到相册修复；下载失败显示真实原因；启动即检查升级；启动页显示版本号"
 }
