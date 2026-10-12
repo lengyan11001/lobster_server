@@ -3838,5 +3838,22 @@ function closeTimeline(){
   }
 })();
 </script>
+<script>
+/* 2026-10-12：背景视频只在网络不差时自动播；弱网/省流量下只显示 poster（79KB WebP），
+   避免退出登录回到登录页时被 580KB 视频拖住、登录框迟迟出不来。 */
+(function () {
+  var v = document.getElementById("bgv");
+  if (!v) return;
+  var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+  var slow = /(^|\s)(slow-2g|2g|3g)(\s|$)/.test(String(c.effectiveType || "")) || c.saveData === true;
+  if (!slow) return;
+  v.removeAttribute("autoplay");
+  v.autoplay = false;
+  v.preload = "none";
+  try { v.pause(); } catch (e) {}
+  var poster = document.getElementById("poster");
+  if (poster) poster.style.opacity = "1";
+})();
+</script>
 </body>
 </html>
