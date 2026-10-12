@@ -265,11 +265,11 @@ body.overlay-open #drawer{z-index:501}
         <h3>登录</h3>
         <div style="margin-bottom:10px">
           <label class="fl" id="accLabel">账号</label>
-          <input id="acc" placeholder="管理员用户名 / 手机号 / 邮箱" autocomplete="username" />
+          <input id="acc" name="m-acc" placeholder="管理员用户名 / 手机号 / 邮箱" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" />
         </div>
         <div>
           <label class="fl">密码</label>
-          <input id="pwd" type="password" placeholder="密码" autocomplete="current-password" />
+          <input id="pwd" name="m-pwd" type="password" placeholder="密码" autocomplete="new-password" data-lpignore="true" data-1p-ignore data-form-type="other" />
         </div>
         <div style="display:flex;gap:10px;margin-top:16px;align-items:center">
           <button class="btn" id="doLogin" style="flex:1">登录</button>
@@ -536,6 +536,7 @@ body.overlay-open #drawer{z-index:501}
         var token = res.access_token || res.token || "";
         if (!token) throw new Error("登录返回异常");
         TOKEN = token; localStorage.setItem("manage_token", token);
+        $("#pwd").value = "";   // 登录成功即清掉输入框里的密码
         localStorage.setItem("manage_login_mode", (res.kind === "admin") ? "admin" : "user");
         var sw = document.getElementById("sweep");
         sw.classList.remove("go"); void sw.offsetWidth; sw.classList.add("go");
@@ -547,8 +548,15 @@ body.overlay-open #drawer{z-index:501}
   }
   $("#doLogin").addEventListener("click", doLogin);
   $("#pwd").addEventListener("keydown", function(e){ if (e.key === "Enter") doLogin(); });
+  function clearLoginInputs(){
+    // 2026-10-12：登录框不记住账号密码 —— 打开/退出/失效都清空，避免浏览器或上次输入残留
+    var a = $("#acc"), p = $("#pwd");
+    if (p) p.value = "";
+    if (a) a.value = "";
+  }
   function goLogin(hint){
     var box = $("#loginBox");
+    clearLoginInputs();
     box.scrollIntoView({ behavior:"smooth", block:"center" });
     setTimeout(function(){ $("#acc").focus(); }, 420);
     if (hint) toast(hint);
@@ -558,6 +566,7 @@ body.overlay-open #drawer{z-index:501}
   $("#ctaDemo").addEventListener("click", function(){ goLogin("登录后：项目里点「AI 生成规划」，能看到它现场排出人员/要求/时间节点"); });
   $("#logout").addEventListener("click", function(){
     TOKEN = ""; localStorage.removeItem("manage_token");
+    clearLoginInputs();
     $("#app").classList.add("hide"); $("#landing").classList.remove("hide");
   });
 
