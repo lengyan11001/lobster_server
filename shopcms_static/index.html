@@ -798,13 +798,6 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
       });
       var sp = $('#save-product');
       if (sp) sp.addEventListener('click', saveProduct);
-      Array.prototype.forEach.call(document.querySelectorAll('[data-listing-edit]'), function (b) {
-        b.addEventListener('click', function () {
-          var pid = Number(b.getAttribute('data-listing-edit'));
-          var prod = (state.products || []).filter(function (x) { return Number(x.id) === pid; })[0];
-          if (prod) { openProduct(prod); state.draft.tab = 'listing'; render(); }
-        });
-      });
       var skuAdd = $('#f-sku-add');
       if (skuAdd) skuAdd.addEventListener('click', function () {
         captureDraft();
@@ -1158,6 +1151,18 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 4px}
     if (pstatus) pstatus.addEventListener('change', function () {
       state.productStatus = String(pstatus.value || '');
       loadProducts();
+    });
+    // 独立站上架页的「配置详情」：绑在顶层。原来它被写在 if (#pm){...} 里面，
+    // 只有商品弹窗已经打开时才绑得上 → 在上架列表里点它完全没反应。
+    Array.prototype.forEach.call(document.querySelectorAll('[data-listing-edit]'), function (b) {
+      b.addEventListener('click', function () {
+        var pid = Number(b.getAttribute('data-listing-edit'));
+        var prod = (state.products || []).filter(function (x) { return Number(x.id) === pid; })[0];
+        if (!prod) { state.msg = '找不到商品 #' + pid + '，请刷新后重试'; render(); return; }
+        openProduct(prod);
+        state.draft.tab = 'listing';
+        render();
+      });
     });
     Array.prototype.forEach.call(document.querySelectorAll('[data-go-listing]'), function (b) {
       b.addEventListener('click', function () {
