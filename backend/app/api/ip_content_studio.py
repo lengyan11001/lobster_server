@@ -2311,13 +2311,64 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
     }
 
 
-def _item_video_url(row: TikHubSourceItem) -> str:
-    """条目里可播放的视频地址（抖音 play_addr / 视频号 object_desc+token）。"""
-    raw_data = _source_raw(row)
-    direct = _clean_long_text(getattr(row, "public_url", "") or "", 4096)
-    if direct and ("finder.video.qq.com" not in direct or "token=" in direct):
-        if any(k in direct for k in ("douyin", "aweme", "finder.video.qq.com", ".mp4", "/video")):
+# public_url 只有是「直链媒体」时才能直接用；抖音/视频号的分享页（iesdouyin.com/share/… 、
+# www.douyin.com/video/… ）是 HTML 页面，不能当下载地址，必须回落到 raw 里的真实地址。
+_VIDEO_URL_HINTS = (
+    "stodownload", "wxapp.tc.qq.com", "wl.video.qq.com", "finder.video.qq.com",
+    "douyinvod", ".mp4", ".m3u8",
+)
+
+
+def pick_item_video_url(public_url: Any, raw_data: Any) -> str:
+    """从条目里挑出可下载的视频地址（纯函数，便于单测）。
+
+    - 视频号 home_page：真正的可播/可下载地址就在 public_url（wxapp.tc.qq.com/.../stodownload?encfilekey=...）
+    - 抖音 user_post：public_url 是分享页，真实地址在 raw.video.play_addr.url_list[0]
+    """
+    direct = _clean_long_text(str(public_url or ""), 4096)
+    lowered = direct.lower()
+    if direct and any(hint in lowered for hint in _VIDEO_URL_HINTS):
+        if "finder.video.qq.com" not in lowered or "token=" in lowered:
             return direct
+    data = raw_data if isinstance(raw_data, dict) else {}
+    paths = [
+        "video.play_addr.url_list.0",
+        "video.play_addr.url_list.1",
+        "video.play_addr_h264.url_list.0",
+        "video.download_addr.url_list.0",
+        "aweme_detail.video.play_addr.url_list.0",
+        "play_url",
+        "play_url_list.0",
+        "video_url",
+        "object_desc.media.0.url",
+        "objectDesc.media.0.url",
+        "objectDesc.mediaList.0.url",
+        "media.0.url",
+        "mediaList.0.url",
+    ]
+    found = _clean_long_text(str(_first(data, paths) or ""), 4096)
+    if not found:
+        return ""
+    token = str(
+        _first(
+            data,
+            [
+                "object_desc.media.0.url_token",
+                "objectDesc.media.0.url_token",
+                "objectDesc.mediaList.0.url_token",
+                "media.0.url_token",
+                "mediaList.0.url_token",
+            ],
+        )
+        or ""
+    ).strip()
+    if token and "token=" not in found:
+        found = found + ("&" if "?" in found else "?") + token.lstrip("&?")
+    return found
+
+
+def _item_video_url(row: TikHubSourceItem) -> str:
+    return pick_item_video_url(getattr(row, "public_url", ""), _source_raw(row))
     paths = [
         "video.play_addr.url_list.0",
         "video.play_addr.url_list.1",
