@@ -17,8 +17,14 @@ if [ "$INSTALL_REMOTE_SUPPORT" = "1" ] && [ -f "$ROOT/remote_support_server/src/
 fi
 
 PREV_COMMIT="$(git rev-parse HEAD)"
-echo "$PREV_COMMIT" > "$ROOT/.deploy_rollback_commit"
-echo "[备份] 当前版本 $PREV_COMMIT 已记录到 .deploy_rollback_commit"
+# 外层 deploy_from_local 已在 reset 前写入「真正的上一个版本」，别用当前版本覆盖它
+RECORDED_COMMIT="$(cat "$ROOT/.deploy_rollback_commit" 2>/dev/null || true)"
+if [ -z "$RECORDED_COMMIT" ] || [ "$RECORDED_COMMIT" = "$PREV_COMMIT" ]; then
+  echo "$PREV_COMMIT" > "$ROOT/.deploy_rollback_commit"
+  echo "[备份] 当前版本 $PREV_COMMIT 已记录到 .deploy_rollback_commit"
+else
+  echo "[备份] 回滚点保持 ${RECORDED_COMMIT:0:7}（当前 $PREV_COMMIT）"
+fi
 
 echo "[更新] 拉取 origin main ..."
 git fetch origin main
@@ -166,9 +172,19 @@ LEGACY_PORT_CLEANUP
     sudo journalctl -u lobster-mastra -n 80 --no-pager || true
     exit 1
   fi
+  # 只重启本机真实存在的 unit：国内有 lobster-shop/shopcms，海外机没有，
+  # 以前无条件重启会让整个部署以退出码 5 收场（代码其实已经更新成功）。
+  SHOP_UNITS_RESOLVED=""
+  for unit in ${SHOP_UNITS:-lobster-shop lobster-shopcms}; do
+    if sudo systemctl cat "$unit.service" >/dev/null 2>&1; then
+      SHOP_UNITS_RESOLVED="$SHOP_UNITS_RESOLVED $unit"
+    else
+      echo "[跳过] $unit 本机未安装"
+    fi
+  done
   if [ -n "$H5_UNIT" ]; then
     echo "[重启] H5 服务最后切换 ..."
-    sudo systemctl restart ${SHOP_UNITS:-lobster-shop lobster-shopcms} "$H5_UNIT"
+    sudo systemctl restart $SHOP_UNITS_RESOLVED "$H5_UNIT"
     H5_OK=0
     for i in 1 2 3 4 5 6 7 8 9 10; do
       if curl --fail --silent "http://127.0.0.1:8010/api/branding?brand=bihuo" >/dev/null 2>&1; then
@@ -199,7 +215,11 @@ LEGACY_PORT_CLEANUP
       exit 1
     fi
   fi
-  sudo systemctl status lobster-backend lobster-mcp lobster-remote-support lobster-shop lobster-shopcms $MASTRA_UNIT $BG_UNIT $H5_UNIT $MANAGE_UNIT --no-pager || true
+  STATUS_UNITS="lobster-backend lobster-mcp lobster-remote-support"
+  for unit in lobster-shop lobster-shopcms $MASTRA_UNIT $BG_UNIT $H5_UNIT $MANAGE_UNIT; do
+    [ -n "$unit" ] && sudo systemctl cat "$unit.service" >/dev/null 2>&1 && STATUS_UNITS="$STATUS_UNITS $unit"
+  done
+  sudo systemctl status $STATUS_UNITS --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."
