@@ -2319,49 +2319,70 @@ _VIDEO_URL_HINTS = (
 )
 
 
-def pick_item_video_url(public_url: Any, raw_data: Any) -> str:
-    """从条目里挑出可下载的视频地址（纯函数，便于单测）。
-
-    - 视频号 home_page：真正的可播/可下载地址就在 public_url（wxapp.tc.qq.com/.../stodownload?encfilekey=...）
-    - 抖音 user_post：public_url 是分享页，真实地址在 raw.video.play_addr.url_list[0]
-    """
-    direct = _clean_long_text(str(public_url or ""), 4096)
-    lowered = direct.lower()
-    if direct and any(hint in lowered for hint in _VIDEO_URL_HINTS):
-        if "finder.video.qq.com" not in lowered or "token=" in lowered:
-            return direct
-    data = raw_data if isinstance(raw_data, dict) else {}
-    paths = [
-        "video.play_addr.url_list.0",
-        "video.play_addr.url_list.1",
-        "video.play_addr_h264.url_list.0",
-        "video.download_addr.url_list.0",
-        "aweme_detail.video.play_addr.url_list.0",
-        "play_url",
-        "play_url_list.0",
-        "video_url",
-        "object_desc.media.0.url",
-        "objectDesc.media.0.url",
-        "objectDesc.mediaList.0.url",
-        "media.0.url",
-        "mediaList.0.url",
-    ]
-    found = _clean_long_text(str(_first(data, paths) or ""), 4096)
-    if not found:
-        return ""
-    token = str(
+def _first_media_token(data: dict) -> str:
+    """视频号 CDN 要的签名 token：实测字段是驼峰 urlToken，值形如 "&token=xxx"。"""
+    return str(
         _first(
             data,
             [
-                "object_desc.media.0.url_token",
+                "objectDesc.spec.0.urlToken",
+                "objectDesc.spec.1.urlToken",
+                "objectDesc.media.0.urlToken",
+                "objectDesc.mediaList.0.urlToken",
+                "objectDesc.spec.0.url_token",
                 "objectDesc.media.0.url_token",
                 "objectDesc.mediaList.0.url_token",
+                "object_desc.media.0.url_token",
                 "media.0.url_token",
                 "mediaList.0.url_token",
             ],
         )
         or ""
     ).strip()
+
+
+def pick_item_video_url(public_url: Any, raw_data: Any) -> str:
+    """从已入库的帖子里挑出可下载的视频地址（纯函数，便于单测）。
+
+    - 抖音 user_post：public_url 是分享页，真实地址在 raw.video.play_addr.url_list[0]
+    - 视频号 home_page：public_url / raw.objectDesc.spec[0].url 是 stodownload 地址，
+      但**必须再拼上 raw.objectDesc.spec[0].urlToken**，否则 CDN 报 400 token not exist!
+    """
+    data = raw_data if isinstance(raw_data, dict) else {}
+    token = _first_media_token(data)
+    direct = _clean_long_text(str(public_url or ""), 4096)
+    lowered = direct.lower()
+    if direct and any(hint in lowered for hint in _VIDEO_URL_HINTS):
+        found = direct
+    else:
+        found = _clean_long_text(
+            str(
+                _first(
+                    data,
+                    [
+                        "video.play_addr.url_list.0",
+                        "video.play_addr.url_list.1",
+                        "video.play_addr_h264.url_list.0",
+                        "video.download_addr.url_list.0",
+                        "aweme_detail.video.play_addr.url_list.0",
+                        "objectDesc.spec.0.url",
+                        "objectDesc.spec.1.url",
+                        "objectDesc.media.0.url",
+                        "objectDesc.mediaList.0.url",
+                        "object_desc.media.0.url",
+                        "media.0.url",
+                        "mediaList.0.url",
+                        "play_url",
+                        "play_url_list.0",
+                        "video_url",
+                    ],
+                )
+                or ""
+            ),
+            4096,
+        )
+    if not found:
+        return ""
     if token and "token=" not in found:
         found = found + ("&" if "?" in found else "?") + token.lstrip("&?")
     return found
@@ -2369,41 +2390,6 @@ def pick_item_video_url(public_url: Any, raw_data: Any) -> str:
 
 def _item_video_url(row: TikHubSourceItem) -> str:
     return pick_item_video_url(getattr(row, "public_url", ""), _source_raw(row))
-    paths = [
-        "video.play_addr.url_list.0",
-        "video.play_addr.url_list.1",
-        "video.play_addr_h264.url_list.0",
-        "video.download_addr.url_list.0",
-        "aweme_detail.video.play_addr.url_list.0",
-        "play_url",
-        "play_url_list.0",
-        "video_url",
-        "object_desc.media.0.url",
-        "objectDesc.media.0.url",
-        "objectDesc.mediaList.0.url",
-        "media.0.url",
-        "mediaList.0.url",
-    ]
-    found = _clean_long_text(str(_first(raw_data, paths) or ""), 4096)
-    if not found:
-        return ""
-    token = str(
-        _first(
-            raw_data,
-            [
-                "object_desc.media.0.url_token",
-                "objectDesc.media.0.url_token",
-                "objectDesc.mediaList.0.url_token",
-                "media.0.url_token",
-                "mediaList.0.url_token",
-            ],
-        )
-        or ""
-    ).strip()
-    if token and "token=" not in found:
-        found = found + ("&" if "?" in found else "?") + token.lstrip("&?")
-    return found
-
 
 def _item_decode_key(row: TikHubSourceItem) -> str:
     return str(
@@ -2423,6 +2409,49 @@ def _item_decode_key(row: TikHubSourceItem) -> str:
     )
 
 
+def pick_item_cover_url(cover_url: Any, raw_data: Any) -> str:
+    """封面兜底：视频号 cover_url 常为空，raw 里有 thumbUrl + thumbUrlToken。"""
+    direct = _clean_long_text(str(cover_url or ""), 4096)
+    if direct:
+        return direct
+    data = raw_data if isinstance(raw_data, dict) else {}
+    found = _clean_long_text(
+        str(
+            _first(
+                data,
+                [
+                    "objectDesc.spec.0.thumbUrl",
+                    "objectDesc.spec.0.coverUrl",
+                    "objectDesc.media.0.thumbUrl",
+                    "objectDesc.media.0.coverUrl",
+                    "video.cover.url_list.0",
+                    "video.origin_cover.url_list.0",
+                    "video.dynamic_cover.url_list.0",
+                ],
+            )
+            or ""
+        ),
+        4096,
+    )
+    if not found:
+        return ""
+    token = str(
+        _first(
+            data,
+            [
+                "objectDesc.spec.0.thumbUrlToken",
+                "objectDesc.spec.0.coverUrlToken",
+                "objectDesc.media.0.thumbUrlToken",
+                "objectDesc.media.0.coverUrlToken",
+            ],
+        )
+        or ""
+    ).strip()
+    if token and "token=" not in found:
+        found = found + ("&" if "?" in found else "?") + token.lstrip("&?")
+    return found
+
+
 def _item_payload(row: TikHubSourceItem) -> dict[str, Any]:
     usage = _source_usage(row)
     return {
@@ -2436,7 +2465,7 @@ def _item_payload(row: TikHubSourceItem) -> dict[str, Any]:
         "title": row.title or "",
         "description": row.description or "",
         "public_url": row.public_url or "",
-        "cover_url": row.cover_url or "",
+        "cover_url": pick_item_cover_url(row.cover_url or "", _source_raw(row)),
         "publish_time": row.publish_time or "",
         "metrics": row.metrics or {},
         "video_url": _item_video_url(row),
