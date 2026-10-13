@@ -2311,6 +2311,67 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
     }
 
 
+def _item_video_url(row: TikHubSourceItem) -> str:
+    """条目里可播放的视频地址（抖音 play_addr / 视频号 object_desc+token）。"""
+    raw_data = _source_raw(row)
+    direct = _clean_long_text(getattr(row, "public_url", "") or "", 4096)
+    if direct and ("finder.video.qq.com" not in direct or "token=" in direct):
+        if any(k in direct for k in ("douyin", "aweme", "finder.video.qq.com", ".mp4", "/video")):
+            return direct
+    paths = [
+        "video.play_addr.url_list.0",
+        "video.play_addr.url_list.1",
+        "video.play_addr_h264.url_list.0",
+        "video.download_addr.url_list.0",
+        "aweme_detail.video.play_addr.url_list.0",
+        "play_url",
+        "play_url_list.0",
+        "video_url",
+        "object_desc.media.0.url",
+        "objectDesc.media.0.url",
+        "objectDesc.mediaList.0.url",
+        "media.0.url",
+        "mediaList.0.url",
+    ]
+    found = _clean_long_text(str(_first(raw_data, paths) or ""), 4096)
+    if not found:
+        return ""
+    token = str(
+        _first(
+            raw_data,
+            [
+                "object_desc.media.0.url_token",
+                "objectDesc.media.0.url_token",
+                "objectDesc.mediaList.0.url_token",
+                "media.0.url_token",
+                "mediaList.0.url_token",
+            ],
+        )
+        or ""
+    ).strip()
+    if token and "token=" not in found:
+        found = found + ("&" if "?" in found else "?") + token.lstrip("&?")
+    return found
+
+
+def _item_decode_key(row: TikHubSourceItem) -> str:
+    return str(
+        _first(
+            _source_raw(row),
+            [
+                "decode_key",
+                "decodeKey",
+                "object_desc.media.0.decode_key",
+                "objectDesc.media.0.decode_key",
+                "objectDesc.mediaList.0.decode_key",
+                "media.0.decode_key",
+                "mediaList.0.decode_key",
+            ],
+        )
+        or ""
+    )
+
+
 def _item_payload(row: TikHubSourceItem) -> dict[str, Any]:
     usage = _source_usage(row)
     return {
@@ -2327,6 +2388,8 @@ def _item_payload(row: TikHubSourceItem) -> dict[str, Any]:
         "cover_url": row.cover_url or "",
         "publish_time": row.publish_time or "",
         "metrics": row.metrics or {},
+        "video_url": _item_video_url(row),
+        "decode_key": _item_decode_key(row),
         "source_meta": _source_meta(row),
         "usage": usage,
         "used_for": sorted({str(item.get("task") or "") for item in usage if item.get("task")}),
@@ -6187,6 +6250,7 @@ def list_my_source_items(
     platform: str = "",
     source_type: str = "",
     q: str = "",
+    competitor_id: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -6212,6 +6276,13 @@ def list_my_source_items(
                 TikHubSourceItem.author_name.ilike(like),
                 TikHubSourceItem.item_key.ilike(like),
             )
+        )
+    if int(competitor_id or 0) > 0:
+        # 同步同行时写入 raw[__lobster_ip_content_meta].competitor_account_id；
+        # 详情页只读「已入库作品」，不触发同步。
+        query = query.filter(
+            func.json_extract_path_text(TikHubSourceItem.raw, _SOURCE_META_KEY, "competitor_account_id")
+            == str(int(competitor_id))
         )
     total = query.with_entities(func.count(TikHubSourceItem.id)).scalar() or 0
     source_rank = case(
