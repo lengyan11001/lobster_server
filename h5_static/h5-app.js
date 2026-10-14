@@ -2114,8 +2114,88 @@
       toast(ok ? "链接已复制，请在外部浏览器打开后保存" : "复制失败，请长按链接复制后用外部浏览器打开");
     }
 
-    function onIosDownloadClick() {
-      if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
+    // iOS（只有 H5，没有 App 桥）：下载属性在 Safari 上不可靠，且下载只能进「文件」而进不了相册。
+    // 这里改成：Web Share（分享面板里选「存储图像」）→ 失败则新窗口打开让用户长按存储。
+    function mediaSaveLabel(mediaKind, downloadLabel) {
+      const kind = String(mediaKind || "").toLowerCase();
+      if (IS_IOS) return ["image", "video"].includes(kind) ? "保存到相册" : "下载到文件";
+      if (IS_ANDROID_APP && ["image", "video"].includes(kind)) return "保存到相册";
+      return downloadLabel;
+    }
+
+    function iosShareFileSupported(file) {
+      try {
+        return Boolean(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+      } catch (err) {
+        return false;
+      }
+    }
+
+    async function iosSaveMediaToAlbum(url, filename, mediaKind) {
+      const safeName = String(filename || filenameFromUrl(url, "lobster-media")).trim() || "lobster-media";
+      const kind = String(mediaKind || mediaPreviewKind(url, safeName)).toLowerCase();
+      const inlineUrl = mediaProxyUrl(url, "inline", safeName);
+      try {
+        const resp = await fetch(inlineUrl, {
+          headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const file = new File([blob], safeName, { type: blob.type || "application/octet-stream" });
+        if (iosShareFileSupported(file)) {
+          await navigator.share({ files: [file], title: safeName });
+          try { closeMobileMediaPreview(); } catch (err) {}
+          toast("在分享面板里选「存储图像」就能进相册");
+          return true;
+        }
+        throw new Error("share_unavailable");
+      } catch (err) {
+        if (kind === "image") {
+          if (!document.getElementById("mobileMediaPreviewDialog") || document.getElementById("mobileMediaPreviewDialog").classList.contains("hidden")) {
+            try { window.open(inlineUrl, "_blank", "noopener"); } catch (err) {}
+          }
+          toast("长按图片 → 存储到照片");
+          return true;
+        }
+        toast("iOS 网页版无法直接写相册，请用「下载到文件」后在文件 App 里另存");
+        return false;
+      }
+    }
+
+    // 以前只给动态创建的那个 a 标签绑了点击，模板字符串生成的「保存到相册」点了根本没反应。这里补文档级委托。
+    if (!window.__lobsterIosDownloadBound) {
+      window.__lobsterIosDownloadBound = true;
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        const anchor = target && target.closest ? target.closest("a[data-ios-download='1']") : null;
+        if (!anchor) return;
+        onIosDownloadClick({
+          currentTarget: anchor,
+          preventDefault: () => { try { event.preventDefault(); } catch (err) {} },
+        });
+      }, true);
+    }
+
+    function onIosDownloadClick(event) {
+      const el = event && event.currentTarget;
+      const data = el && el.dataset ? el.dataset : {};
+      const url = data.mediaDownloadUrl || "";
+      const name = data.mediaDownloadName || "";
+      const kind = String(data.mediaDownloadKind || "").toLowerCase();
+      const wantsAlbum = ["image", "video"].includes(kind);
+      if (!url || !wantsAlbum) {
+        if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
+        return;
+      }
+      if (event && typeof event.preventDefault === "function") event.preventDefault();
+      // 分享面板要用户手势：先同步把媒体打开（iOS 上长按图片就能存到照片），
+      // 再在后台尝试 Web Share，成功就直接关掉预览。
+      const inlineUrl = mediaProxyUrl(url, "inline", name || filenameFromUrl(url, "lobster-media"));
+      try {
+        openMobileMediaPreview(inlineUrl, name, kind);
+        toast(kind === "image" ? "长按图片 → 存储到照片" : "点播放器分享 → 存储视频；或长按画面");
+      } catch (err) {}
+      iosSaveMediaToAlbum(url, name, kind);
     }
 
     function closeMobileMediaPreview() {
@@ -26745,7 +26825,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         download.dataset.mediaDownloadUrl = download.href;
         download.dataset.mediaDownloadName = filename;
         download.dataset.mediaDownloadKind = mediaKind;
-        download.textContent = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
+        download.textContent = mediaSaveLabel(mediaKind, downloadLabel);
         download.addEventListener("click", onIosDownloadClick);
         actions.appendChild(download);
       }
@@ -26764,7 +26844,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       if (IS_WECHAT) {
         return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
       }
-      const label = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
+      const label = mediaSaveLabel(mediaKind, downloadLabel);
       const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
       return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}" data-media-download-kind="${escapeHtml(mediaKind)}"${iosAttr}>${escapeHtml(label)}</a></div>`;
     }
@@ -26781,7 +26861,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         ? `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button>`
         : (() => {
           const downloadUrl = escapeHtml(mediaDownloadHref(url, filename));
-          const label = IS_IOS ? "下载到文件" : (IS_ANDROID_APP && ["image", "video"].includes(mediaKind) ? "保存到相册" : downloadLabel);
+          const label = mediaSaveLabel(mediaKind, downloadLabel);
           const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
           return `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}" data-media-preview-kind="${escapeHtml(mediaKind)}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}" data-media-download-kind="${escapeHtml(mediaKind)}"${iosAttr}>${escapeHtml(label)}</a>`;
         })();
