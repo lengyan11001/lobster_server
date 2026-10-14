@@ -266,6 +266,46 @@ def _resolve_virtualman_for_submit(
     raise HTTPException(status_code=400, detail="请先创建并训练一个自己的闪剪数字人，或显式传入 virtualman_id")
 
 
+_TEMPLATE_LAYER_KEYS = (
+    ("header", "headerLayer"),
+    ("subtitle", "subtitleLayer"),
+    ("ip", "ipLayer"),
+    ("figure", "figureLayer"),
+    ("background", "backgroundLayer"),
+)
+
+
+def _template_layers(item: Any) -> Dict[str, Any]:
+    """从模板的 videoStructInfo 里读出它带哪些图层。
+
+    上游返回的是一串 python 字典字符串（单引号），里面 editInfo 的图层决定了模板能用哪些内容：
+    headerLayer=标题、subtitleLayer=字幕/正文（没这层就是“正文传过去没用”）。
+    """
+    import ast
+    out: Dict[str, Any] = {"ok": False, "header": False, "subtitle": False, "ip": False, "figure": False, "background": False}
+    raw = item.get("videoStructInfo") if isinstance(item, dict) else None
+    if not raw:
+        return out
+    try:
+        obj = ast.literal_eval(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return out
+    edit = obj.get("editInfo") if isinstance(obj, dict) else None
+    if not isinstance(edit, dict):
+        return out
+    out["ok"] = True
+    for name, key in _TEMPLATE_LAYER_KEYS:
+        layer = edit.get(key)
+        out[name] = isinstance(layer, dict)
+        if name == "subtitle" and isinstance(layer, dict):
+            try:
+                out["subtitle_size"] = "%sx%s" % (int(layer.get("width") or 0), int(layer.get("height") or 0))
+            except Exception:
+                pass
+    out["supports_body"] = bool(out["subtitle"])
+    return out
+
+
 @router.post("/api/shanjian-smart-clip/templates")
 async def list_templates(body: TemplateListBody):
     params: Dict[str, Any] = {
@@ -280,13 +320,23 @@ async def list_templates(body: TemplateListBody):
         params["searchValue"] = body.search_value.strip()
     payload = await _get("/v1/clip/template", body.token, params)
     data = _data(payload)
-    return {"ok": True, "results": data.get("results") or [], "sid": data.get("sid") or "", "raw": payload}
+    rows = []
+    for row in (data.get("results") or []):
+        item = dict(row) if isinstance(row, dict) else {"value": row}
+        item["layers"] = _template_layers(item)
+        item["scene"] = str(item.get("scene") or params.get("scene") or "")
+        rows.append(item)
+    return {"ok": True, "results": rows, "sid": data.get("sid") or "", "scene": params.get("scene") or "", "raw": payload}
 
 
 @router.post("/api/shanjian-smart-clip/template-detail")
 async def template_detail(body: TemplateDetailBody):
     payload = await _get(f"/v1/clip/template/detail/{body.template_id.strip()}", body.token, {})
-    return {"ok": True, "item": _data(payload), "raw": payload}
+    item = _data(payload)
+    if isinstance(item, dict):
+        item = dict(item)
+        item["layers"] = _template_layers(item)
+    return {"ok": True, "item": item, "raw": payload}
 
 
 @router.post("/api/shanjian-smart-clip/virtualmans")
