@@ -7726,23 +7726,6 @@ body.h5-action-blocked {
   font-size: 12px;
 }
 
-.personal-digital-human-template-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.personal-digital-human-template-badge {
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
-  font-size: 11px;
-  line-height: 16px;
-  font-style: normal;
-}
-
 .personal-digital-human-picker-category-label {
   color: #64748b;
   font-size: 12px;

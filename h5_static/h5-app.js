@@ -396,9 +396,7 @@
       personalDigitalHumanTemplatesLoading: false,
       personalDigitalHumanTemplatesError: "",
       personalDigitalHumanTemplateSearch: "",
-      personalDigitalHumanTemplateCategory: "all",
       personalDigitalHumanTemplateScene: "realMan",
-      personalDigitalHumanTemplateLayersLoading: false,
       personalDigitalHumanTemplatePickerTarget: "personal",
       personalSelectedDigitalHumanTemplate: null,
       personalDigitalHumanTemplateDraft: null,
@@ -21426,8 +21424,6 @@ async function api(path, options = {}) {
         cover_url: personalDigitalHumanMediaUrl(item.cover_url || item.coverUrl || item.imageUrl),
         demo_url: personalDigitalHumanMediaUrl(item.demo_url || item.demoUrl || item.videoUrl),
         materials: Array.isArray(item.materials) ? item.materials.map((row) => ({ ...row })) : [],
-        // 2026-10-15: 模板分类依据服务端返回的 layers（supports_body = 带字幕/正文层）
-        layers: (item.layers && typeof item.layers === "object") ? { ...item.layers } : null,
         material_sound_switch: !!(item.material_sound_switch ?? item.materialSoundSwitch),
         introduce_name: String(item.introduce_name || item.introduceName || "").trim(),
         introduce_description: String(item.introduce_description || item.introduceDescription || "").trim(),
@@ -21690,119 +21686,20 @@ async function api(path, options = {}) {
       </div>`;
     }
 
-    function personalDigitalHumanTemplateLayers(item) {
-      const layers = item && item.layers;
-      return layers && typeof layers === "object" ? layers : null;
-    }
-
-    // 2026-10-15: 闪剪模板分类——all / 支持正文 / 不含正文（依据服务端 layers）
-    function personalDigitalHumanTemplateMatchesCategory(item, category) {
-      const cat = String(category || "all");
-      if (cat === "all") return true;
-      const layers = personalDigitalHumanTemplateLayers(item);
-      if (!layers || !layers.ok) return false;
-      if (cat === "body") return !!layers.supports_body;
-      if (cat === "no_body") return !layers.supports_body;
-      return true;
-    }
-
-    function personalDigitalHumanTemplateBadges(item) {
-      const layers = personalDigitalHumanTemplateLayers(item);
-      if (!layers || !layers.ok) return "";
-      const pairs = [["header", "标题"], ["subtitle", "字幕"], ["figure", "人物"], ["ip", "形象"], ["background", "背景"]];
-      const body = pairs.filter((pair) => !!layers[pair[0]])
-        .map((pair) => `<em class="personal-digital-human-template-badge">${pair[1]}</em>`).join("");
-      return body ? `<div class="personal-digital-human-template-badges">${body}</div>` : "";
-    }
-
-    function syncPersonalDigitalHumanTemplateCategoryUI() {
+    // 2026-10-15 v2（客户确认后去掉分类）：闪剪模板抽样 110/110 全都带字幕/正文层，
+    // “支持正文/不含正文”没有区分度，只保留场景选择。
+    function syncPersonalDigitalHumanTemplateSceneUI() {
       const sceneRow = $("personalDigitalHumanTemplateScenes");
-      const row = $("personalDigitalHumanTemplateCategories");
+      if (!sceneRow) return;
       const scene = String(state.personalDigitalHumanTemplateScene || "realMan");
-      const category = String(state.personalDigitalHumanTemplateCategory || "all");
-      if (sceneRow) {
-        sceneRow.querySelectorAll("[data-personal-dh-template-scene]").forEach((btn) => {
-          btn.classList.toggle("active", String(btn.getAttribute("data-personal-dh-template-scene")) === scene);
-        });
-      }
-      if (row) {
-        row.querySelectorAll("[data-personal-dh-template-category]").forEach((btn) => {
-          btn.classList.toggle("active", String(btn.getAttribute("data-personal-dh-template-category")) === category);
-        });
-      }
-      const hint = $("personalDigitalHumanTemplateCategoryHint");
-      if (!hint) return;
-      const total = (state.personalDigitalHumanTemplates || []).length;
-      const known = (state.personalDigitalHumanTemplates || []).filter((item) => item.layers && item.layers.ok).length;
-      const parts = [];
-      if (state.personalDigitalHumanTemplateLayersLoading) parts.push(`正在检测模板图层 ${known} / ${total}…`);
-      else if (known && known < total) parts.push(`已检测 ${known} / ${total}`);
-      if (category !== "all") parts.push(`已筛选 ${filteredPersonalDigitalHumanTemplates().length} 个`);
-      hint.textContent = parts.join("，");
-    }
-
-    function applyPersonalDigitalHumanTemplateLayers(map) {
-      if (!map) return 0;
-      let applied = 0;
-      (state.personalDigitalHumanTemplates || []).forEach((item) => {
-        const layers = map[String(item.style_id)];
-        if (layers && layers.ok) {
-          item.layers = { ...layers };
-          applied += 1;
-        }
+      sceneRow.querySelectorAll("[data-personal-dh-template-scene]").forEach((btn) => {
+        btn.classList.toggle("active", String(btn.getAttribute("data-personal-dh-template-scene")) === scene);
       });
-      return applied;
-    }
-
-    // 2026-10-15: 列表接口不带 videoStructInfo，图层得单独补（否则“支持正文”永远是空的）
-    async function detectPersonalDigitalHumanTemplateLayers(limit = 240) {
-      if (state.personalDigitalHumanTemplateLayersLoading) return 0;
-      const ids = (state.personalDigitalHumanTemplates || [])
-        .filter((item) => item.style_id && !(item.layers && item.layers.ok))
-        .map((item) => String(item.style_id))
-        .slice(0, limit);
-      if (!ids.length) return 0;
-      state.personalDigitalHumanTemplateLayersLoading = true;
-      renderPersonalDigitalHumanTemplatePicker();
-      let applied = 0;
-      try {
-        for (let i = 0; i < ids.length; i += 60) {
-          const batch = ids.slice(i, i + 60);
-          try {
-            const data = await api("/api/shanjian-smart-clip/template-layers", {
-              method: "POST",
-              json: { ids: batch },
-              blocking: false,
-            });
-            applied += applyPersonalDigitalHumanTemplateLayers((data && data.layers) || {});
-          } catch (err) {
-            // 服务端还没上批量接口：回退到拉详情（每批只试前 12 个，避免把页面拖死）
-            for (const id of batch.slice(0, 12)) {
-              try {
-                const detail = await api("/api/shanjian-smart-clip/template-detail", {
-                  method: "POST",
-                  json: { template_id: id },
-                  blocking: false,
-                });
-                const layers = ((detail || {}).item || {}).layers;
-                if (layers && layers.ok) applied += applyPersonalDigitalHumanTemplateLayers({ [id]: layers });
-              } catch (e) { /* 单个失败不影响其他 */ }
-            }
-          }
-          if (applied) renderPersonalDigitalHumanTemplatePicker();
-        }
-      } finally {
-        state.personalDigitalHumanTemplateLayersLoading = false;
-        renderPersonalDigitalHumanTemplatePicker();
-      }
-      return applied;
     }
 
     function filteredPersonalDigitalHumanTemplates() {
       const query = String(state.personalDigitalHumanTemplateSearch || "").trim().toLowerCase();
-      const category = String(state.personalDigitalHumanTemplateCategory || "all");
-      const rows = (Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [])
-        .filter((item) => personalDigitalHumanTemplateMatchesCategory(item, category));
+      const rows = Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [];
       if (!query) return rows;
       return rows.filter((item) => String(item.name || "").toLowerCase().includes(query)
         || String(item.style_id || "").toLowerCase().includes(query));
@@ -21811,17 +21708,16 @@ async function api(path, options = {}) {
     function renderPersonalDigitalHumanTemplatePicker() {
       const grid = $("personalDigitalHumanTemplateGrid");
       if (!grid) return;
-      syncPersonalDigitalHumanTemplateCategoryUI();
+      syncPersonalDigitalHumanTemplateSceneUI();
       const rows = filteredPersonalDigitalHumanTemplates();
       const total = (state.personalDigitalHumanTemplates || []).length;
-      const categoryActive = String(state.personalDigitalHumanTemplateCategory || "all") !== "all";
       const count = $("personalDigitalHumanTemplateCount");
-      if (count) count.textContent = (state.personalDigitalHumanTemplateSearch || categoryActive) ? `${rows.length} / ${total} 个模板` : `${total} 个模板`;
+      if (count) count.textContent = state.personalDigitalHumanTemplateSearch ? `${rows.length} / ${total} 个模板` : `${total} 个模板`;
       const status = $("personalDigitalHumanTemplateStatus");
       if (status) {
         status.textContent = state.personalDigitalHumanTemplatesLoading
           ? "正在加载全部模板..."
-          : (state.personalDigitalHumanTemplatesError || (rows.length ? "" : ((state.personalDigitalHumanTemplateSearch || String(state.personalDigitalHumanTemplateCategory || "all") !== "all") ? "没有匹配的模板" : "暂无可用模板")));
+          : (state.personalDigitalHumanTemplatesError || (rows.length ? "" : (state.personalDigitalHumanTemplateSearch ? "没有匹配的模板" : "暂无可用模板")));
         status.classList.toggle("error", !!state.personalDigitalHumanTemplatesError);
       }
       if (state.personalDigitalHumanTemplatesLoading && !rows.length) {
@@ -21838,7 +21734,6 @@ async function api(path, options = {}) {
           </div>
           <div class="personal-digital-human-template-copy">
             <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
-            ${personalDigitalHumanTemplateBadges(item)}
             ${item.demo_url ? `<button class="ghost" type="button" data-preview-personal-dh-template="${escapeHtml(item.style_id)}">查看样片</button>` : `<small>暂无样片</small>`}
           </div>
         </article>`;
@@ -21877,7 +21772,6 @@ async function api(path, options = {}) {
         }
         state.personalDigitalHumanTemplates = rows;
         state.personalDigitalHumanTemplatesLoaded = true;
-        detectPersonalDigitalHumanTemplateLayers();
         const selectedId = String((state.personalDigitalHumanTemplateDraft || {}).style_id || "");
         const selected = selectedId ? rows.find((item) => item.style_id === selectedId) : null;
         if (selected) state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(selected);
@@ -21899,7 +21793,6 @@ async function api(path, options = {}) {
         : state.personalSelectedDigitalHumanTemplate;
       state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(selected);
       state.personalDigitalHumanTemplateSearch = "";
-      state.personalDigitalHumanTemplateCategory = "all";
       if ($("personalDigitalHumanTemplateSearch")) $("personalDigitalHumanTemplateSearch").value = "";
       if ($("personalDigitalHumanTemplateTitle")) {
         $("personalDigitalHumanTemplateTitle").textContent = pickerTarget === "work" ? "选择本次剪辑模板" : "选择数字人剪辑模板";
@@ -30483,13 +30376,6 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     $("personalDigitalHumanTemplateSearch")?.addEventListener("input", (evt) => {
       state.personalDigitalHumanTemplateSearch = evt.target.value || "";
       renderPersonalDigitalHumanTemplatePicker();
-    });
-    $("personalDigitalHumanTemplateCategories")?.addEventListener("click", (evt) => {
-      const btn = evt.target.closest("[data-personal-dh-template-category]");
-      if (!btn) return;
-      state.personalDigitalHumanTemplateCategory = String(btn.getAttribute("data-personal-dh-template-category") || "all");
-      renderPersonalDigitalHumanTemplatePicker();
-      if (String(state.personalDigitalHumanTemplateCategory) !== "all") detectPersonalDigitalHumanTemplateLayers();
     });
     $("personalDigitalHumanTemplateScenes")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-personal-dh-template-scene]");
