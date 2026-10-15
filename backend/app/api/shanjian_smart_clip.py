@@ -314,7 +314,13 @@ def _template_layers(item: Any) -> Dict[str, Any]:
 
 
 @router.post("/api/shanjian-smart-clip/templates")
-async def list_templates(body: TemplateListBody):
+async def list_templates(
+    body: TemplateListBody,
+    # 2026-10-15: 这几个接口之前不需要登录就能调（实测不带 token 返回 200），
+    # 等于任何人都可以借我们的服务器去打闪剪 OpenAPI。查询类虽然不直接计费，
+    # 但被外部滥用、被扫接口、占上游调用频率都是风险，这里统一要求登录。
+    current_user: User = Depends(get_current_user),
+):
     params: Dict[str, Any] = {
         "pageSize": max(1, min(int(body.page_size or 24), 60)),
         "scene": body.scene or "virtualman",
@@ -337,7 +343,10 @@ async def list_templates(body: TemplateListBody):
 
 
 @router.post("/api/shanjian-smart-clip/template-detail")
-async def template_detail(body: TemplateDetailBody):
+async def template_detail(
+    body: TemplateDetailBody,
+    current_user: User = Depends(get_current_user),
+):
     payload = await _get(f"/v1/clip/template/detail/{body.template_id.strip()}", body.token, {})
     item = _data(payload)
     if isinstance(item, dict):
@@ -374,7 +383,10 @@ def _save_layer_cache(cache: Dict[str, Any]) -> None:
 
 
 @router.post("/api/shanjian-smart-clip/template-layers")
-async def template_layers(body: TemplateLayersBody):
+async def template_layers(
+    body: TemplateLayersBody,
+    current_user: User = Depends(get_current_user),
+):
     """批量补模板图层（header/subtitle/ip/figure/background + supports_body）。
 
     列表接口不返回 videoStructInfo，只有详情返回，所以这里按 id 去拉详情。命中缓存直接返回；
@@ -438,7 +450,10 @@ async def common_virtualmans(
 
 
 @router.post("/api/shanjian-smart-clip/voices")
-async def common_voices(body: TokenBody):
+async def common_voices(
+    body: TokenBody,
+    current_user: User = Depends(get_current_user),
+):
     payload = await _get("/v1/assets/voice/common", body.token, {})
     data = _data(payload)
     return {"ok": True, "results": data.get("results") or [], "raw": payload}
@@ -576,7 +591,10 @@ async def submit_clip(
 
 
 @router.post("/api/shanjian-smart-clip/task")
-async def task_info(body: TaskBody):
+async def task_info(
+    body: TaskBody,
+    current_user: User = Depends(get_current_user),
+):
     payload = await _get("/v1/task/info", body.token, {"taskId": body.task_id.strip()})
     data = _data(payload)
     raw_status = str(data.get("status") or "").strip().lower()
