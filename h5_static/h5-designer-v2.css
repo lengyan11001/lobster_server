@@ -7742,3 +7742,9 @@ body.h5-action-blocked {
   line-height: 16px;
   font-style: normal;
 }
+
+.personal-digital-human-picker-category-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}

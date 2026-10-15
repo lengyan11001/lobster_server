@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
 import logging
@@ -38,6 +40,11 @@ class TemplateListBody(TokenBody):
 
 class TemplateDetailBody(TokenBody):
     template_id: str = Field(..., min_length=1)
+
+
+class TemplateLayersBody(TokenBody):
+    # 2026-10-15: 列表接口不带 videoStructInfo，只有详情带，所以图层需要单独补
+    ids: List[str] = Field(default_factory=list)
 
 
 class CommonAssetsBody(TokenBody):
@@ -337,6 +344,71 @@ async def template_detail(body: TemplateDetailBody):
         item = dict(item)
         item["layers"] = _template_layers(item)
     return {"ok": True, "item": item, "raw": payload}
+
+
+_LAYER_CACHE_PATH = _ROOT_DIR / "data" / "shanjian_template_layers.json"
+_LAYER_CACHE_MEMORY: Dict[str, Any] = {}
+
+
+def _load_layer_cache() -> Dict[str, Any]:
+    if _LAYER_CACHE_MEMORY:
+        return dict(_LAYER_CACHE_MEMORY)
+    try:
+        if _LAYER_CACHE_PATH.exists():
+            data = json.loads(_LAYER_CACHE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                _LAYER_CACHE_MEMORY.update(data)
+    except Exception as exc:
+        logger.warning("read shanjian layer cache failed: %s", exc)
+    return dict(_LAYER_CACHE_MEMORY)
+
+
+def _save_layer_cache(cache: Dict[str, Any]) -> None:
+    _LAYER_CACHE_MEMORY.clear()
+    _LAYER_CACHE_MEMORY.update(cache)
+    try:
+        _LAYER_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _LAYER_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("write shanjian layer cache failed: %s", exc)
+
+
+@router.post("/api/shanjian-smart-clip/template-layers")
+async def template_layers(body: TemplateLayersBody):
+    """批量补模板图层（header/subtitle/ip/figure/background + supports_body）。
+
+    列表接口不返回 videoStructInfo，只有详情返回，所以这里按 id 去拉详情。命中缓存直接返回；
+    未命中的最多 6 并发，只把解析成功的结果写缓存（避免把一次失败固化成永久）。
+    """
+    ids: List[str] = []
+    for raw in (body.ids or []):
+        value = _clean_text(raw)
+        if value and value not in ids:
+            ids.append(value)
+        if len(ids) >= 80:
+            break
+    cache = _load_layer_cache()
+    missing = [tid for tid in ids if not (cache.get(tid) or {}).get("ok")]
+    if missing:
+        semaphore = asyncio.Semaphore(6)
+
+        async def fetch(template_id: str):
+            async with semaphore:
+                try:
+                    payload = await _get(f"/v1/clip/template/detail/{template_id}", body.token, {})
+                    item = _data(payload)
+                    return template_id, _template_layers(item if isinstance(item, dict) else {})
+                except Exception as exc:  # noqa: BLE001 - 单个模板拉不到不能影响其他
+                    return template_id, {"ok": False, "error": str(exc)[:120]}
+
+        for template_id, layers in await asyncio.gather(*[fetch(tid) for tid in missing]):
+            if (layers or {}).get("ok"):
+                cache[template_id] = layers
+        _save_layer_cache(cache)
+    known = {tid: cache[tid] for tid in ids if (cache.get(tid) or {}).get("ok")}
+    return {"ok": True, "layers": known,
+            "unknown": [tid for tid in ids if tid not in known],
+            "cached_total": len(cache)}
 
 
 @router.post("/api/shanjian-smart-clip/virtualmans")

@@ -397,6 +397,8 @@
       personalDigitalHumanTemplatesError: "",
       personalDigitalHumanTemplateSearch: "",
       personalDigitalHumanTemplateCategory: "all",
+      personalDigitalHumanTemplateScene: "realMan",
+      personalDigitalHumanTemplateLayersLoading: false,
       personalDigitalHumanTemplatePickerTarget: "personal",
       personalSelectedDigitalHumanTemplate: null,
       personalDigitalHumanTemplateDraft: null,
@@ -21714,19 +21716,86 @@ async function api(path, options = {}) {
     }
 
     function syncPersonalDigitalHumanTemplateCategoryUI() {
+      const sceneRow = $("personalDigitalHumanTemplateScenes");
       const row = $("personalDigitalHumanTemplateCategories");
-      if (!row) return;
+      const scene = String(state.personalDigitalHumanTemplateScene || "realMan");
       const category = String(state.personalDigitalHumanTemplateCategory || "all");
-      row.querySelectorAll("[data-personal-dh-template-category]").forEach((btn) => {
-        btn.classList.toggle("active", String(btn.getAttribute("data-personal-dh-template-category")) === category);
-      });
-      const hint = $("personalDigitalHumanTemplateCategoryHint");
-      if (hint) {
-        const total = (state.personalDigitalHumanTemplates || []).length;
-        hint.textContent = category === "all"
-          ? ""
-          : `已筛选 ${filteredPersonalDigitalHumanTemplates().length} / ${total} 个模板`;
+      if (sceneRow) {
+        sceneRow.querySelectorAll("[data-personal-dh-template-scene]").forEach((btn) => {
+          btn.classList.toggle("active", String(btn.getAttribute("data-personal-dh-template-scene")) === scene);
+        });
       }
+      if (row) {
+        row.querySelectorAll("[data-personal-dh-template-category]").forEach((btn) => {
+          btn.classList.toggle("active", String(btn.getAttribute("data-personal-dh-template-category")) === category);
+        });
+      }
+      const hint = $("personalDigitalHumanTemplateCategoryHint");
+      if (!hint) return;
+      const total = (state.personalDigitalHumanTemplates || []).length;
+      const known = (state.personalDigitalHumanTemplates || []).filter((item) => item.layers && item.layers.ok).length;
+      const parts = [];
+      if (state.personalDigitalHumanTemplateLayersLoading) parts.push(`正在检测模板图层 ${known} / ${total}…`);
+      else if (known && known < total) parts.push(`已检测 ${known} / ${total}`);
+      if (category !== "all") parts.push(`已筛选 ${filteredPersonalDigitalHumanTemplates().length} 个`);
+      hint.textContent = parts.join("，");
+    }
+
+    function applyPersonalDigitalHumanTemplateLayers(map) {
+      if (!map) return 0;
+      let applied = 0;
+      (state.personalDigitalHumanTemplates || []).forEach((item) => {
+        const layers = map[String(item.style_id)];
+        if (layers && layers.ok) {
+          item.layers = { ...layers };
+          applied += 1;
+        }
+      });
+      return applied;
+    }
+
+    // 2026-10-15: 列表接口不带 videoStructInfo，图层得单独补（否则“支持正文”永远是空的）
+    async function detectPersonalDigitalHumanTemplateLayers(limit = 240) {
+      if (state.personalDigitalHumanTemplateLayersLoading) return 0;
+      const ids = (state.personalDigitalHumanTemplates || [])
+        .filter((item) => item.style_id && !(item.layers && item.layers.ok))
+        .map((item) => String(item.style_id))
+        .slice(0, limit);
+      if (!ids.length) return 0;
+      state.personalDigitalHumanTemplateLayersLoading = true;
+      renderPersonalDigitalHumanTemplatePicker();
+      let applied = 0;
+      try {
+        for (let i = 0; i < ids.length; i += 60) {
+          const batch = ids.slice(i, i + 60);
+          try {
+            const data = await api("/api/shanjian-smart-clip/template-layers", {
+              method: "POST",
+              json: { ids: batch },
+              blocking: false,
+            });
+            applied += applyPersonalDigitalHumanTemplateLayers((data && data.layers) || {});
+          } catch (err) {
+            // 服务端还没上批量接口：回退到拉详情（每批只试前 12 个，避免把页面拖死）
+            for (const id of batch.slice(0, 12)) {
+              try {
+                const detail = await api("/api/shanjian-smart-clip/template-detail", {
+                  method: "POST",
+                  json: { template_id: id },
+                  blocking: false,
+                });
+                const layers = ((detail || {}).item || {}).layers;
+                if (layers && layers.ok) applied += applyPersonalDigitalHumanTemplateLayers({ [id]: layers });
+              } catch (e) { /* 单个失败不影响其他 */ }
+            }
+          }
+          if (applied) renderPersonalDigitalHumanTemplatePicker();
+        }
+      } finally {
+        state.personalDigitalHumanTemplateLayersLoading = false;
+        renderPersonalDigitalHumanTemplatePicker();
+      }
+      return applied;
     }
 
     function filteredPersonalDigitalHumanTemplates() {
@@ -21793,7 +21862,7 @@ async function api(path, options = {}) {
         for (let page = 0; page < 20; page += 1) {
           const data = await api("/api/shanjian-smart-clip/templates", {
             method: "POST",
-            json: { page_size: 60, sid, scene: "realMan", sort_by: "desc" },
+            json: { page_size: 60, sid, scene: String(state.personalDigitalHumanTemplateScene || "realMan"), sort_by: "desc" },
             blocking: false,
           });
           (Array.isArray(data.results) ? data.results : []).forEach((raw) => {
@@ -21808,6 +21877,7 @@ async function api(path, options = {}) {
         }
         state.personalDigitalHumanTemplates = rows;
         state.personalDigitalHumanTemplatesLoaded = true;
+        detectPersonalDigitalHumanTemplateLayers();
         const selectedId = String((state.personalDigitalHumanTemplateDraft || {}).style_id || "");
         const selected = selectedId ? rows.find((item) => item.style_id === selectedId) : null;
         if (selected) state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(selected);
@@ -30419,6 +30489,17 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       if (!btn) return;
       state.personalDigitalHumanTemplateCategory = String(btn.getAttribute("data-personal-dh-template-category") || "all");
       renderPersonalDigitalHumanTemplatePicker();
+      if (String(state.personalDigitalHumanTemplateCategory) !== "all") detectPersonalDigitalHumanTemplateLayers();
+    });
+    $("personalDigitalHumanTemplateScenes")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-personal-dh-template-scene]");
+      if (!btn) return;
+      const scene = String(btn.getAttribute("data-personal-dh-template-scene") || "");
+      if (!scene || scene === state.personalDigitalHumanTemplateScene) return;
+      state.personalDigitalHumanTemplateScene = scene;
+      state.personalDigitalHumanTemplates = [];
+      state.personalDigitalHumanTemplatesLoaded = false;
+      loadPersonalDigitalHumanTemplates(true);
     });
     $("personalDigitalHumanTemplateRefresh")?.addEventListener("click", () => loadPersonalDigitalHumanTemplates(true));
     $("personalDigitalHumanTemplateBackdrop")?.addEventListener("click", closePersonalDigitalHumanTemplatePicker);
