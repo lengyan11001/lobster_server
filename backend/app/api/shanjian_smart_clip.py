@@ -36,6 +36,9 @@ class TemplateListBody(TokenBody):
     search_key: str = ""
     search_value: str = ""
     sort_by: str = "desc"
+    # 2026-10-15: 闪剪上游支持按比例筛模板（实测 realMan/virtualman 各有 10 个 16:9），
+    # 不传 = 上游默认只返回 9:16 那批。格式严格：宽:高（如 9:16）。
+    ratio: str = ""
 
 
 class TemplateDetailBody(TokenBody):
@@ -331,6 +334,11 @@ async def list_templates(
     if body.search_key.strip() and body.search_value.strip():
         params["searchKey"] = body.search_key.strip()
         params["searchValue"] = body.search_value.strip()
+    ratio = _clean_text(body.ratio)
+    if ratio:
+        if not re.fullmatch(r"\d{1,3}:\d{1,3}", ratio):
+            raise HTTPException(status_code=400, detail="ratio 格式应为 宽:高，例如 9:16")
+        params["ratio"] = ratio
     payload = await _get("/v1/clip/template", body.token, params)
     data = _data(payload)
     rows = []
