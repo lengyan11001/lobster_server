@@ -13,10 +13,10 @@
   <title>__H5_BRAND_TITLE__</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20261001-chat-duty-mode-v1" />
   <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260905-idea-samples-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260926-img-slim-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20261015-template-categories-v1" />
   <link rel="stylesheet" href="/h5-static/rich-content.css?v=20260910-rich-content-v1" />
   <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
-  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261010-article-oral-draft-v2" />
+  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261015-template-categories-v1" />
 </head>
 <body>
   <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
@@ -2409,6 +2409,12 @@
         <input id="personalDigitalHumanTemplateSearch" type="search" placeholder="搜索模板名称">
         <button class="ghost" type="button" id="personalDigitalHumanTemplateRefresh" aria-label="刷新模板">刷新</button>
       </div>
+      <div class="personal-digital-human-picker-categories" id="personalDigitalHumanTemplateCategories">
+        <button type="button" class="active" data-personal-dh-template-category="all">全部</button>
+        <button type="button" data-personal-dh-template-category="body">支持正文</button>
+        <button type="button" data-personal-dh-template-category="no_body">不含正文</button>
+        <span id="personalDigitalHumanTemplateCategoryHint"></span>
+      </div>
       <div class="personal-digital-human-picker-status" id="personalDigitalHumanTemplateStatus"></div>
       <div class="personal-digital-human-template-grid" id="personalDigitalHumanTemplateGrid"></div>
       <div class="work-dispatch-actions personal-digital-human-picker-actions">
@@ -2861,7 +2867,7 @@
 
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
   <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
-  <script src="/h5-static/h5-app.js?v=20261010-article-oral-draft-v2"></script>
+  <script src="/h5-static/h5-app.js?v=20261015-template-categories-v1"></script>
   <script src="/h5-static/task-center.js?v=20260831-auth-gated-v1"></script>
 </body>
 </html>

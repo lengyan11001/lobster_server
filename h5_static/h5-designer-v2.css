@@ -7694,3 +7694,51 @@ body.h5-action-blocked {
   color: #c92b3a;
   border-color: #f2c8cd;
 }
+
+/* 2026-10-15: 闪剪模板分类（支持正文 / 不含正文）+ 图层标签 */
+.personal-digital-human-picker-categories {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.personal-digital-human-picker-categories button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
+.personal-digital-human-picker-categories button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.personal-digital-human-picker-categories span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.personal-digital-human-template-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.personal-digital-human-template-badge {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+  font-size: 11px;
+  line-height: 16px;
+  font-style: normal;
+}
