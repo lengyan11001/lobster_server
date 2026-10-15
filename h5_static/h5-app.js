@@ -21424,6 +21424,9 @@ async function api(path, options = {}) {
         cover_url: personalDigitalHumanMediaUrl(item.cover_url || item.coverUrl || item.imageUrl),
         demo_url: personalDigitalHumanMediaUrl(item.demo_url || item.demoUrl || item.videoUrl),
         materials: Array.isArray(item.materials) ? item.materials.map((row) => ({ ...row })) : [],
+        // 2026-10-15: 预览图按模板自己的比例显示（9:16 / 16:9…）
+        ratio: String(item.ratio || item.video_ratio || "").trim(),
+
         material_sound_switch: !!(item.material_sound_switch ?? item.materialSoundSwitch),
         introduce_name: String(item.introduce_name || item.introduceName || "").trim(),
         introduce_description: String(item.introduce_description || item.introduceDescription || "").trim(),
@@ -21697,7 +21700,15 @@ async function api(path, options = {}) {
       });
     }
 
+    function personalDigitalHumanTemplateRatioStyle(item) {
+      const text = String((item && item.ratio) || "").replace(/\s+/g, "");
+      if (!/^\d{1,3}:\d{1,3}$/.test(text)) return "";
+      const parts = text.split(":");
+      return ` style="--pdh-ratio: ${Number(parts[0])} / ${Number(parts[1])}"`;
+    }
+
     function filteredPersonalDigitalHumanTemplates() {
+
       const query = String(state.personalDigitalHumanTemplateSearch || "").trim().toLowerCase();
       const rows = Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [];
       if (!query) return rows;
@@ -21728,7 +21739,7 @@ async function api(path, options = {}) {
       grid.innerHTML = rows.map((item) => {
         const selected = String(item.style_id || "") === selectedId;
         return `<article class="personal-digital-human-template-card${selected ? " selected" : ""}" data-personal-dh-template="${escapeHtml(item.style_id)}" tabindex="0" role="radio" aria-checked="${selected ? "true" : "false"}">
-          <div class="personal-digital-human-template-cover">
+          <div class="personal-digital-human-template-cover"${personalDigitalHumanTemplateRatioStyle(item)}>
             ${item.cover_url ? `<img src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span>${escapeHtml((item.name || "模板").slice(0, 2))}</span>`}
             <i>${selected ? "已选择" : "选择"}</i>
           </div>

@@ -3818,7 +3818,8 @@ body * {
 
 .personal-digital-human-template-cover {
   position: relative;
-  aspect-ratio: 3 / 4;
+  /* 2026-10-15: 跟模板自己的比例（没有则 3/4） */
+  aspect-ratio: var(--pdh-ratio, 3 / 4);
   display: grid;
   place-items: center;
   overflow: hidden;
