@@ -240,6 +240,11 @@ _MODEL_QUOTA_HINTS = (
     "额度已用尽",
 )
 
+_IMAGE_UNDERSTAND_HINTS = (
+    "图片理解未返回有效结果",
+    "图片理解失败",
+    "没能读出图片内容",
+)
 _MODEL_AUTH_HINTS = ("unauthorized", "invalid api key", "invalid_api_key", "authentication")
 _MODEL_RATE_LIMIT_HINTS = ("rate limit", "rate_limit", "too many requests", "429")
 _MODEL_UNKNOWN_HINTS = (
@@ -261,6 +266,11 @@ def _friendly_mastra_error(detail: str) -> str:
     """
     raw = str(detail or "").strip()
     lowered = raw.lower()
+    if any(hint in raw for hint in _IMAGE_UNDERSTAND_HINTS):
+        return (
+            "这轮的图片没能识别出来，所以没有下发任务。"
+            "请重发一次图片（尽量清晰、少水印），或者直接用文字描述你的需求，我再安排执行。"
+        )
     if any(hint in lowered for hint in _MODEL_QUOTA_HINTS) or "402" in lowered:
         return "模型额度不足（402 Payment Required），本轮没有下发任务；充值模型额度后重试即可。"
     if any(hint in lowered for hint in _MODEL_UNKNOWN_HINTS):

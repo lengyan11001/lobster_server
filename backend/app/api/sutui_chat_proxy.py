@@ -1462,6 +1462,36 @@ def _sutui_chat_attempts_for_models(
     return attempts
 
 
+# 空正文重试：推理类模型（gpt-5.x-sol / deepseek 思考模式）可能把 max_tokens 全花在思考上，
+# 返回 HTTP 200 + 结构完整 + content 为空串。2026-10-16 线上：用户 19168980789 发图，
+# mastra 的图片理解拿到空正文 → 整轮被判失败。这里给它一次带更大预算的换模型机会。
+_BLANK_TEXT_RETRY_MAX_TOKENS = 8192
+
+
+def _openai_completion_visible_text(data: Any) -> str:
+    """非流式响应里"真正会展示给用户"的正文（不含 reasoning/reasoning_content）。"""
+    try:
+        msg = data["choices"][0]["message"]
+    except Exception:
+        return ""
+    content = msg.get("content") if isinstance(msg, dict) else None
+    return content.strip() if isinstance(content, str) else ""
+
+
+def _openai_completion_has_tool_calls(data: Any) -> bool:
+    try:
+        msg = data["choices"][0]["message"]
+    except Exception:
+        return False
+    calls = msg.get("tool_calls") if isinstance(msg, dict) else None
+    return bool(calls)
+
+
+def _openai_completion_is_blank(data: Any) -> bool:
+    """可用、但没有可展示正文、也没有 tool_calls —— 典型是推理把输出预算吃光。"""
+    return (not _openai_completion_visible_text(data)) and (not _openai_completion_has_tool_calls(data))
+
+
 def _openai_nonstream_completion_usable(data: Any, http_status: int) -> bool:
     """非流式：须为 200 且含非空 choices，且不应为上游业务/池错误 JSON。"""
     if http_status != 200:
@@ -2610,6 +2640,31 @@ async def sutui_chat_completions(
                         )
                         if attempt_idx < len(attempts) - 1:
                             continue
+                if _openai_completion_is_blank(data):
+                    # 2026-10-16：空正文（HTTP 200、结构完整、无 tool_calls）以前被当成功接受，
+                    # 下游只拿到空文本。现在当这一跳失败 → 换下一候选，并给下一跳更大输出预算。
+                    if attempt_idx < len(attempts) - 1:
+                        try:
+                            _cur_tokens = int(body.get("max_tokens") or 0)
+                        except (TypeError, ValueError):
+                            _cur_tokens = 0
+                        body["max_tokens"] = max(_cur_tokens, _BLANK_TEXT_RETRY_MAX_TOKENS)
+                        if isinstance(body.get("max_completion_tokens"), int):
+                            body["max_completion_tokens"] = max(
+                                int(body["max_completion_tokens"]), _BLANK_TEXT_RETRY_MAX_TOKENS
+                            )
+                        logger.warning(
+                            "[sutui-chat] 空正文(疑似推理吃光输出预算) attempt=%s model=%s provider=%s "
+                            "→ 换下一候选并提高 max_tokens=%s；trace_id=%s",
+                            attempt_idx, mid_try, att["provider"], body["max_tokens"], trace_id,
+                        )
+                        body["model"] = _saved_model if _saved_model is not None else body.get("model")
+                        continue
+                    logger.warning(
+                        "[sutui-chat] 最后一跳仍是空正文 model=%s provider=%s trace_id=%s"
+                        "（原样返回，交给调用方判断）",
+                        mid_try, att["provider"], trace_id,
+                    )
                 winning_model = mid_try
                 winning_is_direct = att_is_direct
                 winning_provider = att["provider"]

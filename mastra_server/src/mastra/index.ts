@@ -1443,19 +1443,48 @@ async function prepareChatInput(
   }
 
   const imageInput = chatInputFor(body, message)
-  const result = await imageUnderstandingAgent.generate(imageInput, {
-    requestContext,
-    maxSteps: 1,
-    modelSettings: { maxOutputTokens: 2048, temperature: 0.1 },
-  })
-  const summary = String(result.text || '').trim()
-  if (!summary) throw new Error('图片理解未返回有效结果')
-
   // The main agent receives text only. This keeps its tool-call request
   // compatible with YYAPI while retaining the original attachment manifest.
   const textInput = prependIdentity(chatInputFor(body, message, { includeImages: false }), body)
-  const distilled = `${typeof textInput === 'string' ? textInput : JSON.stringify(textInput)}\n\n` +
-    '[图片理解结果]\n' + summary + '\n[图片理解结果结束]'
+  const textOnly = typeof textInput === 'string' ? textInput : JSON.stringify(textInput)
+
+  // 2026-10-16：以前 maxOutputTokens 只给 2048，推理类模型（gpt-5.x-sol / 思考模式）会把预算
+  // 全花在思考上、正文返回空串，于是**整轮**直接失败（线上 19168980789 发图两次都是这条）。
+  // 现在：加大预算 + 空正文重试一次；仍拿不到就降级成"图片没读懂"，让主调度照常给用户答复。
+  let summary = ''
+  let lastError = ''
+  for (const budget of [4096, 8192]) {
+    try {
+      const result = await imageUnderstandingAgent.generate(imageInput, {
+        requestContext,
+        maxSteps: 1,
+        modelSettings: { maxOutputTokens: budget, temperature: 0.1 },
+      })
+      summary = String(result.text || '').trim()
+      if (summary) break
+      lastError = `模型只返回了空正文（maxOutputTokens=${budget}）`
+      console.warn('[image-understanding] empty text, retrying', { budget, images: images.length })
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      console.warn('[image-understanding] failed', { budget, error: lastError })
+    }
+  }
+
+  if (!summary) {
+    console.error('[image-understanding] giving up, degrading to text-only turn', {
+      images: images.length,
+      lastError,
+    })
+    return {
+      input:
+        `${textOnly}\n\n[图片理解失败]\n本轮没能读出图片内容（${lastError}）。\n` +
+        '请在答复里明确告诉用户图片暂时没能识别出来，请他重发图片或直接用文字描述需求；绝对不要编造图片内容。\n' +
+        '[图片理解失败结束]',
+      imageSummary: '',
+    }
+  }
+
+  const distilled = `${textOnly}\n\n[图片理解结果]\n${summary}\n[图片理解结果结束]`
   return { input: distilled, imageSummary: summary }
 }
 
