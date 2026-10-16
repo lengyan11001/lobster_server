@@ -24943,6 +24943,52 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       return data;
     }
 
+    // 2026-10-16：数字人口播下发前，如果「剪辑方式」没选成「套用剪辑模板」，
+    // 明确提醒一次（默认值不动）。
+    //   确认 -> 照这样下发（就是他明确知道这次出的是数字人原片）
+    //   取消 -> 自动切到「套用剪辑模板」并把模板区滚到眼前，让她先选模板再下发
+    // 背景：同一个手动创建路径上，选没选模板的差别只是 use_template 的 true/false，
+    // 以前默认「不套模板」会静默出一版原片，事后完全看不出来（资产 tags 还写死 template-edited）。
+    function hiflyTemplateModeValue(modeId) {
+      const el = $(modeId);
+      if (el && String(el.tagName || "").toUpperCase() === "SELECT") return String(el.value || "").trim();
+      const checked = document.querySelector(`input[name="${cssEscape(modeId)}"]:checked`);
+      return checked ? String(checked.value || "").trim() : "";
+    }
+
+    function setHiflyTemplateMode(modeId, value) {
+      const el = $(modeId);
+      if (el && String(el.tagName || "").toUpperCase() === "SELECT") {
+        el.value = value;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+      setWorkHiflySegment(modeId, value);
+    }
+
+    function confirmDigitalHumanTemplateBeforeSubmit(scope) {
+      const isWork = scope === "work";
+      const modeId = isWork ? "workHiflyTemplateMode" : "taskHiflyTemplateMode";
+      const templateId = isWork ? "workHiflyTemplate" : "taskHiflyTemplate";
+      if (hiflyTemplateModeValue(modeId) === "template" && workflowParamValue(templateId)) return true;
+      const ok = window.confirm(
+        "这次「剪辑方式」是【不套模板】，成片不会经过闪剪剪辑（就是数字人原片）。\n\n" +
+        "确认：照这样下发。\n取消：帮你切到「套用剪辑模板」，先选好模板再下发。"
+      );
+      if (ok) return true;
+      setHiflyTemplateMode(modeId, "template");
+      const field = $(isWork ? "workHiflyTemplateField" : "taskHiflyTemplateField");
+      if (field) {
+        field.classList.remove("hidden");
+        try { field.scrollIntoView({ block: "center" }); } catch (err) {}
+      }
+      const hasTemplates = (state.personalDigitalHumanTemplates || []).length > 0;
+      toast(hasTemplates
+        ? "请先选择剪辑模板，再点下发"
+        : "还没有可用剪辑模板，请先到「个人默认配置」添加并设为当前");
+      return false;
+    }
+
     async function submitOnceClientTask(plan) {
       return submitScheduledClientTask(plan, { schedule_type: "once" });
     }
@@ -24951,6 +24997,10 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       if (state.workDispatchSubmitting) return;
       const item = workQuickItemByKey(state.workDispatchKey);
       if (!item) throw new Error("未找到岗位入口");
+      if (String(item.key || "") === "hifly.video.create_by_tts"
+        && !confirmDigitalHumanTemplateBeforeSubmit("work")) {
+        return;
+      }
       const plan = collectWorkDispatchPlan(item);
       state.workDispatchSubmitting = true;
       const btn = $("workDispatchSubmit");
@@ -25937,6 +25987,10 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       const serverSide = isServerSideScheduledKind(taskKind);
       if (!serverSide && !selectedInstallationId) {
         toast("未检测到本地 online 设备");
+        return;
+      }
+      if (state.taskAbility === "hifly.video.create_by_tts"
+        && !confirmDigitalHumanTemplateBeforeSubmit("task")) {
         return;
       }
       const capPayload = collectCapabilityPayload();
