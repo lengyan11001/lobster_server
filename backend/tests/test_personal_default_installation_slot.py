@@ -269,3 +269,144 @@ def test_saving_without_profile_fields_keeps_the_device_persona(db_session, test
     )
     assert row.requirements.get("basic_profile", {}).get("name") == "张三"
     assert row.requirements.get("common") == "模板公共字段"
+
+
+def _add_memory_doc(db, user_id: int, doc_id: str, title: str = "口播稿") -> None:
+    from backend.app.models import OpenClawMemoryDocument
+
+    db.add(
+        OpenClawMemoryDocument(
+            doc_id=doc_id,
+            target_user_id=user_id,
+            installation_id="",
+            origin="user",
+            title=title,
+            filename=title + ".md",
+            content_text="正文内容",
+            status="active",
+        )
+    )
+    db.commit()
+
+
+def _add_slot_row(db, user_id: int, slot: str, *, meta: dict, memory_doc_ids=None, keyword_ids=None, competitor_ids=None):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import IPContentScheduleTemplate
+
+    row = IPContentScheduleTemplate(
+        user_id=user_id,
+        name=studio._PERSONAL_DEFAULT_TEMPLATE_NAME,
+        installation_id=slot,
+        status="active",
+        requirements={},
+        memory_doc_ids=list(memory_doc_ids or []),
+        keyword_ids=list(keyword_ids or []),
+        competitor_ids=list(competitor_ids or []),
+        meta=dict(meta),
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def _add_template_row(db, user_id: int, name: str, *, memory_doc_ids=None, keyword_ids=None, competitor_ids=None):
+    from backend.app.models import IPContentScheduleTemplate
+
+    row = IPContentScheduleTemplate(
+        user_id=user_id,
+        name=name,
+        installation_id="",
+        status="active",
+        memory_doc_ids=list(memory_doc_ids or []),
+        keyword_ids=list(keyword_ids or []),
+        competitor_ids=list(competitor_ids or []),
+        meta={"source": "test"},
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_empty_selection_is_not_an_explicit_override(db_session, test_user):
+    """口径（2026-10-16）：空 = "这项没定制"，不是"永久不要"。
+
+    设备行“记忆文件”为空、但带 template_resource_overrides.memory_doc_ids=true 的历史脏数据，
+    也必须回落用户自己点过「设为当前」的那个模板 —— 否则一次误存就把模板资源永久锁死
+    （线上 109/142/210 的"数字人生成缺少：当前启用模板的记忆文件"就是这么来的）。
+    """
+    from backend.app.api import ip_content_studio as studio
+
+    _add_memory_doc(db_session, test_user.id, "doc-mem-1")
+    template = _add_template_row(db_session, test_user.id, "Tengwin", memory_doc_ids=["doc-mem-1"], keyword_ids=[11])
+    slot = _add_slot_row(
+        db_session, test_user.id, "slot-empty-mem",
+        meta={
+            "source": "test",
+            "current_template_id": template.id,
+            "template_resource_overrides": {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": True},
+        },
+    )
+
+    overrides = studio._personal_default_resource_overrides(slot, template)
+    assert overrides == {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": False}
+
+    payload = studio._personal_default_template_payload_with_resources(db_session, slot)
+    assert payload["memory_doc_ids"] == ["doc-mem-1"], "空值不该锁死：要跟随当前模板"
+
+
+def test_legacy_empty_row_follows_the_current_template(db_session, test_user):
+    """老数据（没有 marker）：设备行为空时同样跟随当前模板，而不是判成"差异=自定义"。"""
+    from backend.app.api import ip_content_studio as studio
+
+    _add_memory_doc(db_session, test_user.id, "doc-legacy-1")
+    template = _add_template_row(db_session, test_user.id, "老模板", memory_doc_ids=["doc-legacy-1"], keyword_ids=[21])
+    slot = _add_slot_row(
+        db_session, test_user.id, "slot-legacy",
+        meta={"source": "test", "current_template_id": template.id},
+    )
+
+    overrides = studio._personal_default_resource_overrides(slot, template)
+    assert overrides == {"keyword_ids": False, "competitor_ids": False, "memory_doc_ids": False}
+    payload = studio._personal_default_template_payload_with_resources(db_session, slot)
+    assert payload["memory_doc_ids"] == ["doc-legacy-1"]
+
+
+def test_non_empty_difference_is_still_a_user_override(db_session, test_user):
+    """用户真的自己选过（非空且与模板不同）时，仍然保留设备行上的选择。"""
+    from backend.app.api import ip_content_studio as studio
+
+    _add_memory_doc(db_session, test_user.id, "doc-mine")
+    _add_memory_doc(db_session, test_user.id, "doc-tpl")
+    template = _add_template_row(db_session, test_user.id, "模板", memory_doc_ids=["doc-tpl"])
+    slot = _add_slot_row(
+        db_session, test_user.id, "slot-custom",
+        meta={"source": "test", "current_template_id": template.id},
+        memory_doc_ids=["doc-mine"],
+    )
+
+    overrides = studio._personal_default_resource_overrides(slot, template)
+    assert overrides["memory_doc_ids"] is True, "非空且不同 = 用户自定义，要保留"
+    payload = studio._personal_default_template_payload_with_resources(db_session, slot)
+    assert payload["memory_doc_ids"] == ["doc-mine"]
+
+
+def test_empty_selection_survives_a_later_template_change(db_session, test_user):
+    """点了「设为当前」之后改模板数据要能生效：设备行为空时跟着模板变。"""
+    from backend.app.api import ip_content_studio as studio
+
+    _add_memory_doc(db_session, test_user.id, "doc-v1")
+    _add_memory_doc(db_session, test_user.id, "doc-v2")
+    template = _add_template_row(db_session, test_user.id, "会变的模板", memory_doc_ids=["doc-v1"])
+    slot = _add_slot_row(
+        db_session, test_user.id, "slot-live",
+        meta={
+            "source": "test",
+            "current_template_id": template.id,
+            "template_resource_overrides": {"memory_doc_ids": True},
+        },
+    )
+    assert studio._personal_default_template_payload_with_resources(db_session, slot)["memory_doc_ids"] == ["doc-v1"]
+
+    template.memory_doc_ids = ["doc-v2"]
+    db_session.commit()
+    assert studio._personal_default_template_payload_with_resources(db_session, slot)["memory_doc_ids"] == ["doc-v2"]

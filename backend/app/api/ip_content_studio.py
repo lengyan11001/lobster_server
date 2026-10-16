@@ -3525,23 +3525,38 @@ def _personal_default_resource_overrides(
 ) -> dict[str, bool]:
     """Return resource fields explicitly customized on the personal row.
 
-    New clients persist this marker when the complete selection is saved.  For
-    older rows, a difference from the selected source is treated as an
-    override so a refresh cannot silently restore the source template's full
-    resource set.
+    口径（2026-10-16 明确）：
+    - **空 = 没定制**，不构成"显式取消"。设备行某一项为空时一律回落"当前模板"
+      （用户点过「设为当前」的那一份）。否则一次误存（空数组 != 模板非空）就会被
+      判成"用户显式不要"并永久锁死模板资源 —— 线上实例：109/142/210 报
+      "数字人生成缺少：当前启用模板的记忆文件"，明明模板里挂着 4~8 份。
+    - 只有"设备行该项非空、且与当前模板不同"才算用户自定义，保留在设备行上。
+    - "没选不要用系统默认模板兜底"仍然成立：绝不回落账号级/其它槽位的行，
+      只认用户自己的当前模板。
     """
     meta = row.meta if isinstance(row.meta, dict) else {}
+    row_keywords = _clean_int_ids(row.keyword_ids, 50)
+    row_competitors = _clean_int_ids(row.competitor_ids, 50)
+    row_memory = _clean_memory_doc_ids(row.memory_doc_ids, 50) or _memory_doc_ids_from_docs(row.memory_docs or [], 50)
+    ref_memory = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
     marker = meta.get("template_resource_overrides")
     if isinstance(marker, dict):
-        return {
+        customized = {
             "keyword_ids": bool(marker.get("keyword_ids")),
             "competitor_ids": bool(marker.get("competitor_ids")),
             "memory_doc_ids": bool(marker.get("memory_doc_ids")),
         }
+    else:
+        customized = {
+            "keyword_ids": row_keywords != _clean_int_ids(reference.keyword_ids, 50),
+            "competitor_ids": row_competitors != _clean_int_ids(reference.competitor_ids, 50),
+            "memory_doc_ids": row_memory != ref_memory,
+        }
+    # 空值永远不构成"显式取消"：那一项跟随当前模板。
     return {
-        "keyword_ids": _clean_int_ids(row.keyword_ids, 50) != _clean_int_ids(reference.keyword_ids, 50),
-        "competitor_ids": _clean_int_ids(row.competitor_ids, 50) != _clean_int_ids(reference.competitor_ids, 50),
-        "memory_doc_ids": _clean_memory_doc_ids(row.memory_doc_ids, 50) != _clean_memory_doc_ids(reference.memory_doc_ids, 50),
+        "keyword_ids": bool(customized["keyword_ids"]) and bool(row_keywords),
+        "competitor_ids": bool(customized["competitor_ids"]) and bool(row_competitors),
+        "memory_doc_ids": bool(customized["memory_doc_ids"]) and bool(row_memory),
     }
 
 
