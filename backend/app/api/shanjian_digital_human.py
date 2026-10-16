@@ -1410,64 +1410,12 @@ async def _apply_asset_group_materials(
     snapshot["asset_group_selection"] = selection
     return snapshot
 
-def _default_digital_human_template(
-    db: Session,
-    user_id: int,
-) -> Optional[Dict[str, Any]]:
-    personal = (
-        db.query(IPContentScheduleTemplate)
-        .filter(
-            IPContentScheduleTemplate.user_id == int(user_id),
-            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
-            IPContentScheduleTemplate.status == "active",
-        )
-        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
-        .first()
-    )
-    if personal is None:
-        return None
-
-    personal_meta = personal.meta if isinstance(personal.meta, dict) else {}
-    try:
-        current_template_id = int(personal_meta.get("current_template_id") or personal_meta.get("template_id") or 0)
-    except (TypeError, ValueError):
-        current_template_id = 0
-    if current_template_id > 0:
-        current = (
-            db.query(IPContentScheduleTemplate)
-            .filter(
-                IPContentScheduleTemplate.id == current_template_id,
-                IPContentScheduleTemplate.status == "active",
-            )
-            .first()
-        )
-        if current is not None and int(current.user_id) != int(user_id):
-            grant = (
-                db.query(H5AgentTemplateGrant.id)
-                .filter(
-                    H5AgentTemplateGrant.template_id == current.id,
-                    H5AgentTemplateGrant.owner_user_id == current.user_id,
-                    H5AgentTemplateGrant.target_user_id == int(user_id),
-                    H5AgentTemplateGrant.status == "active",
-                )
-                .first()
-            )
-            if not grant:
-                current = None
-        if current is not None:
-            configured, template_meta = _stored_digital_human_template(current.meta)
-            if configured:
-                return _with_digital_human_asset_groups(template_meta, current.meta)
-
-    _configured, template_meta = _stored_digital_human_template(personal_meta)
-    return _with_digital_human_asset_groups(template_meta, personal_meta)
-
-
 def _resolve_video_template_meta(
     db: Session,
     user_id: int,
     body: CreateVideoBody,
 ) -> tuple[Optional[Dict[str, Any]], str]:
+    """只有请求里显式给了模板才套模板；没选就是没选，不做任何兜底。"""
     if body.use_template is False:
         return None, "request_disabled"
     explicit = _template_meta_from_body(body)
@@ -1475,8 +1423,8 @@ def _resolve_video_template_meta(
         return explicit, "request"
     if body.use_template is True:
         raise HTTPException(status_code=400, detail="已选择套用剪辑模板，请先选择具体模板")
-    configured = _default_digital_human_template(db, user_id)
-    return configured, "active_personal_template" if configured is not None else ""
+    # 没选模板就是没选：不套用账号「个人默认配置」里的当前模板。
+    return None, "not_requested"
 
 
 def _template_meta_from_submit_payload(submit_payload: Optional[dict]) -> Optional[Dict[str, Any]]:

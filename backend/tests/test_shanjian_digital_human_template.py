@@ -21,7 +21,7 @@ def test_h5_app_exposes_digital_human_template_list_route():
     assert "/api/shanjian-smart-clip/templates" in paths
 
 
-def test_active_personal_template_supplies_digital_human_editing_template(db_session, test_user):
+def test_missing_template_selection_does_not_apply_any_template(db_session, test_user):
     current = IPContentScheduleTemplate(
         user_id=test_user.id,
         name="销售内容模板",
@@ -51,10 +51,8 @@ def test_active_personal_template_supplies_digital_human_editing_template(db_ses
 
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
-    assert source == "active_personal_template"
-    assert template_meta is not None
-    assert template_meta["style_id"] == "style-current"
-    assert template_meta["template_scene"] == "realMan"
+    assert source == "not_requested"
+    assert template_meta is None
 
 
 def test_explicit_video_template_overrides_active_personal_template(db_session, test_user):
@@ -109,7 +107,7 @@ def test_request_requiring_template_must_supply_selection(db_session, test_user)
     assert "选择具体模板" in str(exc_info.value)
 
 
-def test_current_template_can_explicitly_disable_automatic_editing(db_session, test_user):
+def test_personal_default_template_is_not_applied_without_selection(db_session, test_user):
     current = IPContentScheduleTemplate(
         user_id=test_user.id,
         name="不剪辑模板",
@@ -134,7 +132,7 @@ def test_current_template_can_explicitly_disable_automatic_editing(db_session, t
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
     assert template_meta is None
-    assert source == ""
+    assert source == "not_requested"
 
 
 def test_stored_template_rules_are_normalized_without_trusting_bad_duration():
@@ -416,7 +414,7 @@ def _personal_template(user_id, name, meta, **kwargs):
     return IPContentScheduleTemplate(user_id=user_id, name=name, status="active", meta=meta, **kwargs)
 
 
-def test_asset_groups_follow_the_configured_template_only(db_session, test_user):
+def test_asset_groups_are_not_attached_without_a_selected_template(db_session, test_user):
     current = _personal_template(
         test_user.id,
         "销售内容模板",
@@ -442,12 +440,11 @@ def test_asset_groups_follow_the_configured_template_only(db_session, test_user)
 
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
-    assert source == "active_personal_template"
-    assert template_meta["style_id"] == "style-current"
-    assert template_meta["asset_groups"] == ["门店"]
+    assert source == "not_requested"
+    assert template_meta is None
 
 
-def test_personal_default_groups_are_used_when_it_is_the_template(db_session, test_user):
+def test_personal_default_groups_are_not_used_without_a_selected_template(db_session, test_user):
     db_session.add(
         _personal_template(
             test_user.id,
@@ -462,8 +459,8 @@ def test_personal_default_groups_are_used_when_it_is_the_template(db_session, te
 
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
-    assert source == "active_personal_template"
-    assert template_meta["asset_groups"] == ["默认组"]
+    assert source == "not_requested"
+    assert template_meta is None
 
 
 def test_explicit_style_does_not_attach_asset_groups(db_session, test_user):
@@ -514,7 +511,7 @@ def test_disabled_current_template_stays_empty_even_with_asset_groups(db_session
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
     assert template_meta is None
-    assert source == ""
+    assert source == "not_requested"
 
 
 def _group_asset(user_id, asset_id, media_type, group, *, tags="", hidden=False, url=""):
