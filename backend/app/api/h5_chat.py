@@ -1215,18 +1215,23 @@ def _content_disposition(kind: str, filename: str) -> str:
 # 表现就是 H5「内容记录」里点开视频「无法预览和播放」（线上 7 天 /api/h5-chat/media 400 共 52 次，
 # 其中目标域名是 ai-res-bhb-1300308946.cos.ap-guangzhou.myqcloud.com 的 46 次）。
 # 生产机 getaddrinfo 实测：
-#   ai-res-bhb-1300308946.cos.ap-guangzhou.myqcloud.com -> 169.254.0.47   (腾讯云 COS)
-#   cdn-video.51sux.com / cdn-ali-hk.51sux.com          -> 169.254.254.254 (速拍 CDN)
+#   ai-res-bhb-1300308946.cos.ap-guangzhou.myqcloud.com -> 169.254.0.47   (腾讯云 COS，走内网回源)
+#
+# 【没有把 cdn-video.51sux.com / cdn-ali-hk.51sux.com 加进来】它们解析出的 169.254.254.254
+# 不是云内网回源，而是「CDN 已下线」的占位：CNAME -> cdn-video.51sux.com.w.cdngslb.com ->
+# offline.specialcdnstatus.com -> 169.254.254.254（阿里公共 DoH 也是同一个答案，生产机
+# curl 直接 code=000 连不上）。加进来只会让每次播放先白等 10 秒连接超时再报 502，
+# 不如让它立刻 400 返回。这批素材（1586 条，最后一条 2026-06-23）源已经没了，要另外处理。
 #
 # 只按**域名**放行，白名单之外的 URL 仍然逐个解析 IP 过滤，SSRF 防护不放松。
 # 注意：绝不能直接放开整个 169.254.0.0/16 —— 那会把云元数据 169.254.169.254 一起放开。
-# 以后遇到新的厂商域名被误杀，在这里加一条（并附上生产机 getaddrinfo 的实测结果）。
+# 以后遇到新的厂商域名被误杀，先在**生产机**上 getaddrinfo 确认「这个 169.254.x 到底是不是
+# 云内网回源」，确认是再加一条。
 _TRUSTED_MEDIA_HOST_RE = re.compile(
     r"^(?:[a-z0-9][a-z0-9\-]*\.)*"
     r"(?:"
     r"cos\.[a-z0-9\-]+\.myqcloud\.com"      # 腾讯云 COS 桶域名
     r"|cos\.[a-z0-9\-]+\.tencentcos\.cn"   # 腾讯云 COS 内网域名
-    r"|51sux\.com"                            # 速拍 CDN
     r")$",
     re.IGNORECASE,
 )
