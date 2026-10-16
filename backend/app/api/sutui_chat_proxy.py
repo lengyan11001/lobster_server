@@ -453,6 +453,8 @@ def _is_openclaw_skill_model_alias(model: str) -> bool:
 _SLIM_MSG_MAX_TURNS = 12          # keep system + last N user/assistant turns
 _SLIM_MSG_MAX_CHARS = 800         # per-message content truncation
 _SLIM_SYS_MSG_MAX_CHARS = 16000   # system messages get a much higher limit to preserve agent instructions
+_SLIM_MSG_TAIL_CHARS = 3000       # 本轮消息、以及带素材清单/图片理解结果的消息：把头尾都留下
+_SLIM_TAIL_MARKERS = ("本轮附加素材：", "[图片理解结果]")
 _SLIM_TOOL_DESC_MAX = 120         # max chars for tool-level description
 _SLIM_PROP_DESC_MAX = 40          # max chars for property-level description; 0 to strip all
 _BASE64_RE = __import__("re").compile(r"data:[^;]{0,60};base64,[A-Za-z0-9+/=]{200,}")
@@ -593,8 +595,12 @@ def _slim_messages(messages: list) -> list:
     result = []
     for m in sys_msgs:
         result.append(_truncate_msg(m, max_chars=_SLIM_SYS_MSG_MAX_CHARS))
-    for m in non_sys:
-        result.append(_truncate_msg(m))
+    last_index = len(non_sys) - 1
+    for index, m in enumerate(non_sys):
+        # 本轮消息保留尾部：素材清单（图片/视频 URL）与图片理解结果都拼在正文末尾，
+        # 只留头会把它们整段截掉，模型就会回答“没收到图片”。
+        keep_tail = _SLIM_MSG_TAIL_CHARS if index == last_index else 0
+        result.append(_truncate_msg(m, keep_tail=keep_tail))
     return result
 
 
@@ -644,14 +650,30 @@ def _repair_orphan_tool_messages(messages: list) -> list:
     return repaired
 
 
-def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS) -> dict:
+def _slim_preserved_tail(text: str, keep_tail: int) -> str:
+    """挑出截断时必须保留的尾部内容（素材清单 / 图片理解结果 / 本轮正文结尾）。"""
+    limit = _SLIM_MSG_TAIL_CHARS if keep_tail <= 0 else keep_tail
+    for marker in _SLIM_TAIL_MARKERS:
+        index = text.find(marker)
+        if index >= 0:
+            return text[index:index + limit]
+    if keep_tail > 0:
+        return text[-keep_tail:]
+    return ""
+
+
+def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS, keep_tail: int = 0) -> dict:
     if not isinstance(m, dict):
         return m
     c = m.get("content")
     if isinstance(c, str):
         c = _BASE64_RE.sub("[image]", c)
         if len(c) > max_chars:
-            c = c[:max_chars] + "…(truncated)"
+            tail = _slim_preserved_tail(c, keep_tail)
+            if tail:
+                c = f"{c[:max_chars]}\n…(中间内容已省略)…\n{tail}"
+            else:
+                c = c[:max_chars] + "…(truncated)"
         if c != m.get("content"):
             return {**m, "content": c}
     elif isinstance(c, list):
