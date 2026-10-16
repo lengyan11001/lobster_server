@@ -1207,6 +1207,39 @@ def _content_disposition(kind: str, filename: str) -> str:
     return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
+# 素材域名白名单（2026-10-16）。
+#
+# 背景：生产机是腾讯云广州 CVM，它会把这些**厂商 CDN 的公网域名**解析成 169.254.0.0/16 的
+# 链路本地地址，走云内网回源（同机 curl 实测 HTTP 200/206、文件能公开下载、支持 Range）。
+# 下面「内网/链路本地」那个判定不认识这种回源方式，把它们一律判成内网链接 -> 400，
+# 表现就是 H5「内容记录」里点开视频「无法预览和播放」（线上 7 天 /api/h5-chat/media 400 共 52 次，
+# 其中目标域名是 ai-res-bhb-1300308946.cos.ap-guangzhou.myqcloud.com 的 46 次）。
+# 生产机 getaddrinfo 实测：
+#   ai-res-bhb-1300308946.cos.ap-guangzhou.myqcloud.com -> 169.254.0.47   (腾讯云 COS)
+#   cdn-video.51sux.com / cdn-ali-hk.51sux.com          -> 169.254.254.254 (速拍 CDN)
+#
+# 只按**域名**放行，白名单之外的 URL 仍然逐个解析 IP 过滤，SSRF 防护不放松。
+# 注意：绝不能直接放开整个 169.254.0.0/16 —— 那会把云元数据 169.254.169.254 一起放开。
+# 以后遇到新的厂商域名被误杀，在这里加一条（并附上生产机 getaddrinfo 的实测结果）。
+_TRUSTED_MEDIA_HOST_RE = re.compile(
+    r"^(?:[a-z0-9][a-z0-9\-]*\.)*"
+    r"(?:"
+    r"cos\.[a-z0-9\-]+\.myqcloud\.com"      # 腾讯云 COS 桶域名
+    r"|cos\.[a-z0-9\-]+\.tencentcos\.cn"   # 腾讯云 COS 内网域名
+    r"|51sux\.com"                            # 速拍 CDN
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _is_trusted_media_host(host: str) -> bool:
+    """素材白名单判定（见 _TRUSTED_MEDIA_HOST_RE 的说明）。"""
+    value = (host or "").strip().rstrip(".").lower()
+    if not value:
+        return False
+    return bool(_TRUSTED_MEDIA_HOST_RE.match(value))
+
+
 def _assert_public_remote_url(raw_url: str) -> str:
     url = (raw_url or "").strip()
     parsed = urlparse(url)
@@ -1215,6 +1248,9 @@ def _assert_public_remote_url(raw_url: str) -> str:
     host = parsed.hostname.strip().lower()
     if host in {"localhost", "127.0.0.1", "::1"}:
         raise HTTPException(status_code=400, detail="不支持本机链接")
+    if _is_trusted_media_host(host):
+        # 已知素材源：云内网回源解析出的链路本地地址是正常现象，跳过 IP 过滤。
+        return url
     try:
         infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
