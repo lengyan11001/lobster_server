@@ -7932,6 +7932,39 @@ def list_system_templates(
             .all()
         ):
             doc_map[str(doc.doc_id)] = doc
+    # 用户端「教程 → 系统模板」详情要同时展示关联关键词 / 关联同行账号的名称，
+    # 这里按模板里记录的 id 批量取回真实存在的条目（已删除的 id 不再回传，避免计数虚高）。
+    keyword_order: dict[int, list[int]] = {}
+    competitor_order: dict[int, list[int]] = {}
+    all_keyword_ids: set[int] = set()
+    all_competitor_ids: set[int] = set()
+    for row in rows:
+        keyword_order[int(row.id)] = _clean_int_ids(row.keyword_ids, 50)
+        competitor_order[int(row.id)] = _clean_int_ids(row.competitor_ids, 50)
+        all_keyword_ids.update(keyword_order[int(row.id)])
+        all_competitor_ids.update(competitor_order[int(row.id)])
+    keyword_map: dict[int, IPContentKeyword] = {}
+    if all_keyword_ids:
+        for kw in (
+            db.query(IPContentKeyword)
+            .filter(
+                IPContentKeyword.id.in_(sorted(all_keyword_ids)),
+                IPContentKeyword.status != "deleted",
+            )
+            .all()
+        ):
+            keyword_map[int(kw.id)] = kw
+    competitor_map: dict[int, ContentCompetitorAccount] = {}
+    if all_competitor_ids:
+        for account in (
+            db.query(ContentCompetitorAccount)
+            .filter(
+                ContentCompetitorAccount.id.in_(sorted(all_competitor_ids)),
+                ContentCompetitorAccount.status != "deleted",
+            )
+            .all()
+        ):
+            competitor_map[int(account.id)] = account
     for row in rows:
         req = row.requirements or {}
         files = []
@@ -7952,8 +7985,29 @@ def list_system_templates(
             "oral": str(req.get("oral") or req.get("ip_oral") or req.get("industry_oral") or ""),
             "moments": str(req.get("moments") or ""),
             "image": str(req.get("image") or ""),
-            "keyword_count": len(row.keyword_ids or []),
-            "competitor_count": len(row.competitor_ids or []),
+            "keyword_ids": keyword_order.get(int(row.id), []),
+            "competitor_ids": competitor_order.get(int(row.id), []),
+            "keywords": [
+                {
+                    "id": int(keyword_map[item].id),
+                    "keyword": keyword_map[item].keyword or "",
+                    "display_name": keyword_map[item].display_name or keyword_map[item].keyword or "",
+                }
+                for item in keyword_order.get(int(row.id), [])
+                if item in keyword_map
+            ],
+            "competitors": [
+                {
+                    "id": int(competitor_map[item].id),
+                    "platform": competitor_map[item].platform or "",
+                    "account_key": competitor_map[item].account_key or "",
+                    "display_name": competitor_map[item].display_name or competitor_map[item].account_key or "",
+                }
+                for item in competitor_order.get(int(row.id), [])
+                if item in competitor_map
+            ],
+            "keyword_count": len([i for i in keyword_order.get(int(row.id), []) if i in keyword_map]),
+            "competitor_count": len([i for i in competitor_order.get(int(row.id), []) if i in competitor_map]),
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             "download_url": "/api/ip-content/system-templates/%d/download" % int(row.id),
         })
