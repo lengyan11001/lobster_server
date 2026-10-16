@@ -1275,16 +1275,13 @@ async def _chat_openai(
     force_tool_retry_done = False
 
     cur = list(msgs)
-    _turn_has_images = _messages_have_image_parts(cur)
-    _llm_timeout = 300.0 if _turn_has_images else 120.0
-    _max_rounds = min(MAX_TOOL_ROUNDS, 2) if _turn_has_images else MAX_TOOL_ROUNDS
-    for rnd in range(_max_rounds):
+    for rnd in range(MAX_TOOL_ROUNDS):
         body: Dict[str, Any] = {"model": model, "messages": cur, "stream": False}
         if oai_tools and rnd < MAX_TOOL_ROUNDS - 1:
             body["tools"] = oai_tools
             body["tool_choice"] = "auto"
 
-        async with httpx.AsyncClient(timeout=_llm_timeout) as c:
+        async with httpx.AsyncClient(timeout=120.0) as c:
             # DeepSeek 官方直连对报文更严：developer 角色、孤立 tool、
             # assistant.tool_calls 缺结果、content 缺字段都会被拒；发之前先整形。
             _normalize_deepseek_messages(url, body, stream=False)
@@ -2154,8 +2151,6 @@ def _build_user_content_with_attachments(
     request: Optional[Request] = None,
     db=None,
     user_id: Optional[int] = None,
-    *,
-    images_attached: bool = False,
 ) -> str:
     user_content = (payload.message or "").strip()
     if getattr(payload, "attachment_asset_ids", None) and request and db is not None and user_id is not None:
@@ -2176,104 +2171,14 @@ def _build_user_content_with_attachments(
         if pairs:
             logger.info("[CHAT] 注入素材 URL: asset_ids=%s", [p[0] for p in pairs])
             user_content += (
-                "\n\n【用户从消息里上传的素材】\n"
+                "\n\n【用户本条消息上传的素材】\n"
                 "- 图生视频：你不要在 video.generate 的 payload 里填 image_url/media_files，由系统自动注入。\n"
                 "- 图生图 / 图片编辑：调用 image.generate，在 payload 里设 image_url 为下方 URL，并指定编辑模型（wan/v2.7/edit、seedream/v4.5/edit 等）。\n"
-                + ("- 理解图片：图片已经作为多模态附件直接提供给你（本条消息里就能看到），请直接阅读图片内容回答；不要调用 image.understand。\n" if images_attached else "- 理解图片：调用 image.understand，在 payload 里设 image_url 为下方 URL，prompt 为用户的要求。\n")
-                + "- 理解视频：调用 video.understand，在 payload 里设 video_url 为下方 URL，prompt 为用户的要求。\n"
+                "- 理解图片：调用 image.understand，在 payload 里设 image_url 为下方 URL，prompt 为用户的要求。\n"
+                "- 理解视频：调用 video.understand，在 payload 里设 video_url 为下方 URL，prompt 为用户的要求。\n"
             )
             user_content += "\n".join(f"- asset_id: {aid}  URL: {u}" for aid, u in pairs)
-    explicit_image_urls = [
-        str(u).strip()
-        for u in (getattr(payload, "attachment_image_urls", None) or [])[:_MAX_VIDEO_IMAGE_ATTACHMENTS]
-        if isinstance(u, str) and str(u).strip().startswith(("http://", "https://"))
-    ]
-    explicit_image_urls = [u for u in dict.fromkeys(explicit_image_urls) if u]
-    if explicit_image_urls:
-        logger.info("[CHAT] 注入显式附件图片 %d 张", len(explicit_image_urls))
-        user_content += (
-            "\n\n【用户从消息里上传的素材】\n"
-            + ("- 理解图片：图片已经作为多模态附件直接提供给你（本条消息里就能看到），请直接阅读图片内容回答；不要调用 image.understand。\n"
-               if images_attached
-               else "- 理解图片：调用 image.understand，在 payload 里设 image_url 为下方 URL，prompt 为用户的要求。\n")
-        )
-        user_content += "\n".join(
-            f"- asset_id: mobile_upload_{idx + 1}  media_type: image  URL: {u}"
-            for idx, u in enumerate(explicit_image_urls)
-        )
-
     return user_content or "（无文字）"
-
-
-_IMAGE_ATTACHMENT_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif", ".avif")
-
-
-def _looks_like_image_attachment_url(url: str) -> bool:
-    """判断附件 URL 是不是图片（视频/音频不进多模态 part）。"""
-    u = str(url or "").strip().lower()
-    if not u:
-        return False
-    if u.startswith("data:image/"):
-        return True
-    if not u.startswith(("http://", "https://")):
-        return False
-    path = u.split("?", 1)[0].split("#", 1)[0]
-    return path.endswith(_IMAGE_ATTACHMENT_SUFFIXES)
-
-
-def _messages_have_image_parts(messages: Any) -> bool:
-    """消息里是否已经带了多模态图片 part（用于放宽 LLM 超时 / 封顶工具轮数）。"""
-    if not isinstance(messages, list):
-        return False
-    for m in messages:
-        if not isinstance(m, dict):
-            continue
-        content = m.get("content")
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if isinstance(part, dict) and part.get("type") in {"image_url", "image"}:
-                return True
-    return False
-
-
-def _attachment_image_urls_for_turn(
-    payload: ChatRequest,
-    request: Optional[Request] = None,
-    db=None,
-    user_id: Optional[int] = None,
-) -> List[str]:
-    """本轮用户消息里的图片附件 URL（显式 URL + 素材 ID 解析），只保留图片。"""
-    urls: List[str] = []
-    for u in _get_attachment_public_urls(payload, request, db=db, user_id=user_id):
-        s = str(u or "").strip()
-        if s and _looks_like_image_attachment_url(s) and s not in urls:
-            urls.append(s)
-    return urls[:_MAX_VIDEO_IMAGE_ATTACHMENTS]
-
-
-def _build_user_message_with_attachments(
-    payload: ChatRequest,
-    request: Optional[Request] = None,
-    db=None,
-    user_id: Optional[int] = None,
-) -> Dict[str, Any]:
-    """组装本轮 user 消息：有图片附件时直接给多模态 content（text + image_url parts）。
-
-    背景（2026-10-16）：附件以前只以“文本行 URL”进 messages，指望模型自己调 image.understand；
-    2026-09-10 主模型换成 deepseek-flash 之后这一步不再稳定触发，模型会回“没收到图片”。
-    把图作为多模态 part 直接交给模型，服务端代理会识别 has_images 并自动选支持 image_url 的视觉模型。
-    """
-    image_urls = _attachment_image_urls_for_turn(payload, request, db=db, user_id=user_id)
-    text_content = _build_user_content_with_attachments(
-        payload, request, db=db, user_id=user_id, images_attached=bool(image_urls)
-    )
-    if not image_urls:
-        return {"role": "user", "content": text_content}
-    logger.info("[CHAT] 本轮注入多模态图片 %d 张（Online 附件 image_url 直给模型）", len(image_urls))
-    content: List[Dict[str, Any]] = [{"type": "text", "text": text_content}]
-    content.extend({"type": "image_url", "image_url": {"url": u}} for u in image_urls)
-    return {"role": "user", "content": content}
 
 
 def _get_attachment_public_urls(
@@ -2414,7 +2319,7 @@ async def chat_endpoint(
             messages.append({"role": m.role, "content": content})
     if len(messages) > MAX_HISTORY + 1:
         messages = [messages[0]] + messages[-MAX_HISTORY:]
-    messages.append(_build_user_message_with_attachments(payload, request, db=db, user_id=current_user.id))
+    messages.append({"role": "user", "content": _build_user_content_with_attachments(payload, request, db=db, user_id=current_user.id)})
 
     attachment_urls = _get_attachment_public_urls(payload, request, db=db, user_id=current_user.id)
     db.commit()
@@ -2603,9 +2508,12 @@ async def _chat_stream_events(
         stream_attachment_urls: List[str] = []
         try:
             messages.append(
-                _build_user_message_with_attachments(
-                    payload, _request_for_assets, db=db, user_id=user_id
-                )
+                {
+                    "role": "user",
+                    "content": _build_user_content_with_attachments(
+                        payload, _request_for_assets, db=db, user_id=user_id
+                    ),
+                }
             )
             stream_attachment_urls = _get_attachment_public_urls(
                 payload, _request_for_assets, db=db, user_id=user_id
