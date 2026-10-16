@@ -11068,14 +11068,19 @@ async function api(path, options = {}) {
       const url = assetPrimaryMediaUrl(asset);
       const type = designerMediaType(asset);
       if (!url) return `<div class="asset-preview-large asset-preview-large-empty">暂无可预览文件</div>`;
-      const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, asset && asset.filename || "asset"));
+      // 2026-10-16：播放/预览一律「公开 https 直链优先」——浏览器自己解析域名直连，
+      // 不让厂商域名卡在服务端代理的 SSRF 校验（腾讯云 COS 桶域名在生产机解析成 169.254.x
+      // 的云内网回源地址，会被判成内网链接返 400，表现就是「无法预览和播放」）；
+      // 直链播不了（网络/许可证）再回退同源代理。
+      const filename = filenameFromUrl(url, (asset && asset.filename) || "asset");
       if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
+        const source = libraryMediaSource(url, filename);
         const posterUrl = assetThumbnailUrl(asset);
         const poster = posterUrl ? ` poster="${escapeHtml(mediaProxyUrl(posterUrl, "inline", filenameFromUrl(posterUrl, "video-cover")))}"` : "";
-        return `<video class="asset-preview-large" src="${escapeHtml(videoFirstFrameUrl(src))}"${poster} controls playsinline preload="metadata"></video>`;
+        return `<video class="asset-preview-large" src="${escapeHtml(videoFirstFrameUrl(source.src))}"${libraryMediaFallbackAttr(source)}${poster} controls playsinline preload="metadata"></video>`;
       }
       if (type === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) {
-        return `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
+        return `<img class="asset-preview-large" ${libraryMediaSourceHtml(url, filename)} alt="">`;
       }
       return `<div class="asset-preview-large asset-preview-large-empty">${escapeHtml(type || "文件")}</div>`;
     }
@@ -11328,7 +11333,7 @@ async function api(path, options = {}) {
         ${row.asset_id ? `<div><span>ID</span><strong>${escapeHtml(String(row.asset_id))}</strong></div>` : ""}
       </div>`;
       const cover = kind === "ppt" && coverUrl
-        ? `<img class="asset-preview-large content-record-cover" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "cover")))}" alt="">`
+        ? `<img class="asset-preview-large content-record-cover" ${libraryMediaSourceHtml(coverUrl, filenameFromUrl(coverUrl, "cover"))} alt="">`
         : (kind === "ppt" ? `<div class="asset-preview-large asset-preview-large-empty content-record-file-mark">PPT</div>` : "");
       const summary = String(row.summary || "").trim();
       const content = String(row.content || row.text || row.prompt || "").trim();
@@ -11420,7 +11425,7 @@ async function api(path, options = {}) {
         const coverUrl = imageUrls[0] || "";
         const fileUrl = String(asset.file_url || asset.source_url || "").trim();
         const cover = kind === "ppt" && coverUrl
-          ? `<img class="asset-preview-large content-record-cover" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "cover")))}" alt="">`
+          ? `<img class="asset-preview-large content-record-cover" ${libraryMediaSourceHtml(coverUrl, filenameFromUrl(coverUrl, "cover"))} alt="">`
           : (kind === "ppt" ? `<div class="asset-preview-large asset-preview-large-empty content-record-file-mark">PPT</div>` : "");
         const summary = String(asset.summary || "").trim();
         const content = String(asset.content || "").trim();
@@ -11493,14 +11498,13 @@ async function api(path, options = {}) {
       const coverUrl = isVoice ? "" : assetThumbnailUrl(row);
       let preview = `<div class="asset-preview-large asset-preview-large-empty">${isVoice ? "暂无试听" : "暂无预览"}</div>`;
       if (mediaUrl) {
-        const src = mediaProxyUrl(mediaUrl, "inline", filenameFromUrl(mediaUrl, isVoice ? "voice.mp3" : "avatar"));
         if (isVoice) {
           preview = `<audio class="asset-preview-audio" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "voice.mp3"))} controls></audio>`;
         } else if (mediaType === "video") {
           const poster = coverUrl ? ` poster="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "avatar-cover")))}"` : "";
           preview = `<video class="asset-preview-large" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "avatar"))}${poster} controls playsinline preload="metadata"></video>`;
         } else {
-          preview = `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
+          preview = `<img class="asset-preview-large" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "avatar"))} alt="">`;
         }
       }
       const deleteActions = source === "hifly" || (source === "shanjian" && !isVoice)
