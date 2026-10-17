@@ -861,34 +861,43 @@ def admin_add_credits(
     if delta == 0:
         raise HTTPException(status_code=400, detail="积分数量不能为 0")
 
+    new_credits = old_credits + delta
+    if new_credits < 0:
+        raise HTTPException(status_code=400, detail=f"积分不足，当前 {old_credits}，操作 {delta}")
+
     agent: Optional[User] = None
     agent_old_credits: Optional[Decimal] = None
     agent_new_credits: Optional[Decimal] = None
+    agent_delta: Optional[Decimal] = None
     transfer_id: Optional[str] = None
-    if ctx.role == "agent" and delta > 0:
+    if ctx.role == "agent":
         agent = users_by_id.get(int(ctx.user_id or 0))
         if not agent or not agent.is_agent or user_brand_mark(agent) != ctx.brand_mark:
             raise HTTPException(status_code=401, detail="代理商账号无效")
         if user_brand_mark(user) != ctx.brand_mark or body.user_id not in _agent_visible_user_ids(db, agent.id):
             raise HTTPException(status_code=403, detail="无权操作此用户")
         agent_old_credits = quantize_credits(agent.credits or 0)
-        if agent_old_credits < delta:
+        # 代理商给下级加积分 = 从自己账户划出；从下级扣积分 = 回收进自己账户。
+        # 两个方向都必须落在代理商账户上，否则往下级扣的分会被凭空吞掉。
+        agent_delta = quantize_credits_signed(-delta)
+        agent_new_raw = quantize_credits_signed(agent_old_credits + agent_delta)
+        if agent_new_raw < 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"代理商余额不足，当前余额 {agent_old_credits}，本次需要 {delta}",
+                detail=f"代理商余额不足，当前余额 {agent_old_credits}，本次需要 {-agent_delta}",
             )
-        agent_new_credits = quantize_credits(agent_old_credits - delta)
+        agent_new_credits = quantize_credits(agent_new_raw)
         agent.credits = agent_new_credits
         transfer_id = uuid4().hex
 
-    new_credits = old_credits + delta
-    if new_credits < 0:
-        raise HTTPException(status_code=400, detail=f"积分不足，当前 {old_credits}，操作 {delta}")
     user.credits = quantize_credits(new_credits)
-    is_agent_transfer = agent is not None and transfer_id is not None
-    entry_type = "agent_transfer_in" if is_agent_transfer else ("recharge" if delta > 0 else "admin_deduct")
+    is_agent_transfer = agent is not None and transfer_id is not None and agent_delta is not None
+    if is_agent_transfer:
+        entry_type = "agent_transfer_in" if agent_delta < 0 else "agent_transfer_out"
+    else:
+        entry_type = "recharge" if delta > 0 else "admin_deduct"
     default_description = (
-        "代理商划转积分"
+        ("代理商划转积分" if agent_delta < 0 else "代理商回收积分")
         if is_agent_transfer
         else ("管理员手动加积分" if delta > 0 else "管理员手动扣减积分")
     )
@@ -905,23 +914,31 @@ def admin_add_credits(
         ref_id=transfer_id,
         meta={
             "source": "agent_panel" if is_agent_transfer else "admin_panel",
-            "admin_action": "transfer_in" if is_agent_transfer else ("add" if delta > 0 else "deduct"),
+            "admin_action": (
+                ("transfer_in" if delta > 0 else "transfer_out")
+                if is_agent_transfer
+                else ("add" if delta > 0 else "deduct")
+            ),
             **({"agent_user_id": agent.id, "transfer_id": transfer_id} if is_agent_transfer and agent else {}),
         },
     )
-    if is_agent_transfer and agent and agent_new_credits is not None:
+    if is_agent_transfer and agent and agent_new_credits is not None and agent_delta is not None:
         append_credit_ledger(
             db,
             agent.id,
-            -delta,
-            "agent_transfer_out",
+            agent_delta,
+            "agent_transfer_out" if agent_delta < 0 else "agent_transfer_in",
             agent_new_credits,
-            description=f"向下级用户 {unscoped_account_email(user.email)} 划转积分"[:200],
+            description=(
+                f"向下级用户 {unscoped_account_email(user.email)} 划转积分"
+                if agent_delta < 0
+                else f"从下级用户 {unscoped_account_email(user.email)} 回收积分"
+            )[:200],
             ref_type="agent_transfer",
             ref_id=transfer_id,
             meta={
                 "source": "agent_panel",
-                "admin_action": "transfer_out",
+                "admin_action": "transfer_out" if agent_delta < 0 else "transfer_back",
                 "target_user_id": user.id,
                 "transfer_id": transfer_id,
             },

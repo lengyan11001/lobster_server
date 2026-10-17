@@ -428,6 +428,75 @@ def test_agent_credit_addition_transfers_from_agent_balance(db_session_factory, 
         assert session.query(CreditLedger).count() == 2
 
 
+def test_agent_credit_deduction_returns_credits_to_agent_balance(db_session_factory, db_session):
+    agent = User(
+        email="agent-deduct@test.local",
+        hashed_password="x",
+        credits=Decimal("40.0000"),
+        role="user",
+        preferred_model="sutui",
+        is_agent=True,
+        agent_level=1,
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(agent)
+    db_session.commit()
+    db_session.refresh(agent)
+    child = User(
+        email="agent-deduct-child@test.local",
+        hashed_password="x",
+        credits=Decimal("70.0000"),
+        role="user",
+        preferred_model="sutui",
+        parent_user_id=agent.id,
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(child)
+    db_session.commit()
+    db_session.refresh(child)
+
+    client = _client_for_admin_context(
+        db_session_factory,
+        admin_api.AdminContext(role="agent", user_id=agent.id, brand_mark="daka"),
+    )
+    response = client.post(
+        "/admin/api/add-credits",
+        json={"user_id": child.id, "amount": -60, "description": "代理商回收积分"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["old_credits"] == 70.0
+    assert data["new_credits"] == 10.0
+    assert data["agent_old_credits"] == 40.0
+    assert data["agent_new_credits"] == 100.0
+    assert data["transfer_id"]
+
+    with db_session_factory() as session:
+        assert session.get(User, agent.id).credits == Decimal("100.0000")
+        assert session.get(User, child.id).credits == Decimal("10.0000")
+        ledger = session.query(CreditLedger).filter(CreditLedger.ref_id == data["transfer_id"]).all()
+        assert len(ledger) == 2
+        by_user = {row.user_id: row for row in ledger}
+        assert by_user[agent.id].entry_type == "agent_transfer_in"
+        assert by_user[agent.id].delta == Decimal("60.0000")
+        assert by_user[agent.id].balance_after == Decimal("100.0000")
+        assert by_user[child.id].entry_type == "agent_transfer_out"
+        assert by_user[child.id].delta == Decimal("-60.0000")
+
+    too_much = client.post(
+        "/admin/api/add-credits",
+        json={"user_id": child.id, "amount": -1000, "description": "超额抵扣"},
+    )
+    assert too_much.status_code == 400
+    assert "积分不足" in too_much.json()["detail"]
+    with db_session_factory() as session:
+        assert session.get(User, agent.id).credits == Decimal("100.0000")
+        assert session.get(User, child.id).credits == Decimal("10.0000")
+
+
 def test_agent_can_reset_managed_user_password_only(db_session_factory, db_session):
     from backend.app.api.auth import verify_password
 
