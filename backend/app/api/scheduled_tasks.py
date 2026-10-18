@@ -714,6 +714,43 @@ def _normalize_sales_digital_human_run_payload(
     return source
 
 
+# ── 朋友圈图文/口播任务类型归一（2026-10-18）──────────────────────────────
+# 背景：H5 / 管理后台编辑器把「朋友圈图文」节点存成
+#   task_kind=client_workflow + payload.action=ip_content_moments
+# 客户端没有这个动作，于是一直报「暂不支持的客户端工作流：ip_content_moments」。
+# 朋友圈图文/口播本质是 **服务端** 任务 ip_content_daily（服务端生成内容后再下发发布），
+# 这里在下发/保存前归一，历史坏数据不逐条改也能恢复。
+_IP_CONTENT_CLIENT_ACTIONS: Dict[str, list[str]] = {
+    "ip_content_moments": ["moments_candidate"],
+    "ip_content_oral": ["industry_hot_oral", "professional_ip_oral"],
+    "ip_content_daily": ["industry_hot_oral", "professional_ip_oral", "moments_candidate"],
+}
+_IP_CONTENT_ALLOWED_TASKS = {"industry_hot_oral", "professional_ip_oral", "moments_candidate"}
+
+
+def normalize_ip_content_client_workflow(
+    task_kind: Any, payload: Any
+) -> "tuple[str, Dict[str, Any], bool]":
+    """把 client_workflow + action=ip_content_* 归一成服务端任务 ip_content_daily。
+
+    返回 (task_kind, payload, changed)。只动写坏的那种，正常数据原样返回。
+    """
+    kind = str(task_kind or "").strip().lower()
+    data = dict(payload or {}) if isinstance(payload, dict) else {}
+    if kind != "client_workflow":
+        return kind, data, False
+    action = str(data.get("action") or "").strip().lower()
+    if action not in _IP_CONTENT_CLIENT_ACTIONS:
+        return kind, data, False
+    tasks = [
+        str(item).strip()
+        for item in (data.get("tasks") if isinstance(data.get("tasks"), list) else [])
+        if str(item).strip() in _IP_CONTENT_ALLOWED_TASKS
+    ]
+    data.pop("action", None)
+    data["tasks"] = tasks or list(_IP_CONTENT_CLIENT_ACTIONS[action])
+    return "ip_content_daily", data, True
+
 # ── 抖音获客任务类型归一（2026-09-20）──────────────────────────────────────────
 # 背景：H5 编辑器把抖音节点的 plan 存成 task_kind=client_workflow + action=douyin_leads，
 # 而客户端只认顶层 task_kind=douyin_leads（子动作放 payload.action），09-16 起 851 个任务
@@ -887,6 +924,13 @@ def normalize_workflow_nodes_for_save(nodes: Any) -> "tuple":
                 if changed:
                     plan["task_kind"] = new_kind
                     plan["payload"] = new_payload
+                    fixed += 1
+                ip_kind, ip_payload, ip_changed = normalize_ip_content_client_workflow(
+                    plan.get("task_kind") or kind, plan.get("payload") or payload
+                )
+                if ip_changed:
+                    plan["task_kind"] = ip_kind
+                    plan["payload"] = ip_payload
                     fixed += 1
             fixed += _fix(node.get("actions"))
             fixed += _fix(node.get("children"))
@@ -3898,6 +3942,7 @@ def _create_run_for_target(
     scheduled_at: Optional[datetime] = None,
 ) -> ScheduledTaskRun:
     run_payload = _run_payload_for_task(db, task, now)
+    run_kind, run_payload, _ip_content_fixed = normalize_ip_content_client_workflow(task.task_kind, run_payload)
     run_payload = _materialize_workflow_node_window(run_payload, scheduled_at=scheduled_at or now)
     effective_deadline, parent_finished_at = _workflow_effective_deadline(
         db,
@@ -3927,7 +3972,7 @@ def _create_run_for_target(
         created_by_role=task.created_by_role,
         installation_id=installation_id,
         title=task.title,
-        task_kind=task.task_kind,
+        task_kind=run_kind,
         content=task.content,
         payload=run_payload,
         status="pending",
@@ -5332,6 +5377,7 @@ def _create_task_row(
         payload=dict(payload),
         target_user_id=target_user_id,
     )
+    task_kind, payload, _ip_content_fixed = normalize_ip_content_client_workflow(task_kind, payload)
     if task_kind == "linkedin_mining":
         payload = _enrich_linkedin_mining_keywords(
             db,
