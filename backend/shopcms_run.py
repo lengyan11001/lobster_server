@@ -29,7 +29,7 @@ app.include_router(cms_router)
 @app.get("/p/{product_id}")
 def product_page(product_id: int) -> FileResponse:
     """商品落地页（推广链接指向这里）。"""
-    return FileResponse(str(STATIC / "index.html"))
+    return FileResponse(str(STATIC / "p_preview.html"))
 
 
 UPLOADS = ROOT / "shop_uploads"
