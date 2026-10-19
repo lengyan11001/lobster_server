@@ -18950,6 +18950,34 @@ async function api(path, options = {}) {
       await refreshCaptcha();
     }
 
+    async function renewH5Token() {
+      // H5 之前完全没有续签：token 30 天到期后直接 401 → 强制重新登录。
+      // 这里在启动/回到前台/遇到 401 时静默调 /auth/refresh（jti 不变，服务端滚动 30 天）。
+      const token = String(state.token || localStorage.getItem(H5_TOKEN_KEY) || "").trim();
+      if (!token) return false;
+      try {
+        const resp = await fetch(apiUrl("/auth/refresh"), {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "X-Lobster-Brand": H5_BRAND_MARK,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        });
+        if (!resp.ok) return false;
+        const data = await resp.json().catch(() => ({}));
+        const fresh = String((data && (data.access_token || data.token)) || "").trim();
+        if (!fresh) return false;
+        state.token = fresh;
+        localStorage.setItem(H5_TOKEN_KEY, fresh);
+        if (H5_BRAND_MARK === "bihuo") localStorage.setItem("lobster_h5_token", fresh);
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+
     async function refreshCurrentUser() {
       state.user = await api("/auth/me");
       setH5AuthReady(true);
@@ -18980,14 +19008,26 @@ async function api(path, options = {}) {
     }
 
     async function validateAuthAndBootstrap(options = {}) {
-      try {
-        await refreshCurrentUser();
+      const finish = async () => {
         showAuthenticatedShell({ switchToOffice: options.switchToOffice !== false });
         loadAuthenticatedBootstrapData().catch((err) => {
           console.warn("[h5] bootstrap data preload failed", err);
         });
         return true;
+      };
+      try {
+        if (state.token) await renewH5Token();
+        await refreshCurrentUser();
+        return await finish();
       } catch (err) {
+        if (isAuthFailure(err) && await renewH5Token()) {
+          try {
+            await refreshCurrentUser();
+            return await finish();
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
         if (isAuthFailure(err)) {
           clearStoredAuth();
           if (options.showLoginOnFailure) await showLoginShell();
@@ -19006,6 +19046,14 @@ async function api(path, options = {}) {
         await refreshCurrentUser();
         return true;
       } catch (err) {
+        if (isAuthFailure(err) && await renewH5Token()) {
+          try {
+            await refreshCurrentUser();
+            return true;
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
         if (isAuthFailure(err)) {
           clearStoredAuth();
           await showLoginShell();
