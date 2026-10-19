@@ -1,36 +1,83 @@
 <!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>选品广场 · shop.bhzn.top</title>
+<title>选品广场 · 必火智能</title>
 <link rel="stylesheet" href="/shop.css">
-</head><body data-plaza="1">
-<header><div class="wrap bar">
-  <a class="brand" href="/" data-store-link>选品广场<small>shop.bhzn.top</small></a>
-  <nav><a href="/" data-store-link>店铺首页</a><span id="auth-state" class="auth-state"></span><button class="btn mini line" id="auth-open" type="button" hidden>登录</button><button class="btn mini line" id="auth-logout" type="button" hidden>退出登录</button></nav>
-</div></header>
-<div class="wrap">
-  <section class="hero small"><div class="art"></div><div class="inner">
-    <div class="kicker">PROMOTER PLAZA</div>
-    <h1>选品广场</h1>
-    <p class="lede">在售商品按热度排序，一键生成带你归因参数的推广链接；买家从链接进店下单，佣金按订单实付计。</p>
-  </div></section>
-  <form id="plaza-filter" class="filters">
-    <input id="q" placeholder="搜商品名 / 关键词，例如：苹果">
-    <select id="cat"><option value="">全部类目</option></select>
-    <select id="sort"><option value="heat">按热度</option><option value="new">按最新上架</option></select>
-    <button class="btn" type="submit">筛选</button>
-  </form>
-  <main id="app"></main>
-</div>
-<footer><div class="wrap">
-  <div>© 2026 独立商城 · 由 shop.bhzn.top 提供独立站能力</div>
-  <div>商品图 / 主视觉由 AI 生成通道产出</div>
-</div></footer>
+<link rel="stylesheet" href="/plaza.css?v=20261019-plaza-v1">
+</head><body class="plaza-page" data-plaza="1">
+<header class="plaza-header">
+  <div class="plaza-header-inner">
+    <a class="plaza-brand" href="/plaza.html" aria-label="选品广场首页">
+      <svg viewBox="0 0 100 50" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M30 38C18.954 38 10 29.046 10 18C10 6.954 18.954 -2 30 -2C36.924 -2 43.048 1.545 46.541 6.84L49 10.6L59.459 26.16C62.952 31.455 69.076 35 76 35C87.046 35 96 26.046 96 15C96 3.954 87.046 -5 76 -5C69.076 -5 62.952 -1.545 59.459 3.84" stroke="url(#plaza-logo-a)" stroke-width="14" stroke-linecap="round"/>
+        <path d="M32 36.84C28.507 42.135 22.383 45.68 15.459 45.68C4.413 45.68 -4.541 36.726 -4.541 25.68C-4.541 14.634 4.413 5.68 15.459 5.68C22.383 5.68 28.507 9.225 32 14.52L34.459 18.28L44.918 33.84C48.411 39.135 54.535 42.68 61.459 42.68C72.505 42.68 81.459 33.726 81.459 22.68C81.459 11.634 72.505 2.68 61.459 2.68C54.535 2.68 48.411 6.225 44.918 11.52" stroke="url(#plaza-logo-b)" stroke-width="14" stroke-linecap="round"/>
+        <text x="21" y="24" fill="#f97316" font-family="Arial, sans-serif" font-weight="900" font-size="14" transform="rotate(-18 21 24)">Ai</text>
+        <defs>
+          <linearGradient id="plaza-logo-a" x1="10" y1="18" x2="96" y2="18" gradientUnits="userSpaceOnUse"><stop stop-color="#06b6d4"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+          <linearGradient id="plaza-logo-b" x1="-4" y1="25" x2="81" y2="25" gradientUnits="userSpaceOnUse"><stop stop-color="#3b82f6"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient>
+        </defs>
+      </svg>
+      <span>必火智能</span><span class="plaza-brand-sep">|</span><span class="plaza-brand-sub">选品广场</span>
+    </a>
+    <nav class="plaza-nav" aria-label="选品广场导航">
+      <a href="/plaza.html" class="active">全部商品</a>
+      <a href="#hot">高佣爆款 <span class="hot">HOT</span></a>
+      <a href="#ranking">达人榜单</a>
+    </nav>
+    <div class="plaza-account">
+      <span id="auth-state" class="auth-state"></span>
+      <button class="plaza-auth-btn primary" id="auth-open" type="button"><span class="plaza-avatar">◉</span> 推客中心</button>
+      <button class="plaza-auth-btn" id="auth-logout" type="button" hidden>退出登录</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="plaza-hero">
+    <div class="plaza-hero-inner">
+      <span class="plaza-hero-kicker">Official Dropshipping Platform</span>
+      <h1>海量优质好物，<span class="grad">一键分享赚佣金</span></h1>
+      <p>严选全网高转化爆款，实时同步热度与佣金比例。无需囤货、无需售后，只需一键生成专属推广链接，买家下单即享丰厚分润。</p>
+      <div class="plaza-stats">
+        <div><strong id="plaza-total">10,000+</strong><span>在售商品</span></div>
+        <div><strong id="plaza-max-rate">最高 45%</strong><span>分销佣金</span></div>
+        <div><strong>0 元</strong><span>开店门槛</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="plaza-shell">
+    <form id="plaza-filter" class="plaza-filter">
+      <div class="plaza-search"><span>⌕</span><input id="q" type="search" placeholder="搜索商品名 / 品牌 / 关键词..." autocomplete="off"></div>
+      <div class="divider"></div>
+      <select id="cat" aria-label="商品类目"><option value="">全部类目</option></select>
+      <select id="sort" aria-label="排序方式">
+        <option value="heat">综合排序</option>
+        <option value="new">最新上架</option>
+        <option value="price_asc">价格从低到高</option>
+        <option value="price_desc">价格从高到低</option>
+        <option value="commission">佣金比例优先</option>
+      </select>
+      <button type="submit">查询</button>
+    </form>
+    <div class="plaza-list-head"><h2>为你推荐</h2><span id="plaza-count">正在加载…</span></div>
+    <main id="app" class="plaza-grid" aria-live="polite"></main>
+    <div id="plaza-pager" class="plaza-more"></div>
+  </div>
+</main>
+
+<footer class="plaza-footer">
+  <div class="plaza-footer-inner">
+    <div>© 2026 必火智能 · 选品广场</div>
+    <div>商品图 / 主视觉由 AI 生成通道产出</div>
+  </div>
+</footer>
+
 <div class="modal" id="auth-modal" hidden>
   <div class="modal-mask" data-auth-close="1"></div>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
     <button class="modal-close" type="button" data-auth-close="1" aria-label="关闭">×</button>
-    <h3 id="auth-title">登录</h3>
+    <h3 id="auth-title">登录推客中心</h3>
     <p class="muted auth-lede">登录后一键复制带归因的推广链接；不登录也能看商品、复制普通链接。</p>
     <label class="field"><span>手机号 / 邮箱</span><input id="plaza-acct" autocomplete="username" placeholder="手机号 / 邮箱"></label>
     <label class="field"><span>登录密码</span><input id="plaza-pwd" type="password" autocomplete="current-password" placeholder="登录密码"></label>
@@ -38,5 +85,5 @@
     <div class="tip" id="plaza-login-tip"></div>
   </div>
 </div>
-<script src="/shop-core.js"></script>
+<script src="/shop-core.js?v=20261019-plaza-v1"></script>
 </body></html>

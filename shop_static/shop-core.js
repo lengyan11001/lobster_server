@@ -116,6 +116,13 @@
     var media = img.closest('.pmedia');
     var main = media && media.querySelector('.cover');
     if (main) main.setAttribute('src', img.getAttribute('src'));
+    var thumb = img.closest('.plaza-thumb');
+    var wrap = thumb && thumb.parentNode;
+    if (wrap) {
+      Array.prototype.forEach.call(wrap.querySelectorAll('.plaza-thumb'), function (item) {
+        item.classList.toggle('on', item === thumb);
+      });
+    }
   };
 
   function coverOf(p) {
@@ -360,59 +367,106 @@
         '库存 ' + stock
       ].filter(Boolean).join(' · ');
 
+      var gallery = ((p.listing && p.listing.gallery) || (p.media && p.media.gallery) || []).filter(Boolean);
+      var coverUrl = p.cover_url || (p.listing && p.listing.cover) || gallery[0] || '';
+      if (coverUrl && gallery.indexOf(coverUrl) < 0) gallery.unshift(coverUrl);
+      var shareUrl = p.buy_url || (location.origin + '/p/' + p.id);
+      var storeHref = m.slug ? withRef('/?slug=' + encodeURIComponent(m.slug)) : '';
+      var detail = String(p.detail_html || '');
+      var detailImgs = (p.listing && p.listing.detail_images) || p.detail_images || [];
+      var tb = (p.specs && p.specs._taobao) || {};
+      var skus = Array.isArray(tb.sku) ? tb.sku.filter(function (r) { return r && (r.n || r.p); }) : [];
+      var promises = Array.isArray(tb.promises) ? tb.promises : [];
+      var priceCents = Number(p.price_cents || 0);
+      var marketCents = Number(p.market_price_cents || 0);
+      var commissionCents = Number(p.commission_estimate_cents || 0);
+      var commissionBp = Number(p.commission_bp || 0);
+      var rate = commissionBp > 0 ? (commissionBp / 100).toFixed(commissionBp % 100 === 0 ? 0 : 1) + '%' : '';
+      var saveCents = marketCents > priceCents ? marketCents - priceCents : 0;
+      var tagsHtml = (Array.isArray(p.tags) ? p.tags : []).map(function (t) { return '<span class="plaza-tag">' + esc(t) + '</span>'; }).join('');
+      var promisesHtml = promises.map(function (t) { return '<span class="plaza-promise">' + esc(t) + '</span>'; }).join('');
+      var skuHtml = skus.map(function (r, i) {
+        var cents = Math.round(Number(r.p || 0) * 100);
+        return '<button type="button" class="plaza-sku' + (i === 0 ? ' on' : '') + '" onclick="window.__pickSku(this,' + cents + ')">' +
+          esc(r.n || ('规格 ' + (i + 1))) + (cents > 0 ? ' · ' + yuan(cents) : '') + (r.s ? ' · 库存 ' + esc(r.s) : '') + '</button>';
+      }).join('');
+      var specRows = [];
+      if (p.brand) specRows.push(['品牌', p.brand]);
+      if (p.category) specRows.push(['类目', p.category]);
+      if (p.sales) specRows.push(['销量', Number(p.sales) + ' 件']);
+      if (p.stock) specRows.push(['库存', Number(p.stock) + ' 件']);
+      Object.keys(p.specs || {}).forEach(function (k) {
+        if (k === '_taobao') return;
+        var v = p.specs[k];
+        if (Array.isArray(v)) v = v.join(' / ');
+        else if (v && typeof v === 'object') v = JSON.stringify(v);
+        if (v != null && String(v).trim()) specRows.push([k, String(v)]);
+      });
+      if (tb.shipDays) specRows.push(['发货时效', tb.shipDays]);
+      if (tb.shipping) specRows.push(['发货方式', tb.shipping]);
+      var specsHtml = specRows.length ? specRows.map(function (r) {
+        return '<div class="plaza-spec-row"><dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd></div>';
+      }).join('') : '<div class="plaza-spec-row"><dt>规格参数</dt><dd>商家暂未补充</dd></div>';
+      var detailHtml = detail ? cleanHtml(detail) : (detailImgs.length ? detailImgs.map(function (u) {
+        return '<img src="' + attr(u) + '" alt="" loading="lazy">';
+      }).join('') : '<div class="plaza-empty"><strong>商家暂未上传图文详情</strong><span>可以先看上方商品主图</span></div>');
+      var thumbsHtml = gallery.slice(0, 4).map(function (u, i) {
+        return '<button type="button" class="plaza-thumb' + (i === 0 ? ' on' : '') + '" onclick="window.__pickThumbImg(this.querySelector(&#39;img&#39;))"><img src="' + attr(u) + '" alt="" loading="lazy"></button>';
+      }).join('');
+      if (p.media && p.media.video) {
+        thumbsHtml += '<button type="button" class="plaza-thumb plaza-video-thumb" title="商品视频"><img src="' + attr(coverUrl) + '" alt=""><span>▶</span></button>';
+      }
+      var metaHtml = [
+        p.brand ? '<span>品牌 <strong>' + esc(p.brand) + '</strong></span>' : '',
+        p.category ? '<span>类目 <strong>' + esc(p.category) + '</strong></span>' : '',
+        '<span>销量 <strong>' + Number(p.sales || 0) + '</strong></span>',
+        '<span>库存 <strong>' + Number(p.stock || 0) + '</strong></span>'
+      ].filter(Boolean).join('');
+
       root.innerHTML = [
-        '<nav class="crumb">',
-        storeHref ? '<a href="' + attr(storeHref) + '">' + esc(m.company_name || p.title || '店铺') + '</a>' : esc(m.company_name || '独立商城'),
-        ' / <span>' + esc(p.title || '') + '</span></nav>',
-        '<div class="pwrap">',
-        '<div class="pmedia">' + coverOf(p),
-        gallery.length > 1 ? '<div class="thumbs">' + gallery.slice(0, 6).map(function (u) { return '<img src="' + attr(u) + '" alt="" loading="lazy" onclick="window.__pickThumbImg(this)">'; }).join('') + '</div>' : '',
-        (p.media && p.media.video) ? '<div class="ph"><span>商品视频位</span><span>' + attr(p.media.video) + '</span></div>' : '',
+        '<div class="plaza-detail-wrap">',
+        '<nav class="plaza-crumb"><a href="/plaza.html">首页</a><span class="sep">/</span>',
+        storeHref ? '<a href="' + attr(storeHref) + '">' + esc(m.company_name || '商家店铺') + '</a>' : '<span>独立商城</span>',
+        '<span class="sep">/</span><span class="current">' + esc(p.title || '商品详情') + '</span></nav>',
+        '<div class="plaza-detail-layout">',
+        '<section class="plaza-gallery pmedia">',
+        '<div class="plaza-main-image">' + (coverUrl ? '<img class="cover" src="' + attr(coverUrl) + '" alt="' + attr(p.title) + '">' : placeholder('商品主图位', 'cover_url')) + '</div>',
+        '<div class="plaza-thumbs">' + thumbsHtml + '</div>',
+        '</section>',
+        '<section class="plaza-info pinfo">',
+        '<h1 class="plaza-detail-title">' + esc(p.title || '') + '</h1>',
+        p.subtitle ? '<p class="plaza-detail-sub">' + esc(p.subtitle) + '</p>' : '',
+        '<div class="plaza-tags">' + tagsHtml + '</div>',
+        '<div class="plaza-price-panel">',
+        '<div class="plaza-price-line"><strong class="price plaza-price-value"><small>¥</small>' + (priceCents / 100).toFixed(priceCents % 100 === 0 ? 0 : 2) + '</strong>' +
+        (marketCents > priceCents ? '<s>' + yuan(marketCents) + '</s><span class="save">立省 ' + yuan(saveCents) + '</span>' : '') + '</div>',
+        (commissionCents > 0 || rate) ? '<div class="plaza-commission-row">预计佣金 <b>' + yuan(commissionCents) + '</b><span>佣金率 ' + rate + '</span></div>' : '',
         '</div>',
-        '<div class="pinfo">',
-        '<h1>' + esc(p.title || '') + '</h1>',
-        p.subtitle ? '<p class="sub">' + esc(p.subtitle) + '</p>' : '',
-        chips(p.tags),
-        priceLine(p, true),
-        '<div class="meta">' + meta + '</div>',
-        commissionLine(p),
-        (function () {
-          var tb = (p.specs && p.specs._taobao) || {};
-          var skus = Array.isArray(tb.sku) ? tb.sku.filter(function (r) { return r && (r.n || r.p); }) : [];
-          var promises = Array.isArray(tb.promises) ? tb.promises : [];
-          var out = [];
-          if (skus.length) {
-            out.push('<div class="skus"><div class="muted">\u9009\u62e9\u89c4\u683c</div>' + skus.map(function (r, i) {
-              var cents = Math.round(Number(r.p || 0) * 100);
-              return '<button type="button" class="sku' + (i === 0 ? ' on' : '') + '" data-old="' + cents + '" onclick="window.__pickSku(this,' + cents + ')">' +
-                esc(r.n || ('\u89c4\u683c ' + (i + 1))) + (cents > 0 ? ' \u00b7 ' + yuan(cents) : '') +
-                (r.s ? ' \u00b7 \u5e93\u5b58 ' + esc(r.s) : '') + '</button>';
-            }).join('') + '</div>');
-          }
-          if (promises.length) {
-            out.push('<div class="promises">' + promises.map(function (t) { return '<span class="badge">' + esc(t) + '</span>'; }).join('') + '</div>');
-          }
-          var ship = [tb.shipDays, tb.shipping].filter(Boolean).join(' \u00b7 ');
-          if (ship) out.push('<div class="ship">' + esc(ship) + '</div>');
-          return out.join('');
-        })(),
-        m.company_name ? '<div class="merchant">商家 ' + esc(m.company_name) + (storeHref ? ' · <a href="' + attr(storeHref) + '">进店逛逛</a>' : '') + '</div>' : '',
-        '<form id="order-form" class="order">',
-        '<div class="row"><label for="qty">数量</label><input id="qty" type="number" min="1" max="' + Math.max(1, stock) + '" value="1"></div>',
-        '<div class="row"><label for="buyer_name">收货人</label><input id="buyer_name" maxlength="64" placeholder="姓名"></div>',
-        '<div class="row"><label for="buyer_phone">手机号</label><input id="buyer_phone" maxlength="32" placeholder="用于联系发货"></div>',
-        '<div class="row"><label for="buyer_address">收货地址</label><textarea id="buyer_address" rows="2" maxlength="300" placeholder="省 / 市 / 区 + 详细地址"></textarea></div>',
-        '<div class="row"><label for="buyer_remark">备注</label><input id="buyer_remark" maxlength="300" placeholder="选填"></div>',
-        '<button class="btn" id="submit-order" type="submit"' + (stock <= 0 ? ' disabled' : '') + '>' + (stock <= 0 ? '暂时缺货' : '立即下单') + '</button>',
-        '<div class="tip" id="order-tip">当前为到付 / 线下下单通道，提交后商家会联系你确认发货。</div>',
-        '</form>',
-        '<div class="share"><button class="btn line" id="copy-link" type="button">复制商品链接</button><span class="muted" id="share-url">' + esc(shareUrl) + '</span></div>',
-        '</div></div>',
-        '<section class="detail"><div class="title"><h2>商品详情</h2><span>Detail</span></div>',
-        (p.specs && Object.keys(p.specs).length) ? '<h3>规格参数</h3>' + specsTable(p.specs) : '',
-        detail ? '<div class="detail-html">' + cleanHtml(detail) + '</div>'
-          : '<div class="grid2"><div class="ph tall"><span>商品详情长图位</span><span>detail_html</span></div><div class="ph tall"><span>产地 / 工艺实拍位</span><span>gallery</span></div></div>',
-        '</section>'
+        '<div class="plaza-detail-meta">' + metaHtml + '</div>',
+        skuHtml ? '<div class="plaza-skus">' + skuHtml + '</div>' : '',
+        promisesHtml ? '<div class="plaza-promises">' + promisesHtml + '</div>' : '',
+        (m.company_name) ? '<div class="plaza-merchant">商家 <span>' + esc(m.company_name) + '</span>' + (storeHref ? '<a href="' + attr(storeHref) + '">进店逛逛</a>' : '') + '</div>' : '',
+        '<div class="plaza-order-card">',
+        '<form id="order-form">',
+        '<div class="plaza-order-row"><label for="qty">数量</label><div class="plaza-qty"><button type="button" id="qtyMinus" aria-label="减少数量">−</button><input id="qty" type="number" min="1" max="' + Math.max(1, Number(p.stock || 0)) + '" value="1"><button type="button" id="qtyPlus" aria-label="增加数量">＋</button></div></div>',
+        '<div class="plaza-order-row"><label for="buyer_name">收货人</label><input id="buyer_name" maxlength="64" placeholder="姓名"></div>',
+        '<div class="plaza-order-row"><label for="buyer_phone">手机号</label><input id="buyer_phone" maxlength="32" placeholder="用于联系发货"></div>',
+        '<div class="plaza-order-row"><label for="buyer_address">收货地址</label><textarea id="buyer_address" rows="2" maxlength="300" placeholder="省 / 市 / 区 + 详细地址"></textarea></div>',
+        '<div class="plaza-order-row"><label for="buyer_remark">备注</label><input id="buyer_remark" maxlength="300" placeholder="选填"></div>',
+        '<button type="submit" class="plaza-order-submit" id="submit-order"' + (Number(p.stock || 0) <= 0 ? ' disabled' : '') + '>' + (Number(p.stock || 0) <= 0 ? '暂时缺货' : '立即下单') + '</button>',
+        '<p class="plaza-order-tip" id="order-tip">当前为到付 / 线下下单通道，提交后商家会联系你确认发货。</p>',
+        '</form></div>',
+        '<div class="plaza-share"><button type="button" id="copy-link">复制商品链接</button><span id="share-url">' + esc(shareUrl) + '</span></div>',
+        '</section></div>',
+        '<div class="plaza-detail-sections"><section class="plaza-section">',
+        '<div class="plaza-section-head"><h2>商品详情</h2><span>Product Details</span></div>',
+        '<div class="plaza-subhead">规格参数</div>',
+        '<dl class="plaza-spec-grid">' + specsHtml + '</dl>',
+        '<div class="plaza-subhead">图文详情</div>',
+        '<div class="plaza-rich">' + detailHtml + '</div>',
+        '</section></div>',
+        '<div class="plaza-trust"><div><b>平台担保</b>订单由选品广场承接</div><div><b>7 天无理由</b>不影响二次销售可退</div><div><b>到付 / 线下</b>商家联系确认发货</div><div><b>佣金透明</b>推广者按订单实付计佣</div></div>',
+        '</div>'
       ].join('');
 
       Array.prototype.forEach.call(document.querySelectorAll('[data-store-link]'), function (el) {
@@ -432,6 +486,17 @@
           setTimeout(function () { copyBtn.textContent = '复制商品链接'; }, 1500);
         });
       }
+      var qtyInput = $('#qty', root);
+      var qtyMinus = $('#qtyMinus', root);
+      var qtyPlus = $('#qtyPlus', root);
+      function adjustQty(delta) {
+        if (!qtyInput) return;
+        var max = Math.max(1, Number(qtyInput.getAttribute('max') || 1));
+        var next = Math.max(1, Math.min(max, (parseInt(qtyInput.value, 10) || 1) + delta));
+        qtyInput.value = String(next);
+      }
+      if (qtyMinus) qtyMinus.addEventListener('click', function () { adjustQty(-1); });
+      if (qtyPlus) qtyPlus.addEventListener('click', function () { adjustQty(1); });
       var form = $('#order-form', root);
       if (form) {
         form.addEventListener('submit', function (ev) {
@@ -455,13 +520,13 @@
           tip.textContent = '正在提交订单…';
           api('/api/shop/orders', { method: 'POST', body: JSON.stringify(body) }).then(function (res) {
             document.body.dataset.lastOrder = JSON.stringify(res);
-            tip.className = 'tip ok';
+            tip.className = 'plaza-card-tip ok';
             tip.innerHTML = '下单成功 · 订单号 <b>' + esc(res.order_no) + '</b> · 应付 ' + yuan(res.pay_amount_cents)
               + (Number(res.commission_cents || 0) > 0 ? ' · 本单佣金 ' + yuan(res.commission_cents) : '');
             btn.disabled = false;
           }).catch(function (e) {
             document.body.dataset.lastOrderError = e.message;
-            tip.className = 'tip err';
+            tip.className = 'plaza-card-tip err';
             tip.textContent = '下单失败：' + e.message + (/authenticat|401|凭证/i.test(e.message) ? ' —— 该接口要求登录态，请先登录后重试。' : '');
             btn.disabled = false;
           });
@@ -526,41 +591,79 @@
     if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
     return Promise.reject(new Error('clipboard unavailable'));
   }
-  var state = { keyword: '', category: '', sort: 'heat', page: 1, size: 24 };
+  var state = { keyword: '', category: '', sort: 'heat', page: 1, size: 32, loaded: 0, maxBp: 0, categories: [] };
+
+  function plazaPrice(cents) {
+    return F.yuan(cents).replace('¥', '');
+  }
+
+  function plazaBadge(p) {
+    var tags = Array.isArray(p.tags) ? p.tags.join(',') : String(p.tags || '');
+    if (/热卖|热销|爆款|榜/.test(tags) || Number(p.sales || 0) >= 100) {
+      return '<span class="plaza-card-badge">热销榜</span>';
+    }
+    if (Number(p.commission_bp || 0) >= 1500) {
+      return '<span class="plaza-card-badge blue">高佣</span>';
+    }
+    return '';
+  }
 
   function plazaCard(p) {
+    var id = F.esc(p.id);
+    var market = Number(p.market_price_cents || 0) > Number(p.price_cents || 0)
+      ? '<s>' + F.yuan(p.market_price_cents) + '</s>' : '';
+    var rate = Number(p.commission_bp || 0)
+      ? (Number(p.commission_bp) / 100).toFixed(Number(p.commission_bp) % 100 === 0 ? 0 : 1) + '%'
+      : '';
+    var earn = Number(p.commission_estimate_cents || 0) ? F.yuan(p.commission_estimate_cents) : '';
+    var subtitle = p.subtitle || (p.merchant && p.merchant.company_name) || p.category || '';
     return [
-      '<div class="card plaza" data-product="' + F.esc(p.id) + '">',
+      '<article class="plaza-card" data-product="' + id + '">',
+      '<div class="plaza-card-media">',
       F.coverOf(p),
-      '<div class="body">',
-      '<div class="name">' + F.esc(p.title) + '</div>',
-      p.subtitle ? '<div class="desc">' + F.esc(p.subtitle) + '</div>' : '',
-      F.priceLine(p),
-      F.commissionLine(p),
-      p.merchant ? '<div class="desc">' + F.esc(p.merchant.company_name || '') + (p.category ? ' · ' + F.esc(p.category) : '') + '</div>' : '',
-      '<div class="acts">',
-      '<button class="btn copy" type="button" data-copy="' + F.esc(p.id) + '">一键复制推广链接</button>',
-      '<a class="btn line" href="' + F.attr(F.withRef('/p/' + p.id)) + '">预览商品页</a>',
+      '<div class="plaza-card-badges">' + plazaBadge(p) + '</div>',
+      '<div class="plaza-card-overlay"><button type="button" data-copy="' + id + '">获取推广链接</button></div>',
       '</div>',
-      '<div class="tip" data-tip="' + F.esc(p.id) + '"></div>',
-      '</div></div>'
+      '<div class="plaza-card-body">',
+      '<h4 class="plaza-card-title">' + F.esc(p.title || '') + '</h4>',
+      '<p class="plaza-card-sub">' + F.esc(subtitle) + '</p>',
+      '<div class="plaza-card-foot">',
+      '<div class="plaza-card-price"><div class="plaza-card-price-label">买家到手价</div>',
+      '<div class="plaza-card-price-line"><strong><small>¥</small>' + plazaPrice(p.price_cents) + '</strong>' + market + '</div></div>',
+      '<div class="plaza-card-commission">' + (rate ? '<span class="plaza-card-rate">佣金 ' + rate + '</span>' : '') +
+      (earn ? '<span class="plaza-card-earn">赚 ' + earn + '</span>' : '') + '</div>',
+      '</div>',
+      '<div class="plaza-card-tip" data-tip="' + id + '"></div>',
+      '</div></article>'
     ].join('');
+  }
+
+  function bindPlazaCards(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('[data-product]'), function (card) {
+      if (card.dataset.plazaBound === '1') return;
+      card.dataset.plazaBound = '1';
+      card.addEventListener('click', function (ev) {
+        if (ev.target.closest('[data-copy]')) return;
+        location.href = F.withRef('/p/' + card.getAttribute('data-product'));
+      });
+    });
   }
 
   function bindCopy(root) {
     Array.prototype.forEach.call(root.querySelectorAll('[data-copy]'), function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', function (event) {
+        if (event) { event.preventDefault(); event.stopPropagation(); }
         var pid = btn.getAttribute('data-copy');
         var tip = root.querySelector('[data-tip="' + pid + '"]');
         var plain = location.origin + '/p/' + pid;
         btn.disabled = true;
-        tip.className = 'tip';
+        tip.className = 'plaza-card-tip';
         tip.textContent = '正在生成推广链接…';
         authed('/api/shop/plaza/link', { method: 'POST', body: JSON.stringify({ product_id: Number(pid), source: 'online_plaza' }) })
           .then(function (r) {
             copyText(r.link).catch(function () {});
             document.body.dataset.lastLink = JSON.stringify(r);
-            tip.className = 'tip ok';
+            tip.className = 'plaza-card-tip ok';
             tip.innerHTML = '已复制推广链接 · 预计佣金 ' + F.yuan(r.commission_estimate_cents)
               + ' (' + (Number(r.commission_bp || 0) / 100) + '%)<br><span class="muted">' + F.esc(r.link) + '</span>';
             btn.textContent = '已复制';
@@ -569,7 +672,7 @@
           .catch(function (e) {
             document.body.dataset.lastLinkError = e.message + '#' + (e.status || 0);
             copyText(plain).catch(function () {});
-            tip.className = 'tip err';
+            tip.className = 'plaza-card-tip err';
             tip.textContent = (e.status === 401 || /authenticat|凭证/i.test(e.message))
               ? '需要登录态：已复制普通商品链接 ' + plain + '；登录后可生成带归因 (?r=&rf=) 的推广链接。'
               : '生成失败：' + e.message + '（已复制普通商品链接 ' + plain + '）';
@@ -579,28 +682,71 @@
     });
   }
 
-  function load(root) {
+  function updatePlazaStats(items, total) {
+    var totalEl = document.getElementById('plaza-total');
+    if (totalEl) totalEl.textContent = total > 0 ? Number(total).toLocaleString('zh-CN') + '+' : '0';
+    var maxBp = Number(state.maxBp || 0);
+    var maxEl = document.getElementById('plaza-max-rate');
+    if (maxEl) maxEl.textContent = '最高 ' + (maxBp > 0 ? (maxBp / 100).toFixed(maxBp % 100 === 0 ? 0 : 1) + '%' : '45%');
+    var count = document.getElementById('plaza-count');
+    if (count) count.textContent = '显示 1-' + state.loaded + ' 个商品，共 ' + Number(total || 0).toLocaleString('zh-CN') + ' 个';
+  }
+
+  function renderPlazaMore(total) {
+    var box = document.getElementById('plaza-pager');
+    if (!box) return;
+    if (state.loaded < total) {
+      box.innerHTML = '<button type="button" id="plazaLoadMore">加载更多</button>';
+      var btn = document.getElementById('plazaLoadMore');
+      if (btn) btn.addEventListener('click', function () {
+        state.page += 1;
+        load(document.getElementById('app'), true);
+      });
+    } else {
+      box.innerHTML = '';
+    }
+  }
+
+  function load(root, append) {
+    if (!root) root = document.getElementById('app');
+    if (!root) return Promise.resolve();
+    if (!append) {
+      state.page = 1;
+      state.loaded = 0;
+      state.maxBp = 0;
+      root.innerHTML = '<div class="plaza-empty"><strong>正在加载选品广场…</strong></div>';
+    }
     var url = '/api/shop/plaza?sort=' + encodeURIComponent(state.sort) + '&page=' + state.page + '&size=' + state.size
       + (state.keyword ? '&keyword=' + encodeURIComponent(state.keyword) : '')
       + (state.category ? '&category=' + encodeURIComponent(state.category) : '');
-    root.innerHTML = '<div class="loading">正在加载选品广场…</div>';
     return F.api(url).then(function (d) {
       var items = d.items || [];
-      var seen = {}, cats = [];
-      items.forEach(function (p) { if (p.category && !seen[p.category]) { seen[p.category] = 1; cats.push(p.category); } });
+      var total = Number(d.total || 0);
+      var seen = {};
+      (state.categories || []).forEach(function (c) { if (c) seen[c] = 1; });
+      items.forEach(function (p) { if (p.category) seen[p.category] = 1; });
+      state.categories = Object.keys(seen);
       var catEl = document.getElementById('cat');
       if (catEl) {
-        catEl.innerHTML = '<option value="">全部类目</option>' + cats.map(function (c) {
+        catEl.innerHTML = '<option value="">全部类目</option>' + state.categories.map(function (c) {
           return '<option value="' + F.attr(c) + '"' + (c === state.category ? ' selected' : '') + '>' + F.esc(c) + '</option>';
         }).join('');
       }
-      root.innerHTML = '<div class="ptitle"><h2>选品广场</h2><span>在售 ' + Number(d.total || 0) + ' 个商品</span></div>'
-        + (items.length ? '<div class="grid">' + items.map(plazaCard).join('') + '</div>'
-          : '<div class="empty"><b>没有匹配的商品</b><div class="muted">换个关键词或类目再试</div></div>');
-      document.body.dataset.plazaReady = JSON.stringify({ total: Number(d.total || 0), items: items.length, cats: cats });
+      state.loaded += items.length;
+      items.forEach(function (p) { state.maxBp = Math.max(Number(state.maxBp || 0), Number(p.commission_bp || 0)); });
+      if (append) {
+        root.insertAdjacentHTML('beforeend', items.map(plazaCard).join(''));
+      } else {
+        root.innerHTML = items.length ? items.map(plazaCard).join('')
+          : '<div class="plaza-empty"><strong>没有匹配的商品</strong><span>换个关键词或类目再试</span></div>';
+      }
+      updatePlazaStats(items, total);
+      renderPlazaMore(total);
+      document.body.dataset.plazaReady = JSON.stringify({ total: total, items: state.loaded, cats: state.categories });
       bindCopy(root);
+      bindPlazaCards(root);
     }).catch(function (e) {
-      root.innerHTML = '<div class="empty"><b>选品广场加载失败</b><div class="muted">' + F.esc(e.message) + '</div></div>';
+      if (!append) root.innerHTML = '<div class="plaza-empty"><strong>选品广场加载失败</strong><span>' + F.esc(e.message) + '</span></div>';
       document.body.dataset.plazaError = e.message;
     });
   }
@@ -614,7 +760,7 @@
       state.sort = document.getElementById('sort').value || 'heat';
       state.page = 1;
       document.body.dataset.plazaQuery = JSON.stringify(state);
-      load(document.getElementById('app'));
+      load(document.getElementById('app'), false);
     });
   }
   /* 登录收进顶栏弹窗：页面中间只放商品，不再用一行登录表单占位 */

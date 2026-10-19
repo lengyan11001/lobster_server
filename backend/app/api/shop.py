@@ -682,7 +682,16 @@ def plaza(
     if keyword:
         like = f"%{keyword}%"
         query = query.filter(ShopProduct.title.ilike(like) | ShopProduct.keywords.ilike(like))
-    order = ShopProduct.heat.desc() if sort == "heat" else ShopProduct.id.desc()
+    if sort == "new":
+        order = ShopProduct.id.desc()
+    elif sort == "price_asc":
+        order = ShopProduct.price_cents.asc()
+    elif sort == "price_desc":
+        order = ShopProduct.price_cents.desc()
+    elif sort == "commission":
+        order = ShopProduct.commission_bp.desc()
+    else:
+        order = ShopProduct.heat.desc()
     if earn_scope:
         # JSON 里有没有图没法跨库用 SQL 过滤：多取一些再按「资料完善」过滤
         rows = query.order_by(order).offset(max(0, (page - 1) * size)).limit(min(size, 100) * 3).all()
