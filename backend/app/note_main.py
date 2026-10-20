@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import models  # noqa: F401
 from .api.auth import router as auth_router
 from .api.health import router as health_router
-from .api.h5_recorder import router as h5_recorder_router
+from .api.h5_recorder import ensure_recorder_analysis_columns, router as h5_recorder_router
 from .core.config import settings
 from .db import Base, engine
 
@@ -23,6 +23,7 @@ NOTE_STATIC_DIR = Path(__file__).resolve().parents[2] / "note_static"
 def create_note_app() -> FastAPI:
     """必火听记录（note.bhzn.top）：登录沿用管理后台 / manage 的账号体系，主体是 H5 的 AI 秘书（录音）。"""
     Base.metadata.create_all(bind=engine)
+    ensure_recorder_analysis_columns(engine)
     app = FastAPI(
         title="必火听记录",
         version="0.1.0",

@@ -24,7 +24,11 @@ from .api.moments_coach import router as moments_coach_router
 from .api.h5_home import router as h5_home_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
-from .api.h5_recorder import mark_interrupted_recordings_failed, router as h5_recorder_router
+from .api.h5_recorder import (
+    ensure_recorder_analysis_columns,
+    mark_interrupted_recordings_failed,
+    router as h5_recorder_router,
+)
 from .api.h5_voice import router as h5_voice_router
 from .api.h5_workflows import router as h5_workflows_router
 from .api.hifly_assets import router as hifly_assets_router
@@ -192,6 +196,7 @@ def create_h5_app() -> FastAPI:
     _ensure_h5_workflow_template_columns()
     ensure_user_brand_schema(engine)
     seed_brand_configs(SessionLocal)
+    ensure_recorder_analysis_columns(engine)
     interrupted_recordings = mark_interrupted_recordings_failed()
     if interrupted_recordings:
         logger.warning("[H5] marked interrupted recorder jobs retryable count=%s", interrupted_recordings)

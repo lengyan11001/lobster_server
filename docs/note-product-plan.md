@@ -13,12 +13,12 @@
 | 智能录音 | 手机/网页录音、设备录音 | ✅ 已有 | 网页 MediaRecorder + 上传 `/api/h5/recorder/files`；设备侧沿用 H5 录音卡/客户端 | P0 |
 | AI 语音转写 | 语音转文字、区分发言人、多语言识别 | ✅ 已有 | `h5_recorder` 后台转写；`transcript_text` + `segments[].speaker`；`/files/{id}/speaker` 改名 | P0 |
 | AI 内容分析（摘要/要点） | 总结、关键结论、待办线索 | ✅ 已有 | `summary_text` + `key_points`（LLM 已有 prompt） | P0 |
-| 内容导出 | TXT / Markdown（后续 DOCX/PDF/SRT） | 🟡 本次落地 | 前端由详情数据生成 TXT/MD；DOCX/PDF 走服务端导出接口 | P0 |
+| 内容导出 | TXT / Markdown / SRT / DOCX | ✅ 已落地 | `GET /files/{id}/export?format=txt|md|srt|docx` + 前端 TXT/MD | P0 |
 | AI 知识库 | 录音/文本/资料沉淀、长期可检索 | 🟡 部分 | 已有 `OpenClawMemoryDocument` + 录音写入记忆文件（`/files/{id}/memory`）；补「知识库」页与检索 | P1 |
-| 待办抽取 | 负责人/截止时间/行动项 | ⬜ 待建 | 在 `_analyze` 的 JSON 里增加 `todos[]`；落库 `recorder_todos` | P1 |
-| 思维导图 | 结构化大纲/脑图 | ⬜ 待建 | 分析结果新增 `outline`（树形），前端用轻量渲染或导出 OPML/Markdown | P1 |
-| 翻译（录音后） | 全文/逐段翻译 | ⬜ 待建 | 新增 `/api/note/translate`（复用 `_call_llm`），结果存 `recorder_translations` | P1 |
-| AI 智能体 | 围绕录音/知识库持续提问 | 🟡 部分 | 复用 Mastra / H5 chat 的 `readPersonalMemory`；新增「听记录」会话上下文（录音 id 列表） | P1 |
+| 待办抽取 | 负责人/截止时间/行动项 | ✅ 已落地 | 分析 JSON 增加 `todos[]` → `analysis`；`GET /api/h5/recorder/todos` 聚合 | P1 |
+| 思维导图 | 结构化大纲/脑图 | ✅ 已落地 | 分析结果 `outline[]`（树形），详情页树状渲染 | P1 |
+| 翻译（录音后） | 全文翻译 | ✅ 已落地 | `POST /files/{id}/translate`（`_call_llm`），结果存 `translated_text/translate_lang` | P1 |
+| AI 智能体 | 围绕录音持续提问 | ✅ 单条录音已落地 | `POST /files/{id}/ask`；跨录音/知识库问答待 P2 | P1 |
 | 实时转译 | 边说边转、边说边译 | ⬜ 待建 | 流式 STT（现有语音网关）+ SSE；前端分轨显示原文/译文 | P2 |
 | 对话翻译 | 面对面跨语言 | ⬜ 待建 | 双栏对话 UI + 逐句 STT→翻译→TTS；复用翻译通道 | P2 |
 | 深度研判 / 联网查证 | 结合外部信息核验 | ⬜ 待建 | LLM + 搜索能力（已有联网检索能力可复用），输出「结论/依据/来源」 | P2 |

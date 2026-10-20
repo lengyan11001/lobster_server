@@ -242,3 +242,23 @@ body {
   padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer;
 }
 .detail-actions button:hover { border-color: var(--accent); color: var(--accent); }
+
+
+/* ---------- 详情：待办 / 大纲 / 翻译 / 问 AI ---------- */
+.todos li i { color: var(--muted); font-style: normal; font-size: 12px; margin-left: 8px; }
+.outline { margin: 6px 0 0; padding-left: 18px; }
+.outline li { margin: 4px 0; }
+.outline ul { padding-left: 16px; border-left: 1px dashed var(--line); margin: 4px 0; }
+.inline-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.inline-row select, .inline-row input {
+  height: 36px; border-radius: 10px; border: 1px solid var(--line);
+  background: #fbfcfe; color: var(--text); padding: 0 10px; font-size: 13px; outline: none;
+}
+.inline-row input { flex: 1 1 220px; }
+.inline-row select:focus, .inline-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.inline-row button {
+  height: 36px; border: 1px solid var(--line); background: #fff; border-radius: 10px;
+  padding: 0 14px; font-size: 13px; cursor: pointer; color: var(--text);
+}
+.inline-row button:hover { border-color: var(--accent); color: var(--accent); }
+.ask-answer { margin-top: 10px; font-size: 13px; color: var(--text); white-space: pre-wrap; }

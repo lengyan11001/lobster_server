@@ -248,10 +248,18 @@
     audio.play();
   }
 
-  async function showDetail(it) {
-    var d = await apiJson('/api/h5/recorder/files/' + encodeURIComponent(it.id));
-    state.detail = d;
-    $('detailTitle').textContent = d.display_name || d.file_name || ('录音 #' + d.id);
+  function renderOutline(nodes) {
+    if (!Array.isArray(nodes)) return '';
+    return '<ul class="outline">' + nodes.map(function (n) {
+      if (typeof n === 'string') return '<li>' + esc(n) + '</li>';
+      var title = esc(n.title || n.name || '');
+      var kids = n.children || n.items || [];
+      return '<li>' + title + (Array.isArray(kids) && kids.length ? renderOutline(kids) : '') + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  function detailHtml(d) {
+    var analysis = d.analysis && typeof d.analysis === 'object' ? d.analysis : {};
     var html = '<div class="kv">' + esc(fmtTime(d.recorded_at || d.created_at)) + (d.source_label ? ' · ' + esc(d.source_label) : '') + '</div>';
     if (d.summary_text) html += '<h4>摘要</h4><div>' + esc(d.summary_text) + '</div>';
     if (Array.isArray(d.key_points) && d.key_points.length) {
@@ -259,6 +267,16 @@
         return '<li>' + esc(typeof p === 'string' ? p : JSON.stringify(p)) + '</li>';
       }).join('') + '</ul>';
     }
+    var todos = Array.isArray(analysis.todos) ? analysis.todos : [];
+    if (todos.length) {
+      html += '<h4>待办</h4><ul class="todos">' + todos.map(function (t) {
+        if (typeof t === 'string') return '<li>' + esc(t) + '</li>';
+        var meta = [t.owner, t.due].filter(Boolean).join(' · ');
+        return '<li>' + esc(t.title || '') + (meta ? '<i>' + esc(meta) + '</i>' : '') + '</li>';
+      }).join('') + '</ul>';
+    }
+    var outline = Array.isArray(analysis.outline) ? analysis.outline : [];
+    if (outline.length) html += '<h4>大纲 / 思维导图</h4>' + renderOutline(outline);
     if (Array.isArray(d.segments) && d.segments.length) {
       html += '<h4>发言人逐字稿</h4><div class="segments">' + d.segments.map(function (s) {
         var who = s && (s.speaker || s.speaker_id || '');
@@ -269,12 +287,38 @@
     } else if (d.transcript_text) {
       html += '<h4>逐字稿</h4><div class="transcript">' + esc(d.transcript_text) + '</div>';
     }
-    html += '<div class="detail-actions"><button type="button" data-export="txt">导出 TXT</button><button type="button" data-export="md">导出 Markdown</button></div>';
+    html += '<h4>翻译</h4>';
+    if (d.translated_text) {
+      html += '<div class="transcript">' + esc(d.translated_text) + '</div><div class="kv">目标语言：' + esc(d.translate_lang || '') + '</div>';
+    } else {
+      html += '<div class="inline-row"><select id="translateLang">' +
+        ['English', '日本語', '한국어', 'Русский', 'Español', 'Français', 'Deutsch', 'العربية']
+          .map(function (l) { return '<option>' + l + '</option>'; }).join('') +
+        '</select><button type="button" data-tr="translate">翻译全文</button></div>';
+    }
+    html += '<h4>问这条录音</h4><div class="inline-row"><input id="askInput" placeholder="例如：客户最关心什么？"><button type="button" data-tr="ask">提问</button></div><div id="askAnswer" class="ask-answer"></div>';
+    html += '<div class="detail-actions">' +
+      '<button type="button" data-export="txt">TXT</button>' +
+      '<button type="button" data-export="md">Markdown</button>' +
+      '<button type="button" data-export="srt">字幕 SRT</button>' +
+      '<button type="button" data-export="docx">Word</button>' +
+      '<button type="button" data-tr="analyze">重新分析</button></div>';
     if (!d.summary_text && !d.transcript_text && !(d.segments || []).length) {
       html += '<p class="kv">' + (d.status === 'processing' ? '正在整理，请稍后刷新。' : '暂无整理结果。') + '</p>';
     }
-    $('detailBody').innerHTML = html;
+    return html;
+  }
+
+  function renderDetail(d) {
+    state.detail = d;
+    $('detailTitle').textContent = d.display_name || d.file_name || ('录音 #' + d.id);
+    $('detailBody').innerHTML = detailHtml(d);
     $('detailMask').classList.remove('hidden');
+  }
+
+  async function showDetail(it) {
+    var d = await apiJson('/api/h5/recorder/files/' + encodeURIComponent(it.id));
+    renderDetail(d);
   }
 
   function detailText(d, markdown) {
@@ -440,10 +484,66 @@
       setTab(btn.getAttribute('data-tab'));
     });
     $('detailClose').addEventListener('click', function () { $('detailMask').classList.add('hidden'); });
-    document.addEventListener('click', function (e) {
+    document.addEventListener('click', async function (e) {
       var b = e.target.closest ? e.target.closest('[data-export]') : null;
       if (!b) return;
-      exportDetail(b.getAttribute('data-export'));
+      var fmt = b.getAttribute('data-export');
+      var d = state.detail;
+      if (!d) return;
+      if (fmt === 'txt' || fmt === 'md') { exportDetail(fmt); return; }
+      try {
+        var r = await api('/api/h5/recorder/files/' + d.id + '/export?format=' + encodeURIComponent(fmt));
+        if (!r.ok) {
+          var err = null;
+          try { err = await r.json(); } catch (e2) { err = null; }
+          throw new Error((err && err.detail) || '导出失败');
+        }
+        var blob = await r.blob();
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = (d.display_name || d.file_name || ('note-' + d.id)) + '.' + fmt;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      } catch (err) { alert(err.message); }
+    });
+    document.addEventListener('click', async function (e) {
+      var b = e.target.closest ? e.target.closest('[data-tr]') : null;
+      if (!b) return;
+      var d = state.detail;
+      if (!d) return;
+      var act = b.getAttribute('data-tr');
+      try {
+        if (act === 'analyze') {
+          b.disabled = true;
+          var r = await apiJson('/api/h5/recorder/files/' + d.id + '/analyze', { method: 'POST' });
+          renderDetail(r.record);
+          await loadRecords();
+          b.disabled = false;
+        } else if (act === 'translate') {
+          b.disabled = true;
+          var lang = (document.getElementById('translateLang') || {}).value || 'English';
+          var r2 = await apiJson('/api/h5/recorder/files/' + d.id + '/translate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_lang: lang })
+          });
+          renderDetail(r2.record);
+          b.disabled = false;
+        } else if (act === 'ask') {
+          var q = (document.getElementById('askInput') || {}).value || '';
+          if (!q.trim()) return;
+          var ans = document.getElementById('askAnswer');
+          if (ans) ans.textContent = '思考中…';
+          var r3 = await apiJson('/api/h5/recorder/files/' + d.id + '/ask', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: q })
+          });
+          if (ans) ans.textContent = r3.answer || '（没有回答）';
+        }
+      } catch (err) {
+        b.disabled = false;
+        alert(err.message);
+      }
     });
     document.addEventListener('click', function (e) {
       var b = e.target.closest ? e.target.closest('[data-cap]') : null;

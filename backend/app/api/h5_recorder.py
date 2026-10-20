@@ -160,6 +160,9 @@ def _serialize(row: RecorderAudioRecord, detail: bool = False) -> dict[str, Any]
         "error_message": row.error_message,
         "summary_text": row.summary_text,
         "key_points": row.key_points or [],
+        "analysis": row.analysis if isinstance(row.analysis, dict) else {},
+        "translated_text": row.translated_text or "",
+        "translate_lang": row.translate_lang or "",
         "created_at": row.created_at.isoformat() if row.created_at else "",
         "recorded_at": row.recorded_at.isoformat() if row.recorded_at else "",
         "updated_at": row.updated_at.isoformat() if row.updated_at else "",
@@ -800,7 +803,9 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
                     "role": "system",
                     "content": (
                         "你是会议录音整理助手。只依据转写内容输出严格 JSON："
-                        "summary 为一段明确结论，key_points 为去重后的关键事实、决定或待办数组。"
+                        "summary 为一段明确结论；key_points 为去重后的关键事实/决定数组；"
+                        "todos 为待办数组，每项 {title, owner, due}（没有就空数组）；"
+                        "outline 为大纲数组，每项 {title, children: [string]}（没有就空数组）。"
                         "不要重复改写同一句话，不要编造人物身份、背景、决定或待办。"
                         "如果录音只是测试、操作说明或内容很短，要在 summary 中直接说明录音实际包含什么，"
                         "以及未包含业务结论或待办；key_points 只保留确实存在的信息。"
@@ -817,6 +822,10 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
                     row.transcript_segments = segments
                     row.summary_text = str(parsed.get("summary") or "").strip()
                     row.key_points = parsed.get("key_points") if isinstance(parsed.get("key_points"), list) else []
+                    row.analysis = {
+                        "todos": parsed.get("todos") if isinstance(parsed.get("todos"), list) else [],
+                        "outline": parsed.get("outline") if isinstance(parsed.get("outline"), list) else [],
+                    }
                     row.stt_task_id = task_id
                     row.status = "completed"
                     row.process_stage = "completed"
@@ -1253,3 +1262,315 @@ def delete_recording(record_id: int, current_user: User = Depends(get_current_us
     db.commit()
     _remove_recording_files(audio_path)
     return {"ok": True, "id": record_id}
+
+# ---------------------------------------------------------------------------
+# 必火听记录（note.bhzn.top）：分析 / 翻译 / 问 AI / 导出 / 待办聚合
+# ---------------------------------------------------------------------------
+class RecorderTranslateBody(BaseModel):
+    target_lang: str = Field(default="English", max_length=64)
+
+
+class RecorderAskBody(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+def ensure_recorder_analysis_columns(engine_) -> None:
+    """给已存在的 recorder_audio_records 补 analysis/translated_text/translate_lang 三列。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine_)
+        if not inspector.has_table("recorder_audio_records"):
+            return
+        columns = {c["name"] for c in inspector.get_columns("recorder_audio_records")}
+        with engine_.begin() as connection:
+            if "analysis" not in columns:
+                connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN analysis JSON"))
+            if "translated_text" not in columns:
+                connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN translated_text TEXT DEFAULT ''"))
+            if "translate_lang" not in columns:
+                connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN translate_lang VARCHAR(32) DEFAULT ''"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recorder analysis column migration skipped: %s", exc)
+
+
+def _record_for_user(db: Session, user_id: int, record_id: int) -> RecorderAudioRecord:
+    row = (
+        db.query(RecorderAudioRecord)
+        .filter(RecorderAudioRecord.id == record_id, RecorderAudioRecord.user_id == user_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    return row
+
+
+def _dialogue_text(row: RecorderAudioRecord) -> str:
+    segments = row.transcript_segments if isinstance(row.transcript_segments, list) else []
+    lines = [
+        f"{str(item.get('speaker') or '')}：{str(item.get('text') or '')}"
+        for item in segments
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
+    return "\n".join(lines) or str(row.transcript_text or "")
+
+
+def _srt_clock(ms: int) -> str:
+    ms = max(0, int(ms))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, milli = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{milli:03d}"
+
+
+def _srt_text(row: RecorderAudioRecord) -> str:
+    segments = row.transcript_segments if isinstance(row.transcript_segments, list) else []
+    blocks = []
+    for index, item in enumerate(segments, start=1):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        start = int(item.get("start_ms") or 0)
+        end = int(item.get("end_ms") or (start + 3000))
+        who = str(item.get("speaker") or "").strip()
+        blocks.append(f"{index}\n{_srt_clock(start)} --> {_srt_clock(end)}\n{(who + '：' if who else '')}{text}")
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def _markdown_text(row: RecorderAudioRecord) -> str:
+    title = row.display_name or row.file_name or f"录音 #{row.id}"
+    lines = [f"# {title}", ""]
+    when = row.recorded_at or row.created_at
+    lines.append(f"- 时间：{when.isoformat() if when else ''}")
+    lines.append(f"- 来源：{SOURCE_LABELS.get(row.source_type, row.source_type)}")
+    lines.append("")
+    if row.summary_text:
+        lines += ["## 摘要", "", row.summary_text, ""]
+    points = row.key_points if isinstance(row.key_points, list) else []
+    if points:
+        lines += ["## 要点", ""] + [f"- {p}" for p in points] + [""]
+    analysis = row.analysis if isinstance(row.analysis, dict) else {}
+    todos = analysis.get("todos") if isinstance(analysis.get("todos"), list) else []
+    if todos:
+        lines += ["## 待办", ""]
+        for t in todos:
+            if isinstance(t, dict):
+                owner = str(t.get("owner") or "").strip()
+                due = str(t.get("due") or "").strip()
+                suffix = "（" + "，".join(x for x in (owner, due) if x) + "）" if (owner or due) else ""
+                lines.append(f"- {str(t.get('title') or '').strip()}{suffix}")
+            else:
+                lines.append(f"- {t}")
+        lines.append("")
+    dialogue = _dialogue_text(row)
+    if dialogue:
+        lines += ["## 逐字稿", "", dialogue, ""]
+    if row.translated_text:
+        lines += [f"## 译文（{row.translate_lang or '翻译'}）", "", row.translated_text, ""]
+    return "\n".join(lines)
+
+
+def _docx_bytes(row: RecorderAudioRecord) -> bytes:
+    import io
+
+    from docx import Document  # type: ignore
+
+    doc = Document()
+    doc.add_heading(row.display_name or row.file_name or f"录音 #{row.id}", level=1)
+    if row.summary_text:
+        doc.add_heading("摘要", level=2)
+        doc.add_paragraph(row.summary_text)
+    points = row.key_points if isinstance(row.key_points, list) else []
+    if points:
+        doc.add_heading("要点", level=2)
+        for p in points:
+            doc.add_paragraph(str(p), style="List Bullet")
+    analysis = row.analysis if isinstance(row.analysis, dict) else {}
+    todos = analysis.get("todos") if isinstance(analysis.get("todos"), list) else []
+    if todos:
+        doc.add_heading("待办", level=2)
+        for t in todos:
+            doc.add_paragraph(str(t.get("title") if isinstance(t, dict) else t), style="List Bullet")
+    dialogue = _dialogue_text(row)
+    if dialogue:
+        doc.add_heading("逐字稿", level=2)
+        doc.add_paragraph(dialogue)
+    if row.translated_text:
+        doc.add_heading(f"译文（{row.translate_lang or '翻译'}）", level=2)
+        doc.add_paragraph(row.translated_text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+@router.post("/api/h5/recorder/files/{record_id}/analyze")
+async def reanalyze_recording(
+    record_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _record_for_user(db, int(current_user.id), record_id)
+    dialogue = _dialogue_text(row)
+    if not dialogue.strip():
+        raise HTTPException(status_code=400, detail="这条录音还没有转写内容")
+    answer = await _call_llm(
+        request,
+        _installation_id(request),
+        [
+            {"role": "system", "content": (
+                "你是会议录音整理助手。只依据转写内容输出严格 JSON："
+                "summary（一段结论）、key_points（数组）、"
+                "todos（数组，每项 {title, owner, due}）、outline（数组，每项 {title, children: [string]}）。"
+                "没有的内容给空数组，不要编造。"
+            )},
+            {"role": "user", "content": f"请重新整理以下录音转写：\n\n{dialogue[:120000]}"},
+        ],
+        timeout_seconds=300,
+    )
+    parsed = _json_object(answer)
+    row.summary_text = str(parsed.get("summary") or "").strip()
+    row.key_points = parsed.get("key_points") if isinstance(parsed.get("key_points"), list) else []
+    row.analysis = {
+        "todos": parsed.get("todos") if isinstance(parsed.get("todos"), list) else [],
+        "outline": parsed.get("outline") if isinstance(parsed.get("outline"), list) else [],
+    }
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "record": _serialize(row, detail=True)}
+
+
+@router.post("/api/h5/recorder/files/{record_id}/translate")
+async def translate_recording(
+    record_id: int,
+    body: RecorderTranslateBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _record_for_user(db, int(current_user.id), record_id)
+    dialogue = _dialogue_text(row)
+    if not dialogue.strip():
+        raise HTTPException(status_code=400, detail="这条录音还没有转写内容")
+    target = str(body.target_lang or "English").strip() or "English"
+    answer = await _call_llm(
+        request,
+        _installation_id(request),
+        [
+            {"role": "system", "content": f"把下面的录音转写翻译成{target}。保留发言人标记与先后顺序，只输出译文，不要解释。"},
+            {"role": "user", "content": dialogue[:120000]},
+        ],
+        timeout_seconds=300,
+    )
+    row.translated_text = str(answer or "").strip()
+    row.translate_lang = target[:32]
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "record": _serialize(row, detail=True)}
+
+
+@router.post("/api/h5/recorder/files/{record_id}/ask")
+async def ask_recording(
+    record_id: int,
+    body: RecorderAskBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _record_for_user(db, int(current_user.id), record_id)
+    dialogue = _dialogue_text(row)
+    if not dialogue.strip() and not row.summary_text:
+        raise HTTPException(status_code=400, detail="这条录音还没有可用的文字内容")
+    question = str(body.question or "").strip()
+    answer = await _call_llm(
+        request,
+        _installation_id(request),
+        [
+            {"role": "system", "content": (
+                "你是这条录音的助理。只依据给定的摘要、要点和逐字稿回答；"
+                "录音里没有提到的内容要明确说“录音里没有提到”，不要编造。"
+            )},
+            {"role": "user", "content": f"【摘要】\n{row.summary_text}\n\n【逐字稿】\n{dialogue[:100000]}\n\n【问题】\n{question}"},
+        ],
+        timeout_seconds=180,
+    )
+    return {"ok": True, "answer": str(answer or "").strip()}
+
+
+@router.get("/api/h5/recorder/files/{record_id}/export")
+def export_recording(
+    record_id: int,
+    format: str = Query(default="md"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from fastapi.responses import Response
+
+    row = _record_for_user(db, int(current_user.id), record_id)
+    fmt = str(format or "md").strip().lower()
+    safe = re.sub(r'[\\/:*?"<>|]+', "_", row.display_name or row.file_name or f"recording-{row.id}")[:80]
+    if fmt == "srt":
+        payload = _srt_text(row).encode("utf-8")
+        media = "application/x-subrip; charset=utf-8"
+        suffix = "srt"
+    elif fmt == "md":
+        payload = _markdown_text(row).encode("utf-8")
+        media = "text/markdown; charset=utf-8"
+        suffix = "md"
+    elif fmt == "txt":
+        payload = _markdown_text(row).replace("#", "").encode("utf-8")
+        media = "text/plain; charset=utf-8"
+        suffix = "txt"
+    elif fmt == "docx":
+        try:
+            payload = _docx_bytes(row)
+        except ImportError as exc:
+            raise HTTPException(status_code=501, detail="服务端未安装 python-docx，暂时无法导出 DOCX") from exc
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        suffix = "docx"
+    else:
+        raise HTTPException(status_code=400, detail="不支持的导出格式")
+    return Response(
+        content=payload,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{safe}.{suffix}"'},
+    )
+
+
+@router.get("/api/h5/recorder/todos")
+def list_recorder_todos(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(RecorderAudioRecord)
+        .filter(RecorderAudioRecord.user_id == int(current_user.id))
+        .order_by(RecorderAudioRecord.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    items = []
+    for row in rows:
+        analysis = row.analysis if isinstance(row.analysis, dict) else {}
+        todos = analysis.get("todos") if isinstance(analysis.get("todos"), list) else []
+        for index, todo in enumerate(todos):
+            if isinstance(todo, dict):
+                title = str(todo.get("title") or "").strip()
+                owner = str(todo.get("owner") or "").strip()
+                due = str(todo.get("due") or "").strip()
+            else:
+                title, owner, due = str(todo or "").strip(), "", ""
+            if not title:
+                continue
+            items.append({
+                "record_id": row.id,
+                "record_title": row.display_name or row.file_name,
+                "index": index,
+                "title": title,
+                "owner": owner,
+                "due": due,
+            })
+    return {"items": items}
+
