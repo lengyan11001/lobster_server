@@ -20,5 +20,5 @@ systemctl enable --now lobster-note.service
 systemctl restart lobster-note.service
 systemctl reload nginx
 systemctl is-active lobster-note.service
-curl -sS -o /dev/null -w 'note_local=%{http_code}\n' http://127.0.0.1:8030/healthz
+curl -sS -o /dev/null -w 'note_local=%{http_code}\n' http://127.0.0.1:8050/healthz
 curl -sS -o /dev/null -w 'note_public=%{http_code}\n' https://note.bhzn.top/healthz

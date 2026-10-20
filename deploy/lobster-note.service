@@ -9,7 +9,7 @@ User=ubuntu
 WorkingDirectory=/opt/lobster-server
 Environment=PYTHONPATH=/opt/lobster-server
 EnvironmentFile=/opt/lobster-server/.env
-Environment=NOTE_PORT=8030
+Environment=NOTE_PORT=8050
 Environment=NOTE_WORKERS=2
 ExecStart=/opt/lobster-server/.venv/bin/python3 -m backend.note_run
 Restart=always

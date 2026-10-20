@@ -6,7 +6,7 @@ import uvicorn
 
 
 def main() -> None:
-    port = int(os.environ.get("NOTE_PORT") or "8030")
+    port = int(os.environ.get("NOTE_PORT") or "8050")
     uvicorn.run(
         "backend.app.note_main:app",
         host=os.environ.get("NOTE_HOST", "127.0.0.1"),
