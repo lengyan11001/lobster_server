@@ -4741,7 +4741,9 @@ def _recover_interrupted_server_side_runs(db: Session, now: Optional[datetime] =
         db.query(ScheduledTaskRun)
         .filter(
             ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
-            ScheduledTaskRun.status == "processing",
+            # recovery_claimed：上一进程在补跑途中被杀掉时留下的状态。
+            # 只收 processing 会让这些行永远卡住（2026-10-20 加）。
+            ScheduledTaskRun.status.in_(["processing", "recovery_claimed"]),
         )
         .order_by(ScheduledTaskRun.started_at.asc(), ScheduledTaskRun.created_at.asc())
         .all()
@@ -4753,7 +4755,7 @@ def _recover_interrupted_server_side_runs(db: Session, now: Optional[datetime] =
             update(ScheduledTaskRun)
             .where(
                 ScheduledTaskRun.id == snapshot.id,
-                ScheduledTaskRun.status == "processing",
+                ScheduledTaskRun.status.in_(["processing", "recovery_claimed"]),
                 ScheduledTaskRun.updated_at == expected_updated_at,
             )
             .values(status="recovery_claimed", updated_at=now)
@@ -4775,7 +4777,7 @@ def _recover_stranded_pending_server_side_runs(
     now: Optional[datetime] = None,
     *,
     min_age_seconds: int = 30,
-    limit: int = 20,
+    limit: int = 2,
 ) -> int:
     """执行「本该服务端跑、却一直挂在 pending」的 run（2026-10-20）。
 
