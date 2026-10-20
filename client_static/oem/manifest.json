@@ -57,7 +57,7 @@
       ]
     },
     "bihuo": {
-      "version": "2026.08.06.1",
+      "version": "2026.10.20.1",
       "profile": {
         "mark": "bihuo",
         "display_name": "必火AI员工",
@@ -96,7 +96,7 @@
         {"key": "icon_512", "url": "/client/oem/bihuo/icon_512.png", "size": 146589, "sha256": "27305f1a4940e2e91f8df5a848cbce64a9f3408049937a4098e46dcee68de60c"},
         {"key": "icon_1024", "url": "/client/oem/bihuo/icon_1024.png", "size": 390834, "sha256": "9d58fedc2853336d945394839dc255279e4295439910856d834bdb8ba734559e"},
         {"key": "logo_source", "url": "/client/oem/bihuo/logo_source.png", "size": 17160, "sha256": "3e60f414771bbdd156db657c7c566eaeb8b364595f487c303ae469ecb2beab8d"},
-        {"key": "desktop_ico", "url": "/client/oem/bihuo/desktop.ico", "size": 98404, "sha256": "06d0b271fdcf3412a34f0eafd08543b225dc19afd94b62dd53daf24decdbc45e"},
+        {"key": "desktop_ico", "url": "/client/oem/bihuo/desktop.ico", "size": 95163, "sha256": "f3a8554b530464760de0bed7d0db2e4bd5bb4219ef27f6ccbceaf9bd418ccbde"},
         {"key": "launcher_exe", "url": "/client/oem/bihuo/client_launcher.exe", "size": 104960, "sha256": "ca2b20962a20bc1e60a0339320a7deb65788787de9703acf4569b6d1dc21aee9"}
       ]
     },
