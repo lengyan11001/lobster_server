@@ -3941,6 +3941,17 @@ def _create_run_for_target(
     *,
     scheduled_at: Optional[datetime] = None,
 ) -> ScheduledTaskRun:
+    # 2026-10-20：朋友圈图文/口播的归一必须**回写任务本身**。
+    # 只归一 run 会造成 task/run 类型打架：task 还是 client_workflow（服务端以为要等
+    # 设备来领），run 已经是 ip_content_daily（设备以为是服务端任务、不领），
+    # 于是 run 永久挂在 pending（u54 的 15:00 朋友圈图文就这样挂了 100 分钟）。
+    normalized_kind, normalized_payload, ip_task_fixed = normalize_ip_content_client_workflow(
+        task.task_kind, task.payload or {}
+    )
+    if ip_task_fixed:
+        task.task_kind = normalized_kind
+        task.payload = normalized_payload
+        task.updated_at = now
     run_payload = _run_payload_for_task(db, task, now)
     run_kind, run_payload, _ip_content_fixed = normalize_ip_content_client_workflow(task.task_kind, run_payload)
     run_payload = _materialize_workflow_node_window(run_payload, scheduled_at=scheduled_at or now)
@@ -4756,6 +4767,76 @@ def _recover_interrupted_server_side_runs(db: Session, now: Optional[datetime] =
             continue
         _execute_server_side_run(db, row, now, resume=True)
         recovered += 1
+    return recovered
+
+
+def _recover_stranded_pending_server_side_runs(
+    db: Session,
+    now: Optional[datetime] = None,
+    *,
+    min_age_seconds: int = 30,
+    limit: int = 20,
+) -> int:
+    """执行「本该服务端跑、却一直挂在 pending」的 run（2026-10-20）。
+
+    背景：ip_content_moments 的任务行曾同时存在两种写法。run 已被归一成服务端类型
+    （ip_content_daily），任务行还是 client_workflow；结果服务端按任务类型等设备领，
+    设备按 run 类型认为是服务端任务不领，run 就永久 pending。这里兜底把它们跑掉。
+    """
+    now = now or datetime.utcnow()
+    cutoff = now - timedelta(seconds=max(0, int(min_age_seconds)))
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
+            ScheduledTaskRun.status == "pending",
+            ScheduledTaskRun.created_at <= cutoff,
+        )
+        .order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
+        .limit(max(1, int(limit)))
+        .all()
+    )
+    recovered = 0
+    for snapshot in rows:
+        expected_updated_at = snapshot.updated_at
+        claim = db.execute(
+            update(ScheduledTaskRun)
+            .where(
+                ScheduledTaskRun.id == snapshot.id,
+                ScheduledTaskRun.status == "pending",
+                ScheduledTaskRun.updated_at == expected_updated_at,
+            )
+            .values(status="recovery_claimed", updated_at=now)
+        )
+        if int(claim.rowcount or 0) != 1:
+            db.rollback()
+            continue
+        db.commit()
+        row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == snapshot.id).first()
+        if row is None:
+            continue
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task is not None:
+            kind, payload, changed = normalize_ip_content_client_workflow(task.task_kind, task.payload or {})
+            if changed:
+                task.task_kind = kind
+                task.payload = payload
+                task.updated_at = now
+                db.commit()
+        try:
+            _execute_server_side_run(db, row, now, resume=True)
+            recovered += 1
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.exception("[scheduled-tasks] stranded pending server-side run failed id=%s", row.id)
+            # 不能让行停在 recovery_claimed：标失败，避免下一轮反复捞同一条。
+            failed_row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == snapshot.id).first()
+            if failed_row is not None and str(failed_row.status or "") not in _FINAL_STATUSES:
+                failed_row.status = "failed"
+                failed_row.error = f"服务端补跑失败：{exc}"[:2000]
+                failed_row.finished_at = now
+                failed_row.updated_at = now
+                db.commit()
     return recovered
 
 

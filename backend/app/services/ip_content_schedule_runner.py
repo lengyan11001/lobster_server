@@ -14,6 +14,7 @@ from ..api.scheduled_tasks import (
     _expire_workflow_node_runs,
     _fail_stale_server_side_runs,
     _recover_interrupted_server_side_runs,
+    _recover_stranded_pending_server_side_runs,
     _scheduled_occurrence_expired,
 )
 from ..db import SessionLocal
@@ -25,7 +26,12 @@ logger = logging.getLogger(__name__)
 def _recover_once_sync() -> int:
     db = SessionLocal()
     try:
-        return _recover_interrupted_server_side_runs(db, datetime.utcnow())
+        now = datetime.utcnow()
+        recovered = _recover_interrupted_server_side_runs(db, now)
+        # 2026-10-20：服务端类型的 run 不该停在 pending；历史脏数据（任务行与
+        # run 行类型不一致）会永久挂住，启动时先兜底跑掉。
+        recovered += _recover_stranded_pending_server_side_runs(db, now, min_age_seconds=30)
+        return recovered
     finally:
         db.close()
 
@@ -40,6 +46,9 @@ def _tick_once_sync() -> int:
         stale_count = _fail_stale_server_side_runs(db, now)
         if stale_count:
             logger.warning("[server-side-schedule] marked stale processing runs failed=%s", stale_count)
+        stranded_count = _recover_stranded_pending_server_side_runs(db, now)
+        if stranded_count:
+            logger.warning("[server-side-schedule] recovered stranded pending runs=%s", stranded_count)
         rows = (
             db.query(ScheduledTask)
             .filter(
