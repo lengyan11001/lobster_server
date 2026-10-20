@@ -2,9 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>必火听记录</title>
-<link rel="stylesheet" href="/note-static/note.css?v=20261020-1">
+<link rel="stylesheet" href="/note-static/note.css?v=20261020-2">
 </head>
 <body>
 <div id="loginView" class="login-wrap">
@@ -28,42 +28,99 @@
       <img src="/note-static/bihu-stack.png" alt="必火智能">
       <span>必火听记录</span>
     </div>
-    <div class="who">
-      <span id="whoText"></span>
-      <button id="logoutBtn" type="button">退出</button>
-    </div>
+    <div class="who"><span id="whoText"></span></div>
   </header>
 
   <main class="wrap">
-    <section class="card recorder">
-      <div class="rec-head">
-        <span class="mark">秘</span>
-        <div>
-          <span class="eyebrow">AI秘书</span>
-          <h2>录音整理工作台</h2>
+    <!-- 首页 -->
+    <section id="viewHome" class="view">
+      <div class="card home-hero">
+        <div class="hello">
+          <div>
+            <div class="eyebrow">AI 秘书</div>
+            <h2 id="homeGreeting">你好</h2>
+            <p id="homeSub" class="muted">今天还没有录音，点下面的按钮开始</p>
+          </div>
+          <button id="recordBtn" class="rec-btn" type="button" aria-label="开始录音"><span class="dot"></span></button>
+        </div>
+        <div class="rec-timer" id="recTimer">00:00</div>
+        <div class="rec-status" id="recStatus">点击麦克风开始录音</div>
+
+        <div class="stats" id="homeStats">
+          <div class="stat"><strong id="statToday">0</strong><span>今日录音</span></div>
+          <div class="stat"><strong id="statDone">0</strong><span>已整理</span></div>
+          <div class="stat"><strong id="statDoing">0</strong><span>待整理</span></div>
+          <div class="stat"><strong id="statPoints">0</strong><span>今日要点</span></div>
         </div>
       </div>
-      <div class="rec-body">
-        <button id="recordBtn" class="rec-btn" type="button" aria-label="开始录音"><span class="dot"></span></button>
-        <div id="recStatus" class="rec-status">点击按钮开始录音</div>
-        <div id="recTimer" class="rec-timer">00:00</div>
+
+      <div class="card home-recent">
+        <div class="list-head">
+          <h3>最近录音</h3>
+          <button type="button" class="ghost" data-tab="records">全部 ›</button>
+        </div>
+        <div id="recentList" class="records"></div>
+        <div id="recentEmpty" class="empty hidden">还没有录音，点上面的麦克风开始</div>
       </div>
-      <div class="rec-actions">
+
+      <div class="card quick">
         <label class="upload-btn" for="fileInput">上传音频文件</label>
         <input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.amr,.wma,.opus,.webm" hidden>
         <span class="hint">支持 MP3 / WAV / M4A / OGG / OPUS / WebM</span>
       </div>
     </section>
 
-    <section class="card list-card">
-      <div class="list-head">
-        <h3>录音记录</h3>
-        <button id="refreshBtn" type="button" class="ghost">刷新</button>
+    <!-- 录音记录 -->
+    <section id="viewRecords" class="view hidden">
+      <div class="card list-card">
+        <div class="list-head">
+          <h3>录音记录</h3>
+          <button id="refreshBtn" type="button" class="ghost">刷新</button>
+        </div>
+        <div class="filters">
+          <input id="searchInput" type="search" placeholder="搜索文件名 / 摘要">
+          <div class="chips" id="statusChips">
+            <button type="button" class="chip-btn active" data-status="">全部</button>
+            <button type="button" class="chip-btn" data-status="completed">已完成</button>
+            <button type="button" class="chip-btn" data-status="processing">整理中</button>
+            <button type="button" class="chip-btn" data-status="failed">失败</button>
+          </div>
+        </div>
+        <div id="records" class="records"></div>
+        <div id="empty" class="empty hidden">没有符合条件的录音</div>
       </div>
-      <div id="records" class="records"></div>
-      <div id="empty" class="empty hidden">还没有录音，点上面的按钮开始</div>
+    </section>
+
+    <!-- 我的 -->
+    <section id="viewMine" class="view hidden">
+      <div class="card mine-card">
+        <div class="mine-head">
+          <div class="avatar" id="mineAvatar">必</div>
+          <div>
+            <div class="mine-name" id="mineName">未登录</div>
+            <div class="mine-sub" id="mineBrand"></div>
+          </div>
+        </div>
+        <div class="mine-stats">
+          <div><strong id="mineTotal">0</strong><span>录音总数</span></div>
+          <div><strong id="mineSize">0 MB</strong><span>占用空间</span></div>
+        </div>
+        <div class="mine-actions">
+          <label class="mine-row" for="fileInputMine">上传音频文件<span>›</span></label>
+          <input id="fileInputMine" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.amr,.wma,.opus,.webm" hidden>
+          <button type="button" class="mine-row" id="refreshMine">刷新数据<span>›</span></button>
+          <button type="button" class="mine-row danger" id="logoutBtn">退出登录<span>›</span></button>
+        </div>
+        <p class="tip">必火听记录 · AI 秘书</p>
+      </div>
     </section>
   </main>
+
+  <nav class="tabbar" id="tabbar">
+    <button type="button" class="tab active" data-tab="home"><i>⌂</i><span>首页</span></button>
+    <button type="button" class="tab" data-tab="records"><i>☰</i><span>录音记录</span></button>
+    <button type="button" class="tab" data-tab="mine"><i>☺</i><span>我的</span></button>
+  </nav>
 </div>
 
 <div id="detailMask" class="mask hidden">
@@ -76,6 +133,6 @@
   </div>
 </div>
 
-<script src="/note-static/note.js?v=20261020-1"></script>
+<script src="/note-static/note.js?v=20261020-2"></script>
 </body>
 </html>

@@ -137,3 +137,78 @@ body {
   .record { flex-wrap: wrap; }
   .record .ops { width: 100%; justify-content: flex-end; }
 }
+
+
+/* ---------- 三个页签：首页 / 录音记录 / 我的 ---------- */
+.wrap { padding-bottom: 96px; }
+.view { display: block; }
+.view.hidden { display: none; }
+.muted { color: var(--muted); }
+.home-hero { padding: 22px 24px 18px; }
+.hello { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.hello h2 { margin: 2px 0 6px; font-size: 22px; }
+.hello .muted { margin: 0; font-size: 13px; color: var(--muted); }
+.home-hero .rec-timer { text-align: center; margin-top: 18px; }
+.home-hero .rec-status { text-align: center; margin-top: 4px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px dashed var(--line); }
+.stat { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px; border-radius: 12px; background: #f8fafc; }
+.stat strong { font-size: 20px; }
+.stat span { font-size: 12px; color: var(--muted); }
+.home-recent { padding: 18px 22px 20px; }
+.quick { display: flex; align-items: center; gap: 14px; padding: 16px 20px; }
+.quick .upload-btn { margin: 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+.filters input {
+  flex: 1 1 220px; height: 38px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: #fbfcfe; color: var(--text); outline: none; font-size: 14px;
+}
+.filters input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip-btn { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 7px 13px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.chip-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  height: 64px; display: flex; align-items: stretch; justify-content: space-around;
+  background: rgba(255,255,255,.94); border-top: 1px solid var(--line);
+  backdrop-filter: blur(14px); padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.tabbar .tab {
+  flex: 1 1 0; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-size: 12px; padding: 0;
+}
+.tabbar .tab i { font-style: normal; font-size: 18px; line-height: 1; }
+.tabbar .tab.active { color: var(--accent); font-weight: 600; }
+
+.mine-card { padding: 24px 22px 18px; }
+.mine-head { display: flex; align-items: center; gap: 14px; }
+.avatar {
+  width: 56px; height: 56px; border-radius: 18px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #2f6fed, #23c8b5); color: #fff; font-size: 22px; font-weight: 700;
+}
+.mine-name { font-size: 17px; font-weight: 600; }
+.mine-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.mine-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 20px 0 8px; }
+.mine-stats div { background: #f8fafc; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mine-stats strong { font-size: 18px; }
+.mine-stats span { font-size: 12px; color: var(--muted); }
+.mine-actions { margin-top: 12px; border-top: 1px solid var(--line); }
+.mine-row {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 4px; border: 0; border-bottom: 1px solid var(--line);
+  background: transparent; font-size: 14px; color: var(--text); cursor: pointer;
+}
+.mine-row span { color: var(--muted); }
+.mine-row.danger { color: var(--danger); }
+.mine-card .tip { margin: 16px 0 0; text-align: center; }
+
+@media (min-width: 860px) {
+  .wrap { max-width: 980px; }
+  .stats { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 720px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .home-hero { padding: 18px 16px 14px; }
+}

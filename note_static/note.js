@@ -57,6 +57,12 @@
     return d;
   }
 
+  var state = {
+    items: [], total: 0, me: null, tab: 'home', query: '', statusFilter: '',
+    media: null, chunks: [], startedAt: 0, tickId: 0, polling: 0
+  };
+
+  /* ---------- auth ---------- */
   async function doLogin() {
     var account = ($('account').value || '').trim();
     var password = $('password').value || '';
@@ -81,9 +87,15 @@
   }
 
   async function loadMe() {
-    var me = await apiJson('/auth/me');
-    $('whoText').textContent = (me && (me.email || me.phone || me.nickname)) || '';
-    return me;
+    state.me = await apiJson('/auth/me');
+    var name = (state.me && (state.me.email || state.me.phone || state.me.nickname)) || '';
+    $('whoText').textContent = name;
+    $('mineName').textContent = name || '未登录';
+    $('mineBrand').textContent = '品牌：' + BRAND;
+    $('mineAvatar').textContent = (name || '必').slice(0, 1).toUpperCase();
+    var h = new Date().getHours();
+    $('homeGreeting').textContent = (h < 11 ? '早上好' : (h < 18 ? '下午好' : '晚上好')) + '，' + (name.split('@')[0] || '');
+    return state.me;
   }
 
   function showLogin() {
@@ -104,15 +116,36 @@
     }
   }
 
-  var state = { items: [], media: null, chunks: [], startedAt: 0, tickId: 0, polling: 0 };
+  /* ---------- tabs ---------- */
+  function setTab(tab) {
+    state.tab = tab;
+    ['home', 'records', 'mine'].forEach(function (k) {
+      var v = $('view' + k.charAt(0).toUpperCase() + k.slice(1));
+      if (v) v.classList.toggle('hidden', k !== tab);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('#tabbar .tab'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-tab') === tab);
+    });
+    if (tab === 'records') renderRecords();
+    if (tab === 'mine') renderMine();
+  }
 
+  /* ---------- records ---------- */
   function fmtTime(iso) {
     if (!iso) return '';
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
     return d.toLocaleString('zh-CN', { hour12: false });
   }
-
+  function dayKey(iso) {
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
+  function todayKey() {
+    var d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
   function statusChip(s) {
     var map = { processing: '整理中', pending: '排队中', queued: '排队中', completed: '已完成', failed: '失败' };
     var key = map[s] ? s : 'processing';
@@ -120,32 +153,85 @@
   }
 
   async function loadRecords() {
-    var d = await apiJson('/api/h5/recorder/files?page=1&page_size=30');
+    var d = await apiJson('/api/h5/recorder/files?page=1&page_size=50');
     state.items = (d && d.items) || [];
-    renderRecords();
+    state.total = (d && d.total) || state.items.length;
+    renderAll();
     schedulePoll();
   }
 
+  function renderAll() {
+    renderHome();
+    if (state.tab === 'records') renderRecords();
+    if (state.tab === 'mine') renderMine();
+  }
+
+  function renderHome() {
+    var tk = todayKey();
+    var today = state.items.filter(function (it) { return dayKey(it.recorded_at || it.created_at) === tk; });
+    var done = today.filter(function (it) { return it.status === 'completed'; }).length;
+    var doing = today.filter(function (it) { return it.status !== 'completed' && it.status !== 'failed'; }).length;
+    var points = today.reduce(function (n, it) { return n + (Array.isArray(it.key_points) ? it.key_points.length : 0); }, 0);
+    $('statToday').textContent = today.length;
+    $('statDone').textContent = done;
+    $('statDoing').textContent = doing;
+    $('statPoints').textContent = points;
+    $('homeSub').textContent = today.length
+      ? '今天录了 ' + today.length + ' 条，AI 已整理 ' + done + ' 条' + (doing ? '，还有 ' + doing + ' 条在处理' : '')
+      : '今天还没有录音，点下面的按钮开始';
+
+    var recent = state.items.slice(0, 3);
+    var box = $('recentList');
+    var empty = $('recentEmpty');
+    if (!recent.length) { box.innerHTML = ''; empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    box.innerHTML = recent.map(recordHtml).join('');
+  }
+
+  function recordHtml(it) {
+    return '<div class="record" data-id="' + esc(it.id) + '">' +
+      '<div class="meta"><div class="name">' + esc(it.display_name || it.file_name || ('录音 #' + it.id)) + '</div>' +
+      '<div class="sub">' + statusChip(it.status) +
+      '<span>' + esc(fmtTime(it.recorded_at || it.created_at)) + '</span>' +
+      (it.file_size ? '<span>' + Math.round(it.file_size / 1024) + ' KB</span>' : '') +
+      '</div></div>' +
+      '<div class="ops">' +
+      '<button type="button" data-act="play">播放</button>' +
+      '<button type="button" data-act="detail">详情</button>' +
+      (it.status === 'failed' ? '<button type="button" data-act="retry">重试</button>' : '') +
+      '<button type="button" data-act="delete" class="danger">删除</button>' +
+      '</div></div>';
+  }
+
+  function filteredItems() {
+    var q = String(state.query || '').trim().toLowerCase();
+    return state.items.filter(function (it) {
+      if (state.statusFilter) {
+        if (state.statusFilter === 'processing') {
+          if (it.status === 'completed' || it.status === 'failed') return false;
+        } else if (it.status !== state.statusFilter) {
+          return false;
+        }
+      }
+      if (!q) return true;
+      var hay = [it.display_name, it.file_name, it.summary_text, it.device_name].join(' ').toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+
   function renderRecords() {
+    var rows = filteredItems();
     var box = $('records');
     var empty = $('empty');
-    if (!state.items.length) { box.innerHTML = ''; empty.classList.remove('hidden'); return; }
+    if (!rows.length) { box.innerHTML = ''; empty.classList.remove('hidden'); return; }
     empty.classList.add('hidden');
-    box.innerHTML = state.items.map(function (it) {
-      return '<div class="record" data-id="' + esc(it.id) + '">' +
-        '<div class="meta"><div class="name">' + esc(it.display_name || it.file_name || ('录音 #' + it.id)) + '</div>' +
-        '<div class="sub">' + statusChip(it.status) +
-        '<span>' + esc(fmtTime(it.recorded_at || it.created_at)) + '</span>' +
-        (it.file_size ? '<span>' + Math.round(it.file_size / 1024) + ' KB</span>' : '') +
-        (it.error_message ? '<span title="' + esc(it.error_message) + '">' + esc(String(it.error_message).slice(0, 40)) + '</span>' : '') +
-        '</div></div>' +
-        '<div class="ops">' +
-        '<button type="button" data-act="play">播放</button>' +
-        '<button type="button" data-act="detail">详情</button>' +
-        (it.status === 'failed' ? '<button type="button" data-act="retry">重试</button>' : '') +
-        '<button type="button" data-act="delete" class="danger">删除</button>' +
-        '</div></div>';
-    }).join('');
+    box.innerHTML = rows.map(recordHtml).join('');
+  }
+
+  function renderMine() {
+    var size = state.items.reduce(function (n, it) { return n + (Number(it.file_size) || 0); }, 0);
+    $('mineTotal').textContent = state.total;
+    $('mineSize').textContent = size ? (size / 1024 / 1024).toFixed(1) + ' MB' : '0 MB';
   }
 
   function findItem(id) {
@@ -189,6 +275,7 @@
     state.polling = setTimeout(function () { loadRecords().catch(function () {}); }, 5000);
   }
 
+  /* ---------- recorder ---------- */
   function pickMime() {
     var list = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
     for (var i = 0; i < list.length; i++) {
@@ -247,27 +334,52 @@
     }
     $('recStatus').textContent = '已上传，AI 秘书正在整理…';
     await loadRecords();
-    setTimeout(function () { $('recStatus').textContent = '点击按钮开始录音'; }, 1800);
+    setTimeout(function () { $('recStatus').textContent = '点击麦克风开始录音'; }, 1800);
   }
 
+  /* ---------- wire ---------- */
   document.addEventListener('DOMContentLoaded', function () {
     $('loginBtn').addEventListener('click', doLogin);
     $('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
     $('logoutBtn').addEventListener('click', function () { clearToken(); location.reload(); });
     $('refreshBtn').addEventListener('click', function () { loadRecords().catch(function (e) { alert(e.message); }); });
+    $('refreshMine').addEventListener('click', function () { loadRecords().then(renderMine).catch(function (e) { alert(e.message); }); });
     $('recordBtn').addEventListener('click', function () {
       if (state.media && state.media.state === 'recording') stopRecording();
       else startRecording().catch(function (e) { alert(e.message || '无法录音'); });
     });
-    $('fileInput').addEventListener('change', function (e) {
-      var f = e.target.files && e.target.files[0];
-      if (!f) return;
-      uploadBlob(f, f.name).catch(function (err) { alert(err.message || '上传失败'); });
-      e.target.value = '';
+    ['fileInput', 'fileInputMine'].forEach(function (id) {
+      var el = $(id);
+      if (!el) return;
+      el.addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        uploadBlob(f, f.name).catch(function (err) { alert(err.message || '上传失败'); });
+        e.target.value = '';
+      });
+    });
+    $('searchInput').addEventListener('input', function (e) { state.query = e.target.value || ''; renderRecords(); });
+    $('statusChips').addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('button[data-status]') : null;
+      if (!btn) return;
+      state.statusFilter = btn.getAttribute('data-status') || '';
+      Array.prototype.forEach.call(document.querySelectorAll('#statusChips .chip-btn'), function (b) {
+        b.classList.toggle('active', b === btn);
+      });
+      renderRecords();
+    });
+    $('tabbar').addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('button[data-tab]') : null;
+      if (btn) setTab(btn.getAttribute('data-tab'));
+    });
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-tab]') : null;
+      if (!btn || btn.closest('#tabbar')) return;
+      setTab(btn.getAttribute('data-tab'));
     });
     $('detailClose').addEventListener('click', function () { $('detailMask').classList.add('hidden'); });
     $('detailMask').addEventListener('click', function (e) { if (e.target === $('detailMask')) $('detailMask').classList.add('hidden'); });
-    $('records').addEventListener('click', function (e) {
+    document.addEventListener('click', function (e) {
       var btn = e.target.closest ? e.target.closest('button[data-act]') : null;
       if (!btn) return;
       var row = btn.closest('.record');
@@ -282,6 +394,7 @@
         apiJson('/api/h5/recorder/files/' + it.id, { method: 'DELETE' }).then(loadRecords).catch(function (err) { alert(err.message); });
       }
     });
+    setTab('home');
     bootApp();
   });
 })();
