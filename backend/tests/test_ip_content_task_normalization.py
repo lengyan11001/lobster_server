@@ -148,3 +148,42 @@ def test_enqueue_treats_normalized_moments_task_as_server_side(db_session, test_
 
     assert task.task_kind == "ip_content_daily"
     assert runs and executed == [runs[0].id], "归一后必须按服务端任务执行，而不是挂 pending 等设备"
+
+
+def test_stranded_run_of_paused_task_is_cancelled_not_executed(db_session, test_user, monkeypatch):
+    """补跑只补“还在跑的工作流”；手动暂停的任务不能被后台偷偷生成一次。"""
+    now = datetime.utcnow()
+    task = _moments_task(test_user.id)
+    task.task_kind = "ip_content_daily"
+    task.payload = {"tasks": ["moments_candidate"], "h5_context": {"workflow_node_id": "wf_pxmp1f0e"}}
+    task.status = "paused"
+    db_session.add(task)
+    db_session.flush()
+    run = ScheduledTaskRun(
+        id="paused-task-run-1",
+        task_id=task.id,
+        user_id=test_user.id,
+        title="朋友圈图文",
+        task_kind="ip_content_daily",
+        content="H5 工作流：朋友圈图文",
+        payload={"tasks": ["moments_candidate"]},
+        status="pending",
+        progress={},
+        installation_id="test-installation",
+        created_at=now - timedelta(minutes=100),
+        updated_at=now - timedelta(minutes=100),
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    executed = []
+    monkeypatch.setattr(
+        scheduled_tasks, "_execute_server_side_run", lambda *a, **k: executed.append(a[1].id)
+    )
+
+    recovered = scheduled_tasks._recover_stranded_pending_server_side_runs(db_session, now, min_age_seconds=60)
+
+    assert recovered == 0
+    assert executed == []
+    db_session.refresh(run)
+    assert run.status == "cancelled"

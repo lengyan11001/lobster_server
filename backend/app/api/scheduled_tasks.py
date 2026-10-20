@@ -4823,6 +4823,14 @@ def _recover_stranded_pending_server_side_runs(
                 task.payload = payload
                 task.updated_at = now
                 db.commit()
+        # 暂停/取消/已结束的任务不能因为“补跑”又偷偷生成一次。
+        if task is None or str(task.status or "").strip().lower() != "active":
+            row.status = "cancelled"
+            row.error = "任务已暂停，执行已停止"
+            row.finished_at = now
+            row.updated_at = now
+            db.commit()
+            continue
         try:
             _execute_server_side_run(db, row, now, resume=True)
             recovered += 1
