@@ -263,11 +263,15 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "allowed_params": {"sec_user_id", "max_cursor", "count", "sort_type"},
     },
     "tiktok_search_video": {
+        # 2026-10-20：web/fetch_search_video 需要 TikTok 网页 cookie（ms_token），
+        # 我们没传，TikHub 一直回 400「请求失败」（117 次调用 0 次成功）。
+        # 改用 app/v3 搜索接口：不需要 cookie，返回 search_item_list。
         "platform": "tiktok",
         "source_type": "keyword_video",
         "method": "GET",
-        "path": "/api/v1/tiktok/web/fetch_search_video",
-        "allowed_params": {"keyword", "count", "offset", "search_id", "cookie"},
+        "path": "/api/v1/tiktok/app/v3/fetch_video_search_result",
+        "allowed_params": {"keyword", "count", "offset", "region", "sort_type", "publish_time"},
+        "default_params": {"region": "US", "sort_type": 0},
     },
     "tiktok_search_user": {
         "platform": "tiktok",
@@ -1336,6 +1340,7 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         return reddit_items
     for key in (
         "aweme_list",
+        "search_item_list",
         "object_list",
         "word_list",
         "hot_words",
@@ -1357,7 +1362,15 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         "business_data",
     ):
         value = node.get(key)
-        if isinstance(value, list):
+        if isinstance(value, list) and value:
+            if key == "search_item_list":
+                # TikTok app/v3 搜索把视频包在 {"aweme_info": {...}} 里
+                unwrapped = [
+                    entry.get("aweme_info") or entry
+                    for entry in value
+                    if isinstance(entry, dict)
+                ]
+                return unwrapped or value
             if key == "business_data":
                 flattened: list[Any] = []
                 for entry in value:
