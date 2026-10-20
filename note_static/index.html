@@ -56,17 +56,17 @@
 
       <div class="card caps">
         <div class="list-head"><h3>能力</h3><span class="hint">逐步开放</span></div>
-        <div class="cap-grid">
-          <button type="button" class="cap ready" data-cap="transcribe">AI 转写<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="summary">总结要点<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="speakers">区分发言人<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="export">内容导出<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="todos">待办抽取<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="outline">思维导图<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="translate">翻译<span>已开启</span></button>
-          <button type="button" class="cap ready" data-cap="ask">AI 智能体<span>已开启</span></button>
-          <button type="button" class="cap soon" disabled>知识库<span>规划中</span></button>
-          <button type="button" class="cap soon" disabled>实时转译<span>规划中</span></button>
+                <div class="cap-list">
+          <button type="button" class="cap-item" data-cap="summary"><span class="cap-ico">✨</span><span class="cap-main"><b>总结要点</b><em>选一条录音，查看摘要和关键要点</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="transcribe"><span class="cap-ico">📝</span><span class="cap-main"><b>AI 转写</b><em>选一条录音，查看完整逐字稿</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="speakers"><span class="cap-ico">🗣</span><span class="cap-main"><b>区分发言人</b><em>选一条录音，按说话人分段的逐字稿</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="translate"><span class="cap-ico">🌐</span><span class="cap-main"><b>翻译</b><em>选一条录音，再选目标语言生成译文</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="todos"><span class="cap-ico">✅</span><span class="cap-main"><b>待办抽取</b><em>汇总所有录音里的待办事项</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="outline"><span class="cap-ico">🧭</span><span class="cap-main"><b>思维导图</b><em>选一条录音，查看层级大纲</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="ask"><span class="cap-ico">💬</span><span class="cap-main"><b>AI 智能体</b><em>选一条录音，围绕内容直接提问</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item" data-cap="export"><span class="cap-ico">⬇</span><span class="cap-main"><b>内容导出</b><em>选一条录音，导出 TXT、Markdown、字幕或 Word</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item soon" disabled><span class="cap-ico">📚</span><span class="cap-main"><b>知识库</b><em>把录音沉淀为可复用资料（规划中）</em></span><span class="cap-arrow">›</span></button>
+          <button type="button" class="cap-item soon" disabled><span class="cap-ico">🎙</span><span class="cap-main"><b>实时转译</b><em>边说边转写、边翻译（规划中）</em></span><span class="cap-arrow">›</span></button>
         </div>
       </div>
 
@@ -139,15 +139,7 @@
   </nav>
 </div>
 
-<div id="detailMask" class="mask hidden">
-  <div class="card detail">
-    <div class="detail-head">
-      <h3 id="detailTitle">录音详情</h3>
-      <button id="detailClose" type="button" class="ghost">关闭</button>
-    </div>
-    <div id="detailBody" class="detail-body"></div>
-  </div>
-</div>
+<div id="modalRoot" class="modal-root"></div>
 
 <script src="/note-static/note.js?v=20261020-2"></script>
 </body>
