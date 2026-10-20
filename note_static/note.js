@@ -250,6 +250,7 @@
 
   async function showDetail(it) {
     var d = await apiJson('/api/h5/recorder/files/' + encodeURIComponent(it.id));
+    state.detail = d;
     $('detailTitle').textContent = d.display_name || d.file_name || ('录音 #' + d.id);
     var html = '<div class="kv">' + esc(fmtTime(d.recorded_at || d.created_at)) + (d.source_label ? ' · ' + esc(d.source_label) : '') + '</div>';
     if (d.summary_text) html += '<h4>摘要</h4><div>' + esc(d.summary_text) + '</div>';
@@ -258,12 +259,73 @@
         return '<li>' + esc(typeof p === 'string' ? p : JSON.stringify(p)) + '</li>';
       }).join('') + '</ul>';
     }
-    if (d.transcript_text) html += '<h4>逐字稿</h4><div class="transcript">' + esc(d.transcript_text) + '</div>';
-    if (!d.summary_text && !d.transcript_text) {
+    if (Array.isArray(d.segments) && d.segments.length) {
+      html += '<h4>发言人逐字稿</h4><div class="segments">' + d.segments.map(function (s) {
+        var who = s && (s.speaker || s.speaker_id || '');
+        var text = s && (s.text || s.content || '');
+        var at = s && (s.start || s.start_time || s.begin || 0);
+        return '<div class="seg"><b>' + esc(who || '未知') + '</b>' + (at ? '<i>' + esc(String(at)) + '</i>' : '') + '<span>' + esc(text) + '</span></div>';
+      }).join('') + '</div>';
+    } else if (d.transcript_text) {
+      html += '<h4>逐字稿</h4><div class="transcript">' + esc(d.transcript_text) + '</div>';
+    }
+    html += '<div class="detail-actions"><button type="button" data-export="txt">导出 TXT</button><button type="button" data-export="md">导出 Markdown</button></div>';
+    if (!d.summary_text && !d.transcript_text && !(d.segments || []).length) {
       html += '<p class="kv">' + (d.status === 'processing' ? '正在整理，请稍后刷新。' : '暂无整理结果。') + '</p>';
     }
     $('detailBody').innerHTML = html;
     $('detailMask').classList.remove('hidden');
+  }
+
+  function detailText(d, markdown) {
+    var lines = [];
+    var title = d.display_name || d.file_name || ('录音 #' + d.id);
+    if (markdown) {
+      lines.push('# ' + title, '', '- 时间：' + fmtTime(d.recorded_at || d.created_at), '- 来源：' + (d.source_label || ''), '');
+      if (d.summary_text) lines.push('## 摘要', '', d.summary_text, '');
+      if (Array.isArray(d.key_points) && d.key_points.length) {
+        lines.push('## 要点', '');
+        d.key_points.forEach(function (p) { lines.push('- ' + (typeof p === 'string' ? p : JSON.stringify(p))); });
+        lines.push('');
+      }
+      if (Array.isArray(d.segments) && d.segments.length) {
+        lines.push('## 逐字稿', '');
+        d.segments.forEach(function (s) { lines.push('**' + (s.speaker || s.speaker_id || '未知') + '**：' + (s.text || s.content || '')); });
+        lines.push('');
+      } else if (d.transcript_text) {
+        lines.push('## 逐字稿', '', d.transcript_text, '');
+      }
+    } else {
+      lines.push(title);
+      lines.push('时间：' + fmtTime(d.recorded_at || d.created_at));
+      lines.push('来源：' + (d.source_label || ''));
+      if (d.summary_text) lines.push('', '【摘要】', d.summary_text);
+      if (Array.isArray(d.key_points) && d.key_points.length) {
+        lines.push('', '【要点】');
+        d.key_points.forEach(function (p) { lines.push('- ' + (typeof p === 'string' ? p : JSON.stringify(p))); });
+      }
+      if (Array.isArray(d.segments) && d.segments.length) {
+        lines.push('', '【逐字稿】');
+        d.segments.forEach(function (s) { lines.push('[' + (s.speaker || s.speaker_id || '未知') + '] ' + (s.text || s.content || '')); });
+      } else if (d.transcript_text) {
+        lines.push('', '【逐字稿】', d.transcript_text);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  function exportDetail(fmt) {
+    var d = state.detail;
+    if (!d) return;
+    var text = detailText(d, fmt === 'md');
+    var blob = new Blob([text], { type: fmt === 'md' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    var name = (d.display_name || d.file_name || ('note-' + d.id)).replace(/[\\/:*?"<>|]/g, '_');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + (fmt === 'md' ? '.md' : '.txt');
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
 
   function schedulePoll() {
@@ -378,6 +440,18 @@
       setTab(btn.getAttribute('data-tab'));
     });
     $('detailClose').addEventListener('click', function () { $('detailMask').classList.add('hidden'); });
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-export]') : null;
+      if (!b) return;
+      exportDetail(b.getAttribute('data-export'));
+    });
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-cap]') : null;
+      if (!b || b.disabled) return;
+      var latest = state.items[0];
+      if (!latest) { alert('还没有录音，先录一条吧'); return; }
+      showDetail(latest).catch(function (err) { alert(err.message); });
+    });
     $('detailMask').addEventListener('click', function (e) { if (e.target === $('detailMask')) $('detailMask').classList.add('hidden'); });
     document.addEventListener('click', function (e) {
       var btn = e.target.closest ? e.target.closest('button[data-act]') : null;

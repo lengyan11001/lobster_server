@@ -212,3 +212,33 @@ body {
   .stats { grid-template-columns: repeat(2, 1fr); }
   .home-hero { padding: 18px 16px 14px; }
 }
+
+
+/* ---------- 能力入口 ---------- */
+.caps { padding: 18px 22px 20px; }
+.caps .hint { font-size: 12px; color: var(--muted); }
+.cap-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.cap {
+  border: 1px solid var(--line); background: #fbfcfe; border-radius: 12px;
+  padding: 12px 8px; font-size: 13px; color: var(--text); cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.cap span { font-size: 11px; color: var(--muted); }
+.cap.ready { border-color: rgba(47,111,237,.22); background: rgba(47,111,237,.05); }
+.cap.ready span { color: var(--accent); }
+.cap.soon { opacity: .62; cursor: default; }
+@media (max-width: 720px) {
+  .cap-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ---------- 详情：发言人 / 导出 ---------- */
+.segments { display: grid; gap: 8px; margin-top: 6px; }
+.seg { background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+.seg b { color: var(--accent); margin-right: 8px; }
+.seg i { color: var(--muted); font-style: normal; font-size: 11px; margin-right: 8px; }
+.detail-actions { display: flex; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.detail-actions button {
+  border: 1px solid var(--line); background: #fff; border-radius: 10px;
+  padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer;
+}
+.detail-actions button:hover { border-color: var(--accent); color: var(--accent); }
