@@ -176,6 +176,18 @@ class ChangePasswordBody(BaseModel):
     new_password: str
 
 
+class ResetPasswordBody(BaseModel):
+    phone: str
+    code: str
+    new_password: str
+    brand_mark: Optional[str] = None
+
+
+class ResetPasswordSendBody(BaseModel):
+    phone: str
+    brand_mark: Optional[str] = None
+
+
 class PhoneChangeSendBody(BaseModel):
     password: str
     new_phone: str
@@ -769,6 +781,54 @@ def change_password(
     db.add(current_user)
     db.commit()
     logger.info("[auth/password/change] user_id=%s ok=1 pv=%s", current_user.id, current_user.password_version)
+    return {"ok": True, "relogin_required": True}
+
+
+@router.post("/password/reset/send-code", summary="忘记密码：发送短信验证码")
+def send_password_reset_code(
+    body: ResetPasswordSendBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
+    mobile = _normalize_cn_mobile(body.phone)
+    user = user_for_account(db, _phone_account_email(mobile), brand_mark)
+    if user is None:
+        raise HTTPException(status_code=404, detail="该手机号尚未注册，请先注册")
+    _dispatch_sms_code(db, mobile, brand_mark)
+    logger.info("[auth/password/reset/send-code] mobile_tail=%s ok=1", mobile[-4:])
+    return {"ok": True, "phone": mobile}
+
+
+@router.post("/password/reset", summary="短信验证码重置密码（忘记密码）")
+def reset_password(
+    body: ResetPasswordBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Forgot-password flow: verified SMS code sets a new password.
+
+    The login page's forgot-password modal uses this endpoint. On success all
+    existing sessions are invalidated just like an authenticated password
+    change.
+    """
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
+    mobile = _normalize_cn_mobile(body.phone)
+    code_in = (body.code or "").strip()
+    if not code_in or len(code_in) > 8:
+        raise HTTPException(status_code=400, detail="短信验证码无效")
+    if not _verify_sms_challenge(db, mobile, code_in, brand_mark):
+        raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
+    user = user_for_account(db, _phone_account_email(mobile), brand_mark)
+    if user is None:
+        raise HTTPException(status_code=404, detail="该手机号尚未注册，请先注册")
+    new_password = _normalize_new_password(body.new_password)
+    user.hashed_password = get_password_hash(new_password)
+    user.password_initialized = True
+    user.password_version = password_version_of(user) + 1
+    db.add(user)
+    db.commit()
+    logger.info("[auth/password/reset] user_id=%s mobile_tail=%s ok=1 pv=%s", user.id, mobile[-4:], user.password_version)
     return {"ok": True, "relogin_required": True}
 
 
