@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>必火听记录</title>
+<link rel="stylesheet" href="/note-static/note.css?v=20261020-1">
+</head>
+<body>
+<div id="loginView" class="login-wrap">
+  <div class="login-card">
+    <img class="login-logo" src="/note-static/bihu-stack.png" alt="必火智能">
+    <h1>必火听记录</h1>
+    <p class="sub">AI秘书 · 录音整理、提炼重点、跟进待办</p>
+    <label for="account">手机号 / 账号</label>
+    <input id="account" autocomplete="username" placeholder="手机号或账号">
+    <label for="password">密码</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="密码">
+    <button id="loginBtn" type="button">登录</button>
+    <div id="loginMsg" class="msg"></div>
+    <p class="tip">与 Online / 管理后台 / manage 使用同一套账号</p>
+  </div>
+</div>
+
+<div id="appView" class="app hidden">
+  <header class="topbar">
+    <div class="brand">
+      <img src="/note-static/bihu-stack.png" alt="必火智能">
+      <span>必火听记录</span>
+    </div>
+    <div class="who">
+      <span id="whoText"></span>
+      <button id="logoutBtn" type="button">退出</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card recorder">
+      <div class="rec-head">
+        <span class="mark">秘</span>
+        <div>
+          <span class="eyebrow">AI秘书</span>
+          <h2>录音整理工作台</h2>
+        </div>
+      </div>
+      <div class="rec-body">
+        <button id="recordBtn" class="rec-btn" type="button" aria-label="开始录音"><span class="dot"></span></button>
+        <div id="recStatus" class="rec-status">点击按钮开始录音</div>
+        <div id="recTimer" class="rec-timer">00:00</div>
+      </div>
+      <div class="rec-actions">
+        <label class="upload-btn" for="fileInput">上传音频文件</label>
+        <input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.amr,.wma,.opus,.webm" hidden>
+        <span class="hint">支持 MP3 / WAV / M4A / OGG / OPUS / WebM</span>
+      </div>
+    </section>
+
+    <section class="card list-card">
+      <div class="list-head">
+        <h3>录音记录</h3>
+        <button id="refreshBtn" type="button" class="ghost">刷新</button>
+      </div>
+      <div id="records" class="records"></div>
+      <div id="empty" class="empty hidden">还没有录音，点上面的按钮开始</div>
+    </section>
+  </main>
+</div>
+
+<div id="detailMask" class="mask hidden">
+  <div class="card detail">
+    <div class="detail-head">
+      <h3 id="detailTitle">录音详情</h3>
+      <button id="detailClose" type="button" class="ghost">关闭</button>
+    </div>
+    <div id="detailBody" class="detail-body"></div>
+  </div>
+</div>
+
+<script src="/note-static/note.js?v=20261020-1"></script>
+</body>
+</html>
