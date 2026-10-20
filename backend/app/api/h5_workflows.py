@@ -1989,7 +1989,9 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
             session_minutes = 30
         base_params["takeover_session_minutes"] = session_minutes
         base_params["message_poll_interval_seconds"] = 15
-        base_params["accept_friend_requests_once"] = True
+        base_params["accept_friend_requests_once"] = _bool_param(
+            base_params.get("accept_friend_requests_once"), True
+        )
         return {
             "title": title,
             "task_kind": "client_workflow",

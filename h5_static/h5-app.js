@@ -4954,7 +4954,8 @@ async function api(path, options = {}) {
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamWecomNote", "可选"), true);
       }
       if (key === "native_wechat_poll") {
-        return taskFieldHtml("是否拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
+        return taskFieldHtml("好友申请", workCheckboxHtml("workflowParamNativeWechatAcceptFriendRequests", "本轮同意好友申请（取消后只轮询对话）", true))
+          + taskFieldHtml("是否拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
       }
       if (key === "native_whatsapp_poll") {
@@ -5522,12 +5523,16 @@ async function api(path, options = {}) {
             moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
           });
         }
-        return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
+        const nativeOptions = {
           targets: workSplitList(workflowParamValue("workflowParamNativeWechatTargets")),
           apply_message: workflowParamValue("workflowParamNativeWechatApplyMessage"),
           group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled"),
           moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
-        }, { requireTargets: key !== "native_wechat_poll" });
+        };
+        if (key === "native_wechat_poll") {
+          nativeOptions.accept_friend_requests_once = workflowParamChecked("workflowParamNativeWechatAcceptFriendRequests");
+        }
+        return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), nativeOptions, { requireTargets: key !== "native_wechat_poll" });
       }
       if (key === "native_whatsapp_poll") {
         return nativeWhatsappWorkflowPlan(workflowParamValue("workflowParamNativeWhatsappInstruction"), {
@@ -7019,6 +7024,7 @@ async function api(path, options = {}) {
         return;
       }
       if (nodeInfo.key === "native_wechat_poll") {
+        setFieldValue("workflowParamNativeWechatAcceptFriendRequests", params.accept_friend_requests_once !== false);
         setFieldValue("workflowParamNativeWechatGroupInviteEnabled", params.group_invite_enabled === true);
         setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
         return;

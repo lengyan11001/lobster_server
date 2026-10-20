@@ -31,6 +31,16 @@ def test_native_wechat_takeover_plan_scans_friends_once_and_messages_every_15_se
     assert params["accept_friend_requests_once"] is True
 
 
+def test_native_wechat_takeover_plan_can_skip_friend_requests(monkeypatch):
+    monkeypatch.setattr(h5_workflows, "_workflow_minutes_between", lambda *args, **kwargs: 60)
+    plan = _native_wechat_plan(
+        "native_wechat_poll",
+        "微信私信接管",
+        {"accept_friend_requests_once": False},
+    )
+    assert plan["payload"]["params"]["accept_friend_requests_once"] is False
+
+
 def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_session, test_user, monkeypatch):
     monkeypatch.setattr(h5_chat, "online_user_for_mobile_user", lambda _db, user: user)
 
