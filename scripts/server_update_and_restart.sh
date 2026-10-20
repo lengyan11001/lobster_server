@@ -126,6 +126,10 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     if [ -n "$PID_ON_PORT" ]; then
       echo "[ERR] port $PORT is still occupied by PID(s) $PID_ON_PORT after stopping Lobster units; refusing to kill an unknown process" >&2
       sudo ss -ltnp "sport = :$PORT" 2>/dev/null || true
+      # 2026-10-20 事故：这里直接 exit 会把刚停掉的 backend/mastra/background 留在停机状态。
+      # 部署中止也必须先把生产拉回来。
+      echo "[恢复] 部署中止，先把刚停掉的服务拉回来，避免生产停机" >&2
+      sudo systemctl start lobster-backend lobster-mcp "$MASTRA_UNIT" "$BG_UNIT" 2>/dev/null || true
       exit 1
     fi
     : <<'LEGACY_PORT_CLEANUP'
