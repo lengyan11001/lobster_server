@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from .auth import get_current_user, request_auth_session_id
+from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
-from ..models import H5ChatDevicePresence, User, UserInstallation, UserMachineIdentity
+from ..models import H5ChatDevicePresence, User, UserDeviceLabel, UserInstallation, UserMachineIdentity
 from ..services.brand_context import normalize_brand_mark, scoped_installation_id, user_brand_mark
 from ..services.installation_slot_ownership import (
     claim_installation_slot,
@@ -427,6 +428,97 @@ def current_installation_id_status(
         "presence_user_count": len(usage.get("presence_user_ids") or []),
         "matched_installation_ids": usage.get("installation_ids") or [],
     }
+
+
+class AliasRestoreRequest(BaseModel):
+    alias: str = ""
+
+
+def _alias_owner_ids(db: Session, current_user: User) -> set[int]:
+    ids = {int(current_user.id)}
+    try:
+        owner = online_user_for_mobile_user(db, current_user)
+    except Exception:
+        owner = None
+    owner_id = getattr(owner, "id", None)
+    if owner_id:
+        ids.add(int(owner_id))
+    return ids
+
+
+@router.get("/api/installation-id/aliases", summary="当前账号的设备别名及原槽位")
+def list_installation_aliases(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_ids = _alias_owner_ids(db, current_user)
+    rows = (
+        db.query(UserDeviceLabel)
+        .filter(UserDeviceLabel.user_id.in_(tuple(owner_ids)))
+        .order_by(UserDeviceLabel.updated_at.desc())
+        .all()
+    )
+    cutoff = datetime.utcnow() - timedelta(minutes=_INSTALLATION_PRESENCE_WINDOW_MINUTES)
+    seen: set[str] = set()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        alias = str(row.display_name or "").strip()
+        slot = str(row.last_installation_id or "").strip()
+        if not alias or not slot:
+            continue
+        key = alias.lower()
+        if key in seen or key.startswith("local-"):
+            continue
+        seen.add(key)
+        online = (
+            db.query(H5ChatDevicePresence.id)
+            .filter(
+                H5ChatDevicePresence.installation_id == slot,
+                H5ChatDevicePresence.last_seen_at >= cutoff,
+            )
+            .first()
+            is not None
+        )
+        items.append(
+            {
+                "alias": alias,
+                "installation_id": slot,
+                "online": online,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+            }
+        )
+    return {"ok": True, "items": items}
+
+
+@router.post("/api/installation-id/aliases/restore", summary="按设备别名找回原来的槽位")
+def restore_installation_alias(
+    body: AliasRestoreRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    alias = str(body.alias or "").strip()
+    if not alias:
+        raise HTTPException(status_code=400, detail="请选择设备别名")
+    owner_ids = _alias_owner_ids(db, current_user)
+    rows = (
+        db.query(UserDeviceLabel)
+        .filter(UserDeviceLabel.user_id.in_(tuple(owner_ids)))
+        .all()
+    )
+    matched = [row for row in rows if str(row.display_name or "").strip().lower() == alias.lower()]
+    if not matched:
+        raise HTTPException(status_code=404, detail="没有找到这个设备别名")
+    matched.sort(key=lambda row: row.updated_at or datetime.min, reverse=True)
+    slot = str(matched[0].last_installation_id or "").strip()
+    if not slot:
+        raise HTTPException(status_code=409, detail="这个别名还没有绑定过槽位")
+    usage = _installation_id_usage(db, slot, exclude_user_id=current_user.id)
+    if usage.get("live_taken"):
+        raise HTTPException(
+            status_code=409,
+            detail="该别名对应的槽位正被另一台设备在线使用，请先在原设备上停止使用后再恢复",
+        )
+    return {"ok": True, "alias": alias, "installation_id": slot}
 
 
 @router.post("/api/installation-id/bind", summary="Bind a unique installation id to current user")
