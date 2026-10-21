@@ -71,6 +71,9 @@ def _installation_id_variants(installation_id: str, brand_mark: str = "") -> set
     return values
 
 
+_INSTALLATION_PRESENCE_WINDOW_MINUTES = 10
+
+
 def _installation_id_usage(
     db: Session,
     installation_id: str,
@@ -78,6 +81,12 @@ def _installation_id_usage(
     brand_mark: str = "",
     exclude_user_id: Optional[int] = None,
 ) -> dict[str, Any]:
+    """槽位占用判断：只有“另一台设备/账号现在还在线用这个槽位”才算占用。
+
+    历史 `user_installations` 行不参与判定：同一台机器换账号登录、重装、OTA
+    都会留下旧账号的槽位记录，按历史行判占用会永远提示“被占用”。
+    同一台机器（machine_instance_id 相同）上的其它账号也不算冲突。
+    """
     raw = _normalize_installation_id(installation_id)
     if not raw:
         return {
@@ -110,11 +119,14 @@ def _installation_id_usage(
         if iid:
             matched_ids.add(str(iid))
 
+    # 只有最近还在心跳的设备才算“正在占用”。
+    cutoff = datetime.utcnow() - timedelta(minutes=_INSTALLATION_PRESENCE_WINDOW_MINUTES)
     p = db.query(H5ChatDevicePresence.user_id, H5ChatDevicePresence.installation_id).filter(
         or_(
             H5ChatDevicePresence.installation_id.in_(tuple(variants)),
             H5ChatDevicePresence.installation_id.like(f"%{suffix}"),
-        )
+        ),
+        H5ChatDevicePresence.last_seen_at >= cutoff,
     )
     for uid, iid in p.all():
         try:
@@ -127,11 +139,36 @@ def _installation_id_usage(
         if iid:
             matched_ids.add(str(iid))
 
-    all_user_ids = sorted(user_ids | presence_user_ids)
+    # 同一台机器上的其它账号（换账号登录/多开）不算冲突。
+    candidates = user_ids | presence_user_ids
+    if exclude_user_id is not None and candidates:
+        mine = {
+            str(mid)
+            for (mid,) in db.query(UserMachineIdentity.machine_instance_id)
+            .filter(UserMachineIdentity.user_id == int(exclude_user_id))
+            .all()
+            if mid
+        }
+        if mine:
+            same_machine_uids = {
+                int(uid)
+                for uid, mid in db.query(
+                    UserMachineIdentity.user_id, UserMachineIdentity.machine_instance_id
+                )
+                .filter(UserMachineIdentity.user_id.in_(tuple(candidates)))
+                .all()
+                if mid and str(mid) in mine
+            }
+            user_ids -= same_machine_uids
+            presence_user_ids -= same_machine_uids
+
     return {
         "valid": True,
-        "taken": bool(all_user_ids),
-        "user_ids": all_user_ids,
+        # 历史口径（其它账号用过这个槽位）：/bind 签名仍需要它。
+        "taken": bool(user_ids),
+        # 实时口径（另一台设备/账号现在还在心跳）：只用于 /status 的“被占用”提示。
+        "live_taken": bool(presence_user_ids),
+        "user_ids": sorted(user_ids),
         "presence_user_ids": sorted(presence_user_ids),
         "installation_ids": sorted(matched_ids),
     }
@@ -383,8 +420,10 @@ def current_installation_id_status(
         "ok": True,
         "installation_id": installation_id,
         "scoped_installation_id": scoped_id,
-        "duplicate": bool(usage.get("taken")),
-        "duplicate_user_count": len(usage.get("user_ids") or []),
+        # 提示只针对“现在还在线的另一台设备/账号”；历史行不再报警。
+        "duplicate": bool(usage.get("live_taken")),
+        "duplicate_user_count": len(usage.get("presence_user_ids") or []),
+        "history_user_count": len(usage.get("user_ids") or []),
         "presence_user_count": len(usage.get("presence_user_ids") or []),
         "matched_installation_ids": usage.get("installation_ids") or [],
     }
