@@ -2090,6 +2090,42 @@ def _asset_local_path(asset: Asset) -> Optional[Path]:
     return p if p.exists() else None
 
 
+class AssetLookupBody(BaseModel):
+    asset_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/api/assets/lookup", summary="批量校验素材是否还在素材库")
+def lookup_assets(
+    body: AssetLookupBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """提交任务前的素材校验：返回哪些 asset_id 还在库里、哪些已经没了。"""
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in (body.asset_ids or [])[:200]:
+        aid = str(raw or "").strip()
+        if aid and aid not in seen:
+            seen.add(aid)
+            wanted.append(aid)
+    if not wanted:
+        return {"ok": True, "found": [], "missing": []}
+    owner = online_user_for_mobile_user(db, current_user)
+    user_ids = {int(current_user.id)}
+    owner_id = getattr(owner, "id", None)
+    if owner_id:
+        user_ids.add(int(owner_id))
+    rows = (
+        db.query(Asset.asset_id)
+        .filter(Asset.asset_id.in_(wanted), Asset.user_id.in_(user_ids))
+        .all()
+    )
+    found = [str(row[0]) for row in rows]
+    found_set = set(found)
+    missing = [aid for aid in wanted if aid not in found_set]
+    return {"ok": True, "found": found, "missing": missing}
+
+
 @router.get("/api/assets/creative-candidate-groups", summary="创意成片备选素材组列表")
 def list_creative_candidate_groups(
     current_user: User = Depends(get_current_user),
