@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import threading
 
 import asyncio
 import copy
@@ -19,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, update
 from sqlalchemy.orm import Session, defer
 
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import (
     Asset,
     H5ChatDevicePresence,
@@ -4118,6 +4119,9 @@ def _scheduled_occurrence_expired(
     *,
     installation_id: str = "",
 ) -> bool:
+    if _is_demo_once_task(task):
+        # 演示任务不适用工作流时间窗，点了就该跑
+        return False
     deadline = _scheduled_occurrence_deadline(
         db,
         task,
@@ -4624,6 +4628,12 @@ def _execute_server_side_run(
             task.updated_at = finished
         _sync_h5_message_from_run(db, run, finished)
         db.commit()
+        if task is not None and str(run.status or "").strip().lower() == "completed" and _is_demo_once_task(task):
+            try:
+                _enqueue_demo_children(db, task, datetime.utcnow())
+            except Exception:
+                db.rollback()
+                logger.exception("[scheduled-tasks] enqueue demo children failed parent=%s", task.id)
     except (asyncio.TimeoutError, TimeoutError):
         failed = datetime.utcnow()
         try:
@@ -5450,6 +5460,100 @@ def _hydrate_workflow_task_payload(
     return payload
 
 
+def _demo_h5_context(payload: Any) -> Dict[str, Any]:
+    data = payload if isinstance(payload, dict) else {}
+    ctx = data.get("h5_context")
+    return ctx if isinstance(ctx, dict) else {}
+
+
+def _is_demo_once_payload(payload: Any, schedule_type: Any, created_by_role: Any) -> bool:
+    """节点演示：普通用户建的一次性任务 + h5_context.template_source=personal_current。
+
+    演示不看节点时间（用户点演示那一刻就开始），也不适用工作流时间窗。
+    """
+    if str(schedule_type or "").strip().lower() != "once":
+        return False
+    if str(created_by_role or "").strip().lower() != "user":
+        return False
+    data = payload if isinstance(payload, dict) else {}
+    ctx = _demo_h5_context(data)
+    source = str(ctx.get("template_source") or data.get("template_source") or "").strip().lower()
+    return source == "personal_current"
+
+
+def _is_demo_once_task(task: Any) -> bool:
+    return _is_demo_once_payload(
+        getattr(task, "payload", None),
+        getattr(task, "schedule_type", ""),
+        getattr(task, "created_by_role", ""),
+    )
+
+
+def _demo_child_tasks(db: Session, parent: ScheduledTask) -> List[ScheduledTask]:
+    """同一个演示批次里，父节点对应的发布等子节点（按 parent_node_id 对齐）。"""
+    ctx = _demo_h5_context(parent.payload)
+    node_id = str(ctx.get("workflow_node_id") or "").strip()
+    template_id = str(ctx.get("workflow_template_id") or "").strip()
+    if not node_id or not template_id:
+        return []
+    rows = (
+        db.query(ScheduledTask)
+        .filter(
+            ScheduledTask.user_id == parent.user_id,
+            ScheduledTask.schedule_type == "once",
+            ScheduledTask.created_by_role == "user",
+            ScheduledTask.status == "active",
+        )
+        .all()
+    )
+    children: List[ScheduledTask] = []
+    for row in rows:
+        child_ctx = _demo_h5_context(row.payload)
+        if str(child_ctx.get("workflow_parent_node_id") or "").strip() != node_id:
+            continue
+        if str(child_ctx.get("workflow_template_id") or "").strip() != template_id:
+            continue
+        children.append(row)
+    return children
+
+
+def _kick_demo_server_task(task_id: int) -> None:
+    """演示的服务端任务：请求返回后立刻在后台线程执行，不等 60s 调度 tick。"""
+    def _run() -> None:
+        session = SessionLocal()
+        try:
+            task = session.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if task is None or str(task.status or "").strip().lower() != "active":
+                return
+            if task.last_run_id:
+                return
+            _enqueue_task(session, task, datetime.utcnow())
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("[scheduled-tasks] demo server task kick failed id=%s", task_id)
+        finally:
+            session.close()
+
+    threading.Thread(target=_run, name=f"demo-task-{task_id}", daemon=True).start()
+
+
+def _enqueue_demo_children(db: Session, parent: ScheduledTask, now: datetime) -> int:
+    """父节点完成后，按演示批次把发布等子节点推入队列（父完成才触发）。"""
+    children = _demo_child_tasks(db, parent)
+    if not children:
+        return 0
+    count = 0
+    for child in children:
+        child.next_run_at = now
+        child.updated_at = now
+        _enqueue_task(db, child, now)
+        count += 1
+    db.commit()
+    logger.info("[scheduled-tasks] demo parent done, enqueued children=%s parent=%s", count, parent.id)
+    return count
+
+
 def _create_task_row(
     db: Session,
     body: ScheduledTaskCreate,
@@ -5562,6 +5666,13 @@ def _create_task_row(
         schedule_config["start_at"] = body.start_at
         schedule_config["start_at_utc"] = start_at_utc.isoformat()
     next_run_at = start_at_utc or now
+    demo_once = _is_demo_once_payload(payload, schedule_type, created_by_role)
+    demo_has_parent = bool(str(_demo_h5_context(payload).get("workflow_parent_node_id") or "").strip())
+    if demo_once:
+        # 演示不看节点时间：父节点点下去就开始；子节点等父节点完成后再触发
+        next_run_at = None if demo_has_parent else now
+        schedule_config.pop("start_at", None)
+        schedule_config.pop("start_at_utc", None)
     if schedule_type == "interval":
         interval_seconds = max(60, min(int(body.interval_seconds or 3600), 366 * 24 * 3600))
     elif schedule_type == "daily_times":
@@ -5618,7 +5729,7 @@ def _create_task_row(
     )
     db.add(task)
     db.flush()
-    if not _is_server_side_task(task) and task.next_run_at and task.next_run_at <= now:
+    if not _is_server_side_task(task) and not (demo_once and demo_has_parent) and task.next_run_at and task.next_run_at <= now:
         targets = _resolve_system_device_targets(db, task.target_installation_ids or [])
         busy = any(
             _installation_has_unclaimed_work(
@@ -5637,6 +5748,8 @@ def _create_task_row(
             db.flush()
     db.commit()
     db.refresh(task)
+    if demo_once and not demo_has_parent and _is_server_side_task(task) and not task.last_run_id:
+        _kick_demo_server_task(task.id)
     return task
 
 
