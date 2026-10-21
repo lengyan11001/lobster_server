@@ -6720,6 +6720,144 @@ def copy_schedule_template(
     return {"ok": True, "item": _template_payload_with_resources(db, row, source="own")}
 
 
+class SlotTemplateLinkBody(BaseModel):
+    template_id: Optional[int] = None
+    template_name: str = ""
+
+
+def _slot_template_items(rows) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        items.append(
+            {
+                "id": int(row.id),
+                "name": _clean_text(row.name, 160) or f"模板 {row.id}",
+                "installation_id": _clean_text(getattr(row, "installation_id", ""), 128),
+                "is_personal_default": _clean_text(row.name, 160) == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+            }
+        )
+    return items
+
+
+@router.get("/api/ip-content/slot-templates", summary="当前设备槽位可关联的个人IP模板")
+def list_slot_templates(
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    slot = _clean_text(x_installation_id, 128)
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == current_user.id,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    row = _personal_default_row_for_slot(
+        db,
+        current_user.id,
+        slot,
+        active_only=False,
+        fallback_to_account=False,
+    )
+    meta = row.meta if row is not None and isinstance(row.meta, dict) else {}
+    current_id = 0
+    try:
+        current_id = int(meta.get("current_template_id") or 0)
+    except (TypeError, ValueError):
+        current_id = 0
+    return {
+        "ok": True,
+        "installation_id": slot,
+        "current_template_id": current_id or None,
+        "current_template_name": _clean_text(meta.get("current_template_name"), 160),
+        "items": _slot_template_items(rows),
+    }
+
+
+@router.post("/api/ip-content/slot-templates/link", summary="把当前设备槽位手动关联到一个模板")
+def link_slot_template(
+    body: SlotTemplateLinkBody,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    slot = _clean_text(x_installation_id, 128)
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == current_user.id,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    target = None
+    if body.template_id:
+        target = next((row for row in rows if int(row.id) == int(body.template_id)), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="模板不存在或已删除")
+    else:
+        name = _clean_text(body.template_name, 160)
+        if not name:
+            raise HTTPException(status_code=400, detail="请输入或选择要关联的模板名")
+        lowered = name.lower()
+        exact = [row for row in rows if _clean_text(row.name, 160).lower() == lowered]
+        if len(exact) > 1:
+            same_slot = [row for row in exact if _clean_text(getattr(row, "installation_id", ""), 128) == slot]
+            if len(same_slot) == 1:
+                exact = same_slot
+        if len(exact) == 1:
+            target = exact[0]
+        elif len(exact) > 1:
+            raise HTTPException(status_code=400, detail="同名模板不止一个，请从下拉列表里选择具体模板")
+        else:
+            partial = [row for row in rows if lowered in _clean_text(row.name, 160).lower()]
+            if len(partial) == 1:
+                target = partial[0]
+            elif len(partial) > 1:
+                names = "、".join(_clean_text(row.name, 160) for row in partial[:5])
+                raise HTTPException(status_code=400, detail=f"匹配到多个模板：{names}，请从下拉列表里选择")
+        if target is None:
+            raise HTTPException(status_code=404, detail="没有找到匹配的模板，请从下拉列表里选择")
+
+    row = _personal_default_row_for_slot(
+        db,
+        current_user.id,
+        slot,
+        active_only=False,
+        fallback_to_account=False,
+    )
+    if row is None:
+        row = IPContentScheduleTemplate(
+            user_id=int(current_user.id),
+            installation_id=slot,
+            name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
+        )
+        db.add(row)
+        db.flush()
+    meta = dict(row.meta or {})
+    linked_at = datetime.utcnow().isoformat()
+    meta["current_template_id"] = int(target.id)
+    meta["current_template_name"] = _clean_text(target.name, 160)
+    meta["current_template_linked_at"] = linked_at
+    meta["current_template_link_source"] = "manual_slot_link"
+    row.meta = meta
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "installation_id": slot,
+        "template_id": int(target.id),
+        "template_name": _clean_text(target.name, 160),
+        "linked_at": linked_at,
+    }
+
+
 @router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")
 def get_personal_default_ip_content_config(
     x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
