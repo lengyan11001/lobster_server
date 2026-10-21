@@ -1410,20 +1410,66 @@ async def _apply_asset_group_materials(
     snapshot["asset_group_selection"] = selection
     return snapshot
 
+
+def _personal_default_digital_human_template(
+    db: Session,
+    user_id: int,
+    installation_id: str = "",
+) -> Optional[Dict[str, Any]]:
+    """账号「个人默认配置」里当前选中的数字人模板（实时读取，不用激活时快照）。"""
+    try:
+        from .ip_content_studio import _current_template_id_from_meta, _personal_default_row_for_slot
+    except Exception:
+        return None
+    personal = _personal_default_row_for_slot(db, int(user_id), installation_id or "")
+    if personal is None and installation_id:
+        personal = _personal_default_row_for_slot(db, int(user_id), "")
+    if personal is None:
+        return None
+    meta = personal.meta if isinstance(personal.meta, dict) else {}
+    template_id = _current_template_id_from_meta(meta)
+    if template_id:
+        row = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.id == template_id,
+                IPContentScheduleTemplate.status == "active",
+            )
+            .first()
+        )
+        if row is not None:
+            # 当前模板明确没配数字人模板（meta 为 null）就是不要模板，
+            # 不能回落到个人行里的历史 style_id。
+            _configured, normalized = _stored_digital_human_template(
+                row.meta if isinstance(row.meta, dict) else {}
+            )
+            return normalized
+    _configured, normalized = _stored_digital_human_template(meta)
+    return normalized
+
+
 def _resolve_video_template_meta(
     db: Session,
     user_id: int,
     body: CreateVideoBody,
+    installation_id: str = "",
 ) -> tuple[Optional[Dict[str, Any]], str]:
-    """只有请求里显式给了模板才套模板；没选就是没选，不做任何兜底。"""
+    """模板口径：请求里显式带模板就按请求；否则按账号「个人默认配置」当前模板。
+
+    - `use_template is False` 才是明确不要模板；
+    - 客户端没选模板（老客户端、手动工作台）时，仍然套用账号当前模板设置，
+      否则用户明明配好了模板，生成出来还是裸视频。
+    """
     if body.use_template is False:
         return None, "request_disabled"
     explicit = _template_meta_from_body(body)
     if explicit is not None:
         return explicit, "request"
-    if body.use_template is True:
+    fallback = _personal_default_digital_human_template(db, user_id, installation_id)
+    if body.use_template is True and fallback is None:
         raise HTTPException(status_code=400, detail="已选择套用剪辑模板，请先选择具体模板")
-    # 没选模板就是没选：不套用账号「个人默认配置」里的当前模板。
+    if fallback is not None:
+        return fallback, "personal_default"
     return None, "not_requested"
 
 
@@ -2447,7 +2493,12 @@ async def create_video(
             "language": _clean_text(body.language) or "zh-CN",
         }
 
-    template_meta, template_source = _resolve_video_template_meta(db, int(current_user.id), body)
+    template_meta, template_source = _resolve_video_template_meta(
+        db,
+        int(current_user.id),
+        body,
+        (request.headers.get("x-installation-id") or "").strip(),
+    )
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
     _script_src = _clean_text(getattr(body, "script_source", ""), 64)
     if _script_src:
@@ -2487,6 +2538,16 @@ async def create_video(
         (template_meta or {}).get("style_id"),
         len((template_meta or {}).get("materials") or []),
     )
+    if template_meta:
+        logger.info(
+            "[shanjian-dh] template options user_id=%s header=%s material=%s subtitle=%s keyword=%s match=%s",
+            getattr(current_user, "id", ""),
+            bool(template_meta.get("header_switch", True)),
+            bool(template_meta.get("material_switch", True)),
+            bool(template_meta.get("subtitle_switch", True)),
+            bool(template_meta.get("keyword_switch", True)),
+            template_meta.get("material_match_way") or "fuzzyMatch",
+        )
     try:
         upstream = await _post_virtualman_with_queue(body.token, payload)
     except HTTPException as exc:
