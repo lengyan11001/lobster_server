@@ -3962,6 +3962,11 @@ def _create_run_for_target(
         scheduled_at=scheduled_at or now,
         installation_id=installation_id or "",
     )
+    if _is_demo_once_task(task):
+        # 演示不按节点时间窗执行：客户端对个微接管有硬超时（到节点结束就取消），
+        # 节点时间已过时会"还没开始就被判过期"。演示统一给 30 分钟窗口。
+        effective_deadline = now + timedelta(minutes=30)
+        parent_finished_at = None
     if effective_deadline is not None:
         run_context = run_payload.get("h5_context") if isinstance(run_payload.get("h5_context"), dict) else None
         if isinstance(run_context, dict):

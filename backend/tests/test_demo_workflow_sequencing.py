@@ -122,3 +122,26 @@ def test_demo_child_waits_for_parent(db_session, test_user, monkeypatch):
     db_session.commit()
     assert task.next_run_at is None, "子节点不能按点击时间开始"
     assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).count() == 0
+
+
+def test_demo_run_gets_fresh_deadline(db_session, test_user, monkeypatch):
+    """演示跑起来后要给新的 30 分钟窗口，否则客户端按旧节点时间判过期。"""
+    monkeypatch.setattr(scheduled_tasks, "_kick_demo_server_task", lambda tid: None)
+    body = scheduled_tasks.ScheduledTaskCreate(
+        title="演示-微信私信接管",
+        task_kind="client_workflow",
+        content="演示",
+        payload={"action": "native_wechat_poll", "params": {}, "h5_context": _demo_payload("wf_poll")["h5_context"]},
+        schedule_type="once",
+        timezone_offset_minutes=480,
+        installation_ids=["test-installation"],
+    )
+    task = scheduled_tasks._create_task_row(
+        db_session, body, target_user_id=test_user.id, created_by_user_id=test_user.id, created_by_role="user"
+    )
+    db_session.commit()
+    run = scheduled_tasks._create_run_for_target(db_session, task, None, datetime.utcnow())
+    db_session.commit()
+    raw = (run.payload or {}).get("h5_context", {}).get("workflow_node_deadline_at")
+    assert raw, "演示 run 必须带 deadline"
+    assert datetime.fromisoformat(raw) > datetime.utcnow() + timedelta(minutes=20)
