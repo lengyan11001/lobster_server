@@ -4517,6 +4517,18 @@ def _execute_server_side_run(
             image_generation = result.get("image_generation") if isinstance(result, dict) else {}
             if isinstance(image_generation, dict) and image_generation.get("automatic"):
                 image_count = int(image_generation.get("image_count") or 0)
+                # 2026-10-21：配图没出全就不能报"已完成"——执行台以前显示
+                # "第 3/3 张" + 已完成，实际 image_urls 是空的（user 352）。
+                if image_count < 3:
+                    first_error = ""
+                    for item in image_generation.get("image_errors") or []:
+                        if isinstance(item, dict) and str(item.get("error") or "").strip():
+                            first_error = str(item.get("error")).strip()
+                            break
+                    raise RuntimeError(
+                        f"朋友圈配图只生成 {image_count}/3 张"
+                        + (f"：{first_error[:300]}" if first_error else "")
+                    )
                 result_text = f"{ip_label}已生成，首条朋友圈图文已自动生成 {image_count}/3 张配图。"
             else:
                 result_text = f"{ip_label}已生成，朋友圈图片请在详情里手动触发。"
