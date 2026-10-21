@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -170,6 +172,49 @@ def test_production_personal_template_with_empty_pack_rules_keeps_template_featu
     assert template_meta["material_switch"] is True
     assert template_meta["subtitle_switch"] is True
     assert template_meta["keyword_switch"] is True
+
+
+def test_missing_library_asset_falls_back_to_client_file_url(db_session, test_user, monkeypatch):
+    """uid=316 线上问题：素材库里查不到 asset_id 时不能整单失败（裸视频）。"""
+    from backend.app.api import shanjian_digital_human as dh
+
+    async def fake_filter(materials, **_kwargs):
+        return materials, {"checked": len(materials), "shrunk": 0, "dropped": [], "unknown": 0}
+
+    monkeypatch.setattr(dh, "_filter_materials_within_shanjian_limit", fake_filter)
+    url = "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/dd4efed6e4f4.mp4"
+    prepared = asyncio.run(
+        dh._prepare_template_media_urls(
+            db=db_session,
+            current_user=test_user,
+            template_meta={
+                "style_id": "68c2482c7d86fd0030fd3a2d",
+                "materials": [{"type": "video", "asset_id": "dd4efed6e4f4", "fileUrl": url}],
+            },
+            title="高净值家庭",
+        )
+    )
+
+    assert prepared["materials"] == [{"type": "video", "fileUrl": url}]
+
+
+def test_missing_library_asset_without_url_reports_clear_index(db_session, test_user, monkeypatch):
+    from fastapi import HTTPException
+
+    from backend.app.api import shanjian_digital_human as dh
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            dh._prepare_template_media_urls(
+                db=db_session,
+                current_user=test_user,
+                template_meta={"style_id": "s", "materials": [{"type": "video", "asset_id": "nope"}]},
+                title="t",
+            )
+        )
+
+    assert exc_info.value.status_code == 404
+    assert "第 1 个" in str(exc_info.value.detail)
 
 
 def test_stored_template_rules_are_normalized_without_trusting_bad_duration():

@@ -1784,16 +1784,37 @@ async def _prepare_template_media_urls(
             or item.get("preview_url")
         )
         if asset_id:
-            row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == int(current_user.id)).first()
-            if not row:
-                raise HTTPException(status_code=404, detail=f"???????{index + 1}")
-            row_url = _clean_text(getattr(row, "source_url", None))
-            _release_db_transaction(db)
-            if _is_reusable_shanjian_media_url(row_url):
-                logger.info("[shanjian-dh] reuse template material user_id=%s asset_id=%s type=%s url=%s", getattr(current_user, "id", ""), asset_id, kind, _url_hint(row_url))
-                materials.append({"type": kind, "fileUrl": row_url})
-                continue
-            file_url = row_url or file_url
+            owner = online_user_for_mobile_user(db, current_user)
+            owner_ids = {int(current_user.id)}
+            owner_id = getattr(owner, "id", None)
+            if owner_id:
+                owner_ids.add(int(owner_id))
+            row = (
+                db.query(Asset)
+                .filter(Asset.asset_id == asset_id, Asset.user_id.in_(owner_ids))
+                .first()
+            )
+            if row is None:
+                # 素材被删/没落库时不能整单失败：客户端带来的 fileUrl 仍可直接用。
+                if not file_url:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"模板素材第 {index + 1} 个在素材库里找不到了，请重新选择素材后再提交",
+                    )
+                logger.warning(
+                    "[shanjian-dh] template material missing in library, fallback to fileUrl user_id=%s asset_id=%s index=%s",
+                    getattr(current_user, "id", ""),
+                    asset_id,
+                    index + 1,
+                )
+            else:
+                row_url = _clean_text(getattr(row, "source_url", None))
+                _release_db_transaction(db)
+                if _is_reusable_shanjian_media_url(row_url):
+                    logger.info("[shanjian-dh] reuse template material user_id=%s asset_id=%s type=%s url=%s", getattr(current_user, "id", ""), asset_id, kind, _url_hint(row_url))
+                    materials.append({"type": kind, "fileUrl": row_url})
+                    continue
+                file_url = row_url or file_url
         if not file_url:
             continue
         if _is_reusable_shanjian_media_url(file_url):
@@ -1806,7 +1827,7 @@ async def _prepare_template_media_urls(
             current_user=current_user,
             title=title,
             media_type=kind,
-            label=f"????{index + 1}",
+            label=f"模板素材{index + 1}",
         )
         materials.append({"type": kind, "fileUrl": uploaded_url})
     materials, material_report = await _filter_materials_within_shanjian_limit(
