@@ -605,8 +605,17 @@
     openSheet('picker', title, html, { tall: true });
   }
 
+  function openNoRecordSheet(title, message) {
+    openSheet('empty', title,
+      '<div class="empty">' + esc(message) + '</div>' +
+      '<div class="action-grid" style="margin-top:16px">' +
+      '<button type="button" data-empty-action="record">去首页录音</button>' +
+      '<button type="button" data-empty-action="upload">上传音频文件</button>' +
+      '</div>');
+  }
+
   function runOnRecord(title, hint, run) {
-    if (!state.items.length) { toast('还没有录音，先录一条吧'); return; }
+    if (!state.items.length) { openNoRecordSheet(title, '还没有录音。先录一条或上传一个音频文件。'); return; }
     if (state.items.length === 1) {
       var only = state.items[0];
       apiJson('/api/h5/recorder/files/' + encodeURIComponent(only.id)).then(function (d) {
@@ -673,7 +682,11 @@
   }
 
   async function openCapability(cap) {
-    if (cap === 'knowledge' || cap === 'live') { toast('该能力规划中'); return; }
+    if (cap === 'knowledge' || cap === 'live') {
+      openSheet('planned', cap === 'knowledge' ? '知识库' : '实时转译',
+        '<div class="empty">该能力正在规划中，敬请期待。</div>');
+      return;
+    }
     if (cap === 'todos') {
       var data = await apiJson('/api/h5/recorder/todos');
       var items = (data && data.items) || [];
@@ -751,20 +764,87 @@
     $('recTimer').textContent = '00:00';
   }
 
-  async function uploadBlob(blob, name) {
-    var fd = new FormData();
-    fd.append('file', new File([blob], name, { type: blob.type || 'audio/webm' }));
-    fd.append('source_type', 'device');
-    fd.append('device_name', '必火听记录');
-    var r = await api('/api/h5/recorder/files', { method: 'POST', body: fd });
-    if (!r.ok) {
-      var d = null;
-      try { d = await r.json(); } catch (e) { d = null; }
-      throw new Error((d && d.detail) || '上传失败');
-    }
-    $('recStatus').textContent = '已上传，AI 秘书正在整理…';
-    await loadRecords();
-    setTimeout(function () { $('recStatus').textContent = '点击麦克风开始录音'; }, 1800);
+  function showUploadToast(name) {
+    var box = $('uploadToast');
+    if (!box) return;
+    box.classList.remove('hidden', 'err');
+    $('uploadTitle').textContent = '正在上传 ' + name;
+    $('uploadBar').style.width = '0%';
+    $('uploadSub').textContent = '0%';
+  }
+
+  function setUploadPct(pct) {
+    var p = Math.max(0, Math.min(100, Math.round(pct || 0)));
+    var bar = $('uploadBar');
+    if (bar) bar.style.width = p + '%';
+    var sub = $('uploadSub');
+    if (sub) sub.textContent = p + '%';
+  }
+
+  function finishUploadToast(title, sub, isErr, hideAfter) {
+    var box = $('uploadToast');
+    if (!box) return;
+    box.classList.toggle('err', !!isErr);
+    $('uploadTitle').textContent = title;
+    $('uploadSub').textContent = sub || '';
+    $('uploadBar').style.width = '100%';
+    if (hideAfter) setTimeout(function () { box.classList.add('hidden'); }, hideAfter);
+  }
+
+  function insertRecord(rec) {
+    if (!rec) return;
+    state.items = [rec].concat(state.items.filter(function (x) { return String(x.id) !== String(rec.id); }));
+    state.total = Math.max(Number(state.total) || 0, state.items.length);
+    state.statuses[String(rec.id)] = rec.status;
+    setTab('records');
+    renderAll();
+  }
+
+  function uploadBlob(blob, name, retried) {
+    return new Promise(function (resolve, reject) {
+      var fd = new FormData();
+      fd.append('file', new File([blob], name, { type: blob.type || 'audio/webm' }));
+      fd.append('source_type', 'device');
+      fd.append('device_name', '必火听记录');
+      showUploadToast(name);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/h5/recorder/files');
+      var hs = headers();
+      Object.keys(hs).forEach(function (k) { xhr.setRequestHeader(k, hs[k]); });
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) setUploadPct(e.loaded / e.total * 100);
+      };
+      xhr.onload = function () {
+        var d = null;
+        try { d = JSON.parse(xhr.responseText || '{}'); } catch (e) { d = null; }
+        if (xhr.status === 401 && !retried) {
+          renew().then(function (ok) {
+            if (ok) resolve(uploadBlob(blob, name, true));
+            else reject(new Error('登录状态已失效，请重新登录'));
+          }).catch(reject);
+          return;
+        }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          var msg = friendlyError((d && d.detail) || ('上传失败 ' + xhr.status));
+          finishUploadToast('上传失败', msg, true, 5000);
+          reject(new Error(msg));
+          return;
+        }
+        setUploadPct(100);
+        insertRecord(d && d.record);
+        schedulePoll();
+        finishUploadToast('上传完成', '已加入录音记录，AI 正在整理…', false, 3200);
+        $('recStatus').textContent = '已上传，AI 秘书正在整理…';
+        setTimeout(function () { $('recStatus').textContent = '点击麦克风开始录音'; }, 2200);
+        resolve(d);
+      };
+      xhr.onerror = function () {
+        var msg = '上传失败，请检查网络后重试';
+        finishUploadToast('上传失败', msg, true, 5000);
+        reject(new Error(msg));
+      };
+      xhr.send(fd);
+    });
   }
 
   /* ---------- wire ---------- */
@@ -813,6 +893,14 @@
       if (closer) { closeSheet(closer.getAttribute('data-close')); return; }
       var cap = e.target.closest ? e.target.closest('[data-cap]') : null;
       if (cap && !cap.disabled) { openCapability(cap.getAttribute('data-cap')).catch(function (err) { toast(err.message); }); return; }
+      var emptyAct = e.target.closest ? e.target.closest('[data-empty-action]') : null;
+      if (emptyAct) {
+        var action = emptyAct.getAttribute('data-empty-action');
+        closeSheet('empty');
+        if (action === 'record') { setTab('home'); }
+        else if (action === 'upload') { var fi = $('fileInput'); if (fi) fi.click(); }
+        return;
+      }
       var pick = e.target.closest ? e.target.closest('[data-pick-id]') : null;
       if (pick) {
         var pickId = pick.getAttribute('data-pick-id');

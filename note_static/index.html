@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>必火听记录</title>
-<link rel="stylesheet" href="/note-static/note.css?v=20261021-3">
+<link rel="stylesheet" href="/note-static/note.css?v=20261021-4">
 </head>
 <body>
 <div id="loginView" class="login-wrap">
@@ -133,6 +133,11 @@
     </section>
   </main>
 
+  <div id="uploadToast" class="upload-toast hidden">
+    <div class="upload-title" id="uploadTitle">正在上传…</div>
+    <div class="upload-track"><i id="uploadBar"></i></div>
+    <div class="upload-sub" id="uploadSub">0%</div>
+  </div>
   <nav class="tabbar" id="tabbar">
     <button type="button" class="tab active" data-tab="home"><i>⌂</i><span>首页</span></button>
     <button type="button" class="tab" data-tab="records"><i>☰</i><span>录音记录</span></button>
@@ -142,6 +147,6 @@
 
 <div id="modalRoot" class="modal-root"></div>
 
-<script src="/note-static/note.js?v=20261021-3"></script>
+<script src="/note-static/note.js?v=20261021-4"></script>
 </body>
 </html>
