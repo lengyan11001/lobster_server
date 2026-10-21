@@ -14,8 +14,20 @@
   function setToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} }
   function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
 
+  function installationId() {
+    var key = 'note_installation_id';
+    var v = '';
+    try { v = localStorage.getItem(key) || ''; } catch (e) { v = ''; }
+    if (!v) {
+      v = 'note-web-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      try { localStorage.setItem(key, v); } catch (e) {}
+    }
+    return v;
+  }
+
   function headers(extra) {
     var h = Object.assign({ 'X-Lobster-Brand': BRAND }, extra || {});
+    if (!h['X-Installation-Id']) h['X-Installation-Id'] = installationId();
     var t = token();
     if (t) h['Authorization'] = 'Bearer ' + t;
     return h;
@@ -27,7 +39,7 @@
     try {
       var r = await fetch('/auth/refresh', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + t, 'X-Lobster-Brand': BRAND, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': 'Bearer ' + t, 'X-Lobster-Brand': BRAND, 'X-Installation-Id': installationId(), 'Content-Type': 'application/json' },
         body: '{}'
       });
       if (!r.ok) return false;
@@ -333,6 +345,9 @@
     if (act === 'outline') { openOutlineSheet(d); return; }
     if (act === 'transcript') { openTranscriptSheet(d); return; }
     if (act === 'analyze') {
+      closeSheet('todos');
+      closeSheet('outline');
+      closeSheet('summary');
       toast('正在重新分析…');
       apiJson('/api/h5/recorder/files/' + d.id + '/analyze', { method: 'POST' })
         .then(function (r) { state.detail = r.record; openDetail(d.id); toast('已重新整理'); loadRecords().catch(function(){}); })
@@ -358,12 +373,19 @@
           return '<li><b>' + esc(t.title || '') + '</b>' + (meta ? '<span>' + esc(meta) + '</span>' : '') + '</li>';
         }).join('') + '</ul>'
       : '<div class="empty">这条录音没有识别到待办</div>';
+    html += '<div class="action-grid" style="margin-top:14px">' +
+      '<button type="button" data-detail-act="analyze">AI 重新整理</button>' +
+      '<button type="button" data-detail-act="outline">看大纲</button></div>';
     openSheet('todos', '待办', recordLabel(d) + html);
   }
 
   function openOutlineSheet(d) {
     var outline = (d.analysis && Array.isArray(d.analysis.outline)) ? d.analysis.outline : [];
-    openSheet('outline', '大纲 / 思维导图', recordLabel(d) + (outline.length ? renderOutline(outline) : '<div class="empty">这条录音还没有大纲</div>'));
+    var html = outline.length ? renderOutline(outline) : '<div class="empty">这条录音还没有大纲</div>';
+    html += '<div class="action-grid" style="margin-top:14px">' +
+      '<button type="button" data-detail-act="analyze">AI 生成大纲</button>' +
+      '<button type="button" data-detail-act="todos">看待办</button></div>';
+    openSheet('outline', '大纲 / 思维导图', recordLabel(d) + html, { tall: true });
   }
 
   function openTranscriptSheet(d) {

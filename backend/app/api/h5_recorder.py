@@ -1315,6 +1315,17 @@ def _dialogue_text(row: RecorderAudioRecord) -> str:
     return "\n".join(lines) or str(row.transcript_text or "")
 
 
+def _note_installation_id(request: Request, user_id: int) -> str:
+    """note.bhzn.top 是独立 H5，没有客户端 installationId 时用账号级稳定标识。"""
+    raw = (
+        request.headers.get("X-Installation-Id")
+        or request.headers.get("x-installation-id")
+        or ""
+    ).strip()
+    if 8 <= len(raw) <= 128 and re.match(r"^[a-zA-Z0-9\-_]+$", raw):
+        return raw
+    return f"note-web-{int(user_id)}"
+
 def _srt_clock(ms: int) -> str:
     ms = max(0, int(ms))
     h, rem = divmod(ms, 3600000)
@@ -1418,7 +1429,7 @@ async def reanalyze_recording(
         raise HTTPException(status_code=400, detail="这条录音还没有转写内容")
     answer = await _call_llm(
         request,
-        _installation_id(request),
+        _note_installation_id(request, int(current_user.id)),
         [
             {"role": "system", "content": (
                 "你是会议录音整理助手。只依据转写内容输出严格 JSON："
@@ -1457,7 +1468,7 @@ async def translate_recording(
     target = str(body.target_lang or "English").strip() or "English"
     answer = await _call_llm(
         request,
-        _installation_id(request),
+        _note_installation_id(request, int(current_user.id)),
         [
             {"role": "system", "content": f"把下面的录音转写翻译成{target}。保留发言人标记与先后顺序，只输出译文，不要解释。"},
             {"role": "user", "content": dialogue[:120000]},
@@ -1486,7 +1497,7 @@ async def ask_recording(
     question = str(body.question or "").strip()
     answer = await _call_llm(
         request,
-        _installation_id(request),
+        _note_installation_id(request, int(current_user.id)),
         [
             {"role": "system", "content": (
                 "你是这条录音的助理。只依据给定的摘要、要点和逐字稿回答；"
