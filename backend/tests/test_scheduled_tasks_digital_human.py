@@ -332,3 +332,66 @@ def test_shanjian_script_sources_multi_normalized():
     empty = {}
     assert scheduled_tasks._normalize_shanjian_script_sources(empty) == ["ip_daily_industry_hot_oral"]
     assert empty["script_source"] == "ip_daily_industry_hot_oral"
+
+def _dh_workflow_payload(params=None):
+    return {
+        "action": "shanjian_digital_human_video",
+        "params": dict(params or {}),
+        "h5_context": {"template_source": "personal_current", "workflow_node_id": "wf_dh"},
+    }
+
+
+def test_digital_human_workflow_defaults_to_personal_ip_template(db_session, test_user):
+    """工作流默认用个人IP设置里人设模板选的数据生成（节点没选模板也要生效）。"""
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name="个人默认配置",
+            status="active",
+            meta={
+                "digital_human_template": {
+                    "scene": "realMan",
+                    "style_id": "6a2668a137004e003477b6ed",
+                    "pack_rules": {},
+                    "process_rules": {},
+                }
+            },
+        )
+    )
+    db_session.commit()
+
+    payload = scheduled_tasks._refresh_live_personal_template_payload(
+        db_session,
+        task_kind="client_workflow",
+        payload=_dh_workflow_payload(),
+        target_user_id=test_user.id,
+    )
+
+    params = payload["params"]
+    assert params["use_template"] is True
+    assert params["style_id"] == "6a2668a137004e003477b6ed"
+    assert params["header_switch"] is True
+    assert params["subtitle_switch"] is True
+
+
+def test_digital_human_workflow_without_personal_template_stays_plain(db_session, test_user):
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name="个人默认配置",
+            status="active",
+            meta={"digital_human_template": None},
+        )
+    )
+    db_session.commit()
+
+    payload = scheduled_tasks._refresh_live_personal_template_payload(
+        db_session,
+        task_kind="client_workflow",
+        payload=_dh_workflow_payload(),
+        target_user_id=test_user.id,
+    )
+
+    params = payload["params"]
+    assert "use_template" not in params
+    assert not params.get("style_id")

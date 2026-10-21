@@ -1613,17 +1613,15 @@ def _refresh_live_personal_template_payload(
                 if voice:
                     params["voice"] = voice
                     params["speaker_id"] = voice
-            # 只刷新“节点已经选了模板”的任务：节点为空就不出模板，不做任何兜底。
+            # 工作流默认用「个人IP设置」里人设模板当前选的数据生成：
+            # 人设模板里配了数字人模板就以它为准（实时读取，不用节点历史快照）；
+            # 人设模板里没有配，就保持节点自己的选择（节点也没选就是普通口播）。
             from .shanjian_digital_human import _stored_digital_human_template
 
             _configured, live_template = _stored_digital_human_template(
                 {"digital_human_template": context_params.get("digital_human_template")}
             )
-            if (
-                _h5_dh_clean_text(params.get("style_id"), 128)
-                and isinstance(live_template, dict)
-                and live_template.get("style_id")
-            ):
+            if isinstance(live_template, dict) and live_template.get("style_id"):
                 params["use_template"] = True
                 params["template_scene"] = live_template.get("template_scene") or "realMan"
                 params["style_id"] = live_template.get("style_id")
