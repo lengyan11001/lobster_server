@@ -636,6 +636,11 @@
     var html = d.summary_text
       ? '<div class="summary-box">' + esc(d.summary_text) + '</div>'
       : '<div class="empty">这条录音还没有摘要</div>';
+    if (!d.summary_text) {
+      html += '<div class="action-grid" style="margin-top:14px">' +
+        '<button type="button" data-detail-act="analyze">AI 重新整理</button>' +
+        '<button type="button" data-detail-act="transcript">看逐字稿</button></div>';
+    }
     if (points.length) {
       html += '<h4>关键要点</h4><ul class="mini-list">' + points.map(function (p) {
         return '<li>' + esc(typeof p === 'string' ? p : JSON.stringify(p)) + '</li>';
@@ -658,7 +663,8 @@
     } else if (text) {
       html = '<div class="transcript">' + esc(text) + '</div>';
     } else {
-      html = '<div class="empty">还没有转写内容</div>';
+      html = '<div class="empty">还没有转写内容</div>' +
+        '<div class="action-grid" style="margin-top:14px"><button type="button" data-detail-act="analyze">AI 重新整理</button></div>';
     }
     openSheet('transcribe', 'AI 转写', recordLabel(d) + html, { tall: true });
   }
@@ -666,7 +672,9 @@
   function openSpeakersSheet(d) {
     var segs = Array.isArray(d.transcript_segments) ? d.transcript_segments : (Array.isArray(d.segments) ? d.segments : []);
     if (!segs.length) {
-      return openSheet('speakers', '区分发言人', '<div class="empty">还没有可区分发言人的逐字稿</div>');
+      return openSheet('speakers', '区分发言人', recordLabel(d) +
+        '<div class="empty">还没有可区分发言人的逐字稿</div>' +
+        '<div class="action-grid" style="margin-top:14px"><button type="button" data-detail-act="analyze">AI 重新整理</button></div>');
     }
     var who = {};
     segs.forEach(function (s) { var k = (s && (s.speaker || s.speaker_id)) || '未知'; who[k] = 1; });
