@@ -1613,14 +1613,17 @@ def _refresh_live_personal_template_payload(
                 if voice:
                     params["voice"] = voice
                     params["speaker_id"] = voice
-            # 模板参数一律以账号当前「个人默认配置」为准：节点里存的是历史快照，
-            # 用户改了模板之后旧值必须被覆盖，否则生成出来还是裸视频/旧模板效果。
+            # 只刷新“节点已经选了模板”的任务：节点为空就不出模板，不做任何兜底。
             from .shanjian_digital_human import _stored_digital_human_template
 
             _configured, live_template = _stored_digital_human_template(
                 {"digital_human_template": context_params.get("digital_human_template")}
             )
-            if isinstance(live_template, dict) and live_template.get("style_id"):
+            if (
+                _h5_dh_clean_text(params.get("style_id"), 128)
+                and isinstance(live_template, dict)
+                and live_template.get("style_id")
+            ):
                 params["use_template"] = True
                 params["template_scene"] = live_template.get("template_scene") or "realMan"
                 params["style_id"] = live_template.get("style_id")

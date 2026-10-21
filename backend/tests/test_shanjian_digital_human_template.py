@@ -23,7 +23,7 @@ def test_h5_app_exposes_digital_human_template_list_route():
     assert "/api/shanjian-smart-clip/templates" in paths
 
 
-def test_missing_template_selection_applies_current_personal_template(db_session, test_user):
+def test_missing_template_selection_does_not_apply_any_template(db_session, test_user):
     current = IPContentScheduleTemplate(
         user_id=test_user.id,
         name="销售内容模板",
@@ -53,11 +53,8 @@ def test_missing_template_selection_applies_current_personal_template(db_session
 
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
-    assert source == "personal_default"
-    assert template_meta is not None
-    assert template_meta["style_id"] == "style-current"
-    assert template_meta["header_switch"] is True
-    assert template_meta["subtitle_switch"] is True
+    assert source == "not_requested"
+    assert template_meta is None
 
 
 def test_explicit_video_template_overrides_active_personal_template(db_session, test_user):
@@ -138,40 +135,6 @@ def test_personal_default_template_is_not_applied_without_selection(db_session, 
 
     assert template_meta is None
     assert source == "not_requested"
-
-
-def test_production_personal_template_with_empty_pack_rules_keeps_template_features_on(db_session, test_user):
-    """复现 2026-10-21 uid=109 的个人默认模板：空 pack_rules/process_rules。"""
-    db_session.add(
-        IPContentScheduleTemplate(
-            user_id=test_user.id,
-            name="个人默认配置",
-            status="active",
-            meta={
-                "digital_human_template": {
-                    "scene": "realMan",
-                    "style_id": "6a2668a137004e003477b6ed",
-                    "name": "双语大橙",
-                    "materials": [],
-                    "material_sound_switch": False,
-                    "introduce_name": "",
-                    "introduce_description": "",
-                    "pack_rules": {},
-                    "process_rules": {},
-                }
-            },
-        )
-    )
-    db_session.commit()
-
-    template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
-
-    assert source == "personal_default"
-    assert template_meta["style_id"] == "6a2668a137004e003477b6ed"
-    assert template_meta["header_switch"] is True
-    assert template_meta["material_switch"] is True
-    assert template_meta["subtitle_switch"] is True
-    assert template_meta["keyword_switch"] is True
 
 
 def test_missing_library_asset_falls_back_to_client_file_url(db_session, test_user, monkeypatch):
@@ -496,7 +459,7 @@ def _personal_template(user_id, name, meta, **kwargs):
     return IPContentScheduleTemplate(user_id=user_id, name=name, status="active", meta=meta, **kwargs)
 
 
-def test_current_personal_template_applies_without_explicit_selection(db_session, test_user):
+def test_asset_groups_are_not_attached_without_a_selected_template(db_session, test_user):
     current = _personal_template(
         test_user.id,
         "销售内容模板",
@@ -522,13 +485,11 @@ def test_current_personal_template_applies_without_explicit_selection(db_session
 
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
-    assert source == "personal_default"
-    assert template_meta is not None
-    assert template_meta["style_id"] == "style-current"
-    assert "asset_groups" not in template_meta
+    assert source == "not_requested"
+    assert template_meta is None
 
 
-def test_personal_default_template_applies_without_explicit_selection(db_session, test_user):
+def test_personal_default_groups_are_not_used_without_a_selected_template(db_session, test_user):
     db_session.add(
         _personal_template(
             test_user.id,
@@ -543,9 +504,8 @@ def test_personal_default_template_applies_without_explicit_selection(db_session
 
     template_meta, source = _resolve_video_template_meta(db_session, test_user.id, CreateVideoBody())
 
-    assert source == "personal_default"
-    assert template_meta is not None
-    assert template_meta["style_id"] == "style-default"
+    assert source == "not_requested"
+    assert template_meta is None
 
 
 def test_explicit_style_does_not_attach_asset_groups(db_session, test_user):
