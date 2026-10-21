@@ -533,7 +533,7 @@ def pre_deduct_canvas(db: Session, user: User, amount: "object", model: str, pat
     """按我们的定价预扣（写 pre_deduct 流水）。任何内部异常都不影响生成，只是不扣。"""
     from decimal import Decimal
 
-    from ..services.credit_ledger import append_credit_ledger
+    from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
     from ..services.credits_amount import quantize_credits, user_balance_decimal
 
     try:
@@ -544,8 +544,8 @@ def pre_deduct_canvas(db: Session, user: User, amount: "object", model: str, pat
         balance = user_balance_decimal(user)
         if balance < amount:
             raise HTTPException(status_code=402, detail=f"积分不足：本次预扣 {amount}，当前余额 {balance}")
-        user.credits = balance - amount
-        append_credit_ledger(db, user.id, -amount, "pre_deduct", user.credits,
+        new_balance = apply_credit_delta(db, user.id, -amount)
+        append_credit_ledger(db, user.id, -amount, "pre_deduct", new_balance,
                              description=f"画布预扣：{model or path}", ref_type="canvas_api", ref_id=path,
                              meta={"model": model, "pre_estimated": float(amount)})
         db.commit()
@@ -571,8 +571,8 @@ def refund_canvas(db: Session, user: User, amount: "object", model: str, path: s
             return
         db.refresh(user)
         balance = user_balance_decimal(user)
-        user.credits = balance + amount
-        append_credit_ledger(db, user.id, amount, "refund", user.credits,
+        new_balance = apply_credit_delta(db, user.id, amount)
+        append_credit_ledger(db, user.id, amount, "refund", new_balance,
                              description=f"画布生成失败退回（{reason}）", ref_type="canvas_api", ref_id=path,
                              meta={"model": model, "refund": float(amount), "reason": reason})
         db.commit()
@@ -914,8 +914,8 @@ def settle_generation_credits(db: Session, user: User, response_body: bytes, mod
         if balance <= 0:
             return 0.0
         real = min(charged, balance)
-        user.credits = balance - real
-        append_credit_ledger(db, user.id, -real, "canvas_generate", user.credits,
+        new_balance = apply_credit_delta(db, user.id, -real)
+        append_credit_ledger(db, user.id, -real, "canvas_generate", new_balance,
                              description=f"画布生成：{model or path}", ref_type="canvas_api", ref_id=path,
                              meta={"model": model, "reported": float(charged)})
         db.commit()

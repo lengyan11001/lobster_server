@@ -46,7 +46,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..models import Asset, CreditLedger, User
-from ..services.credit_ledger import append_credit_ledger
+from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
 from ..services.brand_context import explicit_request_brand_mark
 from ..services.credits_amount import (
     credits_json_float,
@@ -1316,8 +1316,7 @@ def _do_pre_deduct(
             status_code=402,
             detail=f"积分不足：本次预扣 {float(fc)}，当前余额 {float(user_balance_decimal(user))}。",
         )
-    user.credits = user_balance_decimal(user) - fc
-    bal = quantize_credits(user.credits)
+    bal = apply_credit_delta(db, user.id, -fc)
     append_credit_ledger(
         db, user.id, -fc, "pre_deduct", bal,
         description=f"Comfly proxy 预扣 ({endpoint})",
@@ -1350,8 +1349,7 @@ def _do_settle(
         # 补扣：余额不足时不阻断（已经走完上游），只能记账让管理员对账
         cur_bal = user_balance_decimal(user)
         deduct_now = min(cur_bal, delta) if cur_bal > 0 else Decimal("0")
-        user.credits = cur_bal - deduct_now
-        bal = quantize_credits(user.credits)
+        bal = apply_credit_delta(db, user.id, -deduct_now)
         append_credit_ledger(
             db, user.id, -deduct_now, "settle", bal,
             description=description or f"Comfly proxy 结算补扣 ({endpoint}) actual={actual} pre={float(pre)}",
@@ -1372,8 +1370,7 @@ def _do_settle(
     else:
         # 退款
         refund_amt = -delta
-        user.credits = user_balance_decimal(user) + refund_amt
-        bal = quantize_credits(user.credits)
+        bal = apply_credit_delta(db, user.id, refund_amt)
         append_credit_ledger(
             db, user.id, refund_amt, "refund", bal,
             description=description or f"Comfly proxy 结算退款 ({endpoint}) actual={actual} pre={float(pre)}",
@@ -1397,8 +1394,7 @@ def _do_full_refund(
     if not _should_deduct_credits() or pre <= 0:
         return
     db.refresh(user)
-    user.credits = user_balance_decimal(user) + pre
-    bal = quantize_credits(user.credits)
+    bal = apply_credit_delta(db, user.id, pre)
     append_credit_ledger(
         db, user.id, pre, "refund", bal,
         description=description or f"Comfly proxy 调用失败全额退款 ({endpoint})",

@@ -30,7 +30,7 @@ from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
-from ..services.credit_ledger import append_credit_ledger
+from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
 from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
@@ -3015,8 +3015,7 @@ async def _execute_query(
             "transport_exception": type(exc).__name__,
         }
         if billing_uncertain and price > 0:
-            balance_after = quantize_credits(balance - price)
-            current_user.credits = balance_after
+            balance_after = apply_credit_delta(db, current_user.id, -price)
             log.credits_charged = price
             append_credit_ledger(
                 db,
@@ -3086,8 +3085,7 @@ async def _execute_query(
 
     balance_after = balance
     if success and price > 0:
-        balance_after = quantize_credits(balance - price)
-        current_user.credits = balance_after
+        balance_after = apply_credit_delta(db, current_user.id, -price)
         log.credits_charged = price
         append_credit_ledger(
             db,
