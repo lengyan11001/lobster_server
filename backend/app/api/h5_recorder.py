@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, text
+from sqlalchemy import or_, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -1076,7 +1076,7 @@ def list_recordings(
     if clean_source_type in SOURCE_LABELS:
         query = query.filter(RecorderAudioRecord.source_type == clean_source_type)
     total = query.count()
-    rows = query.order_by(func.coalesce(RecorderAudioRecord.recorded_at, RecorderAudioRecord.created_at).desc(), RecorderAudioRecord.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    rows = query.order_by(RecorderAudioRecord.created_at.desc(), RecorderAudioRecord.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"items": [_serialize(row) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
 
 
