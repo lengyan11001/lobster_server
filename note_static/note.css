@@ -317,3 +317,16 @@ body.sheet-open { overflow: hidden; }
 .cap-main b { display: block; font-size: 15px; font-weight: 600; line-height: 1.35; }
 .cap-main em { display: block; margin-top: 3px; font-size: 12px; font-style: normal; color: var(--muted); line-height: 1.5; }
 .cap-arrow { flex: 0 0 auto; color: #c3ccd9; font-size: 18px; }
+
+
+/* ---------- 余额与失败提示 ---------- */
+.who #whoText { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.credit-chip { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 999px; background: #eef4ff; color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.credit-chip.low { background: #fff1f0; color: #d4380d; }
+.mine-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.record-err { margin-top: 6px; font-size: 12px; line-height: 1.45; color: #d4380d; }
+.error-box { margin: 10px 0 2px; padding: 10px 12px; border-radius: 10px; background: #fff1f0; border: 1px solid #ffccc7; color: #b42318; font-size: 13px; line-height: 1.55; }
+@media (max-width: 420px) {
+  .who { gap: 8px; }
+  .who #whoText { max-width: 92px; }
+}

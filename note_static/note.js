@@ -65,13 +65,13 @@
     var r = await api(path, opts);
     var d = null;
     try { d = await r.json(); } catch (e) { d = null; }
-    if (!r.ok) throw Object.assign(new Error((d && (d.detail || d.msg)) || ('请求失败 ' + r.status)), { status: r.status, data: d });
+    if (!r.ok) throw Object.assign(new Error(friendlyError((d && (d.detail || d.msg)) || ('请求失败 ' + r.status))), { status: r.status, data: d });
     return d;
   }
 
   var state = {
     items: [], total: 0, me: null, tab: 'home', query: '', statusFilter: '', detail: null, pick: null,
-    media: null, chunks: [], startedAt: 0, tickId: 0, polling: 0
+    media: null, chunks: [], startedAt: 0, tickId: 0, polling: 0, statuses: {}
   };
 
   /* ---------- toast ---------- */
@@ -142,6 +142,40 @@
     }
   }
 
+  function fmtCredits(v) {
+    var n = Number(v);
+    if (!isFinite(n)) n = 0;
+    if (n >= 10000) return (Math.round(n / 1000) / 10).toFixed(1).replace(/\.0$/, '') + '万';
+    return (Math.round(n * 100) / 100).toFixed(2).replace(/\.?0+$/, '');
+  }
+
+  function isCreditError(msg) {
+    return /积分不足|余额不足|402|算力/.test(String(msg || ''));
+  }
+
+  function friendlyError(msg) {
+    if (isCreditError(msg)) return '余额不足，请先充值后再试';
+    var s = String(msg || '').trim();
+    return s || '操作失败';
+  }
+
+  function renderBalance() {
+    var n = Number((state.me && state.me.credits) || 0);
+    var chip = $('creditText');
+    if (chip) {
+      chip.textContent = '积分 ' + fmtCredits(n);
+      chip.classList.toggle('low', n < 10);
+    }
+    var mine = $('mineCredits');
+    if (mine) mine.textContent = fmtCredits(n);
+  }
+
+  async function refreshBalance() {
+    try {
+      state.me = await apiJson('/auth/me');
+      renderBalance();
+    } catch (e) {}
+  }
   async function loadMe() {
     state.me = await apiJson('/auth/me');
     var name = (state.me && (state.me.email || state.me.phone || state.me.nickname)) || '';
@@ -149,6 +183,7 @@
     $('mineName').textContent = name || '未登录';
     $('mineBrand').textContent = '品牌：' + BRAND;
     $('mineAvatar').textContent = (name || '必').slice(0, 1).toUpperCase();
+    renderBalance();
     var h = new Date().getHours();
     $('homeGreeting').textContent = (h < 11 ? '早上好' : (h < 18 ? '下午好' : '晚上好')) + '，' + (name.split('@')[0] || '');
     return state.me;
@@ -183,7 +218,7 @@
       b.classList.toggle('active', b.getAttribute('data-tab') === tab);
     });
     if (tab === 'records') renderRecords();
-    if (tab === 'mine') renderMine();
+    if (tab === 'mine') { renderMine(); refreshBalance(); }
   }
 
   /* ---------- records ---------- */
@@ -210,6 +245,19 @@
 
   async function loadRecords() {
     var d = await apiJson('/api/h5/recorder/files?page=1&page_size=50');
+    var prev = state.statuses || {};
+    (d && d.items ? d.items : []).forEach(function (it) {
+      var key = String(it.id);
+      var old = prev[key];
+      if (old && old !== 'failed' && it.status === 'failed') {
+        toast(friendlyError(it.error_message));
+        if (isCreditError(it.error_message)) refreshBalance();
+      } else if (old && old !== 'completed' && it.status === 'completed') {
+        refreshBalance();
+      }
+      prev[key] = it.status;
+    });
+    state.statuses = prev;
     state.items = (d && d.items) || [];
     state.total = (d && d.total) || state.items.length;
     renderAll();
@@ -245,12 +293,15 @@
   }
 
   function recordHtml(it) {
+    var err = it.status === 'failed' && it.error_message
+      ? '<div class="record-err">' + esc(friendlyError(it.error_message)) + '</div>'
+      : '';
     return '<div class="record" data-id="' + esc(it.id) + '">' +
       '<div class="meta"><div class="name">' + esc(it.display_name || it.file_name || ('录音 #' + it.id)) + '</div>' +
       '<div class="sub">' + statusChip(it.status) +
       '<span>' + esc(fmtTime(it.recorded_at || it.created_at)) + '</span>' +
       (it.file_size ? '<span>' + Math.round(it.file_size / 1024) + ' KB</span>' : '') +
-      '</div></div>' +
+      '</div>' + err + '</div>' +
       '<div class="ops">' +
       '<button type="button" data-act="play">播放</button>' +
       '<button type="button" data-act="detail">详情</button>' +
@@ -313,6 +364,9 @@
     var points = Array.isArray(d.key_points) ? d.key_points : [];
     var html = '';
     html += '<div class="kv">' + esc(fmtTime(d.recorded_at || d.created_at)) + (d.source_label ? ' · ' + esc(d.source_label) : '') + '</div>';
+    if (d.status === 'failed' && d.error_message) {
+      html += '<div class="error-box">' + esc(friendlyError(d.error_message)) + '</div>';
+    }
     if (d.summary_text) html += '<div class="summary-box">' + esc(d.summary_text) + '</div>';
     if (points.length) {
       html += '<h4>要点</h4><ul class="mini-list">' + points.slice(0, 3).map(function (p) {
@@ -350,7 +404,7 @@
       closeSheet('summary');
       toast('正在重新分析…');
       apiJson('/api/h5/recorder/files/' + d.id + '/analyze', { method: 'POST' })
-        .then(function (r) { state.detail = r.record; openDetail(d.id); toast('已重新整理'); loadRecords().catch(function(){}); })
+        .then(function (r) { state.detail = r.record; openDetail(d.id); toast('已重新整理'); refreshBalance(); loadRecords().catch(function(){}); })
         .catch(function (e) { toast(e.message); });
     }
   }
@@ -804,6 +858,7 @@
           state.detail = r.record;
           var body = sheetBody('translate');
           if (body) body.innerHTML = '<div class="transcript">' + esc(r.record.translated_text || '') + '</div><div class="kv">目标语言：' + esc(r.record.translate_lang || '') + '</div>';
+          refreshBalance();
         }).catch(function (err) { toast(err.message); }).finally(function () { tr.disabled = false; });
       } else if (act === 'ask') {
         var q = (document.getElementById('askInput') || {}).value || '';
@@ -813,7 +868,7 @@
         apiJson('/api/h5/recorder/files/' + d.id + '/ask', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question: q })
-        }).then(function (r) { if (ans) ans.textContent = r.answer || '（没有回答）'; })
+        }).then(function (r) { if (ans) ans.textContent = r.answer || '（没有回答）'; refreshBalance(); })
           .catch(function (err) { if (ans) ans.textContent = err.message; });
       }
     });

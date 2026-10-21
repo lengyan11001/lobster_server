@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>必火听记录</title>
-<link rel="stylesheet" href="/note-static/note.css?v=20261021-2">
+<link rel="stylesheet" href="/note-static/note.css?v=20261021-3">
 </head>
 <body>
 <div id="loginView" class="login-wrap">
@@ -28,7 +28,7 @@
       <img src="/note-static/bihu-stack.png" alt="必火智能">
       <span>必火听记录</span>
     </div>
-    <div class="who"><span id="whoText"></span></div>
+    <div class="who"><span id="creditText" class="credit-chip">积分 --</span><span id="whoText"></span></div>
   </header>
 
   <main class="wrap">
@@ -120,6 +120,7 @@
         <div class="mine-stats">
           <div><strong id="mineTotal">0</strong><span>录音总数</span></div>
           <div><strong id="mineSize">0 MB</strong><span>占用空间</span></div>
+          <div><strong id="mineCredits">--</strong><span>积分余额</span></div>
         </div>
         <div class="mine-actions">
           <label class="mine-row" for="fileInputMine">上传音频文件<span>›</span></label>
@@ -141,6 +142,6 @@
 
 <div id="modalRoot" class="modal-root"></div>
 
-<script src="/note-static/note.js?v=20261021-2"></script>
+<script src="/note-static/note.js?v=20261021-3"></script>
 </body>
 </html>

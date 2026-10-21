@@ -788,17 +788,33 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
 async def _process(record_id: int, request: Request, installation_id: str) -> None:
     try:
         async with background_heavy_slot("recorder_transcription"):
-            text, segments, task_id = await asyncio.to_thread(_run_stt, record_id)
+            db = SessionLocal()
+            try:
+                row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
+                existing_text = str(row.transcript_text or "") if row else ""
+                existing_segments = row.transcript_segments if row and isinstance(row.transcript_segments, list) else []
+                existing_task_id = str(row.stt_task_id or "") if row else ""
+                effective_iid = (installation_id or "").strip() or (f"note-web-{int(row.user_id)}" if row else "")
+            finally:
+                db.close()
+            if existing_text.strip() or existing_segments:
+                text, segments, task_id = existing_text, existing_segments, existing_task_id
+            else:
+                text, segments, task_id = await asyncio.to_thread(_run_stt, record_id)
+            # 先落库逐字稿：后续 LLM 总结即使失败（如余额不足），转写结果也不会丢。
             db = SessionLocal()
             try:
                 row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
                 if row:
+                    row.transcript_text = text
+                    row.transcript_segments = segments
+                    row.stt_task_id = task_id
                     row.process_stage = "summarizing"
                     db.commit()
             finally:
                 db.close()
             dialogue = "\n".join(f"{x['speaker']}：{x['text']}" for x in segments) or text
-            answer = await _call_llm(request, installation_id, [
+            answer = await _call_llm(request, effective_iid, [
                 {
                     "role": "system",
                     "content": (
@@ -1237,9 +1253,6 @@ async def retry_recording(
     row.status = "processing"
     row.process_stage = "uploaded"
     row.error_message = ""
-    row.stt_task_id = ""
-    row.transcript_text = ""
-    row.transcript_segments = []
     row.summary_text = ""
     row.key_points = []
     db.commit()
