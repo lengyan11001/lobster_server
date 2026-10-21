@@ -2377,6 +2377,27 @@ async def set_default_profile(
     return {"ok": True, "profile": _profile_to_dict(row)}
 
 
+# 2026-10-21：闪剪账号并发上限 5，夜里批量触发时第 6 个会被 Concurrency.Limit 拒掉。
+# 这里不判失败，任务先收下，排队等空位再提交（客户端超时 30 分钟）。
+_SHANJIAN_CONCURRENCY_RETRY_SECONDS = 20.0
+_SHANJIAN_CONCURRENCY_MAX_WAIT_SECONDS = 1500.0
+
+
+async def _post_virtualman_with_queue(token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    import asyncio
+
+    waited = 0.0
+    while True:
+        try:
+            return await _post("/v1/virtualman/video", token, payload)
+        except HTTPException as exc:
+            detail = str(getattr(exc, "detail", "") or "")
+            if "Concurrency.Limit" not in detail or waited >= _SHANJIAN_CONCURRENCY_MAX_WAIT_SECONDS:
+                raise
+            await asyncio.sleep(_SHANJIAN_CONCURRENCY_RETRY_SECONDS)
+            waited += _SHANJIAN_CONCURRENCY_RETRY_SECONDS
+            logger.info("[shanjian-dh] 闪剪并发已满，任务排队中 waited=%.0fs", waited)
+
 @router.post("/api/shanjian-digital-human/video/create")
 async def create_video(
     body: CreateVideoBody,
@@ -2467,7 +2488,7 @@ async def create_video(
         len((template_meta or {}).get("materials") or []),
     )
     try:
-        upstream = await _post("/v1/virtualman/video", body.token, payload)
+        upstream = await _post_virtualman_with_queue(body.token, payload)
     except HTTPException as exc:
         await _shanjian_refund_billing(request, billing, reason="base_submit_failed")
         logger.warning(
