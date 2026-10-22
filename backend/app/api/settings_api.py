@@ -923,7 +923,11 @@ def bind_unique_installation_id(
         db.add(known_machine)
     else:
         known_machine.installation_id = installation_id
-        known_machine.assigned_installation_id = None
+        # 指定槽位要等客户端真的落盘（current == 指定值）才算消费掉：
+        # 启动时 bind 会连发两次，第一次返回后第二次还没拿到新槽位，
+        # 过早清空会让第二次把它重新判成分槽。
+        if assigned_slot and _normalize_installation_id(current_installation_id) == assigned_slot:
+            known_machine.assigned_installation_id = None
         known_machine.last_seen_at = datetime.utcnow()
     db.commit()
     usage_after = _installation_id_usage(

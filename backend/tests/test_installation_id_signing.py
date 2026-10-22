@@ -802,5 +802,29 @@ def test_assigned_slot_overrides_current_file_slot(
         )
         .first()
     )
-    assert row.assigned_installation_id is None
+    # 客户端还没落到目标槽位，指定值要留着，等下一次 bind 继续返回它
+    assert row.assigned_installation_id == target
     assert row.installation_id == target
+
+    again = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": target},
+        json={
+            "installation_id": target,
+            "device_id": "a" * 32,
+            "machine_instance_id": machine,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+    assert again.status_code == 200
+    assert again.json()["installation_id"] == target
+    db_session.expire_all()
+    row = (
+        db_session.query(UserMachineIdentity)
+        .filter(
+            UserMachineIdentity.user_id == test_user.id,
+            UserMachineIdentity.machine_instance_id == machine,
+        )
+        .first()
+    )
+    assert row.assigned_installation_id is None
