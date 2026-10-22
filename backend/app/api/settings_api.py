@@ -44,6 +44,7 @@ class InstallationIdBindRequest(BaseModel):
     installation_id: Optional[str] = None
     device_id: Optional[str] = None
     machine_instance_id: Optional[str] = None
+    legacy_machine_instance_id: Optional[str] = None
     force_new: bool = False
 
 
@@ -604,6 +605,46 @@ def bind_unique_installation_id(
     # preserves their previous behavior while new clients can separate two
     # machines that arrived with the same copied legacy slot.
     machine_id = machine_instance_id or device_id
+    # 出厂镜像换了机器身份（m… -> mw…）：把该用户的设备别名迁到新机器 id，
+    # 否则别名会“消失”。只迁当前用户的行。
+    legacy_machine_id = _normalize_installation_id(body.legacy_machine_instance_id)
+    if legacy_machine_id and legacy_machine_id != machine_id:
+        migrated_labels = (
+            db.query(UserDeviceLabel)
+            .filter(
+                UserDeviceLabel.user_id == int(current_user.id),
+                UserDeviceLabel.machine_instance_id == legacy_machine_id,
+            )
+            .update({UserDeviceLabel.machine_instance_id: machine_id}, synchronize_session=False)
+        )
+        existing_new_row = (
+            db.query(UserMachineIdentity)
+            .filter(
+                UserMachineIdentity.user_id == int(current_user.id),
+                UserMachineIdentity.machine_instance_id == machine_id,
+            )
+            .first()
+        )
+        if existing_new_row is None:
+            old_row = (
+                db.query(UserMachineIdentity)
+                .filter(
+                    UserMachineIdentity.user_id == int(current_user.id),
+                    UserMachineIdentity.machine_instance_id == legacy_machine_id,
+                )
+                .first()
+            )
+            if old_row is not None:
+                old_row.machine_instance_id = machine_id
+                db.add(old_row)
+        db.commit()
+        logger.info(
+            "[installation-identity] machine id migrated user=%s legacy=%s new=%s labels=%s",
+            getattr(current_user, "id", ""),
+            legacy_machine_id,
+            machine_id,
+            int(migrated_labels or 0),
+        )
     known_machine = (
         db.query(UserMachineIdentity)
         .filter(
@@ -629,15 +670,14 @@ def bind_unique_installation_id(
             .first()
         )
         if other_machine is not None:
-            online_cutoff = datetime.utcnow() - timedelta(seconds=120)
+            # 机器身份现在来自硬件（mw…）：这个 iid 已经被另一台物理机器占用，
+            # 说明是出厂镜像复制出来的“克隆设备”，必须给它重新分配槽位。
+            recent_cutoff = datetime.utcnow() - timedelta(days=7)
+            other_is_hardware = str(other_machine.machine_instance_id or "").startswith("mw")
             signed_slot_machine_conflict = bool(
-                db.query(H5ChatDevicePresence.id)
-                .filter(
-                    H5ChatDevicePresence.user_id == current_user.id,
-                    H5ChatDevicePresence.installation_id == current_installation_id,
-                    H5ChatDevicePresence.last_seen_at >= online_cutoff,
-                )
-                .first()
+                other_is_hardware
+                and other_machine.last_seen_at
+                and other_machine.last_seen_at >= recent_cutoff
             )
     stale_slot = ""
     if body.force_new:

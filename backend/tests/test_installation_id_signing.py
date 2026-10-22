@@ -485,3 +485,34 @@ def test_bind_prefers_file_slot_over_stale_machine_row(db_session, db_session_fa
         .one()
     )
     assert row.installation_id == current
+
+def test_cloned_factory_machine_gets_its_own_slot(db_session, db_session_factory, test_user):
+    """出厂镜像复制出来的设备：iid 相同、硬件 id 不同 -> 后来者重新分配槽位。"""
+    shared_iid = f"u{test_user.id}-" + "a" * 32
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id="mw-machine-a",
+            installation_id=shared_iid,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": shared_iid},
+        json={
+            "installation_id": shared_iid,
+            "device_id": "a" * 32,
+            "machine_instance_id": "mw-machine-b",
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["installation_id"] != shared_iid
+    assert payload["signed"] is True
+    assert payload["signature_reason"] == "duplicate_machine"
