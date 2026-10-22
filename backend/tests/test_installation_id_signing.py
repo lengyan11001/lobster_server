@@ -626,3 +626,47 @@ def test_clone_split_scans_every_machine_row_on_the_slot(
     payload = resp.json()
     assert payload["installation_id"] != slot
     assert payload["signature_reason"] == "duplicate_machine"
+
+
+def test_known_machine_on_contested_slot_is_reallocated(
+    db_session, db_session_factory, test_user
+):
+    """机器行已存在且指向被占槽位时，也要重新分配，不能一直钉在同一槽位。"""
+    slot = f"u{test_user.id}-" + "a" * 32
+    me = "mw" + "3" * 48
+    other = "mw" + "4" * 48
+    db_session.add_all(
+        [
+            UserMachineIdentity(
+                user_id=test_user.id,
+                machine_instance_id=me,
+                installation_id=slot,
+                last_seen_at=datetime.utcnow(),
+            ),
+            UserMachineIdentity(
+                user_id=test_user.id,
+                machine_instance_id=other,
+                installation_id=slot,
+                last_seen_at=datetime.utcnow(),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": slot},
+        json={
+            "installation_id": slot,
+            "device_id": "a" * 32,
+            "machine_instance_id": me,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["installation_id"] != slot
+    assert payload["signed"] is True
+    assert payload["signature_reason"] == "duplicate_machine"

@@ -715,6 +715,15 @@ def bind_unique_installation_id(
                 known_machine.installation_id = installation_id
                 db.add(known_machine)
                 db.commit()
+        elif signed_slot_machine_conflict:
+            # 自己的机器行还指向一个已被别的机器占着的槽位：必须重新分配，
+            # 否则已知机器分支会把克隆机一直钉在同一个槽位。
+            installation_id = _unique_signed_installation_id_for_user(
+                db, current_user, device_id, brand_mark, machine_id
+            )
+            duplicate_before = True
+            signed = True
+            signature_reason = "duplicate_machine"
         else:
             # 客户端没带有效已签名槽位（老客户端/文件丢失）：沿用机器行，保持稳定。
             installation_id = _normalize_installation_id(known_machine.installation_id) or current_installation_id
