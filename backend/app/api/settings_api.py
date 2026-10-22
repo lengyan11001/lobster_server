@@ -19,7 +19,7 @@ from ..db import get_db
 from .auth import get_current_user, request_auth_session_id
 from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
-from ..models import H5ChatDevicePresence, User, UserDeviceLabel, UserInstallation, UserMachineIdentity
+from ..models import H5ChatDevicePresence, H5MountedAccountDefault, User, UserDeviceLabel, UserInstallation, UserMachineIdentity
 from ..services.brand_context import normalize_brand_mark, scoped_installation_id, user_brand_mark
 from ..services.installation_slot_ownership import (
     claim_installation_slot,
@@ -493,6 +493,7 @@ def list_installation_aliases(
 @router.post("/api/installation-id/aliases/restore", summary="按设备别名找回原来的槽位")
 def restore_installation_alias(
     body: AliasRestoreRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -518,7 +519,35 @@ def restore_installation_alias(
             status_code=409,
             detail="该别名对应的槽位正被另一台设备在线使用，请先在原设备上停止使用后再恢复",
         )
-    return {"ok": True, "alias": alias, "installation_id": slot}
+    # 发布账号/接管账号是按槽位绑定的，换槽位后必须跟着这台机器一起走，
+    # 否则启动工作流会报“默认发布账号不在当前启用设备上”。
+    moved_defaults = 0
+    current_raw = optional_installation_id_from_request(request)
+    if current_raw:
+        candidates = {current_raw}
+        scoped_current = scoped_installation_id(current_raw, user_brand_mark(current_user))
+        if scoped_current:
+            candidates.add(scoped_current)
+        candidates.discard(slot)
+        if candidates:
+            moved_defaults = (
+                db.query(H5MountedAccountDefault)
+                .filter(
+                    H5MountedAccountDefault.user_id == int(current_user.id),
+                    H5MountedAccountDefault.installation_id.in_(tuple(candidates)),
+                )
+                .update(
+                    {H5MountedAccountDefault.installation_id: slot},
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+    return {
+        "ok": True,
+        "alias": alias,
+        "installation_id": slot,
+        "moved_defaults": int(moved_defaults or 0),
+    }
 
 
 @router.post("/api/installation-id/bind", summary="Bind a unique installation id to current user")

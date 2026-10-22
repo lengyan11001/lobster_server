@@ -10,8 +10,22 @@ from backend.app.api.settings_api import (
     list_installation_aliases,
     restore_installation_alias,
 )
-from backend.app.models import H5ChatDevicePresence, User, UserDeviceLabel, UserMachineIdentity
+from starlette.requests import Request
 
+from backend.app.models import (
+    H5ChatDevicePresence,
+    H5MountedAccountDefault,
+    User,
+    UserDeviceLabel,
+    UserMachineIdentity,
+)
+
+
+
+def _req(installation_id):
+    return Request(
+        {"type": "http", "headers": [(b"x-installation-id", str(installation_id or "").encode())]}
+    )
 
 def _user(db_session, email):
     row = User(email=email, hashed_password="x")
@@ -54,7 +68,10 @@ def test_restore_alias_returns_original_slot(db_session, test_user):
     db_session.commit()
 
     result = restore_installation_alias(
-        AliasRestoreRequest(alias="kaifaji"), current_user=test_user, db=db_session
+        AliasRestoreRequest(alias="kaifaji"),
+        request=_req("u31-dc2847b6fd30714808b56a3d385f844b"),
+        current_user=test_user,
+        db=db_session,
     )
 
     assert result["installation_id"] == "u31-f55a8e813d428cd055e7e5eba0bc2aab"
@@ -63,7 +80,10 @@ def test_restore_alias_returns_original_slot(db_session, test_user):
 def test_restore_unknown_alias_is_rejected(db_session, test_user):
     with pytest.raises(HTTPException) as exc_info:
         restore_installation_alias(
-            AliasRestoreRequest(alias="不存在"), current_user=test_user, db=db_session
+            AliasRestoreRequest(alias="不存在"),
+            request=_req(""),
+            current_user=test_user,
+            db=db_session,
         )
     assert exc_info.value.status_code == 404
 
@@ -89,6 +109,38 @@ def test_restore_refuses_slot_used_live_by_another_machine(db_session, test_user
 
     with pytest.raises(HTTPException) as exc_info:
         restore_installation_alias(
-            AliasRestoreRequest(alias="kaifaji"), current_user=test_user, db=db_session
+            AliasRestoreRequest(alias="kaifaji"),
+            request=_req("u31-dc2847b6fd30714808b56a3d385f844b"),
+            current_user=test_user,
+            db=db_session,
         )
     assert exc_info.value.status_code == 409
+
+def test_restore_moves_current_slot_publish_defaults(db_session, test_user):
+    slot_new = "u31-f55a8e813d428cd055e7e5eba0bc2aab"
+    slot_current = "u31-dc2847b6fd30714808b56a3d385f844b"
+    _label(db_session, test_user.id, "kaifaji", slot_new)
+    db_session.add(
+        H5MountedAccountDefault(
+            user_id=test_user.id,
+            scope="publish:douyin",
+            account_key="douyin:-1001",
+            platform="douyin",
+            account_id="-1001",
+            account_label="抖音账号1",
+            installation_id=slot_current,
+        )
+    )
+    db_session.commit()
+
+    result = restore_installation_alias(
+        AliasRestoreRequest(alias="kaifaji"),
+        request=_req(slot_current),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert result["installation_id"] == slot_new
+    assert result["moved_defaults"] == 1
+    row = db_session.query(H5MountedAccountDefault).filter_by(user_id=test_user.id).one()
+    assert row.installation_id == slot_new
