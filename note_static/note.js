@@ -116,7 +116,7 @@
     }, 160);
   }
 
-  function sheetBody(id) { return document.querySelector('[data-body="' + id + '"]'); }
+  function sheetBody(id) { var list = document.querySelectorAll('[data-body="' + id + '"]'); return list.length ? list[list.length - 1] : null; }
 
   /* ---------- auth ---------- */
   async function doLogin() {
@@ -380,10 +380,10 @@
       '<button type="button" data-detail-act="export">导出</button>' +
       '</div>';
     html += '<h4>更多</h4><div class="action-grid">' +
-      '<button type="button" data-detail-act="todos">待办' + (todos.length ? ' · ' + todos.length : '') + '</button>' +
-      '<button type="button" data-detail-act="outline">大纲</button>' +
-      '<button type="button" data-detail-act="transcript">逐字稿' + ((d.transcript_segments || []).length ? ' · ' + (d.transcript_segments || []).length + ' 段' : '') + '</button>' +
+      '<button type="button" data-detail-act="insight">AI 整理' + (todos.length ? ' · ' + todos.length : '') + '</button>' +
+      '<button type="button" data-detail-act="transcript-tabs">转写与发言人' + ((d.transcript_segments || []).length ? ' · ' + (d.transcript_segments || []).length + ' 段' : '') + '</button>' +
       '<button type="button" data-detail-act="analyze">重新分析</button>' +
+      '<button type="button" class="danger" data-detail-act="delete">删除录音</button>' +
       '</div>';
     openSheet('detail', d.display_name || d.file_name || '录音详情', html, { tall: true });
   }
@@ -391,20 +391,46 @@
   function handleDetailAct(act) {
     var d = state.detail;
     if (!d) return;
+    var fromInsight = !!document.querySelector('[data-sheet="insight"]');
+    var fromTranscript = !!document.querySelector('[data-sheet="transcript-tabs"]');
     if (act === 'play') { playItem(d).catch(function (e) { toast(e.message); }); return; }
     if (act === 'translate') { openTranslateSheet(d); return; }
     if (act === 'ask') { openAskSheet(d); return; }
     if (act === 'export') { openExportSheet(d); return; }
-    if (act === 'todos') { openTodosSheet(d); return; }
-    if (act === 'outline') { openOutlineSheet(d); return; }
-    if (act === 'transcript') { openTranscriptSheet(d); return; }
+    if (act === 'insight') { openInsightSheet(d, 'summary'); return; }
+    if (act === 'transcript-tabs') { openTranscriptTabsSheet(d, 'transcript'); return; }
+    if (act === 'todos') { openInsightSheet(d, 'todos'); return; }
+    if (act === 'outline') { openInsightSheet(d, 'outline'); return; }
+    if (act === 'transcript') { openTranscriptTabsSheet(d, 'transcript'); return; }
+    if (act === 'delete') {
+      if (!confirm('删除这条录音？删除后不可恢复。')) return;
+      apiJson('/api/h5/recorder/files/' + d.id, { method: 'DELETE' }).then(function () {
+        state.items = state.items.filter(function (x) { return String(x.id) !== String(d.id); });
+        state.total = Math.max(0, (Number(state.total) || 0) - 1);
+        state.detail = null;
+        closeSheet('detail'); closeSheet('insight'); closeSheet('transcript-tabs'); closeSheet('speaker-rename');
+        renderAll();
+        toast('录音已删除');
+      }).catch(function (e) { toast(e.message); });
+      return;
+    }
     if (act === 'analyze') {
+      closeSheet('insight');
+      closeSheet('transcript-tabs');
       closeSheet('todos');
       closeSheet('outline');
       closeSheet('summary');
       toast('正在重新分析…');
       apiJson('/api/h5/recorder/files/' + d.id + '/analyze', { method: 'POST' })
-        .then(function (r) { state.detail = r.record; openDetail(d.id); toast('已重新整理'); refreshBalance(); loadRecords().catch(function(){}); })
+        .then(function (r) {
+          state.detail = r.record;
+          if (fromInsight) openInsightSheet(r.record, state.insightTab || 'summary');
+          else if (fromTranscript) openTranscriptTabsSheet(r.record, state.transcriptTab || 'transcript');
+          else openDetail(d.id);
+          toast('已重新整理');
+          refreshBalance();
+          loadRecords().catch(function(){});
+        })
         .catch(function (e) { toast(e.message); });
     }
   }
@@ -631,6 +657,187 @@
     });
   }
 
+  /* ---------- 合并弹窗：AI 整理 / 转写与发言人 ---------- */
+  function insightTabBar(active) {
+    var d = state.detail || {};
+    var points = Array.isArray(d.key_points) ? d.key_points : [];
+    var analysis = d.analysis && typeof d.analysis === 'object' ? d.analysis : {};
+    var todos = Array.isArray(analysis.todos) ? analysis.todos : [];
+    var outline = Array.isArray(analysis.outline) ? analysis.outline : [];
+    var tabs = [
+      ['summary', '总结', ''],
+      ['points', '要点', points.length ? ' ' + points.length : ''],
+      ['todos', '待办', todos.length ? ' ' + todos.length : ''],
+      ['outline', '大纲', outline.length ? ' ' + outline.length : '']
+    ];
+    return '<div class="sub-tabs">' + tabs.map(function (x) {
+      return '<button type="button" class="sub-tab' + (x[0] === active ? ' active' : '') +
+        '" data-insight-tab="' + x[0] + '">' + x[1] + x[2] + '</button>';
+    }).join('') + '</div><div id="insightBody"></div>';
+  }
+
+  function insightContent(d, tab) {
+    var analysis = d.analysis && typeof d.analysis === 'object' ? d.analysis : {};
+    var points = Array.isArray(d.key_points) ? d.key_points : [];
+    var todos = Array.isArray(analysis.todos) ? analysis.todos : [];
+    var outline = Array.isArray(analysis.outline) ? analysis.outline : [];
+    var empty = function (text, acts) {
+      var html = '<div class="empty">' + esc(text) + '</div>';
+      if (acts) html += '<div class="action-grid" style="margin-top:14px">' + acts + '</div>';
+      return html;
+    };
+    if (tab === 'points') {
+      if (!points.length) return empty('这条录音还没有要点', '<button type="button" data-detail-act="analyze">AI 重新整理</button>');
+      return '<ul class="mini-list">' + points.map(function (p) {
+        return '<li>' + esc(typeof p === 'string' ? p : JSON.stringify(p)) + '</li>';
+      }).join('') + '</ul>';
+    }
+    if (tab === 'todos') {
+      if (!todos.length) {
+        return empty('这条录音没有识别到待办',
+          '<button type="button" data-detail-act="analyze">AI 重新整理</button>' +
+          '<button type="button" data-global-todos="1">全部录音待办</button>');
+      }
+      var rows = todos.map(function (t) {
+        if (typeof t === 'string') return '<li><b>' + esc(t) + '</b></li>';
+        var meta = [t.owner, t.due].filter(Boolean).join(' · ');
+        return '<li><b>' + esc(t.title || '') + '</b>' + (meta ? '<span>' + esc(meta) + '</span>' : '') + '</li>';
+      }).join('');
+      return '<ul class="todo-list">' + rows + '</ul>' +
+        '<div class="action-grid" style="margin-top:14px">' +
+        '<button type="button" data-detail-act="analyze">AI 重新整理</button>' +
+        '<button type="button" data-global-todos="1">全部录音待办</button></div>';
+    }
+    if (tab === 'outline') {
+      if (!outline.length) return empty('这条录音还没有大纲', '<button type="button" data-detail-act="analyze">AI 生成大纲</button>');
+      return renderOutline(outline);
+    }
+    if (!d.summary_text) {
+      return empty('这条录音还没有摘要',
+        '<button type="button" data-detail-act="analyze">AI 重新整理</button>' +
+        '<button type="button" data-detail-act="transcript-tabs">看逐字稿</button>');
+    }
+    return '<div class="summary-box">' + esc(d.summary_text) + '</div>';
+  }
+
+  function renderInsightTab(tab) {
+    var d = state.detail;
+    if (!d) return;
+    state.insightTab = tab || 'summary';
+    var root = sheetBody('insight');
+    var body = root ? root.querySelector('#insightBody') : null;
+    if (body) body.innerHTML = insightContent(d, state.insightTab);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-insight-tab]'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-insight-tab') === state.insightTab);
+    });
+  }
+
+  function openInsightSheet(d, tab) {
+    state.detail = d || state.detail;
+    if (!state.detail) return;
+    state.insightTab = tab || 'summary';
+    openSheet('insight', 'AI 整理', recordLabel(state.detail) + insightTabBar(state.insightTab), { tall: true });
+    renderInsightTab(state.insightTab);
+  }
+
+  function transcriptTabBar(active) {
+    return '<div class="sub-tabs">' +
+      '<button type="button" class="sub-tab' + (active === 'transcript' ? ' active' : '') + '" data-transcript-tab="transcript">逐字稿</button>' +
+      '<button type="button" class="sub-tab' + (active === 'speakers' ? ' active' : '') + '" data-transcript-tab="speakers">发言人</button>' +
+      '</div><div id="transcriptBody"></div>';
+  }
+
+  function transcriptSegments(d) {
+    return Array.isArray(d.transcript_segments) ? d.transcript_segments : (Array.isArray(d.segments) ? d.segments : []);
+  }
+
+  function speakerMap(d) {
+    var segs = transcriptSegments(d);
+    var map = {};
+    segs.forEach(function (s) {
+      if (!s || typeof s !== 'object') return;
+      var id = String(s.speaker_id || '');
+      var name = String(s.speaker || '未知');
+      var key = id || name;
+      if (!map[key]) map[key] = { name: name, id: id, count: 0 };
+      map[key].count += 1;
+    });
+    return map;
+  }
+
+  function transcriptContent(d, tab) {
+    var segs = transcriptSegments(d);
+    if (tab === 'speakers') {
+      if (!segs.length) {
+        return '<div class="empty">还没有可区分发言人的逐字稿</div>' +
+          '<div class="action-grid" style="margin-top:14px"><button type="button" data-detail-act="analyze">AI 重新整理</button></div>';
+      }
+      var map = speakerMap(d);
+      var rows = Object.keys(map).map(function (key) {
+        var s = map[key];
+        return '<div class="speaker-row"><div><b>' + esc(s.name) + '</b><span>' + s.count + ' 段</span></div>' +
+          '<button type="button" data-speaker-rename="' + esc(s.name) + '" data-speaker-id="' + esc(s.id) + '">改名</button></div>';
+      }).join('');
+      var list = segs.map(function (s) {
+        var name = (s && (s.speaker || s.speaker_id)) || '未知';
+        var at = (s && (s.start_ms || s.start)) || 0;
+        var clock = at ? (Math.floor(at / 60000) + ':' + String(Math.floor((at % 60000) / 1000)).padStart(2, '0')) : '';
+        return '<div class="seg"><b>' + esc(name) + '</b>' + (clock ? '<i>' + esc(clock) + '</i>' : '') +
+          '<span>' + esc((s && (s.text || s.content)) || '') + '</span></div>';
+      }).join('');
+      return '<h4>发言人</h4><div class="speaker-list">' + rows + '</div><h4>分段内容</h4><div class="segments">' + list + '</div>';
+    }
+    var text = d.transcript_text || '';
+    if (!text && segs.length) text = segs.map(function (s) { return (s && (s.text || s.content)) || ''; }).filter(Boolean).join('\n');
+    if (!text) {
+      return '<div class="empty">还没有转写内容</div>' +
+        '<div class="action-grid" style="margin-top:14px"><button type="button" data-detail-act="analyze">AI 重新整理</button></div>';
+    }
+    return '<div class="transcript">' + esc(text) + '</div>';
+  }
+
+  function renderTranscriptTab(tab) {
+    var d = state.detail;
+    if (!d) return;
+    state.transcriptTab = tab || 'transcript';
+    var root = sheetBody('transcript-tabs');
+    var body = root ? root.querySelector('#transcriptBody') : null;
+    if (body) body.innerHTML = transcriptContent(d, state.transcriptTab);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-transcript-tab]'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-transcript-tab') === state.transcriptTab);
+    });
+  }
+
+  function openTranscriptTabsSheet(d, tab) {
+    state.detail = d || state.detail;
+    if (!state.detail) return;
+    state.transcriptTab = tab || 'transcript';
+    openSheet('transcript-tabs', '转写与发言人', recordLabel(state.detail) + transcriptTabBar(state.transcriptTab), { tall: true });
+    renderTranscriptTab(state.transcriptTab);
+  }
+
+  function openSpeakerRename(speaker, speakerId) {
+    var d = state.detail;
+    if (!d) return;
+    state.renameSpeaker = { speaker: speaker, speakerId: speakerId || '' };
+    openSheet('speaker-rename', '修改发言人名称',
+      recordLabel(d) +
+      '<div class="inline-row"><input id="speakerNameInput" maxlength="64" value="' + esc(speaker) + '">' +
+      '<button type="button" data-speaker-save="1">保存</button></div>' +
+      '<div class="kv" style="margin-top:10px">该录音里属于这个发言人的所有分段会一起更新。</div>');
+  }
+
+  async function openAllTodosSheet() {
+    var data = await apiJson('/api/h5/recorder/todos');
+    var items = (data && data.items) || [];
+    var html = items.length
+      ? '<ul class="todo-list">' + items.map(function (t) {
+          var meta = [t.owner, t.due].filter(Boolean).join(' · ');
+          return '<li><b>' + esc(t.title) + '</b><span>' + esc(t.record_title || '') + (meta ? ' · ' + esc(meta) : '') + '</span></li>';
+        }).join('') + '</ul>'
+      : '<div class="empty">还没有识别到待办</div>';
+    openSheet('todos', '全部待办', html, { tall: true });
+  }
   function openSummarySheet(d) {
     var points = Array.isArray(d.key_points) ? d.key_points : [];
     var html = d.summary_text
@@ -695,23 +902,14 @@
         '<div class="empty">该能力正在规划中，敬请期待。</div>');
       return;
     }
-    if (cap === 'todos') {
-      var data = await apiJson('/api/h5/recorder/todos');
-      var items = (data && data.items) || [];
-      var html = items.length
-        ? '<ul class="todo-list">' + items.map(function (t) {
-            var meta = [t.owner, t.due].filter(Boolean).join(' · ');
-            return '<li><b>' + esc(t.title) + '</b><span>' + esc(t.record_title || '') + (meta ? ' · ' + esc(meta) : '') + '</span></li>';
-          }).join('') + '</ul>'
-        : '<div class="empty">还没有识别到待办</div>';
-      openSheet('todos', '全部待办', html, { tall: true });
-      return;
-    }
-    if (cap === 'summary') { runOnRecord('总结要点', '选择一条要总结的录音', openSummarySheet); return; }
-    if (cap === 'transcribe') { runOnRecord('AI 转写', '选择一条要查看逐字稿的录音', openTranscribeSheet); return; }
-    if (cap === 'speakers') { runOnRecord('区分发言人', '选择一条要按说话人查看的录音', openSpeakersSheet); return; }
+    if (cap === 'todos') { await openAllTodosSheet(); return; }
+    if (cap === 'insight') { runOnRecord('AI 整理', '选择一条录音，查看总结、要点、待办和大纲', function (d) { openInsightSheet(d, 'summary'); }); return; }
+    if (cap === 'transcript') { runOnRecord('转写与发言人', '选择一条录音，查看逐字稿并给发言人改名', function (d) { openTranscriptTabsSheet(d, 'transcript'); }); return; }
+    if (cap === 'summary') { runOnRecord('AI 整理', '选择一条要总结的录音', function (d) { openInsightSheet(d, 'summary'); }); return; }
+    if (cap === 'transcribe') { runOnRecord('转写与发言人', '选择一条要查看逐字稿的录音', function (d) { openTranscriptTabsSheet(d, 'transcript'); }); return; }
+    if (cap === 'speakers') { runOnRecord('转写与发言人', '选择一条要按说话人查看的录音', function (d) { openTranscriptTabsSheet(d, 'speakers'); }); return; }
+    if (cap === 'outline') { runOnRecord('AI 整理', '选择一条要查看大纲的录音', function (d) { openInsightSheet(d, 'outline'); }); return; }
     if (cap === 'translate') { runOnRecord('翻译', '先选择录音，再选择目标语言', openTranslateSheet); return; }
-    if (cap === 'outline') { runOnRecord('思维导图', '选择一条要查看大纲的录音', openOutlineSheet); return; }
     if (cap === 'ask') { runOnRecord('AI 智能体', '选择一条要提问的录音', openAskSheet); return; }
     if (cap === 'export') { runOnRecord('内容导出', '选择一条要导出的录音', openExportSheet); return; }
     runOnRecord('录音详情', '选择一条录音', function (d) { openDetail(d.id); });
@@ -921,6 +1119,38 @@
         }
         return;
       }
+      var iTab = e.target.closest ? e.target.closest('[data-insight-tab]') : null;
+      if (iTab) { renderInsightTab(iTab.getAttribute('data-insight-tab')); return; }
+      var tTab = e.target.closest ? e.target.closest('[data-transcript-tab]') : null;
+      if (tTab) { renderTranscriptTab(tTab.getAttribute('data-transcript-tab')); return; }
+      var sr = e.target.closest ? e.target.closest('[data-speaker-rename]') : null;
+      if (sr) {
+        openSpeakerRename(sr.getAttribute('data-speaker-rename'), sr.getAttribute('data-speaker-id'));
+        return;
+      }
+      var ss = e.target.closest ? e.target.closest('[data-speaker-save]') : null;
+      if (ss) {
+        var rs = state.renameSpeaker;
+        var inp = document.getElementById('speakerNameInput');
+        var newName = inp ? String(inp.value || '').trim() : '';
+        if (!rs || !state.detail) return;
+        if (!newName) { toast('请输入发言人名称'); return; }
+        ss.disabled = true;
+        var payload = { speaker: rs.speaker, display_name: newName };
+        if (rs.speakerId) payload.speaker_id = rs.speakerId;
+        apiJson('/api/h5/recorder/files/' + state.detail.id + '/speakers', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).then(function (r) {
+          state.detail = r.record;
+          closeSheet('speaker-rename');
+          openTranscriptTabsSheet(r.record, 'speakers');
+          toast('已更新发言人名称');
+        }).catch(function (err) { toast(err.message); }).finally(function () { ss.disabled = false; });
+        return;
+      }
+      var gt = e.target.closest ? e.target.closest('[data-global-todos]') : null;
+      if (gt) { openAllTodosSheet().catch(function (err) { toast(err.message); }); return; }
       var dAct = e.target.closest ? e.target.closest('[data-detail-act]') : null;
       if (dAct) { handleDetailAct(dAct.getAttribute('data-detail-act')); return; }
       var exp = e.target.closest ? e.target.closest('[data-export]') : null;
