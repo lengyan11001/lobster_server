@@ -17,6 +17,7 @@ from backend.app.models import (
     ScheduledTask,
     ScheduledTaskRun,
     User,
+    UserDeviceLabel,
     UserInstallation,
     UserMachineIdentity,
 )
@@ -516,3 +517,78 @@ def test_cloned_factory_machine_gets_its_own_slot(db_session, db_session_factory
     assert payload["installation_id"] != shared_iid
     assert payload["signed"] is True
     assert payload["signature_reason"] == "duplicate_machine"
+
+
+def test_two_cloned_devices_keep_slots_and_aliases_after_machine_id_split(
+    db_session, db_session_factory, test_user
+):
+    """整盘克隆的两台机器共用同一个 mw id；换成唯一 id 后各自槽位和别名都不能被抢。"""
+    slot_a = f"u{test_user.id}-" + "a" * 32
+    slot_b = f"u{test_user.id}-" + "b" * 32
+    shared = "mw" + "c" * 48
+    old_a = "m1a013ee353a1333a0fea1c248959c9a08fe6ffccc3d"
+    old_b = "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9"
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id=shared,
+            installation_id=slot_b,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.add_all(
+        [
+            UserDeviceLabel(
+                user_id=test_user.id,
+                label_key=old_a,
+                machine_instance_id=old_a,
+                display_name="A-machine",
+                last_installation_id=slot_a,
+            ),
+            UserDeviceLabel(
+                user_id=test_user.id,
+                label_key=shared,
+                machine_instance_id=shared,
+                display_name="B-machine",
+                last_installation_id=slot_b,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    new_a = "mw" + "e" * 48
+    new_b = "mw" + "f" * 48
+    first = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": slot_a},
+        json={
+            "installation_id": slot_a,
+            "device_id": slot_a.split("-", 1)[1],
+            "machine_instance_id": new_a,
+            "legacy_machine_instance_id": f"{shared},{old_a}",
+        },
+    )
+    second = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": slot_b},
+        json={
+            "installation_id": slot_b,
+            "device_id": slot_b.split("-", 1)[1],
+            "machine_instance_id": new_b,
+            "legacy_machine_instance_id": f"{shared},{old_b}",
+        },
+    )
+
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["installation_id"] == slot_a
+    assert second.json()["installation_id"] == slot_b
+
+    labels = {
+        row.last_installation_id: (row.machine_instance_id, row.display_name)
+        for row in db_session.query(UserDeviceLabel)
+        .filter(UserDeviceLabel.user_id == test_user.id)
+        .all()
+    }
+    assert labels[slot_a] == (new_a, "A-machine")
+    assert labels[slot_b] == (new_b, "B-machine")

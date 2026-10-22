@@ -53,6 +53,16 @@ def _normalize_installation_id(raw: Optional[str]) -> str:
     return value if _INSTALLATION_ID_RE.fullmatch(value) else ""
 
 
+def _normalize_identity_list(raw: Optional[str]) -> list[str]:
+    """把 "id1,id2 id3" 解析成合法 id 列表（换机器 id 后新旧值都要认）。"""
+    values: list[str] = []
+    for part in re.split(r"[,;\s]+", str(raw or "").strip()):
+        item = _normalize_installation_id(part)
+        if item and item not in values:
+            values.append(item)
+    return values
+
+
 def _request_installation_brand(request: Request, raw_brand: Optional[str] = None) -> str:
     return normalize_brand_mark(
         raw_brand
@@ -607,42 +617,36 @@ def bind_unique_installation_id(
     machine_id = machine_instance_id or device_id
     # 出厂镜像换了机器身份（m… -> mw…）：把该用户的设备别名迁到新机器 id，
     # 否则别名会“消失”。只迁当前用户的行。
-    legacy_machine_id = _normalize_installation_id(body.legacy_machine_instance_id)
-    if legacy_machine_id and legacy_machine_id != machine_id:
-        migrated_labels = (
-            db.query(UserDeviceLabel)
-            .filter(
-                UserDeviceLabel.user_id == int(current_user.id),
-                UserDeviceLabel.machine_instance_id == legacy_machine_id,
-            )
-            .update({UserDeviceLabel.machine_instance_id: machine_id}, synchronize_session=False)
-        )
-        existing_new_row = (
-            db.query(UserMachineIdentity)
-            .filter(
-                UserMachineIdentity.user_id == int(current_user.id),
-                UserMachineIdentity.machine_instance_id == machine_id,
-            )
-            .first()
-        )
-        if existing_new_row is None:
-            old_row = (
-                db.query(UserMachineIdentity)
+    legacy_machine_ids = _normalize_identity_list(body.legacy_machine_instance_id)
+    if legacy_machine_ids and machine_id and current_installation_id:
+        # 只迁本槽位自己的备注：克隆机会共用一个机器 id，不按槽位限定会互相抢备注。
+        migrated_labels = 0
+        for legacy_machine_id in legacy_machine_ids:
+            if legacy_machine_id == machine_id:
+                continue
+            migrated_labels += (
+                db.query(UserDeviceLabel)
                 .filter(
-                    UserMachineIdentity.user_id == int(current_user.id),
-                    UserMachineIdentity.machine_instance_id == legacy_machine_id,
+                    UserDeviceLabel.user_id == int(current_user.id),
+                    UserDeviceLabel.machine_instance_id == legacy_machine_id,
+                    UserDeviceLabel.last_installation_id == current_installation_id,
                 )
-                .first()
+                .update(
+                    {
+                        UserDeviceLabel.machine_instance_id: machine_id,
+                        UserDeviceLabel.label_key: machine_id[:192],
+                    },
+                    synchronize_session=False,
+                )
             )
-            if old_row is not None:
-                old_row.machine_instance_id = machine_id
-                db.add(old_row)
-        db.commit()
+        if migrated_labels:
+            db.commit()
         logger.info(
-            "[installation-identity] machine id migrated user=%s legacy=%s new=%s labels=%s",
+            "[installation-identity] machine id migrated user=%s legacy=%s new=%s slot=%s labels=%s",
             getattr(current_user, "id", ""),
-            legacy_machine_id,
+            ",".join(legacy_machine_ids),
             machine_id,
+            current_installation_id[:18],
             int(migrated_labels or 0),
         )
     known_machine = (
@@ -673,9 +677,12 @@ def bind_unique_installation_id(
             # 机器身份现在来自硬件（mw…）：这个 iid 已经被另一台物理机器占用，
             # 说明是出厂镜像复制出来的“克隆设备”，必须给它重新分配槽位。
             recent_cutoff = datetime.utcnow() - timedelta(days=7)
-            other_is_hardware = str(other_machine.machine_instance_id or "").startswith("mw")
+            other_id = str(other_machine.machine_instance_id or "").strip()
+            other_is_self = other_id in legacy_machine_ids
+            other_is_hardware = other_id.startswith("mw")
             signed_slot_machine_conflict = bool(
-                other_is_hardware
+                not other_is_self
+                and other_is_hardware
                 and other_machine.last_seen_at
                 and other_machine.last_seen_at >= recent_cutoff
             )
