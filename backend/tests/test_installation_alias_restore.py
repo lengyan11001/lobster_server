@@ -144,3 +144,27 @@ def test_restore_moves_current_slot_publish_defaults(db_session, test_user):
     assert result["moved_defaults"] == 1
     row = db_session.query(H5MountedAccountDefault).filter_by(user_id=test_user.id).one()
     assert row.installation_id == slot_new
+
+def test_restore_moves_machine_identity_to_new_slot(db_session, test_user):
+    slot_new = "u31-f55a8e813d428cd055e7e5eba0bc2aab"
+    slot_current = "u31-dc2847b6fd30714808b56a3d385f844b"
+    _label(db_session, test_user.id, "kaifaji", slot_new)
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id="machine-a",
+            installation_id=slot_current,
+        )
+    )
+    db_session.commit()
+
+    result = restore_installation_alias(
+        AliasRestoreRequest(alias="kaifaji", machine_instance_id="machine-a"),
+        request=_req(slot_current),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert result["updated_machines"] == 1
+    row = db_session.query(UserMachineIdentity).filter_by(user_id=test_user.id).one()
+    assert row.installation_id == slot_new

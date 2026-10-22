@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import socket
@@ -27,6 +28,7 @@ from ..services.installation_slot_ownership import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _CUSTOM_CONFIGS_FILE = Path(__file__).resolve().parent.parent.parent.parent / "custom_configs.json"
 _INSTALLATION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{8,128}$")
@@ -432,6 +434,7 @@ def current_installation_id_status(
 
 class AliasRestoreRequest(BaseModel):
     alias: str = ""
+    machine_instance_id: Optional[str] = None
 
 
 def _alias_owner_ids(db: Session, current_user: User) -> set[int]:
@@ -519,10 +522,35 @@ def restore_installation_alias(
             status_code=409,
             detail="该别名对应的槽位正被另一台设备在线使用，请先在原设备上停止使用后再恢复",
         )
+    # 机器身份也要一起改到恢复后的槽位，否则下一次登录 bind 会按 known_machine
+    # 把槽位又改回旧的。
+    current_raw = optional_installation_id_from_request(request)
+    machine_raw = _normalize_installation_id(body.machine_instance_id)
+    updated_machines = 0
+    machine_query = db.query(UserMachineIdentity).filter(
+        UserMachineIdentity.user_id == int(current_user.id)
+    )
+    if machine_raw:
+        machine_query = machine_query.filter(UserMachineIdentity.machine_instance_id == machine_raw)
+    elif current_raw:
+        candidates_for_machine = {current_raw}
+        scoped_current = scoped_installation_id(current_raw, user_brand_mark(current_user))
+        if scoped_current:
+            candidates_for_machine.add(scoped_current)
+        machine_query = machine_query.filter(
+            UserMachineIdentity.installation_id.in_(tuple(candidates_for_machine))
+        )
+    else:
+        machine_query = None
+    if machine_query is not None:
+        updated_machines = machine_query.update(
+            {UserMachineIdentity.installation_id: slot},
+            synchronize_session=False,
+        )
+        db.commit()
     # 发布账号/接管账号是按槽位绑定的，换槽位后必须跟着这台机器一起走，
     # 否则启动工作流会报“默认发布账号不在当前启用设备上”。
     moved_defaults = 0
-    current_raw = optional_installation_id_from_request(request)
     if current_raw:
         candidates = {current_raw}
         scoped_current = scoped_installation_id(current_raw, user_brand_mark(current_user))
@@ -547,6 +575,7 @@ def restore_installation_alias(
         "alias": alias,
         "installation_id": slot,
         "moved_defaults": int(moved_defaults or 0),
+        "updated_machines": int(updated_machines or 0),
     }
 
 
@@ -738,6 +767,16 @@ def bind_unique_installation_id(
         installation_id,
         brand_mark=brand_mark,
         exclude_user_id=current_user.id,
+    )
+    logger.info(
+        "[installation-identity] bind user=%s current=%s device_prefix=%s machine=%s returned=%s reason=%s replaced=%s",
+        getattr(current_user, "id", ""),
+        current_installation_id or "",
+        str(device_id or "")[:12],
+        machine_id or "",
+        installation_id,
+        signature_reason,
+        replaced or "",
     )
     return {
         "ok": True,
