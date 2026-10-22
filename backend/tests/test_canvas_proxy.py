@@ -768,7 +768,7 @@ def test_display_amount_falls_back_to_our_pricing(monkeypatch):
     monkeypatch.setattr(canvas_proxy, "our_price_for_display", lambda model, body: Decimal("6"))
     payload = {"data": {"task_id": "unknown", "params": {"quality": "low"}}}
 
-    amount = canvas_proxy._display_amount_for_response(None, 42, payload, {}, "openai/gpt-image-2")
+    amount = canvas_proxy._display_amount_for_response(object(), 42, payload, {}, "openai/gpt-image-2")
 
     assert amount == Decimal("6")
 
@@ -780,7 +780,7 @@ def test_display_amount_prefers_recorded_charge(monkeypatch):
     monkeypatch.setattr(canvas_hub, "canvas_task_charged", lambda db, uid, tid: 6.0)
     payload = {"data": {"task_id": "t-1", "params": {"quality": "low"}}}
 
-    amount = canvas_proxy._display_amount_for_response(None, 42, payload, {}, "openai/gpt-image-2")
+    amount = canvas_proxy._display_amount_for_response(object(), 42, payload, {}, "openai/gpt-image-2")
 
     assert amount == Decimal("6.0")
 
