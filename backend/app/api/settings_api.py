@@ -675,8 +675,20 @@ def bind_unique_installation_id(
         )
         # 同一槽位可能已经堆了多条机器行（克隆机各自绑过），必须逐条看；
         # 只看第一条会被最老的 m 开头记录挡住，克隆机就都留在同一个槽位。
+        # 这个槽位的备注挂在本机名下，说明它本来就是这台机器的槽位：
+        # 让它保留，只把其它克隆机分走，避免 205b 这种有数据的槽位被腾空。
+        owns_current_slot = (
+            db.query(UserDeviceLabel.id)
+            .filter(
+                UserDeviceLabel.user_id == current_user.id,
+                UserDeviceLabel.machine_instance_id == machine_id,
+                UserDeviceLabel.last_installation_id == current_installation_id,
+            )
+            .first()
+            is not None
+        )
         recent_cutoff = datetime.utcnow() - timedelta(days=7)
-        for other_machine in other_machines:
+        for other_machine in ([] if owns_current_slot else other_machines):
             other_id = str(other_machine.machine_instance_id or "").strip()
             if other_id in legacy_machine_ids:
                 continue

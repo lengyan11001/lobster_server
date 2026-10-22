@@ -670,3 +670,49 @@ def test_known_machine_on_contested_slot_is_reallocated(
     assert payload["installation_id"] != slot
     assert payload["signed"] is True
     assert payload["signature_reason"] == "duplicate_machine"
+
+
+def test_label_owner_keeps_contested_slot(db_session, db_session_factory, test_user):
+    """槽位备注挂在自己名下的那台机器，冲突时保留槽位，不被克隆机挤走。"""
+    slot = f"u{test_user.id}-" + "a" * 32
+    owner = "mw" + "5" * 48
+    other = "mw" + "6" * 48
+    db_session.add_all(
+        [
+            UserMachineIdentity(
+                user_id=test_user.id,
+                machine_instance_id=owner,
+                installation_id=slot,
+                last_seen_at=datetime.utcnow(),
+            ),
+            UserMachineIdentity(
+                user_id=test_user.id,
+                machine_instance_id=other,
+                installation_id=slot,
+                last_seen_at=datetime.utcnow(),
+            ),
+            UserDeviceLabel(
+                user_id=test_user.id,
+                label_key=owner,
+                machine_instance_id=owner,
+                display_name="Owner-01",
+                last_installation_id=slot,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": slot},
+        json={
+            "installation_id": slot,
+            "device_id": "a" * 32,
+            "machine_instance_id": owner,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["installation_id"] == slot
