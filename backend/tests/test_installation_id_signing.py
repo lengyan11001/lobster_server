@@ -592,3 +592,37 @@ def test_two_cloned_devices_keep_slots_and_aliases_after_machine_id_split(
     }
     assert labels[slot_a] == (new_a, "A-machine")
     assert labels[slot_b] == (new_b, "B-machine")
+
+
+def test_clone_split_scans_every_machine_row_on_the_slot(
+    db_session, db_session_factory, test_user
+):
+    """同一槽位下已经有两条硬件机器行时，第三台克隆机也必须被分走。"""
+    slot = f"u{test_user.id}-" + "a" * 32
+    for machine in ("mw" + "1" * 48, "mw" + "2" * 48):
+        db_session.add(
+            UserMachineIdentity(
+                user_id=test_user.id,
+                machine_instance_id=machine,
+                installation_id=slot,
+                last_seen_at=datetime.utcnow(),
+            )
+        )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": slot},
+        json={
+            "installation_id": slot,
+            "device_id": "a" * 32,
+            "machine_instance_id": "mw" + "3" * 48,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["installation_id"] != slot
+    assert payload["signature_reason"] == "duplicate_machine"

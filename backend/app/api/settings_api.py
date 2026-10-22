@@ -664,28 +664,28 @@ def bind_unique_installation_id(
     # slot so OTA/restart does not unexpectedly move its data.
     signed_slot_machine_conflict = False
     if current_is_signed and has_machine_identity:
-        other_machine = (
+        other_machines = (
             db.query(UserMachineIdentity)
             .filter(
                 UserMachineIdentity.user_id == current_user.id,
                 UserMachineIdentity.installation_id == current_installation_id,
                 UserMachineIdentity.machine_instance_id != machine_id,
             )
-            .first()
+            .all()
         )
-        if other_machine is not None:
-            # 机器身份现在来自硬件（mw…）：这个 iid 已经被另一台物理机器占用，
-            # 说明是出厂镜像复制出来的“克隆设备”，必须给它重新分配槽位。
-            recent_cutoff = datetime.utcnow() - timedelta(days=7)
+        # 同一槽位可能已经堆了多条机器行（克隆机各自绑过），必须逐条看；
+        # 只看第一条会被最老的 m 开头记录挡住，克隆机就都留在同一个槽位。
+        recent_cutoff = datetime.utcnow() - timedelta(days=7)
+        for other_machine in other_machines:
             other_id = str(other_machine.machine_instance_id or "").strip()
-            other_is_self = other_id in legacy_machine_ids
-            other_is_hardware = other_id.startswith("mw")
-            signed_slot_machine_conflict = bool(
-                not other_is_self
-                and other_is_hardware
-                and other_machine.last_seen_at
-                and other_machine.last_seen_at >= recent_cutoff
-            )
+            if other_id in legacy_machine_ids:
+                continue
+            if not other_id.startswith("mw"):
+                continue
+            if not other_machine.last_seen_at or other_machine.last_seen_at < recent_cutoff:
+                continue
+            signed_slot_machine_conflict = True
+            break
     stale_slot = ""
     if body.force_new:
         installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, f"{machine_id}-{secrets.token_hex(8)}")
