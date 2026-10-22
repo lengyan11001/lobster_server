@@ -1,6 +1,23 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+  <style>
+    html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+  </style>
+  <script>
+    (function lockH5ViewportZoom() {
+      function blockGesture(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      }
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (name) {
+        document.addEventListener(name, blockGesture, { passive: false });
+      });
+      document.addEventListener('touchmove', function (event) {
+        if (event && event.touches && event.touches.length > 1) blockGesture(event);
+      }, { passive: false });
+    })();
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>OpenClaw - AI 语音助手</title>

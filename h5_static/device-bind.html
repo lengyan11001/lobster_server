@@ -1,8 +1,25 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+  <style>
+    html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+  </style>
+  <script>
+    (function lockH5ViewportZoom() {
+      function blockGesture(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      }
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (name) {
+        document.addEventListener(name, blockGesture, { passive: false });
+      });
+      document.addEventListener('touchmove', function (event) {
+        if (event && event.touches && event.touches.length > 1) blockGesture(event);
+      }, { passive: false });
+    })();
+  </script>
+
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>设备绑定</title>
 <style>
   :root{--brand:#2563eb;--line:#e2e8f0;--muted:#64748b;--ok:#059669;--bad:#dc2626}

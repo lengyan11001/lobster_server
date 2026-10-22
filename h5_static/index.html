@@ -2,12 +2,27 @@
 <html lang="zh-CN" data-brand="__H5_BRAND_MARK__" style="--blue: __H5_PRIMARY_COLOR__; --designer-blue: __H5_PRIMARY_COLOR__; background: #e5e7eb;">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="color-scheme" content="only light" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <style>
-    html, body { margin: 0; background: #e5e7eb; }
+    html, body { margin: 0; background: #e5e7eb; touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+    /* 禁止双指缩放/双击放大：iPhone 描述文件（webclip）和 APK 内嵌 WebView 里都容易误触 */
+    html, body, #app { touch-action: pan-x pan-y; overscroll-behavior: none; }
   </style>
+  <script>
+    (function lockH5ViewportZoom() {
+      function blockGesture(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      }
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (name) {
+        document.addEventListener(name, blockGesture, { passive: false });
+      });
+      document.addEventListener('touchmove', function (event) {
+        if (event && event.touches && event.touches.length > 1) blockGesture(event);
+      }, { passive: false });
+    })();
+  </script>
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
