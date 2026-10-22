@@ -757,7 +757,7 @@ def test_empty_slot_falls_back_to_machine_slot_with_data(
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["installation_id"] == data_slot
-    assert payload["signature_reason"] == "machine_slot_restore"
+    assert payload["signature_reason"] == "machine_slot_pinned"
 
 
 def test_assigned_slot_overrides_current_file_slot(
@@ -828,3 +828,38 @@ def test_assigned_slot_overrides_current_file_slot(
         .first()
     )
     assert row.assigned_installation_id is None
+
+
+def test_machine_slot_wins_even_when_file_slot_has_data(
+    db_session, db_session_factory, test_user
+):
+    """机器记录指向的槽位优先，不管本地文件槽位有没有数据。"""
+    file_slot = f"u{test_user.id}-" + "a" * 32
+    machine_slot = f"u{test_user.id}-" + "b" * 32
+    machine = "mw" + "9" * 48
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id=machine,
+            installation_id=machine_slot,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": file_slot},
+        json={
+            "installation_id": file_slot,
+            "device_id": "a" * 32,
+            "machine_instance_id": machine,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["installation_id"] == machine_slot
+    assert payload["signature_reason"] == "machine_slot_pinned"

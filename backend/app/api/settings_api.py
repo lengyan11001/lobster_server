@@ -708,15 +708,19 @@ def bind_unique_installation_id(
     # on another machine.  Only split it when that other machine is currently
     # online; an offline/reinstalled client is allowed to retain its signed
     # slot so OTA/restart does not unexpectedly move its data.
-    machine_slot_restore = bool(
-        known_machine is not None
-        and current_is_signed
-        and current_installation_id
-        and _normalize_installation_id(known_machine.installation_id)
-        and _normalize_installation_id(known_machine.installation_id) != current_installation_id
-        and _slot_data_score(db, current_user.id, current_installation_id) == 0
-        and _slot_data_score(db, current_user.id, _normalize_installation_id(known_machine.installation_id)) > 0
-    )
+    # 机器记录就是这台机器的槽位：只要它指向本账号的签名槽位且和本地文件不同，
+    # 一律以机器记录为准返回。客户端文件写没写进来都不影响，避免每次启动来回拉锯。
+    machine_slot_pinned = ""
+    if known_machine is not None:
+        known_slot = _normalize_installation_id(known_machine.installation_id)
+        if (
+            known_slot
+            and str(known_machine.machine_instance_id or "").startswith("mw")
+            and known_slot != current_installation_id
+            and _is_signed_installation_id_for_user(known_slot, current_user.id)
+        ):
+            machine_slot_pinned = known_slot
+    machine_slot_restore = bool(machine_slot_pinned)
     assigned_slot = (
         _normalize_installation_id(getattr(known_machine, "assigned_installation_id", "") or "")
         if known_machine is not None
@@ -775,12 +779,10 @@ def bind_unique_installation_id(
         # bind 每次把 34c5 塞回客户端，客户端文件又拒绝覆盖 → 两边永远对不上。
         # 口径：客户端文件里的已签名槽位是权威；机器行跟着它更新，而不是反过来。
         if machine_slot_restore:
-            # 客户端手里是个空槽，而这台机器自己的记录落在一个有数据的槽位上：
-            # 以机器记录为准把设备带回原槽位，避免分槽把数据留在空槽上。
-            installation_id = _normalize_installation_id(known_machine.installation_id)
+            installation_id = machine_slot_pinned
             duplicate_before = False
             signed = True
-            signature_reason = "machine_slot_restore"
+            signature_reason = "machine_slot_pinned"
         elif current_is_signed and not signed_slot_machine_conflict and current_installation_id:
             installation_id = current_installation_id
             duplicate_before = False
