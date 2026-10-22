@@ -450,3 +450,38 @@ def test_h5_device_status_dispatch_and_online_claim_use_the_same_slot(
     assert pending_a.json()["items"] == []
     assert pending_b.status_code == 200
     assert [item["id"] for item in pending_b.json()["items"]] == [run["id"]]
+
+def test_bind_prefers_file_slot_over_stale_machine_row(db_session, db_session_factory, test_user):
+    current = f"u{test_user.id}-" + "a" * 32
+    stale = f"u{test_user.id}-" + "b" * 32
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id="machine-a",
+            installation_id=stale,
+        )
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": current},
+        json={
+            "installation_id": current,
+            "device_id": "a" * 32,
+            "machine_instance_id": "machine-a",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["installation_id"] == current
+    assert resp.json()["signature_reason"] == "current_file_wins"
+
+    db_session.expire_all()
+    row = (
+        db_session.query(UserMachineIdentity)
+        .filter_by(user_id=test_user.id, machine_instance_id="machine-a")
+        .one()
+    )
+    assert row.installation_id == current

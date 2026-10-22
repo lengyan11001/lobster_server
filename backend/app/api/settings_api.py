@@ -646,12 +646,34 @@ def bind_unique_installation_id(
         signed = True
         signature_reason = "force_new"
     elif known_machine is not None:
-        # Once a machine has a slot, keep using that exact slot forever. This
-        # is what makes a normal login idempotent across restarts and OTA.
-        installation_id = _normalize_installation_id(known_machine.installation_id) or current_installation_id
-        duplicate_before = False
-        signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
-        signature_reason = "known_machine"
+        # 2026-10-22 事故：机器行记的是旧槽位（34c5），客户端文件是固化槽位（205b），
+        # bind 每次把 34c5 塞回客户端，客户端文件又拒绝覆盖 → 两边永远对不上。
+        # 口径：客户端文件里的已签名槽位是权威；机器行跟着它更新，而不是反过来。
+        if current_is_signed and not signed_slot_machine_conflict and current_installation_id:
+            installation_id = current_installation_id
+            duplicate_before = False
+            signed = True
+            if _normalize_installation_id(known_machine.installation_id) == installation_id:
+                signature_reason = "known_machine"
+            else:
+                signature_reason = "current_file_wins"
+            if _normalize_installation_id(known_machine.installation_id) != installation_id:
+                logger.info(
+                    "[installation-identity] machine row corrected user=%s machine=%s old=%s new=%s",
+                    getattr(current_user, "id", ""),
+                    machine_id,
+                    known_machine.installation_id,
+                    installation_id,
+                )
+                known_machine.installation_id = installation_id
+                db.add(known_machine)
+                db.commit()
+        else:
+            # 客户端没带有效已签名槽位（老客户端/文件丢失）：沿用机器行，保持稳定。
+            installation_id = _normalize_installation_id(known_machine.installation_id) or current_installation_id
+            duplicate_before = False
+            signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
+            signature_reason = "known_machine"
     elif current_is_signed and not signed_slot_machine_conflict:
         # A signed slot is the final effective slot. Keep it stable even if an
         # OTA repairs/recreates the local machine identity later.
