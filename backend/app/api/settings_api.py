@@ -717,6 +717,11 @@ def bind_unique_installation_id(
         and _slot_data_score(db, current_user.id, current_installation_id) == 0
         and _slot_data_score(db, current_user.id, _normalize_installation_id(known_machine.installation_id)) > 0
     )
+    assigned_slot = (
+        _normalize_installation_id(getattr(known_machine, "assigned_installation_id", "") or "")
+        if known_machine is not None
+        else ""
+    )
     signed_slot_machine_conflict = False
     if current_is_signed and has_machine_identity:
         other_machines = (
@@ -759,6 +764,12 @@ def bind_unique_installation_id(
         duplicate_before = False
         signed = True
         signature_reason = "force_new"
+    elif assigned_slot:
+        # 服务端给这台机器指定了槽位（人工纠偏用），一次生效后清空。
+        installation_id = assigned_slot
+        duplicate_before = False
+        signed = True
+        signature_reason = "assigned_slot"
     elif known_machine is not None:
         # 2026-10-22 事故：机器行记的是旧槽位（34c5），客户端文件是固化槽位（205b），
         # bind 每次把 34c5 塞回客户端，客户端文件又拒绝覆盖 → 两边永远对不上。
@@ -912,6 +923,7 @@ def bind_unique_installation_id(
         db.add(known_machine)
     else:
         known_machine.installation_id = installation_id
+        known_machine.assigned_installation_id = None
         known_machine.last_seen_at = datetime.utcnow()
     db.commit()
     usage_after = _installation_id_usage(

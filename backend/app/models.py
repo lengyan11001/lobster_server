@@ -1082,6 +1082,7 @@ class UserMachineIdentity(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     machine_instance_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    assigned_installation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

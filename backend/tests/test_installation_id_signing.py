@@ -758,3 +758,49 @@ def test_empty_slot_falls_back_to_machine_slot_with_data(
     payload = resp.json()
     assert payload["installation_id"] == data_slot
     assert payload["signature_reason"] == "machine_slot_restore"
+
+
+def test_assigned_slot_overrides_current_file_slot(
+    db_session, db_session_factory, test_user
+):
+    """服务端指定槽位时，bind 直接返回该槽位并清空指定。"""
+    current = f"u{test_user.id}-" + "a" * 32
+    target = f"u{test_user.id}-" + "b" * 32
+    machine = "mw" + "8" * 48
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id=machine,
+            installation_id=current,
+            assigned_installation_id=target,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": current},
+        json={
+            "installation_id": current,
+            "device_id": "a" * 32,
+            "machine_instance_id": machine,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["installation_id"] == target
+    assert payload["signature_reason"] == "assigned_slot"
+    row = (
+        db_session.query(UserMachineIdentity)
+        .filter(
+            UserMachineIdentity.user_id == test_user.id,
+            UserMachineIdentity.machine_instance_id == machine,
+        )
+        .first()
+    )
+    assert row.assigned_installation_id is None
+    assert row.installation_id == target

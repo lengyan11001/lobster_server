@@ -523,6 +523,20 @@ def _migrate_remote_support_device_authorizations():
         logger.warning("Migration remote support device authorizations skipped: %s", e)
 
 
+def _migrate_machine_assignment_column():
+    """user_machine_identities.assigned_installation_id：服务端指定槽位。"""
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE user_machine_identities "
+                    "ADD COLUMN IF NOT EXISTS assigned_installation_id VARCHAR(128)"
+                )
+            )
+    except Exception as e:
+        logger.warning("Migration machine assignment column skipped: %s", e)
+
+
 def _migrate_device_labels():
     """设备备注（设备名）改成按机器身份保存 + 把历史备注搬进新表（幂等）。
 
@@ -1683,7 +1697,8 @@ def create_app() -> FastAPI:
         _migrate_ip_content_profile_surveys()
         _migrate_h5_device_presence_account_payload()
         _migrate_remote_support_device_authorizations()
-        _migrate_device_labels()
+        _migrate_machine_assignment_column()
+_migrate_device_labels()
         _migrate_customer_authorizations()
         _migrate_manage_ai_employee_columns()
         _migrate_shop_product_listing_media()
