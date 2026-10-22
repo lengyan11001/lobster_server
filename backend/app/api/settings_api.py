@@ -20,7 +20,17 @@ from ..db import get_db
 from .auth import get_current_user, request_auth_session_id
 from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
-from ..models import H5ChatDevicePresence, H5MountedAccountDefault, User, UserDeviceLabel, UserInstallation, UserMachineIdentity
+from ..models import (
+    H5ChatDevicePresence,
+    H5MountedAccountDefault,
+    H5WorkflowActivation,
+    IPContentScheduleTemplate,
+    ScheduledTaskRun,
+    User,
+    UserDeviceLabel,
+    UserInstallation,
+    UserMachineIdentity,
+)
 from ..services.brand_context import normalize_brand_mark, scoped_installation_id, user_brand_mark
 from ..services.installation_slot_ownership import (
     claim_installation_slot,
@@ -245,6 +255,24 @@ def _signed_installation_id_conflicts(
         )
         .first()
     )
+
+
+def _slot_data_score(db: Session, user_id: int, installation_id: str) -> int:
+    """槽位上的数据量（工作流激活 + 人设模板 + 任务执行记录），用于判断空槽。"""
+    iid = _normalize_installation_id(installation_id)
+    if not iid:
+        return 0
+    total = 0
+    for model in (H5WorkflowActivation, IPContentScheduleTemplate, ScheduledTaskRun):
+        try:
+            total += int(
+                db.query(model.id)
+                .filter(model.user_id == int(user_id), model.installation_id == iid)
+                .count()
+            )
+        except Exception:
+            db.rollback()
+    return total
 
 
 def _unique_signed_installation_id_for_user(
@@ -680,6 +708,15 @@ def bind_unique_installation_id(
     # on another machine.  Only split it when that other machine is currently
     # online; an offline/reinstalled client is allowed to retain its signed
     # slot so OTA/restart does not unexpectedly move its data.
+    machine_slot_restore = bool(
+        known_machine is not None
+        and current_is_signed
+        and current_installation_id
+        and _normalize_installation_id(known_machine.installation_id)
+        and _normalize_installation_id(known_machine.installation_id) != current_installation_id
+        and _slot_data_score(db, current_user.id, current_installation_id) == 0
+        and _slot_data_score(db, current_user.id, _normalize_installation_id(known_machine.installation_id)) > 0
+    )
     signed_slot_machine_conflict = False
     if current_is_signed and has_machine_identity:
         other_machines = (
@@ -726,7 +763,14 @@ def bind_unique_installation_id(
         # 2026-10-22 事故：机器行记的是旧槽位（34c5），客户端文件是固化槽位（205b），
         # bind 每次把 34c5 塞回客户端，客户端文件又拒绝覆盖 → 两边永远对不上。
         # 口径：客户端文件里的已签名槽位是权威；机器行跟着它更新，而不是反过来。
-        if current_is_signed and not signed_slot_machine_conflict and current_installation_id:
+        if machine_slot_restore:
+            # 客户端手里是个空槽，而这台机器自己的记录落在一个有数据的槽位上：
+            # 以机器记录为准把设备带回原槽位，避免分槽把数据留在空槽上。
+            installation_id = _normalize_installation_id(known_machine.installation_id)
+            duplicate_before = False
+            signed = True
+            signature_reason = "machine_slot_restore"
+        elif current_is_signed and not signed_slot_machine_conflict and current_installation_id:
             installation_id = current_installation_id
             duplicate_before = False
             signed = True

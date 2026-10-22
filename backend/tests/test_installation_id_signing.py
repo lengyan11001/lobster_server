@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from backend.app.api.auth import access_token_claims, create_access_token, get_current_user
 from backend.app.api.h5_chat import router as h5_chat_router
 from backend.app.api.scheduled_tasks import router as scheduled_tasks_router
+from backend.app.api import settings_api as settings_api_module
 from backend.app.api.settings_api import router as settings_router
 from backend.app.db import get_db
 from backend.app.models import (
@@ -716,3 +717,44 @@ def test_label_owner_keeps_contested_slot(db_session, db_session_factory, test_u
 
     assert resp.status_code == 200
     assert resp.json()["installation_id"] == slot
+
+
+def test_empty_slot_falls_back_to_machine_slot_with_data(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    """设备被分到空槽、机器记录指向有数据的槽位时，bind 要把它带回原槽位。"""
+    empty_slot = f"u{test_user.id}-" + "e" * 32
+    data_slot = f"u{test_user.id}-" + "d" * 32
+    machine = "mw" + "7" * 48
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id=machine,
+            installation_id=data_slot,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(
+        settings_api_module,
+        "_slot_data_score",
+        lambda db, user_id, iid: 0 if iid == empty_slot else 5,
+    )
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        headers={"X-Installation-Id": empty_slot},
+        json={
+            "installation_id": empty_slot,
+            "device_id": "e" * 32,
+            "machine_instance_id": machine,
+            "legacy_machine_instance_id": "m1a0474c3a3dcc8bf35767bc4429bed23c6ac42b99c9",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["installation_id"] == data_slot
+    assert payload["signature_reason"] == "machine_slot_restore"
