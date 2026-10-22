@@ -585,7 +585,7 @@ def refund_canvas(db: Session, user: User, amount: "object", model: str, path: s
 _APIZ_MESSAGE_MAP = (
     ("至少要有一个非空 text", "提示词不能为空：请先在节点里填写文本再提交"),
     ("非法token", "登录态已失效，请重新登录客户端后再试"),
-    ("余额不足", "积分不足，请先充值"),
+    ("余额不足", "上游渠道余额不足（不是你的积分）：本次预扣已退回，请稍后重试或联系管理员"),
     ("PROVIDER_MODERATION_ERROR", "内容被模型审核拦下了：请换一下提示词/参考图，或换一个模型再试；本次预扣的积分已退回。"),
     ("moderated by this Model", "内容被模型审核拦下了：请换一下提示词/参考图，或换一个模型再试；本次预扣的积分已退回。"),
 )
@@ -1207,14 +1207,23 @@ async def canvas_proxy(
                 params=dict(request.query_params),
             )
     except httpx.TimeoutException as exc:
+        if pre_charged:
+            refund_canvas(db, user, pre_charged, model, normalized, "上游超时")
+            pre_charged = None
         raise HTTPException(status_code=504, detail=f"apiz 请求超时：{exc}") from exc
     except httpx.TransportError as exc:
+        if pre_charged:
+            refund_canvas(db, user, pre_charged, model, normalized, "上游连接失败")
+            pre_charged = None
         raise HTTPException(status_code=502, detail=f"apiz 连接失败：{exc}") from exc
 
     if upstream.status_code == 404 and normalized in _TASK_ABSENT_TOLERANT_PATHS:
         # 上游没有这个 task_id（本地任务/已清理任务）：返回空态，让画布继续用自己的状态，
         # 不要把 404 抛给前端弹「任务不存在」。
         logger.info("[canvas] %s 上游查不到 task_id（404 已按空态返回）", normalized)
+        if pre_charged:
+            refund_canvas(db, user, pre_charged, model, normalized, "上游 404 未创建任务")
+            pre_charged = None
         return JSONResponse({"code": 200, "message": "ok", "msg": "ok", "data": None}, status_code=200)
 
     if upstream.status_code < 400 and model:
@@ -1223,9 +1232,30 @@ async def canvas_proxy(
             logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
     # 上游拒绝时把话翻成我们自己的中文（界面直接显示），不再只甩「请检查参数」
     friendly = humanize_upstream_error(upstream.content[:2000].decode("utf-8", "replace"))
-    if friendly and upstream.status_code >= 400 or (friendly and b"text" in upstream.content):
+    if friendly and (upstream.status_code >= 400 or b"text" in upstream.content):
         logger.warning("[canvas] 上游拒绝 %s -> %s", normalized, friendly)
+        if pre_charged:
+            # 2026-10-22 事故：上游用 HTTP 200 + 业务错误（余额不足）拒绝时，这里提前 return
+            # 把后面的退款跳过了，用户被白扣。任何“上游拒绝”都必须先退回预扣。
+            refund_canvas(db, user, pre_charged, model, normalized, f"上游拒绝：{friendly}")
+            pre_charged = None
         return JSONResponse({"code": 400, "msg": friendly, "detail": friendly, "data": None}, status_code=400)
+
+    if upstream.status_code < 400 and pre_charged and _should_settle(normalized):
+        # 兜底：HTTP 200 但业务 code 不是成功（例如上游余额不足/审核拒绝没带已知关键词），
+        # 同样先退回预扣，别把用户的积分吞掉。
+        try:
+            _early = json.loads(upstream.content.decode("utf-8", "replace")) if upstream.content else {}
+        except Exception:
+            _early = {}
+        _code = _early.get("code") if isinstance(_early, dict) else None
+        if _code not in (None, 0, 200, "0", "200"):
+            _early_msg = str(_early.get("msg") or _early.get("message") or "").strip() or f"上游业务错误 code={_code}"
+            logger.warning("[canvas] 上游业务失败 %s code=%s msg=%s", normalized, _code, _early_msg)
+            refund_canvas(db, user, pre_charged, model, normalized, _early_msg[:120])
+            pre_charged = None
+            _friendly_early = humanize_task_error(_early_msg)
+            return JSONResponse({"code": 400, "msg": _friendly_early, "detail": _friendly_early, "data": None}, status_code=400)
 
     if upstream.status_code < 400 and ("query" in normalized or _should_settle(normalized)):
         try:
