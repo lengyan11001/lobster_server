@@ -548,10 +548,30 @@ def _migrate_device_labels():
         for row in rows:
             if not device_label_service.is_custom_label(row.display_name):
                 continue
+            iid = str(row.installation_id or "")
+            machines = {
+                str(m[0] or "")
+                for m in db.query(models.UserMachineIdentity.machine_instance_id)
+                .filter(
+                    models.UserMachineIdentity.user_id == int(row.user_id),
+                    models.UserMachineIdentity.installation_id == iid,
+                )
+                .all()
+                if m[0]
+            }
+            if len(machines) > 1:
+                # 同一槽位压着多台克隆机时，按“最近一台”回填会把备注挂错机器，
+                # 每次启动都洗一次名字；这种槽位留给 bind 的分槽逻辑处理。
+                logger.info(
+                    "[MANAGE] device label backfill skipped slot=%s machines=%s",
+                    iid[:18],
+                    len(machines),
+                )
+                continue
             created = device_label_service.remember_device_label(
                 db,
                 user_id=int(row.user_id),
-                installation_id=str(row.installation_id or ""),
+                installation_id=iid,
                 display_name=str(row.display_name),
                 source="manual",
             )

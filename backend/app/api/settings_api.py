@@ -553,11 +553,29 @@ def restore_installation_alias(
         )
     else:
         machine_query = None
+    released_machines = 0
     if machine_query is not None:
+        keep_machines = [
+            str(row.machine_instance_id or "").strip()
+            for row in machine_query.all()
+            if str(row.machine_instance_id or "").strip()
+        ]
         updated_machines = machine_query.update(
             {UserMachineIdentity.installation_id: slot},
             synchronize_session=False,
         )
+        if keep_machines:
+            # 这个槽位归回本机：其它机器在这条槽位上的记录要放开，
+            # 否则它们下次 bind 会判成冲突，把槽位再抢走。
+            released_machines = (
+                db.query(UserMachineIdentity)
+                .filter(
+                    UserMachineIdentity.user_id == int(current_user.id),
+                    UserMachineIdentity.installation_id == slot,
+                    UserMachineIdentity.machine_instance_id.notin_(tuple(keep_machines)),
+                )
+                .delete(synchronize_session=False)
+            )
         db.commit()
     # 发布账号/接管账号是按槽位绑定的，换槽位后必须跟着这台机器一起走，
     # 否则启动工作流会报“默认发布账号不在当前启用设备上”。
