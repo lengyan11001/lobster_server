@@ -527,11 +527,9 @@ def _migrate_machine_assignment_column():
     """user_machine_identities.assigned_installation_id：服务端指定槽位。"""
     try:
         with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE user_machine_identities "
-                    "ADD COLUMN IF NOT EXISTS assigned_installation_id VARCHAR(128)"
-                )
+            conn.exec_driver_sql(
+                "ALTER TABLE user_machine_identities "
+                "ADD COLUMN IF NOT EXISTS assigned_installation_id VARCHAR(128)"
             )
     except Exception as e:
         logger.warning("Migration machine assignment column skipped: %s", e)
@@ -1698,7 +1696,7 @@ def create_app() -> FastAPI:
         _migrate_h5_device_presence_account_payload()
         _migrate_remote_support_device_authorizations()
         _migrate_machine_assignment_column()
-_migrate_device_labels()
+        _migrate_device_labels()
         _migrate_customer_authorizations()
         _migrate_manage_ai_employee_columns()
         _migrate_shop_product_listing_media()
