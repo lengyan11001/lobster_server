@@ -277,8 +277,15 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "platform": "tiktok",
         "source_type": "user_search",
         "method": "GET",
-        "path": "/api/v1/tiktok/web/fetch_search_user",
-        "allowed_params": {"keyword", "cursor", "search_id", "cookie"},
+        "path": "/api/v1/tiktok/app/v3/fetch_user_search_result",
+        "allowed_params": {"keyword", "cursor", "count"},
+    },
+    "tiktok_keyword_suggest": {
+        "platform": "tiktok",
+        "source_type": "keyword_suggest",
+        "method": "GET",
+        "path": "/api/v1/tiktok/web/fetch_search_keyword_suggest",
+        "allowed_params": {"keyword"},
     },
     "tiktok_user_profile": {
         "platform": "tiktok",

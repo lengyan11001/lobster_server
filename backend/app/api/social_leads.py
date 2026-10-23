@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -2116,6 +2116,108 @@ async def _auto_run_job(job_id: str) -> None:
                 row.completed_at = _utcnow()
                 db.commit()
 
+
+@router.post("/api/social-leads/tiktok/expand-keywords", summary="TikTok 种子词拓词")
+async def expand_tiktok_keywords(
+    payload: dict[str, Any] = Body(default={}),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    seed = _clean_text(payload.get("seed_keyword"), 120).strip()
+    if not seed:
+        raise HTTPException(status_code=400, detail="请输入种子关键词")
+    count = max(1, min(20, int(payload.get("count") or 10)))
+    words: list[str] = []
+    source = "fallback"
+    try:
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="tiktok_keyword_suggest",
+            params={"keyword": seed},
+            body={},
+            save_items=False,
+            include_raw_response=True,
+            attempts=1,
+        )
+        raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        rows = data.get("data") if isinstance(data.get("data"), list) else []
+        for item in rows:
+            word = _clean_text(item.get("word") if isinstance(item, dict) else item, 120).strip()
+            if word and word not in words:
+                words.append(word)
+        if words:
+            source = "tikhub"
+    except Exception as exc:
+        logger.warning("[tiktok-leads] keyword suggest failed seed=%s: %s", seed, exc)
+    chinese = bool(re.search(r"[\u4e00-\u9fff]", seed))
+    fallback = [seed]
+    if chinese:
+        fallback += [f"{seed}{suffix}" for suffix in ("定制", "批发", "厂家", "价格", "供应商", "采购", "外贸", "礼品")]
+    fallback += [f"{seed} {suffix}" for suffix in ("supplier", "factory", "wholesale", "custom", "price", "bulk", "manufacturer", "OEM", "vendor", "procurement")]
+    for word in fallback:
+        if word not in words:
+            words.append(word)
+        if len(words) >= count:
+            break
+    return {"ok": True, "seed_keyword": seed, "keywords": words[:count], "source": source}
+
+
+@router.post("/api/social-leads/tiktok/discover-competitors", summary="TikTok 按拓词发现同行账号")
+async def discover_tiktok_competitors(
+    payload: dict[str, Any] = Body(default={}),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keywords = _clean_list(payload.get("keywords"), limit=8)
+    if not keywords:
+        raise HTTPException(status_code=400, detail="请先选择至少一个拓词")
+    limit = max(1, min(50, int(payload.get("limit") or 20)))
+    accounts: dict[str, dict[str, Any]] = {}
+    for keyword in keywords:
+        try:
+            result = await _execute_query_with_retry(
+                db=db,
+                current_user=current_user,
+                query_type="tiktok_search_user",
+                params={"keyword": keyword, "count": 20, "cursor": 0},
+                body={},
+                save_items=False,
+                include_raw_response=True,
+                attempts=1,
+            )
+            raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+            data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+            rows = data.get("user_list") if isinstance(data.get("user_list"), list) else []
+            for entry in rows:
+                info = entry.get("user_info") if isinstance(entry, dict) and isinstance(entry.get("user_info"), dict) else entry
+                if not isinstance(info, dict):
+                    continue
+                uid = _clean_text(info.get("unique_id") or info.get("uniqueId") or info.get("sec_uid"), 120).strip()
+                if not uid:
+                    continue
+                avatar = ""
+                avatar_obj = info.get("avatar_thumb") or info.get("avatar_168x168") or info.get("avatar_larger")
+                if isinstance(avatar_obj, dict) and isinstance(avatar_obj.get("url_list"), list) and avatar_obj["url_list"]:
+                    avatar = str(avatar_obj["url_list"][0] or "")
+                item = accounts.setdefault(uid, {
+                    "handle": uid,
+                    "unique_id": uid,
+                    "sec_uid": _clean_text(info.get("sec_uid") or info.get("secUid"), 160),
+                    "name": _clean_text(info.get("nickname") or info.get("unique_id") or uid, 160),
+                    "followers": info.get("follower_count") or info.get("followerCount") or 0,
+                    "bio": _clean_long_text(info.get("signature") or "", 400),
+                    "avatar_url": avatar,
+                    "profile_url": f"https://www.tiktok.com/@{uid}",
+                    "matched_keywords": [],
+                })
+                if keyword not in item["matched_keywords"]:
+                    item["matched_keywords"].append(keyword)
+        except Exception as exc:
+            logger.warning("[tiktok-leads] discover failed keyword=%s: %s", keyword, exc)
+    ordered = sorted(accounts.values(), key=lambda x: int(x.get("followers") or 0), reverse=True)[:limit]
+    return {"ok": True, "accounts": ordered, "keywords": keywords, "total": len(ordered)}
 
 @router.post("/api/social-leads/jobs", summary="启动 Reddit/X/TikTok 只读线索采集任务")
 async def start_social_leads_job(
