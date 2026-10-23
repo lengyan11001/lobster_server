@@ -30,6 +30,15 @@ def test_classify_upstream_verdicts():
     }
     verdict, _url, detail = classify_upstream(submit_unknown)
     assert verdict == "failed" and "timeout" in detail.lower()
+    progress_unknown = {
+        "code": 200,
+        "data": {
+            "status": "processing",
+            "progress": 40.0,
+            "progress_info": {"stage": "submit_unknown", "message": "视频任务提交中，请稍后"},
+        },
+    }
+    assert classify_upstream(progress_unknown)[0] == "failed"
 
 
 def test_reconcile_canvas_once_refunds_failed_and_registers_completed(monkeypatch):

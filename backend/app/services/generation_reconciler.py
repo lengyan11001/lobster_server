@@ -82,6 +82,11 @@ def classify_upstream(payload: Any) -> "tuple[str, str, str]":
         return "completed", url, ""
     if status in {"failed", "fail", "error", "webhook_error"}:
         return "failed", url, error_text[:200]
+    progress_info = data.get("progress_info") if isinstance(data.get("progress_info"), dict) else {}
+    progress_stage = str(progress_info.get("stage") or "").strip().lower()
+    if progress_stage == "submit_unknown":
+        stage_message = str(progress_info.get("message") or "").strip()
+        return "failed", url, (stage_message or "上游提交状态未知（创建超时）")[:200]
     # 2026-10-22 事故：上游创建任务超时会返回 submit_unknown，前端和后台
     # 都一直把它当成 pending，任务永远卡在「生成中」，预扣也不退。
     if status == "submit_unknown" and (
