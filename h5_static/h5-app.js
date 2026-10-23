@@ -5220,6 +5220,7 @@ async function api(path, options = {}) {
           content: "H5 工作流：数字人口播",
           payload: {
             avatar,
+            title: workflowParamValue("workflowParamHiflyVideoTitle") || "",
             virtualman_id: avatar,
             drive_mode: driveMode,
             ...(driveMode === "tts"
@@ -24074,6 +24075,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         + taskFieldHtml("驱动方式", taskSelectHtml("workflowParamHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
         + taskFieldHtml("声音", taskSelectHtml("workflowParamVoice", optionHtml("", "加载中...")))
         + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"))
+        + taskFieldHtml("文案标题", workInputHtml("workflowParamHiflyVideoTitle", "text", "", 'placeholder="显示在视频片头；留空则取文案首句"'))
         + taskFieldHtml("视频时长", taskSelectHtml("workflowParamHiflyDurationMode", optionHtml("short", "30 秒以内") + optionHtml("long", "长视频")))
         + `<div class="field hidden" id="workflowParamHiflyTargetDurationField"><label>预计视频时长</label><div class="work-duration-input"><input id="workflowParamHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div></div>`
         + taskFieldHtml("剪辑方式", taskSelectHtml("workflowParamHiflyTemplateMode", optionHtml("none", "不套模板") + optionHtml("template", "套用模板")))
@@ -24103,7 +24105,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     }
 
     function taskDigitalHumanFieldsHtml() {
-      return taskFieldHtml("数字人", taskSelectHtml("taskAvatar", optionHtml("", "加载中...")))
+      return taskFieldHtml("文案标题", workInputHtml("taskHiflyVideoTitle", "text", "", 'placeholder="显示在视频片头；留空则取文案首句"'))
+      + taskFieldHtml("数字人", taskSelectHtml("taskAvatar", optionHtml("", "加载中...")))
         + taskFieldHtml("驱动方式", taskSelectHtml("taskHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
         + taskFieldHtml("声音", taskSelectHtml("taskVoice", optionHtml("", "加载中...")))
         + taskFieldHtml("视频时长", taskSelectHtml("taskHiflyDurationMode", optionHtml("short", "30 秒以内") + optionHtml("long", "长视频")))
@@ -24338,6 +24341,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
           + taskFieldHtml("驱动方式", taskSelectHtml("workHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
           + taskFieldHtml("声音", taskSelectHtml("workVoice", optionHtml("", "加载中...")))
           + taskFieldHtml("任务标题", workInputHtml("workHiflyTitle", "text", "数字人口播"))
+          + taskFieldHtml("文案标题", workInputHtml("workHiflyVideoTitle", "text", "", 'placeholder="显示在视频片头；留空则取文案首句"'))
           + taskFieldHtml("视频时长", `<input id="workHiflyLongVideo" type="hidden" value="false">${workSegmentedHtml("workHiflyDurationMode", [{ value: "short", label: "30秒以内" }, { value: "long", label: "长视频" }], "short")}`)
           + `<div class="field full hidden work-hifly-duration-field" id="workHiflyTargetDurationField"><label for="workHiflyTargetDuration">预计视频时长</label><div class="work-duration-input"><input id="workHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div><small>当前支持最长 5 分钟，实际成片会随口播节奏略有浮动</small></div>`
           + taskFieldHtml("剪辑方式", `<input id="workHiflyUseTemplate" type="hidden" value="false">${workSegmentedHtml("workHiflyTemplateMode", [{ value: "none", label: "不套模板" }, { value: "template", label: "套用模板" }], "none")}`)
@@ -24516,6 +24520,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
           content: "H5 安排工作：数字人口播",
           payload: {
             avatar,
+            title: workValue("workHiflyVideoTitle") || "",
             virtualman_id: avatar,
             drive_mode: driveMode,
             ...(driveMode === "tts" ? { voice, speaker_id: voice, script, text: script, prompt: script } : (/^https?:\/\//i.test(audioValue) ? { audio_url: audioValue } : { audio_asset_id: audioValue })),
@@ -25392,6 +25397,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         const selectedMaterials = useTemplate ? selectedHiflyMaterials("taskHiflyMaterials") : [];
         return {
           avatar,
+          title: workflowParamValue("taskHiflyVideoTitle") || "",
           virtualman_id: avatar,
           drive_mode: driveMode,
           ...(driveMode === "tts"
