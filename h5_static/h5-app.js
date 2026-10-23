@@ -185,8 +185,6 @@
       messageStatusSnapshot: {},
       messageStatusReady: false,
       socialLeadJobs: [],
-      tiktokLeadJobId: "",
-      tiktokLeadTimer: 0,
       linkedinJobs: [],
       wechatTranscriptJobs: [],
       recorderDeviceFiles: [],
@@ -1040,7 +1038,7 @@
             key: "tiktok_leads",
             label: "TikTok线索采集",
             mark: "TT",
-            description: "输入同行主页，采集视频评论，筛出问价格/要方案的精准客户。",
+            description: "采集账号作品、视频评论和潜在线索。",
             packageId: "tiktok_leads",
           },
         ],
@@ -8769,269 +8767,6 @@ async function api(path, options = {}) {
       return ({ reddit: "Reddit", x: "X", tiktok: "TikTok" }[String(platform || "")] || platform || "平台");
     }
 
-    function tiktokLeadFieldsHtml() {
-      return `<div class="tt-lead-workbench">
-        <div class="tt-lead-hero">
-          <div class="tt-hero-glow"></div>
-          <div class="tt-hero-copy">
-            <span class="tt-kicker">TIKTOK LEAD ENGINE</span>
-            <h3>从同行评论区，找到真正想买的人</h3>
-            <p>把任务和结果分开：先创建采集任务，再在任务记录里逐条查看谁在问、问什么。</p>
-            <div class="tt-hero-flow">
-              <span><b>01</b>创建任务</span><i></i>
-              <span><b>02</b>自动采集</span><i></i>
-              <span><b>03</b>查看结果</span>
-            </div>
-          </div>
-          <div class="tt-hero-mark">TT</div>
-        </div>
-        <div class="tt-tabs">
-          <button type="button" class="tt-tab active" data-tt-tab="create">创建任务</button>
-          <button type="button" class="tt-tab" data-tt-tab="jobs">任务记录</button>
-          <button type="button" class="tt-tab hidden" id="ttResultTabBtn" data-tt-tab="result">任务结果</button>
-        </div>
-        <div id="ttPanelCreate" class="tt-panel">
-          <div class="tt-form-grid">
-            <section class="tt-card">
-              <header class="tt-card-head"><span class="tt-step-badge">01</span><div><b>同行账号</b><small>主页链接或 @unique_id，一行一个</small></div></header>
-              ${taskTextareaHtml("abilityLeadAccounts", "https://www.tiktok.com/@brand\n@competitor")}
-              ${taskFieldHtml("任务名称", workInputHtml("abilityLeadTitle", "text", "TikTok 精准获客"))}
-            </section>
-            <section class="tt-card">
-              <header class="tt-card-head"><span class="tt-step-badge">02</span><div><b>什么算精准客户</b><small>用一句自然语言描述你的理想客户</small></div></header>
-              ${taskTextareaHtml("abilityLeadKeywords", "例如：想采购定制笔记本的企业采购，问价格、起订量、交期，想印 logo 做企业礼品")}
-              <div class="tt-mini-grid">
-                ${taskFieldHtml("最近天数", workInputHtml("abilityLeadDays", "number", "30", 'min="1" max="365"'))}
-                ${taskFieldHtml("最多视频", workInputHtml("abilityLeadMaxVideos", "number", "12", 'min="1" max="50"'))}
-                ${taskFieldHtml("每条视频评论", workInputHtml("abilityLeadMaxComments", "number", "100", 'min="1" max="500"'))}
-                ${taskFieldHtml("最多客户", workInputHtml("abilityLeadMaxItems", "number", "50", 'min="1" max="100"'))}
-              </div>
-            </section>
-          </div>
-          <div class="tt-schedule-wrap">${abilityScheduleFieldsHtml()}</div>
-          <div class="tt-note"><span>只读采集</span> 先看评论里谁在问，再决定要不要私信；不会自动打扰客户。</div>
-        </div>
-        <div id="ttPanelJobs" class="tt-panel hidden">
-          <div class="tt-panel-head"><div><span class="tt-kicker">TASK HISTORY</span><h3>任务记录</h3><p>每次采集单独成一条，点开任务再看结果。</p></div><button type="button" class="tt-ghost-btn" data-tt-refresh-jobs="1">刷新</button></div>
-          <div id="ttJobList" class="tt-job-list"><div class="tt-empty">加载中…</div></div>
-        </div>
-        <div id="ttPanelResult" class="tt-panel hidden">
-          <div class="tt-panel-head"><div><span class="tt-kicker">TASK RESULT</span><h3>任务结果</h3><p>客户、搜索轨迹和证据都在这一页。</p></div><button type="button" class="tt-ghost-btn" data-tt-tab="jobs">返回任务记录</button></div>
-          <div id="tiktokLeadResult"></div>
-        </div>
-      </div>`;
-    }
-    function showTiktokLeadTab(tab) {
-      const name = ["create", "jobs", "result"].includes(String(tab)) ? String(tab) : "create";
-      state.tiktokLeadTab = name;
-      const panels = { create: "ttPanelCreate", jobs: "ttPanelJobs", result: "ttPanelResult" };
-      Object.entries(panels).forEach(([key, id]) => {
-        const el = $(id);
-        if (el) el.classList.toggle("hidden", key !== name);
-      });
-      document.querySelectorAll("[data-tt-tab]").forEach((btn) => {
-        btn.classList.toggle("active", btn.getAttribute("data-tt-tab") === name);
-      });
-      const resultTab = $("ttResultTabBtn");
-      if (resultTab && name === "result") resultTab.classList.remove("hidden");
-      const submit = $("abilityWorkbenchSubmit");
-      if (submit) submit.classList.toggle("hidden", name !== "create");
-      if (name === "jobs") loadTiktokLeadJobs().catch((err) => toast(err.message || "任务记录加载失败"));
-    }
-
-    function tiktokJobLeadCount(job) {
-      const result = job && job.result_payload && typeof job.result_payload === "object" ? job.result_payload : {};
-      const leads = Array.isArray(result.leads) ? result.leads : (Array.isArray(result.candidates) ? result.candidates : []);
-      return leads.length;
-    }
-
-    function renderTiktokJobList(jobs) {
-      const box = $("ttJobList");
-      if (!box) return;
-      if (!jobs.length) {
-        box.innerHTML = `<div class="tt-empty"><b>还没有采集任务</b><p>先去「创建任务」录入同行账号，任务会在这里逐条沉淀。</p></div>`;
-        return;
-      }
-      box.innerHTML = jobs.map((job) => {
-        const status = String(job.status || "");
-        const statusClass = status === "completed" ? "is-done" : (status === "failed" ? "is-failed" : "is-running");
-        const count = tiktokJobLeadCount(job);
-        return `<button type="button" class="tt-job-card" data-tt-job-id="${escapeHtml(job.job_id || "")}">
-          <div class="tt-job-main"><b>${escapeHtml(job.title || "TikTok 精准获客")}</b><span>${escapeHtml(fmtTime(job.created_at) || "")}</span></div>
-          <div class="tt-job-side"><span class="tt-status ${statusClass}">${escapeHtml(tiktokLeadStatusText(status))}</span><em>${compactNumber(count)} 客户</em></div>
-        </button>`;
-      }).join("");
-    }
-
-    async function loadTiktokLeadJobs() {
-      const box = $("ttJobList");
-      if (!box) return;
-      box.innerHTML = `<div class="tt-empty">正在加载任务记录…</div>`;
-      try {
-        const data = await api("/api/social-leads/jobs?platform=tiktok&limit=30&offset=0");
-        renderTiktokJobList(Array.isArray(data && data.items) ? data.items : []);
-      } catch (err) {
-        box.innerHTML = `<div class="tt-empty"><b>任务记录加载失败</b><p>${escapeHtml((err && err.message) || "请稍后重试")}</p></div>`;
-      }
-    }
-
-    async function openTiktokJob(jobId) {
-      const id = String(jobId || "").trim();
-      if (!id) return;
-      showTiktokLeadTab("result");
-      const box = $("tiktokLeadResult");
-      if (box) box.innerHTML = `<div class="tt-empty">正在加载任务结果…</div>`;
-      try {
-        const job = await api(`/api/social-leads/jobs/${encodeURIComponent(id)}`);
-        startTiktokLeadJob(job);
-      } catch (err) {
-        if (box) box.innerHTML = `<div class="tt-empty"><b>任务结果加载失败</b><p>${escapeHtml((err && err.message) || "请稍后重试")}</p></div>`;
-      }
-    }
-    function tiktokLeadStatusText(status) {
-      return ({ queued: "排队中", running: "采集中", completed: "已完成", failed: "失败", canceled: "已取消" }[String(status || "")] || "处理中");
-    }
-
-    function tiktokCommentTimeText(value) {
-      const n = Number(value || 0);
-      if (!n) return "";
-      const ms = n > 1000000000000 ? n : n * 1000;
-      return fmtTime(new Date(ms).toISOString());
-    }
-
-    function tiktokLeadReasonHtml(reasons) {
-      const rows = (Array.isArray(reasons) ? reasons : []).map((item) => String(item || "").trim()).filter(Boolean).slice(0, 4);
-      return rows.length ? `<div class="tt-reasons">${rows.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : "";
-    }
-    function tiktokLeadCardHtml(candidate, index) {
-      const item = candidate && typeof candidate === "object" ? candidate : {};
-      const comments = Array.isArray(item.comments) ? item.comments : [];
-      const firstComment = comments.find((row) => row && row.text) || {};
-      const commentText = String(item.comment_text || firstComment.text || "").trim();
-      const videoTitle = String(item.video_title || firstComment.video_title || "").trim();
-      const videoUrl = String(item.video_url || firstComment.video_url || "").trim();
-      const profileUrl = String(item.profile_url || item.url || "").trim();
-      const name = String(item.name || item.nickname || item.handle || `客户 ${index + 1}`).trim();
-      const handle = String(item.handle || item.unique_id || "").trim().replace(/^@/, "");
-      const region = String(item.region || "").trim();
-      const language = String(item.language || item.comment_language || "").trim();
-      const followers = Number(item.followers || 0);
-      const score = Number(item.score || item.intent_score || 0);
-      const avatar = String(item.avatar_url || "").trim();
-      const fallback = (name || handle || "客").slice(0, 1);
-      const initials = avatar
-        ? `<span class="tt-avatar"><img src="${escapeHtml(avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`
-        : `<span class="tt-avatar tt-avatar-fallback">${escapeHtml(fallback)}</span>`;
-      const meta = [region, language, followers ? `${compactNumber(followers)} 粉丝` : ""].filter(Boolean);
-      const moreComments = comments.slice(1).filter((row) => row && row.text);
-      const moreHtml = moreComments.length
-        ? `<details class="tt-more-comments"><summary>还有 ${moreComments.length} 条评论证据</summary>${moreComments.slice(0, 6).map((row) => `<div class="tt-more-comment"><p>“${escapeHtml(row.text || "")}”</p><small>${escapeHtml(row.video_title || "")}</small></div>`).join("")}</details>`
-        : "";
-      return `<article class="tt-lead-card">
-        <div class="tt-lead-card-top">
-          ${initials}
-          <div class="tt-lead-id"><b>${escapeHtml(name)}</b><span>${handle ? "@" + escapeHtml(handle) : "TikTok 用户"}</span></div>
-          <div class="tt-score"><strong>${score ? Math.round(score) : "-"}</strong><span>意向分</span></div>
-        </div>
-        <div class="tt-lead-meta">
-          ${meta.map((text) => `<span>${escapeHtml(text)}</span>`).join("")}
-          ${item.platform_high_intent ? `<span class="is-hot">平台高意向</span>` : ""}
-        </div>
-        ${commentText ? `<div class="tt-quote"><span>他咨询了什么</span><p>“${escapeHtml(commentText)}”</p><small>${escapeHtml([videoTitle, tiktokCommentTimeText(firstComment.comment_time || item.comment_time)].filter(Boolean).join(" · "))}</small></div>` : `<div class="tt-quote tt-quote-empty"><span>评论内容</span><p>这条线索暂时没有可展示的评论原文，请重试采集。</p></div>`}
-        ${tiktokLeadReasonHtml(item.intent_reasons || item.intent_reason)}
-        <div class="tt-lead-actions">
-          ${profileUrl ? `<a href="${escapeHtml(profileUrl)}" target="_blank" rel="noopener noreferrer">打开主页</a>` : ""}
-          ${profileUrl ? `<button type="button" data-copy-text="${escapeHtml(profileUrl)}">复制主页</button>` : ""}
-          ${videoUrl ? `<a href="${escapeHtml(videoUrl)}" target="_blank" rel="noopener noreferrer">看来源视频</a>` : ""}
-        </div>
-        ${moreHtml}
-      </article>`;
-    }
-    function tiktokLeadStepsHtml(job) {
-      const steps = Array.isArray(job && job.steps) ? job.steps : [];
-      if (!steps.length) return "";
-      return `<div class="tt-timeline">${steps.map((step) => {
-        const status = String(step.status || "pending");
-        const result = step.result && typeof step.result === "object" ? step.result : {};
-        const count = result.candidate_count != null ? result.candidate_count : (result.count != null ? result.count : "");
-        return `<div class="tt-timeline-item ${escapeHtml(status)}">
-          <i></i>
-          <div><b>${escapeHtml(step.label || step.key || "")}</b><span>${escapeHtml(step.detail || tiktokLeadStatusText(status))}</span>${count !== "" ? `<em>${escapeHtml(compactNumber(count))}</em>` : ""}</div>
-        </div>`;
-      }).join("")}</div>`;
-    }
-
-    function tiktokLeadTraceHtml(job) {
-      const outputs = Array.isArray(job && job.outputs) ? job.outputs : [];
-      const queries = [];
-      outputs.forEach((output) => {
-        const rows = output && output.kind === "queries" && output.data && Array.isArray(output.data.queries) ? output.data.queries : [];
-        rows.forEach((row) => queries.push({ ...row, step_title: output.title || output.step_key || "" }));
-      });
-      if (!queries.length) return "";
-      return `<details class="tt-trace"><summary>查看搜索轨迹 · ${queries.length} 次请求</summary><div class="tt-trace-body">${queries.slice(0, 40).map((row) => {
-        const target = row.keyword || row.account || row.post_id || row.query_type || "请求";
-        const meta = [row.step_title, row.query_type, row.page ? `第 ${row.page} 页` : "", row.count != null ? `${row.count} 条` : "", row.error ? `失败：${row.error}` : ""].filter(Boolean).join(" · ");
-        return `<div class="tt-trace-row"><b>${escapeHtml(target)}</b><span>${escapeHtml(meta)}</span></div>`;
-      }).join("")}</div></details>`;
-    }
-    function renderTiktokLeadResult(job) {
-      const box = $("tiktokLeadResult");
-      if (!box || !job) return;
-      box.classList.remove("hidden");
-      const status = String(job.status || "");
-      const result = job.result_payload && typeof job.result_payload === "object" ? job.result_payload : {};
-      const leads = Array.isArray(result.leads) ? result.leads : (Array.isArray(result.candidates) ? result.candidates : []);
-      const sourceSummary = job.source_summary && typeof job.source_summary === "object" ? job.source_summary : {};
-      const steps = Array.isArray(job.steps) ? job.steps : [];
-      const done = steps.filter((step) => step.status === "completed").length;
-      const statusClass = status === "completed" ? "is-done" : (status === "failed" ? "is-failed" : "is-running");
-      const cards = leads.map(tiktokLeadCardHtml).join("");
-      const empty = status === "completed"
-        ? `<div class="tt-empty"><b>这轮没有筛到精准客户</b><p>可以放宽筛选提示词，或把“最多视频 / 每条视频评论”调大一点再试。</p></div>`
-        : (status === "failed" || status === "canceled"
-          ? `<div class="tt-empty"><b>采集没有完成</b><p>${escapeHtml(job.error || "任务失败，请检查 TikHub 额度或稍后重试。")}</p></div>`
-          : `<div class="tt-empty"><b>正在从评论里找客户</b><p>同步视频、采集评论和判定意向需要一点时间，结果会自动刷新。</p></div>`);
-      box.innerHTML = `<div class="tt-result-head">
-        <div><span class="tt-kicker">LIVE RESULT</span><h3>${escapeHtml(job.title || "TikTok 精准获客")}</h3></div>
-        <span class="tt-status ${statusClass}">${escapeHtml(tiktokLeadStatusText(status))}</span>
-      </div>
-      <div class="tt-result-stats">
-        <div><strong>${compactNumber(leads.length)}</strong><span>精准客户</span></div>
-        <div><strong>${compactNumber(sourceSummary.total || 0)}</strong><span>采集数据</span></div>
-        <div><strong>${done}/${steps.length || 0}</strong><span>完成步骤</span></div>
-      </div>
-      ${tiktokLeadStepsHtml(job)}
-      ${tiktokLeadTraceHtml(job)}
-      <div class="tt-leads-head"><div><span class="tt-kicker">PRECISE LEADS</span><h3>谁在问，问什么</h3></div><span>${compactNumber(leads.length)} 人</span></div>
-      ${leads.length ? `<div class="tt-lead-cards">${cards}</div>` : empty}`;
-      if (status === "running" || status === "queued") box.classList.add("is-live");
-      else box.classList.remove("is-live");
-    }
-    function startTiktokLeadJob(job) {
-      const box = $("tiktokLeadResult");
-      if (!box || !job || !job.job_id) return;
-      if (state.tiktokLeadTimer) clearTimeout(state.tiktokLeadTimer);
-      state.tiktokLeadJobId = String(job.job_id);
-      const resultTab = $("ttResultTabBtn");
-      if (resultTab) resultTab.classList.remove("hidden");
-      showTiktokLeadTab("result");
-      renderTiktokLeadResult(job);
-      box.scrollIntoView({ behavior: "smooth", block: "start" });
-      const poll = async () => {
-        if (!state.tiktokLeadJobId) return;
-        try {
-          const latest = await api(`/api/social-leads/jobs/${encodeURIComponent(state.tiktokLeadJobId)}`);
-          renderTiktokLeadResult(latest);
-          if (!["completed", "failed", "canceled"].includes(String(latest.status || ""))) {
-            state.tiktokLeadTimer = setTimeout(poll, 2000);
-          }
-        } catch (err) {
-          state.tiktokLeadTimer = setTimeout(poll, 4000);
-        }
-      };
-      state.tiktokLeadTimer = setTimeout(poll, 1200);
-    }
     function abilitySocialFieldsHtml(platform) {
       const sourceLabel = platform === "reddit" ? "社区" : "来源关键词";
       const sourcePlaceholder = platform === "reddit" ? "例如：Entrepreneur、marketing、SaaS" : "例如：AI agent、marketing automation、lead generation";
@@ -9211,7 +8946,6 @@ async function api(path, options = {}) {
       const title = $("abilityWorkbenchTitle");
       const badge = $("abilityWorkbenchBadge");
       const submit = $("abilityWorkbenchSubmit");
-      if (submit) submit.classList.remove("hidden");
       if (!node || (node.children && node.children.length) || node.comingSoon) {
         hideAbilityWorkbench();
         return;
@@ -9246,10 +8980,6 @@ async function api(path, options = {}) {
             loadVideoMemoryDocsForSelect();
           }, 0);
         }
-      } else if (node.key === "tiktok_leads") {
-        html = tiktokLeadFieldsHtml();
-        submitText = "开始找客户";
-        badgeText = "TikTok 精准获客";
       } else if (socialPlatformFromAbilityKey(node.key)) {
         const platform = socialPlatformFromAbilityKey(node.key);
         html = abilitySocialFieldsHtml(platform);
@@ -9272,13 +9002,12 @@ async function api(path, options = {}) {
         hideAbilityWorkbench();
         return;
       }
-      if (!node.routeTab && node.key !== "tiktok_leads" && String(node.capabilityId || node.key || "") !== "moments_sales_coach") html += abilityScheduleFieldsHtml();
+      if (!node.routeTab && String(node.capabilityId || node.key || "") !== "moments_sales_coach") html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
       box.dataset.workbenchKey = String(node.workQuickKey || node.capabilityId || node.key || "").trim();
       if (title) title.textContent = node.workQuickKey === "publish_center" ? "发布任务" : `${node.label || "能力"}工作台`;
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
-      if (node.key === "tiktok_leads") showTiktokLeadTab("create");
       if (String(node.capabilityId || node.key || "") === "moments_sales_coach") {
         if (submit) {
           submit.disabled = true;
@@ -25009,26 +24738,6 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     }
 
     function collectSocialLeadsPayload(platform) {
-      if (platform === "tiktok") {
-        const accounts = splitTextareaList(abilityValue("abilityLeadAccounts"));
-        const prompt = abilityValue("abilityLeadKeywords");
-        if (!accounts.length) throw new Error("请填写至少一个 TikTok 同行主页或 @unique_id");
-        if (!prompt) throw new Error("请描述什么算精准客户");
-        return {
-          platform: "tiktok",
-          title: abilityValue("abilityLeadTitle") || "TikTok 精准获客",
-          keywords: [prompt],
-          intent_prompt: prompt,
-          accounts,
-          max_items: abilityNumber("abilityLeadMaxItems", 50, 1, 100),
-          max_videos: abilityNumber("abilityLeadMaxVideos", 12, 1, 50),
-          max_comments_per_video: abilityNumber("abilityLeadMaxComments", 100, 1, 500),
-          time_range_days: abilityNumber("abilityLeadDays", 30, 1, 365),
-          include_comments: true,
-          include_account_posts: true,
-          auto_run: true,
-        };
-      }
       const keywords = splitTextareaList(abilityValue("abilityLeadKeywords"));
       if (!keywords.length) throw new Error("请填写精准用户方向");
       const mode = abilityValue("abilityLeadMode") || "source";
@@ -25157,12 +24866,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         if (platform) {
           const payload = collectSocialLeadsPayload(platform);
           if (schedule.schedule_type === "once") {
-            const data = await submitSocialLeadsWorkbench(node, platform);
+            await submitSocialLeadsWorkbench(node, platform);
             submittedDirect = true;
-            if (platform === "tiktok") {
-              startTiktokLeadJob(data && data.job);
-              return;
-            }
           } else {
             plan = {
               title: payload.title || `${socialPlatformLabel(platform)}线索采集`,
@@ -31520,26 +31225,6 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     $("workDispatchForm").addEventListener("submit", (evt) => {
       evt.preventDefault();
       submitWorkDispatch().catch((err) => toast(err.message || "下发失败"));
-    });
-    document.addEventListener("click", (evt) => {
-      const ttTab = evt.target.closest && evt.target.closest("[data-tt-tab]");
-      if (ttTab) { showTiktokLeadTab(ttTab.getAttribute("data-tt-tab")); return; }
-      const ttJob = evt.target.closest && evt.target.closest("[data-tt-job-id]");
-      if (ttJob) { openTiktokJob(ttJob.getAttribute("data-tt-job-id")).catch((err) => toast(err.message || "任务加载失败")); return; }
-      const ttRefresh = evt.target.closest && evt.target.closest("[data-tt-refresh-jobs]");
-      if (ttRefresh) { loadTiktokLeadJobs().catch((err) => toast(err.message || "刷新失败")); return; }
-    });
-    document.addEventListener("click", (evt) => {
-      const btn = evt.target.closest && evt.target.closest("[data-copy-text]");
-      if (!btn) return;
-      const text = String(btn.getAttribute("data-copy-text") || "").trim();
-      if (!text) return;
-      const done = () => toast("已复制");
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(() => toast("复制失败，请手动复制"));
-      } else {
-        toast("复制失败，请手动复制");
-      }
     });
     $("abilityWorkbenchForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
