@@ -576,15 +576,31 @@ def restore_installation_alias(
         .all()
     )
     matched = [row for row in rows if str(row.display_name or "").strip().lower() == alias.lower()]
-    if not matched:
-        raise HTTPException(status_code=404, detail="没有找到这个设备别名")
     machine_raw = _normalize_installation_id(body.machine_instance_id)
-    if machine_raw:
-        own = [row for row in matched if str(row.machine_instance_id or "").strip() == machine_raw]
-        if own:
-            matched = own
-    matched.sort(key=lambda row: row.updated_at or datetime.min, reverse=True)
-    slot = str(matched[0].last_installation_id or "").strip()
+    if matched:
+        if machine_raw:
+            own = [row for row in matched if str(row.machine_instance_id or "").strip() == machine_raw]
+            if own:
+                matched = own
+        matched.sort(key=lambda row: row.updated_at or datetime.min, reverse=True)
+        slot = str(matched[0].last_installation_id or "").strip()
+    else:
+        # 备注表里没有这个名字时，退回到设备在线名（客户端改名后先写的是这里）
+        slot = ""
+        presences = (
+            db.query(H5ChatDevicePresence)
+            .filter(H5ChatDevicePresence.user_id.in_(tuple(owner_ids)))
+            .order_by(H5ChatDevicePresence.last_seen_at.desc())
+            .all()
+        )
+        for presence in presences:
+            if str(presence.display_name or "").strip().lower() != alias.lower():
+                continue
+            slot = str(presence.installation_id or "").strip()
+            if slot:
+                break
+        if not slot:
+            raise HTTPException(status_code=404, detail="没有找到这个设备别名")
     if not slot:
         raise HTTPException(status_code=409, detail="这个别名还没有绑定过槽位")
     usage = _installation_id_usage(db, slot, exclude_user_id=current_user.id)
