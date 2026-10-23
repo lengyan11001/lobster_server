@@ -558,27 +558,52 @@ def pre_deduct_canvas(db: Session, user: User, amount: "object", model: str, pat
         return Decimal("0")
 
 
-def refund_canvas(db: Session, user: User, amount: "object", model: str, path: str, reason: str) -> None:
-    """生成失败/被拒：把预扣退回（写 refund 流水）。"""
+def refund_canvas(db: Session, user: User, amount: "object", model: str, path: str, reason: str,
+                  *, task_id: str = "") -> bool:
+    """生成失败/被拒：把预扣退回（写 refund 流水）。
+
+    返回 True 表示退款已落库；False 表示失败，调用方必须保留待退状态并重试。
+    传 task_id 时按 task_id 幂等，避免「钱已退但标记失败」后重复退款。
+    """
     from decimal import Decimal
 
-    from ..services.credit_ledger import append_credit_ledger
+    from ..models import CreditLedger
+    from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
     from ..services.credits_amount import quantize_credits, user_balance_decimal
 
     try:
         amount = quantize_credits(amount or 0)
         if amount <= 0:
-            return
+            return True
+        refund_ref = str(task_id or path or "").strip()[:128]
+        if task_id:
+            existing = (
+                db.query(CreditLedger)
+                .filter(
+                    CreditLedger.user_id == int(user.id),
+                    CreditLedger.entry_type == "refund",
+                    CreditLedger.ref_type == "canvas_api",
+                    CreditLedger.ref_id == refund_ref,
+                    CreditLedger.delta >= amount,
+                )
+                .first()
+            )
+            if existing is not None:
+                return True
         db.refresh(user)
-        balance = user_balance_decimal(user)
         new_balance = apply_credit_delta(db, user.id, amount)
         append_credit_ledger(db, user.id, amount, "refund", new_balance,
-                             description=f"画布生成失败退回（{reason}）", ref_type="canvas_api", ref_id=path,
-                             meta={"model": model, "refund": float(amount), "reason": reason})
+                             description=f"画布生成失败退回（{reason}）", ref_type="canvas_api", ref_id=refund_ref,
+                             meta={"model": model, "refund": float(amount), "reason": reason,
+                                   "canvas_task_id": str(task_id or "")})
         db.commit()
-        logger.info("[canvas] 退回 user=%s model=%s 退=%s 余额=%s", getattr(user, "id", ""), model, amount, user.credits)
+        logger.info("[canvas] 退回 user=%s model=%s 退=%s 余额=%s task=%s",
+                    getattr(user, "id", ""), model, amount, user.credits, task_id or path)
+        return True
     except Exception as exc:
+        db.rollback()
         logger.warning("[canvas] 退回失败: %s", exc, exc_info=True)
+        return False
 
 
 # apiz 的生硬报错 -> 我们自己的中文提示（界面直接显示这句）
@@ -745,9 +770,15 @@ def _sync_canvas_task_from_upstream(db: Session, user: User, uid: int, data: Any
         return
     if failed and not info.get("refunded") and float(info.get("charged") or 0) > 0:
         # 上游明确说「tokens 已退回」时我们也要退：以前只有 HTTP>=400 才退，任务级 failed 会白扣
-        refund_canvas(db, user, info["charged"], model, path, f"上游判定失败：{error_text[:60] or status}")
-        canvas_hub.mark_canvas_task_refunded(db, uid, task_id=task_id)
-        logger.info("[canvas] 上游判定失败，已退回预扣 %s（task=%s）", info["charged"], task_id)
+        refunded = refund_canvas(
+            db, user, info["charged"], model, path,
+            f"上游判定失败：{error_text[:60] or status}", task_id=task_id,
+        )
+        if refunded:
+            canvas_hub.mark_canvas_task_refunded(db, uid, task_id=task_id)
+            logger.info("[canvas] 上游判定失败，已退回预扣 %s（task=%s）", info["charged"], task_id)
+        else:
+            logger.warning("[canvas] 上游判定失败但退款未落库，保留待退状态（task=%s）", task_id)
 
 
 def _ensure_text_content(body: Dict[str, Any]) -> Dict[str, Any]:

@@ -72,12 +72,24 @@ def classify_upstream(payload: Any) -> "tuple[str, str, str]":
         return "pending", "", detail[:200]
     status = str(data.get("status") or "").strip().lower()
     url = canvas_hub._extract_result_url(data.get("output") or data.get("result") or data)
+    output = data.get("output") if isinstance(data.get("output"), dict) else {}
+    output_params = data.get("output_params") if isinstance(data.get("output_params"), dict) else {}
+    error_value = output.get("error") or output_params.get("error") or data.get("message") or ""
+    if isinstance(error_value, dict):
+        error_value = error_value.get("message") or error_value.get("error") or ""
+    error_text = str(error_value or "").strip()
     if status in {"completed", "succeed", "success", "done"}:
         return "completed", url, ""
     if status in {"failed", "fail", "error", "webhook_error"}:
-        output = data.get("output") if isinstance(data.get("output"), dict) else {}
-        return "failed", url, str(output.get("error") or data.get("message") or "")[:200]
-    return "pending", url, ""
+        return "failed", url, error_text[:200]
+    # 2026-10-22 事故：上游创建任务超时会返回 submit_unknown，前端和后台
+    # 都一直把它当成 pending，任务永远卡在「生成中」，预扣也不退。
+    if status == "submit_unknown" and (
+        "timeout" in error_text.lower()
+        or str(data.get("error_type") or "").strip().lower() == "video_submit_unknown"
+    ):
+        return "failed", url, (error_text or "上游创建超时，任务未确认")[:200]
+    return "pending", url, error_text[:200]
 
 
 def _media_type_for(url: str) -> str:
@@ -97,7 +109,10 @@ def _due_canvas_rows(db, limit: int) -> List[Dict[str, Any]]:
          where coalesce(task_id, '') <> ''
            and coalesce(charged, 0) > 0
            and coalesce(refunded, false) = false
-           and status in ('submitted', 'processing', 'running', 'pending')
+           and (
+             status in ('submitted', 'processing', 'running', 'pending')
+             or (status = 'failed' and coalesce(refunded, false) = false)
+           )
            and created_at <= :min_ts
            and created_at >= :max_ts
          order by id asc
@@ -152,16 +167,22 @@ async def reconcile_canvas_once(*, limit: Optional[int] = None, dry_run: bool = 
                         logger.info("[reconcile] task=%s 已补登记产物 %s", task_id, url[:80])
                     else:
                         user = db.query(User).filter(User.id == user_id).first()
+                        refunded_ok = True
                         if user is not None and charged > 0:
-                            canvas_proxy.refund_canvas(
+                            refunded_ok = canvas_proxy.refund_canvas(
                                 db, user, charged, model,
                                 str(row.get("path") or "api/v3/tasks/create"),
-                                f"对账补退（上游 {verdict}）",
+                                f"对账补退（上游 {verdict}）", task_id=task_id,
                             )
-                            canvas_hub.mark_canvas_task_refunded(db, user_id, task_id=task_id)
+                            if refunded_ok:
+                                canvas_hub.mark_canvas_task_refunded(db, user_id, task_id=task_id)
                         canvas_hub.sync_canvas_task(db, user_id, task_id=task_id, status="failed",
                                                     error=(detail or verdict)[:200], model=model)
-                        logger.info("[reconcile] task=%s 判定 %s，已退预扣 %s", task_id, verdict, charged)
+                        if refunded_ok:
+                            logger.info("[reconcile] task=%s 判定 %s，已退预扣 %s", task_id, verdict, charged)
+                        else:
+                            stats["errors"] += 1
+                            logger.warning("[reconcile] task=%s 判定 %s，但退款未落库，保留待退", task_id, verdict)
                 except Exception as exc:  # noqa: BLE001
                     stats["errors"] += 1
                     logger.warning("[reconcile] 结单失败 task=%s: %s", task_id, exc)

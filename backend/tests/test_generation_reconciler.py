@@ -21,6 +21,15 @@ def test_classify_upstream_verdicts():
     assert classify_upstream({"code": 404, "detail": "x"})[0] == "missing"
     assert classify_upstream({"code": 200, "data": {"status": "processing"}})[0] == "pending"
     assert classify_upstream(None)[0] == "pending"
+    submit_unknown = {
+        "code": 200,
+        "data": {
+            "status": "submit_unknown",
+            "output_params": {"error": "TimeoutError: create timeout", "error_type": "video_submit_unknown"},
+        },
+    }
+    verdict, _url, detail = classify_upstream(submit_unknown)
+    assert verdict == "failed" and "timeout" in detail.lower()
 
 
 def test_reconcile_canvas_once_refunds_failed_and_registers_completed(monkeypatch):
@@ -49,7 +58,7 @@ def test_reconcile_canvas_once_refunds_failed_and_registers_completed(monkeypatc
     monkeypatch.setattr(canvas_hub, "sync_canvas_task", lambda *a, **k: seen.setdefault("sync", []).append(k.get("status")))
     monkeypatch.setattr(canvas_hub, "mark_canvas_task_refunded", lambda *a, **k: seen.setdefault("marked", []).append(k.get("task_id")))
     monkeypatch.setattr(canvas_hub, "register_content_record", lambda *a, **k: seen.setdefault("registered", []).append(a[2]))
-    monkeypatch.setattr(canvas_proxy, "refund_canvas", lambda db, user, amount, model, path, reason: seen.setdefault("refunds", []).append((float(amount), reason)))
+    monkeypatch.setattr(canvas_proxy, "refund_canvas", lambda db, user, amount, model, path, reason, **kwargs: (seen.setdefault("refunds", []).append((float(amount), reason)) or True))
 
     class _User:
         id = 42

@@ -658,7 +658,7 @@ def test_failed_upstream_task_refunds_pre_deduct_once(monkeypatch, tmp_path):
     )
 
     refunds: list = []
-    monkeypatch.setattr(canvas_proxy, "refund_canvas", lambda *args, **kwargs: refunds.append(args))
+    monkeypatch.setattr(canvas_proxy, "refund_canvas", lambda *args, **kwargs: (refunds.append(args) or True))
 
     class _User:
         id = 42
@@ -686,6 +686,38 @@ def test_failed_upstream_task_refunds_pre_deduct_once(monkeypatch, tmp_path):
     items = canvas_hub.list_canvas_tasks(db, 42, 12)["list"]
     assert items[0]["status"] == "failed"
     assert "审核" in json.loads(items[0]["output_params"])["error"]
+
+
+def test_canvas_refund_writes_credit_ledger_and_is_idempotent(monkeypatch, tmp_path):
+    """退款必须真的写回余额/流水；不能只把 canvas_task.refunded 标成 True。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from backend.app.db import Base
+    from backend.app.models import CreditLedger, User
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "canvas_refund_test.db").replace("\\", "/"))
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+    user = User(id=42, email="refund@test.local", hashed_password="x", credits=100)
+    db.add(user)
+    db.commit()
+
+    assert canvas_proxy.refund_canvas(
+        db, user, 6, "openai/gpt-image-2", "api/v3/tasks/create", "test refund", task_id="task-refund"
+    ) is True
+    db.refresh(user)
+    assert float(user.credits) == 106
+    rows = db.query(CreditLedger).filter(CreditLedger.user_id == 42, CreditLedger.entry_type == "refund").all()
+    assert len(rows) == 1 and float(rows[0].delta) == 6
+    assert rows[0].ref_id == "task-refund"
+
+    # 同一 task 再调用一次不能重复加钱
+    assert canvas_proxy.refund_canvas(
+        db, user, 6, "openai/gpt-image-2", "api/v3/tasks/create", "test refund", task_id="task-refund"
+    ) is True
+    db.refresh(user)
+    assert float(user.credits) == 106
+    assert db.query(CreditLedger).filter(CreditLedger.user_id == 42, CreditLedger.entry_type == "refund").count() == 1
 
 
 def test_relayed_moderation_error_is_translated_to_chinese():
