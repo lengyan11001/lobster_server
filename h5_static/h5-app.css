@@ -10701,3 +10701,30 @@
 .tt-trace-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 7px 0; border-top: 1px dashed #e8eef7; }
 .tt-trace-row b { min-width: 0; font-size: 12px; color: #263654; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tt-trace-row span { flex: 0 0 auto; max-width: 62%; font-size: 11px; color: #8490a3; text-align: right; }
+
+
+/* TikTok 任务 / 结果分层 */
+.tt-tabs { display: flex; align-items: center; gap: 8px; padding: 5px; border-radius: 14px; background: #eaf1fb; border: 1px solid #dce7f6; width: fit-content; max-width: 100%; overflow-x: auto; }
+.tt-tab { border: 0; background: transparent; color: #5f6f88; font-size: 13px; font-weight: 700; padding: 9px 16px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
+.tt-tab.active { background: #fff; color: #1d4ed8; box-shadow: 0 5px 14px rgba(37, 99, 235, .14); }
+.tt-panel { display: grid; gap: 14px; }
+.tt-panel.hidden, .tt-tab.hidden { display: none; }
+.tt-panel-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding: 4px 2px; }
+.tt-panel-head h3 { margin: 5px 0 0; font-size: 20px; color: #14213d; }
+.tt-panel-head p { margin: 5px 0 0; font-size: 12px; color: #8490a3; line-height: 1.5; }
+.tt-ghost-btn { flex: 0 0 auto; border: 1px solid #dbe6f4; background: #fff; color: #2f6fed; border-radius: 10px; padding: 8px 12px; font-size: 12px; cursor: pointer; }
+.tt-ghost-btn:hover { background: #f4f8ff; }
+.tt-job-list { display: grid; gap: 10px; }
+.tt-job-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; text-align: left; padding: 15px 16px; border: 1px solid #e3ebf6; border-radius: 15px; background: #fff; cursor: pointer; box-shadow: 0 8px 22px rgba(24, 53, 96, .04); }
+.tt-job-card:hover { border-color: #bcd4ff; background: #f9fbff; }
+.tt-job-main { min-width: 0; }
+.tt-job-main b { display: block; font-size: 14px; color: #14213d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-job-main span { display: block; margin-top: 4px; font-size: 12px; color: #8490a3; }
+.tt-job-side { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
+.tt-job-side em { font-size: 12px; color: #2f6fed; font-style: normal; font-weight: 700; }
+.tt-schedule-wrap { padding: 2px 0; }
+@media (max-width: 820px) {
+  .tt-tabs { width: 100%; }
+  .tt-job-card { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .tt-job-side { width: 100%; justify-content: space-between; }
+}

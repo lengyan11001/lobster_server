@@ -8776,38 +8776,118 @@ async function api(path, options = {}) {
           <div class="tt-hero-copy">
             <span class="tt-kicker">TIKTOK LEAD ENGINE</span>
             <h3>从同行评论区，找到真正想买的人</h3>
-            <p>输入同行主页，系统同步视频、采集评论，再筛出问价格、问起订量、要方案的客户。</p>
+            <p>把任务和结果分开：先创建采集任务，再在任务记录里逐条查看谁在问、问什么。</p>
             <div class="tt-hero-flow">
-              <span><b>01</b>录入同行</span><i></i>
-              <span><b>02</b>同步视频</span><i></i>
-              <span><b>03</b>采集评论</span><i></i>
-              <span><b>04</b>精准客户</span>
+              <span><b>01</b>创建任务</span><i></i>
+              <span><b>02</b>自动采集</span><i></i>
+              <span><b>03</b>查看结果</span>
             </div>
           </div>
           <div class="tt-hero-mark">TT</div>
         </div>
-        <div id="tiktokLeadResult" class="tt-result hidden"></div>
-        <div class="tt-form-grid">
-          <section class="tt-card">
-            <header class="tt-card-head"><span class="tt-step-badge">01</span><div><b>同行账号</b><small>主页链接或 @unique_id，一行一个</small></div></header>
-            ${taskTextareaHtml("abilityLeadAccounts", "https://www.tiktok.com/@brand\n@competitor")}
-            ${taskFieldHtml("任务名称", workInputHtml("abilityLeadTitle", "text", "TikTok 精准获客"))}
-          </section>
-          <section class="tt-card">
-            <header class="tt-card-head"><span class="tt-step-badge">02</span><div><b>什么算精准客户</b><small>用一句自然语言描述你的理想客户</small></div></header>
-            ${taskTextareaHtml("abilityLeadKeywords", "例如：想采购定制笔记本的企业采购，问价格、起订量、交期，想印 logo 做企业礼品")}
-            <div class="tt-mini-grid">
-              ${taskFieldHtml("最近天数", workInputHtml("abilityLeadDays", "number", "30", 'min="1" max="365"'))}
-              ${taskFieldHtml("最多视频", workInputHtml("abilityLeadMaxVideos", "number", "12", 'min="1" max="50"'))}
-              ${taskFieldHtml("每条视频评论", workInputHtml("abilityLeadMaxComments", "number", "100", 'min="1" max="500"'))}
-              ${taskFieldHtml("最多客户", workInputHtml("abilityLeadMaxItems", "number", "50", 'min="1" max="100"'))}
-            </div>
-          </section>
+        <div class="tt-tabs">
+          <button type="button" class="tt-tab active" data-tt-tab="create">创建任务</button>
+          <button type="button" class="tt-tab" data-tt-tab="jobs">任务记录</button>
+          <button type="button" class="tt-tab hidden" id="ttResultTabBtn" data-tt-tab="result">任务结果</button>
         </div>
-        <div class="tt-note"><span>只读采集</span> 先看评论里谁在问，再决定要不要私信；不会自动打扰客户。</div>
+        <div id="ttPanelCreate" class="tt-panel">
+          <div class="tt-form-grid">
+            <section class="tt-card">
+              <header class="tt-card-head"><span class="tt-step-badge">01</span><div><b>同行账号</b><small>主页链接或 @unique_id，一行一个</small></div></header>
+              ${taskTextareaHtml("abilityLeadAccounts", "https://www.tiktok.com/@brand\n@competitor")}
+              ${taskFieldHtml("任务名称", workInputHtml("abilityLeadTitle", "text", "TikTok 精准获客"))}
+            </section>
+            <section class="tt-card">
+              <header class="tt-card-head"><span class="tt-step-badge">02</span><div><b>什么算精准客户</b><small>用一句自然语言描述你的理想客户</small></div></header>
+              ${taskTextareaHtml("abilityLeadKeywords", "例如：想采购定制笔记本的企业采购，问价格、起订量、交期，想印 logo 做企业礼品")}
+              <div class="tt-mini-grid">
+                ${taskFieldHtml("最近天数", workInputHtml("abilityLeadDays", "number", "30", 'min="1" max="365"'))}
+                ${taskFieldHtml("最多视频", workInputHtml("abilityLeadMaxVideos", "number", "12", 'min="1" max="50"'))}
+                ${taskFieldHtml("每条视频评论", workInputHtml("abilityLeadMaxComments", "number", "100", 'min="1" max="500"'))}
+                ${taskFieldHtml("最多客户", workInputHtml("abilityLeadMaxItems", "number", "50", 'min="1" max="100"'))}
+              </div>
+            </section>
+          </div>
+          <div class="tt-schedule-wrap">${abilityScheduleFieldsHtml()}</div>
+          <div class="tt-note"><span>只读采集</span> 先看评论里谁在问，再决定要不要私信；不会自动打扰客户。</div>
+        </div>
+        <div id="ttPanelJobs" class="tt-panel hidden">
+          <div class="tt-panel-head"><div><span class="tt-kicker">TASK HISTORY</span><h3>任务记录</h3><p>每次采集单独成一条，点开任务再看结果。</p></div><button type="button" class="tt-ghost-btn" data-tt-refresh-jobs="1">刷新</button></div>
+          <div id="ttJobList" class="tt-job-list"><div class="tt-empty">加载中…</div></div>
+        </div>
+        <div id="ttPanelResult" class="tt-panel hidden">
+          <div class="tt-panel-head"><div><span class="tt-kicker">TASK RESULT</span><h3>任务结果</h3><p>客户、搜索轨迹和证据都在这一页。</p></div><button type="button" class="tt-ghost-btn" data-tt-tab="jobs">返回任务记录</button></div>
+          <div id="tiktokLeadResult"></div>
+        </div>
       </div>`;
     }
+    function showTiktokLeadTab(tab) {
+      const name = ["create", "jobs", "result"].includes(String(tab)) ? String(tab) : "create";
+      state.tiktokLeadTab = name;
+      const panels = { create: "ttPanelCreate", jobs: "ttPanelJobs", result: "ttPanelResult" };
+      Object.entries(panels).forEach(([key, id]) => {
+        const el = $(id);
+        if (el) el.classList.toggle("hidden", key !== name);
+      });
+      document.querySelectorAll("[data-tt-tab]").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-tt-tab") === name);
+      });
+      const resultTab = $("ttResultTabBtn");
+      if (resultTab && name === "result") resultTab.classList.remove("hidden");
+      const submit = $("abilityWorkbenchSubmit");
+      if (submit) submit.classList.toggle("hidden", name !== "create");
+      if (name === "jobs") loadTiktokLeadJobs().catch((err) => toast(err.message || "任务记录加载失败"));
+    }
 
+    function tiktokJobLeadCount(job) {
+      const result = job && job.result_payload && typeof job.result_payload === "object" ? job.result_payload : {};
+      const leads = Array.isArray(result.leads) ? result.leads : (Array.isArray(result.candidates) ? result.candidates : []);
+      return leads.length;
+    }
+
+    function renderTiktokJobList(jobs) {
+      const box = $("ttJobList");
+      if (!box) return;
+      if (!jobs.length) {
+        box.innerHTML = `<div class="tt-empty"><b>还没有采集任务</b><p>先去「创建任务」录入同行账号，任务会在这里逐条沉淀。</p></div>`;
+        return;
+      }
+      box.innerHTML = jobs.map((job) => {
+        const status = String(job.status || "");
+        const statusClass = status === "completed" ? "is-done" : (status === "failed" ? "is-failed" : "is-running");
+        const count = tiktokJobLeadCount(job);
+        return `<button type="button" class="tt-job-card" data-tt-job-id="${escapeHtml(job.job_id || "")}">
+          <div class="tt-job-main"><b>${escapeHtml(job.title || "TikTok 精准获客")}</b><span>${escapeHtml(fmtTime(job.created_at) || "")}</span></div>
+          <div class="tt-job-side"><span class="tt-status ${statusClass}">${escapeHtml(tiktokLeadStatusText(status))}</span><em>${compactNumber(count)} 客户</em></div>
+        </button>`;
+      }).join("");
+    }
+
+    async function loadTiktokLeadJobs() {
+      const box = $("ttJobList");
+      if (!box) return;
+      box.innerHTML = `<div class="tt-empty">正在加载任务记录…</div>`;
+      try {
+        const data = await api("/api/social-leads/jobs?platform=tiktok&limit=30&offset=0");
+        renderTiktokJobList(Array.isArray(data && data.items) ? data.items : []);
+      } catch (err) {
+        box.innerHTML = `<div class="tt-empty"><b>任务记录加载失败</b><p>${escapeHtml((err && err.message) || "请稍后重试")}</p></div>`;
+      }
+    }
+
+    async function openTiktokJob(jobId) {
+      const id = String(jobId || "").trim();
+      if (!id) return;
+      showTiktokLeadTab("result");
+      const box = $("tiktokLeadResult");
+      if (box) box.innerHTML = `<div class="tt-empty">正在加载任务结果…</div>`;
+      try {
+        const job = await api(`/api/social-leads/jobs/${encodeURIComponent(id)}`);
+        startTiktokLeadJob(job);
+      } catch (err) {
+        if (box) box.innerHTML = `<div class="tt-empty"><b>任务结果加载失败</b><p>${escapeHtml((err && err.message) || "请稍后重试")}</p></div>`;
+      }
+    }
     function tiktokLeadStatusText(status) {
       return ({ queued: "排队中", running: "采集中", completed: "已完成", failed: "失败", canceled: "已取消" }[String(status || "")] || "处理中");
     }
@@ -8933,6 +9013,9 @@ async function api(path, options = {}) {
       if (!box || !job || !job.job_id) return;
       if (state.tiktokLeadTimer) clearTimeout(state.tiktokLeadTimer);
       state.tiktokLeadJobId = String(job.job_id);
+      const resultTab = $("ttResultTabBtn");
+      if (resultTab) resultTab.classList.remove("hidden");
+      showTiktokLeadTab("result");
       renderTiktokLeadResult(job);
       box.scrollIntoView({ behavior: "smooth", block: "start" });
       const poll = async () => {
@@ -9128,6 +9211,7 @@ async function api(path, options = {}) {
       const title = $("abilityWorkbenchTitle");
       const badge = $("abilityWorkbenchBadge");
       const submit = $("abilityWorkbenchSubmit");
+      if (submit) submit.classList.remove("hidden");
       if (!node || (node.children && node.children.length) || node.comingSoon) {
         hideAbilityWorkbench();
         return;
@@ -9188,12 +9272,13 @@ async function api(path, options = {}) {
         hideAbilityWorkbench();
         return;
       }
-      if (!node.routeTab && String(node.capabilityId || node.key || "") !== "moments_sales_coach") html += abilityScheduleFieldsHtml();
+      if (!node.routeTab && node.key !== "tiktok_leads" && String(node.capabilityId || node.key || "") !== "moments_sales_coach") html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
       box.dataset.workbenchKey = String(node.workQuickKey || node.capabilityId || node.key || "").trim();
       if (title) title.textContent = node.workQuickKey === "publish_center" ? "发布任务" : `${node.label || "能力"}工作台`;
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
+      if (node.key === "tiktok_leads") showTiktokLeadTab("create");
       if (String(node.capabilityId || node.key || "") === "moments_sales_coach") {
         if (submit) {
           submit.disabled = true;
@@ -31435,6 +31520,14 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     $("workDispatchForm").addEventListener("submit", (evt) => {
       evt.preventDefault();
       submitWorkDispatch().catch((err) => toast(err.message || "下发失败"));
+    });
+    document.addEventListener("click", (evt) => {
+      const ttTab = evt.target.closest && evt.target.closest("[data-tt-tab]");
+      if (ttTab) { showTiktokLeadTab(ttTab.getAttribute("data-tt-tab")); return; }
+      const ttJob = evt.target.closest && evt.target.closest("[data-tt-job-id]");
+      if (ttJob) { openTiktokJob(ttJob.getAttribute("data-tt-job-id")).catch((err) => toast(err.message || "任务加载失败")); return; }
+      const ttRefresh = evt.target.closest && evt.target.closest("[data-tt-refresh-jobs]");
+      if (ttRefresh) { loadTiktokLeadJobs().catch((err) => toast(err.message || "刷新失败")); return; }
     });
     document.addEventListener("click", (evt) => {
       const btn = evt.target.closest && evt.target.closest("[data-copy-text]");
