@@ -40,6 +40,7 @@ from ..models import (
     UserInstallation,
     IPContentDraftRecord,
     IPContentScheduleTemplate,
+    UserContentRecord,
     ShanjianDigitalHumanProfile,
     UserHiflyVoiceAsset,
 )
@@ -6699,6 +6700,80 @@ def submit_scheduled_task_event(
     return {"ok": True}
 
 
+def _final_media_from_run_payload(result_payload: Any) -> dict[str, Any]:
+    payload = result_payload if isinstance(result_payload, dict) else {}
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in {"shanjian_digital_human_video", "hifly.video.create_by_tts"}:
+        return {}
+    local = payload.get("local_result") if isinstance(payload.get("local_result"), dict) else {}
+    video_url = str(local.get("video_url") or payload.get("video_url") or "").strip()
+    if not video_url:
+        return {}
+    return {
+        "action": action,
+        "video_url": video_url,
+        "asset_id": str(local.get("video_asset_id") or payload.get("asset_id") or "").strip(),
+        "title": str(local.get("title") or payload.get("title") or "").strip(),
+        "script": str(local.get("script") or payload.get("script") or "").strip(),
+        "cover_url": str(local.get("cover_url") or payload.get("cover_url") or "").strip(),
+        "task_id": str(local.get("task_id") or payload.get("task_id") or "").strip(),
+        "filename": str(local.get("filename") or "").strip(),
+        "workflow_node_id": str(((payload.get("params") or {}).get("h5_context") or {}).get("workflow_node_id") or "").strip(),
+        "workflow_template_id": str(((payload.get("params") or {}).get("h5_context") or {}).get("workflow_template_id") or "").strip(),
+    }
+
+
+def _upsert_final_media_content_record(db: Session, run: ScheduledTaskRun, result_payload: Any, now: datetime) -> Optional[UserContentRecord]:
+    """最终成品写进内容记录；中间音频/模板素材不写。"""
+    media = _final_media_from_run_payload(result_payload)
+    if not media.get("video_url"):
+        return None
+    source = "h5_workflow"
+    source_id = str(run.id)
+    row = (
+        db.query(UserContentRecord)
+        .filter(
+            UserContentRecord.user_id == run.user_id,
+            UserContentRecord.source == source,
+            UserContentRecord.source_id == source_id,
+        )
+        .first()
+    )
+    title = (media.get("title") or run.title or "数字人口播视频").strip()[:500]
+    script = media.get("script") or ""
+    filename = media.get("filename") or (str(media.get("asset_id") or media.get("task_id") or run.id) + ".mp4")
+    meta = {
+        "run_id": str(run.id),
+        "task_id": media.get("task_id") or "",
+        "asset_id": media.get("asset_id") or "",
+        "action": media.get("action") or "",
+        "workflow_node_id": media.get("workflow_node_id") or "",
+        "workflow_template_id": media.get("workflow_template_id") or "",
+        "final": True,
+    }
+    if row is None:
+        row = UserContentRecord(
+            user_id=run.user_id,
+            source=source,
+            source_id=source_id,
+            kind="video",
+            source_created_at=run.finished_at or now,
+        )
+        db.add(row)
+    row.kind = "video"
+    row.title = title
+    row.summary = (script or title)[:4000]
+    row.content = script or None
+    row.cover_url = media.get("cover_url") or None
+    row.file_url = media.get("video_url")
+    row.filename = filename[:255]
+    row.status = "completed"
+    row.meta = meta
+    row.source_created_at = run.finished_at or now
+    row.updated_at = now
+    return row
+
+
 @router.post("/api/scheduled-tasks/runs/{run_id}/complete", summary="本地 online 回传任务结果")
 def complete_scheduled_task_run(
     run_id: str,
@@ -6720,12 +6795,24 @@ def complete_scheduled_task_run(
         raise HTTPException(status_code=409, detail=row.error or "节点时间已结束，任务已取消")
     error = _normalize_scheduled_completion_error(body)
     result_text = (body.result_text or "").strip()
+    result_payload = dict(body.result_payload or {}) if isinstance(body.result_payload, dict) else {}
+    final_media = _final_media_from_run_payload(result_payload)
+    if final_media and not error:
+        # Give the H5/Online result card stable structured fields instead of
+        # forcing it to parse result_text.
+        result_payload.setdefault("video_url", final_media.get("video_url") or "")
+        result_payload.setdefault("result_url", final_media.get("video_url") or "")
+        result_payload.setdefault("asset_id", final_media.get("asset_id") or "")
+        result_payload.setdefault("title", final_media.get("title") or "")
+        result_payload.setdefault("cover_url", final_media.get("cover_url") or "")
+        result_payload.setdefault("media_type", "video")
     row.status = "failed" if error else "completed"
     row.result_text = result_text or None
-    row.result_payload = body.result_payload or {}
+    row.result_payload = result_payload
     row.error = error or None
     row.finished_at = now
     row.updated_at = now
+    task = None
     if row.task_id:
         task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first()
         if task:
@@ -6740,14 +6827,21 @@ def complete_scheduled_task_run(
             msg.finished_at = now
             msg.updated_at = now
     if error:
-        _add_h5_event(db, row.h5_message_id, row.user_id, "error", {"error": error, **(body.result_payload or {})})
+        _add_h5_event(db, row.h5_message_id, row.user_id, "error", {"error": error, **result_payload})
     else:
-        _add_h5_event(db, row.h5_message_id, row.user_id, "final", {"reply_text": result_text, **(body.result_payload or {})})
+        _upsert_final_media_content_record(db, row, result_payload, now)
+        _add_h5_event(db, row.h5_message_id, row.user_id, "final", {"reply_text": result_text, **result_payload})
     if row.h5_message_id and msg and msg.parent_message_id:
         from .h5_chat import _finish_mastra_parent_from_children
 
         _finish_mastra_parent_from_children(db, msg)
     db.commit()
+    if not error and task is not None and _is_demo_once_task(task):
+        try:
+            _enqueue_demo_children(db, task, datetime.utcnow())
+        except Exception:
+            db.rollback()
+            logger.exception("[scheduled-tasks] enqueue demo children failed parent=%s", task.id)
     return {"ok": True, "status": row.status}
 
 
