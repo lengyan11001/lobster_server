@@ -288,18 +288,20 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "allowed_params": {"secUid", "uniqueId"},
     },
     "tiktok_user_posts": {
+        # 2026-10-23：web/fetch_user_post 实测 422，改用 app/v3，返回 aweme_list。
         "platform": "tiktok",
         "source_type": "user_post",
         "method": "GET",
-        "path": "/api/v1/tiktok/web/fetch_user_post",
-        "allowed_params": {"secUid", "cursor", "count", "coverFormat", "post_item_list_request_type"},
+        "path": "/api/v1/tiktok/app/v3/fetch_user_post_videos_v3",
+        "allowed_params": {"unique_id", "sec_user_id", "cursor", "count", "cover_format"},
     },
     "tiktok_post_comments": {
+        # 2026-10-23：web/fetch_post_comment 实测 400，改用 app/v3，返回 comments。
         "platform": "tiktok",
         "source_type": "post_comment",
         "method": "GET",
-        "path": "/api/v1/tiktok/web/fetch_post_comment",
-        "allowed_params": {"aweme_id", "cursor", "count", "current_region"},
+        "path": "/api/v1/tiktok/app/v3/fetch_video_comments",
+        "allowed_params": {"aweme_id", "cursor", "count", "region"},
     },
     "wechat_channels_hot_words": {
         "platform": "wechat_channels",
@@ -2267,6 +2269,9 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
     item_key = _first(
         field_item,
         [
+            # 评论必须先按 cid/comment_id 去重，否则同一视频的评论会互相覆盖。
+            "cid",
+            "comment_id",
             "aweme_id",
             "id",
             "id_str",
@@ -2281,7 +2286,6 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "subreddit_id",
             "subreddit_name_prefixed",
             "post_id",
-            "comment_id",
             "authorInfo.name",
             "redditorInfoByName.name",
             "data.redditorInfoByName.name",
@@ -2303,7 +2307,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ["unique_id", "uniqueId", "username", "sec_uid", "secUid", "sec_user_id", "uid", "id", "short_id", "finder_username", "nickname", "name"],
     )
     if not author_key:
-        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name", "userInfo.user.uniqueId", "userInfo.user.secUid"])
+        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name", "userInfo.user.uniqueId", "userInfo.user.secUid", "user.unique_id", "user.uniqueId", "user.sec_uid", "user.secUid", "user.nickname"])
     author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "uniqueId", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname", "display_name", "name", "legacy.name", "core.user_results.result.legacy.name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name", "userInfo.user.nickname", "userInfo.user.uniqueId"])
     publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time", "created_utc", "created_at", "legacy.created_at"])
     return {

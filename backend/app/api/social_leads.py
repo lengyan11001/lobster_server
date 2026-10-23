@@ -36,10 +36,18 @@ _TERMINAL_STATUS = {"completed", "failed", "canceled", "stale"}
 _AUTORUN_IDLE_SECONDS = 8.0
 _REDDIT_FEED_SORTS = {"HOT", "NEW", "TOP", "RISING", "CONTROVERSIAL"}
 _REDDIT_RECENT_HOURS = 24
+_TIKTOK_RECENT_HOURS = 24 * 30
 _REDDIT_MAX_COMMENT_PAGES_PER_POST = 100
 _TIKTOK_MAX_COMMENT_PAGES_PER_POST = 20
 _REDDIT_MAX_PROFILE_FETCH = 20
 _LOW_INTENT_REDDIT_USERS = {"automoderator", "deleted", "[deleted]", "reddit", "admin"}
+_TIKTOK_INTENT_TERMS = [
+    "price", "cost", "quote", "quotation", "how much", "moq", "minimum order",
+    "lead time", "sample", "order", "purchase", "wholesale", "bulk", "logo",
+    "custom", "customize", "oem", "odm", "supplier", "contact", "whatsapp", "email",
+    "价格", "多少钱", "报价", "费用", "起订量", "最小起订", "交期", "样品",
+    "下单", "采购", "批发", "定制", "联系", "合作", "询价",
+]
 _HIGH_INTENT_PATTERNS = [
     (re.compile(r"\b(how|what|where|which|anyone|help|need|looking for|recommend|suggest|tool|app|service|solution)\b", re.I), 18, "有明确提问/求推荐表达"),
     (re.compile(r"\b(can'?t|cannot|problem|issue|stuck|struggling|failed|wrong|error|bug|hard|difficult)\b", re.I), 16, "表达痛点或问题"),
@@ -61,6 +69,10 @@ class SocialLeadsStartBody(BaseModel):
     sort: str = Field("", max_length=40)
     time_range: str = Field("", max_length=40)
     max_items: int = Field(30, ge=1, le=100)
+    max_videos: int = Field(20, ge=1, le=50)
+    max_comments_per_video: int = Field(100, ge=1, le=500)
+    time_range_days: int = Field(30, ge=1, le=365)
+    intent_prompt: str = Field("", max_length=2000)
     include_comments: bool = True
     include_account_posts: bool = True
     auto_run: bool = True
@@ -142,36 +154,36 @@ def _initial_steps(req: dict[str, Any]) -> list[dict[str, Any]]:
         if req.get("communities"):
             steps.append(_step("24小时社区帖子采集", "community_feed"))
         if req.get("accounts"):
-            steps.append(_step("账号公开资料", "account_profiles"))
+            steps.append(_step("解析同行账号", "account_profiles"))
             if req.get("include_account_posts"):
                 steps.append(_step("账号发帖/评论", "account_activity"))
         if (req.get("post_ids") or req.get("communities") or req.get("accounts")) and req.get("include_comments"):
             steps.append(_step("帖子内容和评论采集", "post_comments"))
-        steps.append(_step("精准用户分析", "score_leads"))
-        steps.append(_step("精准用户资料补全", "lead_profiles"))
+        steps.append(_step("筛出精准客户", "score_leads"))
+        steps.append(_step("补全客户资料", "lead_profiles"))
     elif platform == "tiktok":
         if req.get("source_keywords"):
-            steps.append(_step("24小时视频采集", "keyword_search"))
+            steps.append(_step("按关键词找视频", "keyword_search"))
         if req.get("accounts"):
-            steps.append(_step("账号公开资料", "account_profiles"))
+            steps.append(_step("解析同行账号", "account_profiles"))
             if req.get("include_account_posts"):
-                steps.append(_step("账号作品采集", "account_activity"))
+                steps.append(_step("同步同行视频", "account_activity"))
         if (req.get("post_ids") or req.get("source_keywords") or req.get("accounts")) and req.get("include_comments"):
-            steps.append(_step("视频评论采集", "post_comments"))
-        steps.append(_step("精准用户分析", "score_leads"))
-        steps.append(_step("精准用户资料补全", "lead_profiles"))
+            steps.append(_step("采集视频评论", "post_comments"))
+        steps.append(_step("筛出精准客户", "score_leads"))
+        steps.append(_step("补全客户资料", "lead_profiles"))
     else:
         if req.get("source_keywords"):
             steps.append(_step("24小时推文采集", "keyword_search"))
         if req.get("accounts"):
-            steps.append(_step("账号公开资料", "account_profiles"))
+            steps.append(_step("解析同行账号", "account_profiles"))
             if req.get("include_account_posts"):
                 steps.append(_step("账号发帖", "account_activity"))
         if (req.get("post_ids") or req.get("source_keywords") or req.get("accounts")) and req.get("include_comments"):
             steps.append(_step("推文评论采集", "post_comments"))
-        steps.append(_step("精准用户分析", "score_leads"))
-        steps.append(_step("精准用户资料补全", "lead_profiles"))
-    steps.append(_step("线索归并", "merge_leads"))
+        steps.append(_step("筛出精准客户", "score_leads"))
+        steps.append(_step("补全客户资料", "lead_profiles"))
+    steps.append(_step("合并客户", "merge_leads"))
     return steps
 
 
@@ -422,13 +434,14 @@ def _is_recent_row(row: TikHubSourceItem, *, hours: int = _REDDIT_RECENT_HOURS) 
     return dt >= _utcnow() - timedelta(hours=hours)
 
 
-def _recent_post_rows_for_job(db: Session, user_id: int, platform: str, job_id: str, limit: int) -> list[TikHubSourceItem]:
+def _recent_post_rows_for_job(db: Session, user_id: int, platform: str, job_id: str, limit: int, hours: Optional[int] = None) -> list[TikHubSourceItem]:
     rows = _rows_for_job(db, user_id, platform, job_id)
     out: list[TikHubSourceItem] = []
     for row in rows:
         if row.source_type not in {"search_result", "subreddit_post", "user_post", "trend", "post_detail", "keyword_video"}:
             continue
-        if platform in {"reddit", "tiktok", "x"} and not _is_recent_row(row):
+        recent_hours = hours if hours is not None else (_TIKTOK_RECENT_HOURS if platform == "tiktok" else _REDDIT_RECENT_HOURS)
+        if platform in {"reddit", "tiktok", "x"} and not _is_recent_row(row, hours=recent_hours):
             continue
         out.append(row)
         if len(out) >= limit:
@@ -443,7 +456,8 @@ def _analysis_rows_for_job(db: Session, user_id: int, platform: str, job_id: str
     out: list[TikHubSourceItem] = []
     for row in rows:
         if row.source_type in {"search_result", "subreddit_post", "user_post", "trend", "post_detail", "keyword_video"}:
-            if _is_recent_row(row):
+            recent_hours = hours if hours is not None else (_TIKTOK_RECENT_HOURS if platform == "tiktok" else _REDDIT_RECENT_HOURS)
+            if _is_recent_row(row, hours=recent_hours):
                 out.append(row)
             continue
         out.append(row)
@@ -725,6 +739,8 @@ def _result_payload_with_current_candidates(
     if not current_candidates:
         return payload
     payload["candidates"] = current_candidates
+    if platform == "tiktok":
+        payload["leads"] = current_candidates
     if isinstance(payload.get("intent_analysis"), dict):
         payload["intent_analysis"] = {
             **payload["intent_analysis"],
@@ -760,7 +776,7 @@ def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
         value = _lookup(raw, key)
         if value not in (None, "", [], {}):
             raw_preview[key] = _jsonable(value)
-    return {
+    payload = {
         "id": row.id,
         "platform": row.platform,
         "source_type": row.source_type,
@@ -776,6 +792,26 @@ def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
         "raw_preview": raw_preview,
         "created_at": row.created_at.isoformat() if row.created_at else "",
     }
+    if row.platform == "tiktok" and row.source_type == "post_comment":
+        user = raw.get("user") if isinstance(raw.get("user"), dict) else {}
+        share = raw.get("share_info") if isinstance(raw.get("share_info"), dict) else {}
+        avatar_thumb = user.get("avatar_thumb") if isinstance(user.get("avatar_thumb"), dict) else {}
+        avatar_urls = avatar_thumb.get("url_list") if isinstance(avatar_thumb.get("url_list"), list) else []
+        payload.update({
+            "comment_text": _clean_long_text(raw.get("text"), 1200),
+            "comment_id": _clean_text(raw.get("cid") or raw.get("comment_id"), 128),
+            "comment_time": raw.get("create_time"),
+            "comment_language": _clean_text(raw.get("comment_language"), 40),
+            "is_high_purchase_intent": bool(raw.get("is_high_purchase_intent")),
+            "region": _clean_text(user.get("region") or user.get("account_region"), 80),
+            "language": _clean_text(user.get("language"), 40),
+            "followers": user.get("follower_count") or user.get("followerCount"),
+            "avatar_url": str(avatar_urls[0] if avatar_urls else ""),
+            "profile_url": f"https://www.tiktok.com/@{user.get('unique_id')}" if user.get("unique_id") else "",
+            "video_title": _clean_text(share.get("title") if isinstance(share, dict) else "", 300),
+            "video_url": _clean_long_text(share.get("url") if isinstance(share, dict) else "", 1000),
+        })
+    return payload
 
 
 def _intent_score_from_text(text: str, source_type: str, metrics: dict[str, Any]) -> tuple[int, list[str]]:
@@ -881,6 +917,9 @@ def _candidate_intent(candidate: dict[str, Any], *, keywords: Optional[list[str]
     if len(source_types) >= 2:
         profile_bonus += 6
         reasons.append("多个来源重复出现")
+    if candidate.get("platform_high_intent"):
+        profile_bonus += 18
+        reasons.insert(0, "平台标记为高购买意向")
     relevance = _keyword_relevance(_candidate_text(candidate), keywords or [])
     if relevance["matched"]:
         profile_bonus += int(relevance.get("score") or 0)
@@ -1073,21 +1112,20 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
         )
         name = _lookup(info, "nickname") or _lookup(info, "name") or username
         url = f"https://www.tiktok.com/@{username}" if username and not str(username).startswith("MS4") else ""
+        # 评论作者的主页签名才是 bio；评论正文不能当 bio，否则客户卡片会显示错。
         bio = (
             _lookup(info, "signature")
             or _lookup(info, "bio_description")
-            or _lookup(body, "desc")
-            or _lookup(body, "description")
-            or _lookup(body, "text")
-            or _lookup(body, "content")
+            or _lookup(info, "desc")
+            or ""
         )
         stats = _lookup(info, "stats") if isinstance(_lookup(info, "stats"), dict) else {}
         author_stats = _lookup(body, "authorStats") if isinstance(_lookup(body, "authorStats"), dict) else {}
         metrics = {
-            "followers": _lookup(stats, "followerCount") or _lookup(author_stats, "followerCount") or _lookup(info, "follower_count"),
-            "following": _lookup(stats, "followingCount") or _lookup(author_stats, "followingCount") or _lookup(info, "following_count"),
-            "likes": _lookup(stats, "heartCount") or _lookup(author_stats, "heartCount") or _lookup(body, "digg_count"),
-            "video_count": _lookup(stats, "videoCount") or _lookup(author_stats, "videoCount") or _lookup(body, "aweme_count"),
+            "followers": _lookup(stats, "followerCount") or _lookup(author_stats, "followerCount") or _lookup(info, "follower_count") or _lookup(info, "followerCount"),
+            "following": _lookup(stats, "followingCount") or _lookup(author_stats, "followingCount") or _lookup(info, "following_count") or _lookup(info, "followingCount"),
+            "likes": _lookup(stats, "heartCount") or _lookup(author_stats, "heartCount") or _lookup(info, "heartCount") or _lookup(body, "digg_count"),
+            "video_count": _lookup(stats, "videoCount") or _lookup(author_stats, "videoCount") or _lookup(info, "videoCount") or _lookup(body, "aweme_count"),
             "comments": _lookup(body, "comment_count"),
             "digg_count": _lookup(body, "digg_count"),
             "share_count": _lookup(body, "share_count"),
@@ -1171,6 +1209,46 @@ def _candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, Any]]:
             "evidence": [],
             "raw": raw_body,
         }
+    if row.platform == "tiktok" and row.source_type == "post_comment":
+        user = raw_body.get("user") if isinstance(raw_body.get("user"), dict) else {}
+        share = raw_body.get("share_info") if isinstance(raw_body.get("share_info"), dict) else {}
+        comment_text = _clean_long_text(raw_body.get("text"), 1200)
+        avatar = ""
+        for key in ("avatar_thumb", "avatar_medium", "avatar_larger", "avatar_168x168"):
+            value = user.get(key) if isinstance(user, dict) else None
+            if isinstance(value, dict):
+                urls = value.get("url_list") if isinstance(value.get("url_list"), list) else []
+                if urls:
+                    avatar = str(urls[0] or "")
+                    break
+            elif isinstance(value, str) and value:
+                avatar = value
+                break
+        candidate.update({
+            "avatar_url": avatar,
+            "region": _clean_text(user.get("region") or user.get("account_region"), 80),
+            "language": _clean_text(raw_body.get("comment_language"), 40),
+            "followers": user.get("follower_count") or user.get("followerCount"),
+            "comment_text": comment_text,
+            "comment_id": _clean_text(raw_body.get("cid") or raw_body.get("comment_id"), 128),
+            "comment_time": raw_body.get("create_time"),
+            "comment_likes": raw_body.get("digg_count") or 0,
+            "comment_replies": raw_body.get("reply_comment_total") or 0,
+            "platform_high_intent": bool(raw_body.get("is_high_purchase_intent")),
+            "video_title": _clean_text(share.get("title") if isinstance(share, dict) else "", 300),
+            "video_url": _clean_long_text(share.get("url") if isinstance(share, dict) else "", 1000),
+        })
+        candidate["comments"] = [{
+            "text": comment_text,
+            "comment_id": candidate.get("comment_id") or "",
+            "comment_time": candidate.get("comment_time"),
+            "language": candidate.get("language") or "",
+            "likes": candidate.get("comment_likes") or 0,
+            "replies": candidate.get("comment_replies") or 0,
+            "platform_high_intent": candidate.get("platform_high_intent") or False,
+            "video_title": candidate.get("video_title") or "",
+            "video_url": candidate.get("video_url") or "",
+        }]
     row_evidence = {
         "source_item_id": row.id,
         "source_type": row.source_type,
@@ -1213,9 +1291,22 @@ def _merge_candidates(candidates: list[dict[str, Any]], *, keywords: Optional[li
             merged[key] = {**item, "evidence": list(item.get("evidence") or [])}
             continue
         cur = merged[key]
-        for field in ("name", "handle", "bio", "url"):
+        for field in ("name", "handle", "bio", "url", "avatar_url", "region", "language", "followers", "video_title", "video_url"):
             if not cur.get(field) and item.get(field):
                 cur[field] = item[field]
+        if item.get("platform_high_intent"):
+            cur["platform_high_intent"] = True
+        cur_comments = cur.get("comments") if isinstance(cur.get("comments"), list) else []
+        seen_comments = {str(x.get("comment_id") or x.get("text") or "") for x in cur_comments if isinstance(x, dict)}
+        for comment in item.get("comments") or []:
+            if not isinstance(comment, dict):
+                continue
+            marker = str(comment.get("comment_id") or comment.get("text") or "")
+            if marker and marker not in seen_comments:
+                cur_comments.append(comment)
+                seen_comments.add(marker)
+        if cur_comments:
+            cur["comments"] = cur_comments
         cur_metrics = cur.setdefault("metrics", {})
         for k, v in (item.get("metrics") or {}).items():
             if v not in (None, "", [], {}) and not cur_metrics.get(k):
@@ -1254,7 +1345,16 @@ def _high_intent_candidates(
     keywords: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    profile_rows: list[TikHubSourceItem] = []
     for source_row in rows:
+        # TikTok 的视频作者/同行账号不是客户，只有评论作者才进入客户池；
+        # 主页资料单独作为补充，合并到已有评论客户上。
+        if platform == "tiktok":
+            if source_row.source_type == "user_profile":
+                profile_rows.append(source_row)
+                continue
+            if source_row.source_type != "post_comment":
+                continue
         candidate = _candidate_from_row(source_row)
         if not candidate:
             continue
@@ -1263,6 +1363,32 @@ def _high_intent_candidates(
             continue
         candidates.append(candidate)
     merged = _merge_candidates(candidates, keywords=keywords or [])
+    if platform == "tiktok" and profile_rows and merged:
+        by_handle = {str(item.get("handle") or "").lower(): item for item in merged}
+        for profile_row in profile_rows:
+            profile = _candidate_from_row(profile_row)
+            if not profile:
+                continue
+            key = str(profile.get("handle") or profile.get("candidate_key") or "").strip().lower()
+            target = by_handle.get(key)
+            if not target:
+                continue
+            for field in ("name", "bio", "url", "avatar_url", "region", "language", "followers"):
+                if not target.get(field) and profile.get(field):
+                    target[field] = profile[field]
+            target_metrics = target.setdefault("metrics", {})
+            for mk, mv in (profile.get("metrics") or {}).items():
+                if mv not in (None, "", [], {}) and not target_metrics.get(mk):
+                    target_metrics[mk] = mv
+            if not target.get("followers") and (profile.get("metrics") or {}).get("followers"):
+                target["followers"] = profile["metrics"]["followers"]
+            existing = {_evidence_marker(x) for x in target.get("evidence") or [] if isinstance(x, dict)}
+            for ev in profile.get("evidence") or []:
+                marker = _evidence_marker(ev) if isinstance(ev, dict) else ""
+                if marker and marker not in existing:
+                    target.setdefault("evidence", []).append(ev)
+                    existing.add(marker)
+        merged = _merge_candidates(merged, keywords=keywords or [])
     filtered = [
         item
         for item in merged
@@ -1533,7 +1659,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         job=row,
                         step_key=step_key,
                         query_type="tiktok_search_video",
-                        params={"keyword": keyword, "count": min(30, int(req.get("max_items") or 30))},
+                        params={"keyword": keyword, "count": min(50, int(req.get("max_videos") or 20))},
                         source_reason=f"TikTok来源词 {keyword}",
                     )
                 else:
@@ -1624,18 +1750,17 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         query = result.get("query") if isinstance(result.get("query"), dict) else {}
                         outputs.append({"account": account, "query_type": query_type, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
                 elif platform == "tiktok":
-                    sec_uid = _latest_tiktok_sec_uid_for_account(db, row.user_id, account)
-                    if not sec_uid:
-                        outputs.append({"account": account, "query_type": "tiktok_user_posts", "ok": False, "count": 0, "error": "未从账号资料中取得 secUid，无法拉取账号作品"})
-                        continue
                     result = await _run_query(
                         db=db,
                         current_user=current_user,
                         job=row,
                         step_key=step_key,
                         query_type="tiktok_user_posts",
-                        params={"secUid": sec_uid, "count": min(30, int(req.get("max_items") or 30))},
-                        source_reason=f"TikTok账号作品 @{account}",
+                        params={
+                            "unique_id": str(account).lstrip("@"),
+                            "count": min(50, int(req.get("max_videos") or 20)),
+                        },
+                        source_reason=f"TikTok同行作品 @{account}",
                     )
                     query = result.get("query") if isinstance(result.get("query"), dict) else {}
                     outputs.append({"account": account, "query_type": "tiktok_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
@@ -1655,14 +1780,16 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                     outputs.append({"account": account, "rest_id": rest_id, "query_type": "x_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "post_comments":
+            video_limit = int(req.get("max_videos") or 20) if platform == "tiktok" else int(req.get("max_items") or 30)
             explicit_ids = req.get("post_ids") or []
             post_ids = list(explicit_ids)
-            if len(post_ids) < int(req.get("max_items") or 30):
-                rows = _recent_post_rows_for_job(db, row.user_id, platform, row.job_id, int(req.get("max_items") or 30))
-                for post_id in _extract_post_ids_from_rows(rows, platform, int(req.get("max_items") or 30)):
+            if len(post_ids) < video_limit:
+                recent_hours = int(req.get("time_range_days") or 30) * 24 if platform == "tiktok" else None
+                rows = _recent_post_rows_for_job(db, row.user_id, platform, row.job_id, video_limit, hours=recent_hours)
+                for post_id in _extract_post_ids_from_rows(rows, platform, video_limit):
                     if post_id not in post_ids:
                         post_ids.append(post_id)
-            for post_id in post_ids[: int(req.get("max_items") or 30)]:
+            for post_id in post_ids[:video_limit]:
                 if platform == "reddit":
                     detail_result = await _run_query(
                         db=db,
@@ -1709,7 +1836,11 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                     cursor = "0"
                     seen_cursors: set[str] = set()
                     page_count = 0
-                    while page_count < _TIKTOK_MAX_COMMENT_PAGES_PER_POST:
+                    saved_comments = 0
+                    target_comments = int(req.get("max_comments_per_video") or 100)
+                    page_size = max(1, min(50, target_comments))
+                    max_pages = max(1, min(_TIKTOK_MAX_COMMENT_PAGES_PER_POST, (target_comments + page_size - 1) // page_size))
+                    while page_count < max_pages:
                         if cursor in seen_cursors:
                             break
                         seen_cursors.add(cursor)
@@ -1719,12 +1850,15 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                             job=row,
                             step_key=step_key,
                             query_type="tiktok_post_comments",
-                            params={"aweme_id": _normalize_tiktok_aweme_id(post_id), "count": 50, "cursor": cursor},
+                            params={"aweme_id": _normalize_tiktok_aweme_id(post_id), "count": page_size, "cursor": cursor},
                             source_reason=f"TikTok视频评论 {post_id}",
                         )
                         page_count += 1
+                        saved_comments += int(result.get("raw_item_count") or 0)
                         query = result.get("query") if isinstance(result.get("query"), dict) else {}
                         outputs.append({"post_id": post_id, "query_type": "tiktok_post_comments", "page": page_count, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
+                        if saved_comments >= target_comments:
+                            break
                         raw_response = result.get("raw_response")
                         next_cursor = _tiktok_next_comment_cursor(raw_response)
                         if not (result.get("ok") and _tiktok_has_more_comments(raw_response) and next_cursor and next_cursor not in seen_cursors):
@@ -1746,7 +1880,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 
         elif step_key == "score_leads":
             rows = _analysis_rows_for_job(db, row.user_id, platform, row.job_id)
-            candidates = _high_intent_candidates(rows, platform=platform, limit=int(req.get("max_items") or 30), keywords=req.get("keywords") or [])
+            score_keywords = _clean_list((req.get("keywords") or []) + ([req.get("intent_prompt")] if req.get("intent_prompt") else []) + (_TIKTOK_INTENT_TERMS if platform == "tiktok" else []), limit=40)
+            candidates = _high_intent_candidates(rows, platform=platform, limit=int(req.get("max_items") or 30), keywords=score_keywords)
             analysis = {
                 "platform": platform,
                 "target_keywords": req.get("keywords") or [],
@@ -1756,7 +1891,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                 "medium_intent_count": sum(1 for item in candidates if item.get("intent_level") == "medium"),
                 "candidates": candidates,
             }
-            row.result_payload = {**(row.result_payload or {}), "intent_analysis": analysis, "candidates": candidates}
+            row.result_payload = {**(row.result_payload or {}), "intent_analysis": analysis, "candidates": candidates, "leads": candidates if platform == "tiktok" else (row.result_payload or {}).get("leads", [])}
             _append_output(row, step_key=step_key, title="精准用户分析", kind="intent_analysis", data=analysis)
             _mark_step(row, step_key, "completed", detail=f"筛出 {len(candidates)} 个可能精准用户", result={"candidate_count": len(candidates), "source_rows": len(rows)})
             _update_progress(row)
@@ -1823,7 +1958,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 
         elif step_key == "merge_leads":
             rows = _analysis_rows_for_job(db, row.user_id, platform, row.job_id)
-            merged = _high_intent_candidates(rows, platform=platform, limit=int(req.get("max_items") or 30), keywords=req.get("keywords") or [])
+            score_keywords = _clean_list((req.get("keywords") or []) + ([req.get("intent_prompt")] if req.get("intent_prompt") else []) + (_TIKTOK_INTENT_TERMS if platform == "tiktok" else []), limit=40)
+            merged = _high_intent_candidates(rows, platform=platform, limit=int(req.get("max_items") or 30), keywords=score_keywords)
             payload = {
                 "platform": platform,
                 "target_keywords": req.get("keywords") or [],
@@ -1834,7 +1970,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                 "source_counts": _source_counts(rows),
                 "candidates": merged,
             }
-            row.result_payload = {**(row.result_payload or {}), "lead_summary": payload, "candidates": merged}
+            row.result_payload = {**(row.result_payload or {}), "lead_summary": payload, "candidates": merged, "leads": merged if platform == "tiktok" else (row.result_payload or {}).get("leads", [])}
             _append_output(row, step_key=step_key, title="线索归并", kind="leads", data=payload)
             _mark_step(row, step_key, "completed", detail=f"归并 {len(merged)} 条线索", result={"candidate_count": len(merged), "source_rows": len(rows)})
             row.status = "completed"
@@ -2005,8 +2141,8 @@ async def start_social_leads_job(
         communities = []
         post_ids = [_normalize_tiktok_aweme_id(x) for x in body.post_ids]
         source_keywords = _clean_list(body.source_keywords or body.communities, limit=12)
-        if bool(accounts) == bool(source_keywords):
-            raise HTTPException(status_code=400, detail="TikTok 账号和来源词必须二选一填写")
+        if not accounts and not source_keywords:
+            raise HTTPException(status_code=400, detail="请至少填写一个同行账号")
     else:
         accounts = [_extract_x_screen_name(x) for x in body.accounts]
         accounts = [x for x in accounts if x][:12]
@@ -2026,7 +2162,11 @@ async def start_social_leads_job(
         "search_type": "post" if platform == "reddit" else ("Latest" if platform == "x" else _clean_text(body.search_type, 40)),
         "sort": "NEW" if platform in {"reddit", "tiktok"} else _clean_text(body.sort, 40),
         "time_range": "day" if platform in {"reddit", "tiktok", "x"} else _clean_text(body.time_range, 40),
-        "max_items": 100 if platform in {"reddit", "tiktok", "x"} else int(body.max_items or 30),
+        "max_items": int(body.max_items or 30) if platform == "tiktok" else (100 if platform in {"reddit", "x"} else int(body.max_items or 30)),
+        "max_videos": int(body.max_videos or 20),
+        "max_comments_per_video": int(body.max_comments_per_video or 100),
+        "time_range_days": int(body.time_range_days or 30),
+        "intent_prompt": _clean_text(body.intent_prompt, 2000),
         "include_comments": True if platform in {"reddit", "tiktok", "x"} else bool(body.include_comments),
         "include_account_posts": True if platform in {"reddit", "tiktok", "x"} else bool(body.include_account_posts),
     }
@@ -2229,8 +2369,8 @@ def create_social_leads_job_from_payload(
         communities = []
         post_ids = [_normalize_tiktok_aweme_id(x) for x in body.post_ids]
         source_keywords = _clean_list(body.source_keywords or body.communities, limit=12)
-        if bool(accounts) == bool(source_keywords):
-            raise HTTPException(status_code=400, detail="TikTok 账号和来源词必须二选一填写")
+        if not accounts and not source_keywords:
+            raise HTTPException(status_code=400, detail="请至少填写一个同行账号")
     else:
         accounts = [_extract_x_screen_name(x) for x in body.accounts]
         accounts = [x for x in accounts if x][:12]
@@ -2250,7 +2390,11 @@ def create_social_leads_job_from_payload(
         "search_type": "post" if platform == "reddit" else ("Latest" if platform == "x" else _clean_text(body.search_type, 40)),
         "sort": "NEW" if platform in {"reddit", "tiktok"} else _clean_text(body.sort, 40),
         "time_range": "day" if platform in {"reddit", "tiktok", "x"} else _clean_text(body.time_range, 40),
-        "max_items": 100 if platform in {"reddit", "tiktok", "x"} else int(body.max_items or 30),
+        "max_items": int(body.max_items or 30) if platform == "tiktok" else (100 if platform in {"reddit", "x"} else int(body.max_items or 30)),
+        "max_videos": int(body.max_videos or 20),
+        "max_comments_per_video": int(body.max_comments_per_video or 100),
+        "time_range_days": int(body.time_range_days or 30),
+        "intent_prompt": _clean_text(body.intent_prompt, 2000),
         "include_comments": True if platform in {"reddit", "tiktok", "x"} else bool(body.include_comments),
         "include_account_posts": True if platform in {"reddit", "tiktok", "x"} else bool(body.include_account_posts),
     }

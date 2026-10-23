@@ -72,6 +72,8 @@ _ENDPOINT_COST_USD: dict[str, Decimal] = {
     "/api/v1/tiktok/app/v3/fetch_video_search_result": Decimal("0.001"),
     "/api/v1/tiktok/web/fetch_search_user": Decimal("0.001"),
     "/api/v1/tiktok/web/fetch_user_profile": Decimal("0.001"),
+    "/api/v1/tiktok/app/v3/fetch_user_post_videos_v3": Decimal("0.001"),
+    "/api/v1/tiktok/app/v3/fetch_video_comments": Decimal("0.001"),
     "/api/v1/tiktok/web/fetch_user_post": Decimal("0.001"),
     "/api/v1/tiktok/web/fetch_post_comment": Decimal("0.001"),
     "/api/v1/douyin/app/v3/fetch_hot_search_list": Decimal("0.001"),
