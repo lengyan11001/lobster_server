@@ -551,6 +551,11 @@ def restore_installation_alias(
     matched = [row for row in rows if str(row.display_name or "").strip().lower() == alias.lower()]
     if not matched:
         raise HTTPException(status_code=404, detail="没有找到这个设备别名")
+    machine_raw = _normalize_installation_id(body.machine_instance_id)
+    if machine_raw:
+        own = [row for row in matched if str(row.machine_instance_id or "").strip() == machine_raw]
+        if own:
+            matched = own
     matched.sort(key=lambda row: row.updated_at or datetime.min, reverse=True)
     slot = str(matched[0].last_installation_id or "").strip()
     if not slot:
