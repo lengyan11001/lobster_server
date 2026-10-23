@@ -456,7 +456,7 @@ def _analysis_rows_for_job(db: Session, user_id: int, platform: str, job_id: str
     out: list[TikHubSourceItem] = []
     for row in rows:
         if row.source_type in {"search_result", "subreddit_post", "user_post", "trend", "post_detail", "keyword_video"}:
-            recent_hours = hours if hours is not None else (_TIKTOK_RECENT_HOURS if platform == "tiktok" else _REDDIT_RECENT_HOURS)
+            recent_hours = _TIKTOK_RECENT_HOURS if platform == "tiktok" else _REDDIT_RECENT_HOURS
             if _is_recent_row(row, hours=recent_hours):
                 out.append(row)
             continue
@@ -2219,6 +2219,62 @@ async def discover_tiktok_competitors(
     ordered = sorted(accounts.values(), key=lambda x: int(x.get("followers") or 0), reverse=True)[:limit]
     return {"ok": True, "accounts": ordered, "keywords": keywords, "total": len(ordered)}
 
+@router.post("/api/social-leads/tiktok/search-videos", summary="TikTok 按关键词直接搜索视频")
+async def search_tiktok_videos(
+    payload: dict[str, Any] = Body(default={}),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword = _clean_text(payload.get("keyword"), 160).strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请输入关键词")
+    limit = max(1, min(30, int(payload.get("count") or 20)))
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="tiktok_search_video",
+        params={"keyword": keyword, "count": limit, "sort_type": 0, "publish_time": 0},
+        body={},
+        save_items=False,
+        include_raw_response=True,
+        attempts=1,
+    )
+    raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    rows = data.get("search_item_list") if isinstance(data.get("search_item_list"), list) else (data.get("aweme_list") if isinstance(data.get("aweme_list"), list) else [])
+    videos: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in rows:
+        item = entry.get("aweme_info") if isinstance(entry, dict) and isinstance(entry.get("aweme_info"), dict) else entry
+        if not isinstance(item, dict):
+            continue
+        aweme_id = str(item.get("aweme_id") or item.get("id") or "").strip()
+        if not aweme_id or aweme_id in seen:
+            continue
+        seen.add(aweme_id)
+        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+        stats = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
+        handle = str(author.get("unique_id") or author.get("uniqueId") or "").strip()
+        title = _clean_long_text(item.get("desc") or item.get("title") or "", 300)
+        cover = ""
+        video_obj = item.get("video") if isinstance(item.get("video"), dict) else {}
+        cover_obj = video_obj.get("cover") if isinstance(video_obj.get("cover"), dict) else {}
+        if isinstance(cover_obj.get("url_list"), list) and cover_obj["url_list"]:
+            cover = str(cover_obj["url_list"][0] or "")
+        videos.append({
+            "aweme_id": aweme_id,
+            "title": title,
+            "author_handle": handle,
+            "author_name": str(author.get("nickname") or handle or "").strip(),
+            "cover_url": cover,
+            "url": str(item.get("share_url") or (f"https://www.tiktok.com/@{handle}/video/{aweme_id}" if handle else f"https://www.tiktok.com/video/{aweme_id}")),
+            "play_count": int(stats.get("play_count") or 0),
+            "digg_count": int(stats.get("digg_count") or 0),
+            "comment_count": int(stats.get("comment_count") or 0),
+            "share_count": int(stats.get("share_count") or 0),
+        })
+    return {"ok": True, "keyword": keyword, "videos": videos[:limit], "total": len(videos)}
+
 @router.post("/api/social-leads/jobs", summary="启动 Reddit/X/TikTok 只读线索采集任务")
 async def start_social_leads_job(
     body: SocialLeadsStartBody,
@@ -2243,8 +2299,8 @@ async def start_social_leads_job(
         communities = []
         post_ids = [_normalize_tiktok_aweme_id(x) for x in body.post_ids]
         source_keywords = _clean_list(body.source_keywords or body.communities, limit=12)
-        if not accounts and not source_keywords:
-            raise HTTPException(status_code=400, detail="请至少填写一个同行账号")
+        if not accounts and not source_keywords and not post_ids:
+            raise HTTPException(status_code=400, detail="请至少填写同行账号、来源词或视频 ID")
     else:
         accounts = [_extract_x_screen_name(x) for x in body.accounts]
         accounts = [x for x in accounts if x][:12]
@@ -2471,8 +2527,8 @@ def create_social_leads_job_from_payload(
         communities = []
         post_ids = [_normalize_tiktok_aweme_id(x) for x in body.post_ids]
         source_keywords = _clean_list(body.source_keywords or body.communities, limit=12)
-        if not accounts and not source_keywords:
-            raise HTTPException(status_code=400, detail="请至少填写一个同行账号")
+        if not accounts and not source_keywords and not post_ids:
+            raise HTTPException(status_code=400, detail="请至少填写同行账号、来源词或视频 ID")
     else:
         accounts = [_extract_x_screen_name(x) for x in body.accounts]
         accounts = [x for x in accounts if x][:12]
