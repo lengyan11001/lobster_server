@@ -977,8 +977,13 @@ def sync_canvas_task(db: Session, user_id: int, *, task_id: str, status: str = "
     sets = ["updated_at = :now"]
     values: Dict[str, Any] = {"uid": user_id, "tid": tid, "now": time.time()}
     if str(status or "").strip():
+        incoming_status = str(status).strip().lower()[:32]
+        # 已退款的任务不能再被前端轮询写回 processing/pending，否则任务记录
+        # 会一直显示「生成中」；只有真正 completed 才允许覆盖。
+        if bool(row.refunded) and incoming_status not in {"completed", "succeed", "success", "done"}:
+            incoming_status = "failed"
         sets.append("status = :status")
-        values["status"] = str(status).strip().lower()[:32]
+        values["status"] = incoming_status
     if result_url:
         sets.append("result_url = :url")
         values["url"] = str(result_url)[:2000]

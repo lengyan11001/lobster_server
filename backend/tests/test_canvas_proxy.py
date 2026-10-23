@@ -720,6 +720,28 @@ def test_canvas_refund_writes_credit_ledger_and_is_idempotent(monkeypatch, tmp_p
     assert db.query(CreditLedger).filter(CreditLedger.user_id == 42, CreditLedger.entry_type == "refund").count() == 1
 
 
+def test_refunded_canvas_task_does_not_revert_to_processing(monkeypatch, tmp_path):
+    """前端退款后仍会轮询 query；不能再把已退款任务写回 processing。"""
+    from sqlalchemy import text as _sql_text
+
+    db = _canvas_task_db(monkeypatch, tmp_path)
+    canvas_hub.add_canvas_task(
+        db, 42, "st-ai/super-seed2-lite", "api/v3/tasks/create",
+        json.dumps({"code": 200, "data": {"task_id": "t-refunded"}}).encode(), charged=1800,
+    )
+    db.execute(_sql_text("UPDATE canvas_task SET refunded = true, status = 'failed' WHERE task_id = 't-refunded'"))
+    db.commit()
+
+    canvas_hub.sync_canvas_task(db, 42, task_id="t-refunded", status="processing", error="视频任务提交中")
+    row = db.execute(_sql_text("SELECT status, refunded FROM canvas_task WHERE task_id = 't-refunded'")).fetchone()
+    assert row.status == "failed"
+    assert bool(row.refunded) is True
+
+    canvas_hub.sync_canvas_task(db, 42, task_id="t-refunded", status="completed", result_url="https://cdn.test/x.png")
+    row = db.execute(_sql_text("SELECT status FROM canvas_task WHERE task_id = 't-refunded'")).fetchone()
+    assert row.status == "completed"
+
+
 def test_relayed_moderation_error_is_translated_to_chinese():
     payload = {
         "code": 200,
