@@ -8909,7 +8909,9 @@ async function api(path, options = {}) {
       const cards = leads.map(tiktokLeadCardHtml).join("");
       const empty = status === "completed"
         ? `<div class="tt-empty"><b>这轮没有筛到精准客户</b><p>可以放宽筛选提示词，或把“最多视频 / 每条视频评论”调大一点再试。</p></div>`
-        : `<div class="tt-empty"><b>正在从评论里找客户</b><p>同步视频、采集评论和判定意向需要一点时间，结果会自动刷新。</p></div>`;
+        : (status === "failed" || status === "canceled"
+          ? `<div class="tt-empty"><b>采集没有完成</b><p>${escapeHtml(job.error || "任务失败，请检查 TikHub 额度或稍后重试。")}</p></div>`
+          : `<div class="tt-empty"><b>正在从评论里找客户</b><p>同步视频、采集评论和判定意向需要一点时间，结果会自动刷新。</p></div>`);
       box.innerHTML = `<div class="tt-result-head">
         <div><span class="tt-kicker">LIVE RESULT</span><h3>${escapeHtml(job.title || "TikTok 精准获客")}</h3></div>
         <span class="tt-status ${statusClass}">${escapeHtml(tiktokLeadStatusText(status))}</span>
