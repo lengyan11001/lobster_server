@@ -529,6 +529,33 @@ def list_installation_aliases(
                 "updated_at": row.updated_at.isoformat() if row.updated_at else "",
             }
         )
+    # 在线表里已经改过名字、但还没写进 user_device_labels 的设备（例如刚改完名），
+    # 也要出现在下拉里，否则用户会看到"这个别名选不了"。
+    presences = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.user_id.in_(tuple(owner_ids)))
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .all()
+    )
+    for presence in presences:
+        alias = str(presence.display_name or "").strip()
+        slot = str(presence.installation_id or "").strip()
+        if not alias or not slot:
+            continue
+        key = alias.lower()
+        if key in seen or key.startswith("local-"):
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "alias": alias,
+                "installation_id": slot,
+                "online": bool(
+                    presence.last_seen_at and presence.last_seen_at >= cutoff
+                ),
+                "updated_at": presence.last_seen_at.isoformat() if presence.last_seen_at else "",
+            }
+        )
     return {"ok": True, "items": items}
 
 
