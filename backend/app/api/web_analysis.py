@@ -72,10 +72,18 @@ def _page_digest(data: Dict[str, Any]) -> str:
     ]
     if description:
         lines.append(f"描述：{description}")
-    lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {min(len(text), 3000)} 字）")
+    raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    start = 0
+    for index, line in enumerate(raw_lines):
+        if len(line) >= 80:
+            start = max(0, index - 2)
+            break
+    excerpt = "
+".join(raw_lines[start:])[:3000]
+    lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
     lines.append("")
     lines.append("正文节选：")
-    lines.append(text[:3000])
+    lines.append(excerpt)
     if links:
         lines.append("")
         lines.append("主要链接：")
