@@ -61,6 +61,50 @@ class CrawlSiteBody(BaseModel):
     use_sitemap: bool = True
 
 
+def _page_digest(data: Dict[str, Any]) -> str:
+    title = str(data.get("title") or "").strip()
+    description = str(data.get("description") or "").strip()
+    text = str(data.get("text") or "").strip()
+    links = data.get("links") if isinstance(data.get("links"), list) else []
+    lines = [
+        f"标题：{title or '(无)'}",
+        f"站点：{data.get('site', '')}",
+    ]
+    if description:
+        lines.append(f"描述：{description}")
+    lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {min(len(text), 3000)} 字）")
+    lines.append("")
+    lines.append("正文节选：")
+    lines.append(text[:3000])
+    if links:
+        lines.append("")
+        lines.append("主要链接：")
+        for link in links[:12]:
+            label = str(link.get("text") or "").strip() or str(link.get("url") or "")
+            lines.append(f"- {label[:60]} {link.get('url', '')}")
+    return "\n".join(lines)
+
+
+def _site_digest(data: Dict[str, Any]) -> str:
+    lines: List[str] = []
+    for site in data.get("sites", []) or []:
+        lines.append(f"站点：{site.get('domain', '')}（{site.get('pages_crawled', 0)} 页）")
+        for page in (site.get("pages") or [])[:10]:
+            lines.append(f"- {page.get('title', '')[:80]} {page.get('url', '')}")
+            excerpt = str(page.get("text") or "")[:160].replace("\n", " ")
+            if excerpt:
+                lines.append(f"  {excerpt}")
+        contacts = site.get("contacts") or {}
+        emails = contacts.get("emails") or []
+        phones = contacts.get("phones") or []
+        if emails or phones:
+            lines.append(f"联系方式：{', '.join(emails[:3])} {', '.join(phones[:3])}".strip())
+        lines.append("")
+    merged = data.get("merged") or {}
+    lines.append(f"合计：{merged.get('pages_crawled', 0)} 页")
+    return "\n".join(lines)
+
+
 @router.post("/api/web/analyze", summary="抓取并解析单个网页")
 def web_analyze_page(body: AnalyzePageBody, current_user: User = Depends(get_current_user)):
     _check_rate_limit(int(current_user.id), "analyze")
@@ -77,6 +121,7 @@ def web_analyze_page(body: AnalyzePageBody, current_user: User = Depends(get_cur
             payload["fallback"] = "online"
             payload["fallback_hint"] = "服务器抓取失败；如需登录或页面依赖浏览器渲染，请把任务下发给已登录设备用浏览器打开。"
         return payload
+    data["digest"] = _page_digest(data)
     return {"ok": True, "data": data}
 
 
@@ -104,4 +149,5 @@ def web_crawl_site(body: CrawlSiteBody, current_user: User = Depends(get_current
             payload["fallback"] = "online"
             payload["fallback_hint"] = "服务器抓取失败；可下发给设备用浏览器打开。"
         return payload
+    data["digest"] = _site_digest(data)
     return {"ok": True, "data": data}
