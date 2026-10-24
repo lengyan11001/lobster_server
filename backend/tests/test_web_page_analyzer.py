@@ -74,3 +74,10 @@ def test_crawl_multi_level(local_site):
     contacts = result["sites"][0]["contacts"]
     assert "sales@acme.example" in contacts["emails"]
     assert contacts["phones"]
+
+def test_robots_groups_do_not_leak_between_agents():
+    robots = "User-agent: HTTrack\nDisallow: /\n\nUser-agent: *\nDisallow: /private\n"
+    disallow, allow, sitemaps, delay = w._parse_robots(robots)
+    assert disallow == ["/private"]
+    assert w._robots_allows("/", disallow, allow)
+    assert not w._robots_allows("/private/x", disallow, allow)

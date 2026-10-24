@@ -393,10 +393,16 @@ def _fetch_text(url: str, *, timeout: float = 8.0) -> Optional[str]:
         return None
 
 
-def _parse_robots(text: str) -> Tuple[List[str], List[str], float]:
-    disallow: List[str] = []
+def _parse_robots(text: str) -> Tuple[List[str], List[str], List[str], float]:
+    """Return (disallow, allow, sitemaps, crawl_delay) for our crawler.
+
+    robots.txt rules are grouped by User-agent.  Only the most specific group
+    matching us (or the ``*`` group) may be applied; otherwise a rule that is
+    meant for HTTrack/Nutch would block every crawler.
+    """
+    groups: List[Dict[str, Any]] = []
     sitemaps: List[str] = []
-    crawl_delay = 0.0
+    current: Optional[Dict[str, Any]] = None
     for raw in (text or "").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line or ":" not in line:
@@ -404,23 +410,53 @@ def _parse_robots(text: str) -> Tuple[List[str], List[str], float]:
         key, value = line.split(":", 1)
         key = key.strip().lower()
         value = value.strip()
-        if key == "disallow" and value:
-            disallow.append(value)
-        elif key == "sitemap" and value:
+        if key == "sitemap" and value:
             sitemaps.append(value)
-        elif key == "crawl-delay":
-            try:
-                crawl_delay = max(0.0, float(value))
-            except ValueError:
-                pass
-    return disallow, sitemaps, crawl_delay
+            continue
+        if key == "user-agent":
+            if current is None or current.get("has_rules"):
+                current = {"agents": set(), "disallow": [], "allow": [], "delay": 0.0, "has_rules": False}
+                groups.append(current)
+            current["agents"].add(value.lower())
+            continue
+        if key in ("disallow", "allow", "crawl-delay"):
+            if current is None:
+                current = {"agents": {"*"}, "disallow": [], "allow": [], "delay": 0.0, "has_rules": False}
+                groups.append(current)
+            current["has_rules"] = True
+            if key == "disallow" and value:
+                current["disallow"].append(value)
+            elif key == "allow" and value:
+                current["allow"].append(value)
+            elif key == "crawl-delay":
+                try:
+                    current["delay"] = max(0.0, float(value))
+                except ValueError:
+                    pass
+
+    chosen: Optional[Dict[str, Any]] = None
+    for group in groups:
+        if any("lobster" in agent for agent in group["agents"]):
+            chosen = group
+            break
+    if chosen is None:
+        for group in groups:
+            if "*" in group["agents"]:
+                chosen = group
+                break
+    if chosen is None:
+        return [], [], sitemaps, 0.0
+    return chosen["disallow"], chosen["allow"], sitemaps, float(chosen["delay"] or 0.0)
 
 
-def _robots_allows(path: str, disallow: List[str]) -> bool:
-    if not disallow:
-        return True
+def _robots_allows(path: str, disallow: List[str], allow: Optional[List[str]] = None) -> bool:
     path = path or "/"
-    for rule in disallow:
+    for rule in allow or []:
+        if rule and path.startswith(rule):
+            return True
+    for rule in disallow or []:
+        if not rule:
+            continue
         if rule == "/":
             return False
         if path.startswith(rule):
@@ -531,11 +567,12 @@ def crawl_site(
         seed_host = urlparse(seed_url).netloc
         seed_key = _host_key(seed_host)
         disallow: List[str] = []
+        allow_rules: List[str] = []
         sitemaps: List[str] = []
         if respect_robots:
             robots_text = _fetch_text(f"{urlparse(seed_url).scheme}://{seed_host}/robots.txt")
             if robots_text:
-                disallow, sitemaps, _ = _parse_robots(robots_text)
+                disallow, allow_rules, sitemaps, _ = _parse_robots(robots_text)
         heap: List[Tuple[int, int, str]] = []
         heapq.heappush(heap, (-5, 0, _normalize_url(seed_url)))
         if use_sitemap:
@@ -575,7 +612,7 @@ def crawl_site(
                 continue
             visited.add(url)
             path = urlparse(url).path or "/"
-            if respect_robots and not _robots_allows(path, disallow):
+            if respect_robots and not _robots_allows(path, disallow, allow_rules):
                 skipped.append({"url": url, "reason": "robots_disallow"})
                 continue
             if exclude_re and any(pattern.search(url) for pattern in exclude_re):
