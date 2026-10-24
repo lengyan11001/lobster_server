@@ -4583,6 +4583,11 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 except Exception as exc:
                     return [{"type": "text", "text": f"内置能力调用失败：{exc}"}], True
                 text_out = json.dumps(data, ensure_ascii=False, indent=2)
+                if capability_id.startswith("web.") and isinstance(data, dict):
+                    payload_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+                    digest = str(payload_data.get("digest") or "").strip()
+                    if digest:
+                        text_out = digest
                 failed = response.status_code >= 400 or not (isinstance(data, dict) and data.get("ok", True))
                 return [{"type": "text", "text": text_out}], failed
             if capability_id == "hifly.video.create_by_tts":
