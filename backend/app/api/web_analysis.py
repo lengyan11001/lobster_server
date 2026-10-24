@@ -75,8 +75,10 @@ def _page_digest(data: Dict[str, Any]) -> str:
     raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
     start = 0
     for index, line in enumerate(raw_lines):
-        if len(line) >= 80:
-            start = max(0, index - 2)
+        if line.startswith("Notice: This page displays a fallback"):
+            continue
+        if len(line) >= 100 and line[-1:] in ".。!?！？":
+            start = max(0, index - 1)
             break
     excerpt = "\n".join(raw_lines[start:])[:3000]
     lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
