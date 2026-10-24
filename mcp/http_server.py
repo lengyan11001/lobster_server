@@ -5948,7 +5948,32 @@ async def mcp_endpoint(request: Request) -> Response:
     return JSONResponse(responses)
 
 
+async def internal_invoke_endpoint(request: Request) -> Response:
+    """Local-only REST bridge for the orchestrator's single meta-tool.
+
+    The orchestrator calls this instead of depending on MCP tool discovery for
+    every capability.  Only loopback callers are accepted.
+    """
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    name = str(payload.get("tool") or "invoke_capability")
+    arguments = payload.get("arguments") or {}
+    if not isinstance(arguments, dict):
+        return JSONResponse({"ok": False, "error": "arguments must be an object"}, status_code=400)
+    token = _get_token_from_request(request)
+    content, is_error = await _call_tool(name, arguments, token, request=request)
+    return JSONResponse({"ok": not is_error, "content": content})
+
+
 app = Starlette(
-    routes=[Route("/mcp", mcp_endpoint, methods=["GET", "POST"])],
+    routes=[
+        Route("/mcp", mcp_endpoint, methods=["GET", "POST"]),
+        Route("/internal/invoke", internal_invoke_endpoint, methods=["POST"]),
+    ],
     middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=["*"])],
 )
