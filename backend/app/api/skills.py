@@ -27,6 +27,7 @@ BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
 # may already have v1 while still missing the employee defaults added later.
 _DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER = "__employee_default_permissions_seeded_v3"
 _PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER = "__personal_whatsapp_assistant_visibility_seeded_v1"
+_WEB_RESEARCH_VISIBILITY_MIGRATION_MARKER = "web_research_skill_visibility_v1"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -62,6 +63,7 @@ DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
     "publish_center_entry",
     "asset_library_entry",
     "global_trade_leads_skill",
+    "web_research_skill",
     "scheduled_tasks_entry",
     "billing_entry",
     "sys_config_entry",
@@ -81,6 +83,7 @@ DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
     "publish_center_entry",
     "asset_library_entry",
     "global_trade_leads_skill",
+    "web_research_skill",
     "scheduled_tasks_entry",
     "billing_entry",
     "sys_config_entry",
@@ -225,6 +228,16 @@ def _user_visible_package_ids(
             db.rollback()
         rows.add("personal_whatsapp_assistant")
         rows.add(_PERSONAL_WHATSAPP_VISIBILITY_MIGRATION_MARKER)
+    if _WEB_RESEARCH_VISIBILITY_MIGRATION_MARKER not in rows:
+        if "web_research_skill" not in rows:
+            db.add(UserSkillVisibility(user_id=user.id, package_id="web_research_skill"))
+        db.add(UserSkillVisibility(user_id=user.id, package_id=_WEB_RESEARCH_VISIBILITY_MIGRATION_MARKER))
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        rows.add("web_research_skill")
+        rows.add(_WEB_RESEARCH_VISIBILITY_MIGRATION_MARKER)
     return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 
