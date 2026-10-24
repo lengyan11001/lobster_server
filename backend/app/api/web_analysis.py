@@ -77,7 +77,9 @@ def _page_digest(data: Dict[str, Any]) -> str:
     for index, line in enumerate(raw_lines):
         if line.startswith("Notice: This page displays a fallback"):
             continue
-        if len(line) >= 100 and line[-1:] in ".。!?！？":
+        if line.startswith(("Skip to content", ">>>", "#")):
+            continue
+        if len(line) >= 60:
             start = max(0, index - 1)
             break
     excerpt = "\n".join(raw_lines[start:])[:3000]
