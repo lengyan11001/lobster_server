@@ -514,10 +514,13 @@ const listSystemCapabilities = createTool({
       matched_count: result.matched_count,
       available_count: result.available_count,
       capabilities: result.capabilities.map((row) => ({
-        ...row,
-        // Keep the structured parameter contract at the tool boundary after
-        // capability search was extracted into its own module.
-      parameter_schema: row.parameter_schema,
+        capability_id: row.capability_id,
+        description: row.description,
+        execution_target: row.execution_target,
+        action: row.action,
+        keywords: row.keywords,
+        parameters: row.parameters,
+        required_parameters: row.required_parameters,
       })),
       execution_hint: canExecute
         ? '当前会话已授权；命中 execution_target=server 的能力时加载并调用实际 MCP 工具，命中 execution_target=online 时调用 dispatch_online_capability。'
@@ -531,6 +534,35 @@ const listSystemCapabilities = createTool({
       ],
       hint: result.matched_count ? '确认执行后只加载与目标最相关的工具。' : '没有匹配项时请换更具体的平台或动作关键词。',
     }
+  },
+  toModelOutput: readToolModelOutput,
+})
+
+const getCapabilityDetails = createTool({
+  id: 'get_capability_details',
+  description: '按 capability_id 批量读取完整参数 schema（类型、必填、默认值、枚举、范围）。只在计划确定后、准备执行前调用，最多 10 个；不要一次性拉全量能力详情。',
+  inputSchema: z.object({
+    capability_ids: z.array(z.string().min(1).max(120)).min(1).max(10),
+  }),
+  execute: async ({ capability_ids }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const data = await backendJson('/api/mastra-chat/capabilities', { method: 'GET' }, context)
+    const catalog = data?.capabilities && typeof data.capabilities === 'object'
+      ? data.capabilities as Record<string, Record<string, unknown>>
+      : {}
+    const rows = capability_ids.map((capabilityId) => {
+      const definition = catalog[capabilityId]
+      if (!definition) return { capability_id: capabilityId, missing: true }
+      return {
+        capability_id: capabilityId,
+        description: String(definition.description || ''),
+        execution_target: String(definition.execution_target || 'server'),
+        action: String(definition.action || ''),
+        keywords: Array.isArray(definition.keywords) ? definition.keywords : [],
+        arg_schema: definition.arg_schema || definition.inputSchema || definition.input_schema || {},
+      }
+    })
+    return { count: rows.length, capabilities: rows }
   },
   toModelOutput: readToolModelOutput,
 })
@@ -1168,7 +1200,7 @@ const orchestrator = new Agent({
 你是必火 AI 员工的服务器调度大脑。你的职责是理解用户目标、读取其既有资料、选择现有技能，并给出真实执行结果。
 
 执行规则：
-0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。
+0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮只用 list_system_capabilities 拿简要目录（id/描述/参数名），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有技能描述和 schema 都加载进来。
 0.1 【网址分析】服务器优先：单页用 analyze_web_page，官网/多级目录用 crawl_site。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
 0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
@@ -1197,6 +1229,7 @@ const orchestrator = new Agent({
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   tools: {
     listSystemCapabilities,
+    getCapabilityDetails,
     getPlanningContext,
     createWorkflowPlan,
     updateWorkflowPlan,
