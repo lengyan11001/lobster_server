@@ -31,7 +31,8 @@
       "required": [
         "url"
       ]
-    }
+    },
+    "side_effect": "read"
   },
   "web.site_crawl": {
     "description": "多级抓取官网：从种子页按 sitemap/导航/内链 BFS，支持深度、页面预算、同域限制和 robots，返回逐页正文与全站联系方式。服务器直接完成，只读。",
@@ -95,7 +96,8 @@
       "required": [
         "seed_urls"
       ]
-    }
+    },
+    "side_effect": "read"
   },
   "image.generate": {
     "description": "生成图片（文生图/图生图）。速推统一 generate 入口，返回 task_id 后用 task.get_result 取结果。",
@@ -106,17 +108,61 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "prompt": { "type": "string", "description": "生成提示词" },
-        "model": { "type": "string", "description": "可选（省略时默认 openai/gpt-image-2）" },
-        "image_url": { "type": "string", "description": "图生图时传入图片 URL" },
-        "image_size": { "type": "string", "description": "可选，如 square_hd, landscape_16_9" },
-        "resolution": { "type": "string", "enum": ["1K", "2K", "4K"], "description": "Optional output resolution level for openai/gpt-image-2." },
-        "quality": { "type": "string", "enum": ["low", "medium", "high"], "description": "Optional generation quality for openai/gpt-image-2." },
-        "num_images": { "type": "integer", "description": "Number of images. openai/gpt-image-2 is normalized to 1.", "default": 1 },
-        "output_format": { "type": "string", "enum": ["png", "jpeg", "webp"], "description": "Optional output image format.", "default": "png" }
+        "prompt": {
+          "type": "string",
+          "description": "生成提示词"
+        },
+        "model": {
+          "type": "string",
+          "description": "可选（省略时默认 openai/gpt-image-2）"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "图生图时传入图片 URL"
+        },
+        "image_size": {
+          "type": "string",
+          "description": "可选，如 square_hd, landscape_16_9"
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "description": "Optional output resolution level for openai/gpt-image-2."
+        },
+        "quality": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "description": "Optional generation quality for openai/gpt-image-2."
+        },
+        "num_images": {
+          "type": "integer",
+          "description": "Number of images. openai/gpt-image-2 is normalized to 1.",
+          "default": 1
+        },
+        "output_format": {
+          "type": "string",
+          "enum": [
+            "png",
+            "jpeg",
+            "webp"
+          ],
+          "description": "Optional output image format.",
+          "default": "png"
+        }
       },
-      "required": ["prompt"]
-    }
+      "required": [
+        "prompt"
+      ]
+    },
+    "side_effect": "write"
   },
   "video.generate": {
     "description": "生成视频（文生视频或图生视频）。速推统一 generate 入口，返回 task_id 后用 task.get_result 轮询（通常 30–120 秒），服务端会自动长轮询。",
@@ -127,16 +173,52 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "model": { "type": "string", "description": "可选；用户明确指定模型时原样传递。未指定时由服务器统一选择默认 Grok 模型和兜底策略，不按时长自动切换更贵模型。" },
-        "prompt": { "type": "string", "description": "描述/动作提示词" },
-        "image_url": { "type": "string", "description": "图生视频时必传，公开可访问的图片 URL；本地图可用 sutui.transfer_url 先转存" },
-        "image_urls": { "type": "array", "items": { "type": "string" }, "maxItems": 3, "description": "多参考图；具体数量和模型支持范围由服务器和上游能力决定。" },
-        "aspect_ratio": { "type": "string", "enum": ["16:9", "9:16"], "description": "可选，默认 16:9" },
-        "resolution": { "type": "string", "enum": ["720p", "1080p"], "description": "可选，默认 720p" },
-        "duration": { "type": "integer", "description": "可选视频时长（秒）；未指定时由服务器按当前模型策略默认 10 秒处理。" }
+        "model": {
+          "type": "string",
+          "description": "可选；用户明确指定模型时原样传递。未指定时由服务器统一选择默认 Grok 模型和兜底策略，不按时长自动切换更贵模型。"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "描述/动作提示词"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "图生视频时必传，公开可访问的图片 URL；本地图可用 sutui.transfer_url 先转存"
+        },
+        "image_urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3,
+          "description": "多参考图；具体数量和模型支持范围由服务器和上游能力决定。"
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16"
+          ],
+          "description": "可选，默认 16:9"
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "720p",
+            "1080p"
+          ],
+          "description": "可选，默认 720p"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "可选视频时长（秒）；未指定时由服务器按当前模型策略默认 10 秒处理。"
+        }
       },
-      "required": ["prompt"]
-    }
+      "required": [
+        "prompt"
+      ]
+    },
+    "side_effect": "write"
   },
   "task.get_result": {
     "description": "查询任务结果（统一能力入口）。若任务仍在处理中（如视频生成），服务端会每 60 秒自动轮询一次，最多等待 30 分钟，无需重复调用。",
@@ -147,10 +229,16 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "task_id": { "type": "string", "description": "任务 ID" }
+        "task_id": {
+          "type": "string",
+          "description": "任务 ID"
+        }
       },
-      "required": ["task_id"]
-    }
+      "required": [
+        "task_id"
+      ]
+    },
+    "side_effect": "read"
   },
   "image.understand": {
     "description": "理解/分析图片内容（i2t）。通过多模态 LLM（Gemini / Claude 等）描述、识别、解读图片。返回文本而非图片。",
@@ -161,13 +249,28 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "prompt": { "type": "string", "description": "提问/指令，如「详细描述这张图片」「图中有什么文字」" },
-        "image_url": { "type": "string", "description": "单张图片 URL（会自动转为 image_urls 数组）" },
-        "image_urls": { "type": "array", "description": "图片 URL 数组（最多 10 张）" },
-        "model": { "type": "string", "description": "图片理解固定走后端 YYAPI gpt-5.6-sol 路线" }
+        "prompt": {
+          "type": "string",
+          "description": "提问/指令，如「详细描述这张图片」「图中有什么文字」"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "单张图片 URL（会自动转为 image_urls 数组）"
+        },
+        "image_urls": {
+          "type": "array",
+          "description": "图片 URL 数组（最多 10 张）"
+        },
+        "model": {
+          "type": "string",
+          "description": "图片理解固定走后端 YYAPI gpt-5.6-sol 路线"
+        }
       },
-      "required": ["prompt"]
-    }
+      "required": [
+        "prompt"
+      ]
+    },
+    "side_effect": "read"
   },
   "video.understand": {
     "description": "理解/分析视频内容（v2t）。通过多模态 LLM（Gemini / Claude 等）描述、总结、解读视频。返回文本而非视频。",
@@ -178,13 +281,28 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "prompt": { "type": "string", "description": "提问/指令，如「这个视频讲了什么」「总结视频内容」" },
-        "video_url": { "type": "string", "description": "单个视频 URL（会自动转为 video_urls 数组）" },
-        "video_urls": { "type": "array", "description": "视频 URL 数组（最多 5 个，支持 mp4/mov/webm）" },
-        "model": { "type": "string", "description": "底层 LLM，默认 google/gemini-3-pro-preview" }
+        "prompt": {
+          "type": "string",
+          "description": "提问/指令，如「这个视频讲了什么」「总结视频内容」"
+        },
+        "video_url": {
+          "type": "string",
+          "description": "单个视频 URL（会自动转为 video_urls 数组）"
+        },
+        "video_urls": {
+          "type": "array",
+          "description": "视频 URL 数组（最多 5 个，支持 mp4/mov/webm）"
+        },
+        "model": {
+          "type": "string",
+          "description": "底层 LLM，默认 google/gemini-3-pro-preview"
+        }
       },
-      "required": ["prompt"]
-    }
+      "required": [
+        "prompt"
+      ]
+    },
+    "side_effect": "read"
   },
   "sutui.search_models": {
     "description": "搜索速推可用模型与参数 Schema",
@@ -195,12 +313,39 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "query": { "type": "string", "description": "自由文本搜索" },
-        "category": { "type": "string", "enum": ["image", "video", "audio", "all"] },
-        "capability": { "type": "string", "enum": ["t2i", "i2i", "t2v", "i2v", "v2v", "t2a", "stt", "i2t", "v2t"] },
-        "model_id": { "type": "string" }
+        "query": {
+          "type": "string",
+          "description": "自由文本搜索"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "image",
+            "video",
+            "audio",
+            "all"
+          ]
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "t2i",
+            "i2i",
+            "t2v",
+            "i2v",
+            "v2v",
+            "t2a",
+            "stt",
+            "i2t",
+            "v2t"
+          ]
+        },
+        "model_id": {
+          "type": "string"
+        }
       }
-    }
+    },
+    "side_effect": "read"
   },
   "sutui.guide": {
     "description": "获取速推模型教程与最佳实践",
@@ -211,11 +356,24 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "query": { "type": "string" },
-        "skill_id": { "type": "string" },
-        "category": { "type": "string", "enum": ["image", "video", "audio", "tool"] }
+        "query": {
+          "type": "string"
+        },
+        "skill_id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "image",
+            "video",
+            "audio",
+            "tool"
+          ]
+        }
       }
-    }
+    },
+    "side_effect": "read"
   },
   "sutui.account": {
     "description": "速推账户管理（余额/签到/套餐/支付）",
@@ -226,10 +384,22 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["balance", "checkin", "packages", "pay"], "default": "balance" },
-        "package_id": { "type": "integer" }
+        "action": {
+          "type": "string",
+          "enum": [
+            "balance",
+            "checkin",
+            "packages",
+            "pay"
+          ],
+          "default": "balance"
+        },
+        "package_id": {
+          "type": "integer"
+        }
       }
-    }
+    },
+    "side_effect": "read"
   },
   "sutui.parse_video": {
     "description": "解析视频分享链接并获取下载地址",
@@ -239,9 +409,16 @@
     "is_default": false,
     "arg_schema": {
       "type": "object",
-      "properties": { "url": { "type": "string" } },
-      "required": ["url"]
-    }
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "side_effect": "read"
   },
   "sutui.transfer_url": {
     "description": "将公网媒体直链转存到速推 CDN（本机 save-url 拉取 v3-tasks 视频失败时也会自动调用）。速推接口的 type 仅有 image / audio：视频（含 .mp4、v3-tasks 成品链）也请传 type=image，并非误用；返回 URL 常见路径为 /mcp-images/、后缀可能为 .jpg，以实际文件内容与 Content-Type 为准。音频必须用 type=audio。",
@@ -258,13 +435,19 @@
         },
         "type": {
           "type": "string",
-          "enum": ["image", "audio"],
+          "enum": [
+            "image",
+            "audio"
+          ],
           "default": "image",
           "description": "速推仅支持 image 与 audio。转存视频时请填 image；仅音频填 audio。"
         }
       },
-      "required": ["url"]
-    }
+      "required": [
+        "url"
+      ]
+    },
+    "side_effect": "write"
   },
   "comfly.chat": {
     "description": "Comfly 对话补全（OpenAI 兼容）。可用于前端技能调用 Comfly 的 LLM 能力，如商品详情图文案等。",
@@ -275,13 +458,29 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "model": { "type": "string", "description": "Comfly 模型名，如 grok-video-3" },
-        "messages": { "type": "array", "description": "OpenAI 格式的 messages 数组" },
-        "temperature": { "type": "number", "description": "采样温度，默认 0.7" },
-        "max_tokens": { "type": "integer", "description": "最大生成 token 数" }
+        "model": {
+          "type": "string",
+          "description": "Comfly 模型名，如 grok-video-3"
+        },
+        "messages": {
+          "type": "array",
+          "description": "OpenAI 格式的 messages 数组"
+        },
+        "temperature": {
+          "type": "number",
+          "description": "采样温度，默认 0.7"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "description": "最大生成 token 数"
+        }
       },
-      "required": ["model", "messages"]
-    }
+      "required": [
+        "model",
+        "messages"
+      ]
+    },
+    "side_effect": "read"
   },
   "sutui.speak": {
     "description": "语音合成和音色管理",
@@ -292,17 +491,51 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["synthesize", "list_voices", "design_voice", "clone_voice"], "default": "synthesize" },
-        "text": { "type": "string" },
-        "voice_id": { "type": "string" },
-        "prompt": { "type": "string" },
-        "audio_url": { "type": "string" },
-        "file_id": { "type": "integer" },
-        "voice_name": { "type": "string" },
-        "model": { "type": "string", "enum": ["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"], "default": "speech-2.8-hd" },
-        "speed": { "type": "number", "default": 1 }
+        "action": {
+          "type": "string",
+          "enum": [
+            "synthesize",
+            "list_voices",
+            "design_voice",
+            "clone_voice"
+          ],
+          "default": "synthesize"
+        },
+        "text": {
+          "type": "string"
+        },
+        "voice_id": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "audio_url": {
+          "type": "string"
+        },
+        "file_id": {
+          "type": "integer"
+        },
+        "voice_name": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string",
+          "enum": [
+            "speech-2.8-hd",
+            "speech-2.8-turbo",
+            "speech-2.6-hd",
+            "speech-2.6-turbo"
+          ],
+          "default": "speech-2.8-hd"
+        },
+        "speed": {
+          "type": "number",
+          "default": 1
+        }
       }
-    }
+    },
+    "side_effect": "write"
   },
   "media.edit": {
     "description": "素材剪辑：叠字、时间段裁剪、画幅比例、静音、视频配新音轨、静图转视频、视频抽帧；输出新 asset。需 ffmpeg。",
@@ -316,47 +549,195 @@
       "properties": {
         "operation": {
           "type": "string",
-          "enum": ["overlay_text", "trim", "scale_pad", "mute", "mux_audio", "image_to_video", "extract_frame"],
+          "enum": [
+            "overlay_text",
+            "trim",
+            "scale_pad",
+            "mute",
+            "mux_audio",
+            "image_to_video",
+            "extract_frame"
+          ],
           "description": "操作类型"
         },
-        "asset_id": { "type": "string", "description": "主素材 ID" },
-        "text": { "type": "string", "description": "overlay_text 文案（必填）" },
-        "position": { "type": "string", "enum": ["top", "center", "bottom"], "description": "overlay_text 垂直位置" },
-        "vertical_align": { "type": "string", "enum": ["top", "center", "bottom"], "description": "overlay_text 垂直对齐，默认 top" },
-        "horizontal_align": { "type": "string", "enum": ["left", "center", "right"], "description": "overlay_text 水平对齐，默认 center" },
-        "margin_x": { "type": "integer", "description": "overlay_text 左右边距，默认 40" },
-        "margin_y": { "type": "integer", "description": "overlay_text 上下边距，默认 40" },
-        "offset_x": { "type": "integer", "description": "overlay_text 额外偏移 X" },
-        "offset_y": { "type": "integer", "description": "overlay_text 额外偏移 Y" },
-        "font_size": { "type": "integer", "description": "overlay_text 字号，默认 48" },
-        "font_color": { "type": "string", "description": "overlay_text 字色" },
-        "font_alpha": { "type": "number", "description": "overlay_text 字透明度 0–1" },
-        "font_file": { "type": "string", "description": "overlay_text 字体路径" },
-        "x_expr": { "type": "string", "description": "overlay_text 自定义 ffmpeg x 表达式" },
-        "y_expr": { "type": "string", "description": "overlay_text 自定义 ffmpeg y 表达式" },
-        "box": { "type": "boolean", "description": "overlay_text 是否绘制文字背景框" },
-        "box_color": { "type": "string", "description": "overlay_text 背景色" },
-        "box_alpha": { "type": "number", "description": "overlay_text 背景透明度 0–1" },
-        "box_border_width": { "type": "integer", "description": "overlay_text 背景框边宽" },
-        "border_width": { "type": "integer", "description": "overlay_text 文字描边宽度" },
-        "border_color": { "type": "string", "description": "overlay_text 描边颜色" },
-        "shadow_x": { "type": "integer", "description": "overlay_text 阴影 X 偏移" },
-        "shadow_y": { "type": "integer", "description": "overlay_text 阴影 Y 偏移" },
-        "shadow_color": { "type": "string", "description": "overlay_text 阴影颜色" },
-        "shadow_alpha": { "type": "number", "description": "overlay_text 阴影透明度 0–1" },
-        "line_spacing": { "type": "integer", "description": "overlay_text 多行行距" },
-        "text_align": { "type": "string", "enum": ["left", "center", "right"], "description": "overlay_text 多行水平对齐" },
-        "fix_bounds": { "type": "boolean", "description": "overlay_text 是否限制在画面内" },
-        "start_sec": { "type": "number", "description": "trim 起始秒" },
-        "end_sec": { "type": "number", "description": "trim 结束秒" },
-        "aspect_ratio": { "type": "string", "enum": ["9:16", "16:9", "1:1", "4:3", "3:4"], "description": "scale_pad 目标比例" },
-        "fit_mode": { "type": "string", "enum": ["contain", "cover"], "description": "scale_pad 留边或裁切" },
-        "audio_asset_id": { "type": "string", "description": "mux_audio 音频素材 ID" },
-        "duration_sec": { "type": "number", "description": "image_to_video 时长（秒），最大 600" },
-        "timestamp_sec": { "type": "number", "description": "extract_frame 截取时刻（秒）" }
+        "asset_id": {
+          "type": "string",
+          "description": "主素材 ID"
+        },
+        "text": {
+          "type": "string",
+          "description": "overlay_text 文案（必填）"
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ],
+          "description": "overlay_text 垂直位置"
+        },
+        "vertical_align": {
+          "type": "string",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ],
+          "description": "overlay_text 垂直对齐，默认 top"
+        },
+        "horizontal_align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "description": "overlay_text 水平对齐，默认 center"
+        },
+        "margin_x": {
+          "type": "integer",
+          "description": "overlay_text 左右边距，默认 40"
+        },
+        "margin_y": {
+          "type": "integer",
+          "description": "overlay_text 上下边距，默认 40"
+        },
+        "offset_x": {
+          "type": "integer",
+          "description": "overlay_text 额外偏移 X"
+        },
+        "offset_y": {
+          "type": "integer",
+          "description": "overlay_text 额外偏移 Y"
+        },
+        "font_size": {
+          "type": "integer",
+          "description": "overlay_text 字号，默认 48"
+        },
+        "font_color": {
+          "type": "string",
+          "description": "overlay_text 字色"
+        },
+        "font_alpha": {
+          "type": "number",
+          "description": "overlay_text 字透明度 0–1"
+        },
+        "font_file": {
+          "type": "string",
+          "description": "overlay_text 字体路径"
+        },
+        "x_expr": {
+          "type": "string",
+          "description": "overlay_text 自定义 ffmpeg x 表达式"
+        },
+        "y_expr": {
+          "type": "string",
+          "description": "overlay_text 自定义 ffmpeg y 表达式"
+        },
+        "box": {
+          "type": "boolean",
+          "description": "overlay_text 是否绘制文字背景框"
+        },
+        "box_color": {
+          "type": "string",
+          "description": "overlay_text 背景色"
+        },
+        "box_alpha": {
+          "type": "number",
+          "description": "overlay_text 背景透明度 0–1"
+        },
+        "box_border_width": {
+          "type": "integer",
+          "description": "overlay_text 背景框边宽"
+        },
+        "border_width": {
+          "type": "integer",
+          "description": "overlay_text 文字描边宽度"
+        },
+        "border_color": {
+          "type": "string",
+          "description": "overlay_text 描边颜色"
+        },
+        "shadow_x": {
+          "type": "integer",
+          "description": "overlay_text 阴影 X 偏移"
+        },
+        "shadow_y": {
+          "type": "integer",
+          "description": "overlay_text 阴影 Y 偏移"
+        },
+        "shadow_color": {
+          "type": "string",
+          "description": "overlay_text 阴影颜色"
+        },
+        "shadow_alpha": {
+          "type": "number",
+          "description": "overlay_text 阴影透明度 0–1"
+        },
+        "line_spacing": {
+          "type": "integer",
+          "description": "overlay_text 多行行距"
+        },
+        "text_align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "description": "overlay_text 多行水平对齐"
+        },
+        "fix_bounds": {
+          "type": "boolean",
+          "description": "overlay_text 是否限制在画面内"
+        },
+        "start_sec": {
+          "type": "number",
+          "description": "trim 起始秒"
+        },
+        "end_sec": {
+          "type": "number",
+          "description": "trim 结束秒"
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "enum": [
+            "9:16",
+            "16:9",
+            "1:1",
+            "4:3",
+            "3:4"
+          ],
+          "description": "scale_pad 目标比例"
+        },
+        "fit_mode": {
+          "type": "string",
+          "enum": [
+            "contain",
+            "cover"
+          ],
+          "description": "scale_pad 留边或裁切"
+        },
+        "audio_asset_id": {
+          "type": "string",
+          "description": "mux_audio 音频素材 ID"
+        },
+        "duration_sec": {
+          "type": "number",
+          "description": "image_to_video 时长（秒），最大 600"
+        },
+        "timestamp_sec": {
+          "type": "number",
+          "description": "extract_frame 截取时刻（秒）"
+        }
       },
-      "required": ["operation", "asset_id"]
-    }
+      "required": [
+        "operation",
+        "asset_id"
+      ]
+    },
+    "side_effect": "write"
   },
   "comfly.daihuo": {
     "description": "（技能「爆款TVC」内的单段/分步能力）Comfly + Veo 图生视频。upload|generate_prompts|submit_video|poll_video。",
@@ -368,20 +749,57 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["upload", "generate_prompts", "submit_video", "poll_video"] },
-        "asset_id": { "type": "string" },
-        "image_url": { "type": "string" },
-        "images": { "type": "array", "items": { "type": "string" } },
-        "prompt": { "type": "string" },
-        "prompts": { "type": "array", "items": { "type": "string" } },
-        "enhance_prompt": { "type": "boolean" },
-        "task_id": { "type": "string" },
-        "video_model": { "type": "string" },
-        "analysis_model": { "type": "string" },
-        "aspect_ratio": { "type": "string" }
+        "action": {
+          "type": "string",
+          "enum": [
+            "upload",
+            "generate_prompts",
+            "submit_video",
+            "poll_video"
+          ]
+        },
+        "asset_id": {
+          "type": "string"
+        },
+        "image_url": {
+          "type": "string"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enhance_prompt": {
+          "type": "boolean"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "video_model": {
+          "type": "string"
+        },
+        "analysis_model": {
+          "type": "string"
+        },
+        "aspect_ratio": {
+          "type": "string"
+        }
       },
-      "required": ["action"]
-    }
+      "required": [
+        "action"
+      ]
+    },
+    "side_effect": "write"
   },
   "comfly.daihuo.pipeline": {
     "description": "技能「爆款TVC」整包成片：一次跑完分镜→多段 Veo→可选 FFmpeg 拼接。action：start_pipeline/run_pipeline/poll_pipeline。",
@@ -393,21 +811,53 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"] },
-        "job_id": { "type": "string" },
-        "asset_id": { "type": "string" },
-        "image_url": { "type": "string" },
-        "merge_clips": { "type": "boolean" },
-        "storyboard_count": { "type": "integer" },
-        "auto_save": { "type": "boolean" },
-        "task_text": { "type": "string" },
-        "isolate_job_dir": { "type": "boolean" },
-        "platform": { "type": "string" },
-        "country": { "type": "string" },
-        "language": { "type": "string" },
-        "output_dir": { "type": "string" }
+        "action": {
+          "type": "string",
+          "enum": [
+            "run_pipeline",
+            "start_pipeline",
+            "poll_pipeline"
+          ]
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "asset_id": {
+          "type": "string"
+        },
+        "image_url": {
+          "type": "string"
+        },
+        "merge_clips": {
+          "type": "boolean"
+        },
+        "storyboard_count": {
+          "type": "integer"
+        },
+        "auto_save": {
+          "type": "boolean"
+        },
+        "task_text": {
+          "type": "string"
+        },
+        "isolate_job_dir": {
+          "type": "boolean"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "output_dir": {
+          "type": "string"
+        }
       }
-    }
+    },
+    "side_effect": "write"
   },
   "comfly.seedance.tvc.pipeline": {
     "description": "一体化 Seedance TVC 成片流水线：基于一个或多个产品参考图，按 10 秒一段规划同一条广告片的连续分镜板，先统一生成全部分镜图，再统一提交全部 10 秒视频任务，最后自动合成为 1 条完整视频。总时长仅支持 10/20/30/40/50/60 秒。action 可选 run_pipeline（同步）、start_pipeline（异步）、poll_pipeline（轮询）。",
@@ -521,7 +971,8 @@
           "description": "异步任务是否隔离到独立 job 目录，默认 true"
         }
       }
-    }
+    },
+    "side_effect": "write"
   },
   "comfly.ecommerce.detail_pipeline": {
     "description": "电商详情页生成流水线：商品主图自动分析卖点、生成多张竖版详情页、拼接长图、素材入库。",
@@ -533,25 +984,73 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"] },
-        "job_id": { "type": "string" },
-        "asset_id": { "type": "string" },
-        "image_url": { "type": "string" },
-        "product_name_hint": { "type": "string" },
-        "product_direction_hint": { "type": "string" },
-        "reference_asset_ids": { "type": "array", "items": { "type": "string" } },
-        "reference_image_urls": { "type": "array", "items": { "type": "string" } },
-        "page_count": { "type": "integer", "minimum": 10, "maximum": 16 },
-        "auto_save": { "type": "boolean" },
-        "platform": { "type": "string" },
-        "country": { "type": "string" },
-        "language": { "type": "string" },
-        "analysis_model": { "type": "string" },
-        "image_model": { "type": "string" },
-        "output_dir": { "type": "string" },
-        "isolate_job_dir": { "type": "boolean" }
+        "action": {
+          "type": "string",
+          "enum": [
+            "run_pipeline",
+            "start_pipeline",
+            "poll_pipeline"
+          ]
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "asset_id": {
+          "type": "string"
+        },
+        "image_url": {
+          "type": "string"
+        },
+        "product_name_hint": {
+          "type": "string"
+        },
+        "product_direction_hint": {
+          "type": "string"
+        },
+        "reference_asset_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reference_image_urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "page_count": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 16
+        },
+        "auto_save": {
+          "type": "boolean"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "analysis_model": {
+          "type": "string"
+        },
+        "image_model": {
+          "type": "string"
+        },
+        "output_dir": {
+          "type": "string"
+        },
+        "isolate_job_dir": {
+          "type": "boolean"
+        }
       }
-    }
+    },
+    "side_effect": "write"
   },
   "hifly.video.create_by_tts": {
     "description": "必火数字人口播：使用已选择的数字人 avatar 与声音 voice，根据 text 生成口播视频并入库，返回 task_id、asset_id、video_url。",
@@ -563,23 +1062,71 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "title": { "type": "string", "description": "视频标题" },
-        "avatar": { "type": "string", "default": "current", "description": "必火数字人 avatar id；省略或传 current 时使用当前账号最近可用的分身" },
-        "voice": { "type": "string", "default": "current", "description": "必火声音 voice id；省略或传 current 时使用当前账号最近可用的声音" },
-        "text": { "type": "string", "description": "口播文案" },
-        "st_show": { "type": "integer", "default": 0, "description": "是否显示字幕，0/1" },
-        "aigc_flag": { "type": "integer", "default": 0 },
-        "rate": { "type": "string", "description": "可选语速" },
-        "volume": { "type": "string", "description": "可选音量" },
-        "pitch": { "type": "string", "description": "可选语调" },
-        "emotion": { "type": "string", "description": "可选情绪" },
-        "instructions": { "type": "string", "description": "可选声音表达指令" },
-        "speech_language": { "type": "string", "description": "可选口播语种" },
-        "poll_interval_seconds": { "type": "integer", "default": 10 },
-        "poll_timeout_seconds": { "type": "integer", "default": 2400 }
+        "title": {
+          "type": "string",
+          "description": "视频标题"
+        },
+        "avatar": {
+          "type": "string",
+          "default": "current",
+          "description": "必火数字人 avatar id；省略或传 current 时使用当前账号最近可用的分身"
+        },
+        "voice": {
+          "type": "string",
+          "default": "current",
+          "description": "必火声音 voice id；省略或传 current 时使用当前账号最近可用的声音"
+        },
+        "text": {
+          "type": "string",
+          "description": "口播文案"
+        },
+        "st_show": {
+          "type": "integer",
+          "default": 0,
+          "description": "是否显示字幕，0/1"
+        },
+        "aigc_flag": {
+          "type": "integer",
+          "default": 0
+        },
+        "rate": {
+          "type": "string",
+          "description": "可选语速"
+        },
+        "volume": {
+          "type": "string",
+          "description": "可选音量"
+        },
+        "pitch": {
+          "type": "string",
+          "description": "可选语调"
+        },
+        "emotion": {
+          "type": "string",
+          "description": "可选情绪"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "可选声音表达指令"
+        },
+        "speech_language": {
+          "type": "string",
+          "description": "可选口播语种"
+        },
+        "poll_interval_seconds": {
+          "type": "integer",
+          "default": 10
+        },
+        "poll_timeout_seconds": {
+          "type": "integer",
+          "default": 2400
+        }
       },
-      "required": ["text"]
-    }
+      "required": [
+        "text"
+      ]
+    },
+    "side_effect": "write"
   },
   "ecommerce.publish": {
     "description": "电商商品发布：打开对应平台的商品创建页面，自动填写商品标题、价格，并上传主图/详情图，但不提交。",
@@ -591,16 +1138,50 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["open_product_form", "list_shop_accounts"] },
-        "platform": { "type": "string", "enum": ["douyin_shop", "xiaohongshu_shop", "alibaba1688", "taobao", "pinduoduo"] },
-        "account_nickname": { "type": "string" },
-        "title": { "type": "string" },
-        "main_image_asset_ids": { "type": "array", "items": { "type": "string" } },
-        "detail_image_asset_ids": { "type": "array", "items": { "type": "string" } },
-        "price": { "type": "string" },
-        "category": { "type": "string" }
+        "action": {
+          "type": "string",
+          "enum": [
+            "open_product_form",
+            "list_shop_accounts"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "douyin_shop",
+            "xiaohongshu_shop",
+            "alibaba1688",
+            "taobao",
+            "pinduoduo"
+          ]
+        },
+        "account_nickname": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "main_image_asset_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "detail_image_asset_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "price": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        }
       }
-    }
+    },
+    "side_effect": "external"
   },
   "create.video.pipeline": {
     "description": "创意成片：规划分镜，调用 image.generate(openai/gpt-image-2) 生成首帧，再优先调用速推 Grok 图生视频；主通道故障时由服务器自动切换官方 xAI 直连。",
@@ -614,7 +1195,11 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"],
+          "enum": [
+            "run_pipeline",
+            "start_pipeline",
+            "poll_pipeline"
+          ],
           "default": "start_pipeline"
         },
         "job_id": {
@@ -643,7 +1228,11 @@
         },
         "duration": {
           "type": "integer",
-          "enum": [6, 10, 15],
+          "enum": [
+            6,
+            10,
+            15
+          ],
           "default": 10,
           "minimum": 6,
           "maximum": 15
@@ -660,7 +1249,10 @@
         },
         "resolution": {
           "type": "string",
-          "enum": ["720p", "1080p"],
+          "enum": [
+            "720p",
+            "1080p"
+          ],
           "default": "720p"
         },
         "planning_model": {
@@ -677,14 +1269,21 @@
         },
         "reference_asset_ids": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "reference_image_urls": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["prompt"]
-    }
+      "required": [
+        "prompt"
+      ]
+    },
+    "side_effect": "write"
   }
 }

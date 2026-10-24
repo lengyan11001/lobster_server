@@ -6,6 +6,7 @@ import io
 import json
 import hashlib
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -2491,3 +2492,95 @@ def update_mastra_plan(
     row.payload = payload
     db.commit()
     return {"ok": True, "plan": plan}
+
+# ── Capability telemetry（query → capability_id）──────────────────────────────
+
+class CapabilityEventBody(BaseModel):
+    capability_id: str = Field(..., min_length=1, max_length=120)
+    phase: str = Field("invoked", max_length=32)
+    parent_message_id: str = Field("", max_length=64)
+    error: str = Field("", max_length=2000)
+    extra: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _capability_events_path() -> Path:
+    root = Path(__file__).resolve().parents[3]
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "mastra_capability_events.jsonl"
+
+
+@router.post("/api/mastra-chat/capability-events", summary="记录能力检索/调用事件")
+def record_capability_event(
+    body: CapabilityEventBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    query = ""
+    if body.parent_message_id:
+        message = (
+            db.query(H5ChatMessage)
+            .filter(H5ChatMessage.id == body.parent_message_id, H5ChatMessage.user_id == owner.id)
+            .first()
+        )
+        if message is not None:
+            query = str(message.content or "")[:500]
+    payload = {
+        "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "user_id": int(owner.id),
+        "capability_id": body.capability_id.strip(),
+        "phase": body.phase.strip() or "invoked",
+        "query": query,
+        "error": body.error[:500],
+        "extra": body.extra,
+    }
+    try:
+        with _capability_events_path().open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("[capability-events] write failed: %s", exc)
+    return {"ok": True}
+
+@router.get("/api/mastra-chat/capability-events/summary", summary="能力调用统计（供检索优化）")
+def summarize_capability_events(
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    counts: Dict[str, Dict[str, Any]] = {}
+    path = _capability_events_path()
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            if int(row.get("user_id") or 0) != int(owner.id):
+                continue
+            try:
+                when = datetime.strptime(str(row.get("ts") or ""), "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                continue
+            if when < cutoff:
+                continue
+            key = f"{row.get('query', '')}\u0000{row.get('capability_id', '')}"
+            item = counts.setdefault(key, {
+                "query": row.get("query", ""),
+                "capability_id": row.get("capability_id", ""),
+                "invoked": 0,
+                "succeeded": 0,
+                "failed": 0,
+            })
+            phase = str(row.get("phase") or "")
+            if phase == "invoked":
+                item["invoked"] += 1
+            elif phase == "succeeded":
+                item["succeeded"] += 1
+            elif phase == "failed":
+                item["failed"] += 1
+    ranked = sorted(counts.values(), key=lambda item: item["invoked"], reverse=True)[:limit]
+    return {"ok": True, "days": days, "pairs": ranked}

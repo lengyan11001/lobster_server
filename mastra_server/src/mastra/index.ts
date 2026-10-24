@@ -515,6 +515,7 @@ const listSystemCapabilities = createTool({
         description: String(definition.description || definition.name || capabilityId).slice(0, 160),
         execution_target: String(definition.execution_target || 'server'),
         action: String(definition.action || ''),
+        side_effect: String(definition.side_effect || 'write'),
         order: order.has(capabilityId) ? (order.get(capabilityId) as number) : 9999,
       }))
       .sort((a, b) => a.order - b.order || a.capability_id.localeCompare(b.capability_id))
@@ -553,6 +554,7 @@ const getCapabilityDetails = createTool({
         description: String(definition.description || ''),
         execution_target: String(definition.execution_target || 'server'),
         action: String(definition.action || ''),
+        side_effect: String(definition.side_effect || 'write'),
         keywords: Array.isArray(definition.keywords) ? definition.keywords : [],
         arg_schema: definition.arg_schema || definition.inputSchema || definition.input_schema || {},
       }
@@ -1013,10 +1015,26 @@ const updateWorkflowPlan = createTool({
 })
 
 const mcpInternalBase = (process.env.LOBSTER_MCP_INTERNAL_BASE || 'http://127.0.0.1:8001').replace(/\/$/, '')
-const READ_ONLY_CAPABILITIES = new Set(['task.get_result', 'image.understand', 'video.understand', 'sutui.search_models'])
 
-function isReadOnlyCapability(capabilityId: string): boolean {
-  return capabilityId.startsWith('web.') || READ_ONLY_CAPABILITIES.has(capabilityId)
+function logCapabilityEvent(
+  context: RequestContext<LobsterContext> | undefined,
+  capabilityId: string,
+  phase: 'invoked' | 'succeeded' | 'failed',
+  error = '',
+): void {
+  try {
+    void backendJson('/api/mastra-chat/capability-events', {
+      method: 'POST',
+      body: JSON.stringify({
+        capability_id: capabilityId,
+        phase,
+        parent_message_id: contextValue(context, 'parentMessageId'),
+        error: String(error || '').slice(0, 500),
+      }),
+    }, context).catch(() => undefined)
+  } catch {
+    // telemetry must never block execution
+  }
 }
 
 // One stable meta-tool for every server-side capability. Capabilities are data
@@ -1037,7 +1055,12 @@ const invokeCapability = createTool({
     if (id.startsWith('online.')) {
       return { ok: false, error: 'online.* 能力请使用 dispatch_online_capability，不要用本工具' }
     }
-    if (!isReadOnlyCapability(id)) {
+    const catalog = await backendJson('/api/mastra-chat/capabilities', { method: 'GET' }, context).catch(() => null)
+    const definition = catalog && catalog.capabilities && typeof catalog.capabilities === 'object'
+      ? (catalog.capabilities as Record<string, Record<string, unknown>>)[id] || {}
+      : {}
+    const sideEffect = String(definition.side_effect || 'write').toLowerCase()
+    if (sideEffect !== 'read') {
       const blocked = await approvalForWrite(
         context,
         `执行服务器能力 ${id}`,
@@ -1048,22 +1071,30 @@ const invokeCapability = createTool({
     const token = contextValue(context, 'authorization')
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (token) headers.Authorization = token.startsWith('Bearer ') ? token : `Bearer ${token}`
-    const response = await fetch(`${mcpInternalBase}/internal/invoke`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        tool: 'invoke_capability',
-        arguments: { capability_id: id, payload: payload || {} },
-      }),
-    })
-    const data = await response.json().catch(() => ({})) as Record<string, unknown>
-    if (!response.ok) {
-      throw new Error(String(data?.error || `能力网关 HTTP ${response.status}`))
-    }
-    return {
-      ok: Boolean(data?.ok),
-      capability_id: id,
-      content: data?.content || [],
+    logCapabilityEvent(context, id, 'invoked')
+    try {
+      const response = await fetch(`${mcpInternalBase}/internal/invoke`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          tool: 'invoke_capability',
+          arguments: { capability_id: id, payload: payload || {} },
+        }),
+      })
+      const data = await response.json().catch(() => ({})) as Record<string, unknown>
+      if (!response.ok) {
+        throw new Error(String(data?.error || `能力网关 HTTP ${response.status}`))
+      }
+      logCapabilityEvent(context, id, data?.ok === false ? 'failed' : 'succeeded')
+      return {
+        ok: Boolean(data?.ok),
+        capability_id: id,
+        side_effect: sideEffect,
+        content: data?.content || [],
+      }
+    } catch (error) {
+      logCapabilityEvent(context, id, 'failed', error instanceof Error ? error.message : String(error))
+      throw error
     }
   },
   toModelOutput: readToolModelOutput,
@@ -1253,7 +1284,7 @@ const orchestrator = new Agent({
 
 执行规则：
 0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮用 list_system_capabilities 拿全量简要目录（它不会按关键词过滤，问法口语化或有错别字也直接按语义选 id），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有 schema 都加载进来。
-0.1 【统一执行入口】所有服务器能力都用同一个原生工具 invoke_capability（capability_id + payload），不要为单个能力新增原生工具。网址分析：单页 capability_id=web.page_analyze，官网/多级目录=web.site_crawl；这两个是只读能力，本工具不会要求确认，直接调用。online.* 能力用 dispatch_online_capability。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
+0.1 【统一执行入口】所有服务器能力都用同一个原生工具 invoke_capability（capability_id + payload），不要为单个能力新增原生工具。网址分析：单页 capability_id=web.page_analyze，官网/多级目录=web.site_crawl。能力是否需要确认由注册表里的 side_effect 决定：read 直接执行，write/external 会走确认；不要自己猜测。online.* 能力用 dispatch_online_capability。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
 0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
 2. 涉及微信、朋友圈、抖音、视频号、阿里询盘浏览器、桌面软件、个人账号登录态、本机文件或其他 GUI 自动化时，先用 list_system_capabilities 查找结构化 Online 能力；命中 execution_target=online 时必须按照 parameter_schema 的类型、必填项、默认值和范围调用 dispatch_online_capability，并逐项保留用户明确给出的参数。只有目录确实没有对应能力时才使用 dispatch_online_task，不要假装服务器已经操作电脑。

@@ -21,6 +21,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "image_studio_generate",
+        "side_effect": "write",
         "arg_schema": _schema(
             {
                 "prompt": {"type": "string", "description": "完整图片需求"},
@@ -40,6 +41,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "shanjian_digital_human_video",
+        "side_effect": "write",
         "arg_schema": _schema(
             {
                 "script": {"type": "string", "description": "口播文案"},
@@ -59,6 +61,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "local_bestseller_plan",
+        "side_effect": "write",
         "arg_schema": _schema({"days": {"type": "integer", "minimum": 1, "maximum": 30, "default": 30}}),
     },
     "online.local_bestseller_scene": {
@@ -68,6 +71,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "local_bestseller_scene_batch",
+        "side_effect": "write",
         "arg_schema": _schema(
             {
                 "days": {"type": "integer", "minimum": 1, "maximum": 30, "default": 30},
@@ -83,6 +87,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "local_bestseller_daily_video",
+        "side_effect": "write",
         "arg_schema": _schema(
             {
                 "days": {"type": "integer", "minimum": 1, "maximum": 30, "default": 30},
@@ -100,6 +105,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "native_wechat_poll",
+        "side_effect": "external",
         "arg_schema": _schema(
             {
                 "account_id": {"type": "string", "default": "pc-wechat-default"},
@@ -115,6 +121,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "native_whatsapp_poll",
+        "side_effect": "external",
         "arg_schema": _schema(
             {
                 "account_id": {"type": "string", "default": "desktop-whatsapp-default"},
@@ -132,6 +139,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "native_wechat_add_friend",
+        "side_effect": "external",
         "arg_schema": _schema(
             {
                 "targets": {"type": "array", "items": {"type": "string"}, "maxItems": 100},
@@ -150,6 +158,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "native_wechat_moments_engage",
+        "side_effect": "external",
         "arg_schema": _schema(
             {
                 "targets": {"type": "array", "items": {"type": "string"}, "maxItems": 100},
@@ -169,6 +178,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "native_wechat_send_message",
+        "side_effect": "external",
         "arg_schema": _schema(
             {
                 "targets": {
@@ -196,6 +206,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "ip_moments_generate_images",
+        "side_effect": "write",
         "arg_schema": _schema(
             {
                 "record_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
@@ -212,6 +223,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "publish_content",
+        "side_effect": "external",
         "arg_schema": _schema(
             {
                 "platform": {"type": "string"},
@@ -234,6 +246,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "browser_extract_page",
+        "side_effect": "read",
         "arg_schema": _schema(
             {
                 "url": {"type": "string", "description": "要打开的完整网址"},
