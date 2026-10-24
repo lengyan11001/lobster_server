@@ -497,9 +497,9 @@ function memoryMetadata(doc: Record<string, unknown>) {
 
 const listSystemCapabilities = createTool({
   id: 'list_system_capabilities',
-  description: '按关键词检索当前用户可用的系统能力。只返回精简目录，不执行任务；需要决定调用哪个技能时先使用。',
+  description: '返回当前用户可用的全部能力简要目录（id + 一句话描述 + 执行位置）。不是关键词过滤：即使问法有错别字或口语化，也请直接按语义从目录里选 capability_id。',
   inputSchema: z.object({
-    query: z.string().max(200).optional().describe('用户目标、平台或能力关键词，例如“朋友圈发布”“生成视频”“阿里询盘”'),
+    query: z.string().max(200).optional().describe('可选：用户目标，仅用于把更相关的排在前面，不会过滤目录'),
   }),
   execute: async ({ query }, executionContext) => {
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
@@ -507,32 +507,27 @@ const listSystemCapabilities = createTool({
     const catalog = data?.capabilities && typeof data.capabilities === 'object'
       ? data.capabilities as Record<string, Record<string, unknown>>
       : {}
-    const result = searchCapabilities(catalog, query || '')
+    const ranked = searchCapabilities(catalog, query || '', 500)
+    const order = new Map(ranked.capabilities.map((row, index) => [row.capability_id, index]))
+    const rows = Object.entries(catalog)
+      .map(([capabilityId, definition]) => ({
+        capability_id: capabilityId,
+        description: String(definition.description || definition.name || capabilityId).slice(0, 160),
+        execution_target: String(definition.execution_target || 'server'),
+        action: String(definition.action || ''),
+        order: order.has(capabilityId) ? (order.get(capabilityId) as number) : 9999,
+      }))
+      .sort((a, b) => a.order - b.order || a.capability_id.localeCompare(b.capability_id))
+      .slice(0, 200)
     const canExecute = contextValue(context, 'permissionMode') === 'full' || contextValue(context, 'approvalGranted')
     return {
       query: query || '',
-      matched_count: result.matched_count,
-      available_count: result.available_count,
-      capabilities: result.capabilities.map((row) => ({
-        capability_id: row.capability_id,
-        description: row.description,
-        execution_target: row.execution_target,
-        action: row.action,
-        keywords: row.keywords,
-        parameters: row.parameters,
-        required_parameters: row.required_parameters,
-      })),
+      total: rows.length,
+      capabilities: rows.map(({ order: _order, ...row }) => row),
       execution_hint: canExecute
-        ? '当前会话已授权；命中 execution_target=server 的能力时加载并调用实际 MCP 工具，命中 execution_target=online 时调用 dispatch_online_capability。'
-        : '当前会话是确认模式；用户明确要求执行命中的 server 生成/写入能力时，先调用 request_task_approval 生成确认卡，execution_target=server。不要说未检索到能力，也不要让用户口头再发“确认执行”。',
-      built_in: [
-        '读取、保存和从已上传素材整理个人记忆',
-        '读取和修改 IP 人设资料',
-        '读取并教授个人微信接管长期规则',
-        '检索内容素材、技能和云端能力',
-        '把依赖桌面、账号登录态或本机文件的任务下发到 Online',
-      ],
-      hint: result.matched_count ? '确认执行后只加载与目标最相关的工具。' : '没有匹配项时请换更具体的平台或动作关键词。',
+        ? '目录已全量返回（仅按相关性排序）。按语义选 capability_id；server 能力用 invoke_capability，online 能力用 dispatch_online_capability。'
+        : '目录已全量返回（仅按相关性排序）。按语义选 capability_id；只读能力直接执行，生成/写入能力会走确认。',
+      next: '计划确定后，只对用到的 capability_id 调用 get_capability_details 取完整参数 schema。',
     }
   },
   toModelOutput: readToolModelOutput,
@@ -1257,7 +1252,7 @@ const orchestrator = new Agent({
 你是必火 AI 员工的服务器调度大脑。你的职责是理解用户目标、读取其既有资料、选择现有技能，并给出真实执行结果。
 
 执行规则：
-0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮只用 list_system_capabilities 拿简要目录（id/描述/参数名），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有技能描述和 schema 都加载进来。
+0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮用 list_system_capabilities 拿全量简要目录（它不会按关键词过滤，问法口语化或有错别字也直接按语义选 id），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有 schema 都加载进来。
 0.1 【统一执行入口】所有服务器能力都用同一个原生工具 invoke_capability（capability_id + payload），不要为单个能力新增原生工具。网址分析：单页 capability_id=web.page_analyze，官网/多级目录=web.site_crawl；这两个是只读能力，本工具不会要求确认，直接调用。online.* 能力用 dispatch_online_capability。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
 0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
