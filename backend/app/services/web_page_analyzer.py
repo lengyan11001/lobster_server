@@ -363,7 +363,10 @@ def extract_facts(text: str, links: List[Dict[str, str]]) -> Dict[str, Any]:
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     dated = []
     for index, line in enumerate(lines):
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line) and index + 1 < len(lines):
+        inline = re.match(r"^(\d{4}-\d{2}-\d{2})\s+(.{3,160})$", line)
+        if inline:
+            dated.append({"date": inline.group(1), "title": inline.group(2).strip()})
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", line) and index + 1 < len(lines):
             dated.append({"date": line, "title": lines[index + 1][:160]})
         elif re.fullmatch(r"\d{4}年\d{1,2}月\d{1,2}日", line) and index + 1 < len(lines):
             dated.append({"date": line, "title": lines[index + 1][:160]})
