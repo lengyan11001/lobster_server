@@ -43,6 +43,7 @@ def _check_rate_limit(user_id: int, bucket: str) -> None:
 class AnalyzePageBody(BaseModel):
     url: str = Field(..., min_length=4, max_length=2048)
     max_chars: int = Field(MAX_PAGE_TEXT, ge=1000, le=MAX_PAGE_TEXT)
+    offset: int = Field(0, ge=0, le=200000)
     timeout_seconds: float = Field(DEFAULT_TIMEOUT, ge=3, le=60)
 
 
@@ -83,10 +84,24 @@ def _page_digest(data: Dict[str, Any]) -> str:
             start = max(0, index - 1)
             break
     excerpt = "\n".join(raw_lines[start:])[:3000]
+    facts = data.get("facts") if isinstance(data.get("facts"), dict) else {}
+    if facts.get("latest_version"):
+        lines.append(f"最新版本：Python {facts['latest_version']}")
+    dated = facts.get("dated_items") or []
+    if dated:
+        lines.append("关键日期：")
+        for item in dated[:5]:
+            lines.append(f"- {item.get('date', '')} {item.get('title', '')}")
+    nav = facts.get("nav") or []
+    if nav:
+        lines.append("主要栏目：" + " / ".join(str(item.get("text", "")) for item in nav[:10]))
     lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
     lines.append("")
     lines.append("正文节选：")
     lines.append(excerpt)
+    if data.get("next_offset"):
+        lines.append("")
+        lines.append(f"（正文还有更多，next_offset={data.get('next_offset')}；可再次调用同一能力并传 offset 继续读取）")
     if links:
         lines.append("")
         lines.append("主要链接：")
@@ -120,7 +135,7 @@ def _site_digest(data: Dict[str, Any]) -> str:
 def web_analyze_page(body: AnalyzePageBody, current_user: User = Depends(get_current_user)):
     _check_rate_limit(int(current_user.id), "analyze")
     try:
-        data = analyze_page(body.url, timeout=body.timeout_seconds, max_chars=body.max_chars)
+        data = analyze_page(body.url, timeout=body.timeout_seconds, max_chars=body.max_chars, text_offset=body.offset)
     except WebFetchError as exc:
         payload: Dict[str, Any] = {
             "ok": False,

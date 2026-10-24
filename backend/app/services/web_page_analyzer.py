@@ -350,10 +350,77 @@ def extract_page(html: str, base_url: str, *, max_chars: int = MAX_PAGE_TEXT) ->
     }
 
 
-def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int = MAX_PAGE_TEXT) -> Dict[str, Any]:
+def extract_facts(text: str, links: List[Dict[str, str]]) -> Dict[str, Any]:
+    raw = text or ""
+    latest = ""
+    match = re.search(r"Latest:\s*Python\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)", raw, re.I)
+    if match:
+        latest = match.group(1)
+    versions = []
+    for item in re.findall(r"Python\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)", raw):
+        if item not in versions:
+            versions.append(item)
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    dated = []
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line) and index + 1 < len(lines):
+            dated.append({"date": line, "title": lines[index + 1][:160]})
+        elif re.fullmatch(r"\d{4}年\d{1,2}月\d{1,2}日", line) and index + 1 < len(lines):
+            dated.append({"date": line, "title": lines[index + 1][:160]})
+        if len(dated) >= 8:
+            break
+    wanted = {"downloads", "documentation", "docs", "community", "news", "events", "jobs", "about",
+              "下载", "文档", "社区", "新闻", "活动", "招聘", "关于"}
+    nav = []
+    for link in links or []:
+        label = str(link.get("text") or "").strip()
+        if label.lower() in wanted and all(item["text"] != label for item in nav):
+            nav.append({"text": label, "url": link.get("url", "")})
+        if len(nav) >= 12:
+            break
+    return {"latest_version": latest, "versions": versions[:8], "dated_items": dated, "nav": nav}
+
+
+def split_sections(blocks: List[str], limit: int = 12) -> List[Dict[str, str]]:
+    sections: List[Dict[str, str]] = []
+    current = {"heading": "", "lines": []}
+    for index, block in enumerate(blocks):
+        stripped = block.strip()
+        if not stripped:
+            continue
+        nxt = blocks[index + 1].strip() if index + 1 < len(blocks) else ""
+        looks_heading = (
+            len(stripped) <= 60
+            and len(nxt) >= 60
+            and not stripped.endswith((".", "。", "!", "?", "？", ":", "："))
+        )
+        if looks_heading:
+            if current["lines"]:
+                sections.append({"heading": current["heading"], "text": " ".join(current["lines"])[:800]})
+            current = {"heading": stripped, "lines": []}
+        else:
+            current["lines"].append(stripped)
+        if len(sections) >= limit:
+            break
+    if current["lines"] and len(sections) < limit:
+        sections.append({"heading": current["heading"], "text": " ".join(current["lines"])[:800]})
+    return sections
+
+
+def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int = MAX_PAGE_TEXT, text_offset: int = 0) -> Dict[str, Any]:
     fetched = fetch_page(url, timeout=timeout)
-    extracted = extract_page(fetched["html"], fetched["final_url"], max_chars=max_chars)
-    content_hash = hashlib.sha256(extracted["text"].encode("utf-8", errors="ignore")).hexdigest()[:32]
+    extracted = extract_page(fetched["html"], fetched["final_url"], max_chars=MAX_PAGE_TEXT)
+    full_text = extracted["text"]
+    offset = max(0, min(int(text_offset or 0), len(full_text)))
+    limit = max(1000, min(int(max_chars or MAX_PAGE_TEXT), MAX_PAGE_TEXT))
+    sliced = full_text[offset:offset + limit]
+    extracted["text"] = sliced
+    extracted["full_text_length"] = len(full_text)
+    extracted["text_offset"] = offset
+    extracted["next_offset"] = (offset + len(sliced)) if offset + len(sliced) < len(full_text) else 0
+    extracted["facts"] = extract_facts(full_text, extracted.get("links") or [])
+    extracted["sections"] = split_sections([line for line in full_text.splitlines() if line.strip()])
+    content_hash = hashlib.sha256(full_text.encode("utf-8", errors="ignore")).hexdigest()[:32]
     site = urlparse(fetched["final_url"]).netloc
     return {
         "url": fetched["url"],
