@@ -1017,6 +1017,51 @@ const updateWorkflowPlan = createTool({
   toModelOutput: readToolModelOutput,
 })
 
+const analyzeWebPage = createTool({
+  id: 'analyze_web_page',
+  description: '抓取并解析一个网页：标题、正文、作者、发布时间、图片、链接、联系方式。服务器直接执行、只读，不需要用户确认，直接调用。',
+  inputSchema: z.object({
+    url: z.string().min(4).max(2048),
+    max_chars: z.number().int().min(1000).max(60000).optional(),
+  }),
+  execute: async ({ url, max_chars }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    return backendJson('/api/web/analyze', {
+      method: 'POST',
+      body: JSON.stringify({ url, ...(max_chars ? { max_chars } : {}) }),
+    }, context)
+  },
+  toModelOutput: readToolModelOutput,
+})
+
+const crawlSite = createTool({
+  id: 'crawl_site',
+  description: '多级抓取一个或多个官网（sitemap/导航/内链 BFS），返回逐页标题、正文、联系方式。服务器直接执行、只读，不需要用户确认，直接调用。',
+  inputSchema: z.object({
+    seed_urls: z.array(z.string()).min(1).max(5),
+    max_depth: z.number().int().min(0).max(4).optional(),
+    max_pages: z.number().int().min(1).max(100).optional(),
+    allow_subdomains: z.boolean().optional(),
+    exclude_patterns: z.array(z.string()).optional(),
+    time_budget_seconds: z.number().int().min(20).max(300).optional(),
+  }),
+  execute: async ({ seed_urls, max_depth, max_pages, allow_subdomains, exclude_patterns, time_budget_seconds }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    return backendJson('/api/web/site', {
+      method: 'POST',
+      body: JSON.stringify({
+        seed_urls,
+        ...(max_depth !== undefined ? { max_depth } : {}),
+        ...(max_pages !== undefined ? { max_pages } : {}),
+        ...(allow_subdomains !== undefined ? { allow_subdomains } : {}),
+        ...(exclude_patterns ? { exclude_patterns } : {}),
+        ...(time_budget_seconds !== undefined ? { time_budget_seconds } : {}),
+      }),
+    }, context)
+  },
+  toModelOutput: readToolModelOutput,
+})
+
 const dispatchOnlineCapability = createTool({
   id: 'dispatch_online_capability',
   description: '按 Online 已实现的结构化能力 ID 和参数下发任务。list_system_capabilities 返回 execution_target=online 时必须优先使用本工具。',
@@ -1201,7 +1246,7 @@ const orchestrator = new Agent({
 
 执行规则：
 0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮只用 list_system_capabilities 拿简要目录（id/描述/参数名），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有技能描述和 schema 都加载进来。
-0.1 【网址分析】服务器优先：单页用 analyze_web_page，官网/多级目录用 crawl_site。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
+0.1 【网址分析】服务器优先：单页用 analyze_web_page，官网/多级目录用 crawl_site。这两个是只读工具，直接调用，不要调用 request_task_approval、也不要用 list_system_capabilities 反复检索；工具名就是 analyze_web_page / crawl_site。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
 0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
 2. 涉及微信、朋友圈、抖音、视频号、阿里询盘浏览器、桌面软件、个人账号登录态、本机文件或其他 GUI 自动化时，先用 list_system_capabilities 查找结构化 Online 能力；命中 execution_target=online 时必须按照 parameter_schema 的类型、必填项、默认值和范围调用 dispatch_online_capability，并逐项保留用户明确给出的参数。只有目录确实没有对应能力时才使用 dispatch_online_task，不要假装服务器已经操作电脑。
@@ -1229,6 +1274,8 @@ const orchestrator = new Agent({
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   tools: {
     listSystemCapabilities,
+    analyzeWebPage,
+    crawlSite,
     getCapabilityDetails,
     getPlanningContext,
     createWorkflowPlan,

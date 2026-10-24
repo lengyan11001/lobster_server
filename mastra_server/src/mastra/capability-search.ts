@@ -26,6 +26,8 @@ const CAPABILITY_ALIASES: Record<string, string[]> = {
   'image.generate': ['图片', '生成图片', '出图', '作图', '做图', '画图', '海报', '封面', '配图', '照片', '商品图', '文生图', '图生图'],
   'video.generate': ['视频', '生成视频', '出视频', '短视频', '成片', '文生视频', '图生视频', '音乐视频'],
   'task.get_result': ['任务结果', '查询结果', '查看结果', '生成结果'],
+  'web.page_analyze': ['网页', '页面', '链接', '网址', '分析网页', '提取信息', '关键信息', 'url', 'website'],
+  'web.site_crawl': ['官网', '整站', '多级', '抓取网站', '网站分析', '公司官网', 'crawl'],
 }
 
 const COMMON_INTENT_HINTS = [
