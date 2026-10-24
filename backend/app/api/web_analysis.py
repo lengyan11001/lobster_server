@@ -78,8 +78,7 @@ def _page_digest(data: Dict[str, Any]) -> str:
         if len(line) >= 80:
             start = max(0, index - 2)
             break
-    excerpt = "
-".join(raw_lines[start:])[:3000]
+    excerpt = "\n".join(raw_lines[start:])[:3000]
     lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
     lines.append("")
     lines.append("正文节选：")
