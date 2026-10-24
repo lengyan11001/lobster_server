@@ -854,6 +854,137 @@ const dispatchOnlineTask = createTool({
   },
 })
 
+const getPlanningContext = createTool({
+  id: 'get_planning_context',
+  description: '规划前读取当前用户的 IP 人设（角色/产品/目标客户/优势）和模板记忆目录。只要用户提出多步目标或需要按他的业务定制方案，必须先调用本工具。',
+  inputSchema: z.object({ memory_query: z.string().max(200).optional() }),
+  execute: async ({ memory_query }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const [profileResp, docsResp] = await Promise.all([
+      backendJson('/api/mastra-chat/personal-profile', { method: 'GET' }, context).catch(() => null),
+      backendJson('/api/personal-settings/memory-documents/list?include_content=false', { method: 'GET' }, context).catch(() => null),
+    ])
+    const profile = profileResp && typeof profileResp === 'object' && profileResp.profile && typeof profileResp.profile === 'object'
+      ? profileResp.profile as Record<string, unknown>
+      : {}
+    const docs = docsResp && Array.isArray(docsResp.documents) ? docsResp.documents as Record<string, unknown>[] : []
+    const needle = String(memory_query || '').trim().toLowerCase()
+    const matched = docs.filter(doc => !needle || [doc.title, doc.filename, doc.notes]
+      .some(value => String(value || '').toLowerCase().includes(needle)))
+    return {
+      profile: {
+        name: profile.name || '',
+        role: profile.role || '',
+        product: profile.product || '',
+        target_customer: profile.target_customer || '',
+        advantages: profile.advantages || '',
+        share_topic: profile.share_topic || '',
+        video_style: profile.video_style || '',
+        current_city: profile.current_city || '',
+      },
+      memory_documents: matched.slice(0, 20).map(doc => ({
+        doc_id: String(doc.doc_id || ''),
+        title: String(doc.title || doc.filename || ''),
+        notes: String(doc.notes || '').slice(0, 200),
+      })),
+      memory_count: docs.length,
+      instruction: '规划时必须结合上面的身份和业务资料，方案要具体到用户是做什么的；需要记忆正文时调用 read_personal_memory_document。',
+    }
+  },
+  toModelOutput: readToolModelOutput,
+})
+
+const createWorkflowPlan = createTool({
+  id: 'create_workflow_plan',
+  description: '把多步目标整理成结构化计划并落库。步骤里的 capability_id 必须来自 list_system_capabilities 或 list_capabilities，不能编造；写操作步骤把 approval_required 设为 true。',
+  inputSchema: z.object({
+    goal: z.string().min(1).max(2000),
+    steps: z.array(z.object({
+      id: z.string().max(32).optional(),
+      title: z.string().min(1).max(200),
+      capability_id: z.string().max(120).default(''),
+      args: z.record(z.string(), z.any()).default({}),
+      depends_on: z.array(z.string()).default([]),
+      approval_required: z.boolean().default(false),
+    })).min(1).max(30),
+    assumptions: z.array(z.string()).default([]),
+    notes: z.string().max(2000).default(''),
+  }),
+  execute: async ({ goal, steps, assumptions, notes }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const catalog = await backendJson('/api/mastra-chat/capabilities', { method: 'GET' }, context).catch(() => null)
+    const capabilities = catalog && typeof catalog === 'object' && catalog.capabilities && typeof catalog.capabilities === 'object'
+      ? catalog.capabilities as Record<string, unknown>
+      : {}
+    const available = Object.keys(capabilities)
+    const unknown = Array.from(new Set(steps.map(step => String(step.capability_id || '').trim()).filter(Boolean)))
+      .filter(id => !available.includes(id))
+    if (unknown.length) {
+      return {
+        ok: false,
+        error: '计划里有目录中不存在的能力：' + unknown.join(', '),
+        available_sample: available.slice(0, 40),
+        hint: '请只用返回清单里的 capability_id 重新生成计划。',
+      }
+    }
+    const normalized = steps.map((step, index) => ({
+      id: step.id || ('s' + (index + 1)),
+      title: step.title,
+      capability_id: String(step.capability_id || '').trim(),
+      args: step.args || {},
+      depends_on: step.depends_on || [],
+      approval_required: !!step.approval_required,
+    }))
+    const parentMessageId = contextValue(context, 'parentMessageId')
+    if (!parentMessageId) return { ok: false, error: '缺少本轮消息上下文，无法保存计划' }
+    const result = await backendJson('/api/mastra-chat/plans', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_message_id: parentMessageId,
+        goal,
+        steps: normalized,
+        assumptions,
+        notes,
+      }),
+    }, context)
+    return {
+      ok: true,
+      plan_id: String(result?.plan_id || ''),
+      plan: result?.plan || {},
+      next: '先把计划完整展示给用户（步骤、每步能力、需要确认的写操作）；用户确认后按依赖顺序执行，每步完成后调用 update_workflow_plan 更新状态。',
+    }
+  },
+  toModelOutput: readToolModelOutput,
+})
+
+const updateWorkflowPlan = createTool({
+  id: 'update_workflow_plan',
+  description: '更新计划的整体状态或某一步的状态/结果/错误。执行每一步前后都要调用，保证进度可见。',
+  inputSchema: z.object({
+    plan_id: z.string().min(1).max(64),
+    status: z.string().max(32).optional(),
+    step_id: z.string().max(32).optional(),
+    step_status: z.string().max(32).optional(),
+    step_result: z.record(z.string(), z.any()).optional(),
+    step_error: z.string().max(2000).optional(),
+  }),
+  execute: async ({ plan_id, status, step_id, step_status, step_result, step_error }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const result = await backendJson('/api/mastra-chat/plans/' + encodeURIComponent(plan_id), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: status || null,
+        step_id: step_id || null,
+        step_status: step_status || null,
+        step_result: step_result || null,
+        step_error: step_error || null,
+      }),
+    }, context)
+    return { ok: true, plan: result?.plan || {} }
+  },
+  toModelOutput: readToolModelOutput,
+})
+
 const dispatchOnlineCapability = createTool({
   id: 'dispatch_online_capability',
   description: '按 Online 已实现的结构化能力 ID 和参数下发任务。list_system_capabilities 返回 execution_target=online 时必须优先使用本工具。',
@@ -1037,6 +1168,9 @@ const orchestrator = new Agent({
 你是必火 AI 员工的服务器调度大脑。你的职责是理解用户目标、读取其既有资料、选择现有技能，并给出真实执行结果。
 
 执行规则：
+0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。
+0.1 【网址分析】服务器优先：单页用 analyze_web_page，官网/多级目录用 crawl_site。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
+0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
 2. 涉及微信、朋友圈、抖音、视频号、阿里询盘浏览器、桌面软件、个人账号登录态、本机文件或其他 GUI 自动化时，先用 list_system_capabilities 查找结构化 Online 能力；命中 execution_target=online 时必须按照 parameter_schema 的类型、必填项、默认值和范围调用 dispatch_online_capability，并逐项保留用户明确给出的参数。只有目录确实没有对应能力时才使用 dispatch_online_task，不要假装服务器已经操作电脑。
 3. 下发后根据工具返回的 online 状态明确告诉用户：在线则正在处理；离线则需要启动 Online。不要编造完成结果。
@@ -1063,6 +1197,9 @@ const orchestrator = new Agent({
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   tools: {
     listSystemCapabilities,
+    getPlanningContext,
+    createWorkflowPlan,
+    updateWorkflowPlan,
     listPersonalMemoryDocuments,
     readPersonalMemoryDocument,
     readPersonalMemory,

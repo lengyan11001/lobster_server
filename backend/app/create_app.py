@@ -39,6 +39,7 @@ from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.douyin_platform_information_desk import router as douyin_platform_information_desk_router
 from .api.h5_chat import router as h5_chat_router
 from .api.mastra_chat import router as mastra_chat_router
+from .api.web_analysis import router as web_analysis_router
 from .api.h5_home import router as h5_home_router
 from .api.h5_workflows import router as h5_workflows_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
@@ -1848,6 +1849,7 @@ def create_app() -> FastAPI:
     app.include_router(douyin_platform_information_desk_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
     app.include_router(mastra_chat_router, prefix="")
+    app.include_router(web_analysis_router, prefix="")
     app.include_router(h5_home_router, prefix="")
     app.include_router(h5_workflows_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")

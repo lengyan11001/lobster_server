@@ -1,4 +1,102 @@
 {
+  "web.page_analyze": {
+    "description": "抓取并解析一个网页：标题、正文、作者、发布时间、图片、链接和联系方式。服务器直接完成，只读。",
+    "upstream": "builtin",
+    "upstream_tool": "web.analyze",
+    "backend_path": "/api/web/analyze",
+    "enabled": true,
+    "is_default": true,
+    "keywords": [
+      "网址",
+      "链接",
+      "网页",
+      "分析网页",
+      "提取信息",
+      "url",
+      "website"
+    ],
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "完整 http/https 网址"
+        },
+        "max_chars": {
+          "type": "integer",
+          "default": 60000,
+          "description": "正文最大字符数"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  "web.site_crawl": {
+    "description": "多级抓取官网：从种子页按 sitemap/导航/内链 BFS，支持深度、页面预算、同域限制和 robots，返回逐页正文与全站联系方式。服务器直接完成，只读。",
+    "upstream": "builtin",
+    "upstream_tool": "web.crawl",
+    "backend_path": "/api/web/site",
+    "enabled": true,
+    "is_default": true,
+    "keywords": [
+      "官网",
+      "整站",
+      "多级",
+      "抓取网站",
+      "公司官网",
+      "网站分析",
+      "crawl"
+    ],
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "seed_urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5
+        },
+        "max_depth": {
+          "type": "integer",
+          "default": 2
+        },
+        "max_pages": {
+          "type": "integer",
+          "default": 25
+        },
+        "max_pages_per_site": {
+          "type": "integer",
+          "default": 25
+        },
+        "allow_subdomains": {
+          "type": "boolean",
+          "default": true
+        },
+        "allow_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "time_budget_seconds": {
+          "type": "integer",
+          "default": 180
+        }
+      },
+      "required": [
+        "seed_urls"
+      ]
+    }
+  },
   "image.generate": {
     "description": "生成图片（文生图/图生图）。速推统一 generate 入口，返回 task_id 后用 task.get_result 取结果。",
     "upstream": "sutui",

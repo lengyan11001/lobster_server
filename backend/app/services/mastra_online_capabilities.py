@@ -227,6 +227,23 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
             ["platform"],
         ),
     },
+    "online.browser_extract_page": {
+        "name": "设备浏览器抓取网页",
+        "description": "在用户已登录的 Online 设备上用浏览器打开网址，等待渲染后提取标题、正文、链接和联系方式。用于服务器抓取失败、需要登录或依赖 JS 渲染的页面。",
+        "keywords": ["浏览器", "网页", "网址", "登录后抓取", "渲染", "官网"],
+        "execution_target": "online",
+        "task_kind": "client_workflow",
+        "action": "browser_extract_page",
+        "arg_schema": _schema(
+            {
+                "url": {"type": "string", "description": "要打开的完整网址"},
+                "wait_ms": {"type": "integer", "minimum": 0, "maximum": 30000, "default": 3000},
+                "scroll_rounds": {"type": "integer", "minimum": 0, "maximum": 10, "default": 2},
+                "max_chars": {"type": "integer", "minimum": 1000, "maximum": 60000, "default": 30000},
+            },
+            ["url"],
+        ),
+    },
 }
 
 

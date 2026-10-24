@@ -1,5 +1,43 @@
 {
   "packages": {
+    "web_research_skill": {
+      "name": "网站抓取",
+      "description": "给一个网址或公司官网，服务器直接抓取正文和关键信息；支持多级目录整站抓取。需要登录或依赖浏览器渲染时，自动下发给已登录设备用浏览器打开。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {
+        "web.page_analyze": {
+          "name": "网页分析",
+          "upstream": "builtin",
+          "execution_target": "server",
+          "enabled": true,
+          "is_default": true
+        },
+        "web.site_crawl": {
+          "name": "官网多级抓取",
+          "upstream": "builtin",
+          "execution_target": "server",
+          "enabled": true,
+          "is_default": true
+        },
+        "online.browser_extract_page": {
+          "name": "设备浏览器抓取",
+          "action": "browser_extract_page",
+          "execution_target": "online",
+          "task_kind": "client_workflow"
+        }
+      },
+      "tags": [
+        "网址",
+        "网页",
+        "官网",
+        "抓取",
+        "提取信息",
+        "整站"
+      ]
+    },
     "multi_clip_mixer_skill": {
       "name": "多段视频混剪",
       "description": "上传多个视频，逐个选择使用片段并按顺序拼接；可选同城爆款音乐和剪辑模板。",

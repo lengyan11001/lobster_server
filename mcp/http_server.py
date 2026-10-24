@@ -572,6 +572,46 @@ def _tool_definitions(
             },
         },
         {
+            "name": "analyze_web_page",
+            "description": (
+                "抓取并解析一个网页（标题、正文、作者、时间、图片、链接、联系方式）。"
+                "服务器直接完成，不需要设备。若返回 fallback=online，说明页面需要登录或依赖浏览器渲染，"
+                "此时改用 dispatch_online_capability 调 online.browser_extract_page 下发给设备。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "完整 http/https 网址"},
+                    "max_chars": {"type": "integer", "default": 60000, "description": "正文最大字符数"},
+                },
+                "required": ["url"],
+            },
+        },
+        {
+            "name": "crawl_site",
+            "description": (
+                "多级抓取一个或多个官网：从种子页按 sitemap/导航/内链做 BFS，支持 2-4 层深度、"
+                "同域/子域限制、robots、页面预算，返回每页标题正文+全站联系方式。"
+                "服务器直接完成；返回 fallback=online 时可下发给设备浏览器。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "seed_urls": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+                    "max_depth": {"type": "integer", "default": 2},
+                    "max_pages": {"type": "integer", "default": 25},
+                    "max_pages_per_site": {"type": "integer", "default": 25},
+                    "allow_subdomains": {"type": "boolean", "default": True},
+                    "allow_domains": {"type": "array", "items": {"type": "string"}},
+                    "include_patterns": {"type": "array", "items": {"type": "string"}},
+                    "exclude_patterns": {"type": "array", "items": {"type": "string"}},
+                    "time_budget_seconds": {"type": "integer", "default": 180},
+                    "per_host_delay_ms": {"type": "integer", "default": 500},
+                },
+                "required": ["seed_urls"],
+            },
+        },
+        {
             "name": "save_asset",
             "description": "保存素材到本地,返回asset_id",
             "inputSchema": {
@@ -4528,6 +4568,23 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if allowed is not None and capability_id not in allowed:
                 return [{"type": "text", "text": f"当前账号未开通此能力: {capability_id}"}], True
             cfg = catalog[capability_id]
+            if str(cfg.get("upstream") or "").strip() == "builtin":
+                backend_path = str(cfg.get("backend_path") or "").strip()
+                if not backend_path:
+                    return [{"type": "text", "text": f"能力缺少 backend_path: {capability_id}"}], True
+                try:
+                    async with httpx.AsyncClient(timeout=320.0) as client:
+                        response = await client.post(
+                            f"{BASE_URL}{backend_path}",
+                            json=payload,
+                            headers=_backend_headers(token, request),
+                        )
+                    data = response.json() if response.content else {}
+                except Exception as exc:
+                    return [{"type": "text", "text": f"内置能力调用失败：{exc}"}], True
+                text_out = json.dumps(data, ensure_ascii=False, indent=2)
+                failed = response.status_code >= 400 or not (isinstance(data, dict) and data.get("ok", True))
+                return [{"type": "text", "text": text_out}], failed
             if capability_id == "hifly.video.create_by_tts":
                 return await _invoke_hifly_video_create_by_tts(
                     payload,
@@ -5563,6 +5620,58 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
 
             text = _json_dumps_mcp_payload(data)
             return [{"type": "text", "text": text}], bool(upstream_error)
+
+        if name == "analyze_web_page":
+            url = str(args.get("url") or "").strip()
+            if not url:
+                return [{"type": "text", "text": "缺少 url 参数"}], True
+            body = {"url": url}
+            if args.get("max_chars"):
+                body["max_chars"] = int(args["max_chars"])
+            async with httpx.AsyncClient(timeout=75.0) as client:
+                r = await client.post(
+                    f"{BASE_URL}/api/web/analyze",
+                    json=body,
+                    headers=_backend_headers(token, request),
+                )
+            try:
+                data = r.json()
+            except Exception:
+                data = {"ok": False, "error": r.text[:500]}
+            text_out = json.dumps(data, ensure_ascii=False, indent=2)
+            return [{"type": "text", "text": text_out}], (r.status_code >= 400) or not data.get("ok", False)
+
+        if name == "crawl_site":
+            seeds = args.get("seed_urls")
+            if isinstance(seeds, str):
+                seeds = [seeds]
+            seeds = [str(item).strip() for item in (seeds or []) if str(item).strip()]
+            if not seeds:
+                return [{"type": "text", "text": "缺少 seed_urls 参数"}], True
+            body = {
+                "seed_urls": seeds[:5],
+                "max_depth": int(args.get("max_depth") or 2),
+                "max_pages": int(args.get("max_pages") or 25),
+                "max_pages_per_site": int(args.get("max_pages_per_site") or args.get("max_pages") or 25),
+                "allow_subdomains": bool(args.get("allow_subdomains", True)),
+                "allow_domains": args.get("allow_domains") or [],
+                "include_patterns": args.get("include_patterns") or [],
+                "exclude_patterns": args.get("exclude_patterns") or [],
+                "time_budget_seconds": int(args.get("time_budget_seconds") or 180),
+                "per_host_delay_ms": int(args.get("per_host_delay_ms") or 500),
+            }
+            async with httpx.AsyncClient(timeout=320.0) as client:
+                r = await client.post(
+                    f"{BASE_URL}/api/web/site",
+                    json=body,
+                    headers=_backend_headers(token, request),
+                )
+            try:
+                data = r.json()
+            except Exception:
+                data = {"ok": False, "error": r.text[:500]}
+            text_out = json.dumps(data, ensure_ascii=False, indent=2)
+            return [{"type": "text", "text": text_out}], (r.status_code >= 400) or not data.get("ok", False)
 
         if name == "save_asset":
             url = str(args.get("url") or "").strip()

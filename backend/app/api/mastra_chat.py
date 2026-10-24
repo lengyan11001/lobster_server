@@ -2356,3 +2356,138 @@ def get_mastra_diagnostics(
         ],
         "suggestions": suggestions,
     }
+
+
+# ── Workflow plans（AI 规划 → 分步执行）──────────────────────────────────────
+
+class PlanStepBody(BaseModel):
+    id: str = Field(..., min_length=1, max_length=32)
+    title: str = Field(..., min_length=1, max_length=200)
+    capability_id: str = Field("", max_length=120)
+    args: Dict[str, Any] = Field(default_factory=dict)
+    depends_on: List[str] = Field(default_factory=list)
+    approval_required: bool = False
+
+
+class PlanCreateBody(BaseModel):
+    parent_message_id: str = Field(..., min_length=1, max_length=64)
+    goal: str = Field(..., min_length=1, max_length=2000)
+    steps: List[PlanStepBody] = Field(..., min_length=1, max_length=30)
+    assumptions: List[str] = Field(default_factory=list)
+    notes: str = Field("", max_length=2000)
+
+
+class PlanUpdateBody(BaseModel):
+    status: Optional[str] = Field(None, max_length=32)
+    step_id: Optional[str] = Field(None, max_length=32)
+    step_status: Optional[str] = Field(None, max_length=32)
+    step_result: Optional[Dict[str, Any]] = None
+    step_error: Optional[str] = Field(None, max_length=2000)
+
+
+def _load_plan_event(db: Session, user_id: int, plan_id: str) -> Optional[H5ChatEvent]:
+    rows = (
+        db.query(H5ChatEvent)
+        .filter(H5ChatEvent.user_id == user_id, H5ChatEvent.event_type == "plan")
+        .order_by(H5ChatEvent.id.desc())
+        .limit(200)
+        .all()
+    )
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
+        if str(plan.get("plan_id") or "") == plan_id:
+            return row
+    return None
+
+@router.post("/api/mastra-chat/plans", summary="创建 AI 工作流计划")
+def create_mastra_plan(
+    body: PlanCreateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    message = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.id == body.parent_message_id, H5ChatMessage.user_id == owner.id)
+        .first()
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="调度消息不存在")
+    plan_id = uuid.uuid4().hex
+    now_text = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    plan = {
+        "plan_id": plan_id,
+        "goal": body.goal,
+        "status": "draft",
+        "assumptions": body.assumptions,
+        "notes": body.notes,
+        "created_at": now_text,
+        "updated_at": now_text,
+        "steps": [
+            {
+                "id": step.id,
+                "title": step.title,
+                "capability_id": step.capability_id,
+                "args": step.args,
+                "depends_on": step.depends_on,
+                "approval_required": step.approval_required,
+                "status": "pending",
+                "result": {},
+                "error": "",
+            }
+            for step in body.steps
+        ],
+    }
+    _add_event(db, message, "plan", {"plan": plan})
+    db.commit()
+    return {"ok": True, "plan_id": plan_id, "plan": plan}
+
+
+@router.get("/api/mastra-chat/plans/{plan_id}", summary="读取 AI 工作流计划")
+def get_mastra_plan(
+    plan_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _load_plan_event(db, owner.id, plan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="计划不存在")
+    return {"ok": True, "plan": (row.payload or {}).get("plan", {})}
+
+@router.patch("/api/mastra-chat/plans/{plan_id}", summary="更新 AI 工作流计划/步骤状态")
+def update_mastra_plan(
+    plan_id: str,
+    body: PlanUpdateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _load_plan_event(db, owner.id, plan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="计划不存在")
+    payload = dict(row.payload or {})
+    plan = dict(payload.get("plan") or {})
+    steps = [dict(step) for step in (plan.get("steps") or []) if isinstance(step, dict)]
+    if body.status:
+        plan["status"] = body.status[:32]
+    if body.step_id:
+        for step in steps:
+            if str(step.get("id") or "") != body.step_id:
+                continue
+            if body.step_status:
+                step["status"] = body.step_status[:32]
+            if body.step_result is not None:
+                step["result"] = body.step_result
+            if body.step_error is not None:
+                step["error"] = body.step_error[:2000]
+            break
+        else:
+            raise HTTPException(status_code=404, detail="步骤不存在")
+    plan["steps"] = steps
+    plan["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    payload["plan"] = plan
+    row.payload = payload
+    db.commit()
+    return {"ok": True, "plan": plan}
