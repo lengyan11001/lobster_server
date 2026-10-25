@@ -1852,6 +1852,25 @@ def _build_realman_clip_payload(*, title: str, template_meta: Dict[str, Any], vi
     return payload
 
 
+async def _post_with_queue(path: str, token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """闪剪并发满了就排队等，不许直接失败：任务保持执行中，等到空位再提交。"""
+    import asyncio
+
+    waited = 0.0
+    while True:
+        try:
+            return await _post(path, token, payload)
+        except HTTPException as exc:
+            detail = str(getattr(exc, "detail", "") or "")
+            if "Concurrency.Limit" not in detail or waited >= _SHANJIAN_CONCURRENCY_MAX_WAIT_SECONDS:
+                raise
+            await asyncio.sleep(_SHANJIAN_CONCURRENCY_RETRY_SECONDS)
+            waited += _SHANJIAN_CONCURRENCY_RETRY_SECONDS
+            logger.info(
+                "[shanjian-dh] 并发已满排队等待 path=%s waited=%.0fs", path, waited
+            )
+
+
 async def _submit_realman_clip_task(
     *,
     body: VideoTaskBody,
@@ -1895,7 +1914,7 @@ async def _submit_realman_clip_task(
         str(clip_payload)[:2000],
     )
     _release_db_transaction(db)
-    clip_upstream = await _post("/v1/clip/video/realman_broadcast", body.token, clip_payload)
+    clip_upstream = await _post_with_queue("/v1/clip/video/realman_broadcast", body.token, clip_payload)
     clip_data = _data(clip_upstream)
     clip_task_id = _clean_text(clip_data.get("taskId"))
     if not clip_task_id:
