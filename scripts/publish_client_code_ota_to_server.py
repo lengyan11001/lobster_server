@@ -268,9 +268,9 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     head = [p for p in expanded if p not in version_paths]
     tail = [p for p in expanded if p in version_paths]
     result = _expand_bare_root_paths(head, names)
-    for asset in _static_root_brand_assets(names):
-        if asset not in result:
-            result.append(asset)
+    # 不把 static 根目录的品牌图写进 manifest：这些图是每台机器自己的 OEM 资源，
+    # 由 OEM 切换器维护。写进清单就会被更新器覆盖成默认必火图（2026-09-20 build 341，
+    # 2026-10-25 再次发生）。
     return result + tail
 
 
