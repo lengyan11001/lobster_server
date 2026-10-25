@@ -259,6 +259,12 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
                     "maxItems": 5,
                     "description": "需要自己点开的导航/入口文案，例如 联系我们、产品中心、价格",
                 },
+                "assist": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "需要登录或 18+ 确认时传 true：拉起可见浏览器，让用户手动完成后自动继续提取",
+                },
+                "assist_timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "default": 180},
             },
             ["url"],
         ),
