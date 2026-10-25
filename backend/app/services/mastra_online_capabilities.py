@@ -253,6 +253,12 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
                 "wait_ms": {"type": "integer", "minimum": 0, "maximum": 30000, "default": 3000},
                 "scroll_rounds": {"type": "integer", "minimum": 0, "maximum": 10, "default": 2},
                 "max_chars": {"type": "integer", "minimum": 1000, "maximum": 60000, "default": 30000},
+                "click_texts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 5,
+                    "description": "需要自己点开的导航/入口文案，例如 联系我们、产品中心、价格",
+                },
             },
             ["url"],
         ),

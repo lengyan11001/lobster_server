@@ -1339,6 +1339,7 @@ const orchestrator = new Agent({
 | 核心功能 | 分镜、角色一致性、运镜、工作流/API |
 缺失：首页未公开套餐价格与模型清单。
 下一步：1) 登录后抓 API Access；2) 抓 /#wWorkflow；3) 发我套餐截图。
+25. 【自己点，不要让用户点】页面里出现“联系我们 / 产品中心 / 价格 / 关于我们 / API Access”等入口时，自己继续：网页能力用 browser_extract_page 的 click_texts 点开，或把导航链接传给 crawl_site 抓子页；禁止回复“请点击联系人/请把页面发我”作为唯一方案。
 24. 【失败也要有结论】工具失败或空结果时：结论=没拿到什么、仍能确认什么；已知=已确认事实；缺失=具体字段；下一步=最多 3 条。不要只写“抓取失败/被截断/无法分析”。
   `.trim(),
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),

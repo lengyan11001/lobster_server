@@ -94,7 +94,9 @@ def _page_digest(data: Dict[str, Any]) -> str:
             lines.append(f"- {item.get('date', '')} {item.get('title', '')}")
     nav = facts.get("nav") or []
     if nav:
-        lines.append("主要栏目：" + " / ".join(str(item.get("text", "")) for item in nav[:10]))
+        lines.append("主要栏目：")
+        for item in nav[:10]:
+            lines.append(f"- {item.get('text', '')} {item.get('url', '')}")
     lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
     lines.append("")
     lines.append("正文节选：")
