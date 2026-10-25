@@ -79,6 +79,23 @@ def _page_digest(data: Dict[str, Any]) -> str:
     ]
     if description:
         lines.append(f"描述：{description}")
+    contacts = data.get("contacts") if isinstance(data.get("contacts"), dict) else {}
+    emails = [str(item) for item in (contacts.get("emails") or [])]
+    phones = [str(item) for item in (contacts.get("phones") or [])]
+    if emails or phones:
+        # 通用规则：联系方式放在摘要最前面，长文被截断时也不会丢。
+        def _email_rank(value: str) -> int:
+            low = value.lower()
+            for index, key in enumerate(ROLE_MAILBOXES):
+                if low.startswith(key):
+                    return index
+            return len(ROLE_MAILBOXES)
+
+        lines.append("联系方式：")
+        for item in sorted(emails, key=_email_rank)[:8]:
+            lines.append(f"- 邮箱：{item}")
+        for item in phones[:6]:
+            lines.append(f"- 电话：{item}")
     raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
     start = 0
     for index, line in enumerate(raw_lines):
@@ -89,7 +106,7 @@ def _page_digest(data: Dict[str, Any]) -> str:
         if len(line) >= 60:
             start = max(0, index - 1)
             break
-    excerpt = "\n".join(raw_lines[start:])[:3000]
+    excerpt = "\n".join(raw_lines[start:])[:6000]
     facts = data.get("facts") if isinstance(data.get("facts"), dict) else {}
     if facts.get("latest_version"):
         lines.append(f"最新版本：{facts['latest_version']}")
@@ -103,23 +120,6 @@ def _page_digest(data: Dict[str, Any]) -> str:
         lines.append("主要栏目：")
         for item in nav[:10]:
             lines.append(f"- {item.get('text', '')} {item.get('url', '')}")
-    contacts = data.get("contacts") if isinstance(data.get("contacts"), dict) else {}
-    def _email_rank(value: str) -> int:
-        # 通用规则：按“职能邮箱”排序（销售/咨询/客服优先），不针对任何具体站点。
-        low = value.lower()
-        for index, key in enumerate(ROLE_MAILBOXES):
-            if low.startswith(key):
-                return index
-        return len(ROLE_MAILBOXES)
-
-    emails = sorted([str(item) for item in (contacts.get("emails") or [])], key=_email_rank)[:6]
-    phones = [str(item) for item in (contacts.get("phones") or [])][:6]
-    if emails or phones:
-        lines.append("联系方式：")
-        for item in emails:
-            lines.append(f"- 邮箱：{item}")
-        for item in phones:
-            lines.append(f"- 电话：{item}")
     if data.get("needs_browser"):
         lines.append("提示：正文提取过少，页面可能由前端脚本渲染；建议改用设备浏览器 browser_extract_page 再抓一次（用户要联系方式时同时传 click_texts）。")
     lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
@@ -132,7 +132,7 @@ def _page_digest(data: Dict[str, Any]) -> str:
     if links:
         lines.append("")
         lines.append("主要链接：")
-        for link in links[:12]:
+        for link in links[:20]:
             label = str(link.get("text") or "").strip() or str(link.get("url") or "")
             lines.append(f"- {label[:60]} {link.get('url', '')}")
     return "\n".join(lines)

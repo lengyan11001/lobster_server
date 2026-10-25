@@ -5643,7 +5643,19 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 data = r.json()
             except Exception:
                 data = {"ok": False, "error": r.text[:500]}
-            text_out = json.dumps(data, ensure_ascii=False, indent=2)
+            digest = str((data or {}).get("digest") or "")
+            if digest:
+                meta = []
+                page = data.get("data") if isinstance(data.get("data"), dict) else data
+                if page.get("next_offset"):
+                    meta.append(f"next_offset={page.get('next_offset')}（可再次调用并传 offset 继续读）")
+                if page.get("word_count"):
+                    meta.append(f"word_count={page.get('word_count')}")
+                if page.get("needs_browser"):
+                    meta.append("needs_browser=true（正文过少，建议改用设备浏览器）")
+                text_out = digest + ("\n\n[meta] " + "；".join(meta) if meta else "")
+            else:
+                text_out = json.dumps(data, ensure_ascii=False, indent=2)
             return [{"type": "text", "text": text_out}], (r.status_code >= 400) or not data.get("ok", False)
 
         if name == "crawl_site":
@@ -5675,7 +5687,8 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 data = r.json()
             except Exception:
                 data = {"ok": False, "error": r.text[:500]}
-            text_out = json.dumps(data, ensure_ascii=False, indent=2)
+            digest = str((data or {}).get("digest") or "")
+            text_out = digest if digest else json.dumps(data, ensure_ascii=False, indent=2)
             return [{"type": "text", "text": text_out}], (r.status_code >= 400) or not data.get("ok", False)
 
         if name == "save_asset":

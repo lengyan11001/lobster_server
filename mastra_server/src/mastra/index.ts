@@ -78,8 +78,9 @@ function compactEvidence(value: unknown, limit = 1200): string {
   } catch {
     text = String(value ?? '')
   }
-  text = String(text || '').replace(/\s+/g, ' ').trim()
-  return text.length > limit ? `${text.slice(0, limit)}…（已截断）` : text
+  // 保留换行和列表结构：网页摘要、表格类结果被压成一行后很难读，也容易看漏后面的联系方式。
+  text = String(text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  return text.length > limit ? `${text.slice(0, limit)}\n…（已截断，可用 offset 继续读）` : text
 }
 
 // 判断「这段回复算不算给了用户答复」：空、占位句、工具残留、只承诺不做事 → 都不算
@@ -95,7 +96,7 @@ function looksLikeUnfinishedReply(value: unknown): boolean {
 
 // 读取类工具的「模型可见输出」：ToolCallFilter 会移除原始结果，只保留这份紧凑文本，
 // 这样读到过的资料不会在几步之后凭空消失（长任务失忆的直接原因）。
-const readToolModelOutput = (output: unknown) => compactEvidence(output, 2000)
+const readToolModelOutput = (output: unknown) => compactEvidence(output, 6000)
 
 type MediaTaskSnapshot = {
   capability_id: string
@@ -1133,7 +1134,7 @@ const invokeCapability = createTool({
   },
   toModelOutput: (output) => {
     const digest = String((output as Record<string, unknown>)?.digest || '')
-    return digest ? digest.slice(0, 5000) : readToolModelOutput(output)
+    return digest ? digest.slice(0, 20000) : readToolModelOutput(output)
   },
 })
 
@@ -1322,6 +1323,7 @@ const orchestrator = new Agent({
 执行规则：
 0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮用 list_system_capabilities 拿全量简要目录（它不会按关键词过滤，问法口语化或有错别字也直接按语义选 id），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有 schema 都加载进来。
 0.1 【统一执行入口】所有服务器能力都用同一个原生工具 invoke_capability（capability_id + payload），不要为单个能力新增原生工具。网址分析：单页 capability_id=web.page_analyze，官网/多级目录=web.site_crawl。能力是否需要确认由注册表里的 side_effect 决定：read 直接执行，write/external 会走确认；不要自己猜测。online.* 能力用 dispatch_online_capability。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
+0.1.1 【网页信息宁全勿缺】网页分析统一走 invoke_capability：单页用 web.page_analyze、多页/整站用 web.site_crawl，不要调用其它同名的网页工具（例如 analyze_web_page），否则结果会被截断。工具返回的是 digest 文本，按原样读；返回 next_offset 时继续用同一个 url 加 offset 再读，直到信息够了为止。摘要开头就是结论和联系方式，不要只读前几句就下结论。
 0.3 【结果呈现】如果工具结果里有 next_offset，说明正文还有更多：用同一个 url 加 offset=next_offset 再调用一次（最多 3 次），信息够了再总结，不要因为只拿到节选就说“被截断”或要求用户提供原文。工具返回的是资料，不是给用户的答案。禁止原样粘贴 JSON、工具输出或整段网页原文；必须用中文要点总结（3-10 条）。如果只拿到节选，就基于节选回答能确认的部分，并注明“基于页面节选”，不要因此拒答或反过来要求用户提供原文。
 0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
