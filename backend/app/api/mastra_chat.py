@@ -2376,6 +2376,8 @@ class PlanCreateBody(BaseModel):
     steps: List[PlanStepBody] = Field(..., min_length=1, max_length=30)
     assumptions: List[str] = Field(default_factory=list)
     notes: str = Field("", max_length=2000)
+    existing_assets: List[Dict[str, Any]] = Field(default_factory=list)
+    capability_gaps: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class PlanUpdateBody(BaseModel):
@@ -2423,6 +2425,8 @@ def create_mastra_plan(
         "status": "draft",
         "assumptions": body.assumptions,
         "notes": body.notes,
+        "existing_assets": body.existing_assets[:50],
+        "capability_gaps": body.capability_gaps[:30],
         "created_at": now_text,
         "updated_at": now_text,
         "steps": [

@@ -889,9 +889,10 @@ const getPlanningContext = createTool({
   inputSchema: z.object({ memory_query: z.string().max(200).optional() }),
   execute: async ({ memory_query }, executionContext) => {
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
-    const [profileResp, docsResp] = await Promise.all([
+    const [profileResp, docsResp, assetsResp] = await Promise.all([
       backendJson('/api/mastra-chat/personal-profile', { method: 'GET' }, context).catch(() => null),
       backendJson('/api/personal-settings/memory-documents/list?include_content=false', { method: 'GET' }, context).catch(() => null),
+      backendJson('/api/assets?limit=8&offset=0', { method: 'GET' }, context).catch(() => null),
     ])
     const profile = profileResp && typeof profileResp === 'object' && profileResp.profile && typeof profileResp.profile === 'object'
       ? profileResp.profile as Record<string, unknown>
@@ -900,6 +901,10 @@ const getPlanningContext = createTool({
     const needle = String(memory_query || '').trim().toLowerCase()
     const matched = docs.filter(doc => !needle || [doc.title, doc.filename, doc.notes]
       .some(value => String(value || '').toLowerCase().includes(needle)))
+    const assetRows = assetsResp && Array.isArray((assetsResp as Record<string, unknown>).assets)
+      ? (assetsResp as Record<string, unknown>).assets as Record<string, unknown>[]
+      : []
+    const assetTotal = Number((assetsResp as Record<string, unknown> | null)?.total || assetRows.length) || 0
     return {
       profile: {
         name: profile.name || '',
@@ -917,7 +922,14 @@ const getPlanningContext = createTool({
         notes: String(doc.notes || '').slice(0, 200),
       })),
       memory_count: docs.length,
-      instruction: '规划时必须结合上面的身份和业务资料，方案要具体到用户是做什么的；需要记忆正文时调用 read_personal_memory_document。',
+      existing_assets: assetRows.slice(0, 8).map(row => ({
+        asset_id: String(row.asset_id || ''),
+        name: String(row.filename || row.title || ''),
+        media_type: String(row.media_type || ''),
+        created_at: String(row.created_at || '').slice(0, 10),
+      })),
+      asset_total: assetTotal,
+      instruction: '规划时必须结合上面的身份、模板记忆和素材库：方案要具体到用户是做什么的；已有素材要在计划里写明文件名和这次怎么用；需要记忆正文时调用 read_personal_memory_document。',
     }
   },
   toModelOutput: readToolModelOutput,
@@ -938,8 +950,20 @@ const createWorkflowPlan = createTool({
     })).min(1).max(30),
     assumptions: z.array(z.string()).default([]),
     notes: z.string().max(2000).default(''),
+    existing_assets: z.array(z.object({
+      kind: z.string().max(32).default('asset'),
+      name: z.string().min(1).max(200),
+      ref: z.string().max(200).default(''),
+      how_used: z.string().max(300).default(''),
+    })).default([]),
+    capability_gaps: z.array(z.object({
+      need: z.string().min(1).max(200),
+      impact: z.string().max(300).default(''),
+      workaround: z.string().max(300).default(''),
+      severity: z.string().max(16).default('medium'),
+    })).default([]),
   }),
-  execute: async ({ goal, steps, assumptions, notes }, executionContext) => {
+  execute: async ({ goal, steps, assumptions, notes, existing_assets, capability_gaps }, executionContext) => {
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
     const catalog = await backendJson('/api/mastra-chat/capabilities', { method: 'GET' }, context).catch(() => null)
     const capabilities = catalog && typeof catalog === 'object' && catalog.capabilities && typeof catalog.capabilities === 'object'
@@ -974,13 +998,15 @@ const createWorkflowPlan = createTool({
         steps: normalized,
         assumptions,
         notes,
+        existing_assets: existing_assets || [],
+        capability_gaps: capability_gaps || [],
       }),
     }, context)
     return {
       ok: true,
       plan_id: String(result?.plan_id || ''),
       plan: result?.plan || {},
-      next: '先把计划完整展示给用户（步骤、每步能力、需要确认的写操作）；用户确认后按依赖顺序执行，每步完成后调用 update_workflow_plan 更新状态。',
+      next: '按规则 27 的交付式格式展示：**一、你要的结果** / **二、你已有的资料**（表格，来自 existing_assets 和记忆） / **三、我会这样做**（有序列表，每步带 capability_id） / **四、系统现在能覆盖的**（表格） / **五、系统还缺什么**（表格，capability_gaps，没有就写暂无缺口） / **六、需要你确认**。用户确认后按依赖顺序执行，每步完成后调用 update_workflow_plan 更新状态。',
     }
   },
   toModelOutput: readToolModelOutput,
@@ -1340,6 +1366,19 @@ const orchestrator = new Agent({
 缺失：首页未公开套餐价格与模型清单。
 下一步：1) 登录后抓 API Access；2) 抓 /#wWorkflow；3) 发我套餐截图。
 26. 【需要登录/18+时让用户协助，但别让用户复制内容】页面要求登录、验证码或 18+ 确认且自动处理失败时：调用 browser_extract_page 并传 assist=true（assist_timeout_seconds 建议 180），告诉用户“已在你的电脑上拉起浏览器，请在窗口里完成登录/年龄确认，完成后我会自动继续”，然后等待工具返回；拿到内容后继续总结。assist 可以和 click_texts 一起传：用户确认/登录完成后，工具会自动点开“联系人/产品/价格/关于我们”等入口并把每个入口的摘要放进 pages，你据此直接给结论，不要再来一轮让用户点。浏览器窗口会被复用（同一登录态），5 分钟没有新请求会自动关闭；assist 仍返回 status=needs_user 时才说明用户没完成操作，这时只提醒一次“窗口还开着，完成登录/年龄确认后我再继续”，不要要求用户手工复制正文/截图。
+27. 【交付式方案：先盘资料，再列动作，最后报缺口】用户提出“帮我做 XX”这类要交付的需求时，必须先调用 get_planning_context，拿到人设、模板记忆和素材库，再按下面的顺序组织回答；整篇必须是 Markdown：小标题用粗体、分段、步骤用有序列表、清单用表格，不要写成一整段话，也不要贴 JSON。
+**一、你要的结果**
+一句话说清交付物、给谁看、怎么算成功（1-2 句）。
+**二、你已有的资料**
+表格三列：资料（人设字段 / 记忆文件名 / 素材文件名原样） | 类型 | 这次怎么用。素材用 existing_assets，记忆用 memory_documents，人设用 profile；没有的写“暂无”，禁止编造文件名。
+**三、我会这样做**
+有序列表 1) 2) 3)，每步格式：【步骤名 — capability_id — 用到的资料 — 产出】。能力必须来自 list_system_capabilities；纯写作/判断的步骤写“我自己完成”;涉及发布、发私信、扣积分、改数据的步骤标注“需你确认”。
+**四、系统现在能覆盖的**
+表格四列：能力 | capability_id | 这次做什么 | 状态（现成 / 需确认 / 需权限）。
+**五、系统还缺什么**
+表格四列：缺的能力 | 影响哪一步 | 现在怎么绕过 | 是否建议开发。这一节必须写，没有缺口就写“暂无缺口”；缺口要具体（例如“缺 TikTok 私信接口”“缺成片 4K 校验”），不要写“能力不足”这种空话；绕不过去就直接说这步现在做不了，并写清哪一步要人接手。
+**六、需要你确认**
+最多 3 条，每条写清确认后我立刻执行哪一步。
 25. 【自己点，不要让用户点】页面里出现“联系我们 / 产品中心 / 价格 / 关于我们 / API Access”等入口时，自己继续：网页能力用 browser_extract_page 的 click_texts 点开，或把导航链接传给 crawl_site 抓子页；禁止回复“请点击联系人/请把页面发我”作为唯一方案。
 24. 【失败也要有结论】工具失败或空结果时：结论=没拿到什么、仍能确认什么；已知=已确认事实；缺失=具体字段；下一步=最多 3 条。不要只写“抓取失败/被截断/无法分析”。
   `.trim(),
