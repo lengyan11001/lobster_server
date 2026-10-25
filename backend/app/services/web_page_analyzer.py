@@ -478,10 +478,17 @@ def _html_contacts(html: str) -> Dict[str, List[str]]:
 def extract_contacts(text: str) -> Dict[str, List[str]]:
     emails = sorted(set(re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", text or "")))
     phones = []
-    for match in re.findall(r"(?<![\w-])\+?\d[\d\s\-()]{6,20}\d(?![\w-])", text or ""):
-        digits = re.sub(r"\D", "", match)
-        if 7 <= len(digits) <= 20:
-            phones.append(match.strip())
+    patterns = (
+        r"400[- ]?\d{3}[- ]?\d{4}",
+        r"0\d{2,3}[- ]\d{7,8}(?:[-转]\d{1,6})?",
+        r"\+\d{1,3}[ -]\d{2,4}[ -]\d{3,8}",
+        r"(?<!\d)1[3-9]\d{9}(?!\d)",
+    )
+    for pattern in patterns:
+        for match in re.findall(pattern, text or ""):
+            digits = re.sub(r"\D", "", match)
+            if 7 <= len(digits) <= 15 and match.strip() not in phones:
+                phones.append(match.strip())
     return {"emails": emails[:10], "phones": sorted(set(phones))[:10]}
 
 def _host_key(host: str) -> str:
