@@ -889,8 +889,10 @@ def _finish_mastra_parent_from_children(db: Session, child: H5ChatMessage) -> No
             collect_assets(local_result if isinstance(local_result, (dict, list)) else run.result_payload)
         new_urls = [item["url"] for item in saved_assets[before:] if item.get("url")]
         if row.status == "completed":
-            result = (row.reply_text or "执行完成").strip()
-            output = f"{index}. Online 执行完成：{result}"
+            # 只并入一行结果提示，完整摘要留在子任务记录里，避免把 8k 字原文贴进主回答。
+            raw_result = (row.reply_text or "执行完成").strip()
+            first_line = next((ln.strip() for ln in raw_result.splitlines() if ln.strip()), "执行完成")
+            output = f"{index}. Online 执行完成：{first_line[:80]}"
             if new_urls:
                 output += "\n   成品：" + "、".join(new_urls[:3])
             details.append(output)
