@@ -212,10 +212,11 @@ def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[st
     else:
         lines = [f"「{title}」已完成。"]
         if result_text:
-            lines.append(_truncate(result_text, 500))
+            # 只给一行摘要：完整结果留在任务记录里，由 AI 总结，不在聊天里贴原文。
+            first_line = next((ln.strip() for ln in result_text.splitlines() if ln.strip()), "")
+            lines.append("结果摘要：" + _truncate(first_line, 120))
         if urls:
             lines.append("产物：" + "、".join(urls))
-        lines.append("需要我继续发布、二次剪辑或做数据分析，直接说就行。")
         text = "\n".join(lines)
     return {
         "key": key,
