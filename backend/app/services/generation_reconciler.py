@@ -201,6 +201,79 @@ ORPHAN_MIN_AGE_SECONDS = 1800
 ORPHAN_LOOKBACK_DAYS = 7
 
 
+STALE_PENDING_SECONDS = 7200
+STALE_PROCESSING_SECONDS = 21600
+DEVICE_ONLINE_WINDOW_SECONDS = 600
+
+
+async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = False) -> Dict[str, Any]:
+    """客户端离线后，pending/processing 的 run 永远不会收口，界面就一直显示执行中。
+
+    只收口「设备已经离线」的：pending 超 2 小时、processing 超 6 小时。
+    """
+    from sqlalchemy import text as _text
+
+    from ..db import SessionLocal
+
+    db = SessionLocal()
+    stats: Dict[str, Any] = {"checked": 0, "closed": 0}
+    try:
+        rows = db.execute(
+            _text(
+                """
+                select r.id, r.status
+                  from scheduled_task_runs r
+                 where r.status in ('pending', 'processing')
+                   and (
+                     (r.status = 'pending'
+                      and r.created_at < now() - make_interval(secs => :pending_age))
+                     or
+                     (r.status = 'processing'
+                      and coalesce(r.updated_at, r.created_at) < now() - make_interval(secs => :processing_age))
+                   )
+                   and not exists (
+                     select 1 from h5_chat_device_presence p
+                      where p.installation_id = r.installation_id
+                        and p.last_seen_at >= now() - make_interval(secs => :online_window)
+                   )
+                 order by r.id asc
+                 limit :limit
+                """
+            ),
+            {
+                "pending_age": STALE_PENDING_SECONDS,
+                "processing_age": STALE_PROCESSING_SECONDS,
+                "online_window": DEVICE_ONLINE_WINDOW_SECONDS,
+                "limit": int(limit),
+            },
+        ).fetchall()
+        stats["checked"] = len(rows)
+        if dry_run or not rows:
+            return stats
+        ids = [row.id for row in rows]
+        db.execute(
+            _text(
+                """
+                update scheduled_task_runs
+                   set status = 'failed',
+                       error = '执行超时未回传（客户端已离线，任务已中断）',
+                       finished_at = now(),
+                       updated_at = now()
+                 where id = any(:ids)
+                """
+            ),
+            {"ids": ids},
+        )
+        db.commit()
+        stats["closed"] = len(ids)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return stats
+
+
 async def reconcile_orphan_canvas_charges_once(*, limit: int = 20, dry_run: bool = False) -> Dict[str, Any]:
     """预扣了画布积分但根本没建出 task 的（提交阶段就失败）也要退。
 
@@ -364,6 +437,9 @@ async def generation_reconcile_loop(interval_seconds: float = DEFAULT_INTERVAL_S
     interval = max(20.0, float(interval_seconds))
     while True:
         try:
+            stale_stats = await sweep_stale_scheduled_runs_once()
+            if stale_stats.get("closed"):
+                logger.info("[reconcile] stale scheduled runs %s", stale_stats)
             orphan_stats = await reconcile_orphan_canvas_charges_once()
             if orphan_stats.get("checked"):
                 logger.info("[reconcile] orphan canvas charges %s", orphan_stats)
