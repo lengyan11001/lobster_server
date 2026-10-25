@@ -16822,7 +16822,8 @@ async function api(path, options = {}) {
 
     function refreshMyAreaDeviceStatus(key = activeViewKey()) {
       if (!["profile", "personalSettings", "recorder", "mountedAccounts", "liveExecutor"].includes(String(key || ""))) return;
-      refreshDeviceStatus().catch(() => {});
+      // 每次进入「我的」相关页面都强制拉一次最新设备状态，不做定时轮询
+      refreshDeviceStatus(true).catch(() => {});
     }
 
     function openHomeTarget(target, backTab = "office") {
@@ -19812,15 +19813,6 @@ async function api(path, options = {}) {
       renderChatAvailabilityStatus();
     }
 
-    let __deviceStatusHeartbeatTimer = 0;
-    function startDeviceStatusHeartbeat() {
-      if (__deviceStatusHeartbeatTimer) return;
-      __deviceStatusHeartbeatTimer = setInterval(() => {
-        if (document.visibilityState !== "visible" || !state.token) return;
-        refreshDeviceStatus(true).catch(() => {});
-      }, 60000);
-    }
-
     async function refreshDeviceStatus(force = false) {
         return h5CachedRequest("device-status", force ? 0 : 4000, () => refreshDeviceStatusInner(), { force });
     }
@@ -19839,7 +19831,6 @@ async function api(path, options = {}) {
           state.systemDevices = Array.isArray(data.system_devices) ? data.system_devices : [];
           applyServerDeviceSelection(data.selection);
           state.devicesLoaded = true;
-          startDeviceStatusHeartbeat();
           h5CacheWrite("devices", state.devices.slice(0, 40));
           const previousInstallationId = String(state.selectedInstallationId || "").trim();
           ensureSelectedInstallationId();
