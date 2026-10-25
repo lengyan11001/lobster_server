@@ -893,7 +893,8 @@ def _finish_mastra_parent_from_children(db: Session, child: H5ChatMessage) -> No
             raw_result = (row.reply_text or "执行完成").strip()
             first_line = next((ln.strip() for ln in raw_result.splitlines() if ln.strip()), "执行完成")
             output = f"{index}. Online 执行完成：{first_line[:80]}"
-            if new_urls:
+            is_web_fetch = "设备浏览器抓取网页" in (row.content or "") or "browser_extract" in (row.content or "")
+            if new_urls and not is_web_fetch:
                 output += "\n   成品：" + "、".join(new_urls[:3])
             details.append(output)
         elif row.status == "cancelled":

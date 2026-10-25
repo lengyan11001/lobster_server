@@ -1273,13 +1273,14 @@ const getOnlineTaskStatus = createTool({
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
     const url = '/api/mastra-chat/online-tasks/' + encodeURIComponent(message_id)
     // task polling: wait until terminal state (max 90s)
-    const deadline = Date.now() + 90_000
+    const deadline = Date.now() + 35_000
     let last: unknown = null
     while (true) {
       last = await backendJson(url, { method: 'GET' }, context).catch(() => last)
       const payload = last as Record<string, any> | null
       const status = String(payload?.message?.status || payload?.run?.status || '').toLowerCase()
       if (['completed', 'failed', 'cancelled', 'canceled'].includes(status)) return last
+      if (status === '' && Date.now() + 3000 >= deadline) return last
       if (Date.now() >= deadline) return last
       await new Promise((resolve) => setTimeout(resolve, 3000))
     }
