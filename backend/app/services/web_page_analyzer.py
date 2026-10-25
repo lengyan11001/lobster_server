@@ -434,7 +434,9 @@ def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int =
         if phone not in phones:
             phones.append(phone)
     extracted["contacts"] = {"emails": emails[:10], "phones": phones[:10]}
-    extracted["needs_browser"] = bool(len(full_text.strip()) < 400 and fetched["bytes"] > 50_000)
+    stripped_len = len(full_text.strip())
+    extracted["needs_browser"] = bool(stripped_len < 400)
+    extracted["html_bytes"] = fetched["bytes"]
     extracted["sections"] = split_sections([line for line in full_text.splitlines() if line.strip()])
     content_hash = hashlib.sha256(full_text.encode("utf-8", errors="ignore")).hexdigest()[:32]
     site = urlparse(fetched["final_url"]).netloc

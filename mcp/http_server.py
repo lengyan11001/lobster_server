@@ -5643,6 +5643,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 data = r.json()
             except Exception:
                 data = {"ok": False, "error": r.text[:500]}
+            if r.status_code >= 400 and not data.get("ok"):
+                detail = data.get("detail") if isinstance(data, dict) else None
+                hint = json.dumps(detail, ensure_ascii=False) if detail is not None else str(data.get("error") or "")[:400]
+                return [{"type": "text", "text": f"网页解析失败 HTTP {r.status_code}：{hint}"}], True
             digest = str((data or {}).get("digest") or "")
             if digest:
                 meta = []
@@ -5687,6 +5691,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 data = r.json()
             except Exception:
                 data = {"ok": False, "error": r.text[:500]}
+            if r.status_code >= 400 and not data.get("ok"):
+                detail = data.get("detail") if isinstance(data, dict) else None
+                hint = json.dumps(detail, ensure_ascii=False) if detail is not None else str(data.get("error") or "")[:400]
+                return [{"type": "text", "text": f"整站抓取失败 HTTP {r.status_code}：{hint}"}], True
             digest = str((data or {}).get("digest") or "")
             text_out = digest if digest else json.dumps(data, ensure_ascii=False, indent=2)
             return [{"type": "text", "text": text_out}], (r.status_code >= 400) or not data.get("ok", False)

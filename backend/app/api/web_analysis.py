@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from typing import Any, Deque, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..models import User
 from ..services.web_page_analyzer import (
@@ -49,6 +49,41 @@ class AnalyzePageBody(BaseModel):
 
 class CrawlSiteBody(BaseModel):
     seed_urls: List[str] = Field(..., min_length=1, max_length=5)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_url_aliases(cls, data):
+        # 通用容错：调用方常把单页 url 直接当种子传，别因为字段名不同就 422。
+        if isinstance(data, dict) and not data.get("seed_urls"):
+            for key in ("url", "seed_url", "urls", "start_url", "start_urls"):
+                value = data.get(key)
+                if not value:
+                    continue
+                if isinstance(value, str):
+                    data["seed_urls"] = [value]
+                elif isinstance(value, (list, tuple)):
+                    data["seed_urls"] = [str(item) for item in value if str(item).strip()]
+                break
+        if isinstance(data, dict):
+            seeds = data.get("seed_urls")
+            if isinstance(seeds, str):
+                data["seed_urls"] = [seeds]
+            # 通用钳制：模型常把预算/深度传大一点，直接夹到允许范围，不要 422。
+            def _clamp(key: str, low: int, high: int) -> None:
+                try:
+                    value = data.get(key)
+                    if value is None or value == "":
+                        return
+                    data[key] = max(low, min(high, int(value)))
+                except Exception:
+                    data.pop(key, None)
+
+            _clamp("max_depth", 0, 4)
+            _clamp("max_pages", 1, 100)
+            _clamp("max_pages_per_site", 1, 100)
+            _clamp("time_budget_seconds", 20, 300)
+            _clamp("per_host_delay_ms", 0, 3000)
+        return data
     max_depth: int = Field(2, ge=0, le=4)
     max_pages: int = Field(25, ge=1, le=100)
     max_pages_per_site: int = Field(25, ge=1, le=100)
@@ -106,7 +141,8 @@ def _page_digest(data: Dict[str, Any]) -> str:
         if len(line) >= 60:
             start = max(0, index - 1)
             break
-    excerpt = "\n".join(raw_lines[start:])[:6000]
+    full_body = "\n".join(raw_lines[start:])
+    excerpt = full_body[:14000]
     facts = data.get("facts") if isinstance(data.get("facts"), dict) else {}
     if facts.get("latest_version"):
         lines.append(f"最新版本：{facts['latest_version']}")
@@ -121,10 +157,16 @@ def _page_digest(data: Dict[str, Any]) -> str:
         for item in nav[:10]:
             lines.append(f"- {item.get('text', '')} {item.get('url', '')}")
     if data.get("needs_browser"):
-        lines.append("提示：正文提取过少，页面可能由前端脚本渲染；建议改用设备浏览器 browser_extract_page 再抓一次（用户要联系方式时同时传 click_texts）。")
-    lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
+        lines.append(
+            f"提示：这个页面只返回了 {len(full_body)} 字正文（HTML {data.get('html_bytes', data.get('bytes', 0))} 字节），"
+            "基本是前端脚本渲染的空壳，服务器抓不到内容；请改用设备浏览器 browser_extract_page 打开后再读。"
+        )
+    lines.append(f"正文字数：{data.get('word_count', 0)}")
     lines.append("")
-    lines.append("正文节选：")
+    if len(full_body) > len(excerpt):
+        lines.append(f"正文（前 {len(excerpt)} 字，共 {len(full_body)} 字）：")
+    else:
+        lines.append("正文：")
     lines.append(excerpt)
     if data.get("next_offset"):
         lines.append("")
