@@ -156,7 +156,13 @@ def _page_digest(data: Dict[str, Any]) -> str:
         lines.append("主要栏目：")
         for item in nav[:10]:
             lines.append(f"- {item.get('text', '')} {item.get('url', '')}")
-    if data.get("needs_browser"):
+    if data.get("challenge"):
+        lines.append(
+            f"提示：这是反爬/人机验证页（Cloudflare 之类），只拿到 {len(full_body)} 字正文"
+            f"（HTML {data.get('html_bytes', data.get('bytes', 0))} 字节），服务器拿不到真实内容；"
+            "请改用设备浏览器 browser_extract_page，需要时传 assist=true 让用户在窗口里点一下验证。"
+        )
+    elif data.get("needs_browser"):
         lines.append(
             f"提示：这个页面只返回了 {len(full_body)} 字正文（HTML {data.get('html_bytes', data.get('bytes', 0))} 字节），"
             "基本是前端脚本渲染的空壳，服务器抓不到内容；请改用设备浏览器 browser_extract_page 打开后再读。"

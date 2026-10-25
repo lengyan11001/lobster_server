@@ -436,6 +436,7 @@ def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int =
     extracted["contacts"] = {"emails": emails[:10], "phones": phones[:10]}
     stripped_len = len(full_text.strip())
     extracted["needs_browser"] = bool(stripped_len < 400)
+    extracted["challenge"] = bool(looks_like_challenge(full_text))
     extracted["html_bytes"] = fetched["bytes"]
     extracted["sections"] = split_sections([line for line in full_text.splitlines() if line.strip()])
     content_hash = hashlib.sha256(full_text.encode("utf-8", errors="ignore")).hexdigest()[:32]
@@ -454,6 +455,20 @@ def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int =
 
 
 _ASSET_EXT = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".js", ".css", ".ico", ".woff", ".woff2")
+
+_CHALLENGE_MARKERS = (
+    "checking your browser", "just a moment", "verify you are human", "enable javascript",
+    "attention required", "ddos protection", "cf-chl", "cloudflare", "captcha",
+    "人机验证", "安全验证", "验证您是真人", "请稍候", "请稍等", "访问验证",
+)
+
+
+def looks_like_challenge(text: str) -> bool:
+    """页面其实是反爬/人机验证页，而不是正文。"""
+    sample = str(text or "").strip().lower()
+    if not sample or len(sample) >= 1200:
+        return False
+    return len(sample) < 400 and any(marker in sample for marker in _CHALLENGE_MARKERS)
 _NOISE_MAIL = ("sentry.io", "w3.org", "example.com", "schema.org", "domain.com")
 
 
