@@ -147,6 +147,9 @@ def web_analyze_page(body: AnalyzePageBody, current_user: User = Depends(get_cur
             payload["fallback"] = "online"
             payload["fallback_hint"] = "服务器抓取失败；如需登录或页面依赖浏览器渲染，请把任务下发给已登录设备用浏览器打开。"
         return payload
+    if int(data.get("word_count", 0) or 0) < 60:
+        data["fallback"] = "online"
+        data["fallback_hint"] = "服务器只拿到很少内容（可能是年龄门或 JS 渲染），请改用设备浏览器打开。"
     data["digest"] = _page_digest(data)
     return {"ok": True, "data": data}
 
