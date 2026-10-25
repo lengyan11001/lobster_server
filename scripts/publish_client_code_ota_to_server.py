@@ -80,6 +80,9 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
 WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "scripts",
     "backend",
+    # backend/app/api/publish.py、api/tiktok_browser_leads.py 都 import publisher；
+    # 2.0.186 因为包里没有它直接起不来，所以常规网站包必须带上。
+    "publisher",
     # Website OTA also carries the small OEM switcher runtime. Keep these as
     # exact paths so a partial desktop update never replaces the whole desktop
     # directory on the client.
@@ -200,9 +203,12 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     # 包里因此会出现 skills/__init__.py。它不能再作为"这是完整代码包"的判据，否则常规网站 OTA
     # 会被误判成 full-code 模式、把整根 static 写进 manifest，客户端对账时删掉本地品牌资源图
     # （build 341 事故）。完整代码包仍然能通过 mcp/publisher/openclaw/desktop 非白名单条目识别。
+    # publisher 自 2.0.187 起进入常规网站 OTA（backend 有模块依赖它），
+    # 不能再拿它当“完整代码包”的判据：否则常规包会被判成 full-code，
+    # manifest 写成整根 static，客户端对账时删掉 OEM 品牌资源（2026-10-25 事故）。
     has_full_code_roots = any(
         any(name.startswith(root + "/") for name in names)
-        for root in ("mcp", "publisher", "openclaw")
+        for root in ("mcp", "openclaw")
     ) or any(
         name.startswith("desktop/") and name not in OEM_SWITCHER_OTA_PATHS
         for name in names
@@ -217,9 +223,14 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
         ] + skill_roots + skill_root_files + ["CLIENT_CODE_VERSION.json"]
     else:
         candidate_paths = WEBSITE_CLIENT_CODE_OTA_PATHS
+    # 目录级清单会让客户端按目录对账、删除包里没有的文件；品牌目录里是
+    # 每台机器自己的 OEM 资源，绝不能作为目录下发（只允许具体的品牌文件）。
+    _never_dir_paths = {"static", "static/branding"}
     paths = []
     for path in candidate_paths:
         normalized = path.replace("\\", "/").rstrip("/")
+        if normalized in _never_dir_paths:
+            continue
         if normalized in names or any(name.startswith(normalized + "/") for name in names):
             paths.append(path)
     runtime_dirs = [
