@@ -97,6 +97,24 @@ def _page_digest(data: Dict[str, Any]) -> str:
         lines.append("主要栏目：")
         for item in nav[:10]:
             lines.append(f"- {item.get('text', '')} {item.get('url', '')}")
+    contacts = data.get("contacts") if isinstance(data.get("contacts"), dict) else {}
+    def _email_rank(value: str) -> int:
+        low = value.lower()
+        for index, key in enumerate(("sales", "info", "contact", "business", "service", "support", "fae")):
+            if low.startswith(key):
+                return index
+        return 9
+
+    emails = sorted([str(item) for item in (contacts.get("emails") or [])], key=_email_rank)[:6]
+    phones = [str(item) for item in (contacts.get("phones") or [])][:6]
+    if emails or phones:
+        lines.append("联系方式：")
+        for item in emails:
+            lines.append(f"- 邮箱：{item}")
+        for item in phones:
+            lines.append(f"- 电话：{item}")
+    if data.get("needs_browser"):
+        lines.append("提示：正文提取过少，页面可能由前端脚本渲染；建议改用设备浏览器 browser_extract_page 再抓一次（用户要联系方式时同时传 click_texts）。")
     lines.append(f"正文字数：{data.get('word_count', 0)}（节选 {len(excerpt)} 字）")
     lines.append("")
     lines.append("正文节选：")

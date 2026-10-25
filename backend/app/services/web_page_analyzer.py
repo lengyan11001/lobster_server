@@ -422,6 +422,18 @@ def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int =
     extracted["text_offset"] = offset
     extracted["next_offset"] = (offset + len(sliced)) if offset + len(sliced) < len(full_text) else 0
     extracted["facts"] = extract_facts(full_text, extracted.get("links") or [])
+    text_contacts = extract_contacts(full_text)
+    markup_contacts = _html_contacts(fetched["html"])
+    emails = list(markup_contacts["emails"])
+    for email in text_contacts["emails"]:
+        if email not in emails:
+            emails.append(email)
+    phones = list(markup_contacts["phones"])
+    for phone in text_contacts["phones"]:
+        if phone not in phones:
+            phones.append(phone)
+    extracted["contacts"] = {"emails": emails[:10], "phones": phones[:10]}
+    extracted["needs_browser"] = bool(len(full_text.strip()) < 400 and fetched["bytes"] > 50_000)
     extracted["sections"] = split_sections([line for line in full_text.splitlines() if line.strip()])
     content_hash = hashlib.sha256(full_text.encode("utf-8", errors="ignore")).hexdigest()[:32]
     site = urlparse(fetched["final_url"]).netloc
@@ -436,6 +448,31 @@ def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int =
         "content_hash": content_hash,
         **extracted,
     }
+
+
+_ASSET_EXT = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".js", ".css", ".ico", ".woff", ".woff2")
+_NOISE_MAIL = ("sentry.io", "w3.org", "example.com", "schema.org", "domain.com")
+
+
+def _html_contacts(html: str) -> Dict[str, List[str]]:
+    """Emails and phones that only exist in the markup (mailto:/tel:) or in an SSR payload."""
+    blob = str(html or "")[:1_500_000]
+    emails = [m for m in re.findall(r"mailto:([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})", blob, re.I)]
+    if not emails:
+        emails = re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", blob)
+    clean_emails: List[str] = []
+    for item in emails:
+        low = item.lower()
+        if low.endswith(_ASSET_EXT) or any(noise in low for noise in _NOISE_MAIL):
+            continue
+        if item not in clean_emails:
+            clean_emails.append(item)
+    phones = []
+    for match in re.findall(r"tel:([+0-9\-\s()]{6,24})", blob, re.I):
+        value = match.strip()
+        if 7 <= len(re.sub(r"\D", "", value)) <= 20 and value not in phones:
+            phones.append(value)
+    return {"emails": clean_emails[:10], "phones": phones[:10]}
 
 
 def extract_contacts(text: str) -> Dict[str, List[str]]:
