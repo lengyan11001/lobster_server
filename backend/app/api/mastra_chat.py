@@ -1426,6 +1426,18 @@ def cancel_mastra_background_task(
     }
 
 
+@router.get("/api/mastra-chat/device-status", summary="查询当前用户 Online 设备是否在线")
+def get_mastra_device_status(
+    installation_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    clean_id = (installation_id or "").strip() or None
+    online = _online_available(db, owner.id, clean_id)
+    return {"ok": True, "online": bool(online), "installation_id": clean_id or ""}
+
+
 @router.get("/api/mastra-chat/personal-profile", summary="读取 AI 调度可用的个人 IP 人设")
 def get_mastra_personal_profile(
     current_user: User = Depends(get_current_user),

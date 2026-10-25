@@ -890,10 +890,11 @@ const getPlanningContext = createTool({
   inputSchema: z.object({ memory_query: z.string().max(200).optional() }),
   execute: async ({ memory_query }, executionContext) => {
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
-    const [profileResp, docsResp, assetsResp] = await Promise.all([
+    const [profileResp, docsResp, assetsResp, deviceResp] = await Promise.all([
       backendJson('/api/mastra-chat/personal-profile', { method: 'GET' }, context).catch(() => null),
       backendJson('/api/personal-settings/memory-documents/list?include_content=false', { method: 'GET' }, context).catch(() => null),
       backendJson('/api/assets?limit=8&offset=0', { method: 'GET' }, context).catch(() => null),
+      backendJson('/api/mastra-chat/device-status', { method: 'GET' }, context).catch(() => null),
     ])
     const profile = profileResp && typeof profileResp === 'object' && profileResp.profile && typeof profileResp.profile === 'object'
       ? profileResp.profile as Record<string, unknown>
@@ -930,7 +931,8 @@ const getPlanningContext = createTool({
         created_at: String(row.created_at || '').slice(0, 10),
       })),
       asset_total: assetTotal,
-      instruction: '规划时必须结合上面的身份、模板记忆和素材库：方案要具体到用户是做什么的；已有素材要在计划里写明文件名和这次怎么用；需要记忆正文时调用 read_personal_memory_document。',
+      device_online: Boolean((deviceResp as Record<string, unknown> | null)?.online),
+      instruction: '规划时必须结合上面的身份、模板记忆和素材库：方案要具体到用户是做什么的；已有素材要在计划里写明文件名和这次怎么用；需要记忆正文时调用 read_personal_memory_document。device_online 表示用户的 Online 设备此刻是否在线，网页类任务按规则 0.1.2 决定走设备还是服务器。',
     }
   },
   toModelOutput: readToolModelOutput,
@@ -1323,7 +1325,8 @@ const orchestrator = new Agent({
 执行规则：
 0. 【先规划再执行】用户提出多步目标（例如“分析官网 → 写脚本 → 做视频 → 发布”）时：先调用 get_planning_context 读取用户的 IP 人设和模板记忆，确认“他是做什么的、卖给谁、优势是什么”；再调用 create_workflow_plan 生成结构化计划，每一步必须落到目录里真实存在的 capability_id。先把计划完整展示给用户；涉及写操作（发布、发私信、扣积分、改数据）必须先确认；用户确认后按依赖顺序执行，每步前后用 update_workflow_plan 标记 running / completed / failed。能力检索分两步：第一轮用 list_system_capabilities 拿全量简要目录（它不会按关键词过滤，问法口语化或有错别字也直接按语义选 id），计划确定后，只对计划里用到的 capability_id 调用 get_capability_details 取完整参数 schema，不要一次性把所有 schema 都加载进来。
 0.1 【统一执行入口】所有服务器能力都用同一个原生工具 invoke_capability（capability_id + payload），不要为单个能力新增原生工具。网址分析：单页 capability_id=web.page_analyze，官网/多级目录=web.site_crawl。能力是否需要确认由注册表里的 side_effect 决定：read 直接执行，write/external 会走确认；不要自己猜测。online.* 能力用 dispatch_online_capability。工具返回 fallback=online、needs_login、needs_js 或空内容时，再调用 dispatch_online_capability 下发 online.browser_extract_page 到用户设备用浏览器打开，不要直接说做不到。
-0.1.1 【网页信息宁全勿缺】网页分析统一走 invoke_capability：单页用 web.page_analyze、多页/整站用 web.site_crawl，不要调用其它同名的网页工具（例如 analyze_web_page），否则结果会被截断。工具返回的是 digest 文本，按原样读；返回 next_offset 时继续用同一个 url 加 offset 再读，直到信息够了为止。摘要开头就是结论和联系方式，不要只读前几句就下结论。摘要出现“提示：这个页面只返回了 … 字正文”，或正文只有 Checking your browser / Just a moment / 验证 / Enable JavaScript 之类，说明站点是前端渲染或反爬验证页：立刻 dispatch_online_capability(online.browser_extract_page, {url, assist: true})，让可见浏览器打开后由用户自己点验证；返回 status=needs_verify 也是同一条路。浏览器会复用同一份登录态和 Cloudflare 放行 cookie，通过一次之后同一站点后续不用再点。不要回“内容被截断”，也不要让用户自己复制正文。
+0.1.1 【网页信息宁全勿缺】走服务器兜底时，网页分析统一用 invoke_capability：单页用 web.page_analyze、多页/整站用 web.site_crawl，不要调用其它同名的网页工具（例如 analyze_web_page），否则结果会被截断。工具返回的是 digest 文本，按原样读；返回 next_offset 时继续用同一个 url 加 offset 再读，直到信息够了为止。摘要开头就是结论和联系方式，不要只读前几句就下结论。摘要出现“提示：这个页面只返回了 … 字正文”，或正文只有 Checking your browser / Just a moment / 验证 / Enable JavaScript 之类，说明站点是前端渲染或反爬验证页：立刻 dispatch_online_capability(online.browser_extract_page, {url, assist: true})，让可见浏览器打开后由用户自己点验证；返回 status=needs_verify 也是同一条路。浏览器会复用同一份登录态和 Cloudflare 放行 cookie，通过一次之后同一站点后续不用再点。不要回“内容被截断”，也不要让用户自己复制正文。
+0.1.2 【网页优先设备，设备不在才用服务器】用户要读网页、抓联系方式、点页面入口时：先看 get_planning_context 返回的 device_online。device_online=true：直接 dispatch_online_capability(online.browser_extract_page, {url, click_texts?, assist?})，用设备的本机 IP 和真实浏览器去抓；在线时不要再同时跑服务器抓取，避免两套结果打架。device_online=false（或下发返回 online=false）：先调用 invoke_capability(web.page_analyze / web.site_crawl) 把服务器能拿到的尽量拿全，然后在回答里明确写一句“以上是服务器能拿到的部分；要更全（过反爬验证、点开联系页、读页脚）需要启动 Online 设备”，不要把设备缺失说成网站没有内容。
 0.3 【结果呈现】如果工具结果里有 next_offset，说明正文还有更多：用同一个 url 加 offset=next_offset 再调用一次（最多 3 次），信息够了再总结，不要因为只拿到节选就说“被截断”或要求用户提供原文。工具返回的是资料，不是给用户的答案。禁止原样粘贴 JSON、工具输出或整段网页原文；必须用中文要点总结（3-10 条）。如果只拿到节选，就基于节选回答能确认的部分，并注明“基于页面节选”，不要因此拒答或反过来要求用户提供原文。
 0.2 【身份约束】规划和文案必须围绕 get_planning_context 返回的 profile（role / product / target_customer / advantages）和模板记忆，不得编造公司、产品或身份；资料不足时先问一个最关键的问题。
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
