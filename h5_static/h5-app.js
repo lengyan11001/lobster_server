@@ -19812,6 +19812,15 @@ async function api(path, options = {}) {
       renderChatAvailabilityStatus();
     }
 
+    let __deviceStatusHeartbeatTimer = 0;
+    function startDeviceStatusHeartbeat() {
+      if (__deviceStatusHeartbeatTimer) return;
+      __deviceStatusHeartbeatTimer = setInterval(() => {
+        if (document.visibilityState !== "visible" || !state.token) return;
+        refreshDeviceStatus(true).catch(() => {});
+      }, 60000);
+    }
+
     async function refreshDeviceStatus(force = false) {
         return h5CachedRequest("device-status", force ? 0 : 4000, () => refreshDeviceStatusInner(), { force });
     }
@@ -19830,6 +19839,7 @@ async function api(path, options = {}) {
           state.systemDevices = Array.isArray(data.system_devices) ? data.system_devices : [];
           applyServerDeviceSelection(data.selection);
           state.devicesLoaded = true;
+          startDeviceStatusHeartbeat();
           h5CacheWrite("devices", state.devices.slice(0, 40));
           const previousInstallationId = String(state.selectedInstallationId || "").trim();
           ensureSelectedInstallationId();
