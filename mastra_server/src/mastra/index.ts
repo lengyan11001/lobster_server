@@ -1097,6 +1097,19 @@ const invokeCapability = createTool({
       )
       if (blocked) return blocked
     }
+    // 网页抓取优先走设备：设备在线时直接拒绝服务器抓取，逼模型改用 dispatch_online_capability。
+    if (id.startsWith('web.')) {
+      const device = await backendJson('/api/mastra-chat/device-status', { method: 'GET' }, context).catch(() => null)
+      const deviceOnline = Boolean((device as Record<string, unknown> | null)?.online)
+      if (deviceOnline) {
+        return {
+          ok: false,
+          error: '设备在线：网页抓取必须走设备浏览器，不要用服务器抓取',
+          next_action: 'dispatch_online_capability',
+          hint: `调用 dispatch_online_capability(online.browser_extract_page, {"url": "${String(payload?.url || '')}", "click_texts": ["Products","Company profile"]})，拿到任务后用 get_online_task_status 取结果。`,
+        }
+      }
+    }
     const token = contextValue(context, 'authorization')
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (token) headers.Authorization = token.startsWith('Bearer ') ? token : `Bearer ${token}`
