@@ -197,6 +197,115 @@ async def reconcile_canvas_once(*, limit: Optional[int] = None, dry_run: bool = 
     return stats
 
 
+ORPHAN_MIN_AGE_SECONDS = 1800
+ORPHAN_LOOKBACK_DAYS = 7
+
+
+async def reconcile_orphan_canvas_charges_once(*, limit: int = 20, dry_run: bool = False) -> Dict[str, Any]:
+    """预扣了画布积分但根本没建出 task 的（提交阶段就失败）也要退。
+
+    这类单子没有 canvas_task 行，原来的对齐逻辑按 task 退款，永远看不到它们。
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import text as _text
+
+    from ..db import SessionLocal
+    from ..models import User
+
+    db = SessionLocal()
+    stats: Dict[str, Any] = {"checked": 0, "refunded": 0, "amount": 0.0}
+    try:
+        rows = db.execute(
+            _text(
+                """
+                select l.id, l.user_id, l.delta, coalesce(l.meta->>'model', '') as model
+                  from credit_ledger l
+                 where l.entry_type = 'pre_deduct'
+                   and l.description like :pat
+                   and l.created_at <= now() - make_interval(secs => :min_age)
+                   and l.created_at >= now() - make_interval(days => :days)
+                   and not exists (
+                     select 1 from canvas_task t
+                      where t.user_id = l.user_id
+                        and t.created_at >= extract(epoch from l.created_at) - 120
+                        and t.created_at <= extract(epoch from l.created_at) + 900
+                   )
+                   and not exists (
+                     select 1 from credit_ledger r
+                      where r.user_id = l.user_id
+                        and r.entry_type = 'refund'
+                        and (r.meta->>'refund_of') = l.id::text
+                   )
+                   -- 附近已经有画布退款单的，说明人工/其它路径处理过，交给人工核对，避免重复退
+                   and not exists (
+                     select 1 from credit_ledger r2
+                      where r2.user_id = l.user_id
+                        and r2.entry_type = 'refund'
+                        and r2.description like :canvas_ref
+                        and r2.created_at >= l.created_at - interval '1 day'
+                        and r2.created_at <= l.created_at + interval '3 days'
+                   )
+                 order by l.id asc
+                 limit :limit
+                """
+            ),
+            {
+                "pat": "%画布预扣%",
+                "canvas_ref": "%画布%",
+                "min_age": ORPHAN_MIN_AGE_SECONDS,
+                "days": ORPHAN_LOOKBACK_DAYS,
+                "limit": int(limit),
+            },
+        ).fetchall()
+        stats["checked"] = len(rows)
+        if dry_run:
+            return stats
+        for row in rows:
+            uid = int(row.user_id)
+            amount = -Decimal(str(row.delta))
+            if amount <= 0:
+                continue
+            user = db.query(User).filter(User.id == uid).with_for_update().first()
+            if user is None:
+                continue
+            balance = Decimal(str(user.credits or 0)) + amount
+            user.credits = balance
+            db.execute(
+                _text(
+                    """
+                    insert into credit_ledger
+                      (user_id, delta, balance_after, entry_type, description, ref_type, ref_id, meta, created_at)
+                    values
+                      (:uid, :delta, :balance, 'refund', :desc, 'canvas_api', :ref, :meta, now())
+                    """
+                ),
+                {
+                    "uid": uid,
+                    "delta": amount,
+                    "balance": balance,
+                    "desc": f"画布预扣后未创建任务，自动退款（原流水 {int(row.id)}）",
+                    "ref": str(int(row.id)),
+                    "meta": json_dumps_safe(
+                        {
+                            "refund_of": str(int(row.id)),
+                            "source": "orphan_reconciler",
+                            "model": str(row.model or ""),
+                        }
+                    ),
+                },
+            )
+            stats["refunded"] += 1
+            stats["amount"] = round(float(stats["amount"]) + float(amount), 2)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return stats
+
+
 def json_dumps_safe(value: Any) -> str:
     import json
 
@@ -255,6 +364,9 @@ async def generation_reconcile_loop(interval_seconds: float = DEFAULT_INTERVAL_S
     interval = max(20.0, float(interval_seconds))
     while True:
         try:
+            orphan_stats = await reconcile_orphan_canvas_charges_once()
+            if orphan_stats.get("checked"):
+                logger.info("[reconcile] orphan canvas charges %s", orphan_stats)
             canvas_stats = await reconcile_canvas_once()
             if canvas_stats.get("checked"):
                 logger.info("[reconcile] canvas %s", canvas_stats)
