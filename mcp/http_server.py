@@ -572,46 +572,6 @@ def _tool_definitions(
             },
         },
         {
-            "name": "analyze_web_page",
-            "description": (
-                "抓取并解析一个网页（标题、正文、作者、时间、图片、链接、联系方式）。"
-                "服务器直接完成，不需要设备。若返回 fallback=online，说明页面需要登录或依赖浏览器渲染，"
-                "此时改用 dispatch_online_capability 调 online.browser_extract_page 下发给设备。"
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "完整 http/https 网址"},
-                    "max_chars": {"type": "integer", "default": 60000, "description": "正文最大字符数"},
-                },
-                "required": ["url"],
-            },
-        },
-        {
-            "name": "crawl_site",
-            "description": (
-                "多级抓取一个或多个官网：从种子页按 sitemap/导航/内链做 BFS，支持 2-4 层深度、"
-                "同域/子域限制、robots、页面预算，返回每页标题正文+全站联系方式。"
-                "服务器直接完成；返回 fallback=online 时可下发给设备浏览器。"
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "seed_urls": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
-                    "max_depth": {"type": "integer", "default": 2},
-                    "max_pages": {"type": "integer", "default": 25},
-                    "max_pages_per_site": {"type": "integer", "default": 25},
-                    "allow_subdomains": {"type": "boolean", "default": True},
-                    "allow_domains": {"type": "array", "items": {"type": "string"}},
-                    "include_patterns": {"type": "array", "items": {"type": "string"}},
-                    "exclude_patterns": {"type": "array", "items": {"type": "string"}},
-                    "time_budget_seconds": {"type": "integer", "default": 180},
-                    "per_host_delay_ms": {"type": "integer", "default": 500},
-                },
-                "required": ["seed_urls"],
-            },
-        },
-        {
             "name": "save_asset",
             "description": "保存素材到本地,返回asset_id",
             "inputSchema": {

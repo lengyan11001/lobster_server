@@ -4,7 +4,7 @@
     "upstream": "builtin",
     "upstream_tool": "web.analyze",
     "backend_path": "/api/web/analyze",
-    "enabled": true,
+    "enabled": false,
     "is_default": true,
     "keywords": [
       "网址",
@@ -39,7 +39,7 @@
     "upstream": "builtin",
     "upstream_tool": "web.crawl",
     "backend_path": "/api/web/site",
-    "enabled": true,
+    "enabled": false,
     "is_default": true,
     "keywords": [
       "官网",
