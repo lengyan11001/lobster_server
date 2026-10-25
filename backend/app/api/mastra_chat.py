@@ -1844,7 +1844,6 @@ def _authorized_online_dispatch(
     parent_message_id: str,
     installation_id: Optional[str],
     approval_id: str,
-    allow_readonly: bool = False,
 ) -> tuple[H5ChatMessage, Optional[str]]:
     parent = (
         db.query(H5ChatMessage)
@@ -1870,8 +1869,7 @@ def _authorized_online_dispatch(
     )
     fully_authorized = bool(session and _permission_mode(session.permission_mode) == "full")
     executing_approval = None
-    # 只读的 Online 能力（如浏览器抓页面）不需要确认：与服务器侧 read 能力规则一致。
-    if not fully_authorized and not allow_readonly:
+    if not fully_authorized:
         executing_approval = (
             db.query(H5ChatApproval)
             .filter(
@@ -2063,7 +2061,6 @@ def dispatch_online_capability(
         parent_message_id=body.parent_message_id,
         installation_id=body.installation_id,
         approval_id=body.approval_id,
-        allow_readonly=str(definition.get("side_effect") or "").strip().lower() == "read",
     )
     capability_id = str(body.capability_id or "").strip().lower()
     try:
