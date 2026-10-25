@@ -202,6 +202,9 @@ def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[st
     result_text = str(getattr(run, "result_text", "") or child.reply_text or "").strip()
     error_text = str(getattr(run, "error", "") or child.error or "").strip()
     urls = _collect_urls(getattr(run, "result_payload", None) or child.reply_text)
+    # 抓网页类任务的“产物”就是用户给的网址，没有意义，直接不展示。
+    if "浏览器抓取" in title or "browser_extract" in str(getattr(run, "task_kind", "") or ""):
+        urls = []
     key = _notice_key("online", child.id)
     if state == "cancelled":
         text = f"「{title}」已取消。"
