@@ -204,6 +204,7 @@ ORPHAN_LOOKBACK_DAYS = 7
 STALE_PENDING_SECONDS = 7200
 STALE_PROCESSING_SECONDS = 21600
 DEVICE_ONLINE_WINDOW_SECONDS = 600
+NO_PROGRESS_FAIL_SECONDS = 1800
 
 
 async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = False) -> Dict[str, Any]:
@@ -230,6 +231,16 @@ async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = Fa
                      or
                      (r.status = 'processing'
                       and coalesce(r.updated_at, r.created_at) < now() - make_interval(secs => :processing_age))
+                     or
+                     -- 客户端还在发心跳，但 claimed 后 30 分钟没有任何阶段推进（没有 stage/round/index/
+                     -- progress_updated_at），说明任务挂死，不能一直占着本地队列。
+                     (r.status = 'processing'
+                      and r.claimed_at is not null
+                      and r.claimed_at < now() - make_interval(secs => :no_progress_age)
+                      and coalesce(r.progress->>'stage', '') = ''
+                      and coalesce(r.progress->>'round', '') = ''
+                      and coalesce(r.progress->>'index', '') = ''
+                      and coalesce(r.progress->>'progress_updated_at', '') = '')
                    )
                    and not exists (
                      select 1 from h5_chat_device_presence p
@@ -244,6 +255,7 @@ async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = Fa
                 "pending_age": STALE_PENDING_SECONDS,
                 "processing_age": STALE_PROCESSING_SECONDS,
                 "online_window": DEVICE_ONLINE_WINDOW_SECONDS,
+                "no_progress_age": NO_PROGRESS_FAIL_SECONDS,
                 "limit": int(limit),
             },
         ).fetchall()
