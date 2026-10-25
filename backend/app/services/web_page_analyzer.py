@@ -475,13 +475,13 @@ _NOISE_MAIL = ("sentry.io", "w3.org", "example.com", "schema.org", "domain.com")
 def _html_contacts(html: str) -> Dict[str, List[str]]:
     """Emails and phones that only exist in the markup (mailto:/tel:) or in an SSR payload."""
     blob = str(html or "")[:1_500_000]
-    emails = [m for m in re.findall(r"mailto:([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})", blob, re.I)]
+    emails = [m for m in re.findall(r"mailto:([A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]+\.[A-Za-z]{2,24})", blob, re.I)]
     if not emails:
-        emails = re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", blob)
+        emails = _EMAIL_PATTERN.findall(blob)
+    emails = [_clean_email(item) for item in emails]
     clean_emails: List[str] = []
     for item in emails:
-        low = item.lower()
-        if low.endswith(_ASSET_EXT) or any(noise in low for noise in _NOISE_MAIL):
+        if _is_noise_email(item):
             continue
         if item not in clean_emails:
             clean_emails.append(item)
@@ -493,8 +493,26 @@ def _html_contacts(html: str) -> Dict[str, List[str]]:
     return {"emails": clean_emails[:10], "phones": phones[:10]}
 
 
+_EMAIL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9\-])"
+)
+
+
+def _clean_email(raw: str) -> str:
+    """两个邮箱贴在一起时（…cnFAE@…）把尾巴上的大写串切掉。"""
+    match = re.match(r"^(.*\.[A-Za-z]{2,6})([A-Z][A-Za-z]{2,})$", raw or "")
+    return match.group(1) if match else raw
+
+
+def _is_noise_email(value: str) -> bool:
+    low = (value or "").lower()
+    if low.endswith(_ASSET_EXT):
+        return True
+    return any(noise in low for noise in _NOISE_MAIL)
+
+
 def extract_contacts(text: str) -> Dict[str, List[str]]:
-    emails = sorted(set(re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", text or "")))
+    emails = sorted(set(_clean_email(item) for item in _EMAIL_PATTERN.findall(text or "") if not _is_noise_email(_clean_email(item))))
     phones = []
     patterns = (
         r"400[- ]?\d{3}[- ]?\d{4}",
