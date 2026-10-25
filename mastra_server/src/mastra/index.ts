@@ -1072,11 +1072,14 @@ function logCapabilityEvent(
 async function autoDeviceFallback(
   capabilityId: string,
   payload: Record<string, unknown>,
-  digest: string,
+  page: Record<string, unknown>,
   context?: RequestContext<LobsterContext>,
 ): Promise<Record<string, unknown>> {
   if (!capabilityId.startsWith('web.')) return {}
-  if (String(digest || '').length >= 600) return {}
+  const subpages = Array.isArray(page?.subpages) ? (page.subpages as unknown[]) : []
+  const thin = Boolean(page?.needs_browser || page?.challenge) || subpages.length > 0
+  if (!thin) return {}
+  const textLen = String(page?.text || '').length
   const rawSeeds = (payload as Record<string, unknown>)?.seed_urls
   const seedUrl = Array.isArray(rawSeeds) ? String(rawSeeds[0] || '') : ''
   const url = String((payload as Record<string, unknown>)?.url || seedUrl || '').trim()
@@ -1107,11 +1110,11 @@ async function autoDeviceFallback(
       })
       return {
         auto_device_task_id: taskId,
-        auto_device_note: `服务器只拿到 ${String(digest || '').length} 字正文，已自动改用你本机浏览器抓取（任务 ${taskId}）。必须调用 get_online_task_status 取回结果后再总结。`,
+        auto_device_note: `服务器只拿到 ${textLen} 字正文，已自动改用你本机浏览器抓取（任务 ${taskId}）。必须调用 get_online_task_status 取回结果后再总结。`,
       }
     }
     return {
-      auto_device_note: `服务器只拿到 ${String(digest || '').length} 字正文，且当前 Online 不在线；如需更全内容请提示用户启动客户端。`,
+      auto_device_note: `服务器只拿到 ${textLen} 字正文，且当前 Online 不在线；如需更全内容请提示用户启动客户端。`,
     }
   } catch {
     return {}
@@ -1166,11 +1169,18 @@ const invokeCapability = createTool({
       logCapabilityEvent(context, id, data?.ok === false ? 'failed' : 'succeeded')
       const content = Array.isArray(data?.content) ? data.content as Array<{ text?: string }> : []
       let digest = ''
+      let page: Record<string, unknown> = {}
+      const rawText = String(content[0]?.text || '')
       try {
-        const parsed = JSON.parse(String(content[0]?.text || ''))
-        digest = String(parsed?.data?.digest || '')
+        const parsed = JSON.parse(rawText) as Record<string, unknown>
+        const inner = parsed?.data
+        page = inner && typeof inner === 'object' && !Array.isArray(inner)
+          ? inner as Record<string, unknown>
+          : parsed
+        digest = String((inner as Record<string, unknown> | undefined)?.digest || parsed?.digest || '')
       } catch {
-        digest = ''
+        digest = rawText
+        page = {}
       }
       return {
         ok: Boolean(data?.ok),
@@ -1178,7 +1188,7 @@ const invokeCapability = createTool({
         side_effect: sideEffect,
         ...(digest ? { digest } : { content }),
         // 服务器抓不到的页面（正文过薄）自动切设备浏览器，别指望模型自己想起来。
-        ...(await autoDeviceFallback(id, payload, digest, context)),
+        ...(await autoDeviceFallback(id, payload, page, context)),
       }
     } catch (error) {
       logCapabilityEvent(context, id, 'failed', error instanceof Error ? error.message : String(error))
@@ -1186,8 +1196,13 @@ const invokeCapability = createTool({
     }
   },
   toModelOutput: (output) => {
-    const digest = String((output as Record<string, unknown>)?.digest || '')
-    return digest ? digest.slice(0, 32000) : readToolModelOutput(output)
+    const o = output as Record<string, unknown>
+    const digest = String(o?.digest || '')
+    if (digest) return digest.slice(0, 32000)
+    const content = Array.isArray(o?.content) ? o.content as Array<{ text?: string }> : []
+    const text = String(content[0]?.text || '')
+    if (text) return text.slice(0, 32000)
+    return readToolModelOutput(output)
   },
 })
 
