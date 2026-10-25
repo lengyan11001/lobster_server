@@ -352,12 +352,13 @@ def extract_page(html: str, base_url: str, *, max_chars: int = MAX_PAGE_TEXT) ->
 
 def extract_facts(text: str, links: List[Dict[str, str]]) -> Dict[str, Any]:
     raw = text or ""
+    # 通用规则：靠“最新/版本/version”这类词定位版本号，不假设站点属于某个具体产品。
     latest = ""
-    match = re.search(r"Latest:\s*Python\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)", raw, re.I)
+    match = re.search(r"(?:latest|current|stable|release|版本|最新)[^\n]{0,24}?v?([0-9]+\.[0-9]+(?:\.[0-9]+)?)", raw, re.I)
     if match:
         latest = match.group(1)
     versions = []
-    for item in re.findall(r"Python\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)", raw):
+    for item in re.findall(r"(?:version|release|版本|v)\s*([0-9]+(?:\.[0-9]+){1,2})\b", raw, re.I):
         if item not in versions:
             versions.append(item)
     lines = [line.strip() for line in raw.splitlines() if line.strip()]

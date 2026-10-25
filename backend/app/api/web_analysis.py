@@ -62,6 +62,12 @@ class CrawlSiteBody(BaseModel):
     use_sitemap: bool = True
 
 
+ROLE_MAILBOXES = (
+    "sales", "info", "contact", "enquiry", "enquiries", "inquiry", "business",
+    "service", "support", "office", "hello", "admin", "marketing",
+)
+
+
 def _page_digest(data: Dict[str, Any]) -> str:
     title = str(data.get("title") or "").strip()
     description = str(data.get("description") or "").strip()
@@ -86,7 +92,7 @@ def _page_digest(data: Dict[str, Any]) -> str:
     excerpt = "\n".join(raw_lines[start:])[:3000]
     facts = data.get("facts") if isinstance(data.get("facts"), dict) else {}
     if facts.get("latest_version"):
-        lines.append(f"最新版本：Python {facts['latest_version']}")
+        lines.append(f"最新版本：{facts['latest_version']}")
     dated = facts.get("dated_items") or []
     if dated:
         lines.append("关键日期：")
@@ -99,11 +105,12 @@ def _page_digest(data: Dict[str, Any]) -> str:
             lines.append(f"- {item.get('text', '')} {item.get('url', '')}")
     contacts = data.get("contacts") if isinstance(data.get("contacts"), dict) else {}
     def _email_rank(value: str) -> int:
+        # 通用规则：按“职能邮箱”排序（销售/咨询/客服优先），不针对任何具体站点。
         low = value.lower()
-        for index, key in enumerate(("sales", "info", "contact", "business", "service", "support", "fae")):
+        for index, key in enumerate(ROLE_MAILBOXES):
             if low.startswith(key):
                 return index
-        return 9
+        return len(ROLE_MAILBOXES)
 
     emails = sorted([str(item) for item in (contacts.get("emails") or [])], key=_email_rank)[:6]
     phones = [str(item) for item in (contacts.get("phones") or [])][:6]
