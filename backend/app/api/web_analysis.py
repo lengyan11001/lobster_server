@@ -165,8 +165,13 @@ def _page_digest(data: Dict[str, Any]) -> str:
     elif data.get("needs_browser"):
         lines.append(
             f"提示：这个页面只返回了 {len(full_body)} 字正文（HTML {data.get('html_bytes', data.get('bytes', 0))} 字节），"
-            "基本是前端脚本渲染的空壳，服务器抓不到内容；请改用设备浏览器 browser_extract_page 打开后再读。"
+            "内容基本在前端脚本里，服务器抓不到；请改用设备浏览器 browser_extract_page 打开后再读。"
         )
+    subpages = data.get("subpages") or []
+    if (data.get("needs_browser") or data.get("challenge")) and subpages:
+        lines.append("内容可能在这些同域子页里（下一步必须跟进）：")
+        for url in subpages[:3]:
+            lines.append(f"- {url}")
     lines.append(f"正文字数：{data.get('word_count', 0)}")
     lines.append("")
     if len(full_body) > len(excerpt):

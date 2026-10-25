@@ -435,7 +435,8 @@ def analyze_page(url: str, *, timeout: float = DEFAULT_TIMEOUT, max_chars: int =
             phones.append(phone)
     extracted["contacts"] = {"emails": emails[:10], "phones": phones[:10]}
     stripped_len = len(full_text.strip())
-    extracted["needs_browser"] = bool(stripped_len < 400)
+    extracted["needs_browser"] = bool(stripped_len < 900)
+    extracted["subpages"] = pick_subpage_candidates(extracted.get("links") or [], fetched["final_url"])
     extracted["challenge"] = bool(looks_like_challenge(full_text))
     extracted["html_bytes"] = fetched["bytes"]
     extracted["sections"] = split_sections([line for line in full_text.splitlines() if line.strip()])
@@ -509,6 +510,39 @@ def _is_noise_email(value: str) -> bool:
     if low.endswith(_ASSET_EXT):
         return True
     return any(noise in low for noise in _NOISE_MAIL)
+
+
+_SUBPAGE_HINTS = (
+    "product", "products", "productlist", "company", "company_profile", "about",
+    "about us", "profile", "contact", "catalog", "collection", "shop",
+)
+
+
+def pick_subpage_candidates(links, base_url: str, limit: int = 3) -> List[str]:
+    """同域里像“商品/公司/联系”这类子页，抓不到正文时给模型一个明确的下一步。"""
+    host = urlparse(base_url).netloc.lower()
+    out: List[str] = []
+    for item in links or []:
+        try:
+            url = str(item.get("url") or "").strip()
+            label = str(item.get("text") or "").strip().lower()
+        except Exception:
+            continue
+        if not url:
+            continue
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or parsed.netloc.lower() != host:
+            continue
+        path = (parsed.path or "").lower()
+        if not any(hint in label or hint.replace(" ", "-") in path or hint.replace(" ", "") in path for hint in _SUBPAGE_HINTS):
+            continue
+        key = parsed.scheme + "://" + parsed.netloc + parsed.path
+        if key.rstrip("/") == base_url.rstrip("/") or key in out:
+            continue
+        out.append(key)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def extract_contacts(text: str) -> Dict[str, List[str]]:
