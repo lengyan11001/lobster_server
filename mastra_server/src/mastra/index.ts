@@ -1069,55 +1069,6 @@ function logCapabilityEvent(
 // One stable meta-tool for every server-side capability. Capabilities are data
 // in the registry, not individual agent tools, so adding a skill never changes
 // the tool surface.
-async function autoDeviceFallback(
-  capabilityId: string,
-  payload: Record<string, unknown>,
-  digest: string,
-  context?: RequestContext<LobsterContext>,
-): Promise<Record<string, unknown>> {
-  if (!capabilityId.startsWith('web.')) return {}
-  if (String(digest || '').length >= 600) return {}
-  const rawSeeds = (payload as Record<string, unknown>)?.seed_urls
-  const seedUrl = Array.isArray(rawSeeds) ? String(rawSeeds[0] || '') : ''
-  const url = String((payload as Record<string, unknown>)?.url || seedUrl || '').trim()
-  if (!url) return {}
-  try {
-    const dispatched = await backendJson(
-      '/api/mastra-chat/online-capability-dispatch',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          capability_id: 'online.browser_extract_page',
-          params: { url, click_texts: ['Products', 'Company profile'], assist: false },
-          reason: '服务器只拿到极薄正文，自动改用设备浏览器',
-          parent_message_id: contextValue(context, 'parentMessageId'),
-          installation_id: contextValue(context, 'installationId'),
-          approval_id: contextValue(context, 'approvalId'),
-        }),
-      },
-      context,
-    )
-    const taskId = String(dispatched?.message?.id || '')
-    if (dispatched?.online && taskId) {
-      contextValue(context, 'dispatches').push({
-        message_id: taskId,
-        status: 'pending',
-        online: true,
-        installation_id: String(dispatched?.message?.installation_id || ''),
-      })
-      return {
-        auto_device_task_id: taskId,
-        auto_device_note: `服务器只拿到 ${String(digest || '').length} 字正文，已自动改用你本机浏览器抓取（任务 ${taskId}）。必须调用 get_online_task_status 取回结果后再总结。`,
-      }
-    }
-    return {
-      auto_device_note: `服务器只拿到 ${String(digest || '').length} 字正文，且当前 Online 不在线；如需更全内容请提示用户启动客户端。`,
-    }
-  } catch {
-    return {}
-  }
-}
-
 const invokeCapability = createTool({
   id: 'invoke_capability',
   description: '统一能力执行入口：capability_id + payload。先 list_system_capabilities 拿简要目录，计划确定后用 get_capability_details 取参数 schema，再调用本工具执行。online.* 能力请改用 dispatch_online_capability。',
@@ -1177,8 +1128,6 @@ const invokeCapability = createTool({
         capability_id: id,
         side_effect: sideEffect,
         ...(digest ? { digest } : { content }),
-        // 服务器抓不到的页面（正文过薄）自动切设备浏览器，别指望模型自己想起来。
-        ...(await autoDeviceFallback(id, payload, digest, context)),
       }
     } catch (error) {
       logCapabilityEvent(context, id, 'failed', error instanceof Error ? error.message : String(error))
