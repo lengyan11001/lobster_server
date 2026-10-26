@@ -1327,6 +1327,7 @@ _LIVE_PERSONAL_TEMPLATE_ACTIONS = {
     "local_bestseller_scene_batch",
     "local_bestseller_daily_video",
     "shanjian_digital_human_video",
+    "shanjian_material_mix",
     "native_wechat_poll",
 }
 
@@ -1423,6 +1424,43 @@ def _live_personal_template_validation(
             if isinstance(source.get("params"), dict)
             else {}
         )
+        audio_mode = (
+            _h5_dh_clean_text(source_params.get("drive_mode"), 32).lower() == "audio"
+            or bool(source_params.get("audio_url") or source_params.get("audio_asset_id"))
+        )
+        if not audio_mode and not any(
+            _h5_dh_clean_text(item.get("voice") or item.get("speaker_id"), 128)
+            for item in voices
+            if isinstance(item, dict)
+        ):
+            missing.append("voice asset")
+        message = "Current personal template is incomplete: " + ", ".join(dict.fromkeys(missing)) if missing else ""
+        return {
+            "checked": True,
+            "ok": not missing,
+            "missing": list(dict.fromkeys(missing)),
+            "message": message,
+        }
+
+    if action == "shanjian_material_mix":
+        # 素材混剪不需要数字人形象，但必须有闪剪模板和声音（纯音频驱动时可免声音）。
+        resources = context.get("digital_human_resources")
+        resources = resources if isinstance(resources, dict) else {}
+        voices = resources.get("voices") if isinstance(resources.get("voices"), list) else []
+        template = context.get("digital_human_template")
+        template_id = ""
+        if isinstance(template, dict):
+            template_id = _h5_dh_clean_text(
+                template.get("style_id")
+                or template.get("styleId")
+                or template.get("template_id")
+                or template.get("templateId")
+                or template.get("id"),
+                128,
+            )
+        if not template_id:
+            missing.append("editing template")
+        source_params = source.get("params") if isinstance(source.get("params"), dict) else {}
         audio_mode = (
             _h5_dh_clean_text(source_params.get("drive_mode"), 32).lower() == "audio"
             or bool(source_params.get("audio_url") or source_params.get("audio_asset_id"))
@@ -1581,10 +1619,11 @@ def _refresh_live_personal_template_payload(
                 payload=source,
                 target_user_id=target_user_id,
             )
-        elif action == "shanjian_digital_human_video":
+        elif action in {"shanjian_digital_human_video", "shanjian_material_mix"}:
             # All inputs used to build the script/TTS request come from the
             # latest template. Explicit node controls such as title, speed,
-            # polling and rotation slot are retained.
+            # duration, polling and rotation slot are retained.
+            is_material_mix = action == "shanjian_material_mix"
             for key in (
                 "requirements",
                 "keyword_ids",
@@ -1598,17 +1637,23 @@ def _refresh_live_personal_template_payload(
             ):
                 if key in context_params:
                     params[key] = copy.deepcopy(context_params[key])
-            candidates = context_params.get("virtualman_candidates")
             voice_candidates = context_params.get("voice_candidates")
-            params["virtualman_candidates"] = copy.deepcopy(candidates if isinstance(candidates, list) else [])
             params["voice_candidates"] = copy.deepcopy(voice_candidates if isinstance(voice_candidates, list) else [])
-            params["virtualman_selection_mode"] = "daily_sequence" if params["virtualman_candidates"] else "fixed"
             params["voice_selection_mode"] = "daily_sequence" if params["voice_candidates"] else "fixed"
-            params.pop("virtualman_id", None)
             params.pop("voice", None)
             params.pop("speaker_id", None)
-            if params["virtualman_candidates"]:
-                params["virtualman_id"] = _h5_dh_clean_text(context_params.get("virtualman_id"), 128)
+            if not is_material_mix:
+                candidates = context_params.get("virtualman_candidates")
+                params["virtualman_candidates"] = copy.deepcopy(candidates if isinstance(candidates, list) else [])
+                params["virtualman_selection_mode"] = "daily_sequence" if params["virtualman_candidates"] else "fixed"
+                params.pop("virtualman_id", None)
+                if params["virtualman_candidates"]:
+                    params["virtualman_id"] = _h5_dh_clean_text(context_params.get("virtualman_id"), 128)
+            else:
+                # 素材混剪绝不能把数字人形象带到执行端。
+                params.pop("virtualman_id", None)
+                params.pop("virtualman_candidates", None)
+                params.pop("virtualman_selection_mode", None)
             if params["voice_candidates"]:
                 voice = _h5_dh_clean_text(context_params.get("voice"), 128)
                 if voice:
@@ -1624,7 +1669,7 @@ def _refresh_live_personal_template_payload(
             )
             if isinstance(live_template, dict) and live_template.get("style_id"):
                 params["use_template"] = True
-                params["template_scene"] = live_template.get("template_scene") or "realMan"
+                params["template_scene"] = "oralMixCutting" if is_material_mix else (live_template.get("template_scene") or "realMan")
                 params["style_id"] = live_template.get("style_id")
                 params["materials"] = copy.deepcopy(live_template.get("materials") or [])
                 for key in (
@@ -6739,7 +6784,7 @@ def submit_scheduled_task_event(
 def _final_media_from_run_payload(result_payload: Any) -> dict[str, Any]:
     payload = result_payload if isinstance(result_payload, dict) else {}
     action = str(payload.get("action") or "").strip().lower()
-    if action not in {"shanjian_digital_human_video", "hifly.video.create_by_tts"}:
+    if action not in {"shanjian_digital_human_video", "shanjian_material_mix", "hifly.video.create_by_tts"}:
         return {}
     local = payload.get("local_result") if isinstance(payload.get("local_result"), dict) else {}
     video_url = str(local.get("video_url") or payload.get("video_url") or "").strip()

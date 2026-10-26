@@ -2304,6 +2304,9 @@ def _node_consumes_ip_persona(node: dict[str, Any]) -> bool:
         "hifly.video.create_by_tts",
     }:
         return True
+    # 素材混剪：同样按口播文案生成，但不提交数字人形象，只需要声音和素材。
+    if action == "shanjian_material_mix" or key == "shanjian_material_mix":
+        return True
     if capability_id == "hifly.video.create_by_tts":
         return True
     return False
@@ -2388,6 +2391,10 @@ def _custom_workflow_material_needs(nodes: list[dict[str, Any]]) -> dict[str, bo
             needs["keywords"] = True
             needs["memory"] = True
             needs["digital_human"] = True
+        if action == "shanjian_material_mix" or key == "shanjian_material_mix":
+            needs["survey"] = True
+            needs["keywords"] = True
+            needs["memory"] = True
         if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
             needs["wechat"] = True
         if task_kind == "client_workflow" and action == "native_whatsapp_poll":
@@ -2491,6 +2498,7 @@ def _prepare_sales_workflow_nodes(
     template_language = _clean_text(template_context.get("language"), 64) or _template_language(requirements, reference_template)
 
     has_hifly = False
+    has_material_mix = False
     has_ip_daily = False
     has_local_bestseller = False
     has_wechat = False
@@ -2644,6 +2652,38 @@ def _prepare_sales_workflow_nodes(
                 payload["params"] = params
                 plan["payload"] = payload
 
+        if task_kind == "client_workflow" and action == "shanjian_material_mix":
+            # 素材混剪只生成/使用口播音频，不提交数字人；素材由客户端按
+            # 宽口径从素材库挑选，这里只补齐文案和声音需要的实时资料。
+            has_material_mix = True
+            payload = dict(payload)
+            params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            params = dict(params)
+            params["requirements"] = copy.deepcopy(requirements)
+            params["keyword_ids"] = list(keyword_ids)
+            params["keywords"] = list(keyword_texts)
+            params["keyword_texts"] = list(keyword_texts)
+            params["competitors"] = list(competitor_texts)
+            params["memory_doc_ids"] = list(memory_doc_ids)
+            params["memory_docs"] = copy.deepcopy(memory_docs)
+            params["language"] = template_language
+            params["target_language"] = template_language
+            params.setdefault(
+                "sales_node_label",
+                _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160),
+            )
+            _normalize_shanjian_script_sources(params)
+            params.pop("virtualman_id", None)
+            params.pop("virtualman_candidates", None)
+            params.pop("virtualman_selection_mode", None)
+            if hifly_voice:
+                params["voice"] = hifly_voice
+                params["speaker_id"] = hifly_voice
+            params["voice_candidates"] = copy.deepcopy(selected_voices)
+            params["voice_selection_mode"] = "daily_round_robin" if selected_voices else "fixed"
+            payload["params"] = params
+            plan["payload"] = payload
+
         if task_kind == "capability" and capability_id == "hifly.video.create_by_tts":
             has_hifly = True
             payload = dict(payload)
@@ -2793,7 +2833,7 @@ def _prepare_sales_workflow_nodes(
             elif not any(row.last_fetch_at for row in competitors):
                 missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
             # 只有「记忆接管」节点时不需要 IP 模板记忆文件：那份记忆在 Online 抖音获客-私信引流里选。
-            needs_template_memory = has_ip_daily or has_hifly
+            needs_template_memory = has_ip_daily or has_hifly or has_material_mix
             if not (memory_doc_ids or memory_docs) and not (has_memory_takeover and not needs_template_memory):
                 if _has_active_memory_docs(db, owner.id, installation_id):
                     missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
@@ -2806,6 +2846,11 @@ def _prepare_sales_workflow_nodes(
             missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
         if has_whatsapp and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
             missing.append("平台账号：当前启用设备不在线，无法执行个人whatapp助手节点")
+        if has_material_mix:
+            if not digital_human_template_id:
+                missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
+            if not selected_voices:
+                missing.append("素材库：请先创建可用的声音分身")
         if has_hifly:
             if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
                 if not hifly_avatar_rows:
