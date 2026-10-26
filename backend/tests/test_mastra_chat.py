@@ -2360,3 +2360,43 @@ def test_delete_session_still_blocks_active_child(db_session, db_session_factory
     )
     assert response.status_code == 409
     assert "任务执行中" in response.json()["detail"]
+
+def test_auto_summary_prompt_is_hidden_from_user_content(db_session, db_session_factory, test_user):
+    from backend.app.models import H5ChatMessage
+
+    session = _session(db_session, test_user.id, title="自动总结")
+    now = datetime.utcnow()
+    auto = H5ChatMessage(
+        id=f"auto-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        mode="mastra",
+        status="completed",
+        content="[自动总结] task_x\n设备任务已完成，请直接给结论。",
+        reply_text="这是结论。",
+        created_at=now,
+        updated_at=now,
+    )
+    normal = H5ChatMessage(
+        id=f"normal-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        mode="mastra",
+        status="completed",
+        content="普通用户消息",
+        reply_text="普通回复",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([auto, normal])
+    db_session.commit()
+
+    data = _client(db_session_factory, test_user.id).get(
+        f"/api/h5-chat/messages?session_id={session.id}"
+    ).json()
+    by_id = {item["message"]["id"]: item["message"] for item in data["messages"]}
+    assert by_id[auto.id]["internal"] is True
+    assert by_id[auto.id]["content"] == ""
+    assert by_id[auto.id]["reply_text"] == "这是结论。"
+    assert by_id[normal.id]["internal"] is False
+    assert by_id[normal.id]["content"] == "普通用户消息"

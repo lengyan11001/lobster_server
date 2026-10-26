@@ -715,6 +715,8 @@ def _serialize_message(
     include_reply: bool = True,
     chat_turn_charged: bool = False,
 ) -> Dict[str, Any]:
+    content = strip_work_brief(strip_customer_service_faq(row.content))
+    internal = content.lstrip().startswith("[自动总结]")
     data = {
         "id": row.id,
         "mode": row.mode,
@@ -723,7 +725,8 @@ def _serialize_message(
         "target_message_id": row.target_message_id or "",
         "session_id": row.session_id,
         "parent_message_id": row.parent_message_id,
-        "content": strip_work_brief(strip_customer_service_faq(row.content)),
+        "content": "" if internal else content,
+        "internal": internal,
         "attachments": row.attachments or [],
         "status": row.status,
         "installation_id": row.installation_id,
