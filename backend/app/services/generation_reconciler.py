@@ -513,7 +513,7 @@ async def reconcile_douyin_imitation_once(*, limit: Optional[int] = None) -> Dic
 async def reconcile_terminal_run_messages_once(*, limit: int = 50) -> Dict[str, Any]:
     """Repair H5 messages left pending behind an already-terminal run."""
     from ..db import SessionLocal
-    from ..models import ScheduledTaskRun
+    from ..models import H5ChatMessage, ScheduledTaskRun
 
     db = SessionLocal()
     stats: Dict[str, Any] = {"checked": 0, "synced": 0}
@@ -521,9 +521,10 @@ async def reconcile_terminal_run_messages_once(*, limit: int = 50) -> Dict[str, 
         now = datetime.utcnow()
         runs = (
             db.query(ScheduledTaskRun)
+            .join(H5ChatMessage, H5ChatMessage.id == ScheduledTaskRun.h5_message_id)
             .filter(
                 ScheduledTaskRun.status.in_(("completed", "failed", "cancelled")),
-                ScheduledTaskRun.h5_message_id.isnot(None),
+                H5ChatMessage.status.in_(("pending", "processing")),
             )
             .order_by(ScheduledTaskRun.updated_at.desc())
             .limit(max(1, min(200, int(limit))))
