@@ -368,6 +368,18 @@ def classify_template_category(name: str, description: str = "", upstream: Optio
     return "other"
 
 
+_NAME_COPY_SUFFIX = re.compile(r"(\s*-\s*copy)+$", re.I)
+_NAME_DUP_SUFFIX = re.compile(r"(\s*[（(]?\s*副本\s*[)）]?)+$")
+
+
+def _dedupe_key(name: str) -> str:
+    """同名副本（"xxx - Copy" / "xxx 副本"）算同一条，避免灵感页重复。"""
+    text_value = str(name or "").strip()
+    text_value = _NAME_COPY_SUFFIX.sub("", text_value)
+    text_value = _NAME_DUP_SUFFIX.sub("", text_value).strip()
+    return (text_value or str(name or "")).lower()
+
+
 def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, Any]:
     # 画布前端（canvas-web bundle）只在 canvas_url 非空时才去调 canvas/load：
     #   if (a.canvas_url) { A = (await loadDrawCanvas(token, n)).snapshot }
@@ -411,9 +423,11 @@ def _identifier_clause(identifier: str) -> Tuple[str, Dict[str, Any]]:
 
 
 def list_projects(db: Session, *, user_id: Optional[int], only_public: bool, skip: int, limit: int,
-                  keyword: str = "", category: str = "") -> List[Dict[str, Any]]:
+                  keyword: str = "", category: str = "", dedupe: bool = True) -> List[Dict[str, Any]]:
     sql = "SELECT * FROM canvas_project WHERE 1=1"
-    params: Dict[str, Any] = {"skip": max(0, skip), "limit": max(1, min(200, limit or 50))}
+    params: Dict[str, Any] = {}
+    page_skip = max(0, skip)
+    page_limit = max(1, min(200, limit or 50))
     category = str(category or "").strip().lower()
     if category and category not in ("all", "全部发现"):
         sql += " AND coalesce(category, '') = :cat"
@@ -426,9 +440,23 @@ def list_projects(db: Session, *, user_id: Optional[int], only_public: bool, ski
     if keyword:
         sql += " AND (name LIKE :kw OR description LIKE :kw)"
         params["kw"] = f"%{keyword}%"
-    sql += " ORDER BY sort DESC, updated_at DESC LIMIT :limit OFFSET :skip"
-    rows = db.execute(text(sql), params).fetchall()
-    return [project_row_to_json(row) for row in rows]
+    order = " ORDER BY sort DESC, updated_at DESC"
+    if not dedupe:
+        rows = db.execute(text(sql + order + " LIMIT :limit OFFSET :skip"),
+                          {**params, "limit": page_limit, "skip": page_skip}).fetchall()
+        return [project_row_to_json(row) for row in rows]
+    # 同名副本（- Copy / 副本）只留一条：数据集不大，先取全量去重再切页，保证翻页不重复
+    rows = db.execute(text(sql + order + " LIMIT 500"), params).fetchall()
+    seen: set = set()
+    unique_rows = []
+    for row in rows:
+        key = _dedupe_key(getattr(row, "name", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_rows.append(row)
+    page = unique_rows[page_skip: page_skip + page_limit]
+    return [project_row_to_json(row) for row in page]
 
 
 def create_project(db: Session, *, user_id: int, name: str, description: str, is_public: bool) -> Dict[str, Any]:
