@@ -6955,26 +6955,61 @@ def save_personal_default_ip_content_config(
         )
         db.add(row)
     survey_selection_sent = "survey_id" in body_fields
-    # A selected template's relationship is authoritative and remains live.
-    requested_survey_id = template_ref.survey_id if template_ref is not None else body.survey_id
+    explicit_survey = (
+        _owned_survey(db, int(current_user.id), body.survey_id)
+        if survey_selection_sent and body.survey_id is not None
+        else None
+    )
+    # 用户明确保存了一份可用的资料调查时以这份为准；否则沿用当前模板的关联。
+    if explicit_survey is not None:
+        requested_survey_id = int(explicit_survey.id)
+    elif template_ref is not None:
+        requested_survey_id = template_ref.survey_id
+    else:
+        requested_survey_id = body.survey_id
     if requested_survey_id is not None:
         survey = _owned_survey(db, int(current_user.id), requested_survey_id)
         if survey is None:
-            raise HTTPException(status_code=400, detail="资料调查记录不存在")
-        row.survey_id = int(survey.id)
-    elif template_ref is not None or survey_selection_sent:
-        row.survey_id = None
-    elif _allows_personal_profile_update(body.meta) and _personal_profile_has_values(body.requirements):
-        # Keep old clients working: a profile save creates a reusable record.
-        survey = IPContentProfileSurvey(
-            user_id=int(current_user.id),
-            name=_clean_text((body.meta or {}).get("survey_name"), 160) or "资料调查",
-            requirements=_jsonable(body.requirements or {}),
-            meta={"source": "personal_settings"},
-        )
-        db.add(survey)
-        db.flush()
-        row.survey_id = int(survey.id)
+            # 模板里关联的资料调查被删除后，不能让每次保存都 400：
+            # 清掉悬空引用，本次保存继续；用户下次在模板里重新选一份即可。
+            requested_survey_id = None
+            if template_ref is not None and int(template_ref.user_id) == int(current_user.id):
+                template_ref.survey_id = None
+                template_ref.updated_at = _utcnow()
+        else:
+            row.survey_id = int(survey.id)
+            if (
+                explicit_survey is not None
+                and template_ref is not None
+                and int(template_ref.user_id) == int(current_user.id)
+            ):
+                # 当前模板是用户自己的：把新资料调查同步回模板，否则运行时
+                # 仍会去读模板里那条已删除的调查。
+                template_ref.survey_id = int(survey.id)
+                template_ref.updated_at = _utcnow()
+    if requested_survey_id is None:
+        if template_ref is not None or survey_selection_sent:
+            row.survey_id = None
+            if (
+                survey_selection_sent
+                and body.survey_id is None
+                and template_ref is not None
+                and int(template_ref.user_id) == int(current_user.id)
+            ):
+                # 用户显式清空关联时，模板同步清空。
+                template_ref.survey_id = None
+                template_ref.updated_at = _utcnow()
+        elif _allows_personal_profile_update(body.meta) and _personal_profile_has_values(body.requirements):
+            # Keep old clients working: a profile save creates a reusable record.
+            survey = IPContentProfileSurvey(
+                user_id=int(current_user.id),
+                name=_clean_text((body.meta or {}).get("survey_name"), 160) or "资料调查",
+                requirements=_jsonable(body.requirements or {}),
+                meta={"source": "personal_settings"},
+            )
+            db.add(survey)
+            db.flush()
+            row.survey_id = int(survey.id)
     existing_requirements = row.requirements if row is not None else {}
     existing_meta = row.meta if row is not None and isinstance(row.meta, dict) else {}
     incoming_requirements = body.requirements
