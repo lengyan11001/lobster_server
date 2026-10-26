@@ -6258,6 +6258,22 @@ def pending_scheduled_task_runs(
             row.error = "任务长时间未被领取，已作废"
             row.finished_at = now
             row.updated_at = now
+            _sync_h5_message_from_run(db, row, now)
+            _add_h5_event(
+                db,
+                row.h5_message_id,
+                row.user_id,
+                "error",
+                {
+                    "error": row.error,
+                    "reason": "unclaimed_timeout",
+                    "error_code": "unclaimed_timeout",
+                },
+            )
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+            if task:
+                task.last_error = row.error
+                task.updated_at = now
         db.commit()
     # A physical installation executes exactly one client task at a time.
     # Do not materialize another run while it is busy.  The next poll after a

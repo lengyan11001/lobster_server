@@ -51,7 +51,8 @@ else:
         _connect_args["options"] = (
             f"-c statement_timeout={_statement_timeout_ms} "
             f"-c lock_timeout={_lock_timeout_ms} "
-            f"-c idle_in_transaction_session_timeout={_idle_transaction_timeout_ms}"
+            f"-c idle_in_transaction_session_timeout={_idle_transaction_timeout_ms} "
+            f"-c timezone=UTC"
         )
     engine = create_engine(
         _db_url,

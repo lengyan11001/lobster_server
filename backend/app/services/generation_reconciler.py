@@ -20,6 +20,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -207,6 +208,65 @@ DEVICE_ONLINE_WINDOW_SECONDS = 600
 NO_PROGRESS_FAIL_SECONDS = 1800
 
 
+def _sync_terminal_run_to_h5(db: Any, run: Any, *, now: datetime) -> bool:
+    """Keep the H5 child message consistent with its terminal scheduled run.
+
+    The device queue and the H5 conversation are two views of the same run.  A
+    timeout used to close only scheduled_task_runs, leaving the chat bubble in
+    ``pending`` and making the planner wait forever.
+    """
+    from ..models import H5ChatEvent, H5ChatMessage
+
+    message_id = str(getattr(run, "h5_message_id", "") or "").strip()
+    status = str(getattr(run, "status", "") or "").strip().lower()
+    if not message_id or status not in {"completed", "failed", "cancelled"}:
+        return False
+    message = db.query(H5ChatMessage).filter(H5ChatMessage.id == message_id).first()
+    if message is None:
+        return False
+    if str(getattr(message, "status", "") or "").strip().lower() in {"completed", "failed", "cancelled"}:
+        return False
+
+    message.status = status
+    message.updated_at = now
+    message.finished_at = now
+    if status == "completed":
+        message.error = None
+        message.reply_text = str(getattr(run, "result_text", "") or "") or message.reply_text
+        event_type = "final"
+        payload = {
+            "reply_text": message.reply_text or "",
+            "reason": "run_terminal_reconcile",
+            "error_code": "",
+        }
+    elif status == "cancelled":
+        message.error = str(getattr(run, "error", "") or "任务已取消")
+        event_type = "cancelled"
+        payload = {
+            "error": message.error,
+            "reason": "cancelled",
+            "error_code": "cancelled",
+        }
+    else:
+        message.error = str(getattr(run, "error", "") or "任务执行失败")
+        event_type = "error"
+        payload = {
+            "error": message.error,
+            "reason": "run_failed",
+            "error_code": "run_failed",
+        }
+    db.add(
+        H5ChatEvent(
+            message_id=message_id,
+            user_id=int(getattr(run, "user_id", 0) or 0),
+            event_type=event_type,
+            payload=payload,
+            created_at=now,
+        )
+    )
+    return True
+
+
 async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = False) -> Dict[str, Any]:
     """客户端离线后，pending/processing 的 run 永远不会收口，界面就一直显示执行中。
 
@@ -263,6 +323,7 @@ async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = Fa
         if dry_run or not rows:
             return stats
         ids = [row.id for row in rows]
+        closed_at = db.execute(_text("select timezone('UTC', now())")).scalar_one()
         db.execute(
             _text(
                 """
@@ -276,6 +337,11 @@ async def sweep_stale_scheduled_runs_once(*, limit: int = 50, dry_run: bool = Fa
             ),
             {"ids": ids},
         )
+        from ..models import ScheduledTaskRun
+
+        closed_runs = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id.in_(ids)).all()
+        for run in closed_runs:
+            _sync_terminal_run_to_h5(db, run, now=closed_at)
         db.commit()
         stats["closed"] = len(ids)
     except Exception:  # noqa: BLE001
@@ -444,6 +510,38 @@ async def reconcile_douyin_imitation_once(*, limit: Optional[int] = None) -> Dic
     return stats
 
 
+async def reconcile_terminal_run_messages_once(*, limit: int = 50) -> Dict[str, Any]:
+    """Repair H5 messages left pending behind an already-terminal run."""
+    from ..db import SessionLocal
+    from ..models import ScheduledTaskRun
+
+    db = SessionLocal()
+    stats: Dict[str, Any] = {"checked": 0, "synced": 0}
+    try:
+        now = datetime.utcnow()
+        runs = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.status.in_(("completed", "failed", "cancelled")),
+                ScheduledTaskRun.h5_message_id.isnot(None),
+            )
+            .order_by(ScheduledTaskRun.updated_at.desc())
+            .limit(max(1, min(200, int(limit))))
+            .all()
+        )
+        stats["checked"] = len(runs)
+        for run in runs:
+            if _sync_terminal_run_to_h5(db, run, now=now):
+                stats["synced"] += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return stats
+
+
 async def generation_reconcile_loop(interval_seconds: float = DEFAULT_INTERVAL_SECONDS) -> None:
     """后台循环：每轮各跑一批画布 / 跟创对账（串行、有间隔，避免压上游）。"""
     interval = max(20.0, float(interval_seconds))
@@ -452,6 +550,9 @@ async def generation_reconcile_loop(interval_seconds: float = DEFAULT_INTERVAL_S
             stale_stats = await sweep_stale_scheduled_runs_once()
             if stale_stats.get("closed"):
                 logger.info("[reconcile] stale scheduled runs %s", stale_stats)
+            h5_sync_stats = await reconcile_terminal_run_messages_once()
+            if h5_sync_stats.get("synced"):
+                logger.info("[reconcile] terminal run -> h5 %s", h5_sync_stats)
             orphan_stats = await reconcile_orphan_canvas_charges_once()
             if orphan_stats.get("checked"):
                 logger.info("[reconcile] orphan canvas charges %s", orphan_stats)

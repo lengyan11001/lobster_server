@@ -117,3 +117,51 @@ def test_reconcile_respects_batch_limit(monkeypatch):
     monkeypatch.setattr("backend.app.db.SessionLocal", lambda: _Db())
     stats = asyncio.run(rec.reconcile_canvas_once(limit=7))
     assert seen["limit"] == 7 and stats["checked"] == 0
+
+def test_sync_terminal_run_to_h5_closes_pending_message_once():
+    """设备任务已失败时，H5 子消息必须同步收口，且事件只写一次。"""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from backend.app.models import H5ChatEvent, H5ChatMessage
+    from backend.app.services import generation_reconciler as rec
+
+    message = H5ChatMessage(id="task_sync", user_id=31, content="x", status="pending")
+    run = SimpleNamespace(
+        h5_message_id="task_sync",
+        status="failed",
+        user_id=31,
+        error="device offline",
+        result_text=None,
+        content="",
+    )
+
+    class _Query:
+        def __init__(self, value):
+            self.value = value
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return self.value
+
+    class _Db:
+        def __init__(self, value):
+            self.value = value
+            self.added = []
+
+        def query(self, *args, **kwargs):
+            return _Query(self.value)
+
+        def add(self, obj):
+            self.added.append(obj)
+
+    db = _Db(message)
+    now = datetime.utcnow()
+    assert rec._sync_terminal_run_to_h5(db, run, now=now) is True
+    assert message.status == "failed"
+    assert message.error == "device offline"
+    assert len(db.added) == 1 and isinstance(db.added[0], H5ChatEvent)
+    assert db.added[0].event_type == "error"
+    assert rec._sync_terminal_run_to_h5(db, run, now=now) is False
