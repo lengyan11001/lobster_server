@@ -2241,6 +2241,7 @@ def _robot_is_interrupted(text: str) -> bool:
     return any(h in blob for h in ROBOT_INTERRUPTED_HINTS)
 ROBOT_ACTION_LABEL = {
     "shanjian_digital_human_video": "\u6570\u5b57\u4eba\u53e3\u64ad\u89c6\u9891",
+    "shanjian_material_mix": "\u7d20\u6750\u6df7\u526a",
     "local_bestseller_daily_video": "\u7206\u6b3e\u590d\u523b\u89c6\u9891",
     "image_studio_generate": "\u56fe\u6587\u7d20\u6750",
     "viral_video_remix_start": "\u89c6\u9891\u6df7\u526a",
