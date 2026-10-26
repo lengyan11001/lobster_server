@@ -105,6 +105,7 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     # 灵感画布代码/功能资源（与 pack_client_code_ota.WEBSITE_OTA_PATHS 保持一致）。
     # 只列代码与功能资源，不列用户运行目录（会被对账删除）。
     "static/canvas-web",
+    "static/canvas-ui",
     "static/douyin-origin",
     "static/vendor",
     "static/data",
