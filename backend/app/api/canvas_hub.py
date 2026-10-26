@@ -210,14 +210,23 @@ async def sync_public_templates(db: Session, *, limit: int = 100, force: bool = 
     now = time.time()
     if not force and _template_sync_at and (now - _template_sync_at) < _TEMPLATE_SYNC_TTL:
         return 0
+    # 上游分页只认 query 参数（放 body 里会被忽略，永远只返回第一页 100 条）
+    projects: List[Dict[str, Any]] = []
     try:
-        payload = await apiz_json("POST", "/api/v1/projects/public", {"skip": 0, "limit": limit})
+        skip = 0
+        while skip < max(limit, 100):
+            payload = await apiz_json("POST", f"/api/v1/projects/public?skip={skip}&limit=100", {})
+            page = payload.get("projects") if isinstance(payload, dict) else None
+            if not isinstance(page, list) or not page:
+                break
+            projects.extend(page)
+            if len(page) < 100:
+                break
+            skip += 100
     except Exception as exc:
         logger.info("[canvas] 同步公开模板失败，继续用库里已有的: %s", exc)
-        return 0
-    projects = payload.get("projects") if isinstance(payload, dict) else None
-    if not isinstance(projects, list):
-        return 0
+        if not projects:
+            return 0
     saved = 0
     for item in projects:
         if not isinstance(item, dict):
@@ -359,6 +368,10 @@ def classify_template_category(name: str, description: str = "", upstream: Optio
             if value in TEMPLATE_CATEGORIES:
                 return value
     title = str(name or "").strip()
+    base = _NAME_COPY_SUFFIX.sub("", title)
+    base = _NAME_DUP_SUFFIX.sub("", base).strip()
+    if base in _CATEGORY_NAME_MAP:
+        return _CATEGORY_NAME_MAP[base]
     if title in _CATEGORY_NAME_MAP:
         return _CATEGORY_NAME_MAP[title]
     text = (title + " " + str(description or "")).lower()
