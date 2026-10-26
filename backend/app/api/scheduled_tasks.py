@@ -6239,6 +6239,26 @@ def pending_scheduled_task_runs(
         )
         if interrupted:
             db.commit()
+    # 从未被领取的 pending run 超过 5 分钟直接作废：否则一个中断的下发会永久堵住
+    # _installation_has_active_work，后续任务永远领不到（2026-10-26 事故）。
+    stale_unclaimed = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == current_user_id,
+            ScheduledTaskRun.installation_id == xi,
+            ScheduledTaskRun.status == "pending",
+            ScheduledTaskRun.claimed_at.is_(None),
+            ScheduledTaskRun.created_at < now - timedelta(minutes=5),
+        )
+        .all()
+    )
+    if stale_unclaimed:
+        for row in stale_unclaimed:
+            row.status = "failed"
+            row.error = "任务长时间未被领取，已作废"
+            row.finished_at = now
+            row.updated_at = now
+        db.commit()
     # A physical installation executes exactly one client task at a time.
     # Do not materialize another run while it is busy.  The next poll after a
     # final state will enqueue and claim exactly one currently-valid task.
