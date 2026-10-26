@@ -730,6 +730,13 @@ def delete_mastra_session(
     row = _ensure_chat_session(db, owner.id, session_id)
     if is_system_task_session_id(row.id, owner.id):
         raise HTTPException(status_code=409, detail="系统任务会话用于归集任务记录，不能删除")
+    # Older conversations can be left in processing after their device child
+    # has already finished.  Settle those roots before deciding that the
+    # session is still running; genuinely active children remain protected.
+    from ..services.runtime_state_maintenance import finalize_orphan_mastra_roots
+
+    if finalize_orphan_mastra_roots(db, session_id=row.id):
+        db.commit()
     active = (
         db.query(H5ChatMessage.id)
         .filter(

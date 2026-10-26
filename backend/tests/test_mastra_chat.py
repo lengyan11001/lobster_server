@@ -2265,3 +2265,98 @@ def test_wechat_send_message_capability_rejects_missing_message():
 
     with pytest.raises(OnlineCapabilityParamsError):
         normalize_mastra_online_params("online.wechat_send_message", {"targets": ["九变1"]})
+
+def test_delete_session_settles_orphan_mastra_root(db_session, db_session_factory, test_user):
+    """子任务已结束、主消息仍 processing 的历史会话，应先收口再允许删除。"""
+    from backend.app.models import H5ChatApproval, H5ChatMessage, H5ChatSession
+
+    session = _session(db_session, test_user.id, title="历史会话")
+    now = datetime.utcnow()
+    root = H5ChatMessage(
+        id=f"root-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        mode="mastra",
+        status="processing",
+        content="抓取网页",
+        reply_text="任务已经结束，这是最终结果。",
+        claimed_by_installation_id="mastra-server",
+        claimed_at=now - timedelta(hours=1),
+        created_at=now - timedelta(hours=1),
+        updated_at=now,
+    )
+    child = H5ChatMessage(
+        id=f"child-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        parent_message_id=root.id,
+        mode="mastra",
+        status="failed",
+        content="[AI任务] 抓取网页",
+        error="设备超时",
+        created_at=now - timedelta(minutes=50),
+        updated_at=now - timedelta(minutes=40),
+    )
+    approval = H5ChatApproval(
+        id=f"approval-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        message_id=root.id,
+        task="online.browser_extract_page",
+        status="executing",
+        execution_target="online",
+        created_at=now - timedelta(hours=1),
+        updated_at=now - timedelta(hours=1),
+    )
+    db_session.add_all([root, child, approval])
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).delete(
+        f"/api/mastra-chat/sessions/{session.id}"
+    )
+    assert response.status_code == 200, response.text
+
+    with db_session_factory() as db:
+        saved_session = db.query(H5ChatSession).filter(H5ChatSession.id == session.id).one()
+        saved_root = db.query(H5ChatMessage).filter(H5ChatMessage.id == root.id).one()
+        saved_approval = db.query(H5ChatApproval).filter(H5ChatApproval.id == approval.id).one()
+        assert saved_session.archived_at is not None
+        assert saved_root.status == "completed"
+        assert saved_root.finished_at is not None
+        assert saved_approval.status == "completed"
+
+
+def test_delete_session_still_blocks_active_child(db_session, db_session_factory, test_user):
+    from backend.app.models import H5ChatMessage
+
+    session = _session(db_session, test_user.id, title="正在执行")
+    now = datetime.utcnow()
+    root = H5ChatMessage(
+        id=f"root-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        mode="mastra",
+        status="processing",
+        content="执行任务",
+        created_at=now,
+        updated_at=now,
+    )
+    child = H5ChatMessage(
+        id=f"child-{uuid.uuid4().hex}",
+        user_id=test_user.id,
+        session_id=session.id,
+        parent_message_id=root.id,
+        mode="mastra",
+        status="processing",
+        content="[AI任务] 执行中",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([root, child])
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).delete(
+        f"/api/mastra-chat/sessions/{session.id}"
+    )
+    assert response.status_code == 409
+    assert "任务执行中" in response.json()["detail"]

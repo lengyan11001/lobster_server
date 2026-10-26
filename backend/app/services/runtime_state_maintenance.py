@@ -13,7 +13,7 @@ from ..api.scheduled_tasks import (
     _fail_abandoned_client_runs,
 )
 from ..db import SessionLocal
-from ..models import CreativeGenerationJob, H5ChatApproval, H5ChatEvent, H5ChatMessage, RechargeOrder
+from ..models import CreativeGenerationJob, H5ChatApproval, H5ChatEvent, H5ChatMessage, RechargeOrder, ScheduledTaskRun
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,123 @@ def _env_hours(name: str, default: int, *, minimum: int = 1, maximum: int = 24 *
         return default
 
 
+def finalize_orphan_mastra_roots(
+    db,
+    *,
+    now: datetime | None = None,
+    session_id: str | None = None,
+    limit: int = 500,
+) -> int:
+    """Close a mastra root whose child work is all terminal but the root never finalized.
+
+    This is what makes an old conversation deletable without weakening the
+    guard for genuinely running work: pending/processing children, active
+    scheduled runs, and approvals still waiting for the user all keep the root
+    open.
+    """
+    now = now or datetime.utcnow()
+    query = db.query(H5ChatMessage).filter(
+        H5ChatMessage.parent_message_id.is_(None),
+        H5ChatMessage.mode == "mastra",
+        H5ChatMessage.status.in_(("pending", "processing")),
+    )
+    if session_id:
+        query = query.filter(H5ChatMessage.session_id == session_id)
+    roots = query.order_by(H5ChatMessage.updated_at.asc()).limit(max(1, min(1000, int(limit)))).all()
+
+    finalized = 0
+    for root in roots:
+        children = (
+            db.query(H5ChatMessage)
+            .filter(H5ChatMessage.parent_message_id == root.id)
+            .all()
+        )
+        if not children:
+            continue
+        if any(str(child.status or "").lower() in {"pending", "processing"} for child in children):
+            continue
+
+        child_ids = [child.id for child in children]
+        active_run = (
+            db.query(ScheduledTaskRun.id)
+            .filter(
+                ScheduledTaskRun.h5_message_id.in_(child_ids),
+                ScheduledTaskRun.status.in_(("pending", "processing")),
+            )
+            .first()
+        )
+        if active_run:
+            continue
+
+        approvals = (
+            db.query(H5ChatApproval)
+            .filter(H5ChatApproval.message_id == root.id)
+            .all()
+        )
+        if any(str(row.status or "").lower() in {"pending", "approved"} for row in approvals):
+            continue
+
+        reply = str(root.reply_text or "").strip()
+        # A recent planner claim with no reply may still be writing.  A reply
+        # already exists in the stuck cases, so it is safe to finalize now.
+        if (
+            not reply
+            and str(root.claimed_by_installation_id or "") == "mastra-server"
+            and root.claimed_at
+            and (now - root.claimed_at) < timedelta(minutes=15)
+        ):
+            continue
+
+        failed_children = any(
+            str(child.status or "").lower() in {"failed", "cancelled"}
+            for child in children
+        )
+        if reply:
+            root.status = "completed"
+            root.error = None
+            event_type = "final"
+            payload = {
+                "reply_text": reply,
+                "reason": "orphan_mastra_root_reconciled",
+                "had_failed_children": failed_children,
+            }
+        else:
+            root.status = "failed"
+            root.error = "后台任务已结束，但未生成最终回复；可以重新发起。"
+            event_type = "error"
+            payload = {
+                "error": root.error,
+                "reason": "orphan_mastra_root_reconciled",
+            }
+        root.finished_at = now
+        root.updated_at = now
+
+        for approval in approvals:
+            if str(approval.status or "").lower() in {"completed", "failed", "rejected", "cancelled"}:
+                continue
+            approval.status = "completed" if root.status == "completed" else "failed"
+            approval.finished_at = now
+            approval.updated_at = now
+
+        existing = (
+            db.query(H5ChatEvent.id)
+            .filter(H5ChatEvent.message_id == root.id, H5ChatEvent.event_type == event_type)
+            .first()
+        )
+        if existing is None:
+            db.add(
+                H5ChatEvent(
+                    message_id=root.id,
+                    user_id=root.user_id,
+                    event_type=event_type,
+                    payload=payload,
+                    created_at=now,
+                )
+            )
+        finalized += 1
+    return finalized
+
+
 def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
     """Repair terminal-state drift and bound durable queues without deleting audit rows."""
     now = now or datetime.utcnow()
@@ -54,6 +171,7 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
         "abandoned_runs_failed": 0,
         "chat_messages_expired": 0,
         "approvals_repaired": 0,
+        "mastra_roots_finalized": 0,
         "creative_jobs_expired": 0,
         "fuiou_orders_expired": 0,
     }
@@ -79,6 +197,7 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
             approval.finished_at = approval.finished_at or now
             approval.updated_at = now
         result["approvals_repaired"] = len(terminal_approvals)
+        result["mastra_roots_finalized"] = finalize_orphan_mastra_roots(db, now=now)
 
         chat_cutoff = now - timedelta(hours=_env_hours("LOBSTER_PENDING_CHAT_EXPIRY_HOURS", 72))
         stale_messages = (
