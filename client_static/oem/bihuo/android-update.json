@@ -1,15 +1,15 @@
 {
-    "schema_version": 1,
-    "brand": "bihuo",
-    "package_name": "com.bihuo.lobsterh5",
-    "version_code": 27,
-    "version_name": "1.1.25",
-    "apk_url": "/client/oem/bihuo/android-1.1.25.apk",
-    "sha256": "28b5ea932883842d468b28e168801faaea6b7bbdb3b42e9d40104939f69c6815",
-    "size": 300149,
-    "published_at": "2026-10-10T05:44:39Z",
-    "force_update": false,
-    "min_supported_version_code": 1,
-    "title": "发现新版本",
-    "notes": "1.1.25：统一保存/下载管线（相册与下载目录兼容各安卓版本与 ROM）；素材保存到相册修复；下载失败显示真实原因；启动即检查升级；启动页显示版本号"
+    "schema_version":  1,
+    "brand":  "bihuo",
+    "package_name":  "com.bihuo.lobsterh5",
+    "version_code":  29,
+    "version_name":  "1.1.27",
+    "apk_url":  "/client/oem/bihuo/android-1.1.27.apk",
+    "sha256":  "ba8ec3e9b16ec58df30ce4031390eb8d37cb8137a36f2a1450f7266532d26d8a",
+    "size":  300150,
+    "published_at":  "2026-10-26T03:36:47Z",
+    "force_update":  false,
+    "min_supported_version_code":  1,
+    "title":  "发现新版本",
+    "notes":  "录音笔：设备别名、自动连接、来电暂停恢复"
 }

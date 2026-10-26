@@ -1,15 +1,15 @@
 {
-    "schema_version": 1,
-    "brand": "hikong",
-    "package_name": "com.bihuo.lobsterh5.hikong",
-    "version_code": 27,
-    "version_name": "1.1.25",
-    "apk_url": "/client/oem/hikong/android-1.1.25.apk",
-    "sha256": "26065eee2abba84042477e41ea9c78e6cd41b5953497769e02b54caecd561b03",
-    "size": 197750,
-    "published_at": "2026-10-10T05:44:40Z",
-    "force_update": false,
-    "min_supported_version_code": 1,
-    "title": "发现新版本",
-    "notes": "1.1.25：统一保存/下载管线（相册与下载目录兼容各安卓版本与 ROM）；素材保存到相册修复；下载失败显示真实原因；启动即检查升级；启动页显示版本号"
+    "schema_version":  1,
+    "brand":  "hikong",
+    "package_name":  "com.bihuo.lobsterh5.hikong",
+    "version_code":  29,
+    "version_name":  "1.1.27",
+    "apk_url":  "/client/oem/hikong/android-1.1.27.apk",
+    "sha256":  "d5fc591834940c0f7b7b4ccf82d2eed4dc3e3cba9ca05ce97f18211813481e1e",
+    "size":  197751,
+    "published_at":  "2026-10-26T03:36:51Z",
+    "force_update":  false,
+    "min_supported_version_code":  1,
+    "title":  "发现新版本",
+    "notes":  "录音笔：设备别名、自动连接、来电暂停恢复"
 }
