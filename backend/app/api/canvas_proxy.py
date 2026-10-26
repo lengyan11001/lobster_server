@@ -1201,6 +1201,16 @@ async def canvas_proxy(
         return _local_quote_response(normalized, body_json)
 
     # 模型/音色/技能目录：本地缓存 + 我们的价
+    # 单个模型的参数 schema：/v3/models/<name> 之前没实现，前端拿不到 params_schema
+    if normalized.startswith("api/v3/models/") and normalized not in _CATALOG_PATHS:
+        model_name = normalized[len("api/v3/models/"):].strip("/")
+        if model_name:
+            try:
+                payload = await canvas_hub.apiz_json("GET", "/api/v3/models/" + model_name)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"模型详情获取失败：{exc}") from exc
+            return JSONResponse(payload)
+
     if normalized in _CATALOG_PATHS:
         return await _catalog_response(normalized, db)
 
