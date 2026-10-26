@@ -866,6 +866,18 @@ async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
                     holder["url"] = await transfer_media_url(holder["url"])
                 elif isinstance(holder, str):
                     item["image_url"] = {"url": await transfer_media_url(holder)}
+    # 参考素材是列表（reference_image_urls / image_urls），逐条转存成 apiz 可访问的地址
+    for list_key in ("reference_image_urls", "image_urls", "reference_video_urls"):
+        value = params.get(list_key)
+        if isinstance(value, list) and value:
+            mapped = []
+            for item in value:
+                if isinstance(item, str) and item.startswith("http"):
+                    mapped.append(await transfer_media_url(item))
+                else:
+                    mapped.append(item)
+            params[list_key] = mapped
+
     for key in ("image_url", "image", "first_frame", "last_frame", "video_url"):
         value = params.get(key)
         if isinstance(value, str) and value.startswith("http"):
