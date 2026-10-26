@@ -183,6 +183,35 @@ def _migrate_shop_product_listing_media():
         logger.warning("Migration shop_products.listing_media skipped: %s", e)
 
 
+def _migrate_canvas_project_category():
+    """canvas_project.category：灵感页风格 tab 的分类（老库补列 + 回填）。
+
+    历史模板没有分类字段，按名字归类；已经填过的不覆盖。
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("canvas_project"):
+            return
+        cols = {c["name"] for c in insp.get_columns("canvas_project")}
+        with engine.begin() as conn:
+            if "category" not in cols:
+                conn.execute(text("ALTER TABLE canvas_project ADD COLUMN category VARCHAR(32) NOT NULL DEFAULT ''"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_canvas_project_category ON canvas_project (category)"))
+        from backend.app.api.canvas_hub import classify_template_category
+
+        with engine.begin() as conn:
+            pending = conn.execute(text("SELECT id, name, coalesce(description, '') AS descr FROM canvas_project"
+                                        " WHERE coalesce(category, '') = ''")).fetchall()
+            for row in pending:
+                conn.execute(text("UPDATE canvas_project SET category = :cat WHERE id = :id"),
+                             {"cat": classify_template_category(row[1], row[2]), "id": row[0]})
+        logger.info("Migration canvas_project.category ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration canvas_project.category skipped: %s", e)
+
+
 def _migrate_user_password_version():
     """users.password_version：改密码后旧 token 失效（老库补列）。"""
     from sqlalchemy import inspect, text
@@ -1684,6 +1713,7 @@ def create_app() -> FastAPI:
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_user_password_version()
+        _migrate_canvas_project_category()
         _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()
         _migrate_wechat_outcome_channel()

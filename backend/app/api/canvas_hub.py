@@ -234,17 +234,20 @@ async def sync_public_templates(db: Session, *, limit: int = 100, force: bool = 
             "thumb": str(item.get("thumbnail_url") or item.get("cover_url") or "")[:1000],
             "src": str(item.get("canvas_url") or "")[:1000],
             "sort": int(item.get("sort") or 9999),
+            "cat": classify_template_category(str(item.get("name") or "官方模板"), str(item.get("description") or ""), item),
             "now": now,
         }
         if row is None:
             db.execute(
                 text("INSERT INTO canvas_project (uuid, user_id, name, description, is_public, snapshot,"
-                     " thumbnail_url, source_url, sort, created_at, updated_at)"
-                     " VALUES (:u, %d, :name, :descr, :pub, NULL, :thumb, :src, :sort, :now, :now)"
+                     " thumbnail_url, source_url, sort, category, created_at, updated_at)"
+                     " VALUES (:u, %d, :name, :descr, :pub, NULL, :thumb, :src, :sort, :cat, :now, :now)"
                      % TEMPLATE_SEED_USER_ID), params)
         else:
             db.execute(text("UPDATE canvas_project SET name = :name, description = :descr, is_public = :pub,"
-                            " thumbnail_url = :thumb, source_url = :src, sort = :sort, updated_at = :now"
+                            " thumbnail_url = :thumb, source_url = :src, sort = :sort,"
+                            " category = CASE WHEN coalesce(category, '') = '' THEN :cat ELSE category END,"
+                            " updated_at = :now"
                             " WHERE uuid = :u"), params)
         saved += 1
     db.commit()
@@ -315,6 +318,56 @@ def _has_canvas(snapshot: Any) -> bool:
     return bool(text) and text not in ("{}", "null")
 
 
+# ---------------------------------------------------------------- 模板分类
+# 灵感页风格 tab 用的分类。现有模板没有分类字段，这里按名字归类，
+# 上游以后若直接给了 category/tags，优先用上游的。
+TEMPLATE_CATEGORIES = ("poster", "xhs", "portrait", "cartoon", "other")
+
+_CATEGORY_NAME_MAP = {
+    # 爆款带货海报：电商/产品/广告/海报
+    "商业大片": "poster", "电商广告": "poster", "咖啡广告": "poster", "产品摄影": "poster",
+    "产品推广视频": "poster", "sora2生成广告视频": "poster", "苹果饮料广告": "poster",
+    "饮料分镜广告": "poster", "产品渲染": "poster", "创意广告": "poster", "饰品广告": "poster",
+    "美妆产品广告分镜": "poster", "果汁饮料创意海报": "poster", "诺斯sora2 电商视频": "poster",
+    # 小红书图文：图文/笔记/手帐/卡片/截图/穿搭
+    "旅游手帐": "xhs", "旅游手帐 - Copy": "xhs", "服装穿搭": "xhs", "知识解说图": "xhs",
+    "知识卡片": "xhs", "聊天截图": "xhs",
+    # 摄影级人像：人像/人物/角色一致性
+    "sora2人物一致性": "portrait", "香蕉2多人物一致性": "portrait", "sora2角色一致性 - Copy": "portrait",
+    "sora2角色一致性": "portrait", "sora角色使用案例": "portrait", "角色创建 - Copy": "portrait",
+    "视频换脸案例": "portrait", "视频换脸案例 - Copy - Copy": "portrait", "人物关系图谱": "portrait",
+    "角色打斗": "portrait", "天使化": "portrait", "人物关系图谱": "other",
+    # 3D 卡通 IP：动画/漫画/插画/潮玩
+    "动画故事": "cartoon", "拉布布": "cartoon", "儿童绘本": "cartoon", "扁平风插画": "cartoon",
+    "温暖系插画": "cartoon", "梦幻插画": "cartoon", "治愈插画": "cartoon", "日式动漫 - Copy": "cartoon",
+    "漫画翻译上色": "cartoon", "漫画画布": "cartoon", "灵感画布画漫画": "cartoon",
+}
+
+_CATEGORY_KEYWORDS = (
+    ("poster", ("带货", "电商", "海报", "商品", "主图", "产品", "广告", "促销", "爆款")),
+    ("xhs", ("小红书", "图文", "笔记", "手帐", "卡片", "截图", "穿搭")),
+    ("portrait", ("人像", "写真", "摄影", "人物", "角色", "换脸")),
+    ("cartoon", ("3d", "卡通", "动漫", "漫画", "插画", "盲盒", "ip", "绘本", "动画")),
+)
+
+
+def classify_template_category(name: str, description: str = "", upstream: Optional[Dict[str, Any]] = None) -> str:
+    """给模板归类；已经带合法 category 的直接用。"""
+    if isinstance(upstream, dict):
+        for key in ("category", "category_key", "style"):
+            value = str(upstream.get(key) or "").strip().lower()
+            if value in TEMPLATE_CATEGORIES:
+                return value
+    title = str(name or "").strip()
+    if title in _CATEGORY_NAME_MAP:
+        return _CATEGORY_NAME_MAP[title]
+    text = (title + " " + str(description or "")).lower()
+    for code, words in _CATEGORY_KEYWORDS:
+        if any(word in text for word in words):
+            return code
+    return "other"
+
+
 def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, Any]:
     # 画布前端（canvas-web bundle）只在 canvas_url 非空时才去调 canvas/load：
     #   if (a.canvas_url) { A = (await loadDrawCanvas(token, n)).snapshot }
@@ -337,6 +390,7 @@ def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, A
         "cover_url": row.thumbnail_url or "",
         "canvas_url": canvas_url,
         "is_template": int(row.user_id or 0) == TEMPLATE_SEED_USER_ID,
+        "category": str(getattr(row, "category", "") or ""),
         "sort": row.sort,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -357,9 +411,13 @@ def _identifier_clause(identifier: str) -> Tuple[str, Dict[str, Any]]:
 
 
 def list_projects(db: Session, *, user_id: Optional[int], only_public: bool, skip: int, limit: int,
-                  keyword: str = "") -> List[Dict[str, Any]]:
+                  keyword: str = "", category: str = "") -> List[Dict[str, Any]]:
     sql = "SELECT * FROM canvas_project WHERE 1=1"
     params: Dict[str, Any] = {"skip": max(0, skip), "limit": max(1, min(200, limit or 50))}
+    category = str(category or "").strip().lower()
+    if category and category not in ("all", "全部发现"):
+        sql += " AND coalesce(category, '') = :cat"
+        params["cat"] = category
     if user_id is not None:
         sql += " AND user_id = :uid"
         params["uid"] = user_id

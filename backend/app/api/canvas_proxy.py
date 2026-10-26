@@ -1012,6 +1012,7 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         return JSONResponse({"code": 200, "data": {"is_admin": False}})
 
     if normalized.startswith("api/v1/projects"):
+        category = str(body.get("category") or request.query_params.get("category") or "").strip().lower()
         rest = normalized[len("api/v1/projects"):].strip("/")
         if rest in ("", "create"):
             project = hub.create_project(db, user_id=uid, name=str(body.get("name") or ""),
@@ -1019,16 +1020,19 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
                                          is_public=bool(body.get("is_public")))
             return JSONResponse({"code": 200, **project, "project": project, "data": project})
         if rest == "my":
-            items = hub.list_projects(db, user_id=uid, only_public=False, skip=skip, limit=limit)
+            items = hub.list_projects(db, user_id=uid, only_public=False, skip=skip, limit=limit,
+                                      category=category)
             return _ok_list(items, len(items))
         if rest == "public":
             if not skip:
                 await hub.sync_public_templates(db, limit=max(60, limit))
-            items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit)
+            items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit,
+                                      category=category)
             return _ok_list(items, len(items))
         if rest == "search":
             keyword = str(request.query_params.get("q") or "")
-            items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit, keyword=keyword)
+            items = hub.list_projects(db, user_id=None, only_public=True, skip=skip, limit=limit, keyword=keyword,
+                                      category=category)
             return _ok_list(items, len(items))
         if rest.startswith("admin/"):
             return JSONResponse({"code": 200, "data": {"list": [], "total": 0}})
