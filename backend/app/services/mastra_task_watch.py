@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -231,6 +232,58 @@ def _online_child_summary(db: Session, child: H5ChatMessage) -> Optional[Dict[st
         "root_id": child.parent_message_id,
         "user_id": int(child.user_id),
     }
+
+
+def _queue_autosummary(db: Session, child: H5ChatMessage, summary: Dict[str, Any]) -> bool:
+    """设备任务完成后，自动起一轮“总结”让模型输出结论（幂等）。"""
+    parent = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.id == str(child.parent_message_id or ""))
+        .first()
+    )
+    if parent is None or str(parent.mode or "").strip().lower() != "mastra":
+        return False
+    # 防循环：自动总结那一轮再派生的子任务，不再触发新的自动总结
+    if str(parent.content or "").lstrip().startswith("[自动总结]"):
+        return False
+    marker = f"[自动总结] {child.id}"
+    exists = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.user_id == child.user_id, H5ChatMessage.content.like(marker + "%"))
+        .first()
+    )
+    if exists is not None:
+        return False
+    run = (
+        db.query(ScheduledTaskRun)
+        .filter(ScheduledTaskRun.h5_message_id == child.id)
+        .order_by(ScheduledTaskRun.created_at.desc())
+        .first()
+    )
+    result_text = str(getattr(run, "result_text", "") or child.reply_text or "").strip()
+    if not result_text:
+        return False
+    title = str(summary.get("title") or "设备任务")
+    body = (
+        marker + "\n"
+        + f"设备任务「{title}」已经完成。请基于下面的真实结果直接给出结论：\n"
+        + "- 用户要的是这家店铺/这个页面的内容，不要再让用户确认，也不要重复任务信息；\n"
+        + "- 用结论 + 表格（产品线/价格/联系入口）+ 下一步的方式组织；\n"
+        + "- 只引用下面结果里出现过的信息，不要编造。\n\n"
+        + result_text[:6000]
+    )
+    row = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=int(child.user_id),
+        session_id=parent.session_id,
+        mode="mastra",
+        status="pending",
+        content=body[:8000],
+        installation_id=child.installation_id,
+    )
+    db.add(row)
+    db.flush()
+    return True
 
 
 def _online_child_notice(db: Session, child: H5ChatMessage) -> Optional[Tuple[str, str, str]]:
@@ -567,6 +620,9 @@ def _watch_online_children(now: datetime, *, window_minutes: Optional[float] = N
                     root_message_id=root_message_id,
                     key=key,
                 )
+                if str(child.status or "").strip().lower() == "completed":
+                    _queue_autosummary(db, child, summary)
+                    db.commit()
                 notified += 1
             except Exception:  # noqa: BLE001
                 db.rollback()
