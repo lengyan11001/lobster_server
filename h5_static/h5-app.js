@@ -17243,12 +17243,22 @@ async function api(path, options = {}) {
       state.recorderDeviceState = { ...state.recorderDeviceState, ...next };
       const value = state.recorderDeviceState;
       const status = $("recorderDeviceStatus");
+      const displayName = value.alias || value.name || "录音设备";
       if (status) {
         status.textContent = !value.connected
           ? "尚未连接录音设备"
           : value.recording
-            ? `${value.paused ? "录音已暂停" : "正在录音"} · ${value.name || "录音设备"}`
-            : `已连接 ${value.name || "录音设备"}`;
+            ? `${value.paused ? "录音已暂停" : "正在录音"} · ${displayName}`
+            : `已连接 ${displayName}`;
+        status.style.cursor = value.connected ? "pointer" : "";
+        status.title = value.connected ? "点击修改设备名称" : "";
+        status.onclick = function () {
+          const native = recorderNative();
+          if (!value.connected || !native || typeof native.setRecorderAlias !== "function") return;
+          const next = window.prompt("设备名称（只改本地显示，不改蓝牙名）", displayName);
+          if (next === null) return;
+          try { native.setRecorderAlias(String(next || "").trim()); } catch (e) {}
+        };
       }
       const duration = $("recorderDuration");
       if (duration) {
@@ -17532,7 +17542,7 @@ async function api(path, options = {}) {
     window.addEventListener("lobster-recorder", (event) => {
       const detail = event.detail || {};
       if (detail.type === "connected") {
-        renderRecorderDeviceState({ connected: true, name: detail.name || "录音设备", recording: !!detail.recording, paused: !!detail.paused, duration: Number(detail.duration || 0) });
+        renderRecorderDeviceState({ connected: true, name: detail.name || "录音设备", alias: detail.alias || "", recording: !!detail.recording, paused: !!detail.paused, duration: Number(detail.duration || 0) });
       } else if (detail.type === "disconnected") {
         renderRecorderDeviceState({ connected: false, recording: false, paused: false, duration: 0, name: "" });
         state.recorderSyncActive = false;
