@@ -86,7 +86,8 @@ _CATEGORY_LINES = (
 _HARD_RULES = (
     "- 热搜/榜单/热榜：用 online.discover_hotlist；禁止用 browser_extract_page 抓榜单",
     "- browser_extract_page 只用于读取某个具体网页正文（用户给了链接且要内容时）",
-    "- 需要完整参数或未列出的能力：调 listSystemCapabilities，不要猜",
+    "- 需要完整参数或未列出的能力：先调 listSystemCapabilities 取目录，不要猜",
+    "- 只能使用真实存在的 id：不要输出 plan_*、online.discover_* 这类通配或臆造 id",
 )
 
 
