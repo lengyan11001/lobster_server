@@ -391,3 +391,153 @@ def normalize_mastra_online_params(capability_id: str, params: Dict[str, Any]) -
         raise OnlineCapabilityParamsError("params 必须是对象")
     schema = definition.get("arg_schema") if isinstance(definition.get("arg_schema"), dict) else _schema({})
     return _normalize_object(params, schema)
+
+# ── 2026-10-27 给 AI 的元数据补齐：layer / 边界 / 输出契约 / 降级 / 示例 ──
+# 目的：模型不只知道"能做什么"，还要知道"什么时候不该用、失败怎么办、返回什么"。
+CATALOG_VERSION = "2026-10-27"
+
+_ENRICHMENT: Dict[str, Dict[str, Any]] = {
+    "online.image_studio": {
+        "layer": "produce",
+        "boundary": {
+            "not_for": ["视频", "数字人口播", "批量分镜"],
+            "use_instead": [
+                {"scene": "口播视频", "capability": "online.digital_human_v2"},
+                {"scene": "同城爆款分镜批量出图", "capability": "online.local_bestseller_scene"},
+            ],
+        },
+        "outputs": {"fields": ["task_id", "asset_id", "url"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["模型不支持所选比例时改为同族可用模型并提示", "参考图无法访问时忽略参考图重试一次"],
+        "examples": [{"params": {"prompt": "海边日落，一位穿白裙的女生背影", "aspect_ratio": "9:16"},
+                      "note": "单张竖版配图"}],
+    },
+    "online.digital_human_v2": {
+        "layer": "produce",
+        "boundary": {
+            "not_for": ["纯图文", "不需要人像的口播混剪"],
+            "use_instead": [{"scene": "不需要数字人形象的素材混剪", "capability": "online.image_studio"}],
+        },
+        "outputs": {"fields": ["task_id", "video_url", "duration"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["未选模板时只出纯口播原片（无字幕/无混剪）并明确提示", "时长被模板上限裁剪时提示实际出片时长"],
+        "examples": [{"params": {"script": "今年做实体最难的是获客成本", "aspect_ratio": "9:16"},
+                      "note": "15-30 秒口播"}],
+    },
+    "online.local_bestseller_plan": {
+        "layer": "plan",
+        "boundary": {"not_for": ["直接出片", "跨城市投放"],
+                     "use_instead": [{"scene": "直接出片", "capability": "online.local_bestseller_video"}]},
+        "outputs": {"fields": ["plan_id", "days", "topics"], "status": ["completed", "failed"]},
+        "degrade": ["人设资料缺失时按行业通用模板生成并提示补充"],
+        "examples": [{"params": {"days": 7}, "note": "一周选题与脚本规划"}],
+    },
+    "online.local_bestseller_scene": {
+        "layer": "produce",
+        "boundary": {"not_for": ["成片", "数字人口播"],
+                     "use_instead": [{"scene": "直接成片", "capability": "online.local_bestseller_video"}]},
+        "outputs": {"fields": ["task_id", "scene_ids", "image_urls"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["生图失败的分镜自动重试一次，仍失败则跳过并在结果里标注"],
+        "examples": [{"params": {"days": 3, "quality": "high"}, "note": "3 天分镜批量出图"}],
+    },
+    "online.local_bestseller_video": {
+        "layer": "produce",
+        "boundary": {"not_for": ["只出图", "需要真人出镜"],
+                     "use_instead": [{"scene": "只出分镜图", "capability": "online.local_bestseller_scene"},
+                                     {"scene": "真人口播", "capability": "online.digital_human_v2"}]},
+        "outputs": {"fields": ["task_id", "video_url", "duration"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["视频模型不可用时退回图生图方案并提示"],
+        "examples": [{"params": {"days": 7, "day": 1}, "note": "第 1 天成片"}],
+    },
+    "online.wechat_takeover": {
+        "layer": "ops",
+        "boundary": {"not_for": ["企业微信", "群发营销"],
+                     "use_instead": [{"scene": "主动加好友", "capability": "online.wechat_add_friend"}]},
+        "outputs": {"fields": ["task_id", "handled_count", "takeover_minutes"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["微信未登录时直接失败并提示先登录 PC 微信"],
+        "examples": [{"params": {"takeover_session_minutes": 30}, "note": "接管 30 分钟"}],
+    },
+    "online.whatsapp_takeover": {
+        "layer": "ops",
+        "boundary": {"not_for": ["个人微信", "手机端 WhatsApp"],
+                     "use_instead": [{"scene": "个人微信", "capability": "online.wechat_takeover"}]},
+        "outputs": {"fields": ["task_id", "handled_count"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["桌面客户端未启动时提示先打开 WhatsApp Desktop"],
+        "examples": [{"params": {}, "note": "按默认轮次接管"}],
+    },
+    "online.wechat_add_friend": {
+        "layer": "ops",
+        "boundary": {"not_for": ["批量群发", "朋友圈互动"],
+                     "use_instead": [{"scene": "朋友圈点赞评论", "capability": "online.wechat_moments_engage"}]},
+        "outputs": {"fields": ["task_id", "added_count", "failed_targets"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["达到当日上限时停止并返回已加数量"],
+        "examples": [{"params": {"max_targets": 10}, "note": "最多加 10 个"}],
+    },
+    "online.wechat_moments_engage": {
+        "layer": "ops",
+        "boundary": {"not_for": ["私信回复", "加好友"],
+                     "use_instead": [{"scene": "私信接管", "capability": "online.wechat_takeover"}]},
+        "outputs": {"fields": ["task_id", "liked", "commented"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["朋友圈不可见时跳过该联系人并记录"],
+        "examples": [{"params": {}, "note": "默认点赞+简短评论"}],
+    },
+    "online.wechat_send_message": {
+        "layer": "ops",
+        "boundary": {"not_for": ["群发", "接管会话"],
+                     "use_instead": [{"scene": "持续接管回复", "capability": "online.wechat_takeover"}]},
+        "outputs": {"fields": ["task_id", "sent"], "status": ["completed", "failed"]},
+        "degrade": ["联系人不存在时返回失败原因，不重试"],
+        "examples": [{"params": {"target": "张三", "text": "您好，资料已发您"}, "note": "单条发送"}],
+    },
+    "online.moments_generate_images": {
+        "layer": "produce",
+        "boundary": {"not_for": ["视频", "长图文"],
+                     "use_instead": [{"scene": "通用配图", "capability": "online.image_studio"}]},
+        "outputs": {"fields": ["task_id", "image_urls"], "status": ["queued", "running", "completed", "failed"]},
+        "degrade": ["生成失败时返回可用的部分图片"],
+        "examples": [{"params": {"prompt": "秋天落叶，朋友圈配图"}, "note": "朋友圈九宫格之一"}],
+    },
+    "online.publish_content": {
+        "layer": "publish",
+        "boundary": {"not_for": ["创作", "素材生成"],
+                     "use_instead": [{"scene": "生成内容", "capability": "online.image_studio"}]},
+        "outputs": {"fields": ["task_id", "platform", "publish_url"], "status": ["queued", "running", "published", "failed"]},
+        "degrade": ["平台未登录时返回未登录原因并保留草稿", "自动发布失败时提示改用人工审核发布"],
+        "examples": [{"params": {"platform": "wechat_moments", "source_mode": "parent_latest_run"},
+                      "note": "发布上游节点产物"}],
+    },
+    "online.browser_extract_page": {
+        "layer": "discover",
+        "boundary": {"not_for": ["需要登录后私密数据", "批量爬站"],
+                     "use_instead": [{"scene": "整站抓取", "capability": "online.browser_extract_page"}]},
+        "outputs": {"fields": ["title", "text", "links", "images", "method"], "status": ["completed", "failed"]},
+        "degrade": ["直连失败改用 Jina Reader", "X/GitHub 自动走专用适配器", "仍失败退回无头浏览器"],
+        "examples": [{"params": {"url": "https://x.com/xxx/status/123", "max_chars": 5000},
+                      "note": "抓取推文正文"}],
+    },
+}
+
+for _cid, _extra in _ENRICHMENT.items():
+    if _cid in _ONLINE_CAPABILITIES:
+        _ONLINE_CAPABILITIES[_cid].update(deepcopy(_extra))
+
+
+def validate_capability_catalog() -> list[str]:
+    """检查每个能力是否具备 AI 路由所需的完整元数据。"""
+    problems: list[str] = []
+    required = ("name", "description", "keywords", "arg_schema", "layer", "boundary", "outputs", "degrade", "examples")
+    for cid, cfg in _ONLINE_CAPABILITIES.items():
+        for key in required:
+            if not cfg.get(key):
+                problems.append(f"{cid}: missing {key}")
+        boundary = cfg.get("boundary") or {}
+        if not boundary.get("not_for"):
+            problems.append(f"{cid}: boundary.not_for empty")
+        for item in boundary.get("use_instead") or []:
+            target = str((item or {}).get("capability") or "")
+            if target and target not in _ONLINE_CAPABILITIES:
+                problems.append(f"{cid}: unknown use_instead {target}")
+        schema = cfg.get("arg_schema") or {}
+        props = schema.get("properties") or {}
+        for req in schema.get("required") or []:
+            if req not in props:
+                problems.append(f"{cid}: required '{req}' missing from properties")
+    return problems
