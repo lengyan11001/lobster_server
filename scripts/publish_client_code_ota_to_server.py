@@ -88,6 +88,8 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     # directory on the client.
     "desktop/launcher.py",
     "desktop/launcher.pyc",
+    "desktop/frameless_chrome.py",
+    "desktop/frameless_chrome.pyc",
     "desktop/oem_branding.py",
     "desktop/oem_branding.pyc",
     "desktop/oem_configurator.py",
