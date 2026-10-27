@@ -2676,11 +2676,51 @@ def _prepare_sales_workflow_nodes(
             params.pop("virtualman_id", None)
             params.pop("virtualman_candidates", None)
             params.pop("virtualman_selection_mode", None)
-            if hifly_voice:
-                params["voice"] = hifly_voice
-                params["speaker_id"] = hifly_voice
-            params["voice_candidates"] = copy.deepcopy(selected_voices)
-            params["voice_selection_mode"] = "daily_round_robin" if selected_voices else "fixed"
+            # 素材混剪的模板和声音一律取「个人IP设置」里的模板，节点只保留时长；
+            # 节点里即使残留了 voice/template 也不采用。
+            personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+            personal_res = personal_meta.get("digital_human_resources")
+            personal_res = personal_res if isinstance(personal_res, dict) else {}
+            personal_tpl = personal_meta.get("digital_human_template")
+            personal_tpl = personal_tpl if isinstance(personal_tpl, dict) else {}
+            mm_voices = [v for v in (personal_res.get("voices") or []) if isinstance(v, dict)]
+            if not mm_voices:
+                mm_voices = [v for v in (selected_voices or []) if isinstance(v, dict)]
+            params.pop("voice", None)
+            params.pop("speaker_id", None)
+            params.pop("template", None)
+            params.pop("template_source", None)
+            if personal_tpl:
+                pack_rules = personal_tpl.get("pack_rules") if isinstance(personal_tpl.get("pack_rules"), dict) else {}
+                process_rules = personal_tpl.get("process_rules") if isinstance(personal_tpl.get("process_rules"), dict) else {}
+                params["template_scene"] = _clean_text(personal_tpl.get("scene"), 32) or "realMan"
+                params["style_id"] = _clean_text(
+                    personal_tpl.get("style_id") or personal_tpl.get("styleId")
+                    or personal_tpl.get("template_id") or personal_tpl.get("id"), 128
+                )
+                params["materials"] = copy.deepcopy(personal_tpl.get("materials") or [])
+                params["material_sound_switch"] = bool(personal_tpl.get("material_sound_switch"))
+                params["introduce_name"] = _clean_text(personal_tpl.get("introduce_name"), 128)
+                params["introduce_description"] = _clean_text(personal_tpl.get("introduce_description"), 300)
+                params["header_switch"] = bool(pack_rules.get("headerSwitch", True))
+                params["material_switch"] = bool(pack_rules.get("materialSwitch", True))
+                params["subtitle_switch"] = bool(pack_rules.get("subtitleSwitch", True))
+                params["keyword_switch"] = bool(pack_rules.get("keywordSwitch", True))
+                params["watermark_show"] = bool(process_rules.get("watermarkShow", False))
+                params["material_match_way"] = _clean_text(process_rules.get("materialMatchWay"), 32) or "fuzzyMatch"
+                params["resource_preprocess_method"] = _clean_text(process_rules.get("resourcePreprocessMethod"), 32) or "roughCut"
+                params["material_composition"] = _clean_text(process_rules.get("materialComposition"), 32) or "random"
+                params["template_source"] = "personal_ip"
+            if mm_voices:
+                first = mm_voices[0]
+                mm_voice_id = _clean_text(
+                    first.get("voice") or first.get("speaker_id") or first.get("hifly_voice_id"), 128
+                )
+                if mm_voice_id:
+                    params["voice"] = mm_voice_id
+                    params["speaker_id"] = mm_voice_id
+            params["voice_candidates"] = copy.deepcopy(mm_voices)
+            params["voice_selection_mode"] = "daily_round_robin" if len(mm_voices) > 1 else "fixed"
             payload["params"] = params
             plan["payload"] = payload
 
