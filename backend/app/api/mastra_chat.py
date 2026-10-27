@@ -2109,10 +2109,11 @@ async def dispatch_online_capability(
 
     # 发现层：热搜 / 行业资讯 / RSS，服务端直接执行（带缓存与降级）
     if action in ("discover_hotlist", "discover_news", "discover_rss",
-                  "discover_calendar", "discover_gap", "discover_competitor", "discover_ugc"):
+                  "discover_calendar", "discover_gap", "discover_competitor", "discover_ugc",
+                  "discover_algorithm", "discover_platform_diff"):
         from ..services.discover import (calendar as calendar_mod, competitor as competitor_mod,
-                                          gap as gap_mod, hotlist, news as news_mod, rss as rss_mod,
-                                          ugc as ugc_mod)
+                                          gap as gap_mod, hotlist, knowledge as knowledge_mod,
+                                          news as news_mod, rss as rss_mod, ugc as ugc_mod)
 
         if action == "discover_hotlist":
             data = await hotlist.fetch(list(params.get("platforms") or ["weibo", "douyin"]),
@@ -2142,6 +2143,14 @@ async def dispatch_online_capability(
             data = await competitor_mod.analyze(list(params.get("urls") or []),
                                                 platform=str(params.get("platform") or ""))
             reply = competitor_mod.format_markdown(data)
+        elif action in ("discover_algorithm", "discover_platform_diff"):
+            doc = "traits" if action == "discover_platform_diff" else ""
+            items = knowledge_mod.search(str(params.get("query") or ""),
+                                          platform=str(params.get("platform") or ""),
+                                          doc=doc, limit=5)
+            data = {"items": items}
+            heading = "跨平台内容差异" if doc == "traits" else "平台算法机制"
+            reply = knowledge_mod.format_markdown(items, heading=heading)
         elif action == "discover_ugc":
             data = await ugc_mod.search(str(params.get("brand") or ""),
                                         platforms=list(params.get("platforms") or []) or None,

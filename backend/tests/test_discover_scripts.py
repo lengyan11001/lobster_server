@@ -3,6 +3,7 @@ from backend.app.services.discover import (
     competitor as competitor_mod,
     gap as gap_mod,
     hotlist,
+    knowledge as knowledge_mod,
     news,
     rss,
     scoring,
@@ -43,6 +44,10 @@ def test_competitor_and_ugc_selftest():
     assert ugc_mod.selftest() == []
 
 
+def test_knowledge_selftest():
+    assert knowledge_mod.selftest() == []
+
+
 def test_cache_roundtrip():
     discover_cache.clear()
     discover_cache.set("k", {"v": 1}, 60)
@@ -54,7 +59,8 @@ def test_discover_capabilities_registered_and_complete():
     caps = mastra_online_capabilities()
     for cid in ("online.discover_hotlist", "online.discover_news", "online.discover_rss",
                 "online.discover_calendar", "online.discover_gap",
-                "online.discover_competitor", "online.discover_ugc"):
+                "online.discover_competitor", "online.discover_ugc",
+                "online.discover_algorithm", "online.discover_platform_diff"):
         assert cid in caps, cid
         cfg = caps[cid]
         assert cfg["task_kind"] == "server_action"

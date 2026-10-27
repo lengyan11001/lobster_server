@@ -53,4 +53,7 @@ TikHub 等付费 API 只在显式配置时启用，用于补齐：
 | `online.discover_competitor` | 直连 / Jina / 无头浏览器 | 公开页可见计数，缺失指标明确标注 |
 | `online.discover_ugc` | Bing 公开搜索 | 提及链接列表，互动明细需人工补 |
 
-未移植：algorithm-updates、cross-platform-diff（纯知识文档，不涉及数据抓取）。
+| `online.discover_algorithm` | 本地知识库（algorithm-vocabulary + platform-sources） | 平台推荐机制/限流/官方公告来源，离线 |
+| `online.discover_platform_diff` | 本地知识库（platform-traits） | 跨平台格式/节奏/合规差异 |
+
+移植完成度：9/9（Easel 发现层全部技能已落地；知识型技能用本地文档实现，不依赖网络）。
