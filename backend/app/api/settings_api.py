@@ -556,6 +556,36 @@ def list_installation_aliases(
                 "updated_at": presence.last_seen_at.isoformat() if presence.last_seen_at else "",
             }
         )
+    # 没有自定义备注的历史槽位也要能选：否则用户只能看到空下拉，无法恢复。
+    seen_slots = {str(item.get("installation_id") or "") for item in items}
+    installs = (
+        db.query(UserInstallation)
+        .filter(UserInstallation.user_id.in_(tuple(owner_ids)))
+        .order_by(UserInstallation.last_seen_at.desc())
+        .all()
+    )
+    for install in installs:
+        slot = str(install.installation_id or "").strip()
+        if not slot or slot in seen_slots:
+            continue
+        tail = slot[-8:]
+        key = f"设备 {tail}".lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        seen_slots.add(slot)
+        presence = next((p for p in presences if str(p.installation_id or "") == slot), None)
+        items.append(
+            {
+                "alias": f"设备 {tail}",
+                "installation_id": slot,
+                "online": bool(
+                    presence and presence.last_seen_at and presence.last_seen_at >= cutoff
+                ),
+                "updated_at": presence.last_seen_at.isoformat() if presence and presence.last_seen_at else "",
+                "fallback": True,
+            }
+        )
     return {"ok": True, "items": items}
 
 
@@ -600,7 +630,32 @@ def restore_installation_alias(
             if slot:
                 break
         if not slot:
-            raise HTTPException(status_code=404, detail="没有找到这个设备别名")
+            # Fallback label format: “设备 <slot tail>”. Select the unique
+            # known installation with that suffix when no custom alias exists.
+            candidate = alias.strip()
+            tail = candidate.split()[-1].lower() if candidate.startswith("设备 ") else ""
+            installs = (
+                db.query(UserInstallation)
+                .filter(UserInstallation.user_id.in_(tuple(owner_ids)))
+                .order_by(UserInstallation.last_seen_at.desc())
+                .all()
+            )
+            matches = [
+                str(row.installation_id or "").strip()
+                for row in installs
+                if str(row.installation_id or "").strip()
+                and (
+                    str(row.installation_id or "").strip().lower() == candidate.lower()
+                    or (tail and str(row.installation_id or "").strip().lower().endswith(tail))
+                )
+            ]
+            matches = list(dict.fromkeys(matches))
+            if len(matches) == 1:
+                slot = matches[0]
+            elif len(matches) > 1:
+                raise HTTPException(status_code=409, detail="该设备短号对应多个槽位，请改用完整槽位 ID")
+        if not slot:
+            raise HTTPException(status_code=404, detail="没有找到这个设备别名或槽位")
     if not slot:
         raise HTTPException(status_code=409, detail="这个别名还没有绑定过槽位")
     usage = _installation_id_usage(db, slot, exclude_user_id=current_user.id)

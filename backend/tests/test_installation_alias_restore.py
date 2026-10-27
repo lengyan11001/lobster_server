@@ -17,6 +17,7 @@ from backend.app.models import (
     H5MountedAccountDefault,
     User,
     UserDeviceLabel,
+    UserInstallation,
     UserMachineIdentity,
 )
 
@@ -168,3 +169,28 @@ def test_restore_moves_machine_identity_to_new_slot(db_session, test_user):
     assert result["updated_machines"] == 1
     row = db_session.query(UserMachineIdentity).filter_by(user_id=test_user.id).one()
     assert row.installation_id == slot_new
+
+def test_alias_list_includes_unnamed_slots_and_restores_by_fallback(db_session, test_user):
+    slot = "u31-unnamed-slot-12345678"
+    db_session.add(
+        UserInstallation(
+            user_id=test_user.id,
+            installation_id=slot,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    listed = list_installation_aliases(current_user=test_user, db=db_session)
+    item = next(row for row in listed["items"] if row["installation_id"] == slot)
+    assert item["fallback"] is True
+    assert item["alias"].startswith("设备 ")
+    assert item["alias"].endswith(slot[-8:])
+
+    restored = restore_installation_alias(
+        AliasRestoreRequest(alias=item["alias"]),
+        request=_req(""),
+        current_user=test_user,
+        db=db_session,
+    )
+    assert restored["installation_id"] == slot
