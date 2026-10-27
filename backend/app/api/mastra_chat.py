@@ -2108,8 +2108,11 @@ async def dispatch_online_capability(
         }
 
     # 发现层：热搜 / 行业资讯 / RSS，服务端直接执行（带缓存与降级）
-    if action in ("discover_hotlist", "discover_news", "discover_rss"):
-        from ..services.discover import hotlist, news as news_mod, rss as rss_mod
+    if action in ("discover_hotlist", "discover_news", "discover_rss",
+                  "discover_calendar", "discover_gap", "discover_competitor", "discover_ugc"):
+        from ..services.discover import (calendar as calendar_mod, competitor as competitor_mod,
+                                          gap as gap_mod, hotlist, news as news_mod, rss as rss_mod,
+                                          ugc as ugc_mod)
 
         if action == "discover_hotlist":
             data = await hotlist.fetch(list(params.get("platforms") or ["weibo", "douyin"]),
@@ -2123,6 +2126,27 @@ async def dispatch_online_capability(
                 limit_per_source=int(params.get("limit_per_source") or 5),
             )
             reply = news_mod.format_markdown(data, track=str(params.get("track") or ""))
+        elif action == "discover_calendar":
+            items = calendar_mod.upcoming(int(params.get("days") or 30),
+                                          track=str(params.get("track") or ""),
+                                          kinds=list(params.get("kinds") or []) or None)
+            data = {"items": items}
+            reply = calendar_mod.format_markdown(items, days=int(params.get("days") or 30),
+                                                 track=str(params.get("track") or ""))
+        elif action == "discover_gap":
+            data = await gap_mod.build(str(params.get("track") or ""),
+                                       platforms=list(params.get("platforms") or []) or None,
+                                       limit=int(params.get("limit") or 20))
+            reply = gap_mod.format_markdown(data)
+        elif action == "discover_competitor":
+            data = await competitor_mod.analyze(list(params.get("urls") or []),
+                                                platform=str(params.get("platform") or ""))
+            reply = competitor_mod.format_markdown(data)
+        elif action == "discover_ugc":
+            data = await ugc_mod.search(str(params.get("brand") or ""),
+                                        platforms=list(params.get("platforms") or []) or None,
+                                        limit=int(params.get("limit") or 10))
+            reply = ugc_mod.format_markdown(data)
         else:
             data = await rss_mod.fetch(
                 list(params.get("feeds") or []),

@@ -40,3 +40,17 @@ TikHub 等付费 API 只在显式配置时启用，用于补齐：
 - 海外平台（LinkedIn / Reddit / Twitter）
 
 启用前需确认额度与计费，文档与能力描述里**不默认推荐**。
+
+## 已实现模块（2026-10-27）
+
+| 能力 | 数据来源 | 说明 |
+|---|---|---|
+| `online.discover_hotlist` | 60s / xxapi | 多平台热搜，5 分钟缓存 |
+| `online.discover_news` | 8 个 RSS 源 | 按赛道路由，30 分钟缓存 |
+| `online.discover_rss` | 用户指定 feed | 标准库解析 |
+| `online.discover_calendar` | 本地 events_china.md + lunar.py | 农历离线换算，无网络依赖 |
+| `online.discover_gap` | 热搜 + Bing/百度联想词 | 加权评分（30/25/20/15/10） |
+| `online.discover_competitor` | 直连 / Jina / 无头浏览器 | 公开页可见计数，缺失指标明确标注 |
+| `online.discover_ugc` | Bing 公开搜索 | 提及链接列表，互动明细需人工补 |
+
+未移植：algorithm-updates、cross-platform-diff（纯知识文档，不涉及数据抓取）。
