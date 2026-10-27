@@ -2051,7 +2051,7 @@ def preview_online_capability(
 
 
 @router.post("/api/mastra-chat/online-capability-dispatch", summary="AI 调度结构化下发 Online 能力")
-def dispatch_online_capability(
+async def dispatch_online_capability(
     body: OnlineCapabilityDispatchCreate,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -2105,6 +2105,40 @@ def dispatch_online_capability(
             "online": _online_available(db, owner.id, existing.installation_id),
             "message": _serialize_message(existing),
             "run": _online_scheduled_run_payload(db, existing.id),
+        }
+
+    # 浏览器抓取：服务端直接执行（适配器 → 直连 → Jina → 无头浏览器），不再下发给设备
+    if action == "browser_extract_page":
+        from ..services.web_extract import extract_page_server, format_extract_reply
+
+        result = await extract_page_server(params)
+        now = datetime.utcnow()
+        child = H5ChatMessage(
+            id=uuid.uuid4().hex,
+            user_id=owner.id,
+            session_id=parent.session_id,
+            installation_id=installation_id,
+            parent_message_id=parent.id,
+            mode="mastra",
+            queue_mode="normal",
+            queue_priority=0,
+            content=child_content,
+            status="completed",
+            reply_text=format_extract_reply(result),
+            created_at=now,
+            updated_at=now,
+            finished_at=now,
+        )
+        db.add(child)
+        db.commit()
+        db.refresh(child)
+        return {
+            "ok": True,
+            "server_side": True,
+            "online": _online_available(db, owner.id, installation_id),
+            "message": _serialize_message(child),
+            "run": None,
+            "extract": result,
         }
 
     # Reuse the same client_workflow queue as H5. Online therefore receives the
