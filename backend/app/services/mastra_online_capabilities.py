@@ -733,6 +733,12 @@ _ENRICHMENT: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# 策划层：16 个技能由注册表生成，字段与在线能力一致
+from .plan.catalog import PLAN_CAPABILITIES
+
+_ONLINE_CAPABILITIES.update(deepcopy(PLAN_CAPABILITIES))
+
+
 for _cid, _extra in _ENRICHMENT.items():
     if _cid in _ONLINE_CAPABILITIES:
         _ONLINE_CAPABILITIES[_cid].update(deepcopy(_extra))

@@ -2107,6 +2107,50 @@ async def dispatch_online_capability(
             "run": _online_scheduled_run_payload(db, existing.id),
         }
 
+    # 策划层：定位/受众/选题/结构/排期，服务端调内部模型生成
+    if action.startswith("plan_"):
+        from ..services.plan import service as plan_service
+
+        now = datetime.utcnow()
+        reply = ""
+        error_text = ""
+        plan_data = None
+        try:
+            result = await plan_service.run(action, params)
+            reply = str(result.get("text") or "")[:20000]
+            plan_data = result.get("data")
+        except Exception as exc:  # noqa: BLE001
+            error_text = str(exc)[:500]
+            reply = f"策划生成失败：{error_text}\n\n可稍后重试，或先补充账号与目标信息。"
+        child = H5ChatMessage(
+            id=uuid.uuid4().hex,
+            user_id=owner.id,
+            session_id=parent.session_id,
+            installation_id=installation_id,
+            parent_message_id=parent.id,
+            mode="mastra",
+            queue_mode="normal",
+            queue_priority=0,
+            content=child_content,
+            status="failed" if error_text else "completed",
+            reply_text=reply,
+            error=error_text or None,
+            created_at=now,
+            updated_at=now,
+            finished_at=now,
+        )
+        db.add(child)
+        db.commit()
+        db.refresh(child)
+        return {
+            "ok": True,
+            "server_side": True,
+            "online": _online_available(db, owner.id, installation_id),
+            "message": _serialize_message(child),
+            "run": None,
+            "plan": {"action": action, "data": plan_data},
+        }
+
     # 发现层：热搜 / 行业资讯 / RSS，服务端直接执行（带缓存与降级）
     if action in ("discover_hotlist", "discover_news", "discover_rss",
                   "discover_calendar", "discover_gap", "discover_competitor", "discover_ugc",
