@@ -107,6 +107,7 @@ WEBSITE_CLIENT_CODE_OTA_PATHS = [
     "static/canvas-web",
     "static/canvas-ui",
     "static/douyin-origin",
+    "static/tiktok-origin",
     "static/vendor",
     "static/data",
     "static/branding/brands.json",
