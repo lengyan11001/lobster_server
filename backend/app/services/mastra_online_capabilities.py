@@ -219,7 +219,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     "online.publish_content": {
         "name": "发布内容",
         "description": "通过 Online 已登录的平台账号发布图片、视频或朋友圈内容。",
-        "keywords": ["发布", "朋友圈", "视频号", "抖音", "小红书", "平台账号"],
+        "keywords": ["发布", "发到", "朋友圈", "视频号", "抖音", "小红书", "平台账号"],
         "execution_target": "online",
         "task_kind": "client_workflow",
         "action": "publish_content",
@@ -241,8 +241,8 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_calendar": {
         "name": "内容节点日历",
-        "description": "查询未来 N 天的节日、电商大促、行业节点（含农历换算），给出蹭点价值与准备时间。",
-        "keywords": ["节点日历", "营销日历", "未来有什么节日", "什么时候有大促", "节日营销"],
+        "description": "查询未来 N 天的节日/电商大促/行业节点（含农历）。当用户问「未来有什么节日/营销日历/什么时候有大促/提前准备什么」时使用；只问今天热搜请用 discover_hotlist。",
+        "keywords": ["节点日历", "营销日历", "节日", "节点", "大促", "未来有什么节日", "什么时候有大促", "节日营销"],
         "execution_target": "server",
         "task_kind": "server_action",
         "action": "discover_calendar",
@@ -257,7 +257,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_gap": {
         "name": "蓝海选题",
-        "description": "用免费热搜 + 搜索联想词生成候选选题，按需求/竞争/匹配/成本/时效加权评分并分档。",
+        "description": "用热搜 + 搜索联想词找「高需求低竞争」的蓝海选题并打分。当用户问「蓝海选题/内容缺口/没人做什么/差异化选题」时使用；评估单个已有选题请用 plan_topic_eval。",
         "keywords": ["蓝海选题", "选题机会", "内容缺口", "高需求低竞争", "差异化选题"],
         "execution_target": "server",
         "task_kind": "server_action",
@@ -274,8 +274,8 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_competitor": {
         "name": "竞品公开信息",
-        "description": "抓取竞品账号公开页（直连/Jina/无头浏览器），提取标题、可见计数与摘要；拿不到的指标明确标注。",
-        "keywords": ["竞品分析", "对标账号", "拆解爆款", "竞品在做什么", "账号数据"],
+        "description": "抓竞品账号公开页提取可见信息。当用户给具体账号链接要「拆解竞品/对标账号」时使用；不知道做什么方向请用 plan_positioning。后台播放量/完播率/增粉拿不到，不要编。",
+        "keywords": ["竞品", "竞品分析", "对标账号", "拆解", "拆解爆款", "竞品在做什么", "账号数据"],
         "execution_target": "server",
         "task_kind": "server_action",
         "action": "discover_competitor",
@@ -290,7 +290,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_ugc": {
         "name": "UGC 提及",
-        "description": "按品牌/账号关键词做公开搜索，汇总可访问的提及与测评链接；互动明细需人工补。",
+        "description": "按品牌词公开搜索 UGC 提及与测评链接。当用户问「谁提到我/用户口碑/测评」时使用；互动明细需人工补，不要编造数据。",
         "keywords": ["UGC", "品牌提及", "用户口碑", "测评搜索", "社区讨论"],
         "execution_target": "server",
         "task_kind": "server_action",
@@ -333,7 +333,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_hotlist": {
         "name": "热搜聚合",
-        "description": "用免费公开接口抓微博/抖音/知乎/头条/小红书/百度/B站实时热搜（无需 API Key），按热度和赛道筛选，用于快速追热点与二创选题。",
+        "description": "抓微博/抖音/知乎/头条/小红书/百度/B站实时热搜（免费源，无需 Key）。当用户问「今天有什么热搜/热榜/最近大家在聊什么/追热点」时使用。不要用 browser_extract_page 抓榜单，也不要抓平台官网。",
         "keywords": ["热搜", "热点", "今天有什么热搜", "追热点", "蹭热点", "热榜"],
         "execution_target": "server",
         "task_kind": "server_action",
@@ -352,8 +352,8 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_news": {
         "name": "行业资讯",
-        "description": "按赛道聚合中文行业媒体（虎嗅/钛媒体/少数派/InfoQ/AIHOT/澎湃等）的深度文章，输出情报简报与选题方向。",
-        "keywords": ["行业资讯", "行业动态", "资讯简报", "最近发生了什么", "科技新闻", "AI 资讯"],
+        "description": "按赛道聚合中文行业媒体（虎嗅/钛媒体/少数派/InfoQ/AIHOT/澎湃）的深度文章。当用户问「行业资讯/最近行业动态/每日简报/科技或 AI 新闻」时使用；分钟级热搜请用 online.discover_hotlist。",
+        "keywords": ["行业资讯", "行业动态", "资讯简报", "行业新闻", "新闻", "最近发生了什么", "科技新闻", "AI 资讯"],
         "execution_target": "server",
         "task_kind": "server_action",
         "action": "discover_news",

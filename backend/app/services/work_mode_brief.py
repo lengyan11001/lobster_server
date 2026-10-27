@@ -69,39 +69,58 @@ def _capability_lines(db) -> List[str]:
     return lines
 
 
-def _online_lines() -> List[str]:
-    """Online 能力（服务端执行）单独列，避免模型只看到本地 capability_configs。"""
+_CORE_ONLINE = (
+    "online.discover_hotlist",
+    "online.discover_news",
+    "online.discover_calendar",
+    "plan_topic_eval",
+    "plan_hook",
+    "plan_calendar",
+)
+_CATEGORY_LINES = (
+    "- 发现：热搜/行业资讯/RSS/节点日历/蓝海选题 → online.discover_*",
+    "- 策划：定位/受众/人设/选题评估/矩阵/排期/钩子 → plan_*",
+    "- 创作与发布：图片、数字人、素材剪辑、发布 → 查 listSystemCapabilities",
+    "- 设备类：微信/WhatsApp 接管、加好友、朋友圈互动 → 查 listSystemCapabilities",
+)
+_HARD_RULES = (
+    "- 热搜/榜单/热榜：用 online.discover_hotlist；禁止用 browser_extract_page 抓榜单",
+    "- browser_extract_page 只用于读取某个具体网页正文（用户给了链接且要内容时）",
+    "- 需要完整参数或未列出的能力：调 listSystemCapabilities，不要猜",
+)
+
+
+def _online_lines(query: str = "") -> List[str]:
+    """类目 + 6 个高频能力；其余靠 listSystemCapabilities，避免常驻清单稀释。"""
     key = "online_capabilities"
     now = time.time()
     with _CACHE_LOCK:
         cached = _CACHE.get(key)
         if cached and now - cached[0] < _CACHE_TTL_SECONDS:
-            return list(cached[1])
-    lines: List[str] = []
-    try:
-        from .mastra_online_capabilities import mastra_online_capabilities
+            caps = cached[1]
+        else:
+            caps = None
+    if caps is None:
+        try:
+            from .mastra_online_capabilities import mastra_online_capabilities
 
-        caps = mastra_online_capabilities()
-        def rank(item):
-            cid = item[0]
-            if cid.startswith("online.discover_"):
-                return (0, cid)
-            if cid.startswith("plan_"):
-                return (1, cid)
-            if cid == "online.browser_extract_page":
-                return (9, cid)
-            layer = str((item[1] or {}).get("layer") or "")
-            return ({"produce": 2, "publish": 3, "ops": 4}.get(layer, 5), cid)
+            caps = mastra_online_capabilities()
+        except Exception:
+            caps = {}
+        with _CACHE_LOCK:
+            _CACHE[key] = (now, caps)
 
-        items = sorted(caps.items(), key=rank)
-        for cid, cfg in items:
-            name = str((cfg or {}).get("name") or "").strip()
-            lines.append(f"- {cid}：{name[:24]}" if name else f"- {cid}")
-    except Exception:
-        lines = []
-    lines = lines[:_ONLINE_LIMIT]
-    with _CACHE_LOCK:
-        _CACHE[key] = (now, list(lines))
+    lines: List[str] = ["【能力类目】"] + list(_CATEGORY_LINES)
+    core: List[str] = []
+    for cid in _CORE_ONLINE:
+        name = str((caps.get(cid) or {}).get("name") or "").strip()
+        if name:
+            core.append(f"- {cid}：{name}")
+    if core:
+        lines.append("【常用能力】")
+        lines.extend(core)
+    lines.append("【硬规则】")
+    lines.extend(_HARD_RULES)
     return lines
 
 
@@ -137,14 +156,14 @@ def _memory_lines(db, user_id: int, installation_id: str = "") -> List[str]:
     return lines
 
 
-def build_brief_block(db, user_id: int, installation_id: str = "") -> str:
+def build_brief_block(db, user_id: int, installation_id: str = "", query: str = "") -> str:
     if not _enabled():
         return ""
     caps = _capability_lines(db)
     memories = _memory_lines(db, user_id, installation_id)
     if not caps and not memories:
         return ""
-    online = _online_lines()
+    online = _online_lines(query)
     blocks: List[str] = [WORK_BRIEF_START]
     if caps:
         blocks.append("【可用能力目录】\n" + "\n".join(caps))
@@ -173,7 +192,7 @@ def maybe_attach_brief(content: str, db, user_id: int, installation_id: str = ""
         return content
     if WORK_BRIEF_START in text:
         return content
-    block = build_brief_block(db, user_id, installation_id)
+    block = build_brief_block(db, user_id, installation_id, query=text)
     if not block:
         return content
     return text + "\n\n" + block

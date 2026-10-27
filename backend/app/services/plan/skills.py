@@ -11,7 +11,7 @@ SYSTEM = (
 SKILLS: Dict[str, Dict[str, Any]] = {
     "plan_positioning": {
         "name": "差异化定位",
-        "description": "扫描赛道、给竞品定位坐标、找空白、凝练一句话定位。",
+        "description": "找到「我和别人不一样且用户需要」的位置。当用户问「我的定位是什么/怎么和竞品区分/同质化怎么办」时使用；拆解具体竞品账号用 online.discover_competitor。",
         "keywords": ["差异化定位", "我的定位", "怎么和竞品区分", "同质化", "找差异"],
         "args": {"account": {"type": "string"}, "competitors": {"type": "array", "items": {"type": "string"}}, "goal": {"type": "string"}},
         "required": ["account"],
@@ -119,8 +119,8 @@ SKILLS: Dict[str, Dict[str, Any]] = {
     },
     "plan_calendar": {
         "name": "月度内容排期",
-        "description": "按支柱与频率生成一个月排期，每条选题具体可执行。",
-        "keywords": ["内容排期", "月度日历", "发布计划", "这个月发什么"],
+        "description": "生成一个月的发布排期（逐条选题+角度+形式）。当用户问「这个月发什么/内容日历/排期表」时使用；只想看节点用 online.discover_calendar。",
+        "keywords": ["内容排期", "月度日历", "发布计划", "排期", "怎么排", "这个月发什么"],
         "args": {"month": {"type": "string"}, "pillars": {"type": "array", "items": {"type": "string"}}, "platforms": {"type": "array", "items": {"type": "string"}}, "frequency": {"type": "string"}},
         "required": [],
         "guide": """1) 本月目标与节奏（周更/日更）
@@ -157,7 +157,7 @@ SKILLS: Dict[str, Dict[str, Any]] = {
     },
     "plan_hook": {
         "name": "开头钩子",
-        "description": "针对主题生成 6 种 Hook，每条两行、每行不超过 40 字。",
+        "description": "给主题生成 6 种开头钩子（两行、每行≤40字）。当用户问「写钩子/开头怎么抓人/前三秒」时使用；成篇文案用创作层，不在这里。",
         "keywords": ["钩子", "开头", "Hook", "前三秒", "标题钩子"],
         "args": {"topic": {"type": "string"}, "platform": {"type": "string"}},
         "required": ["topic"],
@@ -188,7 +188,7 @@ SKILLS: Dict[str, Dict[str, Any]] = {
     },
     "plan_topic_eval": {
         "name": "选题评估",
-        "description": "七维打分（流量/匹配/差异/时效/变现/成本/合规）+ 阈值结论。",
+        "description": "对单个已有选题做七维打分并给「做/改/不做」。当用户问「这个选题值不值得做/能不能火」时使用；还没选题、要一批标题请用 plan_matrix。",
         "keywords": ["选题评估", "值不值得做", "能不能火", "做不做"],
         "args": {"topic": {"type": "string"}, "account": {"type": "string"}, "platform": {"type": "string"}},
         "required": ["topic"],
