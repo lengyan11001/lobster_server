@@ -241,7 +241,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.discover_hotlist": {
         "name": "热搜聚合",
-        "description": "抓微博/抖音/知乎/头条/小红书/百度/B站实时热搜，按热度和赛道筛选，用于快速追热点与二创选题。",
+        "description": "用免费公开接口抓微博/抖音/知乎/头条/小红书/百度/B站实时热搜（无需 API Key），按热度和赛道筛选，用于快速追热点与二创选题。",
         "keywords": ["热搜", "热点", "今天有什么热搜", "追热点", "蹭热点", "热榜"],
         "execution_target": "server",
         "task_kind": "server_action",
@@ -563,7 +563,7 @@ _ENRICHMENT: Dict[str, Dict[str, Any]] = {
         "boundary": {"not_for": ["日级行业深度", "账号数据"],
                      "use_instead": [{"scene": "行业深度资讯", "capability": "online.discover_news"}]},
         "outputs": {"fields": ["items", "source", "errors"], "status": ["completed", "failed"]},
-        "degrade": ["60s 主源失败自动切 xxapi", "全部失败如实告知并请用户提供截图"],
+        "degrade": ["60s 主源失败自动切 xxapi（均为免费源）", "小红书暂无免费热搜源，取不到时如实告知", "全部失败请用户提供截图，不编造"],
         "examples": [{"params": {"platforms": ["weibo", "douyin"], "limit": 10}, "note": "默认双平台 Top10"}],
     },
     "online.discover_news": {
