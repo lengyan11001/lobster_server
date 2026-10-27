@@ -28,6 +28,7 @@ _CACHE_LOCK = threading.Lock()
 _CACHE: Dict[str, Tuple[float, List[str]]] = {}
 _CACHE_TTL_SECONDS = 120.0
 _MAX_ITEMS = 15
+_ONLINE_LIMIT = 40
 _MEMORY_LIMIT = 12
 
 
@@ -63,6 +64,42 @@ def _capability_lines(db) -> List[str]:
     except Exception:
         lines = []
     lines = lines[:_MAX_ITEMS]
+    with _CACHE_LOCK:
+        _CACHE[key] = (now, list(lines))
+    return lines
+
+
+def _online_lines() -> List[str]:
+    """Online 能力（服务端执行）单独列，避免模型只看到本地 capability_configs。"""
+    key = "online_capabilities"
+    now = time.time()
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+        if cached and now - cached[0] < _CACHE_TTL_SECONDS:
+            return list(cached[1])
+    lines: List[str] = []
+    try:
+        from .mastra_online_capabilities import mastra_online_capabilities
+
+        caps = mastra_online_capabilities()
+        def rank(item):
+            cid = item[0]
+            if cid.startswith("online.discover_"):
+                return (0, cid)
+            if cid.startswith("plan_"):
+                return (1, cid)
+            if cid == "online.browser_extract_page":
+                return (9, cid)
+            layer = str((item[1] or {}).get("layer") or "")
+            return ({"produce": 2, "publish": 3, "ops": 4}.get(layer, 5), cid)
+
+        items = sorted(caps.items(), key=rank)
+        for cid, cfg in items:
+            name = str((cfg or {}).get("name") or "").strip()
+            lines.append(f"- {cid}：{name[:24]}" if name else f"- {cid}")
+    except Exception:
+        lines = []
+    lines = lines[:_ONLINE_LIMIT]
     with _CACHE_LOCK:
         _CACHE[key] = (now, list(lines))
     return lines
@@ -107,14 +144,19 @@ def build_brief_block(db, user_id: int, installation_id: str = "") -> str:
     memories = _memory_lines(db, user_id, installation_id)
     if not caps and not memories:
         return ""
+    online = _online_lines()
     blocks: List[str] = [WORK_BRIEF_START]
     if caps:
         blocks.append("【可用能力目录】\n" + "\n".join(caps))
+    if online:
+        blocks.append("【Online 能力（服务端直接执行，不占设备）】\n" + "\n".join(online))
     if memories:
         blocks.append("【我的记忆文件目录（要正文请按 doc_id 调 readPersonalMemoryDocument）】\n" + "\n".join(memories))
     blocks.append(
         "【用法】先用上面的目录判断该用哪个能力/哪份记忆；确实需要细节时再按需调用对应工具取，"
-        "不要为了拿目录重复调用 listSystemCapabilities / listPersonalMemoryDocuments。"
+        "不要为了拿目录重复调用 listSystemCapabilities / listPersonalMemoryDocuments。\n"
+        "热搜/资讯/RSS/节点/蓝海选题/定位/选题评估/排期这类需求，优先用 online.discover_* 与 plan_*；"
+        "browser_extract_page 只用于读取某个具体网页的正文，不要用它抓榜单或热搜。"
     )
     blocks.append(WORK_BRIEF_END)
     return "\n\n".join(blocks)
