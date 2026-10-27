@@ -239,6 +239,60 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
             ["platform"],
         ),
     },
+    "online.discover_hotlist": {
+        "name": "热搜聚合",
+        "description": "抓微博/抖音/知乎/头条/小红书/百度/B站实时热搜，按热度和赛道筛选，用于快速追热点与二创选题。",
+        "keywords": ["热搜", "热点", "今天有什么热搜", "追热点", "蹭热点", "热榜"],
+        "execution_target": "server",
+        "task_kind": "server_action",
+        "action": "discover_hotlist",
+        "side_effect": "read",
+        "arg_schema": _schema(
+            {
+                "platforms": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["weibo", "douyin", "zhihu", "toutiao", "xiaohongshu", "baidu", "bilibili"]},
+                    "default": ["weibo", "douyin"],
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+            }
+        ),
+    },
+    "online.discover_news": {
+        "name": "行业资讯",
+        "description": "按赛道聚合中文行业媒体（虎嗅/钛媒体/少数派/InfoQ/AIHOT/澎湃等）的深度文章，输出情报简报与选题方向。",
+        "keywords": ["行业资讯", "行业动态", "资讯简报", "最近发生了什么", "科技新闻", "AI 资讯"],
+        "execution_target": "server",
+        "task_kind": "server_action",
+        "action": "discover_news",
+        "side_effect": "read",
+        "arg_schema": _schema(
+            {
+                "track": {"type": "string", "enum": ["content", "tech", "business", "ai", "news"], "default": "content"},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "since_hours": {"type": "integer", "minimum": 1, "maximum": 168, "default": 48},
+                "limit_per_source": {"type": "integer", "minimum": 1, "maximum": 15, "default": 5},
+            }
+        ),
+    },
+    "online.discover_rss": {
+        "name": "RSS 聚合",
+        "description": "聚合用户指定的 RSS/Atom 订阅源，按关键词和时间窗过滤、去重并按时间排序。",
+        "keywords": ["RSS", "订阅源", "聚合资讯", "追更博主", "feed"],
+        "execution_target": "server",
+        "task_kind": "server_action",
+        "action": "discover_rss",
+        "side_effect": "read",
+        "arg_schema": _schema(
+            {
+                "feeds": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 20},
+                "keyword": {"type": "string"},
+                "since_days": {"type": "integer", "minimum": 1, "maximum": 90, "default": 7},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+            },
+            ["feeds"],
+        ),
+    },
     "online.browser_extract_page": {
         "name": "设备浏览器抓取网页",
         "description": "在用户已登录的 Online 设备上用浏览器打开网址，等待渲染后提取标题、正文、链接和联系方式。用于服务器抓取失败、需要登录或依赖 JS 渲染的页面。",
@@ -503,6 +557,30 @@ _ENRICHMENT: Dict[str, Dict[str, Any]] = {
         "degrade": ["平台未登录时返回未登录原因并保留草稿", "自动发布失败时提示改用人工审核发布"],
         "examples": [{"params": {"platform": "wechat_moments", "source_mode": "parent_latest_run"},
                       "note": "发布上游节点产物"}],
+    },
+    "online.discover_hotlist": {
+        "layer": "discover",
+        "boundary": {"not_for": ["日级行业深度", "账号数据"],
+                     "use_instead": [{"scene": "行业深度资讯", "capability": "online.discover_news"}]},
+        "outputs": {"fields": ["items", "source", "errors"], "status": ["completed", "failed"]},
+        "degrade": ["60s 主源失败自动切 xxapi", "全部失败如实告知并请用户提供截图"],
+        "examples": [{"params": {"platforms": ["weibo", "douyin"], "limit": 10}, "note": "默认双平台 Top10"}],
+    },
+    "online.discover_news": {
+        "layer": "discover",
+        "boundary": {"not_for": ["分钟级热搜", "竞品账号拆解"],
+                     "use_instead": [{"scene": "实时热搜", "capability": "online.discover_hotlist"}]},
+        "outputs": {"fields": ["items", "sources", "errors"], "status": ["completed", "failed"]},
+        "degrade": ["单源失败跳过并记录", "全部失败提示换源或稍后重试"],
+        "examples": [{"params": {"track": "ai", "since_hours": 48}, "note": "48 小时 AI 资讯"}],
+    },
+    "online.discover_rss": {
+        "layer": "discover",
+        "boundary": {"not_for": ["平台热搜", "行业媒体默认源"],
+                     "use_instead": [{"scene": "行业资讯", "capability": "online.discover_news"}]},
+        "outputs": {"fields": ["items", "errors"], "status": ["completed", "failed"]},
+        "degrade": ["单源失败跳过", "无条目时提示检查 feed 地址"],
+        "examples": [{"params": {"feeds": ["https://sspai.com/feed"], "since_days": 7}, "note": "少数派近 7 天"}],
     },
     "online.browser_extract_page": {
         "layer": "discover",

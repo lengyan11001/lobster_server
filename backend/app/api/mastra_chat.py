@@ -2107,6 +2107,64 @@ async def dispatch_online_capability(
             "run": _online_scheduled_run_payload(db, existing.id),
         }
 
+    # 发现层：热搜 / 行业资讯 / RSS，服务端直接执行（带缓存与降级）
+    if action in ("discover_hotlist", "discover_news", "discover_rss"):
+        from ..services.discover import hotlist, news as news_mod, rss as rss_mod
+
+        if action == "discover_hotlist":
+            data = await hotlist.fetch(list(params.get("platforms") or ["weibo", "douyin"]),
+                                       int(params.get("limit") or 10))
+            reply = hotlist.format_markdown(data)
+        elif action == "discover_news":
+            data = await news_mod.fetch(
+                track=str(params.get("track") or "content"),
+                keywords=list(params.get("keywords") or []),
+                since_hours=int(params.get("since_hours") or 48),
+                limit_per_source=int(params.get("limit_per_source") or 5),
+            )
+            reply = news_mod.format_markdown(data, track=str(params.get("track") or ""))
+        else:
+            data = await rss_mod.fetch(
+                list(params.get("feeds") or []),
+                keyword=str(params.get("keyword") or ""),
+                since_days=int(params.get("since_days") or 7),
+                limit=int(params.get("limit") or 20),
+            )
+            reply = "\n".join(
+                [f"# RSS 聚合（{len(data.get('items') or [])} 条）", ""]
+                + [f"- {item['title']}｜{item.get('feed', '')}｜{item.get('url', '')}"
+                   for item in (data.get("items") or [])]
+                + ([f"> 失败：{e['url']} {e['error']}" for e in (data.get("errors") or [])] or [])
+            )
+        now = datetime.utcnow()
+        child = H5ChatMessage(
+            id=uuid.uuid4().hex,
+            user_id=owner.id,
+            session_id=parent.session_id,
+            installation_id=installation_id,
+            parent_message_id=parent.id,
+            mode="mastra",
+            queue_mode="normal",
+            queue_priority=0,
+            content=child_content,
+            status="completed",
+            reply_text=reply[:20000],
+            created_at=now,
+            updated_at=now,
+            finished_at=now,
+        )
+        db.add(child)
+        db.commit()
+        db.refresh(child)
+        return {
+            "ok": True,
+            "server_side": True,
+            "online": _online_available(db, owner.id, installation_id),
+            "message": _serialize_message(child),
+            "run": None,
+            "discover": data,
+        }
+
     # 浏览器抓取：服务端直接执行（适配器 → 直连 → Jina → 无头浏览器），不再下发给设备
     if action == "browser_extract_page":
         from ..services.web_extract import extract_page_server, format_extract_reply
