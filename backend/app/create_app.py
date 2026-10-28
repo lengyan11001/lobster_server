@@ -46,6 +46,7 @@ from .api.h5_personal_settings import router as h5_personal_settings_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_voice import router as h5_voice_router
 from .api.h5_recorder import router as h5_recorder_router
+from .api.h5_recorder_extract import router as h5_recorder_extract_router
 from .api.hifly_assets import router as hifly_assets_router
 from .api.media_proxy import router as media_proxy_router
 from .api.device_bind import router as device_bind_router
@@ -1888,6 +1889,7 @@ def create_app() -> FastAPI:
     app.include_router(h5_agent_management_router, prefix="")
     app.include_router(h5_voice_router, prefix="")
     app.include_router(h5_recorder_router, prefix="")
+    app.include_router(h5_recorder_extract_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
     app.include_router(device_bind_router, prefix="")
     app.include_router(device_ai_router, prefix="")
