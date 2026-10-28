@@ -3970,6 +3970,7 @@ def list_h5_digital_library(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     clean_kind = str(kind or "avatar").strip().lower()
     if clean_kind in {"voice", "voices"}:
         query = db.query(UserHiflyVoiceAsset).filter(
