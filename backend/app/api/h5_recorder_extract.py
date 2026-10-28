@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import RecorderAudioRecord, User
+from ..models import OpenClawMemoryDocument, RecorderAudioRecord, User
 from .auth import access_token_claims, create_access_token, get_current_user
 from .h5_personal_settings import _owner_user
 from .mobile_identity import online_user_for_mobile_user
@@ -63,9 +63,35 @@ async def extract_digital_human_params(
         "你是资深短视频编导，要把一段录音整理成一条可以直接给数字人口播的文案。"
         '只输出严格 JSON：{"title":"标题","script":"口播文案","duration_seconds":30}。'
         "标题不超过 20 字；口播文案 120-260 字，口语化、开头有钩子、结尾有行动引导；"
-        "不要 Markdown、不要解释、不要编造录音里没有的事实。"
+        "要结合【个人记忆】里的产品、客户、优势来写；不要 Markdown、不要解释、不要编造录音与记忆里都没有的事实。"
     )
-    user_prompt = "【录音名称】" + str(row.display_name or row.file_name or "") + "\n【录音内容】\n" + text[:20000]
+    memory_block = ""
+    try:
+        mem_rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(
+                OpenClawMemoryDocument.target_user_id == owner.id,
+                OpenClawMemoryDocument.status == "active",
+            )
+            .order_by(OpenClawMemoryDocument.updated_at.desc())
+            .limit(6)
+            .all()
+        )
+        parts = []
+        for mem in mem_rows:
+            content = str(mem.content_text or "").strip()
+            if not content:
+                continue
+            parts.append("【" + str(mem.title or mem.filename or "个人记忆") + "】\n" + content[:1500])
+        memory_block = "\n\n".join(parts)[:6000]
+    except Exception:
+        memory_block = ""
+
+    user_prompt = (
+        "【录音名称】" + str(row.display_name or row.file_name or "")
+        + ("\n\n【个人记忆】\n" + memory_block if memory_block else "")
+        + "\n\n【录音内容】\n" + text[:20000]
+    )
     headers = {"Content-Type": "application/json"}
     if owner_token:
         headers["Authorization"] = "Bearer " + owner_token
