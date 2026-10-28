@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..models import Asset, OpenClawMemoryDocument, RecorderAudioRecord, User
 from .auth import access_token_claims, create_access_token, get_current_user
 from .h5_personal_settings import _owner_user
 from .mobile_identity import online_user_for_mobile_user
@@ -59,11 +59,30 @@ async def extract_digital_human_params(
         or (os.environ.get("LOBSTER_DEFAULT_SUTUI_CHAT_MODEL") or "").strip()
         or "openai/gpt-4.1-mini"
     )
+    groups = {}
+    try:
+        asset_rows = (
+            db.query(Asset)
+            .filter(Asset.user_id == owner.id)
+            .order_by(Asset.created_at.desc())
+            .limit(300)
+            .all()
+        )
+        for item in asset_rows:
+            meta = item.meta if isinstance(item.meta, dict) else {}
+            group_name = str(meta.get("creative_candidate_group") or "").strip()
+            if not group_name:
+                continue
+            groups.setdefault(group_name, []).append(item)
+    except Exception:
+        groups = {}
+    group_catalog = "、".join(f"{name}({len(rows)}个)" for name, rows in list(groups.items())[:20])
+
     system_prompt = (
         "你是资深短视频编导，要把一段录音整理成一条可以直接给数字人口播的文案。"
-        '只输出严格 JSON：{"title":"标题","script":"口播文案","duration_seconds":30}。'
+        '只输出严格 JSON：{"title":"标题","script":"口播文案","duration_seconds":30,"material_group":"素材分组名或空"}。'
         "标题不超过 20 字；口播文案 120-260 字，口语化、开头有钩子、结尾有行动引导；"
-        "要结合【个人记忆】里的产品、客户、优势来写；不要 Markdown、不要解释、不要编造录音与记忆里都没有的事实。"
+        "要结合【个人记忆】里的产品、客户、优势来写；如果给了素材分组清单，选一个最贴合内容的分组填到 material_group，没有合适的就填空字符串；不要 Markdown、不要解释、不要编造录音与记忆里都没有的事实。"
     )
     memory_block = ""
     try:
@@ -90,6 +109,7 @@ async def extract_digital_human_params(
     user_prompt = (
         "【录音名称】" + str(row.display_name or row.file_name or "")
         + ("\n\n【个人记忆】\n" + memory_block if memory_block else "")
+        + ("\n\n【可用素材分组】" + group_catalog if group_catalog else "")
         + "\n\n【录音内容】\n" + text[:20000]
     )
     headers = {"Content-Type": "application/json"}
@@ -136,9 +156,24 @@ async def extract_digital_human_params(
     except Exception:
         duration_seconds = 30
     duration_seconds = max(10, min(180, duration_seconds))
+    group_name = str(parsed.get("material_group") or "").strip()
+    materials = []
+    if group_name and group_name in groups:
+        for item in groups[group_name][:8]:
+            media_type = str(item.media_type or "").lower()
+            if media_type not in ("image", "video"):
+                continue
+            materials.append({
+                "asset_id": item.asset_id,
+                "type": media_type,
+                "fileUrl": str(item.source_url or ""),
+                "name": str(item.filename or item.asset_id),
+            })
     return {
         "ok": True,
         "title": title or (row.display_name or row.file_name or "")[:20],
         "script": script[:2000],
         "duration_seconds": duration_seconds,
+        "material_group": group_name if materials else "",
+        "materials": materials,
     }
