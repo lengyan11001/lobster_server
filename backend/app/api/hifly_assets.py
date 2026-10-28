@@ -2756,6 +2756,7 @@ async def preview_my_voice_tts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     voice_id = (body.voice or "").strip()
     row = (
         db.query(UserHiflyVoiceAsset)
