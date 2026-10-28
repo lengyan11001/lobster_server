@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal, get_db
 from ..models import IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, User
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot
-from .auth import get_current_user
+from .auth import access_token_claims, create_access_token, get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from .cutcli_templates import (
     _extract_stt_output,
@@ -1647,7 +1647,11 @@ async def extract_profile_from_recording(
     owner = _owner_user(db, current_user)
     base = str(request.base_url).rstrip("/")
     headers = {"Content-Type": "application/json"}
-    auth = request.headers.get("Authorization") or request.headers.get("authorization") or ""
+    try:
+        owner_token = create_access_token(access_token_claims(owner))
+    except Exception:
+        owner_token = ""
+    auth = f"Bearer {owner_token}" if owner_token else (request.headers.get("Authorization") or "")
     if auth:
         headers["Authorization"] = auth
     brand = request.headers.get("X-Lobster-Brand") or request.headers.get("x-lobster-brand") or ""
