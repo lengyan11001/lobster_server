@@ -145,6 +145,14 @@ def _owner_user(db: Session, current_user: User) -> User:
     return online_user_for_mobile_user(db, current_user)
 
 
+def _memory_installation_id(request: Request) -> str:
+    """记忆文件按账号共享：没带设备 id 时按账号级处理，不报错。"""
+    try:
+        return optional_installation_id_from_request(request) or ""
+    except Exception:
+        return ""
+
+
 def _installation_id(request: Request) -> str:
     iid = optional_installation_id_from_request(request)
     if not iid:
@@ -1429,7 +1437,7 @@ async def list_memory_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     rows = _doc_query(db, target_user.id, installation_id).order_by(OpenClawMemoryDocument.updated_at.desc()).limit(300).all()
@@ -1447,7 +1455,7 @@ async def preview_memory_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     row, source = _accessible_memory_row(db, target_user, installation_id, doc_id)
     data = _memory_summary(row, include_content=True, source=source)
@@ -1461,7 +1469,7 @@ async def download_memory_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     row, _source = _accessible_memory_row(db, target_user, installation_id, doc_id)
     title = _short_title(row.title or row.filename or "个人记忆资料", "个人记忆资料")
@@ -1481,7 +1489,7 @@ async def delete_memory_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     row = _memory_row(db, target_user.id, installation_id, doc_id)
     row.status = "deleted"
@@ -1498,7 +1506,7 @@ async def save_raw_memory_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     mode = (body.mode or "new").strip().lower()
@@ -1534,7 +1542,7 @@ async def save_generated_memory_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     docs = {k: str(v or "").strip() for k, v in (body.documents or {}).items() if str(v or "").strip()}
@@ -1578,7 +1586,7 @@ async def save_uploaded_memory_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     document_uploads = [item for item in files if item and item.filename]
@@ -1660,7 +1668,7 @@ async def complete_online_memory_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     message = (
         db.query(H5ChatMessage)
@@ -1731,7 +1739,7 @@ async def complete_online_memory_generation(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     message = (
         db.query(H5ChatMessage)
@@ -1881,7 +1889,7 @@ async def generate_memory_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    installation_id = _memory_installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     source_uploads = [item for item in files if item and item.filename]
