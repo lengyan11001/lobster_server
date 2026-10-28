@@ -940,7 +940,10 @@ def list_memory_audio_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    installation_id = _installation_id(request)
+    try:
+        installation_id = _installation_id(request)
+    except Exception:
+        installation_id = ""
     target_user = _owner_user(db, current_user)
     rows = (
         db.query(OpenClawMemoryDocument)
