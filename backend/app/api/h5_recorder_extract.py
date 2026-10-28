@@ -163,7 +163,7 @@ async def extract_digital_human_params(
         if tpl_resp.status_code < 400:
             tpl_data = tpl_resp.json() or {}
             for item in (tpl_data.get("results") or [])[:40]:
-                style_id = str(item.get("styleId") or item.get("style_id") or "").strip()
+                style_id = str(item.get("styleId") or item.get("style_id") or item.get("id") or "").strip()
                 style_name = str(item.get("name") or item.get("title") or "").strip()
                 if style_id and style_name:
                     style_templates.append({"style_id": style_id, "name": style_name[:20]})
