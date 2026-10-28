@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import httpx
 import logging
 import math
 import mimetypes
@@ -24,7 +25,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
-from ..models import OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..models import IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, User
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
@@ -1611,4 +1612,154 @@ def list_recorder_todos(
                 "due": due,
             })
     return {"items": items}
+
+_EXTRACT_MEMORY_TITLES = {
+    "brand_product_intro": "品牌产品介绍",
+    "product_service_faq": "产品服务百问百答",
+    "short_video_scripts": "短视频口播稿",
+}
+_EXTRACT_BASIC_KEYS = (
+    "gender", "birth_era", "current_province", "current_city", "hometown",
+    "role", "share_topic", "video_style", "after_view_action",
+)
+_EXTRACT_BUSINESS_KEYS = ("product", "target_customer", "advantages")
+
+
+@router.post("/api/h5/recorder/files/{record_id}/extract-profile", summary="从录音转写提取资料并填充个人记忆")
+async def extract_profile_from_recording(
+    record_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """录音转写 → AI 提取个人资料 → 写入个人默认配置 + 生成三份个人记忆文档。"""
+    current_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.id == record_id,
+        RecorderAudioRecord.user_id == current_user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    text = str(row.transcript_text or "").strip()
+    if row.status != "completed" or not text:
+        raise HTTPException(status_code=409, detail="转写完成后才能提取资料")
+
+    owner = _owner_user(db, current_user)
+    base = str(request.base_url).rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    auth = request.headers.get("Authorization") or request.headers.get("authorization") or ""
+    if auth:
+        headers["Authorization"] = auth
+    brand = request.headers.get("X-Lobster-Brand") or request.headers.get("x-lobster-brand") or ""
+    if brand:
+        headers["X-Lobster-Brand"] = brand
+    xi = request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or ""
+    if xi:
+        headers["X-Installation-Id"] = xi
+
+    try:
+        async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            resp = await client.post(
+                f"{base}/api/ip-content/profile-extract",
+                json={
+                    "text": text,
+                    "title": row.display_name or row.file_name or "",
+                    "targets": ["profile", "memory"],
+                },
+                headers=headers,
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"提取服务不可用：{str(exc)[:200]}") from exc
+    if resp.status_code >= 400:
+        detail = ""
+        try:
+            detail = str((resp.json() or {}).get("detail") or "")
+        except Exception:
+            detail = (resp.text or "")[:200]
+        raise HTTPException(status_code=502, detail=f"提取失败：{detail or resp.status_code}")
+    data = resp.json() if resp.content else {}
+    profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
+    memory = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+
+    template = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == owner.id,
+            IPContentScheduleTemplate.name == "个人默认配置",
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    created_template = False
+    if template is None:
+        template = IPContentScheduleTemplate(
+            user_id=owner.id,
+            name="个人默认配置",
+            status="active",
+            requirements={},
+            installation_id="",
+        )
+        db.add(template)
+        created_template = True
+
+    req = dict(template.requirements or {})
+    basic = dict(req.get("basic_profile") or {})
+    filled: list[str] = []
+    for key in _EXTRACT_BASIC_KEYS:
+        value = str(profile.get(key) or "").strip()
+        if value:
+            basic[key] = value
+            filled.append(key)
+    if basic:
+        req["basic_profile"] = basic
+    name_value = str(profile.get("profile_name") or "").strip()
+    if name_value:
+        req["profile_name"] = name_value
+        filled.append("profile_name")
+    for key in _EXTRACT_BUSINESS_KEYS:
+        value = str(profile.get(key) or "").strip()
+        if value:
+            req[key] = value
+            filled.append(key)
+    template.requirements = req
+    template.updated_at = datetime.utcnow()
+    db.add(template)
+    db.commit()
+
+    created_docs: list[str] = []
+    installation_id = _installation_id(request)
+    for doc_key, doc_title in _EXTRACT_MEMORY_TITLES.items():
+        content = str(memory.get(doc_key) or "").strip()
+        if not content:
+            continue
+        try:
+            _create_document(
+                db,
+                target_user=owner,
+                uploader_user=current_user,
+                installation_id=installation_id,
+                title=f"{doc_title}（录音提取）",
+                filename=f"{doc_title}.txt",
+                notes=f"来自录音：{row.display_name or row.file_name}",
+                content_text=content,
+                meta={
+                    "save_mode": "new",
+                    "uploaded": True,
+                    "recorder_record_id": row.id,
+                    "extract_source": "recorder_profile_extract",
+                    "doc_type": doc_key,
+                },
+            )
+            created_docs.append(doc_title)
+        except HTTPException:
+            continue
+    db.commit()
+
+    return {
+        "ok": True,
+        "profile_fields": filled,
+        "memory_docs": created_docs,
+        "template_created": created_template,
+    }
 
