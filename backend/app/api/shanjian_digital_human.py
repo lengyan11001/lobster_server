@@ -2118,6 +2118,7 @@ async def list_profiles(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     rows = db.query(ShanjianDigitalHumanProfile).filter(
         ShanjianDigitalHumanProfile.user_id == int(current_user.id),
         ShanjianDigitalHumanProfile.status != "deleted",
@@ -2134,6 +2135,7 @@ async def list_video_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     rows = db.query(ShanjianDigitalHumanVideoTask).filter(
         ShanjianDigitalHumanVideoTask.user_id == int(current_user.id),
         ShanjianDigitalHumanVideoTask.status != "deleted",
@@ -2150,6 +2152,7 @@ async def delete_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(ShanjianDigitalHumanProfile).filter(
         ShanjianDigitalHumanProfile.id == int(profile_id),
         ShanjianDigitalHumanProfile.user_id == int(current_user.id),
@@ -2216,6 +2219,7 @@ async def create_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     endpoint, payload, source_url, source_asset_id, auth_asset_id = _profile_endpoint_and_payload(
         body,
         request=request,
@@ -2346,6 +2350,7 @@ async def query_profile_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = None
     if body.profile_id:
         row = db.query(ShanjianDigitalHumanProfile).filter(
@@ -2402,6 +2407,7 @@ async def set_default_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(ShanjianDigitalHumanProfile).filter(
         ShanjianDigitalHumanProfile.id == int(body.profile_id),
         ShanjianDigitalHumanProfile.user_id == int(current_user.id),
@@ -2445,6 +2451,7 @@ async def create_video(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     profile, virtualman_id = _resolve_profile_for_video(db, current_user, body.profile_id, body.virtualman_id)
     text = _clean_text(body.text)
     speaker_id = _clean_text(body.speaker_id)
@@ -2665,6 +2672,7 @@ async def query_video_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = None
     if body.record_id:
         row = db.query(ShanjianDigitalHumanVideoTask).filter(

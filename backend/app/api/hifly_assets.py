@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import mimetypes
@@ -39,6 +39,7 @@ from .assets import (
     build_asset_file_url,
 )
 from .auth import get_current_user
+from .mobile_identity import online_user_for_mobile_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -2332,6 +2333,7 @@ async def create_my_voice_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     user_id = int(current_user.id)
     _release_db_before_hifly_upstream(db, phase="create_voice_upload")
     uploaded = await _prepare_voice_clone_upload(file)
@@ -2565,6 +2567,7 @@ async def poll_my_voice_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = (
         db.query(UserHiflyVoiceAsset)
         .filter(
@@ -3929,6 +3932,7 @@ def list_my_voices(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     query = db.query(UserHiflyVoiceAsset).filter(
         UserHiflyVoiceAsset.user_id == current_user.id,
         UserHiflyVoiceAsset.status != "deleted",
