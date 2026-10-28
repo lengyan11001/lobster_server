@@ -1863,3 +1863,22 @@ def test_add_competitor_by_video_detail_resolves_username(monkeypatch, db_sessio
     assert result["channel_id"] == ""
     assert calls[0][0] == "wechat_channels_video_detail_v2"
     assert calls[0][1]["share_url"] == "https://weixin.qq.com/sph/AbC123xyz"
+
+
+def test_add_competitor_accepts_direct_finder_username(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    result = asyncio.run(
+        studio.add_competitor_by_channel_id(
+            studio.CompetitorByChannelIdBody(
+                channel_id="v2_direct_add@finder",
+                industry_tags="教育",
+            ),
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["item"]["account_key"] == "v2_direct_add@finder"
+    assert result["finder_username"] == "v2_direct_add@finder"
+    assert result["query"]["source"] == "direct_username"

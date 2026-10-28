@@ -7590,6 +7590,10 @@ async def add_competitor_by_channel_id(
         candidate = _wechat_channels_video_detail_candidate(result.get("raw_response") or {}, raw_input)
         if not candidate:
             raise HTTPException(status_code=502, detail="作品详情未返回有效的 finder username")
+    elif _is_wechat_channels_finder_username(raw_input):
+        resolution_source = "competitor_direct_username_add"
+        candidate = _wechat_channels_account_from_username(raw_input)
+        result = {"query": {"source": "direct_username"}, "balance_after": credits_json_float(user_balance_decimal(current_user))}
     elif channel_id:
         result = await _execute_query_with_retry(
             db=db,
