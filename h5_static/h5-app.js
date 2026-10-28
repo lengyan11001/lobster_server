@@ -22324,38 +22324,57 @@ async function api(path, options = {}) {
 
     function updatePersonalCompetitorSearchFields() {
       const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      const isWeChat = platform === "wechat_channels";
       const input = $("personalCompetitorKey");
       const directButton = $("personalAddCompetitorByChannelIdBtn");
-      if (directButton) directButton.hidden = platform !== "wechat_channels";
-      if (input) input.placeholder = platform === "wechat_channels" ? "输入昵称、sph开头ID或 username；ID区分0/O和大小写" : "输入昵称或抖音号";
+      const videoRow = $("personalCompetitorVideoLinkRow");
+      if (directButton) directButton.hidden = !isWeChat;
+      if (videoRow) videoRow.hidden = !isWeChat;
+      if (input) input.placeholder = isWeChat ? "输入视频号昵称、username、sph ID 或作品链接" : "输入昵称或抖音号";
       state.personalCompetitorCandidates = [];
       renderPersonalCompetitorCandidates();
     }
 
-    async function addPersonalCompetitorByChannelId() {
+    async function submitPersonalCompetitorByChannelId(value, successText, triggerButton) {
       const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
       if (platform !== "wechat_channels") return;
-      const input = $("personalCompetitorKey");
-      const channelId = (input && input.value || "").trim();
-      if (!channelId) throw new Error("请先输入视频号公开 ID（sph 开头）。");
       const tags = ($("personalCompetitorTags") && $("personalCompetitorTags").value || "").trim();
-      const button = $("personalAddCompetitorByChannelIdBtn");
+      const button = triggerButton || $("personalAddCompetitorByChannelIdBtn");
       personalSetBusy(button, true, "解析并添加中...");
       try {
         const data = await api("/api/ip-content/wechat-channels/competitors/by-channel-id", {
           method: "POST",
-          json: { channel_id: channelId, industry_tags: tags },
+          json: { channel_id: value, industry_tags: tags },
         });
-        if (input) input.value = "";
+        if ($("personalCompetitorKey")) $("personalCompetitorKey").value = "";
+        if ($("personalCompetitorVideoLink")) $("personalCompetitorVideoLink").value = "";
         if ($("personalCompetitorTags")) $("personalCompetitorTags").value = "";
         state.personalCompetitorCandidates = [];
         renderPersonalCompetitorCandidates();
         await refreshPersonalDataPreserveSelection({ competitors: true });
-        personalSetStatus("视频号公开 ID 已添加，正在同步公开作品。");
+        personalSetStatus(successText + "，正在同步公开作品。");
         if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
       } finally {
         personalSetBusy(button, false);
       }
+    }
+
+    async function addPersonalCompetitorByChannelId() {
+      const input = $("personalCompetitorKey");
+      const videoLink = ($("personalCompetitorVideoLink") && $("personalCompetitorVideoLink").value || "").trim();
+      const channelId = (input && input.value || "").trim();
+      if (!channelId && videoLink) {
+        await submitPersonalCompetitorByChannelId(videoLink, "已从作品链接添加视频号账号", $("personalAddCompetitorByChannelIdBtn"));
+        return;
+      }
+      if (!channelId) throw new Error("请粘贴 sph 公开 ID、v2_...@finder username，或作品分享链接。");
+      await submitPersonalCompetitorByChannelId(channelId, "视频号账号已添加", $("personalAddCompetitorByChannelIdBtn"));
+    }
+
+    async function addPersonalCompetitorByVideoLink() {
+      const videoLink = ($("personalCompetitorVideoLink") && $("personalCompetitorVideoLink").value || "").trim();
+      if (!videoLink) throw new Error("请粘贴视频号作品分享链接，例如 https://weixin.qq.com/sph/...");
+      await submitPersonalCompetitorByChannelId(videoLink, "已从作品链接添加视频号账号", $("personalAddCompetitorByVideoLinkBtn"));
     }
 
     async function addPersonalCompetitor() {
@@ -30605,7 +30624,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     });
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => personalSetStatus(err.message || "搜索失败", true)));
-    $("personalAddCompetitorByChannelIdBtn")?.addEventListener("click", () => addPersonalCompetitorByChannelId().catch((err) => personalSetStatus(err.message || "按照视频号公开 ID 添加失败", true)));
+    $("personalAddCompetitorByChannelIdBtn")?.addEventListener("click", () => addPersonalCompetitorByChannelId().catch((err) => personalSetStatus(err.message || "添加视频号同行失败", true)));
+    $("personalAddCompetitorByVideoLinkBtn")?.addEventListener("click", () => addPersonalCompetitorByVideoLink().catch((err) => personalSetStatus(err.message || "从作品链接添加视频号同行失败", true)));
     $("personalCompetitorPlatform")?.addEventListener("change", updatePersonalCompetitorSearchFields);
     updatePersonalCompetitorSearchFields();
     $("personalCompetitorKey")?.addEventListener("keydown", (evt) => {
