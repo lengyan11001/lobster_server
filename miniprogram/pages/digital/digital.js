@@ -310,8 +310,9 @@ Page({
           });
         }
         const templateName = String((data && data.template_name) || "").trim();
+        const templateStyleId = String((data && data.template_style_id) || "").trim();
         if (useMaterials) {
-          this.applyTemplateByName(templateName);
+          this.applyTemplateById(templateStyleId, templateName);
           if (!this.data.assetsAll.length) this.loadAssets();
         }
         const parts = ["文案"];
@@ -326,10 +327,12 @@ Page({
       });
   },
 
-  applyTemplateByName(name) {
+  applyTemplateById(styleId, name) {
     const apply = () => {
-      if (!name) return;
-      const index = this.data.templates.findIndex((row) => String(row.name || "") === name);
+      const rows = this.data.templates;
+      let index = -1;
+      if (styleId) index = rows.findIndex((row) => String(row.styleId || "") === styleId);
+      if (index < 0 && name) index = rows.findIndex((row) => String(row.name || "") === name);
       if (index >= 0) this.setData({ templateIndex: index });
     };
     if (!this.data.templates.length) {

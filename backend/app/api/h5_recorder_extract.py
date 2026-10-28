@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Asset, IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..models import Asset, OpenClawMemoryDocument, RecorderAudioRecord, User
 from .auth import access_token_claims, create_access_token, get_current_user
 from .h5_personal_settings import _owner_user
 from .mobile_identity import online_user_for_mobile_user
@@ -40,7 +40,7 @@ def _as_bool(value: Any, default: bool) -> bool:
 def _normalize_ai_params(
     parsed: dict[str, Any],
     groups: dict[str, list],
-    template_catalog: str,
+    style_templates: list[dict[str, str]],
 ) -> dict[str, Any]:
     """把 AI 返回的松散 JSON 收敛成 mini program 能直接落地的参数。"""
     use_materials = _as_bool(parsed.get("use_materials"), True)
@@ -58,8 +58,17 @@ def _normalize_ai_params(
                 "name": str(item.filename or item.asset_id),
             })
     template_name = str(parsed.get("template_name") or "").strip()
-    if template_catalog and template_name not in template_catalog.split("、"):
-        template_name = ""
+    template_style_id = ""
+    if template_name:
+        for row in style_templates:
+            if row.get("name") == template_name:
+                template_style_id = row.get("style_id", "")
+                break
+        else:
+            template_name = ""
+    elif len(style_templates) == 1:
+        template_style_id = style_templates[0].get("style_id", "")
+        template_name = style_templates[0].get("name", "")
 
     def _enum(value: Any, allowed: list[str], default: str) -> str:
         text = str(value or "").strip()
@@ -79,6 +88,7 @@ def _normalize_ai_params(
         "material_group": group_name if use_materials else "",
         "materials": materials,
         "template_name": template_name,
+        "template_style_id": template_style_id,
         "match_way": match_way,
         "composition": composition,
         "preprocess": preprocess,
@@ -116,6 +126,7 @@ async def extract_digital_human_params(
     except Exception:
         owner_token = ""
 
+    brand_value = request.headers.get("X-Lobster-Brand") or ""
     base = (os.environ.get("LOBSTER_INTERNAL_API_BASE") or "").strip().rstrip("/") or "http://127.0.0.1:8000"
     model = (
         (os.environ.get("LOBSTER_ORCHESTRATION_SUTUI_CHAT_MODEL") or "").strip()
@@ -141,26 +152,24 @@ async def extract_digital_human_params(
         groups = {}
     group_catalog = "、".join(f"{name}({len(rows)}个)" for name, rows in list(groups.items())[:20])
 
-    template_catalog = ""
+    style_templates: list[dict[str, str]] = []
     try:
-        tpl_rows = (
-            db.query(IPContentScheduleTemplate)
-            .filter(
-                IPContentScheduleTemplate.user_id == owner.id,
-                IPContentScheduleTemplate.status == "active",
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as tpl_client:
+            tpl_resp = await tpl_client.post(
+                base + "/api/shanjian-smart-clip/templates",
+                json={"page_size": 40, "scene": "realMan"},
+                headers={"Authorization": "Bearer " + owner_token, "X-Lobster-Brand": brand_value},
             )
-            .order_by(IPContentScheduleTemplate.updated_at.desc())
-            .limit(20)
-            .all()
-        )
-        names: list[str] = []
-        for tpl in tpl_rows:
-            name = str(tpl.name or "").strip()
-            if name and name not in names:
-                names.append(name)
-        template_catalog = "、".join(names)
+        if tpl_resp.status_code < 400:
+            tpl_data = tpl_resp.json() or {}
+            for item in (tpl_data.get("results") or [])[:40]:
+                style_id = str(item.get("styleId") or item.get("style_id") or "").strip()
+                style_name = str(item.get("name") or item.get("title") or "").strip()
+                if style_id and style_name:
+                    style_templates.append({"style_id": style_id, "name": style_name[:20]})
     except Exception:
-        template_catalog = ""
+        style_templates = []
+    template_catalog = "、".join(row["name"] for row in style_templates)
 
     system_prompt = (
         "你是资深短视频编导，要把一段录音整理成一条数字人口播任务的完整参数。"
@@ -211,9 +220,8 @@ async def extract_digital_human_params(
     headers = {"Content-Type": "application/json"}
     if owner_token:
         headers["Authorization"] = "Bearer " + owner_token
-    brand = request.headers.get("X-Lobster-Brand") or ""
-    if brand:
-        headers["X-Lobster-Brand"] = brand
+    if brand_value:
+        headers["X-Lobster-Brand"] = brand_value
     payload = {
         "model": model,
         "messages": [
@@ -252,7 +260,7 @@ async def extract_digital_human_params(
     except Exception:
         duration_seconds = 30
     duration_seconds = max(10, min(180, duration_seconds))
-    params = _normalize_ai_params(parsed, groups, template_catalog)
+    params = _normalize_ai_params(parsed, groups, style_templates)
     return {
         "ok": True,
         "title": title or (row.display_name or row.file_name or "")[:20],
