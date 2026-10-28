@@ -29,7 +29,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
@@ -3373,6 +3373,9 @@ def _template_payload(
         "survey_id": int(getattr(row, "survey_id", 0) or 0) or None,
         "requirements": row.requirements or {},
         "status": row.status,
+        "installation_id": str(getattr(row, "installation_id", "") or ""),
+        "device_name": "",
+        "device_online": False,
         "source": source,
         "granted_user_ids": grants or [],
         "meta": row.meta or {},
@@ -6754,6 +6757,30 @@ def list_schedule_templates(
             for row in granted_rows
             if int(row.id) not in own_ids
         )
+    device_map = {}
+    try:
+        presence_rows = (
+            db.query(H5ChatDevicePresence)
+            .filter(H5ChatDevicePresence.user_id == int(current_user.id))
+            .all()
+        )
+        now = datetime.utcnow()
+        for presence in presence_rows:
+            iid = str(presence.installation_id or "")
+            if not iid:
+                continue
+            seen = presence.last_seen_at
+            device_map[iid] = {
+                "name": str(presence.display_name or ""),
+                "online": bool(seen and (now - seen).total_seconds() < 300),
+            }
+    except Exception:
+        device_map = {}
+    for item in items:
+        iid = str(item.get("installation_id") or "")
+        info = device_map.get(iid) or {}
+        item["device_name"] = info.get("name") or ("账号级" if not iid else iid[:12])
+        item["device_online"] = bool(info.get("online"))
     return {"items": items}
 
 
