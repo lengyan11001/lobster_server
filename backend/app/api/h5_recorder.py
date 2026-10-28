@@ -27,6 +27,7 @@ from ..db import SessionLocal, get_db
 from ..models import OpenClawMemoryDocument, RecorderAudioRecord, User
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot
 from .auth import get_current_user
+from .mobile_identity import online_user_for_mobile_user
 from .cutcli_templates import (
     _extract_stt_output,
     _find_ffmpeg_bin,
@@ -877,6 +878,7 @@ async def upload_recording(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     name = Path(file.filename or "recording.opus").name[:255]
     source_type = str(source_type or "device").strip().lower()
     if source_type not in SOURCE_LABELS:
@@ -1063,6 +1065,7 @@ def list_recordings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == current_user.id)
     selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
     if selected_installation_id:
@@ -1086,6 +1089,7 @@ def recorder_known_names(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     query = db.query(RecorderAudioRecord.file_name).filter(
         RecorderAudioRecord.user_id == current_user.id,
         RecorderAudioRecord.source_type == "device",
@@ -1104,6 +1108,7 @@ def recorder_known_names(
 
 @router.patch("/api/h5/recorder/files/{record_id}")
 def rename_recording(record_id: int, body: RecorderRenameBody, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id, RecorderAudioRecord.user_id == current_user.id).first()
     if not row:
         raise HTTPException(status_code=404, detail="录音不存在")
@@ -1120,6 +1125,7 @@ def rename_recording_speaker(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(
         RecorderAudioRecord.id == record_id,
         RecorderAudioRecord.user_id == current_user.id,
@@ -1150,6 +1156,7 @@ def rename_recording_speaker(
 
 @router.get("/api/h5/recorder/files/{record_id}")
 def recording_detail(record_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id, RecorderAudioRecord.user_id == current_user.id).first()
     if not row:
         raise HTTPException(status_code=404, detail="录音不存在")
@@ -1163,6 +1170,7 @@ def save_recording_as_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(
         RecorderAudioRecord.id == record_id,
         RecorderAudioRecord.user_id == current_user.id,
@@ -1218,6 +1226,7 @@ def save_recording_as_memory(
 
 @router.get("/api/h5/recorder/files/{record_id}/audio")
 def recording_audio(record_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(
         RecorderAudioRecord.id == record_id,
         RecorderAudioRecord.user_id == current_user.id,
@@ -1239,6 +1248,7 @@ async def retry_recording(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(
         RecorderAudioRecord.id == record_id,
         RecorderAudioRecord.user_id == current_user.id,
@@ -1264,6 +1274,7 @@ async def retry_recording(
 
 @router.delete("/api/h5/recorder/files/{record_id}")
 def delete_recording(record_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(
         RecorderAudioRecord.id == record_id,
         RecorderAudioRecord.user_id == current_user.id,
@@ -1436,6 +1447,7 @@ async def reanalyze_recording(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = _record_for_user(db, int(current_user.id), record_id)
     dialogue = _dialogue_text(row)
     if not dialogue.strip():
@@ -1474,6 +1486,7 @@ async def translate_recording(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = _record_for_user(db, int(current_user.id), record_id)
     dialogue = _dialogue_text(row)
     if not dialogue.strip():
@@ -1503,6 +1516,7 @@ async def ask_recording(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = _record_for_user(db, int(current_user.id), record_id)
     dialogue = _dialogue_text(row)
     if not dialogue.strip() and not row.summary_text:
