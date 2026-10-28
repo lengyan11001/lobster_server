@@ -1751,3 +1751,115 @@ def test_ip_content_llm_timeout_keeps_proxy_fallback_budget(monkeypatch):
     assert exc.value.status_code == 504
     assert seen_timeouts
     assert seen_timeouts[0].read >= studio._LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS
+
+
+def test_ip_content_wechat_channels_user_search_resolves_video_share_url(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append({"query_type": query_type, "body": body, "kwargs": kwargs})
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {
+                    "id": "15042111919915338192",
+                    "username": "v2_video_user@finder",
+                    "nickname": "作品账号",
+                    "avatar_url": "https://example.com/avatar.jpg",
+                },
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 9,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="https://weixin.qq.com/sph/AbC123xyz",
+            current_user=SimpleNamespace(credits=10),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert result["items"][0]["username"] == "v2_video_user@finder"
+    assert result["items"][0]["display_name"] == "作品账号"
+    assert result["items"][0]["source"] == "video_detail"
+    assert result["query"]["source"] == "video_detail"
+    assert calls[0]["query_type"] == "wechat_channels_video_detail_v2"
+    assert calls[0]["body"] == {"share_url": "https://weixin.qq.com/sph/AbC123xyz", "raw": False}
+
+
+def test_ip_content_wechat_channels_user_search_resolves_export_id(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append({"query_type": query_type, "body": body})
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {"username": "v2_export_user@finder", "nickname": "导出账号"},
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 9,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="export/UzFfBgAAxNWjVAhRT0-Fk8zT4DCJkbR9XWLuHrpA4FJzYA0iPA",
+            current_user=SimpleNamespace(credits=10),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert result["items"][0]["username"] == "v2_export_user@finder"
+    assert calls[0]["query_type"] == "wechat_channels_video_detail_v2"
+    assert calls[0]["body"]["export_id"] == "export/UzFfBgAAxNWjVAhRT0-Fk8zT4DCJkbR9XWLuHrpA4FJzYA0iPA"
+
+
+def test_add_competitor_by_video_detail_resolves_username(monkeypatch, db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append((query_type, body))
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {"username": "v2_video_add@finder", "nickname": "作品添加账号"},
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 8,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+    result = asyncio.run(
+        studio.add_competitor_by_channel_id(
+            studio.CompetitorByChannelIdBody(
+                channel_id="这人的作品 https://weixin.qq.com/sph/AbC123xyz 看一下",
+                industry_tags="教育",
+            ),
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["item"]["account_key"] == "v2_video_add@finder"
+    assert result["item"]["display_name"] == "作品添加账号"
+    assert result["channel_id"] == ""
+    assert calls[0][0] == "wechat_channels_video_detail_v2"
+    assert calls[0][1]["share_url"] == "https://weixin.qq.com/sph/AbC123xyz"

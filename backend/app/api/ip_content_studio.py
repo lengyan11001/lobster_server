@@ -769,9 +769,44 @@ def _is_wechat_channels_finder_username(value: str) -> bool:
     return bool(text) and (text.startswith("v2_") or "@finder" in text)
 
 
+_WECHAT_CHANNELS_INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff\u00a0]")
+_WECHAT_CHANNELS_SHARE_URL_RE = re.compile(r"https?://weixin\.qq\.com/sph/[A-Za-z0-9]+/?", re.I)
+_WECHAT_CHANNELS_EXPORT_ID_RE = re.compile(r"(export/[A-Za-z0-9_+\-/=]{12,})", re.I)
+
+
+def _normalize_wechat_channels_input(value: Any, max_len: int = 2000) -> str:
+    text = _WECHAT_CHANNELS_INVISIBLE_RE.sub("", _clean_text(value, max_len))
+    return text.strip()
+
+
+def _extract_wechat_channels_channel_id(value: Any) -> str:
+    text = _normalize_wechat_channels_input(value)
+    match = re.search(r"(?<![0-9A-Za-z_-])sph[0-9A-Za-z_-]{6,80}(?![0-9A-Za-z_-])", text, re.I)
+    return match.group(0) if match else ""
+
+
 def _is_wechat_channels_channel_id(value: str) -> bool:
-    text = (value or "").strip()
-    return bool(re.fullmatch(r"sph[0-9A-Za-z_-]{6,80}", text, re.I))
+    return bool(_extract_wechat_channels_channel_id(value))
+
+
+def _wechat_channels_video_detail_body(value: Any) -> dict[str, Any]:
+    """Resolve a video share link / object id / export id to a detail request."""
+    text = _normalize_wechat_channels_input(value, 4000)
+    if not text:
+        return {}
+    share = _WECHAT_CHANNELS_SHARE_URL_RE.search(text)
+    if share:
+        return {"share_url": share.group(0), "raw": False}
+    export = _WECHAT_CHANNELS_EXPORT_ID_RE.search(text)
+    if export:
+        return {"export_id": export.group(1), "raw": False}
+    object_match = re.search(r"(?:object_?id|objectid)\s*[:=]\s*(\d{8,})", text, re.I)
+    if object_match:
+        return {"object_id": object_match.group(1), "raw": False}
+    bare = text.strip()
+    if re.fullmatch(r"\d{8,}", bare):
+        return {"object_id": bare, "raw": False}
+    return {}
 
 
 def _wechat_channels_search_chunks(value: str) -> list[str]:
@@ -859,17 +894,7 @@ def _wechat_channels_account_from_username(username: str) -> dict[str, Any]:
     }
 
 
-def _wechat_channels_channel_id_candidate(payload: Any, channel_id: str) -> Optional[dict[str, Any]]:
-    """Extract the resolved finder account without falling back to account search."""
-    users, _ = _normalize_wechat_channels_users_from_payload(payload or {}, limit=1)
-    if users:
-        candidate = dict(users[0])
-        candidate["channel_id"] = channel_id
-        candidate["source"] = "channel_id"
-        return candidate
-
-    # Some TiKHub responses return the username as a scalar rather than a
-    # candidate object. Only accept a finder username in this fallback.
+def _find_wechat_channels_finder_username(payload: Any) -> str:
     def find_username(node: Any, depth: int = 0) -> str:
         if depth > 8:
             return ""
@@ -896,12 +921,53 @@ def _wechat_channels_channel_id_candidate(payload: Any, channel_id: str) -> Opti
                 return found
         return ""
 
-    username = find_username(payload)
+    return find_username(payload)
+
+
+def _wechat_channels_channel_id_candidate(payload: Any, channel_id: str) -> Optional[dict[str, Any]]:
+    """Extract the resolved finder account without falling back to account search."""
+    users, _ = _normalize_wechat_channels_users_from_payload(payload or {}, limit=1)
+    if users:
+        candidate = dict(users[0])
+        candidate["channel_id"] = channel_id
+        candidate["source"] = "channel_id"
+        return candidate
+
+    # Some TiKHub responses return the username as a scalar rather than a
+    # candidate object. Only accept a finder username in this fallback.
+    username = _find_wechat_channels_finder_username(payload)
     if not username:
         return None
     candidate = _wechat_channels_account_from_username(username)
     candidate["channel_id"] = channel_id
     candidate["source"] = "channel_id"
+    return candidate
+
+
+def _wechat_channels_video_detail_candidate(payload: Any, input_value: str) -> Optional[dict[str, Any]]:
+    username = _find_wechat_channels_finder_username(payload)
+    if not username:
+        return None
+    data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    nickname = _clean_text(
+        _first(data, ["nickname", "author_name", "authorName", "finder_nickname", "finderNickname"]),
+        80,
+    )
+    avatar_url = _clean_text(
+        _first(data, ["avatar_url", "avatarUrl", "head_url", "headUrl", "head_img_url", "headImgUrl"]),
+        1000,
+    )
+    candidate = _wechat_channels_account_from_username(username)
+    candidate.update(
+        {
+            "nickname": nickname,
+            "display_name": nickname or username,
+            "avatar_url": avatar_url,
+            "source": "video_detail",
+            "video_input": _clean_text(input_value, 500),
+            "raw": _jsonable(data) if isinstance(data, dict) else {"username": username},
+        }
+    )
     return candidate
 
 
@@ -7366,33 +7432,63 @@ async def search_wechat_channels_users(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    keyword = _clean_text(q, 2000)
+    keyword = _normalize_wechat_channels_input(q, 2000)
     if not keyword:
-        raise HTTPException(status_code=400, detail="请填写视频号昵称或 username")
-    if _is_wechat_channels_finder_username(keyword):
+        raise HTTPException(status_code=400, detail="请填写视频号昵称、username、sph ID 或作品链接")
+    direct_username = _clean_text(keyword, 191)
+    if _is_wechat_channels_finder_username(direct_username):
         return {
             "ok": True,
-            "items": [_wechat_channels_account_from_username(keyword)],
+            "items": [_wechat_channels_account_from_username(direct_username)],
             "raw_item_count": 1,
             "query": {"source": "direct_username"},
             "balance_after": credits_json_float(user_balance_decimal(current_user)),
         }
 
-    if _is_wechat_channels_channel_id(keyword):
+    video_body = _wechat_channels_video_detail_body(keyword)
+    if video_body:
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_video_detail_v2",
+            params={},
+            body=video_body,
+            save_items=False,
+            meta={"source": "competitor_video_detail_search", "input": keyword[:200]},
+            attempts=2,
+            include_raw_response=True,
+        )
+        if not result.get("ok"):
+            query = result.get("query") if isinstance(result.get("query"), dict) else {}
+            detail = query.get("error_message") or "作品详情解析失败"
+            raise HTTPException(status_code=502, detail=f"作品链接解析失败：{detail}")
+        candidate = _wechat_channels_video_detail_candidate(result.get("raw_response") or {}, keyword)
+        if not candidate:
+            raise HTTPException(status_code=502, detail="作品详情未返回有效的 finder username")
+        return {
+            "ok": True,
+            "items": [candidate],
+            "raw_item_count": 1,
+            "query": {"source": "video_detail", "query_type": "wechat_channels_video_detail_v2"},
+            "balance_after": result.get("balance_after"),
+        }
+
+    channel_id = _extract_wechat_channels_channel_id(keyword)
+    if channel_id:
         result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
             query_type="wechat_channels_channel_id_to_username_v2",
             params={},
-            body={"channel_id": keyword, "raw": False},
+            body={"channel_id": channel_id, "raw": False},
             save_items=False,
-            meta={"source": "competitor_channel_id_search", "channel_id": keyword},
+            meta={"source": "competitor_channel_id_search", "channel_id": channel_id},
             attempts=2,
             include_raw_response=True,
         )
         users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
         if users:
-            users[0]["channel_id"] = keyword
+            users[0]["channel_id"] = channel_id
             users[0]["source"] = "channel_id"
             query = dict(result.get("query") or {})
             query["source"] = "channel_id"
@@ -7405,7 +7501,10 @@ async def search_wechat_channels_users(
             }
         query = result.get("query") if isinstance(result.get("query"), dict) else {}
         detail = query.get("error_message") or "没有解析到对应的视频号账号"
-        raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{detail}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"视频号 ID 解析接口暂时不可用：{detail}；可改用该账号任意作品的分享链接继续添加",
+        )
 
     result: dict[str, Any] = {}
     users: list[dict[str, Any]] = []
@@ -7443,7 +7542,10 @@ async def search_wechat_channels_users(
     query = result.get("query") if isinstance(result.get("query"), dict) else {}
     if not result.get("ok"):
         detail = query.get("error_message") or "TikHub 微信搜一搜接口调用失败"
-        raise HTTPException(status_code=502, detail=f"视频号账号搜索失败：{detail}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"视频号账号搜索失败：{detail}；可粘贴该账号任意作品的分享链接继续添加",
+        )
     return {
         "ok": True,
         "items": [],
@@ -7459,42 +7561,75 @@ async def add_competitor_by_channel_id(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    channel_id = _clean_text(body.channel_id, 200)
-    if not _is_wechat_channels_channel_id(channel_id):
-        raise HTTPException(status_code=400, detail="请填写有效的视频号公开 ID（sph 开头）")
+    raw_input = _normalize_wechat_channels_input(body.channel_id, 4000)
+    video_body = _wechat_channels_video_detail_body(raw_input)
+    channel_id = _extract_wechat_channels_channel_id(raw_input)
+    candidate: Optional[dict[str, Any]] = None
+    result: dict[str, Any] = {}
+    resolution_source = "competitor_channel_id_add"
 
-    # This endpoint intentionally calls only the ID conversion API. It must
-    # never perform nickname/keyword account search as a fallback.
-    result = await _execute_query_with_retry(
-        db=db,
-        current_user=current_user,
-        query_type="wechat_channels_channel_id_to_username_v2",
-        params={},
-        body={"channel_id": channel_id, "raw": False},
-        save_items=False,
-        meta={"source": "competitor_channel_id_add", "channel_id": channel_id},
-        attempts=2,
-        include_raw_response=True,
-    )
-    if not result.get("ok"):
-        query = result.get("query") if isinstance(result.get("query"), dict) else {}
-        detail = query.get("error_message") or "视频号公开 ID 解析失败"
-        raise HTTPException(status_code=502, detail=f"视频号公开 ID 解析失败：{detail}")
+    if video_body:
+        # A video link is a reliable public fallback when nickname search or
+        # channel-id conversion is temporarily unavailable upstream.
+        resolution_source = "competitor_video_detail_add"
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_video_detail_v2",
+            params={},
+            body=video_body,
+            save_items=False,
+            meta={"source": resolution_source, "input": raw_input[:200]},
+            attempts=2,
+            include_raw_response=True,
+        )
+        if not result.get("ok"):
+            query = result.get("query") if isinstance(result.get("query"), dict) else {}
+            detail = query.get("error_message") or "作品详情解析失败"
+            raise HTTPException(status_code=502, detail=f"作品链接解析失败：{detail}")
+        candidate = _wechat_channels_video_detail_candidate(result.get("raw_response") or {}, raw_input)
+        if not candidate:
+            raise HTTPException(status_code=502, detail="作品详情未返回有效的 finder username")
+    elif channel_id:
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_channel_id_to_username_v2",
+            params={},
+            body={"channel_id": channel_id, "raw": False},
+            save_items=False,
+            meta={"source": resolution_source, "channel_id": channel_id},
+            attempts=2,
+            include_raw_response=True,
+        )
+        if not result.get("ok"):
+            query = result.get("query") if isinstance(result.get("query"), dict) else {}
+            detail = query.get("error_message") or "视频号公开 ID 解析失败"
+            raise HTTPException(
+                status_code=502,
+                detail=f"视频号 ID 解析接口暂时不可用：{detail}；可改用该账号任意作品的分享链接继续添加",
+            )
+        candidate = _wechat_channels_channel_id_candidate(result.get("raw_response") or {}, channel_id)
+        if not candidate:
+            raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="请填写有效的视频号公开 ID（sph 开头），或粘贴该账号任意作品的分享链接",
+        )
 
-    candidate = _wechat_channels_channel_id_candidate(result.get("raw_response") or {}, channel_id)
-    if not candidate:
-        raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
     account_key = _clean_text(candidate.get("username") or candidate.get("finder_username"), 191)
     if not _is_wechat_channels_finder_username(account_key):
-        raise HTTPException(status_code=502, detail="视频号公开 ID 未返回有效的 finder username")
+        raise HTTPException(status_code=502, detail="视频号账号解析未返回有效的 finder username")
 
     meta = dict(candidate.get("raw") or {}) if isinstance(candidate.get("raw"), dict) else {}
     meta.update(
         {
-            "source": "competitor_channel_id_add",
+            "source": resolution_source,
             "channel_id": channel_id,
             "username": account_key,
             "finder_username": account_key,
+            "resolution_input": raw_input[:500],
         }
     )
     existing = (
