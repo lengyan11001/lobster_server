@@ -47,6 +47,7 @@ from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_voice import router as h5_voice_router
 from .api.h5_recorder import router as h5_recorder_router
 from .api.hifly_assets import router as hifly_assets_router
+from .api.media_proxy import router as media_proxy_router
 from .api.device_bind import router as device_bind_router
 from .api.device_ai import router as device_ai_router
 from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
@@ -1871,6 +1872,7 @@ def create_app() -> FastAPI:
     # app.include_router(consumption_accounts_router, prefix="")
     app.include_router(mcp_registry_router, prefix="")
     app.include_router(assets_router, prefix="")
+    app.include_router(media_proxy_router, prefix="")
     app.include_router(creative_jobs_router, prefix="")
     app.include_router(cutcli_templates_router, prefix="")
     # app.include_router(publish_router, prefix="")
