@@ -1,888 +1,1089 @@
 const app = getApp();
 const api = require("../../utils/api");
-const media = require("../../utils/media");
-const staticAssets = require("../../utils/static_assets");
 const share = require("../../utils/share");
+const config = require("../../config");
 
-const DIGITAL_VIDEO_PENDING_KEY = "lobster_digital_video_pending_tasks";
-const VOICE_CLONE_MAX_BYTES = 10 * 1024 * 1024;
+const POLL_MS = 6000;
+const MAX_POLLS = 80;
+const TRAIN_POLL_MS = 8000;
+const TRAIN_MAX_POLLS = 120;
+const SERVER_BASE = "https://bhzn.top";
+const READY_STATUS = ["success", "succeed", "ready", "completed", "done"];
+const EMOTION_LABELS = ["自然积极", "平静", "悲伤低落", "愤怒强烈"];
+const EMOTION_VALUES = ["happy", "neutral", "sad", "angry"];
+const MATCH_WAY_NAMES = ["模糊匹配", "精确匹配"];
+const MATCH_WAY_VALUES = ["fuzzyMatch", "preciseMatch"];
+const CLONE_LANGS = ["中文", "英文"];
+const CLONE_LANG_VALUES = ["zh", "en"];
 
-function assetUrl(path) {
-  const value = String(path || "").trim();
-  if (!value) return "";
-  let decoded = value;
+function assetUrl(value) {
+  const u = String(value || "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.charAt(0) === "/") return SERVER_BASE + u;
+  return u;
+}
+
+
+function mediaBase() {
+  return String(config.API_BASE || "").replace(/\/+$/, "");
+}
+
+function thumbUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  return `${mediaBase()}/api/media/thumb?url=${encodeURIComponent(u)}`;
+}
+
+function playUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  return `${mediaBase()}/api/media/proxy?url=${encodeURIComponent(u)}`;
+}
+
+function isPreviewVoice(voice) {
+  return String(voice || "").indexOf("consumer_") === 0;
+}
+
+function normalizeProfiles(items) {
+  return (items || []).map((row) => {
+    const id = Number(row && row.id);
+    if (!id) return null;
+    const status = String((row && row.status) || "").toLowerCase();
+    return {
+      id,
+      title: String(row.title || `数字人 ${id}`),
+      initial: String(row.title || "人").trim().slice(0, 1) || "人",
+      status_text: String(row.status_text || status || "未知"),
+      ready: READY_STATUS.indexOf(status) >= 0,
+      is_default: Boolean(row.is_default),
+      cover_url: assetUrl(row.cover_url || ""),
+      source_url: assetUrl(row.source_url || ""),
+      kind: String(row.cover_url || "").trim() ? "image" : (/\.mp4|\.mov|\.webm/i.test(String(row.source_url || "")) ? "video" : "image"),
+      thumb: String(row.cover_url || "").trim() ? assetUrl(row.cover_url) : thumbUrl(assetUrl(row.source_url))
+    };
+  }).filter(Boolean);
+}
+
+function normalizeVoices(items) {
+  const out = [];
+  (items || []).forEach((row) => {
+    const styles = Array.isArray(row && row.styles) && row.styles.length ? row.styles : [row || {}];
+    const baseTitle = String((row && (row.title || row.name || row.voice)) || "");
+    const params = (row && row.voice_params) || {};
+    const fallback = styles.find((s) => s && s.voice && !isPreviewVoice(s.voice)) || styles[0] || {};
+    styles.forEach((style) => {
+      const voice = String((style && style.voice) || (fallback && fallback.voice) || (row && row.voice) || "").trim();
+      if (!voice || isPreviewVoice(voice)) return;
+      const label = style && style.label && style.label !== "默认风格" ? `${baseTitle} - ${style.label}` : (baseTitle || voice);
+      out.push({
+        voice,
+        title: label,
+        provider: String((row && row.provider) || ""),
+        rate: (style && style.rate) || params.rate || (row && row.rate) || "",
+        volume: (style && style.volume) || params.volume || (row && row.volume) || "",
+        pitch: (style && style.pitch) || params.pitch || (row && row.pitch) || "",
+        emotion: (style && style.emotion) || params.emotion || (row && row.emotion) || ""
+      });
+    });
+  });
+  return out;
+}
+
+function findAudioUrl(input) {
+  const keys = ["audio_url", "audioUrl", "url", "source_url", "file_url", "play_url"];
+  const queue = [input];
+  let guard = 0;
+  while (queue.length && guard < 200) {
+    guard += 1;
+    const current = queue.shift();
+    if (!current) continue;
+    if (typeof current === "string") {
+      if (/^https?:\/\//i.test(current) || /^data:audio\//i.test(current)) return current;
+      continue;
+    }
+    if (typeof current !== "object") continue;
+    for (let i = 0; i < keys.length; i += 1) {
+      const value = current[keys[i]];
+      if (typeof value === "string" && (/^https?:\/\//i.test(value) || /^data:audio\//i.test(value))) return value;
+    }
+    Object.keys(current).forEach((key) => {
+      const value = current[key];
+      if (value && typeof value === "object") queue.push(value);
+    });
+  }
+  return "";
+}
+function dataUriToTempFile(dataUri) {
+  const matched = /^data:audio\/[a-z0-9.+-]+;base64,(.+)$/i.exec(String(dataUri || ""));
+  if (!matched) return "";
   try {
-    decoded = decodeURIComponent(value);
-  } catch (e) {
-    decoded = value;
+    const fs = wx.getFileSystemManager();
+    const path = `${wx.env.USER_DATA_PATH}/tts_${Date.now()}.mp3`;
+    fs.writeFileSync(path, matched[1], "base64");
+    return path;
+  } catch (err) {
+    return "";
   }
-  if (/hfcdn\.lingverse\.co/i.test(value) || /hfcdn\.lingverse\.co/i.test(decoded)) {
-    const match = decoded.match(/https?:\/\/hfcdn\.lingverse\.co\/[^"'&\s]+/i);
-    const clean = match ? match[0].split("?")[0].split("#")[0] : "";
-    const filename = clean.split("/").pop();
-    return filename ? staticAssets.hiflyAvatarUrl(`${filename}.jpg`) : "";
-  }
-  const staticMatch = decoded.match(/\/static\/hifly_avatars\/([^"'&?\s#]+)/i);
-  if (staticMatch && staticMatch[1]) {
-    return staticAssets.hiflyAvatarUrl(staticMatch[1]);
-  }
-  const hostedMatch = decoded.match(/\/client\/miniprogram\/hifly_avatars\/([^"'&?\s#]+)/i);
-  if (hostedMatch && hostedMatch[1]) {
-    return staticAssets.hiflyAvatarUrl(hostedMatch[1]);
-  }
-  if (/^https?:\/\//i.test(value)) return value;
-  if (/^\/\//.test(value)) return `https:${value}`;
-  if (value.indexOf("/client/miniprogram/") === 0) return staticAssets.staticAssetUrl(value.replace("/client/miniprogram/", ""));
-  if (value.charAt(0) === "/") return api.buildUrl(value);
-  return api.buildUrl(value);
-}
-
-function uniqueBy(rows, keyName) {
-  const out = [];
-  const seen = {};
-  (rows || []).forEach((row) => {
-    const key = String((row && row[keyName]) || "").trim();
-    if (!key || seen[key]) return;
-    seen[key] = true;
-    out.push(row);
-  });
-  return out;
-}
-
-function isConsumerPreviewVoice(value) {
-  return String(value || "").trim().indexOf("consumer_") === 0;
-}
-
-function normalizeAvatar(row, source) {
-  const avatar = String((row && row.avatar) || "").trim();
-  if (!avatar) return null;
-  const rawImage = (row && (row.image_url || row.cover_url || row.detail_url || row.thumb || row.avatar_url || row.poster_url || row.thumbnail_url || row.preview_url)) || "";
-  return {
-    avatar,
-    id: `${source}:${avatar}`,
-    title: (row && (row.title || row.name || row.avatar)) || avatar,
-    image_url: assetUrl(rawImage),
-    section: source,
-    section_label: source === "mine" ? "我的数字人" : "公共数字人",
-    status: (row && row.status) || "success",
-    raw: row || {}
-  };
-}
-
-function normalizeVoice(row, source) {
-  const styles = Array.isArray(row && row.styles) && row.styles.length ? row.styles : [row || {}];
-  const baseTitle = (row && (row.title || row.name || row.voice)) || "";
-  const params = (row && row.voice_params) || {};
-  const fallbackStyle = styles.find((style) => style && style.voice && !isConsumerPreviewVoice(style.voice)) || styles[0] || {};
-  const rows = [];
-  styles.forEach((style) => {
-    const voice = String((style && style.voice) || (fallbackStyle && fallbackStyle.voice) || (row && row.voice) || "").trim();
-    if (!voice) return;
-    if (source === "public" && isConsumerPreviewVoice(voice)) return;
-    const label = (style && style.label && style.label !== "默认风格") ? `${baseTitle} - ${style.label}` : (baseTitle || voice);
-    rows.push({
-      voice,
-      id: `${source}:${voice}`,
-      title: label,
-      demo_url: assetUrl((style && style.demo_url) || (row && (row.demo_url || row.audio_url || row.preview_url)) || ""),
-      preview_voice: (style && style.preview_voice) || "",
-      section: source,
-      section_label: source === "mine" ? "我的声音" : "公共声音",
-      status: (row && row.status) || "success",
-      provider: (row && row.provider) || "",
-      rate: (style && style.rate) || params.rate || (row && row.rate) || "",
-      volume: (style && style.volume) || params.volume || (row && row.volume) || "",
-      pitch: (style && style.pitch) || params.pitch || (row && row.pitch) || "",
-      emotion: (style && style.emotion) || params.emotion || (row && row.emotion) || "",
-      instructions: (style && style.instructions) || params.instructions || (row && row.instructions) || "",
-      raw: row || {}
-    });
-  });
-  return rows;
-}
-
-function videoItemForSave(item) {
-  const url = item.video_url || item.asset_video_url || item.source_video_url || "";
-  return {
-    id: item.id,
-    title: item.title || `digital_${item.id}.mp4`,
-    media_type: "video",
-    url,
-    preview_url: url,
-    download_url: url
-  };
-}
-
-function pendingDigitalVideoTasks() {
-  const rows = wx.getStorageSync(DIGITAL_VIDEO_PENDING_KEY);
-  const now = Date.now();
-  if (!Array.isArray(rows)) return [];
-  return rows
-    .filter((item) => item && item.task_id)
-    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000)
-    .slice(0, 50);
-}
-
-function setPendingDigitalVideoTasks(rows) {
-  wx.setStorageSync(DIGITAL_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
-}
-
-function upsertPendingDigitalVideoTask(task) {
-  if (!task || !task.task_id) return;
-  const rows = pendingDigitalVideoTasks();
-  const next = [task].concat(rows.filter((item) => item && item.task_id !== task.task_id)).slice(0, 50);
-  setPendingDigitalVideoTasks(next);
-  wx.setStorageSync("lobster_open_digital_video", true);
-  wx.setStorageSync("lobster_refresh_works", "1");
-}
-
-function normalizeVoiceList(rows, source) {
-  const out = [];
-  (rows || []).forEach((row) => {
-    normalizeVoice(row, source).forEach((item) => out.push(item));
-  });
-  return out;
-}
-
-function selectSource(mine, publicRows) {
-  return mine && mine.length ? "mine" : "public";
-}
-
-function sourceRows(source, mine, publicRows) {
-  return source === "mine" ? (mine || []) : (publicRows || []);
-}
-
-function voiceParamText(value, fallback, min, max) {
-  const raw = value === undefined || value === null || value === "" ? fallback : value;
-  const num = Number(raw);
-  const safeNum = Math.max(min, Math.min(max, Number.isNaN(num) ? fallback : num));
-  return safeNum.toFixed(2);
-}
-
-function writeAudioDataUrlToTempFile(dataUrl) {
-  const value = String(dataUrl || "").trim();
-  const match = value.match(/^data:audio\/[^;]+;base64,(.+)$/i);
-  if (!match || !match[1]) return Promise.resolve(value);
-  const filePath = `${wx.env.USER_DATA_PATH}/voice-preview-${Date.now()}.mp3`;
-  return new Promise((resolve, reject) => {
-    wx.getFileSystemManager().writeFile({
-      filePath,
-      data: match[1],
-      encoding: "base64",
-      success: () => resolve(filePath),
-      fail: reject
-    });
-  });
-}
-
-function buildVoicePreviewCacheKey(item, text, params) {
-  return JSON.stringify({
-    voice: item.voice || "",
-    provider: item.provider || "",
-    text: text || "",
-    rate: params.rate || "",
-    volume: params.volume || "",
-    pitch: params.pitch || "",
-    emotion: params.emotion || "",
-    instructions: params.instructions || ""
-  });
 }
 
 Page({
   data: {
-    phoneBound: false,
-    authPanelVisible: false,
-    pageMode: "select",
-    manageTab: "avatar",
-    activeAssetTab: "avatar",
-    avatarTab: "public",
-    voiceTab: "public",
-    avatarsMine: [],
-    avatarsPublic: [],
-    voicesMine: [],
-    voicesPublic: [],
-    displayAvatars: [],
-    displayAvatarSource: "public",
-    displayVoices: [],
-    displayVoiceSource: "public",
-    videos: [],
-    selectedAvatar: null,
-    selectedVoice: null,
-    selectedVideo: null,
-    title: "数字人口播",
-    text: "",
-    stShow: true,
-    speechRate: 1,
-    speechRateText: "1.00x",
-    loadingAssets: false,
-    loadingVideos: false,
-    submitting: false,
-    pollingTaskId: "",
-    progressText: "",
-    audioPlayingId: "",
-    voicePreviewLoadingId: "",
-    previewVisible: false,
-    previewVideoUrl: "",
-    onlineDevices: [],
-    selectedInstallationId: "",
-    onlineText: "",
-    authHint: "使用数字人前需要微信登录并绑定手机号。"
+    phoneBound: false, maskedPhone: "", errText: "",
+    profiles: [], profileIndex: -1, profilesLoading: false,
+    voices: [], voiceNames: [], voiceIndex: -1, voicesLoading: false,
+    trainOpen: false, trainMode: "image", trainFileName: "", trainFile: "",
+    trainTitle: "", trainAuth: "", trainAgree: false, trainSubmitting: false, trainStatus: "",
+    cloneOpen: false, cloneFileName: "", cloneFile: "", cloneTitle: "",
+    cloneLanguages: CLONE_LANGS, cloneLangIndex: 0, cloneAgree: false,
+    cloneSubmitting: false, cloneStatus: "",
+    mode: "tts", title: "", taskName: "数字人口播", videoTitle: "", text: "", audioUrl: "", audioName: "",
+    durationMode: "short", targetDuration: 60, templateMode: "none", advancedOpen: false,
+    speed: 1, speedText: "1.00", volume: 1, volumeText: "1.00",
+    pitch: 0, pitchText: "0", pitchMin: -12, pitchMax: 12, pitchStep: 1,
+    emotions: EMOTION_LABELS, emotionIndex: 0,
+    instructions: "",
+    preprocessNames: ["粗剪", "切片拼接"], preprocessValues: ["roughCut", "sliceMerge"], preprocessIndex: 0,
+    compositionNames: ["随机", "顺序"], compositionValues: ["random", "sequential"], compositionIndex: 0,
+    useTemplate: false, templates: [], templateIndex: -1, templatesLoading: false,
+    templateKeyword: "", templatePageSize: 20,
+    headerSwitch: true, subtitleSwitch: true, keywordSwitch: true,
+    materialSwitch: true, materialSoundSwitch: false, watermarkSwitch: false,
+    matchWayNames: MATCH_WAY_NAMES, matchWayIndex: 0,
+    materials: [], assetTab: "image", assets: [], assetsAll: [], assetsLoading: false,
+    assetKeyword: "",
+    submitting: false, statusText: "", videoUrl: "", coverUrl: "", history: [],
+    pickerOpen: false, pickerItems: [], pickerLoading: false, extracting: false, extractStep: 0,
+    dhTemplateName: "", dhTemplateDevice: "", dhTemplateStyleId: ""
   },
 
-  audio: null,
-  pollTimer: null,
-  voicePreviewRequestId: 0,
-  voicePreviewCache: {},
+  onLoad() {
+    this.pollTimer = null;
+    this.pollCount = 0;
+    this.trainTimer = null;
+    this.cloneTimer = null;
+    this.voiceAudio = null;
+    const prefill = wx.getStorageSync("lobster_digital_prefill");
+    if (prefill && typeof prefill === "object") {
+      wx.removeStorageSync("lobster_digital_prefill");
+      this.setData({ title: String(prefill.title || ""), text: String(prefill.text || "") });
+    }
+    this.loadProfiles();
+    this.loadVoices();
+    this.loadHistory();
+  },
 
   onShow() {
     share.showShareMenu();
     app.restoreSession();
-    this.applyPrefill();
-    this.refreshAuthState();
+    this.loadDhTemplate();
+    this.refreshAuth();
     if (this.data.phoneBound) {
-      this.loadAll();
+      this.loadInstallationId();
+      this.loadProfiles();
+      this.loadVoices();
     }
+  },
+
+  loadDhTemplate() {
+    const saved = wx.getStorageSync("lobster_current_template") || wx.getStorageSync("lobster_dh_template");
+    if (saved && saved.id) {
+      this.setData({
+        dhTemplateName: String(saved.name || ""),
+        dhTemplateDevice: String(saved.device_name || "账号级"),
+        dhTemplateStyleId: String(saved.styleId || "")
+      });
+    } else {
+      this.setData({ dhTemplateName: "", dhTemplateDevice: "", dhTemplateStyleId: "" });
+    }
+  },
+
+  refreshAuth() {
+    const phone = String(app.globalData.phone || "");
+    const bound = Boolean(app.globalData.token && phone);
+    const masked = phone ? phone.replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2") : "";
+    this.setData({ phoneBound: bound, maskedPhone: masked });
+    if (!bound) this.setData({ errText: "未登录：请先到「我的」用手机号登录授权" });
+  },
+
+  goLogin() {
+    wx.switchTab({ url: "/pages/profile/profile" });
+  },
+
+  openAudioPicker() {
+    if (!(app.globalData.token && app.globalData.phone)) {
+      wx.showToast({ title: "请先到「我的」登录授权", icon: "none" });
+      return;
+    }
+    this.setData({ pickerOpen: true, pickerLoading: true, pickerItems: [] });
+    app.request({ url: "/api/h5/recorder/files?page=1&page_size=30", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && data.items) || [])
+          .filter((row) => row.status === "completed")
+          .map((row) => ({
+            id: row.id,
+            name: String(row.display_name || row.file_name || "录音"),
+            time: String(row.created_at || "").replace("T", " ").slice(0, 16),
+            statusText: "已转写"
+          }));
+        this.setData({ pickerItems: rows });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ pickerLoading: false }));
+  },
+
+  closePicker() {
+    this.setData({ pickerOpen: false });
+  },
+
+  noop() {},
+
+  pickRecording(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.pickerItems[index];
+    if (!row || this.data.extracting) return;
+    this.setData({ extracting: true, extractStep: 0 });
+    if (!this.extractTimer) {
+      this.extractTimer = setInterval(() => {
+        if (!this.data.extracting) return;
+        this.setData({ extractStep: Math.min(2, (this.data.extractStep || 0) + 1) });
+      }, 6000);
+    }
+    app.request({
+      method: "POST",
+      url: `/api/h5/recorder/files/${row.id}/extract-digital-human`,
+      data: {},
+      timeout: 240000
+    })
+      .then((data) => {
+        const script = String((data && data.script) || "").trim();
+        if (!script) throw new Error("没有生成出文案");
+        const title = String((data && data.title) || "").trim();
+        const duration = Number((data && data.duration_seconds) || 30);
+        const useMaterials = !(data && data.use_materials === false);
+        const materials = (((data && data.materials) || []).map((item) => ({
+          asset_id: String(item.asset_id || ""),
+          type: String(item.type || "image"),
+          fileUrl: String(item.fileUrl || ""),
+          thumb: thumbUrl(String(item.fileUrl || "")),
+          name: String(item.name || "")
+        }))).filter((item) => item.asset_id && item.fileUrl);
+        const patch = {
+          text: script,
+          videoTitle: title,
+          taskName: title || this.data.taskName,
+          durationMode: duration > 30 ? "long" : "short",
+          targetDuration: Math.max(10, Math.min(300, duration || 30)),
+          pickerOpen: false,
+          templateMode: useMaterials ? "template" : "none",
+          materials: useMaterials ? materials : [],
+          advancedOpen: useMaterials
+        };
+        const emotionIndex = EMOTION_VALUES.indexOf(String((data && data.emotion) || ""));
+        if (emotionIndex >= 0) patch.emotionIndex = emotionIndex;
+        const speed = Number(data && data.speed);
+        if (speed) { patch.speed = speed; patch.speedText = speed.toFixed(2); }
+        const matchWayIndex = MATCH_WAY_VALUES.indexOf(String((data && data.match_way) || ""));
+        if (matchWayIndex >= 0) patch.matchWayIndex = matchWayIndex;
+        const compositionIndex = this.data.compositionValues.indexOf(String((data && data.composition) || ""));
+        if (compositionIndex >= 0) patch.compositionIndex = compositionIndex;
+        const preprocessIndex = this.data.preprocessValues.indexOf(String((data && data.preprocess) || ""));
+        if (preprocessIndex >= 0) patch.preprocessIndex = preprocessIndex;
+        const switchMap = {
+          header_switch: "headerSwitch",
+          subtitle_switch: "subtitleSwitch",
+          keyword_switch: "keywordSwitch",
+          material_sound_switch: "materialSoundSwitch",
+          watermark_switch: "watermarkSwitch"
+        };
+        Object.keys(switchMap).forEach((key) => {
+          const value = data ? data[key] : undefined;
+          if (typeof value === "boolean") patch[switchMap[key]] = value;
+        });
+        this.setData(patch);
+        if (this.data.assetsAll.length) {
+          const picked = (useMaterials ? materials : []).map((m) => m.asset_id);
+          this.setData({
+            assetsAll: this.data.assetsAll.map((row) => Object.assign({}, row, {
+              selected: picked.indexOf(row.asset_id) >= 0
+            }))
+          });
+        }
+        const templateName = String((data && data.template_name) || "").trim();
+        if (useMaterials) {
+          this.applyTemplateByName(templateName);
+          if (!this.data.assetsAll.length) this.loadAssets();
+        }
+        const parts = ["文案"];
+        if (title) parts.push("标题");
+        if (useMaterials) parts.push(materials.length ? `混剪 ${materials.length} 个素材` : "混剪模板");
+        wx.showToast({ title: "已填好：" + parts.join(" + "), icon: "none" });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => {
+        if (this.extractTimer) { clearInterval(this.extractTimer); this.extractTimer = null; }
+        this.setData({ extracting: false, extractStep: 0 });
+      });
+  },
+
+  applyTemplateByName(name) {
+    const apply = () => {
+      if (!name) return;
+      const index = this.data.templates.findIndex((row) => String(row.name || "") === name);
+      if (index >= 0) this.setData({ templateIndex: index });
+    };
+    if (!this.data.templates.length) {
+      this.loadTemplates("", 60).then(apply);
+      return;
+    }
+    apply();
+  },
+
+  goRecords() {
+    wx.navigateTo({ url: "/pages/records/records" });
+  },
+
+  goAssets() {
+    wx.navigateTo({ url: "/pages/assets/assets" });
+  },
+
+  goIpProfile() {
+    wx.navigateTo({ url: "/pages/ip-profile/ip-profile" });
   },
 
   onUnload() {
-    this.stopAudio();
     this.stopPolling();
+    if (this.extractTimer) { clearInterval(this.extractTimer); this.extractTimer = null; }
+    if (this.trainTimer) clearInterval(this.trainTimer);
+    if (this.cloneTimer) clearInterval(this.cloneTimer);
+    if (this.voiceAudio) {
+      this.voiceAudio.stop();
+      this.voiceAudio.destroy();
+      this.voiceAudio = null;
+    }
   },
 
   onPullDownRefresh() {
-    this.loadAll().finally(() => wx.stopPullDownRefresh());
+    Promise.all([this.loadProfiles(), this.loadVoices(), this.loadHistory()])
+      .then(() => wx.stopPullDownRefresh())
+      .catch(() => wx.stopPullDownRefresh());
   },
 
-  refreshAuthState() {
-    const phoneBound = Boolean(app.globalData.token && app.globalData.phone);
-    this.setData({ phoneBound });
-    return phoneBound;
+  iidHeader() {
+    return this.installationId ? { "X-Installation-Id": this.installationId } : {};
   },
 
-  applyPrefill() {
-    const prefill = wx.getStorageSync("lobster_digital_prefill");
-    if (!prefill) return;
-    wx.removeStorageSync("lobster_digital_prefill");
-    const selectedAvatar = prefill.avatar ? normalizeAvatar(prefill.avatar, prefill.avatar.section || "public") : null;
-    const data = {
-      pageMode: "create",
-      title: prefill.title || this.data.title,
-      text: prefill.text || this.data.text
-    };
-    if (selectedAvatar) {
-      data.selectedAvatar = selectedAvatar;
-      data.avatarTab = selectedAvatar.section || "public";
-      data.displayAvatarSource = selectedAvatar.section || "public";
-    }
-    this.setData(data);
+  loadInstallationId() {
+    if (!app.globalData.token) return Promise.resolve("");
+    if (this.installationId) return Promise.resolve(this.installationId);
+    return app.request({ url: "/api/mobile/devices", timeout: 20000 })
+      .then((data) => {
+        const rows = (data && data.online_devices) || [];
+        const picked = rows.find((row) => row.online) || rows[0];
+        this.installationId = picked ? String(picked.installation_id || "") : "";
+        return this.installationId;
+      })
+      .catch(() => "");
   },
 
-  showAuthPanel(hint) {
-    this.refreshAuthState();
-    if (this.data.phoneBound) return false;
-    this.setData({
-      authPanelVisible: true,
-      authHint: hint || "使用数字人前需要微信登录并绑定手机号。"
+  uploadAudioFile(filePath) {
+    return api.uploadFile({
+      url: "/api/assets/upload",
+      filePath,
+      name: "file",
+      formData: { media_type: "audio", tags: "tts,miniprogram" },
+      header: this.iidHeader(),
+      token: app.globalData.token || ""
+    }).then((data) => {
+      const url = assetUrl((data && (data.source_url || data.url)) || "");
+      if (!url) throw new Error("配音上传失败，没有返回地址");
+      return url;
     });
+  },
+
+  resolveAudioUrl(raw) {
+    const value = String(raw || "");
+    if (/^https?:\/\//i.test(value)) return Promise.resolve(value);
+    if (/^data:audio\//i.test(value)) {
+      const path = dataUriToTempFile(value);
+      if (!path) return Promise.reject(new Error("配音数据解析失败"));
+      return this.uploadAudioFile(path);
+    }
+    return Promise.reject(new Error("配音返回格式不支持"));
+  },
+
+  ensureAuth() {
+    if (!(app.globalData.token && app.globalData.phone)) {
+      wx.showToast({ title: "请先在「我的」授权手机号", icon: "none" });
+      return false;
+    }
     return true;
   },
 
-  login() {
-    wx.showLoading({ title: "登录中", mask: true });
-    app
-      .loginWithWechat()
+  loadProfiles() {
+    if (!app.globalData.token) { this.setData({ errText: "未登录：请先到「我的」用手机号登录授权" }); return Promise.resolve(); }
+    this.setData({ profilesLoading: true, errText: "" });
+    return app.request({ url: "/api/shanjian-digital-human/profiles", timeout: 30000 })
       .then((data) => {
-        this.refreshAuthState();
-        if (data.needs_phone_bind || !app.globalData.phone) {
-          wx.showToast({ title: "请授权手机号", icon: "none" });
-          return;
-        }
-        this.setData({ authPanelVisible: false });
-        this.loadAll();
-      })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
-  },
-
-  onGetPhoneNumber(evt) {
-    const code = evt.detail && evt.detail.code;
-    if (!code) {
-      wx.showToast({ title: "微信取号失败", icon: "none" });
-      return;
-    }
-    const bind = () => this.bindPhone(code);
-    if (!app.globalData.token) {
-      app.loginWithWechat().then(bind).catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
-      return;
-    }
-    bind();
-  },
-
-  bindPhone(code) {
-    wx.showLoading({ title: "绑定中", mask: true });
-    app
-      .bindPhone(code)
-      .then(() => {
-        this.setData({ authPanelVisible: false, phoneBound: true });
-        wx.showToast({ title: "绑定成功", icon: "success" });
-        this.loadAll();
-      })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
-  },
-
-  loadAll() {
-    if (!this.refreshAuthState()) return Promise.resolve();
-    return Promise.all([this.loadAssets(), this.loadVideos(), this.loadOnlineStatus()]);
-  },
-
-  loadOnlineStatus(showToast) {
-    if (!app.globalData.token) return Promise.resolve();
-    this.setData({ onlineText: "正在检查 online..." });
-    return app
-      .request({ url: "/api/h5-chat/devices/status" })
-      .then((data) => {
-        const devices = Array.isArray(data.devices) ? data.devices : [];
-        const selected = devices.find((d) => d.online && d.installation_id) || devices.find((d) => d.installation_id) || {};
-        const onlineCount = devices.filter((d) => d.online).length;
-        this.setData({
-          onlineDevices: devices,
-          selectedInstallationId: selected.installation_id || "",
-          onlineText: data.online ? `online 已连接 ${onlineCount}/${devices.length || onlineCount}` : "online 暂未在线"
-        });
+        const profiles = normalizeProfiles((data && data.items) || []);
+        let index = profiles.findIndex((row) => row.is_default && row.ready);
+        if (index < 0) index = profiles.findIndex((row) => row.ready);
+        if (index < 0 && profiles.length) index = 0;
+        this.setData({ profiles, profileIndex: index });
       })
       .catch((err) => {
-        this.setData({ onlineText: "online 状态获取失败" });
-        if (showToast) wx.showToast({ title: api.errorMessage(err), icon: "none" });
+        const msg = api.errorMessage(err);
+        this.setData({ errText: "读取数字人失败：" + msg });
+        wx.showToast({ title: msg, icon: "none" });
+      })
+      .then(() => this.setData({ profilesLoading: false }));
+  },
+
+  loadVoices() {
+    if (!app.globalData.token) return Promise.resolve();
+    this.setData({ voicesLoading: true });
+    return app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
+      .then((data) => {
+        const rows = normalizeVoices((data && (data.items || data.results)) || []);
+        this.setData({ voices: rows, voiceNames: rows.map((r) => r.title), voiceIndex: rows.length ? 0 : -1 });
+        if (rows.length) this.applyVoiceDefaults(rows[0]);
+      })
+      .catch((err) => {
+        const msg = api.errorMessage(err);
+        this.setData({ errText: "读取声音失败：" + msg });
+        wx.showToast({ title: msg, icon: "none" });
+      })
+      .then(() => this.setData({ voicesLoading: false }));
+  },
+
+  applyVoiceDefaults(voice) {
+    if (!voice) return;
+    const pitch = Math.min(12, Math.max(-12, Number(voice.pitch || 0)));
+    const volume = Math.min(2, Math.max(0.1, Number(voice.volume || 1)));
+    const speed = Math.min(2, Math.max(0.5, Number(voice.rate || 1)));
+    const emotionIdx = Math.max(0, EMOTION_VALUES.indexOf(String(voice.emotion || "happy")));
+    this.setData({
+      pitch,
+      pitchText: String(pitch),
+      volume,
+      volumeText: volume.toFixed(2),
+      speed,
+      speedText: speed.toFixed(2),
+      emotionIndex: emotionIdx
+    });
+  },
+
+  chooseTrainFile() {
+    const mode = this.data.trainMode;
+    wx.chooseMedia({
+      count: 1,
+      mediaType: [mode === "image" ? "image" : "video"],
+      maxDuration: 60,
+      success: (res) => {
+        const file = (res.tempFiles || [])[0];
+        if (!file) return;
+        this.setData({ trainFile: file.tempFilePath, trainFileName: file.fileType === "video" ? "已选视频" : "已选图片" });
+      }
+    });
+  },
+
+  onTrainTitle(e) { this.setData({ trainTitle: e.detail.value }); },
+  onTrainAuth(e) { this.setData({ trainAuth: e.detail.value }); },
+  toggleTrain() { this.setData({ trainOpen: !this.data.trainOpen }); },
+
+  setTrainMode(e) {
+    this.setData({ trainMode: String(e.currentTarget.dataset.mode || "image"), trainFile: "", trainFileName: "" });
+  },
+
+  toggleTrainAgree(e) { this.setData({ trainAgree: Boolean(e.detail.value) }); },
+
+  submitTrain() {
+    if (!this.ensureAuth()) return;
+    const { trainFile, trainMode, trainTitle, trainAuth, trainAgree } = this.data;
+    if (!trainFile) return wx.showToast({ title: "先选择素材", icon: "none" });
+    if (!String(trainTitle || "").trim()) return wx.showToast({ title: "填写数字人名称", icon: "none" });
+    if (String(trainAuth || "").trim().length < 2) return wx.showToast({ title: "填写授权说明（至少 2 字）", icon: "none" });
+    if (!trainAgree) return wx.showToast({ title: "请先勾选肖像授权", icon: "none" });
+    this.setData({ trainSubmitting: true, trainStatus: "上传素材中…" });
+    wx.showLoading({ title: "上传中" });
+    api.uploadFile({
+      url: "/api/assets/upload",
+      filePath: trainFile,
+      name: "file",
+      formData: { media_type: trainMode === "image" ? "image" : "video", tags: "digital_human_v2,profile_train" },
+      token: app.globalData.token || ""
+    })
+      .then((data) => {
+        const url = assetUrl((data && (data.source_url || data.url)) || "");
+        if (!url) throw new Error("素材上传失败，没有返回地址");
+        this.setData({ trainStatus: "提交训练任务…" });
+        const body = {
+          title: String(trainTitle).trim(),
+          mode: trainMode,
+          auth_text: String(trainAuth).trim(),
+          make_default: true
+        };
+        if (trainMode === "image") body.image_url = url; else body.video_url = url;
+        return app.request({ method: "POST", url: "/api/shanjian-digital-human/profile/train", data: body, timeout: 120000 });
+      })
+      .then((data) => {
+        const taskId = String((data && (data.task_id || (data.record && data.record.task_id))) || "").trim();
+        this.setData({ trainStatus: "训练已提交" + (taskId ? "，任务 " + taskId.slice(0, 8) : "") + "，等待出结果…" });
+        if (taskId) this.startTrainPolling(taskId);
+      })
+      .catch((err) => {
+        this.setData({ trainStatus: "" });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      })
+      .then(() => {
+        this.setData({ trainSubmitting: false });
+        wx.hideLoading();
       });
+  },
+
+  startTrainPolling(taskId) {
+    if (this.trainTimer) clearInterval(this.trainTimer);
+    let count = 0;
+    const tick = () => {
+      count += 1;
+      app.request({ method: "POST", url: "/api/shanjian-digital-human/profile/task", data: { task_id: taskId }, timeout: 60000 })
+        .then((data) => {
+          const status = String((data && data.status) || "processing");
+          const text = String((data && data.status_text) || "训练中");
+          this.setData({ trainStatus: "训练" + text });
+          if (status === "succeed" || status === "failed") {
+            clearInterval(this.trainTimer);
+            this.trainTimer = null;
+            if (status === "succeed") {
+              wx.showToast({ title: "训练完成", icon: "success" });
+              this.loadProfiles();
+              this.setData({ trainOpen: false, trainStatus: "" });
+            } else {
+              wx.showToast({ title: (data && data.error_message) || "训练失败", icon: "none" });
+            }
+          }
+        })
+        .catch((err) => {
+          clearInterval(this.trainTimer);
+          this.trainTimer = null;
+          this.setData({ trainStatus: api.errorMessage(err) });
+        });
+      if (count > TRAIN_MAX_POLLS) {
+        clearInterval(this.trainTimer);
+        this.trainTimer = null;
+        this.setData({ trainStatus: "训练时间较长，请稍后到列表查看" });
+      }
+    };
+    tick();
+    this.trainTimer = setInterval(tick, TRAIN_POLL_MS);
+  },
+
+  toggleClone() { this.setData({ cloneOpen: !this.data.cloneOpen }); },
+
+  chooseCloneFile() {
+    wx.chooseMessageFile({
+      count: 1, type: "file", extension: ["mp3", "wav", "m4a", "aac"],
+      success: (res) => {
+        const file = (res.tempFiles || [])[0];
+        if (!file) return;
+        this.setData({ cloneFile: file.path, cloneFileName: String(file.name || "已选音频") });
+      }
+    });
+  },
+
+  onCloneTitle(e) { this.setData({ cloneTitle: e.detail.value }); },
+  pickCloneLang(e) { this.setData({ cloneLangIndex: Number(e.detail.value || 0) }); },
+  toggleCloneAgree(e) { this.setData({ cloneAgree: Boolean(e.detail.value) }); },
+
+  submitClone() {
+    if (!this.ensureAuth()) return;
+    const { cloneFile, cloneTitle, cloneAgree, cloneLangIndex } = this.data;
+    if (!String(cloneTitle || "").trim()) return wx.showToast({ title: "填写声音名称", icon: "none" });
+    if (!cloneFile) return wx.showToast({ title: "先选择音频", icon: "none" });
+    if (!cloneAgree) return wx.showToast({ title: "请先勾选声音授权", icon: "none" });
+    this.setData({ cloneSubmitting: true, cloneStatus: "上传音频…" });
+    wx.showLoading({ title: "上传中" });
+    api.uploadFile({
+      url: "/api/hifly/my/voice/create-upload",
+      filePath: cloneFile,
+      name: "file",
+      formData: {
+        title: String(cloneTitle).trim(),
+        languages: CLONE_LANG_VALUES[cloneLangIndex] || "zh",
+        voice_type: "8"
+      },
+      token: app.globalData.token || "",
+      timeout: 180000
+    })
+      .then((data) => {
+        const taskId = String((data && (data.task_id || (data.item && data.item.task_id))) || "").trim();
+        this.setData({ cloneStatus: "克隆任务已提交，等待结果…" });
+        if (taskId) this.startClonePolling(taskId);
+      })
+      .catch((err) => {
+        this.setData({ cloneStatus: "" });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      })
+      .then(() => {
+        this.setData({ cloneSubmitting: false });
+        wx.hideLoading();
+      });
+  },
+
+  startClonePolling(taskId) {
+    if (this.cloneTimer) clearInterval(this.cloneTimer);
+    let count = 0;
+    const tick = () => {
+      count += 1;
+      app.request({ method: "POST", url: "/api/hifly/my/voice/task", data: { task_id: taskId }, timeout: 60000 })
+        .then((data) => {
+          const status = String((data && (data.status || (data.item && data.item.status))) || "processing");
+          this.setData({ cloneStatus: "克隆中：" + status });
+          if (status === "success" || status === "succeed" || status === "failed") {
+            clearInterval(this.cloneTimer);
+            this.cloneTimer = null;
+            if (status === "failed") {
+              wx.showToast({ title: "克隆失败", icon: "none" });
+            } else {
+              wx.showToast({ title: "克隆完成", icon: "success" });
+              this.setData({ cloneOpen: false, cloneStatus: "" });
+              this.loadVoices();
+            }
+          }
+        })
+        .catch((err) => {
+          clearInterval(this.cloneTimer);
+          this.cloneTimer = null;
+          this.setData({ cloneStatus: api.errorMessage(err) });
+        });
+      if (count > TRAIN_MAX_POLLS) {
+        clearInterval(this.cloneTimer);
+        this.cloneTimer = null;
+        this.setData({ cloneStatus: "克隆时间较长，请稍后刷新列表" });
+      }
+    };
+    tick();
+    this.cloneTimer = setInterval(tick, TRAIN_POLL_MS);
+  },
+
+  audition() {
+    const voice = this.data.voices[this.data.voiceIndex];
+    if (!voice) return;
+    const payload = {
+      voice: voice.voice,
+      text: "你好，这是当前声音的试听效果。",
+      rate: String(this.data.speed || 1),
+      volume: String(this.data.volume || 1),
+      pitch: String(this.data.pitch),
+      emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
+    };
+    if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
+    if (voice.provider === "minimax" || voice.provider === "qwen") payload.voice_provider = voice.provider;
+    wx.showLoading({ title: "试听生成" });
+    app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: payload, header: this.iidHeader(), timeout: 120000 })
+      .then((data) => {
+        const url = findAudioUrl(data);
+        if (!url) throw new Error("没有返回试听音频");
+        const playable = /^data:audio\//i.test(url) ? dataUriToTempFile(url) : url;
+        if (!playable) throw new Error("试听音频解析失败");
+        if (!this.voiceAudio) this.voiceAudio = wx.createInnerAudioContext();
+        this.voiceAudio.src = playable;
+        this.voiceAudio.play();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => wx.hideLoading());
+  },
+
+  loadTemplates(keyword, pageSize) {
+    this.setData({ templatesLoading: true });
+    const body = { page_size: pageSize || this.data.templatePageSize || 20, scene: "realMan" };
+    const kw = String(keyword !== undefined ? keyword : this.data.templateKeyword || "").trim();
+    if (kw) { body.search_key = "name"; body.search_value = kw; }
+    return app.request({ method: "POST", url: "/api/shanjian-smart-clip/templates", data: body, timeout: 60000 })
+      .then((data) => {
+        const rows = ((data && data.results) || []).map((row, i) => ({
+          styleId: String(row.styleId || row.style_id || row.templateId || row.id || ""),
+          name: String(row.name || row.title || `模板 ${i + 1}`).slice(0, 20),
+          cover: assetUrl(row.cover || row.coverUrl || row.cover_url || "")
+        })).filter((row) => row.styleId);
+        this.setData({ templates: rows, templateIndex: rows.length ? 0 : -1 });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ templatesLoading: false }));
+  },
+
+  onTemplateKeyword(e) {
+    const keyword = e.detail.value;
+    this.setData({ templateKeyword: keyword });
+    if (this.templateTimer) clearTimeout(this.templateTimer);
+    this.templateTimer = setTimeout(() => this.loadTemplates(keyword), 500);
+  },
+
+  loadMoreTemplates() {
+    const size = Math.min(60, (this.data.templatePageSize || 20) + 20);
+    this.setData({ templatePageSize: size });
+    this.loadTemplates(this.data.templateKeyword, size);
   },
 
   loadAssets() {
-    this.setData({ loadingAssets: true });
-    return Promise.all([
-      app.request({ url: "/api/hifly/my/avatar/list?page=1&size=100" }).catch(() => ({ items: [] })),
-      app.request({ method: "POST", url: "/api/hifly/avatar/library", data: {} }).catch(() => ({ public: [] })),
-      app.request({ url: "/api/hifly/my/voice/list?page=1&size=100" }).catch(() => ({ items: [] })),
-      app.request({ method: "POST", url: "/api/hifly/voice/library", data: {} }).catch(() => ({ public: [] }))
-    ])
-      .then(([myAvatars, publicAvatars, myVoices, publicVoices]) => {
-        const avatarsMine = uniqueBy((myAvatars.items || []).filter((row) => row.status !== "deleted").map((row) => normalizeAvatar(row, "mine")).filter(Boolean), "avatar");
-        const avatarsPublic = uniqueBy((publicAvatars.public || []).map((row) => normalizeAvatar(row, "public")).filter(Boolean), "avatar");
-        const voicesMine = uniqueBy(normalizeVoiceList((myVoices.items || []).filter((row) => row.status !== "deleted"), "mine"), "voice");
-        const voicesPublic = uniqueBy(normalizeVoiceList(publicVoices.public || [], "public"), "voice");
-        const selectedAvatar = this.data.selectedAvatar || avatarsMine[0] || avatarsPublic[0] || null;
-        const selectedVoice = this.data.selectedVoice || voicesMine[0] || voicesPublic[0] || null;
-        const displayAvatarSource = this.data.avatarTab || (selectedAvatar && selectedAvatar.section) || selectSource(avatarsMine, avatarsPublic);
-        const displayVoiceSource = this.data.voiceTab || (selectedVoice && selectedVoice.section) || selectSource(voicesMine, voicesPublic);
-        this.setData({
-          avatarsMine,
-          avatarsPublic,
-          voicesMine,
-          voicesPublic,
-          displayAvatars: sourceRows(displayAvatarSource, avatarsMine, avatarsPublic),
-          displayAvatarSource,
-          displayVoices: sourceRows(displayVoiceSource, voicesMine, voicesPublic),
-          displayVoiceSource,
-          selectedAvatar,
-          selectedVoice,
-          avatarTab: displayAvatarSource,
-          voiceTab: voicesMine.length ? "mine" : "public"
-        });
+    if (!app.globalData.token) return Promise.resolve();
+    this.setData({ assetsLoading: true });
+    return app.request({ url: "/api/assets?limit=120", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && (data.assets || data.items)) || []).map((row) => {
+          const id = String(row.asset_id || row.id || "");
+          if (!id) return null;
+          const type = String(row.media_type || "").toLowerCase();
+          if (type !== "image" && type !== "video") return null;
+          return {
+            asset_id: id,
+            media_type: type,
+            name: String(row.filename || row.name || id),
+            url: assetUrl(row.source_url || row.url || row.open_url || ""),
+            thumb: thumbUrl(assetUrl(row.source_url || row.url || row.open_url || "")),
+            selected: this.data.materials.some((m) => m.asset_id === id)
+          };
+        }).filter(Boolean);
+        this.setData({ assetsAll: rows });
+        this.applyAssetFilter(rows, this.data.assetTab, this.data.assetKeyword);
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => this.setData({ loadingAssets: false }));
+      .then(() => this.setData({ assetsLoading: false }));
   },
 
-  loadVideos() {
-    this.setData({ loadingVideos: true });
-    return app
-      .request({ url: "/api/hifly/my/video/list?page=1&size=30" })
-      .then((data) => this.setData({ videos: data.items || [] }))
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => this.setData({ loadingVideos: false }));
+  applyAssetFilter(all, tab, keyword) {
+    const kw = String(keyword || "").trim().toLowerCase();
+    const rows = (all || []).filter((row) => row.media_type === tab)
+      .filter((row) => !kw || row.name.toLowerCase().indexOf(kw) >= 0);
+    this.setData({ assets: rows });
   },
 
-  setAssetTab(evt) {
-    const tab = evt.currentTarget.dataset.tab || "avatar";
-    const data = { activeAssetTab: tab };
-    if (tab === "avatar") {
-      const source = selectSource(this.data.avatarsMine, this.data.avatarsPublic);
-      data.displayAvatarSource = source;
-      data.displayAvatars = source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic;
-      data.avatarTab = source;
+  onAssetKeyword(e) {
+    const keyword = e.detail.value;
+    this.setData({ assetKeyword: keyword });
+    this.applyAssetFilter(this.data.assetsAll, this.data.assetTab, keyword);
+  },
+
+  switchAssetTab(e) {
+    const tab = String(e.currentTarget.dataset.tab || "image");
+    this.setData({ assetTab: tab });
+    if (!this.data.assetsAll.length) this.loadAssets();
+    else this.applyAssetFilter(this.data.assetsAll, tab, this.data.assetKeyword);
+  },
+
+  previewMedia(url, type) {
+    if (!url) return wx.showToast({ title: "没有可预览的资源", icon: "none" });
+    const kind = type === "video" ? "video" : "image";
+    const target = kind === "video" ? playUrl(url) : thumbUrl(url);
+    if (wx.previewMedia) {
+      wx.previewMedia({ sources: [{ url: target, type: kind }], current: 0 });
+      return;
+    }
+    if (kind === "image") wx.previewImage({ current: target, urls: [target] });
+    else wx.showToast({ title: "当前版本不支持视频预览", icon: "none" });
+  },
+
+  previewProfile(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.profiles[index];
+    if (!row) return;
+    this.previewMedia(row.cover_url || row.source_url, row.kind);
+  },
+
+  previewAsset(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.assets[index];
+    if (!row) return;
+    this.previewMedia(row.url, row.media_type === "video" ? "video" : "image");
+  },
+
+  previewMaterial(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.materials[index];
+    if (!row) return;
+    this.previewMedia(row.fileUrl, row.type === "video" ? "video" : "image");
+  },
+
+  selectProfile(e) { this.setData({ profileIndex: Number(e.currentTarget.dataset.index || 0) }); },
+
+  selectVoice(e) {
+    const index = Number(e.detail.value || 0);
+    this.setData({ voiceIndex: index });
+    this.applyVoiceDefaults(this.data.voices[index]);
+  },
+
+  selectTemplate(e) { this.setData({ templateIndex: Number(e.currentTarget.dataset.index || 0) }); },
+
+  toggleTemplate(e) {
+    this.setTemplateMode({ currentTarget: { dataset: { mode: Boolean(e.detail.value) ? "template" : "none" } } });
+  },
+
+  onSwitch(e) {
+    const key = e.currentTarget.dataset.key;
+    if (key) this.setData({ [key]: Boolean(e.detail.value) });
+  },
+
+  pickMatchWay(e) { this.setData({ matchWayIndex: Number(e.detail.value || 0) }); },
+  pickEmotion(e) { this.setData({ emotionIndex: Number(e.detail.value || 0) }); },
+  onInstructions(e) { this.setData({ instructions: e.detail.value }); },
+  pickPreprocess(e) { this.setData({ preprocessIndex: Number(e.detail.value || 0) }); },
+  pickComposition(e) { this.setData({ compositionIndex: Number(e.detail.value || 0) }); },
+  setMode(e) { this.setData({ mode: String(e.currentTarget.dataset.mode || "tts") }); },
+  onTaskName(e) { this.setData({ taskName: e.detail.value }); },
+  onVideoTitle(e) { this.setData({ videoTitle: e.detail.value }); },
+  setDurationMode(e) { this.setData({ durationMode: String(e.currentTarget.dataset.mode || "short") }); },
+  onTargetDuration(e) { this.setData({ targetDuration: Number(e.detail.value || 60) }); },
+  setTemplateMode(e) {
+    const mode = String(e.currentTarget.dataset.mode || "none");
+    this.setData({ templateMode: mode });
+    if (mode === "template") {
+      if (!this.data.templates.length) this.loadTemplates();
+      if (!this.data.assetsAll.length) this.loadAssets();
+    }
+  },
+  toggleAdvanced() { this.setData({ advancedOpen: !this.data.advancedOpen }); },
+  onTitleInput(e) { this.setData({ title: e.detail.value }); },
+  onTextInput(e) { this.setData({ text: e.detail.value }); },
+  onSpeedChange(e) { const v = Number(e.detail.value || 100) / 100; this.setData({ speed: v, speedText: v.toFixed(2) }); },
+  onVolumeChange(e) { const v = Number(e.detail.value || 100) / 100; this.setData({ volume: v, volumeText: v.toFixed(2) }); },
+  onPitchChange(e) { const v = Number(e.detail.value); this.setData({ pitch: v, pitchText: String(v) }); },
+
+  toggleAsset(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const asset = this.data.assets[index];
+    if (!asset) return;
+    const exists = this.data.materials.some((m) => m.asset_id === asset.asset_id);
+    let materials = this.data.materials.slice();
+    if (exists) {
+      materials = materials.filter((m) => m.asset_id !== asset.asset_id);
     } else {
-      const source = selectSource(this.data.voicesMine, this.data.voicesPublic);
-      data.displayVoiceSource = source;
-      data.displayVoices = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
-      data.voiceTab = source;
+      if (materials.length >= 20) return wx.showToast({ title: "最多 20 个素材", icon: "none" });
+      materials.push({ asset_id: asset.asset_id, type: asset.media_type, fileUrl: asset.url, thumb: asset.thumb, name: asset.name });
     }
-    this.setData(data);
+    const all = this.data.assetsAll.map((row) =>
+      row.asset_id === asset.asset_id ? Object.assign({}, row, { selected: !exists }) : row
+    );
+    this.setData({ materials, assetsAll: all });
+    this.applyAssetFilter(all, this.data.assetTab, this.data.assetKeyword);
   },
 
-  setPageMode(evt) {
-    const mode = evt.currentTarget.dataset.mode || "select";
-    this.setData({ pageMode: mode });
+  removeMaterial(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const target = this.data.materials[index];
+    if (!target) return;
+    const materials = this.data.materials.filter((m) => m.asset_id !== target.asset_id);
+    const all = this.data.assetsAll.map((row) =>
+      row.asset_id === target.asset_id ? Object.assign({}, row, { selected: false }) : row
+    );
+    this.setData({ materials, assetsAll: all });
+    this.applyAssetFilter(all, this.data.assetTab, this.data.assetKeyword);
   },
 
-  goSelect() {
-    this.setData({ pageMode: "select" });
+  clearMaterials() {
+    const all = this.data.assetsAll.map((row) => Object.assign({}, row, { selected: false }));
+    this.setData({ materials: [], assetsAll: all });
+    this.applyAssetFilter(all, this.data.assetTab, this.data.assetKeyword);
   },
 
-  goBack() {
-    wx.navigateBack({
-      fail() {
-        wx.switchTab({ url: "/pages/index/index" });
-      }
-    });
-  },
-
-  goCreate() {
-    this.setData({ pageMode: "create" });
-  },
-
-  goPickDigital() {
-    const text = (this.data.text || "").trim();
-    if (!text) {
-      wx.showToast({ title: "请输入视频内容", icon: "none" });
-      return;
-    }
-    this.setData({ pageMode: "pick" });
-  },
-
-  submitDigitalTask() {
-    if (!this.data.selectedAvatar) {
-      wx.showToast({ title: "请选择数字人", icon: "none" });
-      return;
-    }
-    if (!this.data.selectedVoice) {
-      wx.showToast({ title: "请选择声音", icon: "none" });
-      return;
-    }
-    this.createVideo();
-  },
-
-  goManage() {
-    this.setData({ pageMode: "manage", manageTab: this.data.activeAssetTab || "avatar" });
-  },
-
-  cloneAvatar() {
-    if (this.showAuthPanel("克隆数字分身前需要先登录并绑定手机号。")) return;
-    wx.showActionSheet({
-      itemList: ["上传照片克隆", "上传视频克隆"],
-      success: (res) => {
-        if (res.tapIndex === 0) {
-          this.chooseAvatarCloneMedia("image");
-          return;
-        }
-        if (res.tapIndex === 1) {
-          this.chooseAvatarCloneMedia("video");
-        }
-      }
-    });
-  },
-
-  chooseAvatarCloneMedia(kind) {
-    const isVideo = kind === "video";
+  uploadMaterial() {
     wx.chooseMedia({
-      count: 1,
-      mediaType: [isVideo ? "video" : "image"],
-      sourceType: ["album", "camera"],
-      sizeType: ["compressed"],
-      maxDuration: 60,
+      count: 1, mediaType: ["image", "video"],
       success: (res) => {
-        const file = (res.tempFiles || [])[0] || {};
-        const filePath = file.tempFilePath || file.path || "";
-        if (!filePath) {
-          wx.showToast({ title: "未选择文件", icon: "none" });
-          return;
-        }
-        this.uploadAvatarClone(filePath, kind);
+        const file = (res.tempFiles || [])[0];
+        if (!file) return;
+        const type = file.fileType === "video" ? "video" : "image";
+        wx.showLoading({ title: "上传中" });
+        api.uploadFile({
+          url: "/api/assets/upload",
+          filePath: file.tempFilePath,
+          name: "file",
+          formData: { media_type: type, tags: "digital_human_v2,material" },
+          token: app.globalData.token || ""
+        })
+          .then((data) => {
+            const id = String((data && data.asset_id) || "").trim();
+            const url = assetUrl((data && (data.source_url || data.url)) || "");
+            if (!id || !url) throw new Error("上传成功但没有返回素材编号");
+            if (this.data.materials.some((m) => m.asset_id === id)) return;
+            this.setData({
+              materials: this.data.materials.concat({
+                asset_id: id, type, fileUrl: url, thumb: thumbUrl(url), name: String((data && data.filename) || id)
+              })
+            });
+          })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+          .then(() => wx.hideLoading());
       }
     });
   },
 
-  uploadAvatarClone(filePath, kind) {
-    const isVideo = kind === "video";
-    const title = `${isVideo ? "视频" : "照片"}克隆分身`;
-    wx.showLoading({ title: "正在上传", mask: true });
-    api
-      .uploadFile({
-        url: isVideo ? "/api/hifly/my/avatar/create-by-video-upload" : "/api/hifly/my/avatar/create-by-image-upload",
-        filePath,
-        name: "file",
-        formData: {
-          title,
-          aigc_flag: 0,
-          model: 2
-        },
-        token: app.globalData.token || "",
-        timeout: 180000
-      })
-      .then((data) => {
-        const item = data.item || null;
-        wx.showToast({ title: "克隆任务已创建", icon: "success" });
-        const nextMine = item ? uniqueBy([normalizeAvatar(item, "mine")].filter(Boolean).concat(this.data.avatarsMine || []), "avatar") : this.data.avatarsMine;
-        this.setData({
-          pageMode: "manage",
-          manageTab: "avatar",
-          activeAssetTab: "avatar",
-          avatarTab: "mine",
-          displayAvatarSource: "mine",
-          avatarsMine: nextMine,
-          displayAvatars: nextMine
-        });
-        this.loadAssets();
-      })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
-  },
-
-  cloneVoice() {
-    if (this.showAuthPanel("克隆声音前需要先登录并绑定手机号。")) return;
+  chooseAudio() {
     wx.chooseMessageFile({
-      count: 1,
-      type: "file",
-      extension: ["mp3", "wav", "m4a", "aac"],
+      count: 1, type: "file", extension: ["mp3", "wav", "m4a", "aac"],
       success: (res) => {
-        const file = (res.tempFiles || [])[0] || {};
-        if (Number(file.size || 0) > VOICE_CLONE_MAX_BYTES) {
-          wx.showToast({ title: "声音文件不能超过10MB", icon: "none" });
-          return;
-        }
-        const filePath = file.path || file.tempFilePath || "";
-        if (!filePath) {
-          wx.showToast({ title: "未选择音频", icon: "none" });
-          return;
-        }
-        const name = String(file.name || "").replace(/\.(mp3|wav|m4a|aac)$/i, "").trim();
-        this.uploadVoiceClone(filePath, name || "我的声音");
+        const file = (res.tempFiles || [])[0];
+        if (!file) return;
+        wx.showLoading({ title: "上传音频" });
+        api.uploadFile({
+          url: "/api/assets/upload",
+          filePath: file.path,
+          name: "file",
+          formData: { media_type: "audio", tags: "digital_human_v2,audio_drive" },
+          token: app.globalData.token || ""
+        })
+          .then((data) => {
+            const url = assetUrl((data && (data.source_url || data.url)) || "");
+            if (!url) throw new Error("上传成功但没有返回音频地址");
+            this.setData({ audioUrl: url, audioName: String(file.name || "已选音频") });
+          })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+          .then(() => wx.hideLoading());
       }
     });
   },
 
-  uploadVoiceClone(filePath, title) {
-    wx.showLoading({ title: "正在克隆声音", mask: true });
-    api
-      .uploadFile({
-        url: "/api/hifly/my/voice/create-upload",
-        filePath,
-        name: "file",
-        formData: {
-          title: title || "我的声音",
-          voice_type: 8,
-          languages: "zh"
-        },
-        token: app.globalData.token || "",
-        timeout: 180000
-      })
+  clearAudio() { this.setData({ audioUrl: "", audioName: "" }); },
+
+  buildCreateBody(profile, title, audioUrl) {
+    const useTemplate = this.data.templateMode === "template";
+    const body = {
+      profile_id: profile.id,
+      title,
+      template_scene: useTemplate ? "realMan" : "",
+      language: "zh-CN",
+      speed_ratio: Number(this.data.speed || 1),
+      audio_url: audioUrl,
+      long_video: this.data.durationMode === "long",
+      video_duration: this.data.durationMode === "long" ? Number(this.data.targetDuration || 60) : 30
+    };
+    if (this.data.mode === "tts") body.text = String(this.data.text || "").trim();
+    if (useTemplate) {
+      const tpl = this.data.templates[this.data.templateIndex];
+      if (tpl) {
+        body.style_id = tpl.styleId;
+        body.header_switch = Boolean(this.data.headerSwitch);
+        body.subtitle_switch = Boolean(this.data.subtitleSwitch);
+        body.keyword_switch = Boolean(this.data.keywordSwitch);
+        body.material_switch = Boolean(this.data.materialSwitch);
+        body.material_sound_switch = Boolean(this.data.materialSoundSwitch);
+        body.material_match_way = MATCH_WAY_VALUES[this.data.matchWayIndex] || "fuzzyMatch";
+        body.resource_preprocess_method = this.data.preprocessValues[this.data.preprocessIndex] || "roughCut";
+        body.material_composition = this.data.compositionValues[this.data.compositionIndex] || "random";
+        body.watermark_show = Boolean(this.data.watermarkSwitch);
+        if (this.data.materials.length) {
+          body.materials = this.data.materials.map((m) => ({
+            asset_id: m.asset_id, type: m.type, fileUrl: m.fileUrl, name: m.name
+          }));
+        }
+      }
+    }
+    if (!body.style_id && this.data.dhTemplateStyleId) {
+      body.style_id = this.data.dhTemplateStyleId;
+      body.template_scene = "realMan";
+    }
+    return body;
+  },
+
+  generate() {
+    if (!this.ensureAuth()) return;
+    if (!this.installationId) {
+      this.setData({ statusText: "读取设备信息…" });
+      this.loadInstallationId().then(() => this.doGenerate()).catch(() => this.doGenerate());
+      return;
+    }
+    this.doGenerate();
+  },
+
+  doGenerate() {
+    const profile = this.data.profiles[this.data.profileIndex];
+    const voice = this.data.voices[this.data.voiceIndex];
+    if (!profile || !profile.ready) return wx.showToast({ title: "请选择已训练完成的数字人", icon: "none" });
+    if (this.data.mode === "tts" && !voice) return wx.showToast({ title: "请选择声音", icon: "none" });
+    if (this.data.mode === "tts" && !String(this.data.text || "").trim()) {
+      return wx.showToast({ title: "请填写口播文案", icon: "none" });
+    }
+    if (this.data.mode === "audio" && !this.data.audioUrl) return wx.showToast({ title: "请上传驱动音频", icon: "none" });
+
+    const title = String(this.data.videoTitle || "").trim() ||
+      String(this.data.taskName || "").trim() ||
+      (this.data.mode === "tts" ? String(this.data.text || "").slice(0, 24) : "数字人口播");
+    this.lastTitle = title;
+    this.setData({ submitting: true, statusText: "准备中…", videoUrl: "", coverUrl: "" });
+
+    if (this.data.mode === "audio") {
+      this.prepareThenCreate(profile, title, this.data.audioUrl);
+      return;
+    }
+
+    this.setData({ statusText: "正在合成配音…" });
+    const ttsPayload = {
+      voice: voice.voice,
+      text: String(this.data.text || "").trim(),
+      rate: String(this.data.speed || 1),
+      volume: String(this.data.volume || 1),
+      pitch: String(this.data.pitch),
+      emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
+    };
+    if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
+    if (voice.provider === "minimax" || voice.provider === "qwen") ttsPayload.voice_provider = voice.provider;
+
+    app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: ttsPayload, header: this.iidHeader(), timeout: 300000 })
       .then((data) => {
-        const rows = normalizeVoiceList(data.item ? [data.item] : [], "mine");
-        const nextMine = uniqueBy(rows.concat(this.data.voicesMine || []), "voice");
-        wx.showToast({ title: "声音已克隆", icon: "success" });
-        this.setData({
-          pageMode: "manage",
-          manageTab: "voice",
-          activeAssetTab: "voice",
-          voiceTab: "mine",
-          displayVoiceSource: "mine",
-          voicesMine: nextMine,
-          displayVoices: nextMine,
-          selectedVoice: rows[0] || this.data.selectedVoice
+        const audioUrl = findAudioUrl(data);
+        if (!audioUrl) throw new Error("配音生成失败，没有返回音频地址");
+        this.setData({ statusText: "正在上传配音…" });
+        return this.resolveAudioUrl(audioUrl).then((finalUrl) => {
+          this.setData({ statusText: "正在提交生成任务…" });
+          this.prepareThenCreate(profile, title, finalUrl);
         });
-        this.loadAssets();
-      })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
-  },
-
-  setManageTab(evt) {
-    const tab = evt.currentTarget.dataset.tab || "avatar";
-    const data = { manageTab: tab };
-    if (tab === "avatar") {
-      const source = selectSource(this.data.avatarsMine, this.data.avatarsPublic);
-      data.displayAvatarSource = source;
-      data.displayAvatars = source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic;
-      data.avatarTab = source;
-    } else {
-      const source = selectSource(this.data.voicesMine, this.data.voicesPublic);
-      data.displayVoiceSource = source;
-      data.displayVoices = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
-      data.voiceTab = source;
-    }
-    this.setData(data);
-  },
-
-  setAvatarTab(evt) {
-    const source = evt.currentTarget.dataset.tab || "public";
-    this.setData({
-      avatarTab: source,
-      displayAvatarSource: source,
-      displayAvatars: source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic
-    });
-  },
-
-  setVoiceTab(evt) {
-    const source = evt.currentTarget.dataset.tab || "public";
-    this.setData({
-      voiceTab: source,
-      displayVoiceSource: source,
-      displayVoices: source === "mine" ? this.data.voicesMine : this.data.voicesPublic
-    });
-  },
-
-  selectAvatar(evt) {
-    const source = evt.currentTarget.dataset.source;
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const list = source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic;
-    this.setData({ selectedAvatar: list[index] || null });
-  },
-
-  selectVoice(evt) {
-    const source = evt.currentTarget.dataset.source;
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const list = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
-    this.setData({ selectedVoice: list[index] || null });
-  },
-
-  onTitleInput(evt) {
-    this.setData({ title: evt.detail.value || "" });
-  },
-
-  onTextInput(evt) {
-    this.setData({ text: evt.detail.value || "" });
-  },
-
-  onSpeechRateChange(evt) {
-    const raw = Number(evt.detail.value || 100);
-    const rate = Math.max(50, Math.min(200, raw)) / 100;
-    this.setData({
-      speechRate: rate,
-      speechRateText: `${rate.toFixed(2)}x`
-    });
-  },
-
-  toggleSubtitle(evt) {
-    this.setData({ stShow: Boolean(evt.detail.value) });
-  },
-
-  fillSample() {
-    this.setData({
-      title: this.data.title || "数字人口播",
-      text: "大家好，我是你的数字人助理。今天为你介绍一个可以快速生成口播视频的工作流。"
-    });
-  },
-
-  playVoice(evt) {
-    const source = evt.currentTarget.dataset.source;
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const list = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
-    const item = list[index];
-    if (!item) {
-      wx.showToast({ title: "暂无试听音频", icon: "none" });
-      return;
-    }
-    if (this.data.voicePreviewLoadingId === item.id) return;
-    if (this.data.audioPlayingId === item.id) {
-      this.stopAudio();
-      return;
-    }
-    this.stopAudio();
-    const playUrl = (url) => {
-      if (!url) {
-        wx.showToast({ title: "暂无试听音频", icon: "none" });
-        return;
-      }
-      const audio = wx.createInnerAudioContext();
-      this.audio = audio;
-      audio.src = url;
-      audio.obeyMuteSwitch = false;
-      audio.onEnded(() => this.setData({ audioPlayingId: "" }));
-      audio.onError(() => {
-        this.setData({ audioPlayingId: "" });
-        wx.showToast({ title: "试听失败", icon: "none" });
-      });
-      audio.play();
-      this.setData({ audioPlayingId: item.id });
-    };
-    const text = (this.data.text || "").trim();
-    const shouldRenderPreview = Boolean(text && item.section === "mine" && item.voice);
-    if (!shouldRenderPreview) {
-      playUrl(item.demo_url);
-      return;
-    }
-    const previewParams = {
-      rate: voiceParamText(this.data.speechRate || item.rate, 1, 0.5, 2),
-      volume: voiceParamText(item.volume, 1, 0.1, 2),
-      pitch: voiceParamText(item.pitch, item.provider === "minimax" ? 0 : 1, item.provider === "minimax" ? -12 : 0.1, item.provider === "minimax" ? 12 : 2),
-      emotion: item.emotion || "",
-      instructions: item.instructions || ""
-    };
-    const cacheKey = buildVoicePreviewCacheKey(item, text, previewParams);
-    const cachedUrl = this.voicePreviewCache[cacheKey] || "";
-    if (cachedUrl) {
-      playUrl(cachedUrl);
-      return;
-    }
-    const requestId = this.voicePreviewRequestId + 1;
-    this.voicePreviewRequestId = requestId;
-    this.setData({ voicePreviewLoadingId: item.id });
-    app
-      .request({
-        method: "POST",
-        url: "/api/hifly/my/voice/preview-tts",
-        data: {
-          voice: item.voice,
-          voice_provider: item.provider || "",
-          text,
-          rate: previewParams.rate,
-          volume: previewParams.volume,
-          pitch: previewParams.pitch,
-          emotion: previewParams.emotion,
-          instructions: previewParams.instructions
-        },
-        timeout: 60000
-      })
-      .then((data) => writeAudioDataUrlToTempFile(data.audio_url || ""))
-      .then((url) => {
-        if (this.voicePreviewRequestId !== requestId) return;
-        if (url) this.voicePreviewCache[cacheKey] = url;
-        playUrl(url || item.demo_url);
       })
       .catch((err) => {
-        if (this.voicePreviewRequestId !== requestId) return;
-        if (item.demo_url) {
-          playUrl(item.demo_url);
-          return;
+        this.setData({ statusText: "", submitting: false });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
+  },
+
+  prepareThenCreate(profile, title, audioUrl) {
+    const body = this.buildCreateBody(profile, title, audioUrl);
+    const ids = (body.materials || []).map((m) => m.asset_id);
+    if (!ids.length) {
+      this.submitCreate(body);
+      return;
+    }
+    app.request({ method: "POST", url: "/api/assets/lookup", data: { asset_ids: ids }, header: this.iidHeader(), timeout: 30000 })
+      .then((data) => {
+        const missing = ((data && data.missing) || []).map(String);
+        if (missing.length) {
+          const kept = this.data.materials.filter((m) => missing.indexOf(m.asset_id) < 0);
+          this.setData({ materials: kept });
+          body.materials = body.materials.filter((m) => missing.indexOf(m.asset_id) < 0);
+          wx.showToast({ title: `${missing.length} 个素材已被删除，已移除`, icon: "none" });
         }
-        wx.showToast({ title: api.errorMessage(err) || "试听生成失败", icon: "none" });
+        this.submitCreate(body);
       })
-      .finally(() => {
-        if (this.voicePreviewRequestId === requestId) {
-          this.setData({ voicePreviewLoadingId: "" });
-        }
-      });
+      .catch(() => this.submitCreate(body));
   },
 
-  stopAudio() {
-    this.voicePreviewRequestId += 1;
-    if (this.audio) {
-      try {
-        this.audio.stop();
-        this.audio.destroy();
-      } catch (e) {
-        // ignore cleanup errors
-      }
-      this.audio = null;
-    }
-    this.setData({ audioPlayingId: "", voicePreviewLoadingId: "" });
-  },
-
-  createVideo() {
-    if (this.showAuthPanel("生成数字人视频前需要先登录并绑定手机号。")) return;
-    const avatar = this.data.selectedAvatar;
-    const voice = this.data.selectedVoice;
-    const text = (this.data.text || "").trim();
-    const title = (this.data.title || "").trim() || "数字人口播";
-    if (!avatar || !avatar.avatar) {
-      wx.showToast({ title: "请选择数字人", icon: "none" });
-      return;
-    }
-    if (!voice || !voice.voice) {
-      wx.showToast({ title: "请选择声音", icon: "none" });
-      return;
-    }
-    if (isConsumerPreviewVoice(voice.voice)) {
-      wx.showToast({ title: "该公共声音仅支持试听", icon: "none" });
-      return;
-    }
-    if (!text) {
-      wx.showToast({ title: "请输入口播文案", icon: "none" });
-      return;
-    }
-    const sendCreateRequest = (installationId) => {
-      this.setData({ submitting: true, progressText: "正在创建数字人视频" });
-      return app
-        .request({
-          method: "POST",
-          url: "/api/hifly/my/video/create-by-tts",
-          header: { "X-Installation-Id": installationId },
-          data: {
-            title,
-            avatar: avatar.avatar,
-            avatar_title: avatar.title || "",
-            avatar_image_url: avatar.image_url || "",
-            voice: voice.voice,
-            voice_title: voice.title || "",
-            voice_provider: voice.provider || "",
-            text,
-            st_show: this.data.stShow ? 1 : 0,
-            rate: voiceParamText(this.data.speechRate || voice.rate, 1, 0.5, 2),
-            volume: voiceParamText(voice.volume, 1, 0.1, 2),
-            pitch: voiceParamText(voice.pitch, voice.provider === "minimax" ? 0 : 1, voice.provider === "minimax" ? -12 : 0.1, voice.provider === "minimax" ? 12 : 2),
-            emotion: voice.emotion || ""
-          },
-          timeout: 60000
-        })
-        .then((data) => {
-          const taskId = data.task_id || (data.item && data.item.task_id) || "";
-          if (taskId) {
-            const now = Date.now();
-            upsertPendingDigitalVideoTask(Object.assign({
-              id: `digital-pending-${taskId}`,
-              task_id: taskId,
-              title,
-              text,
-              prompt: text,
-              avatar_image_url: avatar.image_url || "",
-              avatar_title: avatar.title || "",
-              voice_title: voice.title || "",
-              status: "processing",
-              status_label: "生成中",
-              created_at: new Date(now).toISOString(),
-              created_at_ms: now
-            }, data.item || {}));
-          }
-          wx.showToast({ title: "任务已创建", icon: "success" });
-          this.setData({
-            pollingTaskId: taskId,
-            selectedVideo: data.item || null,
-            progressText: "视频生成中，请稍候",
-            text: ""
-          });
-          wx.setStorageSync("lobster_open_digital_video", true);
-          wx.setStorageSync("lobster_refresh_works", "1");
-          this.stopPolling();
-          setTimeout(() => {
-            wx.switchTab({ url: "/pages/downloads/downloads" });
-          }, 500);
-        })
-        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-        .finally(() => this.setData({ submitting: false }));
-    };
-
-    const installationId = this.data.selectedInstallationId;
-    if (!installationId) {
-      this.setData({ progressText: "正在检查本地 online 设备" });
-      this.loadOnlineStatus(true).then(() => {
-        const refreshedInstallationId = this.data.selectedInstallationId;
-        if (!refreshedInstallationId) {
-          wx.showToast({ title: "未检测到本地 online 设备", icon: "none" });
-          this.setData({ progressText: "" });
-          return;
-        }
-        sendCreateRequest(refreshedInstallationId);
+  submitCreate(body) {
+    app.request({ method: "POST", url: "/api/shanjian-digital-human/video/create", data: body, header: this.iidHeader(), timeout: 180000 })
+      .then((data) => {
+        const taskId = String((data && (data.task_id || (data.record && data.record.task_id))) || "").trim();
+        if (!taskId) throw new Error("没有拿到任务号");
+        this.setData({ statusText: "已提交，排队生成中…", submitting: false });
+        this.startPolling(taskId);
+      })
+      .catch((err) => {
+        this.setData({ statusText: "", submitting: false });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
       });
-      return;
-    }
-    sendCreateRequest(installationId);
   },
 
   startPolling(taskId) {
     this.stopPolling();
-    if (!taskId) return;
-    const poll = () => this.pollTask(taskId);
-    poll();
-    this.pollTimer = setInterval(poll, 8000);
+    this.pollCount = 0;
+    const tick = () => this.poll(taskId);
+    tick();
+    this.pollTimer = setInterval(tick, POLL_MS);
   },
 
   stopPolling() {
@@ -892,122 +1093,94 @@ Page({
     }
   },
 
-  pollTask(taskId) {
-    return app
-      .request({
-        method: "POST",
-        url: "/api/hifly/my/video/task",
-        data: { task_id: taskId },
-        timeout: 60000
-      })
+  poll(taskId) {
+    this.pollCount += 1;
+    if (this.pollCount > MAX_POLLS) {
+      this.stopPolling();
+      this.setData({ statusText: "生成超时，请稍后到作品里查看" });
+      return;
+    }
+    app.request({ method: "POST", url: "/api/shanjian-digital-human/video/task", data: { task_id: taskId }, header: this.iidHeader(), timeout: 60000 })
       .then((data) => {
-        const item = data.item || {};
-        this.setData({ selectedVideo: item, progressText: data.status_text || item.status_text || "处理中" });
-        this.loadVideos();
-        if (item.status === "success" || item.status === "failed" || Number(data.status) === 3 || Number(data.status) === 4) {
+        const status = String((data && data.status) || "processing");
+        const statusText = String((data && data.status_text) || "处理中");
+        const videoUrl = assetUrl((data && data.video_url) || "");
+        const coverUrl = assetUrl((data && data.cover_url) || "");
+        this.setData({ statusText, videoUrl, coverUrl });
+        if (status === "succeed" || status === "failed") {
           this.stopPolling();
-          this.setData({ pollingTaskId: "" });
-          wx.showToast({ title: item.status === "success" ? "生成完成" : "生成失败", icon: "none" });
+          if (status === "succeed") {
+            wx.showToast({ title: "生成完成", icon: "success" });
+            this.saveToWorks(videoUrl);
+            this.loadHistory();
+          } else {
+            wx.showToast({ title: (data && data.message) || "生成失败", icon: "none" });
+          }
         }
       })
       .catch((err) => {
         this.stopPolling();
-        this.setData({ pollingTaskId: "" });
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+        this.setData({ statusText: api.errorMessage(err) });
       });
   },
 
-  pollVideo(evt) {
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const item = this.data.videos[index];
-    if (!item || !item.task_id) return;
-    this.setData({ progressText: "正在刷新任务状态", selectedVideo: item });
-    this.pollTask(item.task_id);
+  saveToWorks(url) {
+    if (!url) return;
+    app.request({
+      method: "POST",
+      url: "/api/assets/save-url",
+      data: { url, media_type: "video", tags: "digital_human_v2,miniprogram", title: this.lastTitle || "数字人口播" },
+      timeout: 180000
+    })
+      .then(() => wx.setStorageSync("lobster_refresh_works", "1"))
+      .catch(() => {});
   },
 
-  previewVideo(evt) {
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const item = this.data.videos[index];
-    const url = item && item.video_url;
-    if (!url) {
-      wx.showToast({ title: "视频还未生成", icon: "none" });
-      return;
-    }
-    this.setData({ previewVisible: true, previewVideoUrl: url, selectedVideo: item });
+  loadHistory() {
+    if (!app.globalData.token) return Promise.resolve();
+    return app.request({ url: "/api/shanjian-digital-human/videos", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && data.items) || []).slice(0, 8).map((row) => ({
+          id: String(row.id || row.task_id || ""),
+          title: String(row.title || "数字人口播"),
+          status_text: String(row.status_text || row.status || ""),
+          created_at: String(row.created_at || "").replace("T", " ").slice(0, 16),
+          video_url: assetUrl(row.video_url || ""),
+          cover_url: assetUrl(row.cover_url || "")
+        }));
+        this.setData({ history: rows });
+      })
+      .catch(() => {});
   },
 
-  closePreview() {
-    this.setData({ previewVisible: false, previewVideoUrl: "" });
-  },
-
-  saveVideo(evt) {
-    const rawIndex = evt.currentTarget.dataset.index;
-    const item = rawIndex === undefined ? this.data.selectedVideo : this.data.videos[Number(rawIndex || 0)];
-    if (!item || !item.video_url) {
-      wx.showToast({ title: "视频还未生成", icon: "none" });
-      return;
-    }
-    media
-      .saveToAlbum(videoItemForSave(item))
-      .then(() => wx.showToast({ title: "已保存", icon: "success" }))
-      .catch((err) => {
-        const text = api.errorMessage(err);
-        if (/auth deny|authorize|permission|scope/i.test(text)) {
-          wx.showModal({
-            title: "需要相册权限",
-            content: "请允许保存到相册后再试。",
-            confirmText: "去设置",
-            success(res) {
-              if (res.confirm) wx.openSetting({});
-            }
-          });
-          return;
-        }
-        media.copyLink(item.video_url).finally(() => wx.showToast({ title: "保存失败，已复制链接", icon: "none" }));
-      });
-  },
-
-  copyVideo(evt) {
-    const rawIndex = evt.currentTarget.dataset.index;
-    const item = rawIndex === undefined ? this.data.selectedVideo : this.data.videos[Number(rawIndex || 0)];
-    const url = item && item.video_url;
-    if (!url) {
-      wx.showToast({ title: "暂无视频链接", icon: "none" });
-      return;
-    }
-    media.copyLink(url).then(() => wx.showToast({ title: "链接已复制", icon: "success" }));
-  },
-
-  deleteVideo(evt) {
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const item = this.data.videos[index];
-    if (!item) return;
-    wx.showModal({
-      title: "删除作品",
-      content: "确定删除这个数字人视频吗？",
+  downloadVideo() {
+    const url = this.data.videoUrl;
+    if (!url) return;
+    wx.showLoading({ title: "下载中" });
+    wx.downloadFile({
+      url,
       success: (res) => {
-        if (!res.confirm) return;
-        app
-          .request({ method: "DELETE", url: `/api/hifly/my/video/${item.id}` })
-          .then(() => {
-            wx.showToast({ title: "已删除", icon: "success" });
-            this.loadVideos();
-          })
-          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
-      }
+        if (res.statusCode !== 200) return wx.showToast({ title: "下载失败", icon: "none" });
+        wx.saveVideoToPhotosAlbum({
+          filePath: res.tempFilePath,
+          success: () => wx.showToast({ title: "已保存到相册", icon: "success" }),
+          fail: () => wx.showToast({ title: "保存失败，请检查相册权限", icon: "none" })
+        });
+      },
+      fail: () => wx.showToast({ title: "下载失败", icon: "none" }),
+      complete: () => wx.hideLoading()
     });
   },
 
-  onShareAppMessage() {
-    return share.appShare({
-      title: "必火AI数字人 - 快速生成口播视频",
-      path: "/pages/digital/digital"
-    });
+  openHistory(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.history[index];
+    if (!row) return;
+    this.setData({ videoUrl: row.video_url, coverUrl: row.cover_url, statusText: row.status_text });
   },
 
-  onShareTimeline() {
-    return share.timelineShare({
-      title: "必火AI数字人 - 快速生成口播视频"
-    });
+  copyVideoUrl() {
+    if (!this.data.videoUrl) return;
+    wx.setClipboardData({ data: this.data.videoUrl });
   }
 });

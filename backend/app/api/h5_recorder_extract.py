@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Asset, OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..models import Asset, IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, User
 from .auth import access_token_claims, create_access_token, get_current_user
 from .h5_personal_settings import _owner_user
 from .mobile_identity import online_user_for_mobile_user
@@ -29,6 +29,69 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "y", "是"}
+    return bool(value) if value is not None else default
+
+
+def _normalize_ai_params(
+    parsed: dict[str, Any],
+    groups: dict[str, list],
+    template_catalog: str,
+) -> dict[str, Any]:
+    """把 AI 返回的松散 JSON 收敛成 mini program 能直接落地的参数。"""
+    use_materials = _as_bool(parsed.get("use_materials"), True)
+    group_name = str(parsed.get("material_group") or "").strip()
+    materials = []
+    if use_materials and group_name and group_name in groups:
+        for item in groups[group_name][:8]:
+            media_type = str(item.media_type or "").lower()
+            if media_type not in ("image", "video"):
+                continue
+            materials.append({
+                "asset_id": item.asset_id,
+                "type": media_type,
+                "fileUrl": str(item.source_url or ""),
+                "name": str(item.filename or item.asset_id),
+            })
+    template_name = str(parsed.get("template_name") or "").strip()
+    if template_catalog and template_name not in template_catalog.split("、"):
+        template_name = ""
+
+    def _enum(value: Any, allowed: list[str], default: str) -> str:
+        text = str(value or "").strip()
+        return text if text in allowed else default
+
+    match_way = _enum(parsed.get("match_way"), ["fuzzyMatch", "preciseMatch"], "fuzzyMatch")
+    composition = _enum(parsed.get("composition"), ["random", "sequential"], "random")
+    preprocess = _enum(parsed.get("preprocess"), ["roughCut", "sliceMerge"], "roughCut")
+    emotion = _enum(parsed.get("emotion"), ["happy", "neutral", "sad", "angry"], "happy")
+    try:
+        speed = round(float(parsed.get("speed") or 1.0), 2)
+    except Exception:
+        speed = 1.0
+    speed = max(0.8, min(1.3, speed))
+    return {
+        "use_materials": use_materials,
+        "material_group": group_name if use_materials else "",
+        "materials": materials,
+        "template_name": template_name,
+        "match_way": match_way,
+        "composition": composition,
+        "preprocess": preprocess,
+        "emotion": emotion,
+        "speed": speed,
+        "header_switch": _as_bool(parsed.get("header_switch"), True),
+        "subtitle_switch": _as_bool(parsed.get("subtitle_switch"), True),
+        "keyword_switch": _as_bool(parsed.get("keyword_switch"), True),
+        "material_sound_switch": _as_bool(parsed.get("material_sound_switch"), False),
+        "watermark_switch": _as_bool(parsed.get("watermark_switch"), False),
+    }
+
+
 @router.post("/api/h5/recorder/files/{record_id}/extract-digital-human", summary="从录音生成数字人口播参数")
 async def extract_digital_human_params(
     record_id: int,
@@ -59,7 +122,7 @@ async def extract_digital_human_params(
         or (os.environ.get("LOBSTER_DEFAULT_SUTUI_CHAT_MODEL") or "").strip()
         or "openai/gpt-4.1-mini"
     )
-    groups = {}
+    groups: dict[str, list] = {}
     try:
         asset_rows = (
             db.query(Asset)
@@ -78,11 +141,43 @@ async def extract_digital_human_params(
         groups = {}
     group_catalog = "、".join(f"{name}({len(rows)}个)" for name, rows in list(groups.items())[:20])
 
+    template_catalog = ""
+    try:
+        tpl_rows = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.user_id == owner.id,
+                IPContentScheduleTemplate.status == "active",
+            )
+            .order_by(IPContentScheduleTemplate.updated_at.desc())
+            .limit(20)
+            .all()
+        )
+        names: list[str] = []
+        for tpl in tpl_rows:
+            name = str(tpl.name or "").strip()
+            if name and name not in names:
+                names.append(name)
+        template_catalog = "、".join(names)
+    except Exception:
+        template_catalog = ""
+
     system_prompt = (
-        "你是资深短视频编导，要把一段录音整理成一条可以直接给数字人口播的文案。"
-        '只输出严格 JSON：{"title":"标题","script":"口播文案","duration_seconds":30,"material_group":"素材分组名或空"}。'
-        "标题不超过 20 字；口播文案 120-260 字，口语化、开头有钩子、结尾有行动引导；"
-        "要结合【个人记忆】里的产品、客户、优势来写；如果给了素材分组清单，选一个最贴合内容的分组填到 material_group，没有合适的就填空字符串；不要 Markdown、不要解释、不要编造录音与记忆里都没有的事实。"
+        "你是资深短视频编导，要把一段录音整理成一条数字人口播任务的完整参数。"
+        "只输出严格 JSON，字段固定为："
+        '{"title":"","script":"","duration_seconds":30,"use_materials":true,"material_group":"",'
+        '"template_name":"","match_way":"fuzzyMatch","composition":"random","preprocess":"roughCut",'
+        '"emotion":"happy","speed":1.0,"header_switch":true,"subtitle_switch":true,"keyword_switch":true,'
+        '"material_sound_switch":false,"watermark_switch":false}。'
+        "规则：标题不超过 20 字；口播文案 120-260 字，口语化、开头有钩子、结尾有行动引导；"
+        "要结合【个人记忆】里的产品、客户、优势来写；duration_seconds 按文案长度估 15-120 秒；"
+        "use_materials 由你自己判断这条口播要不要插混剪素材垫画面：讲到产品、场景、案例、数据就要 true，纯观点或情绪口述填 false；"
+        "use_materials 为 true 时，从【可用素材分组】里挑最贴合的一组填 material_group，没有合适分组填空字符串；"
+        "template_name 从【可用模板】里挑最贴合的一个，没有合适模板或不需要模板填空字符串；"
+        "match_way 只能是 fuzzyMatch 或 preciseMatch；composition 只能是 random 或 sequential；"
+        "preprocess 只能是 roughCut 或 sliceMerge；emotion 只能是 happy、neutral、sad、angry；speed 在 0.8-1.3 之间；"
+        "有字幕、有片头的短视频一般 header_switch/subtitle_switch/keyword_switch 填 true，watermark_switch 填 false；"
+        "不要 Markdown、不要解释、不要编造录音与记忆里都没有的事实。"
     )
     memory_block = ""
     try:
@@ -110,6 +205,7 @@ async def extract_digital_human_params(
         "【录音名称】" + str(row.display_name or row.file_name or "")
         + ("\n\n【个人记忆】\n" + memory_block if memory_block else "")
         + ("\n\n【可用素材分组】" + group_catalog if group_catalog else "")
+        + ("\n\n【可用模板】" + template_catalog if template_catalog else "")
         + "\n\n【录音内容】\n" + text[:20000]
     )
     headers = {"Content-Type": "application/json"}
@@ -156,24 +252,11 @@ async def extract_digital_human_params(
     except Exception:
         duration_seconds = 30
     duration_seconds = max(10, min(180, duration_seconds))
-    group_name = str(parsed.get("material_group") or "").strip()
-    materials = []
-    if group_name and group_name in groups:
-        for item in groups[group_name][:8]:
-            media_type = str(item.media_type or "").lower()
-            if media_type not in ("image", "video"):
-                continue
-            materials.append({
-                "asset_id": item.asset_id,
-                "type": media_type,
-                "fileUrl": str(item.source_url or ""),
-                "name": str(item.filename or item.asset_id),
-            })
+    params = _normalize_ai_params(parsed, groups, template_catalog)
     return {
         "ok": True,
         "title": title or (row.display_name or row.file_name or "")[:20],
         "script": script[:2000],
         "duration_seconds": duration_seconds,
-        "material_group": group_name if materials else "",
-        "materials": materials,
+        **params,
     }
