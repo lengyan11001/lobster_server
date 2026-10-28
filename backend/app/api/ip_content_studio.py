@@ -6487,6 +6487,7 @@ def list_competitors(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(ContentCompetitorAccount)
         .filter(ContentCompetitorAccount.user_id == current_user.id)
@@ -6703,6 +6704,7 @@ def list_schedule_templates(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(IPContentScheduleTemplate)
         .filter(IPContentScheduleTemplate.user_id == current_user.id, IPContentScheduleTemplate.status == "active")
@@ -6763,6 +6765,7 @@ def copy_schedule_template(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     source = _granted_template_for_user(db, int(current_user.id), template_id)
     if source is None:
         raise HTTPException(status_code=404, detail="模板不存在或未授权")
@@ -7172,6 +7175,7 @@ def save_schedule_template(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     name = _clean_text(body.name, 160)
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
@@ -7683,6 +7687,7 @@ def add_competitor(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     platform = body.platform.strip()
     if platform not in {"douyin", "wechat_channels"}:
         raise HTTPException(status_code=400, detail="platform 仅支持 douyin / wechat_channels")
@@ -7716,6 +7721,7 @@ def delete_competitor(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.id == account_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="同行账号不存在")
@@ -7732,6 +7738,7 @@ async def sync_competitor(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.id == account_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="同行账号不存在")
@@ -7877,6 +7884,7 @@ def list_keywords(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(IPContentKeyword)
         .filter(IPContentKeyword.user_id == current_user.id)
@@ -7892,6 +7900,7 @@ def add_keyword(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     keyword = _clean_text(body.keyword, 191)
     if not keyword:
         raise HTTPException(status_code=400, detail="请填写关键词")
@@ -7917,6 +7926,7 @@ def delete_keyword(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.id == keyword_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="关键词不存在")
@@ -7933,6 +7943,7 @@ async def sync_keyword(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.id == keyword_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="关键词不存在")
