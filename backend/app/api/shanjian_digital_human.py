@@ -37,7 +37,7 @@ from .assets import (
     get_asset_public_url,
     online_user_for_mobile_user,
 )
-from .auth import get_current_user
+from .auth import access_token_claims, create_access_token, get_current_user
 from .shanjian_smart_clip import _data, _get, _post
 
 logger = logging.getLogger(__name__)
@@ -170,8 +170,16 @@ def _billing_base() -> str:
     return base
 
 
-def _billing_headers(request: Request) -> Dict[str, str]:
-    token = _bearer_from_request(request)
+def _billing_headers(request: Request, acting_user: Optional[User] = None) -> Dict[str, str]:
+    token = ""
+    if acting_user is not None:
+        # 小程序是微信账号，额度挂在绑定手机号账号上：计费时用手机号账号的身份。
+        try:
+            token = create_access_token(access_token_claims(acting_user))
+        except Exception:
+            token = ""
+    if not token:
+        token = _bearer_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="Please sign in before generating a digital human video")
     headers: Dict[str, str] = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -231,6 +239,7 @@ def _estimate_billing_seconds(body: "CreateVideoBody", template_meta: Optional[D
 async def _shanjian_pre_deduct(
     *,
     request: Request,
+    acting_user: Optional[User] = None,
     template_meta: Optional[Dict[str, Any]],
     estimated_seconds: int,
     title: str,
@@ -252,7 +261,7 @@ async def _shanjian_pre_deduct(
         },
     }
     async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
-        resp = await client.post(f"{_billing_base()}/capabilities/pre-deduct", json=body, headers=_billing_headers(request))
+        resp = await client.post(f"{_billing_base()}/capabilities/pre-deduct", json=body, headers=_billing_headers(request, acting_user))
     if resp.status_code == 402:
         try:
             detail = (resp.json() if resp.content else {}).get("detail", "balance insufficient")
@@ -281,7 +290,7 @@ async def _shanjian_pre_deduct(
     }
 
 
-async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *, reason: str, acting_user: Optional[User] = None) -> Dict[str, Any]:
     if not isinstance(billing, dict) or billing.get("billing_status") in {"settled", "refunded"}:
         return billing if isinstance(billing, dict) else {}
     credits = float(billing.get("credits_pre_deducted") or 0)
@@ -293,7 +302,7 @@ async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *,
     body = {"capability_id": billing.get("capability_id") or _SHANJIAN_BILLING_CAPABILITY_ID, "credits": credits}
     try:
         async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
-            resp = await client.post(f"{_billing_base()}/capabilities/refund", json=body, headers=_billing_headers(request))
+            resp = await client.post(f"{_billing_base()}/capabilities/refund", json=body, headers=_billing_headers(request, acting_user))
         if resp.status_code >= 400:
             logger.warning("[shanjian-billing] refund failed http=%s body=%s", resp.status_code, (resp.text or "")[:300])
             billing["billing_status"] = "refund_failed"
@@ -312,6 +321,7 @@ async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *,
 
 async def _shanjian_settle_billing(
     *,
+    acting_user: Optional[User] = None,
     request: Request,
     row: ShanjianDigitalHumanVideoTask,
     billing: Dict[str, Any],
@@ -343,7 +353,7 @@ async def _shanjian_settle_billing(
         "credits_final": final_credits,
     }
     async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
-        resp = await client.post(f"{_billing_base()}/capabilities/record-call", json=body, headers=_billing_headers(request))
+        resp = await client.post(f"{_billing_base()}/capabilities/record-call", json=body, headers=_billing_headers(request, acting_user))
     if resp.status_code >= 400:
         logger.warning("[shanjian-billing] settle failed http=%s body=%s", resp.status_code, (resp.text or "")[:300])
         billing["billing_status"] = "settle_failed"
@@ -359,6 +369,7 @@ async def _shanjian_settle_billing(
 
 
 async def _finalize_row_billing(
+    acting_user: Optional[User] = None,
     *,
     request: Request,
     row: ShanjianDigitalHumanVideoTask,
@@ -375,6 +386,7 @@ async def _finalize_row_billing(
     if status == "succeed":
         fallback = int(billing.get("estimated_seconds") or row.duration or 1)
         billing = await _shanjian_settle_billing(
+            acting_user=acting_user,
             request=request,
             row=row,
             billing=billing,
@@ -383,7 +395,7 @@ async def _finalize_row_billing(
             stage=stage,
         )
     elif status == "failed":
-        billing = await _shanjian_refund_billing(request, billing, reason=error_message or f"{stage}_failed")
+        billing = await _shanjian_refund_billing(request, billing, reason=error_message or f"{stage}_failed", acting_user=acting_user)
     submit_payload["billing"] = billing
     row.submit_payload = submit_payload
 
@@ -2516,6 +2528,7 @@ async def create_video(
     _release_db_transaction(db)
     billing = await _shanjian_pre_deduct(
         request=request,
+        acting_user=current_user,
         template_meta=template_meta,
         estimated_seconds=_estimate_billing_seconds(body, template_meta, text),
         title=title,
@@ -2547,7 +2560,7 @@ async def create_video(
     try:
         upstream = await _post_virtualman_with_queue(body.token, payload)
     except HTTPException as exc:
-        await _shanjian_refund_billing(request, billing, reason="base_submit_failed")
+        await _shanjian_refund_billing(request, billing, reason="base_submit_failed", acting_user=current_user)
         logger.warning(
             "[shanjian-dh] submit base video failed user_id=%s virtualman=%s audio=%s detail=%s",
             getattr(current_user, "id", ""),
@@ -2559,7 +2572,7 @@ async def create_video(
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
     if not task_id:
-        await _shanjian_refund_billing(request, billing, reason="base_missing_task_id")
+        await _shanjian_refund_billing(request, billing, reason="base_missing_task_id", acting_user=current_user)
         logger.warning("[shanjian-dh] submit base video missing taskId user_id=%s response=%s", getattr(current_user, "id", ""), str(upstream)[:1000])
         raise HTTPException(status_code=502, detail="Shanjian did not return taskId")
 
@@ -2747,6 +2760,7 @@ async def query_video_task(
         db.add(row)
         db.commit()
         await _finalize_row_billing(
+            acting_user=current_user,
             request=request,
             row=row,
             status=status,
@@ -2869,6 +2883,7 @@ async def query_video_task(
     db.add(row)
     db.commit()
     await _finalize_row_billing(
+        acting_user=current_user,
         request=request,
         row=row,
         status=status,
