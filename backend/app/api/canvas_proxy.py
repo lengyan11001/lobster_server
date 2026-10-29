@@ -14,13 +14,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 import httpx
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from ..core.config import settings
 from ..db import get_db
 from ..models import User
 from . import canvas_hub
@@ -884,6 +885,70 @@ async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
             params[key] = await transfer_media_url(value)
         elif isinstance(value, dict) and isinstance(value.get("url"), str):
             value["url"] = await transfer_media_url(value["url"])
+
+    # image_files / files / images：apiz 只认 http(s)，空串、相对路径、blob: 一律拒收
+    # （线上报文：image_files[1] 必须是有效的 HTTP/HTTPS URL —— 画布会把没上传成功的
+    #  占位空串也塞进数组，这里统一清洗掉，别把脏数据丢给上游。）
+    public_base = (getattr(settings, "public_base_url", None) or "").strip().rstrip("/")
+
+    def _abs_media_url(value: Any) -> str:
+        if isinstance(value, dict):
+            text = str(value.get("url") or value.get("file_url") or value.get("src") or "").strip()
+        elif isinstance(value, str):
+            text = value.strip()
+        else:
+            return ""
+        if not text or text.startswith("blob:") or text.startswith("data:"):
+            return ""
+        if text.startswith("http://") or text.startswith("https://"):
+            return text
+        if text.startswith("/") and public_base:
+            return public_base + text
+        return ""
+
+    async def _clean_media_lists(container: Dict[str, Any]) -> None:
+        for list_key in ("image_files", "files", "media_files", "images", "filePaths"):
+            value = container.get(list_key)
+            if isinstance(value, str):
+                value = [value]
+            if not isinstance(value, list):
+                continue
+            cleaned: List[str] = []
+            for item in value:
+                absolute = _abs_media_url(item)
+                if absolute and absolute not in cleaned:
+                    cleaned.append(absolute)
+            if cleaned:
+                container[list_key] = [await transfer_media_url(url) for url in cleaned]
+            else:
+                container.pop(list_key, None)
+
+    await _clean_media_lists(params)
+
+    # resolution：上游只接受 480p/720p/1080p/4k（区分大小写），画布会传 720P / 720 / 1080
+    _RESOLUTION_ALIASES = {
+        "480p": "480p", "480": "480p",
+        "720p": "720p", "720": "720p", "hd": "720p", "1280x720": "720p",
+        "1080p": "1080p", "1080": "1080p", "fhd": "1080p", "fullhd": "1080p", "1920x1080": "1080p",
+        "4k": "4k", "2160": "4k", "2160p": "4k", "uhd": "4k", "3840x2160": "4k",
+    }
+
+    def _normalize_resolution(container: Dict[str, Any]) -> None:
+        for key in ("resolution", "video_resolution"):
+            raw = container.get(key)
+            if raw is None:
+                continue
+            text = str(raw).strip().lower().replace(" ", "")
+            mapped = _RESOLUTION_ALIASES.get(text)
+            if mapped:
+                container[key] = mapped
+
+    _normalize_resolution(params)
+    for nested_key in ("params", "input_params"):
+        nested = params.get(nested_key)
+        if isinstance(nested, dict):
+            await _clean_media_lists(nested)
+            _normalize_resolution(nested)
 
     # 该模型不接受 content（seedance 等）：把文字拆成 prompt，图片提到顶层
     if "seedance" in model or "super-seed" in model or "kling" in model:
