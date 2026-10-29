@@ -774,6 +774,16 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
     clearTimeout(t._t);
     t._t = setTimeout(function(){ t.classList.remove("on"); }, sticky ? 12000 : (bad ? 8000 : 2600));
   }
+  var LOGIN_ERR_TIMER = 0;
+  function setLoginErr(msg, autoClearMs){
+    var el = $("#loginErr");
+    if (!el) return;
+    clearTimeout(LOGIN_ERR_TIMER);
+    el.textContent = msg || "";
+    if (msg && autoClearMs){
+      LOGIN_ERR_TIMER = setTimeout(function(){ if (el.textContent === msg) el.textContent = ""; }, autoClearMs);
+    }
+  }
   var ERR_PINNED = false;
   function showErr(msg, ctx){
     var b = $("#errBox");
@@ -847,8 +857,8 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
   function doLogin(){
     var acc = $("#acc").value.trim(), pwd = $("#pwd").value;
     var btn = $("#doLogin");
-    $("#loginErr").textContent = "";
-    if (!acc || !pwd){ $("#loginErr").textContent = "请填写账号与密码"; return; }
+    setLoginErr("");
+    if (!acc || !pwd){ setLoginErr("请填写账号与密码", 6000); return; }
     btn.disabled = true; btn.textContent = "登录中…";
     api("/api/manage/login", { method:"POST", body: { account: acc, password: pwd } })
       .then(function(res){
@@ -862,7 +872,7 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
         document.getElementById("landing").classList.add("gone");
         return new Promise(function(res){ setTimeout(res, 320); }).then(bootApp);
       })
-      .catch(function(e){ $("#loginErr").textContent = e.message || "登录失败"; })
+      .catch(function(e){ setLoginErr(e.message || "登录失败", 7000); })
       .then(function(){ btn.disabled = false; btn.textContent = "登录"; });
   }
   $("#doLogin").addEventListener("click", doLogin);
@@ -956,10 +966,16 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
         if (mb2) mb2.click();
       }
     }).catch(function(e){
-      if (String(e.message).indexOf("401") >= 0 || String(e.message).indexOf("Not authenticated") >= 0){
-        TOKEN = ""; localStorage.removeItem("manage_token");
+      var msg = String((e && e.message) || "加载失败");
+      var authExpired = /(^|\D)401(\D|$)|Not authenticated|密码已修改|登录状态已失效|请重新登录/.test(msg);
+      if (authExpired){
+        TOKEN = "";
+        localStorage.removeItem("manage_token");
+        setLoginErr("");
+        toast(/密码已修改/.test(msg) ? "密码已修改，请重新登录" : "登录状态已失效，请重新登录", true, false);
+      } else {
+        setLoginErr(msg, 7000);
       }
-      $("#loginErr").textContent = e.message || "加载失败";
       throw e;
     });
   }
