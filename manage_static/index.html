@@ -247,6 +247,220 @@ body.overlay-open #drawer{z-index:501}
 .fs-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;user-select:none}
 .fs-toggle input[type="checkbox"]{width:15px;height:15px;min-width:15px;max-width:15px;padding:0;margin:0;flex:0 0 auto;
   border-radius:4px;accent-color:var(--accent,#7c5cff);box-shadow:none;background:none;appearance:auto}
+
+/* ========== 2026-10-29 IMS light visual refresh (styles only) ========== */
+:root{
+  --bg:#fafafa; --ink:#0f172a; --muted:#64748b; --dim:#94a3b8;
+  --w-glass:rgba(255,255,255,.92); --w-line:#e2e8f0; --w-line2:#cbd5e1;
+  --accent:#0891b2; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444;
+  --ease:cubic-bezier(.4,0,.2,1);
+  --mono:Outfit,ui-monospace,SFMono-Regular,Consolas,monospace;
+  --ims-grad:linear-gradient(135deg,#06b6d4 0%,#2563eb 100%);
+  --ims-shadow:0 1px 3px rgba(15,23,42,.04),0 14px 34px -26px rgba(15,23,42,.22);
+}
+html{color-scheme:light}
+body{
+  background:#fafafa;color:var(--ink);text-shadow:none;
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.bg{
+  background:
+    radial-gradient(circle at -6% -12%,#e0f2fe 0,transparent 34%),
+    radial-gradient(circle at 108% 108%,#ccfbf1 0,transparent 36%),
+    #fafafa;
+}
+.bg video,.bg .poster,.bg .aurora,.bg .grid,.bg .veil{display:none!important}
+a{color:#2563eb}
+a:hover{color:#1d4ed8}
+.glass,.glass.card,.card{
+  background:rgba(255,255,255,.94);
+  border:1px solid #e2e8f0;
+  box-shadow:var(--ims-shadow);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+}
+.card{border-radius:12px}
+.num,.font-outfit{font-family:Outfit,ui-monospace,SFMono-Regular,Consolas,monospace}
+.mut{color:var(--muted)}.dim{color:var(--dim)}
+.btn{
+  color:#fff;border-radius:8px;border:1px solid transparent;
+  background:var(--ims-grad);
+  box-shadow:0 4px 12px rgba(37,99,235,.18);
+  transition:all .2s var(--ease);
+}
+.btn:hover{transform:translateY(-1px);box-shadow:0 7px 18px rgba(37,99,235,.24)}
+.btn:disabled{opacity:.48;transform:none;box-shadow:none}
+.btn.ghost,.btn-secondary{
+  background:#fff;border:1px solid #e2e8f0;color:#475569;box-shadow:none;
+}
+.btn.ghost:hover{background:#f8fafc;border-color:#cbd5e1;color:#0f172a;box-shadow:none}
+.btn.sm{border-radius:7px}
+.btn-danger,#delCompanyBtn{
+  color:#dc2626!important;border-color:#fecaca!important;background:#fff!important;
+}
+input,select,textarea{
+  background:#fff;border:1px solid #e2e8f0;border-radius:8px;color:#0f172a;
+  box-shadow:0 1px 2px rgba(15,23,42,.02);
+}
+input::placeholder,textarea::placeholder{color:#94a3b8}
+input:focus,select:focus,textarea:focus{border-color:#22d3ee;box-shadow:0 0 0 3px rgba(6,182,212,.12)}
+select{background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#94a3b8 50%),linear-gradient(135deg,#94a3b8 50%,transparent 50%)}
+select option{background:#fff;color:#0f172a}
+label.fl{color:#64748b;font-size:11px;font-weight:500;letter-spacing:.01em}
+.err{color:#dc2626}
+.warn{background:#fffbeb!important;border-left-color:#f59e0b!important;color:#92400e}
+.ok{background:#ecfdf5!important;border-left-color:#10b981!important;color:#047857}
+.tag{
+  height:auto;min-height:22px;padding:2px 8px;border-radius:6px;
+  border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-weight:500;
+}
+.tag.ok{color:#047857;background:#ecfdf5;border-color:#a7f3d0}
+.tag.wn{color:#b45309;background:#fffbeb;border-color:#fde68a}
+.tag.bd{color:#dc2626;background:#fef2f2;border-color:#fecaca}
+.tag.cy{color:#0e7490;background:#ecfeff;border-color:#a5f3fc}
+.dot{box-shadow:none}
+.bar{background:#f1f5f9}
+.bar i{background:var(--ims-grad)}
+.toast{background:#0f172a;border-color:#1e293b;color:#fff;box-shadow:0 18px 45px -18px rgba(15,23,42,.55)}
+.miss{color:#d97706}
+/* Landing */
+#landing{max-width:1480px;margin:0 auto;padding:0 max(24px,6vw) 44px}
+nav.top{
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  backdrop-filter:none;-webkit-backdrop-filter:none;height:76px;margin-top:0;
+}
+nav.top .logo{
+  width:40px;height:40px;border-radius:12px;background:#fff;
+  border:1px solid #e2e8f0;box-shadow:0 5px 16px rgba(15,23,42,.06);
+}
+nav.top .logo img{padding:5px}
+nav.top .nm{font-size:14px;font-weight:600;color:#0f172a;letter-spacing:.02em}
+.hero{padding-top:3vh}
+.eyebrow{background:#eff6ff;border-color:#dbeafe;color:#2563eb;font-weight:500}
+h1{color:#0f172a;font-weight:600;letter-spacing:-.035em}
+h1 em{
+  color:transparent;background:linear-gradient(135deg,#06b6d4,#2563eb);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  text-shadow:none!important;
+}
+.sub{color:#64748b;font-weight:400}
+#loginBox{
+  background:rgba(255,255,255,.76);border:1px solid #fff;border-radius:16px;
+  box-shadow:0 12px 40px rgba(15,23,42,.06);padding:24px;
+}
+#loginBox h3{color:#0f172a;font-weight:600}
+#loginBox .dim{color:#94a3b8!important}
+.win{background:#fff;border:1px solid #e2e8f0;box-shadow:0 35px 80px -42px rgba(15,23,42,.35)}
+.win .bar{background:#f8fafc;border-color:#e2e8f0}
+.win .bar i{background:#e2e8f0}
+.win .bar .url{background:#fff;color:#94a3b8;border:1px solid #e2e8f0}
+.chip{background:rgba(255,255,255,.95);border-color:#e2e8f0;box-shadow:0 8px 25px -16px rgba(15,23,42,.25);color:#0f172a}
+.chip .t{color:#94a3b8}
+/* App shell */
+#app{grid-template-columns:80px 1fr;gap:16px;padding:16px;max-width:1680px;margin:0 auto}
+.rail{
+  background:#fff!important;border:1px solid #e2e8f0!important;border-radius:18px;
+  box-shadow:var(--ims-shadow);margin-right:0;padding:14px 0;
+}
+.rail .logo{background:#fff;border:1px solid #e2e8f0;box-shadow:0 5px 16px rgba(15,23,42,.06);padding:6px}
+.rail button{color:#94a3b8;border-radius:12px}
+.rail button:hover{background:#f8fafc;color:#475569}
+.rail button.on{color:#fff;background:var(--ims-grad);box-shadow:0 7px 16px rgba(37,99,235,.2)}
+.main{gap:16px}
+.topbar{
+  background:rgba(255,255,255,.94)!important;border:1px solid #e2e8f0!important;
+  border-radius:14px;box-shadow:var(--ims-shadow);padding:14px 18px;
+}
+.topbar h2{font-size:18px;font-weight:600;color:#0f172a}
+.topbar .sub{color:#94a3b8}
+.view{gap:16px;padding-bottom:20px}
+.g4,.g3,.g2{gap:16px}
+.kpi{background:#fff;border:1px solid #f1f5f9;border-radius:12px;padding:18px}
+.kpi .t{color:#64748b;font-weight:500}
+.kpi .v{font-size:28px;font-weight:600;color:#0f172a;letter-spacing:-.02em}
+.row{gap:16px}
+.dsec{background:#f8fafc;border-color:#e2e8f0;border-radius:12px}
+.dsec h4{color:#475569;font-weight:600}
+.mline{border-bottom-color:#e2e8f0}
+.mchip{background:#fff!important;border-color:#e2e8f0!important;color:#475569!important}
+/* Tables */
+table.tb{border-collapse:separate;border-spacing:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden}
+.tb th{background:#f8fafc;color:#64748b;font-weight:500;padding:12px;border-bottom:1px solid #e2e8f0}
+.tb td{background:#fff;border:0;border-top:1px solid #f1f5f9;padding:12px;color:#334155}
+.tb tr:first-child td{border-top:0}
+.tb tr:hover td{background:#f8fafc}
+.tb td:first-child,.tb td:last-child{border-radius:0}
+/* Drawer and dialogs */
+#mask{background:rgba(15,23,42,.24);backdrop-filter:blur(3px)}
+#drawer{background:#fff!important;border-left:1px solid #e2e8f0;box-shadow:-28px 0 70px -40px rgba(15,23,42,.35)}
+.dhead{border-bottom:1px solid #f1f5f9}
+.dbody{padding-top:14px}
+#remoteModal .rmBack,#tlModal .rmBack,#fsGuideModal .fgBack{background:rgba(15,23,42,.34)!important;backdrop-filter:blur(4px)}
+#remoteModal .rmCard,#tlModal .rmCard,#fsGuideModal .fgCard{background:#fff!important;border:1px solid #e2e8f0;box-shadow:0 28px 80px -30px rgba(15,23,42,.5)}
+#remoteModal .rmHead,#tlModal .rmHead,#fsGuideModal .fgHead{border-bottom-color:#e2e8f0;background:#fff}
+#remoteModal iframe{background:#f8fafc}
+#fsGuideModal .fgBody code{background:#f1f5f9;color:#334155}
+#fsGuideModal .fgBody th,#fsGuideModal .fgBody td{border-bottom-color:#e2e8f0}
+#fsGuideModal .fgBody th{color:#64748b}
+/* Timeline */
+.tl-left{background:#f8fafc!important;border-right-color:#e2e8f0}
+.tl-left .tl-head,.tl-axis{background:#f8fafc!important;border-color:#e2e8f0;color:#64748b}
+.tl-left .tl-row,.tl-grid-row{border-bottom-color:#e2e8f0}
+.tl-left .tl-row:hover{background:#fff}
+.tl-line{background:#f1f5f9}
+.tl-line.weekend{background:#e2e8f0}
+.tl-today{background:#06b6d4}
+.tl-axis .tl-day{border-left-color:#f1f5f9;color:#94a3b8}
+.tl-axis .tl-day.today{background:#ecfeff;color:#0891b2}
+.tl-bar{box-shadow:0 2px 7px rgba(15,23,42,.12)}
+.tl-kpi .k{background:#fff;border-color:#e2e8f0}
+.tl-kpi .k b{color:#0f172a}
+input[type="date"]{color-scheme:light}
+input[type="date"]::-webkit-calendar-picker-indicator{filter:none;opacity:.65}
+input.search{background:#fff;border-color:#e2e8f0;color:#0f172a}
+/* Mind map */
+.mmwrap{background:radial-gradient(120% 90% at 8% 0%,rgba(6,182,212,.08),transparent 60%),radial-gradient(90% 80% at 100% 100%,rgba(37,99,235,.06),transparent 60%),#fff;border-color:#e2e8f0}
+.mmnode{background:#fff;border-color:#e2e8f0;color:#64748b;box-shadow:0 3px 10px rgba(15,23,42,.05)}
+.mmnode:hover{background:#f8fafc;border-color:#cbd5e1}
+.mmnode.root{border-color:#22d3ee;color:#0e7490;box-shadow:0 0 0 3px rgba(6,182,212,.1)}
+.mmnode.phase{border-color:#bfdbfe;color:#1d4ed8}
+.mmnode.task.ok{border-color:#a7f3d0}
+.mmnode.task.miss{border-color:#fde68a;color:#b45309}
+.coach-out{background:#f8fafc;border-color:#e2e8f0}
+#errBox{background:#fef2f2!important;border-color:#fecaca!important;color:#b91c1c!important;box-shadow:none}
+#errBox *{color:#b91c1c!important}
+.sweep{background:linear-gradient(90deg,transparent,#67e8f9,#93c5fd,transparent)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}
+::-webkit-scrollbar-track{background:transparent}
+
+
+#landing{max-width:1440px}
+.hero{grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(36px,4.5vw,68px)}
+h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
+.win{animation:rise 1.2s var(--ease) both .4s!important;border-radius:12px}
+.winwrap{perspective:none}
+.chip.c1,.chip.c2{animation:rise 1.2s var(--ease) both .7s!important}
+@media(max-width:980px){.hero{gap:28px}}
+
+
+@media(max-width:768px){
+  #landing{padding:0 18px 32px}
+  nav.top{height:64px;gap:10px}
+  nav.top .dim{display:none}
+  nav.top .logo{width:36px;height:36px}
+  .hero{grid-template-columns:1fr;gap:30px;padding-top:18px}
+  .winwrap{order:0;width:100%}
+  h1{font-size:clamp(36px,10vw,44px);line-height:1.14}
+  .sub{font-size:14px;max-width:none}
+  .btns{flex-wrap:wrap;gap:10px;margin-top:22px}
+  .btns .btn{height:44px;padding:0 18px;font-size:14px}
+  #loginBox{max-width:none;width:100%;padding:20px}
+  .win{animation:none!important}
+  .chip{display:none}
+}
+
 </style>
 </head>
 <body>
@@ -264,7 +478,7 @@ body.overlay-open #drawer{z-index:501}
 <!-- ================= 落地页 ================= -->
 <div id="landing">
   <nav class="top glass">
-    <span class="logo"><img src="media/bihu_32.png" alt="必火智能AI IMS" /></span><span class="nm" title="AIMS · AI Intelligent Management System" style="letter-spacing:.06em">必火智能AI IMS</span>
+    <span class="logo"><img src="media/ims-logo.svg" alt="必火智能AI IMS" /></span><span class="nm" title="AIMS · AI Intelligent Management System" style="letter-spacing:.06em">必火智能AI IMS</span>
     <span class="dim" style="font-size:12px;margin-left:6px">AI 智能管理系统 · 内部系统 · 登录后使用</span>
     <span class="grow"></span>
     <button class="btn sm ghost" id="toLogin">登录</button>
@@ -314,7 +528,7 @@ body.overlay-open #drawer{z-index:501}
 <!-- ================= 应用 ================= -->
 <div id="app" class="hide">
   <aside class="rail glass">
-    <div class="logo" title="必火智能AI IMS · AIMS"><img src="media/bihu_64.png" alt="" /></div>
+    <div class="logo" title="必火智能AI IMS · AIMS"><img src="media/ims-logo.svg" alt="" /></div>
     <button data-go="s-brief" class="on"><span class="ic">◈</span>简报</button>
     <button data-go="s-proj"><span class="ic">✧</span>项目</button>
     <button data-go="s-org"><span class="ic">◍</span>组织</button>
