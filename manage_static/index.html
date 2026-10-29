@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<link rel="icon" type="image/png" href="media/bihu_32.png" />
+<link rel="icon" type="image/png" href="media/icon_32.png" />
+<link rel="apple-touch-icon" href="media/icon_128.png" />
 <title>必火智能AI IMS · AI 智能管理系统</title>
 <style>
 :root{
@@ -300,12 +301,12 @@ a:hover{color:#1d4ed8}
   color:#dc2626!important;border-color:#fecaca!important;background:#fff!important;
 }
 input,select,textarea{
-  background:#fff;border:1px solid #e2e8f0;border-radius:8px;color:#0f172a;
+  background-color:#fff;border:1px solid #e2e8f0;border-radius:8px;color:#0f172a;
   box-shadow:0 1px 2px rgba(15,23,42,.02);
 }
 input::placeholder,textarea::placeholder{color:#94a3b8}
 input:focus,select:focus,textarea:focus{border-color:#22d3ee;box-shadow:0 0 0 3px rgba(6,182,212,.12)}
-select{background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#94a3b8 50%),linear-gradient(135deg,#94a3b8 50%,transparent 50%)}
+select{background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#94a3b8 50%),linear-gradient(135deg,#94a3b8 50%,transparent 50%);background-position:calc(100% - 17px) 50%,calc(100% - 12px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 select option{background:#fff;color:#0f172a}
 label.fl{color:#64748b;font-size:11px;font-weight:500;letter-spacing:.01em}
 .err{color:#dc2626}
@@ -478,10 +479,9 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
 <!-- ================= 落地页 ================= -->
 <div id="landing">
   <nav class="top glass">
-    <span class="logo"><img src="media/ims-logo.svg" alt="必火智能AI IMS" /></span><span class="nm" title="AIMS · AI Intelligent Management System" style="letter-spacing:.06em">必火智能AI IMS</span>
+    <span class="logo"><img src="media/icon_64.png" alt="必火智能AI IMS" /></span><span class="nm" title="AIMS · AI Intelligent Management System" style="letter-spacing:.06em">必火智能AI IMS</span>
     <span class="dim" style="font-size:12px;margin-left:6px">AI 智能管理系统 · 内部系统 · 登录后使用</span>
     <span class="grow"></span>
-    <button class="btn sm ghost" id="toLogin">登录</button>
   </nav>
 
   <div class="hero">
@@ -528,7 +528,7 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
 <!-- ================= 应用 ================= -->
 <div id="app" class="hide">
   <aside class="rail glass">
-    <div class="logo" title="必火智能AI IMS · AIMS"><img src="media/ims-logo.svg" alt="" /></div>
+    <div class="logo" title="必火智能AI IMS · AIMS"><img src="media/icon_64.png" alt="" /></div>
     <button data-go="s-brief" class="on"><span class="ic">◈</span>简报</button>
     <button data-go="s-proj"><span class="ic">✧</span>项目</button>
     <button data-go="s-org"><span class="ic">◍</span>组织</button>
@@ -890,13 +890,23 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
     setTimeout(function(){ $("#acc").focus(); }, 420);
     if (hint) toast(hint);
   }
-  $("#toLogin").addEventListener("click", function(){ goLogin(); });
   $("#ctaLogin").addEventListener("click", function(){ goLogin(); });
   $("#ctaDemo").addEventListener("click", function(){ goLogin("登录后：项目里点「AI 生成规划」，能看到它现场排出人员/要求/时间节点"); });
   $("#logout").addEventListener("click", function(){
-    TOKEN = ""; localStorage.removeItem("manage_token");
+    TOKEN = "";
+    localStorage.removeItem("manage_token");
     clearLoginInputs();
-    $("#app").classList.add("hide"); $("#landing").classList.remove("hide");
+    closeDrawer();
+    var app = $("#app");
+    var landing = $("#landing");
+    app.classList.add("hide");
+    app.classList.remove("in");
+    landing.classList.remove("gone", "hide");
+    landing.style.transform = "";
+    landing.style.opacity = "";
+    landing.style.pointerEvents = "";
+    window.scrollTo({ top: 0, behavior: "auto" });
+    setTimeout(function(){ goLogin(); }, 60);
   });
 
   $("#toast").addEventListener("click", function(){ this.classList.remove("on"); clearTimeout(this._t); });
