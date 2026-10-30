@@ -328,6 +328,18 @@ def user_for_account(db: Session, account_email: str, raw_brand: Optional[str]) 
     return db.query(User).filter(User.email == scoped, brand_filter).first()
 
 
+def _oem_bundle_version(mark: str) -> str:
+    """OEM 包版本号，用来给 icon URL 加 ?v= 做缓存击穿。"""
+    try:
+        path = Path(__file__).resolve().parents[3] / "client_static" / "oem" / "manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        brands = data.get("brands") if isinstance(data, dict) else None
+        entry = (brands or {}).get(mark) if isinstance(brands, dict) else None
+        return str((entry or {}).get("version") or "").strip()
+    except Exception:
+        return ""
+
+
 def public_brand_config(db: Session, raw: Optional[str]) -> dict[str, Any]:
     mark = ensure_brand_enabled(db, raw)
     row = db.query(BrandConfig).filter(BrandConfig.mark == mark).first()
@@ -337,6 +349,19 @@ def public_brand_config(db: Session, raw: Optional[str]) -> dict[str, Any]:
     base["mark"] = mark
     base["display_name"] = (row.display_name if row else "") or base.get("display_name") or mark
     base["enabled"] = True
+    # 2026-10-30：OEM 包里换了新 logo，但 URL 没变，WebView 会一直用缓存的旧图
+    # （登录页先对、随后被 JS 覆盖成龙虾就是这个原因）。这里给站内图标 URL 加版本号。
+    icons = base.get("icons")
+    if isinstance(icons, dict):
+        version = _oem_bundle_version(mark) or str(base.get("version") or "").strip()
+        if version:
+            patched = {}
+            for key, value in icons.items():
+                if isinstance(value, str) and value.startswith("/") and "?" not in value:
+                    patched[key] = f"{value}?v={version}"
+                else:
+                    patched[key] = value
+            base["icons"] = patched
     return base
 
 
