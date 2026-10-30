@@ -257,6 +257,22 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
             if runtime_dir not in paths:
                 paths.append(runtime_dir)
         paths.append(version_path)
+    # 2026-10-30：static 根目录下的品牌资源图（bihu_stack.png / bihu_mark_64.png …）
+    # 必须逐个列进 manifest.paths，否则客户端更新器根本不会写它们：包里带了也没用，
+    # 机器上一直 404 -> 欢迎页/登录页/右上角 logo 空白或旧图。
+    _brand_suffixes = {".png", ".ico", ".jpg", ".jpeg", ".svg", ".webp", ".icns"}
+    _brand_files = [
+        name
+        for name in sorted(names)
+        if name.startswith("static/")
+        and name.count("/") == 1
+        and Path(name).suffix.lower() in _brand_suffixes
+        and name not in paths
+    ]
+    if _brand_files:
+        _version_path = "CLIENT_CODE_VERSION.json"
+        paths = [item for item in paths if item != _version_path] + _brand_files + [_version_path]
+
     # 安全修正（2026-09-20）：永远不要把「整个 skills 根」写进 manifest。
     # 客户端 update 会按 manifest.paths 对账：列了 skills 根就会把包里没有的 skill
     # 从用户机器上删掉（例如刻意排除的 skills/ppt_master ≈58MB、已退役的 media_edit 等）。
