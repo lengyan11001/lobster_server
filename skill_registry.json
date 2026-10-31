@@ -142,6 +142,17 @@
         "chat"
       ]
     },
+    "personal_telegram_assistant": {
+      "entry": {"type": "view", "target": "personal-telegram", "label": "打开控制台"},
+      "name": "个人 Telegram 助手",
+      "description": "用你自己的 Telegram 号读通讯录（含手机号）、会话和历史消息，并在工作流里做私聊接管。",
+      "type": "skill",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["Telegram", "用户协议", "工作流"]
+    },
     "personal_whatsapp_assistant": {
       "name": "个人whatapp助手",
       "description": "管理 Windows 桌面版 WhatsApp：同步会话和通讯录、查看与回复消息、添加联系人并执行私聊接管。",
@@ -236,6 +247,17 @@
         "reply"
       ]
     },
+    "meta_social": {
+      "entry": {"type": "view", "target": "meta-social", "label": "管理账号"},
+      "name": "Instagram / Facebook",
+      "description": "通过 Facebook OAuth 授权连接 IG Business 或 FB 主页；对话中可直接发布 photo / video / reel / story / carousel，也可拉取粉丝数据与互动指标。",
+      "type": "skill",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["Instagram", "Facebook", "OAuth"]
+    },
     "messenger_reply": {
       "name": "Facebook Messenger 客服",
       "description": "多应用 Webhook、Meta 消息自动回复；配置与回调走海外 lobster_server（在线版「Messenger」API 基址）。",
@@ -250,6 +272,17 @@
         "chat",
         "reply"
       ]
+    },
+    "viral_video_remix_skill": {
+      "entry": {"type": "view", "target": "viral-video-remix", "label": "进入工作台"},
+      "name": "爆款视频复刻",
+      "description": "上传原爆款视频、人物四视图和产品图，用智能视频模型复刻动作、运镜和节奏。",
+      "type": "skill",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["复刻", "智能视频模型", "人物四视图", "产品替换"]
     },
     "media_edit_skill": {
       "name": "素材剪辑",
@@ -606,6 +639,17 @@
         "shop",
         "product"
       ]
+    },
+    "shanjian_smart_clip": {
+      "entry": {"type": "view", "target": "shanjian-smart-clip", "label": "进入智能剪辑"},
+      "name": "智能剪辑",
+      "description": "拉取内置模板、公共数字人和公共声音，选择模板后提交数字人口播混剪任务。",
+      "type": "skill",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["智能剪辑", "模板", "数字人", "平台服务"]
     },
     "sutui_mcp": {
       "name": "速推 MCP",
