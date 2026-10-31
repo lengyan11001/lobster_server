@@ -39,6 +39,7 @@
       ]
     },
     "multi_clip_mixer_skill": {
+      "entry": {"type": "view", "target": "multi-clip-mixer", "label": "进入工作台"},
       "name": "多段视频混剪",
       "description": "上传多个视频，逐个选择使用片段并按顺序拼接；可选同城爆款音乐和剪辑模板。",
       "type": "builtin",
@@ -1266,6 +1267,7 @@
       ]
     },
     "ip_content_oral_skill": {
+      "entry": {"type": "view", "target": "ip-content-studio", "arg": "oral", "label": "进入工作台"},
       "name": "IP口播文案",
       "description": "基于行业热门和专业同行数据，生成行业热门口播与专业 IP 口播文案。",
       "type": "builtin",
@@ -1290,6 +1292,7 @@
       ]
     },
     "ip_content_moments_skill": {
+      "entry": {"type": "view", "target": "ip-content-studio", "arg": "moments", "label": "进入工作台"},
       "name": "朋友圈图文",
       "description": "基于关键词、同行和记忆资料生成朋友圈图文内容与配图提示词。",
       "type": "builtin",
@@ -1679,6 +1682,7 @@
       ]
     },
     "wechat_channels_transcript_skill": {
+      "entry": {"type": "view", "target": "wechat-channels-transcript", "label": "进入工作台"},
       "name": "作品提取",
       "description": "添加视频号/抖音同行并同步作品，支持下载原视频、批量提取口播文案与导出。",
       "type": "builtin",
@@ -1972,6 +1976,7 @@
       ]
     },
     "ai_3d_model_skill": {
+      "entry": {"type": "view", "target": "ai-3d-model", "label": "进入工作台"},
       "name": "高质量 3D 模型",
       "description": "上传单图、多视角图片或 zip 拆件包，自动调用 Meshy 生成 GLB/FBX/OBJ/USDZ。生产质量模式默认启用贴图、PBR 与重拓扑，适合复杂头盔、道具、产品资产进入 Blender/ZBrush 继续修模。",
       "type": "builtin",
@@ -2103,6 +2108,7 @@
       ]
     },
     "liepin_recruit_skill": {
+      "entry": {"type": "view", "target": "liepin-recruit", "label": "进入工作台"},
       "name": "猎聘招聘",
       "description": "猎聘招聘端（lpt.liepin.com）：先扫码登录，再搜人才 / 读候选人 / 沟通发消息 / 出候选人表。搜索走协议直连（api-lpt.liepin.com，无需浏览器界面），发消息与开简历走已登录浏览器。",
       "type": "builtin",
