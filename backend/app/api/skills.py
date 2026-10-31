@@ -408,6 +408,10 @@ def list_store(
         pc = pkg.get("package_config")
         if isinstance(pc, dict):
             entry["package_config"] = pc
+        # 入口（视图/URL）由注册表下发，客户端只负责渲染与跳转，不在客户端写死技能入口
+        ec = pkg.get("entry")
+        if isinstance(ec, dict) and ec.get("target"):
+            entry["entry"] = ec
         out.append(entry)
     return {"packages": out, "is_skill_store_admin": is_admin}
 
