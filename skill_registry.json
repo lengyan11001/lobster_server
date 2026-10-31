@@ -836,7 +836,7 @@
       ]
     },
     "hifly_digital_human_skill": {
-      "name": "数字人",
+      "name": "数字人口播",
       "description": "选择数字人和声音，输入口播文案后生成数字人视频，生成完成后自动入库。",
       "type": "builtin",
       "store_visibility": "online",
