@@ -235,6 +235,27 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     paths = []
     for path in candidate_paths:
         normalized = path.replace("\\", "/").rstrip("/")
+        if normalized == "static":
+            # 重要：整根 static 不能下发（会误删每台机器自己的 OEM 品牌资源），但
+            # 也不能直接丢掉，否则 static/js、static/css、static/views、index.html
+            # 永远不会进 manifest.paths —— 客户端更新器只按 manifest 覆盖，
+            # 结果是「后端更新了、前端 JS 一直是旧的」。
+            sub_dirs = sorted(
+                {
+                    name.split("/")[1]
+                    for name in names
+                    if name.startswith("static/") and name.count("/") >= 2
+                }
+            )
+            for sub in sub_dirs:
+                if sub == "branding":
+                    continue
+                paths.append("static/" + sub)
+            root_files = sorted(
+                name for name in names if name.startswith("static/") and name.count("/") == 1
+            )
+            paths.extend(root_files)
+            continue
         if normalized in _never_dir_paths:
             continue
         if normalized in names or any(name.startswith(normalized + "/") for name in names):
