@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -311,6 +311,30 @@ def _validate_sync_item(item: ContentRecordSyncItem) -> tuple[str, str, str]:
     return source, source_id, kind
 
 
+def _device_identity_from_request(request: Optional[Request]) -> dict[str, str]:
+    """从同步请求头取「哪台设备生成的」：安装 ID / 机器 ID / 品牌 / UA。"""
+    if request is None:
+        return {}
+
+    def _h(name: str) -> str:
+        return (request.headers.get(name) or request.headers.get(name.lower()) or "").strip()
+
+    out: dict[str, str] = {}
+    iid = _h("X-Installation-Id")[:128]
+    mid = _h("X-Machine-Id")[:128]
+    brand = _h("X-Device-Brand")[:64]
+    ua = _h("User-Agent")[:300]
+    if iid:
+        out["installation_id"] = iid
+    if mid:
+        out["machine_instance_id"] = mid
+    if brand:
+        out["device_brand"] = brand
+    if ua:
+        out["device_user_agent"] = ua
+    return out
+
+
 def _apply_sync_item(row: UserContentRecord, item: ContentRecordSyncItem, *, kind: str) -> None:
     row.kind = kind
     row.title = _clean_text(item.title, 500) or None
@@ -352,6 +376,11 @@ def _synced_payload(row: UserContentRecord, *, compact: bool = False) -> dict[st
         "filename": row.filename or "",
         "media_type": (row.kind if row.kind in ("image", "video", "audio") else "document"),
         "status": row.status or "completed",
+        "device": {
+            k: meta.get(k)
+            for k in ("installation_id", "machine_instance_id", "device_brand", "device_host")
+            if meta.get(k)
+        },
         "tags": f"content-record,{row.kind},{row.source}",
         "prompt": compact_preview if compact else (row.summary or ""),
         "meta": {} if compact else meta,
@@ -451,6 +480,7 @@ def _ip_draft_payload(row: IPContentDraftRecord, *, compact: bool = False) -> di
 @router.post("/api/content-records/sync", summary="Sync desktop content records for H5")
 def sync_content_records(
     body: ContentRecordSyncBody,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -460,6 +490,8 @@ def sync_content_records(
         raise HTTPException(status_code=400, detail="单次最多同步 200 条内容")
 
     owner = online_user_for_mobile_user(db, current_user)
+    device_identity = _device_identity_from_request(request)
+
     def apply_items() -> tuple[int, int, list[UserContentRecord]]:
         created_count = 0
         updated_count = 0
@@ -494,6 +526,17 @@ def sync_content_records(
                     continue
                 updated_count += 1
             _apply_sync_item(row, sync_item, kind=item_kind)
+            # 记录来源设备（客户端 meta 没带时用请求头补齐，老客户端也能记上）
+            if device_identity:
+                row_meta = dict(row.meta or {}) if isinstance(row.meta, dict) else {}
+                merged = False
+                for key, value in device_identity.items():
+                    if not row_meta.get(key):
+                        row_meta[key] = value
+                        merged = True
+                if merged:
+                    row_meta["device_recorded_at"] = datetime.utcnow().isoformat(timespec="seconds")
+                    row.meta = row_meta
             applied_rows.append(row)
         return created_count, updated_count, applied_rows
 

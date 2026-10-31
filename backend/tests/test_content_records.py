@@ -2,6 +2,16 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
+
+
+def _fake_request(installation_id: str = "u31-testinstall0001") -> Request:
+    """最小 Request：只带设备头，用于直接调用 sync_content_records。"""
+    return Request({"type": "http", "headers": [
+        (b"x-installation-id", installation_id.encode()),
+        (b"x-machine-id", b"mw25testmachine0001"),
+        (b"user-agent", b"pytest"),
+    ]})
 
 from backend.app.api.content_records import (
     ContentRecordPublishBody,
@@ -33,9 +43,9 @@ def test_sync_content_records_is_idempotent(db_session, test_user):
         ]
     )
 
-    first = sync_content_records(body, current_user=test_user, db=db_session)
+    first = sync_content_records(body, request=_fake_request(), current_user=test_user, db=db_session)
     body.records[0].title = "第二版方案"
-    second = sync_content_records(body, current_user=test_user, db=db_session)
+    second = sync_content_records(body, request=_fake_request(), current_user=test_user, db=db_session)
 
     assert first["created"] == 1
     assert second["updated"] == 1
@@ -278,7 +288,7 @@ def test_deleted_synced_content_stays_hidden_after_resync(db_session, test_user)
             content="原始正文",
         )]
     )
-    sync_content_records(body, current_user=test_user, db=db_session)
+    sync_content_records(body, request=_fake_request(), current_user=test_user, db=db_session)
 
     deleted = delete_content_record(
         source="online_writer",
@@ -289,7 +299,7 @@ def test_deleted_synced_content_stays_hidden_after_resync(db_session, test_user)
     assert deleted["ok"] is True
 
     body.records[0].content = "再次同步的正文"
-    sync_content_records(body, current_user=test_user, db=db_session)
+    sync_content_records(body, request=_fake_request(), current_user=test_user, db=db_session)
     listing = list_content_records(
         kind="article",
         limit=20,
@@ -477,3 +487,38 @@ def test_list_content_records_returns_canvas_images(db_session, test_user, monke
     except HTTPException:
         raised = True
     assert raised
+
+
+def test_sync_records_device_identity(db_session, test_user):
+    """同步时应把「哪台设备生成的」写进记录 meta（客户端没带时用请求头补齐）。"""
+    from backend.app.models import UserContentRecord
+
+    body = ContentRecordSyncBody(
+        records=[
+            ContentRecordSyncItem(
+                source="online_canvas",
+                source_id="dev-001",
+                kind="image",
+                title="设备来源测试",
+                file_url="https://cdn.example.test/dev-001.png",
+                source_created_at="2026-10-31T08:00:00+08:00",
+                meta={"slide_count": 0},
+            )
+        ]
+    )
+    sync_content_records(
+        body, request=_fake_request("u31-deviceabc001"), current_user=test_user, db=db_session
+    )
+    row = (
+        db_session.query(UserContentRecord)
+        .filter(
+            UserContentRecord.user_id == test_user.id,
+            UserContentRecord.source == "online_canvas",
+            UserContentRecord.source_id == "dev-001",
+        )
+        .first()
+    )
+    assert row is not None
+    meta = row.meta or {}
+    assert meta.get("installation_id") == "u31-deviceabc001"
+    assert meta.get("machine_instance_id") == "mw25testmachine0001"
