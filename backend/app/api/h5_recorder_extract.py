@@ -268,3 +268,171 @@ async def extract_digital_human_params(
         "duration_seconds": duration_seconds,
         **params,
     }
+
+# ── 朋友圈图文 / 公众号文案：录音 → 表单字段 ──────────────────────────────
+# H5 里这两个功能的输入（h5-app.js）：
+#   朋友圈图文：主题/卖点（moments idea）+ 配图数量
+#   公众号文章：公众号主题(idea) + 目标读者 + 写作风格(专业观点/简洁商业/故事叙事/实用教程)
+# 小程序页面字段较少，这里按小程序现有字段出结果，语义与 H5 对齐。
+_COPY_TARGETS = {
+    "moments": {
+        "schema": '{"topic":"主题或卖点","count":3,"title":""}',
+        "rules": (
+            "topic 是朋友圈图的主题/卖点，30-80 字，写清产品、卖点、场景或优惠；"
+            "count 是建议配图张数，1-9 之间的整数，一般 3；title 可留空。"
+        ),
+    },
+    "article": {
+        "schema": '{"title":"","topic":"文章主题","points":"要点与素材","tone":"专业干货"}',
+        "rules": (
+            "title 是任务名称，可留空；topic 是一句话文章主题（不超过 40 字）；"
+            "points 用换行列出录音里可用的卖点、案例、数据或观点，每条一行，最多 6 条；"
+            "tone 只能是「专业干货」「真诚故事」「犀利观点」之一。"
+        ),
+    },
+}
+
+_COPY_TONES = ("专业干货", "真诚故事", "犀利观点")
+
+
+@router.post(
+    "/api/h5/recorder/files/{record_id}/extract-copy-fields",
+    summary="从录音提取朋友圈/公众号文案的填写字段",
+)
+async def extract_copy_fields(
+    record_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    body = await request.json() if await request.body() else {}
+    target = str((body or {}).get("target") or "article").strip().lower()
+    if target not in _COPY_TARGETS:
+        raise HTTPException(status_code=400, detail="target 只能是 moments 或 article")
+
+    current_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.id == record_id,
+        RecorderAudioRecord.user_id == current_user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    text = str(row.transcript_text or "").strip()
+    if row.status != "completed" or not text:
+        raise HTTPException(status_code=409, detail="转写完成后才能生成填写内容")
+
+    owner = _owner_user(db, current_user)
+    try:
+        owner_token = create_access_token(access_token_claims(owner))
+    except Exception:
+        owner_token = ""
+
+    memory_block = ""
+    try:
+        mem_rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(
+                OpenClawMemoryDocument.target_user_id == owner.id,
+                OpenClawMemoryDocument.status == "active",
+            )
+            .order_by(OpenClawMemoryDocument.updated_at.desc())
+            .limit(6)
+            .all()
+        )
+        parts = []
+        for mem in mem_rows:
+            content = str(mem.content_text or "").strip()
+            if not content:
+                continue
+            parts.append("【" + str(mem.title or mem.filename or "个人记忆") + "】\n" + content[:1500])
+        memory_block = "\n\n".join(parts)[:6000]
+    except Exception:
+        memory_block = ""
+
+    spec = _COPY_TARGETS[target]
+    base = (os.environ.get("LOBSTER_INTERNAL_API_BASE") or "").strip().rstrip("/") or "http://127.0.0.1:8000"
+    model = (
+        (os.environ.get("LOBSTER_ORCHESTRATION_SUTUI_CHAT_MODEL") or "").strip()
+        or (os.environ.get("LOBSTER_DEFAULT_SUTUI_CHAT_MODEL") or "").strip()
+        or "openai/gpt-4.1-mini"
+    )
+    system_prompt = (
+        "你是一名中文内容编导，要把一段录音整理成可直接填进表单的字段。"
+        "只输出严格 JSON：" + spec["schema"] + "。"
+        + spec["rules"]
+        + "要结合【个人记忆】里的产品、客户、优势；不要 Markdown、不要解释、不要编造录音与记忆里都没有的事实。"
+    )
+    user_prompt = (
+        "【录音名称】" + str(row.display_name or row.file_name or "")
+        + ("\n\n【个人记忆】\n" + memory_block if memory_block else "")
+        + "\n\n【录音内容】\n" + text[:20000]
+    )
+    headers = {"Content-Type": "application/json"}
+    if owner_token:
+        headers["Authorization"] = "Bearer " + owner_token
+    brand = request.headers.get("X-Lobster-Brand") or ""
+    if brand:
+        headers["X-Lobster-Brand"] = brand
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.4,
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            resp = await client.post(base + "/api/sutui-chat/completions", json=payload, headers=headers)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AI 生成失败：" + str(exc)[:200]) from exc
+    if resp.status_code >= 400:
+        detail = ""
+        try:
+            raw = resp.json()
+            detail = str(raw.get("detail") or raw.get("message") or "")
+        except Exception:
+            detail = (resp.text or "")[:200]
+        raise HTTPException(status_code=502, detail="AI 生成失败：" + (detail or str(resp.status_code)))
+    data = resp.json() if resp.content else {}
+    content = ""
+    try:
+        content = str(data["choices"][0]["message"]["content"] or "")
+    except Exception:
+        content = str(data.get("text") or "")
+    parsed = _extract_json_object(content)
+
+    if target == "moments":
+        topic = str(parsed.get("topic") or "").strip()[:300]
+        if not topic:
+            raise HTTPException(status_code=502, detail="AI 没有返回朋友圈主题")
+        try:
+            count = int(parsed.get("count") or 3)
+        except Exception:
+            count = 3
+        count = max(1, min(9, count))
+        return {
+            "ok": True,
+            "target": "moments",
+            "topic": topic,
+            "count": count,
+            "title": str(parsed.get("title") or "").strip()[:60],
+        }
+
+    topic = str(parsed.get("topic") or "").strip()[:200]
+    if not topic:
+        raise HTTPException(status_code=502, detail="AI 没有返回文章主题")
+    points = str(parsed.get("points") or "").strip()[:1200]
+    tone = str(parsed.get("tone") or "").strip()
+    if tone not in _COPY_TONES:
+        tone = _COPY_TONES[0]
+    return {
+        "ok": True,
+        "target": "article",
+        "title": str(parsed.get("title") or "").strip()[:60],
+        "topic": topic,
+        "points": points,
+        "tone": tone,
+    }
+

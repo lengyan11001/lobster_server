@@ -1,0 +1,51 @@
+<view class="page">
+  <view class="head">
+    <view class="head-text">
+      <text class="title">公众号文案</text>
+      <text class="sub">一次生成标题、摘要和正文，可直接复制到公众号后台</text>
+    </view>
+    <button class="ghost mini" bindtap="openAudioPicker">录音生成</button>
+  </view>
+
+  <view class="panel">
+    <text class="label">文章主题</text>
+    <input class="input" value="{{topic}}" bindinput="onTopicInput" placeholder="例如：小户型收纳的三个反常识" />
+    <text class="label">要点 / 素材（可选）</text>
+    <textarea class="textarea" value="{{points}}" bindinput="onPointsInput" placeholder="产品卖点、案例、想强调的观点" auto-height maxlength="800" />
+    <view class="row">
+      <text class="label">风格</text>
+      <view class="chips">
+        <view wx:for="{{tones}}" wx:key="*this" class="chip {{tone === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setTone">{{item}}</view>
+      </view>
+    </view>
+    <button class="primary" loading="{{loading}}" disabled="{{loading}}" bindtap="generate">生成公众号文案</button>
+  </view>
+
+  <view wx:if="{{title || body}}" class="panel">
+    <text class="label">标题</text>
+    <view class="title-box">{{title}}</view>
+    <text class="label">摘要</text>
+    <view class="summary-box">{{summary}}</view>
+    <text class="label">正文</text>
+    <text class="body" user-select="{{true}}">{{body}}</text>
+    <button class="ghost" bindtap="copyAll">复制标题 + 正文</button>
+    <button class="ghost" bindtap="reset">重新生成</button>
+  </view>
+
+  <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
+
+  <view wx:if="{{pickerOpen}}" class="overlay" catchtap="closePicker">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">选一条已转写的录音</text>
+        <text class="sheet-close" catchtap="closePicker">×</text>
+      </view>
+      <view wx:if="{{pickerLoading}}" class="empty">加载中…</view>
+      <view wx:elif="{{!pickerItems.length}}" class="empty">没有可用的录音（需转写完成）</view>
+      <view wx:for="{{pickerItems}}" wx:key="id" class="pick" data-index="{{index}}" bindtap="pickRecording">
+        <text class="pick-name">{{item.name}}</text>
+        <text class="pick-meta">{{item.time}}</text>
+      </view>
+    </view>
+  </view>
+</view>
