@@ -110,6 +110,7 @@ _TASK_ABSENT_TOLERANT_PATHS = {
     "api/fal/tasks/info",
     "api/v2/tasks/info",
     "api/v3/tasks/info",
+    "api/v3/tasks/query",
     "api/fal/tasks/delete",
 }
 
