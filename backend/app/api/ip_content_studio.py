@@ -6530,7 +6530,7 @@ async def extract_profile_from_text(
     body: ProfileExtractBody,
     current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    text = _clean_long_text(body.text, 60000)
+    text = _clean_long_text(body.text, 12000)  # 60k 太长：模型推理时间线性上升，提取用前 12k 足够
     if not str(text or "").strip():
         raise HTTPException(status_code=400, detail="没有可提取的内容")
     targets = [str(t or "").strip().lower() for t in (body.targets or []) if str(t or "").strip()]
@@ -6576,8 +6576,8 @@ async def extract_profile_from_text(
             "temperature": 0.2,
         },
         headers=headers,
-        attempts=2,
-        timeout_seconds=120.0,
+        attempts=1,
+        timeout_seconds=60.0,
     )
     try:
         raw = str(data["choices"][0]["message"]["content"] or "")
