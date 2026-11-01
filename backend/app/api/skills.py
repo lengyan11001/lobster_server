@@ -129,14 +129,33 @@ DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
     ),
 }
 
+# 技能包依赖：只要用户能看到/使用左侧技能，就必须同时具备右侧能力包。
+# 数字人 3.0 本身不声明 capability，实际生成走 sutui_mcp 的 video.generate。
+PACKAGE_DEPENDENCY_EXPANSIONS = {
+    "digital_human_koubo_skill": ("sutui_mcp",),
+}
+
+
+def _expand_package_dependencies(package_ids: set) -> set:
+    expanded = {str(item) for item in package_ids if str(item).strip()}
+    pending = list(expanded)
+    while pending:
+        package_id = pending.pop()
+        for dependency_id in PACKAGE_DEPENDENCY_EXPANSIONS.get(package_id, ()):
+            dependency_id = str(dependency_id or "").strip()
+            if dependency_id and dependency_id not in expanded:
+                expanded.add(dependency_id)
+                pending.append(dependency_id)
+    expanded.difference_update(REMOVED_DEFAULT_PACKAGE_IDS)
+    return expanded
+
 
 def _expand_group_visibility(package_ids: set) -> set:
     expanded = {str(item) for item in package_ids if str(item).strip()}
     for group_id, children in DEFAULT_GROUP_PACKAGE_EXPANSIONS.items():
         if group_id in expanded:
             expanded.update(children)
-    expanded.difference_update(REMOVED_DEFAULT_PACKAGE_IDS)
-    return expanded
+    return _expand_package_dependencies(expanded)
 
 
 def _default_visible_packages_for_request(is_overseas_client: bool) -> tuple[str, ...]:
@@ -238,6 +257,7 @@ def _user_visible_package_ids(
             db.rollback()
         rows.add("web_research_skill")
         rows.add(_WEB_RESEARCH_VISIBILITY_MIGRATION_MARKER)
+    rows = _expand_package_dependencies(rows)
     return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 
 
@@ -462,8 +482,20 @@ def user_allowed_capability_ids(
         current_user,
         is_overseas_client=_client_is_overseas(x_lobster_client_overseas),
     )
+    # 可见性只决定技能商店展示；用户已解锁/安装的包同样应该获得调用权。
+    # 手机号注册会默认写入 sutui_mcp 的 SkillUnlock，但 sutui_mcp 不在默认
+    # 商店可见组里，旧逻辑因此把 video.generate 一并拒掉了。
+    entitled = set(visible)
+    for pkg_id in _user_unlocked_package_ids(db, current_user.id):
+        pkg = packages.get(pkg_id)
+        if not pkg or pkg_id in REMOVED_DEFAULT_PACKAGE_IDS:
+            continue
+        if _pkg_store_visibility(pkg) == "debug":
+            continue
+        entitled.add(pkg_id)
+    entitled = _expand_package_dependencies(entitled)
     cap_ids = []
-    for pkg_id in visible:
+    for pkg_id in entitled:
         pkg = packages.get(pkg_id, {})
         cap_ids.extend((pkg.get("capabilities") or {}).keys())
     return {"is_admin": False, "capability_ids": sorted(set(cap_ids))}

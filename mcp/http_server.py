@@ -182,6 +182,25 @@ def _capability_id_is_debug_only_in_registry(cap_id: str) -> bool:
     return found_debug
 
 
+_CAPABILITY_DENIED_MESSAGES = {
+    "video.generate": (
+        "当前账号未开通视频生成能力：video.generate。"
+        "请联系管理员在技能商店为账号开通「速推 MCP」（数字人3.0 依赖该能力）后重试。"
+    ),
+    "image.generate": (
+        "当前账号未开通图片生成能力：image.generate。"
+        "请联系管理员在技能商店为账号开通「速推 MCP」后重试。"
+    ),
+}
+
+
+def _capability_denied_message(capability_id: str) -> str:
+    return _CAPABILITY_DENIED_MESSAGES.get(
+        capability_id,
+        f"当前账号未开通此能力: {capability_id}。请联系管理员在技能商店为账号开通后重试。",
+    )
+
+
 async def _fetch_is_skill_store_admin(token: Optional[str]) -> bool:
     if not (token or "").strip():
         return False
@@ -4526,7 +4545,12 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 return [{"type": "text", "text": "该能力为调试中技能，当前账号不可用。"}], True
             allowed = await _fetch_user_allowed_capability_ids(token, request)
             if allowed is not None and capability_id not in allowed:
-                return [{"type": "text", "text": f"当前账号未开通此能力: {capability_id}"}], True
+                logger.warning(
+                    "[MCP] capability denied capability_id=%s allowed_count=%s",
+                    capability_id,
+                    len(allowed),
+                )
+                return [{"type": "text", "text": _capability_denied_message(capability_id)}], True
             cfg = catalog[capability_id]
             if str(cfg.get("upstream") or "").strip() == "builtin":
                 backend_path = str(cfg.get("backend_path") or "").strip()
