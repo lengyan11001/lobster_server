@@ -808,6 +808,84 @@ class RechargeCreateBody(BaseModel):
     order_type: Optional[str] = None
 
 
+class FeatureChargeIn(BaseModel):
+    feature: str
+    credits: float
+    ref_id: str = ""
+    description: str = ""
+
+
+def _feature_charge_trusted(request: Request) -> bool:
+    """只允许本机回环或携带内部计费 key 的请求动账。"""
+    provided = (request.headers.get("X-Lobster-Mcp-Billing") or "").strip()
+    expected = (getattr(settings, "lobster_mcp_billing_internal_key", "") or "").strip()
+    if expected and provided and provided == expected:
+        return True
+    host = (request.client.host if request.client else "") or ""
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+@router.post("/api/billing/feature-charge", summary="本机功能按次扣费（如多段混剪成片 100 积分/条）")
+def feature_charge(
+    body: FeatureChargeIn,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not _feature_charge_trusted(request):
+        raise HTTPException(status_code=403, detail="计费请求来源未受信任")
+    feature = str(body.feature or "").strip()[:64]
+    if not feature:
+        raise HTTPException(status_code=400, detail="feature 不能为空")
+    amount = quantize_credits(body.credits or 0)
+    if amount <= 0:
+        return {"ok": True, "charged": credits_json_float(0), "duplicate": False}
+    ref_id = str(body.ref_id or "").strip()[:128]
+    if ref_id:
+        exists = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(current_user.id),
+                CreditLedger.ref_type == feature,
+                CreditLedger.ref_id == ref_id,
+            )
+            .first()
+        )
+        if exists:
+            return {
+                "ok": True,
+                "charged": credits_json_float(0),
+                "duplicate": True,
+                "balance": credits_json_float(user_balance_decimal(current_user)),
+            }
+    db.refresh(current_user)
+    balance = user_balance_decimal(current_user)
+    if balance < amount:
+        raise HTTPException(
+            status_code=402,
+            detail="算力不足：本次成片需要 %s 积分，当前余额 %s"
+            % (credits_json_float(amount), credits_json_float(balance)),
+        )
+    current_user.credits = quantize_credits(balance - amount)
+    append_credit_ledger(
+        db,
+        int(current_user.id),
+        -amount,
+        "deduct",
+        quantize_credits(current_user.credits),
+        description=(body.description or feature)[:200],
+        ref_type=feature,
+        ref_id=ref_id,
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "charged": credits_json_float(amount),
+        "duplicate": False,
+        "balance": credits_json_float(user_balance_decimal(current_user)),
+    }
+
+
 @router.post("/api/recharge/create", summary="创建充值订单（自有）")
 def create_recharge_order(
     body: RechargeCreateBody,
