@@ -870,6 +870,17 @@ _transfer_cache: Dict[str, str] = {}
 _MODEL_FALLBACKS = {
     "apiz/seedance-2.5": "st-ai/super-seed2-lite",
     "doubao-seedance-2-0-fast-260128": "st-ai/super-seed2-lite",
+    # 2026-11-02：模板里遗留的即梦/seedream 图片模型，上游已无账号可用
+    # （实测：jimeng-4.0 无 Token、fal seedream v4 无 Fal 账号），统一回落到我们现役的 gpt-image-2。
+    "jimeng-4.0": "openai/gpt-image-2",
+    "jimeng-4.5": "openai/gpt-image-2",
+    "jimeng-3.0": "openai/gpt-image-2",
+    "jimeng": "openai/gpt-image-2",
+    "image-01": "openai/gpt-image-2",
+    "bytedance-seedream-v4": "openai/gpt-image-2",
+    "fal-ai/bytedance/seedream/v4/text-to-image": "openai/gpt-image-2",
+    "fal-ai/bytedance/seedream/v4/edit": "openai/gpt-image-2",
+    "seedream-4.0": "openai/gpt-image-2",
 }
 
 
