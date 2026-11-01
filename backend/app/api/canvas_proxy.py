@@ -881,6 +881,9 @@ _MODEL_FALLBACKS = {
     "fal-ai/bytedance/seedream/v4/text-to-image": "openai/gpt-image-2",
     "fal-ai/bytedance/seedream/v4/edit": "openai/gpt-image-2",
     "seedream-4.0": "openai/gpt-image-2",
+    "seedream-4": "openai/gpt-image-2",
+    "bytedance/seedream-4": "openai/gpt-image-2",
+    "bytedance/seedream-4.0": "openai/gpt-image-2",
 }
 
 
