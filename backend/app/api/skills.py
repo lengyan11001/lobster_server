@@ -108,6 +108,10 @@ REMOVED_DEFAULT_PACKAGE_IDS = frozenset({
     "bihuo_25_video_skill",
 })
 
+# 所有账号的基础能力包：不依赖商店开通、管理员授权或自定义可见性。
+# sutui_mcp 提供 image.generate / video.generate / task.get_result 等通用能力。
+ALWAYS_VISIBLE_PACKAGE_IDS = frozenset({"sutui_mcp"})
+
 DEFAULT_GROUP_PACKAGE_EXPANSIONS = {
     "my_ai_employees_entry": (
         "local_bestseller_skill",
@@ -152,6 +156,7 @@ def _expand_package_dependencies(package_ids: set) -> set:
 
 def _expand_group_visibility(package_ids: set) -> set:
     expanded = {str(item) for item in package_ids if str(item).strip()}
+    expanded.update(ALWAYS_VISIBLE_PACKAGE_IDS)
     for group_id, children in DEFAULT_GROUP_PACKAGE_EXPANSIONS.items():
         if group_id in expanded:
             expanded.update(children)
@@ -257,6 +262,7 @@ def _user_visible_package_ids(
             db.rollback()
         rows.add("web_research_skill")
         rows.add(_WEB_RESEARCH_VISIBILITY_MIGRATION_MARKER)
+    rows.update(ALWAYS_VISIBLE_PACKAGE_IDS)
     rows = _expand_package_dependencies(rows)
     return {r for r in rows if r not in REMOVED_DEFAULT_PACKAGE_IDS}
 

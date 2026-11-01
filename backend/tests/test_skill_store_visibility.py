@@ -181,8 +181,8 @@ def test_bihuo_25_video_is_retired(db_session, db_session_factory, monkeypatch):
     assert install.status_code == 410
 
 
-def test_unlocked_sutui_grants_video_capability_without_store_visibility(db_session, db_session_factory, monkeypatch):
-    """手机号注册默认解锁 sutui_mcp，但它不在商店默认可见组里；MCP 仍应放行 video.generate。"""
+def test_sutui_mcp_is_visible_and_callable_for_default_users(db_session, db_session_factory, monkeypatch):
+    """sutui_mcp 是所有账号的基础能力包，默认用户必须可见且能调用 video.generate。"""
     from backend.app.models import SkillUnlock, User
 
     user = User(
@@ -203,7 +203,7 @@ def test_unlocked_sutui_grants_video_capability_without_store_visibility(db_sess
     client = _client_for_user(db_session_factory, monkeypatch, user.id)
     store = client.get("/skills/store")
     assert store.status_code == 200
-    assert "sutui_mcp" not in {item["id"] for item in store.json()["packages"]}
+    assert "sutui_mcp" in {item["id"] for item in store.json()["packages"]}
 
     allowed = client.get("/skills/user-allowed-capability-ids")
     assert allowed.status_code == 200
@@ -242,6 +242,41 @@ def test_digital_human_visibility_grants_sutui_dependency(db_session, db_session
     store_ids = {item["id"] for item in store.json()["packages"]}
     assert "digital_human_koubo_skill" in store_ids
     assert "sutui_mcp" in store_ids
+
+    allowed = client.get("/skills/user-allowed-capability-ids")
+    assert allowed.status_code == 200
+    assert "video.generate" in allowed.json()["capability_ids"]
+
+
+def test_sutui_mcp_is_always_visible_for_custom_visibility_users(db_session, db_session_factory, monkeypatch):
+    """即使用户已有自定义可见性行，sutui_mcp 也不能被漏掉。"""
+    from backend.app.api.skills import _DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER
+    from backend.app.models import User, UserSkillVisibility
+
+    user = User(
+        email="sutui-custom-visibility@test.local",
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        is_overseas_user=False,
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    db_session.add(
+        UserSkillVisibility(
+            user_id=user.id,
+            package_id=_DEFAULT_ENTRY_VISIBILITY_MIGRATION_MARKER,
+        )
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, monkeypatch, user.id)
+    store = client.get("/skills/store")
+    assert store.status_code == 200
+    assert "sutui_mcp" in {item["id"] for item in store.json()["packages"]}
 
     allowed = client.get("/skills/user-allowed-capability-ids")
     assert allowed.status_code == 200
