@@ -422,7 +422,11 @@ def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, A
     }
     if with_snapshot:
         # 兜底拆包：即使历史数据里存的是「字符串套 JSON」，也要能读出真正的画布
-        snapshot = normalize_task_nodes(snapshot_as_dict(row.snapshot))
+        snapshot = snapshot_as_dict(row.snapshot)
+        # 官方模板是给人看效果的：保留 taskId 与 completed 状态，不清运行态；
+        # 只有用户自己的项目/副本才清理，避免把模板里的失败态带进副本。
+        if int(getattr(row, "user_id", 0) or 0) != TEMPLATE_SEED_USER_ID:
+            snapshot = normalize_task_nodes(snapshot)
         data["snapshot"] = snapshot
         data["canvas"] = snapshot
     return data
