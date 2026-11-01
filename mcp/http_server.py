@@ -565,9 +565,11 @@ def _tool_definitions(
                     # 改成普通字符串 + 示例，服务端负责给出"能力未找到 + 可用清单"的可恢复提示。
                     "capability_id": {
                         "type": "string",
+                        "enum": capability_list,
                         "description": (
-                            "能力 ID，必须逐字取自 list_capabilities / list_system_capabilities 的返回值。"
-                            "常用：" + ", ".join(capability_list[:16])
+                            "能力 ID，只能从 enum 里逐字选择。"
+                            "网页正文用 web.page_analyze / web.site_crawl（设备在线且有验证码时用 online.browser_extract_page）；"
+                            "禁止用 comfly.* / video.* / image.* 抓网页。"
                         ),
                     },
                     "payload": {"type": "object"},

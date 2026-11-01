@@ -1249,17 +1249,45 @@ async def _chat_openai(
     }
     model = cfg["model_name"]
     use_tools = model not in _NO_TOOL_SUPPORT and bool(mcp_tools)
-    oai_tools = [
-        {
+    # 意图决定工具面：网页抓取类请求只暴露网页能力，生成类能力不出现在工具里，
+    # 模型不可能“选错”（这是 schema 级约束，不依赖它自觉）。
+    _intent_text = ""
+    for _m in reversed(msgs or []):
+        if isinstance(_m, dict) and _m.get("role") == "user":
+            _intent_text = str(_m.get("content") or "")
+            break
+    _web_intent = False
+    try:
+        from ..services.capability_surface import intent_of
+
+        _web_intent = intent_of(_intent_text) == "web_read"
+    except Exception:
+        _web_intent = False
+
+    _WEB_TOOLS = ["web.page_analyze", "web.site_crawl", "online.browser_extract_page"]
+
+    def _tool_payload(tool: Dict) -> Dict:
+        params = tool.get("inputSchema", {"type": "object", "properties": {}})
+        if _web_intent and tool.get("name") == "invoke_capability":
+            import copy as _copy
+
+            params = _copy.deepcopy(params)
+            props = params.setdefault("properties", {})
+            props["capability_id"] = {
+                "type": "string",
+                "enum": _WEB_TOOLS,
+                "description": "读取网页内容只能用这三个能力之一。",
+            }
+        return {
             "type": "function",
             "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": params,
             },
         }
-        for t in mcp_tools
-    ] if use_tools else []
+
+    oai_tools = [_tool_payload(t) for t in mcp_tools] if use_tools else []
 
     _ACTION_KW = re.compile(
         r"(发布|生成|打开浏览器|帮你|开始|正在|马上|登录|查看素材|查看账号|"
@@ -1308,6 +1336,26 @@ async def _chat_openai(
                 _inject_video_media_urls(a, attachment_urls or [])
                 logger.info("[CHAT] tool_call: %s(%s)", fn.get("name"), list(a.keys()))
                 cap = (a.get("capability_id") or "").strip()
+                try:
+                    from ..services.capability_surface import web_read_guard
+
+                    _last_user = ""
+                    for _m in reversed(msgs or []):
+                        if isinstance(_m, dict) and _m.get("role") == "user":
+                            _last_user = str(_m.get("content") or "")
+                            break
+                    _guard = web_read_guard(cap, a.get("payload"), _last_user)
+                    if _guard:
+                        logger.warning("[CHAT] 网页意图误用生成能力 cap=%s，已拦截", cap)
+                        res = json.dumps({"ok": False, "error": _guard}, ensure_ascii=False)
+                        if progress_cb:
+                            try:
+                                await progress_cb({"type": "tool_end", "name": fn.get("name"), "preview": _guard[:200], "capability_id": cap, "in_progress": False})
+                            except Exception:
+                                pass
+                        continue
+                except Exception:
+                    pass
                 if cap in ("image.generate", "video.generate", "task.get_result"):
                     logger.info("[素材] 模型请求工具 capability_id=%s", cap)
                 res = await _exec_tool_with_balance(

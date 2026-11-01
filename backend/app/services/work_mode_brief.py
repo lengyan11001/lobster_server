@@ -27,8 +27,8 @@ WORK_BRIEF_END = "【简要目录结束】"
 _CACHE_LOCK = threading.Lock()
 _CACHE: Dict[str, Tuple[float, List[str]]] = {}
 _CACHE_TTL_SECONDS = 120.0
-_MAX_ITEMS = 15
-_ONLINE_LIMIT = 40
+_MAX_ITEMS = 60
+_ONLINE_LIMIT = 60
 _MEMORY_LIMIT = 12
 
 
@@ -38,6 +38,19 @@ def _enabled() -> bool:
 
 
 def _capability_lines(db) -> List[str]:
+    # 统一从 capability_surface 取全量（能力行 + online 能力），不再只给前 15 条
+    try:
+        from .capability_surface import all_capabilities
+
+        surface = all_capabilities(db)
+        lines: List[str] = []
+        for cid in sorted(surface):
+            meta = surface[cid]
+            desc = str(meta.get("description") or "")[:40]
+            lines.append(f"- {cid}：{desc}" if desc else f"- {cid}")
+        return lines
+    except Exception:
+        pass
     key = "capabilities"
     now = time.time()
     with _CACHE_LOCK:
@@ -85,7 +98,9 @@ _CATEGORY_LINES = (
 )
 _HARD_RULES = (
     "- 热搜/榜单/热榜：用 online.discover_hotlist；禁止用 browser_extract_page 抓榜单",
-    "- browser_extract_page 只用于读取某个具体网页正文（用户给了链接且要内容时）",
+    "- 读网页正文（公司官网/店铺/文章/联系方式）：用 web.page_analyze（单页）或 web.site_crawl（多页）；"
+    "设备在线且页面有验证码时改用 online.browser_extract_page",
+    "- 禁止用 comfly.* / video.* / image.* 这类生成能力去抓网页；生成类能力只用于生成素材",
     "- 需要完整参数或未列出的能力：先调 listSystemCapabilities 取目录，不要猜",
     "- 只能使用真实存在的 id：不要输出 plan_*、online.discover_* 这类通配或臆造 id",
 )
@@ -120,6 +135,10 @@ def _online_lines(query: str = "") -> List[str]:
     if core:
         lines.append("【常用能力】")
         lines.extend(core)
+    all_online = sorted(caps.keys())
+    if all_online:
+        lines.append("【全部 online 能力（需要详情再查 get_capability_details）】")
+        lines.append("，".join(all_online))
     lines.append("【硬规则】")
     lines.extend(_HARD_RULES)
     return lines
