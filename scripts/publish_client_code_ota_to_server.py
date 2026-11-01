@@ -452,10 +452,75 @@ print(public_domain + "/" + {json.dumps(object_key)})
     return out.splitlines()[-1].strip()
 
 
+_APPROVAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".release_approvals")
+_RELEASE_LEDGER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "release_ledger.log")
+
+
+def _release_version_of_zip(zip_path: str) -> str:
+    try:
+        import zipfile
+        with zipfile.ZipFile(zip_path) as zf:
+            for name in ("CLIENT_CODE_VERSION.json", "static/client_version.json"):
+                if name in zf.namelist():
+                    data = json.loads(zf.read(name).decode("utf-8"))
+                    return str(data.get("version") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _require_release_approval(zip_path: str, approved_version: str) -> str:
+    """版本级发布闸门：必须同时满足
+       1) --approved-version 与包内版本一致
+       2) 环境变量 LOBSTER_RELEASE_APPROVED 与 --approved-version 一致
+       3) .release_approvals/<version>.txt 存在（用户明确说「发 <version>」后才允许创建）
+    任何一条不满足直接拒绝，避免"顺手就发一版"。
+    """
+    version = _release_version_of_zip(str(zip_path))
+    if not version:
+        print("[BLOCKED] 读不到包内版本号，拒绝发布。", file=sys.stderr)
+        raise SystemExit(5)
+    if not approved_version or approved_version.strip() != version:
+        print(
+            f"[BLOCKED] 必须显式传 --approved-version {version}（与包内版本一致）。",
+            file=sys.stderr,
+        )
+        raise SystemExit(5)
+    env_value = (os.environ.get("LOBSTER_RELEASE_APPROVED") or "").strip()
+    if env_value != version:
+        print(
+            "[BLOCKED] 缺少用户授权：需要 LOBSTER_RELEASE_APPROVED=" + version,
+            file=sys.stderr,
+        )
+        raise SystemExit(5)
+    approval_file = os.path.join(_APPROVAL_DIR, version + ".txt")
+    if not os.path.isfile(approval_file):
+        print(
+            "[BLOCKED] 缺少审批凭据：" + approval_file + "\n"
+            "  只有在用户明确说「发 " + version + "」后，才可以写入该文件。",
+            file=sys.stderr,
+        )
+        raise SystemExit(5)
+    try:
+        note = io.open(approval_file, encoding="utf-8").read().strip().splitlines()[0][:200]
+    except Exception:
+        note = ""
+    try:
+        with io.open(_RELEASE_LEDGER, "a", encoding="utf-8") as fh:
+            fh.write(
+                "%s release version=%s approval=%s\\n"
+                % (__import__("datetime").datetime.now().isoformat(timespec="seconds"), version, note)
+            )
+    except Exception:
+        pass
+    return version
+
+
 def main() -> int:
     _require_user_deploy_confirmation()
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path", type=Path, help="local OTA zip")
+    ap.add_argument("--approved-version", default="", help="用户明确批准的版本号（必须与包内版本一致）")
     ap.add_argument("--version", default="1.0.5", help="manifest.version")
     ap.add_argument("--build", type=int, default=5, help="manifest.build")
     ap.add_argument(
@@ -469,6 +534,7 @@ def main() -> int:
         help="explicit HTTPS URL already uploaded to OSS/TOS/CDN; if provided, manifest uses this directly",
     )
     args = ap.parse_args()
+    _require_release_approval(str(args.zip_path), args.approved_version)
 
     zip_path = args.zip_path.resolve()
     if not zip_path.is_file():
