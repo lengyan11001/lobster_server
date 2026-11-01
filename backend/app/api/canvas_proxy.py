@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Tuple
 import httpx
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
 
 from ..core.config import settings
@@ -34,6 +35,7 @@ router = APIRouter()
 # 只中转「生成」类（这些才是真正花钱调用模型能力的）
 _RELAY_PREFIXES: Tuple[str, ...] = (
     "api/v3/tasks",
+    "api/v3/minimax/",
     "api/v3/captioning",
     "api/v3/tools",
     "api/v2/tasks",
@@ -397,6 +399,51 @@ def rewrite_prices(node: Any, amount: "object") -> Any:
         return [rewrite_prices(item, amount) for item in node]
     return node
 
+
+
+async def _merged_voice_list() -> Optional[Dict[str, Any]]:
+    """系统音色 + 当前账号克隆音色（v3 user_voices）合并，供画布音色弹窗使用。"""
+    try:
+        base = await canvas_hub.apiz_json("POST", "/api/voice/list", {"user_type": 1, "only_own": False})
+    except Exception as exc:
+        logger.info("[canvas] voice/list failed: %s", exc)
+        return None
+    if not isinstance(base, dict):
+        return None
+    data = base.get("data") if isinstance(base.get("data"), dict) else {}
+    rows = data.get("list") if isinstance(data.get("list"), list) else []
+    seen = {str(r.get("voice_id") or "") for r in rows if isinstance(r, dict)}
+    try:
+        v3 = await canvas_hub.apiz_json("POST", "/api/v3/minimax/voices", {"user_type": 1})
+        uv = ((v3 or {}).get("data") or {}).get("user_voices") or []
+    except Exception:
+        uv = []
+    for item in uv:
+        if not isinstance(item, dict):
+            continue
+        vid = str(item.get("voice_id") or "").strip()
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        rows.append({
+            "id": item.get("id"),
+            "voice_id": vid,
+            "voice_name": item.get("voice_name") or vid,
+            "description": item.get("prompt_text") or item.get("demo_text") or "克隆音色",
+            "voice_text": item.get("prompt_text") or "",
+            "voice_url": item.get("demo_audio_url") or "",
+            "tags": "",
+            "is_public": 0,
+            "is_own": True,
+            "voice_type": item.get("voice_type") or "clone",
+            "voice_type_display": item.get("voice_type_display") or "声音克隆",
+            "expires_at": item.get("expires_at"),
+            "is_expired": str(item.get("status") or "").lower() != "active",
+            "created_time": item.get("created_at"),
+        })
+    data["list"] = rows
+    base["data"] = data
+    return base
 
 
 async def _catalog_response(normalized: str, db: Session) -> Response:
@@ -1060,6 +1107,12 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
     skip = int(request.query_params.get("skip") or 0)
     limit = int(request.query_params.get("limit") or request.query_params.get("page_size") or 50)
 
+    if normalized in ("api/voice/list", "api/v3/voices"):
+        # 画布音色弹窗：apiz 的 voice/list 只有 310 条系统音色，克隆音色在
+        # /api/v3/minimax/voices 的 user_voices 里，这里合并后一起返回。
+        payload = await _merged_voice_list()
+        if payload is not None:
+            return JSONResponse(payload)
     if normalized.startswith("media/"):
         return hub.media_response(normalized[len("media/"):])
 
@@ -1218,6 +1271,119 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
     return None
 
 
+class CanvasVoiceCloneIn(BaseModel):
+    audio_url: str
+    voice_name: str = ""
+    text: str = "这是克隆音色的试听文本。"
+    model: str = "speech-2.6-hd"
+
+
+@router.post("/canvas-api/api/canvas-voice/clone", summary="画布：上传音频克隆音色（MiniMax）")
+async def canvas_voice_clone(
+    body: CanvasVoiceCloneIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """用服务器速推 key 走 v3 通道克隆音色：
+
+    1) /api/v3/minimax/upload-audio 拿 file_id
+    2) /api/v3/tasks/create model=minimax/voice-clone 带上自造 voice_id
+    3) 轮询任务到 completed，再按我们的定价扣积分
+    """
+    import asyncio as _asyncio
+    import uuid as _uuid
+
+    from ..services.credit_ledger import append_credit_ledger
+    from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+
+    audio_url = (body.audio_url or "").strip()
+    if not audio_url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="audio_url 无效")
+
+    price = our_price_for_display("minimax/voice-clone", {"params": {}}) or 2.0
+    price = quantize_credits(price)
+    db.refresh(user)
+    balance = user_balance_decimal(user)
+    if balance < price:
+        raise HTTPException(
+            status_code=402,
+            detail="积分不足：克隆音色需要 %s 积分，当前余额 %s"
+            % (credits_json_float(price), credits_json_float(balance)),
+        )
+
+    try:
+        uploaded = await canvas_hub.apiz_json(
+            "POST", "/api/v3/minimax/upload-audio",
+            {"audio_url": audio_url, "purpose": "voice_clone"},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"音频上传失败：{exc}") from exc
+    file_id = ((uploaded or {}).get("data") or {}).get("file_id")
+    if not file_id:
+        raise HTTPException(status_code=502, detail=f"音频上传失败：{str(uploaded)[:200]}")
+
+    voice_id = "clone_%s_%s" % (_uuid.uuid4().hex[:12], _uuid.uuid4().hex[:16])
+    try:
+        created = await canvas_hub.apiz_json(
+            "POST", "/api/v3/tasks/create",
+            {
+                "model": "minimax/voice-clone",
+                "params": {
+                    "file_id": file_id,
+                    "voice_id": voice_id,
+                    "text": (body.text or "这是克隆音色的试听文本。")[:200],
+                    "model": (body.model or "speech-2.6-hd"),
+                    "need_noise_reduction": False,
+                },
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"克隆任务提交失败：{exc}") from exc
+    task_id = ((created or {}).get("data") or {}).get("task_id")
+    if not task_id:
+        raise HTTPException(status_code=502, detail=f"克隆任务提交失败：{str(created)[:200]}")
+
+    status = str(((created or {}).get("data") or {}).get("status") or "running")
+    for _ in range(30):
+        if status in {"completed", "succeeded", "failed"}:
+            break
+        await _asyncio.sleep(2.5)
+        try:
+            info = await canvas_hub.apiz_json("GET", f"/api/v3/tasks/{task_id}")
+        except Exception:
+            continue
+        data = (info or {}).get("data") or {}
+        status = str(data.get("status") or "running")
+    if status not in {"completed", "succeeded"}:
+        raise HTTPException(status_code=502, detail=f"克隆未完成（status={status}，task={task_id}）")
+
+    # 成功才扣费
+    db.refresh(user)
+    balance = user_balance_decimal(user)
+    if balance < price:
+        raise HTTPException(status_code=402, detail="积分不足，音色虽已创建但未扣费，请联系管理员")
+    user.credits = quantize_credits(balance - price)
+    append_credit_ledger(
+        db,
+        int(user.id),
+        -price,
+        "deduct",
+        quantize_credits(user.credits),
+        description="画布音色克隆：%s" % (body.voice_name or voice_id),
+        ref_type="canvas_voice_clone",
+        ref_id=voice_id,
+    )
+    db.commit()
+    logger.info("[canvas] voice clone ok user=%s voice=%s task=%s", user.id, voice_id, task_id)
+    return {
+        "ok": True,
+        "voice_id": voice_id,
+        "task_id": task_id,
+        "charged": credits_json_float(price),
+        "balance": credits_json_float(user_balance_decimal(user)),
+    }
+
+
 @router.api_route(
     "/canvas-api/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -1287,6 +1453,7 @@ async def canvas_proxy(
     # 生成类先按速推定价表预检（余额不足 402 / 无价 400），调用后再按上游回报扣费
     model = _payload_model(body_json)
     pre_charged = None
+    voice_first_use = 0.0
     if model and _should_settle(normalized):
         # 按**我们自己的定价**预扣（余额不足 402 挡住）；没定价的模型返回 0，不猜价
         # 先走余额预检（不足直接 402），预检拿不到正价时再用我们的兜底价
@@ -1294,6 +1461,21 @@ async def canvas_proxy(
         if not charged_now or charged_now <= 0:
             charged_now = our_price_for_display(model, body_json) or 0
             logger.info("[canvas] 用兜底价预扣: %s -> %s", model, charged_now)
+        # 上游规则：克隆音色「首次用于语音合成」额外收 1000 积分（自定义音色费）
+        voice_first_use = 0.0
+        if str(model or "").startswith("minimax/t2a"):
+            _vid = str(((body_json.get("params") or {}).get("voice_id") or "")).strip()
+            if _vid.startswith("clone_"):
+                from sqlalchemy import text as _sql_text
+
+                _used = db.execute(
+                    _sql_text("select 1 from canvas_remote_cache where cache_key = :k"),
+                    {"k": "voice_first_use:" + _vid},
+                ).fetchone()
+                if not _used:
+                    voice_first_use = 1000.0
+                    charged_now = float(charged_now or 0) + voice_first_use
+                    logger.info("[canvas] 克隆音色首次合成附加费 1000（voice=%s）", _vid)
         pre_charged = pre_deduct_canvas(db, user, charged_now, model, normalized)
 
     if _path_relayable(normalized) and _should_settle(normalized) and isinstance(body_json.get("params"), dict):
@@ -1352,6 +1534,23 @@ async def canvas_proxy(
         # 成功：价格按我们自己的定价（前面已预扣），不再按 apiz 回报扣一次
         if pre_charged:
             logger.info("[canvas] 生成成功，按我们定价已扣 %s（model=%s）", pre_charged, model)
+        if voice_first_use > 0:
+            try:
+                from sqlalchemy import text as _sql_text2
+
+                _vid2 = str(((body_json.get("params") or {}).get("voice_id") or "")).strip()
+                if _vid2:
+                    db.execute(
+                        _sql_text2(
+                            "insert into canvas_remote_cache (cache_key, payload, synced_at) "
+                            "values (:k, '{}', :t) on conflict (cache_key) do update set synced_at = :t"
+                        ),
+                        {"k": "voice_first_use:" + _vid2, "t": __import__("time").time()},
+                    )
+                    db.commit()
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                logger.warning("[canvas] 记录克隆音色首次使用失败: %s", exc)
     # 上游拒绝时把话翻成我们自己的中文（界面直接显示），不再只甩「请检查参数」
     friendly = humanize_upstream_error(upstream.content[:2000].decode("utf-8", "replace"))
     if friendly and (upstream.status_code >= 400 or b"text" in upstream.content):
