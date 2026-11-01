@@ -10,6 +10,8 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -44,29 +46,58 @@ def _is_video(url: str, content_type: str = "") -> bool:
     return path.endswith((".mp4", ".mov", ".m4v", ".webm", ".avi"))
 
 
+# 2026-11-01：缩略图 ffmpeg 并发与缓存清理。
+# 国内 4 核机后端常驻约 1 核；列表页一次刷几十个视频会同时抽首帧，
+# 无限并发会把 API 挤到超时。这里全局最多 2 个 ffmpeg，同一 URL 只算一次。
+_FFMPEG_SEM = threading.BoundedSemaphore(2)
+_KEY_LOCKS: dict[str, threading.Lock] = {}
+_KEY_LOCKS_GUARD = threading.Lock()
+_CACHE_TTL_SECONDS = 7 * 24 * 3600
+_last_cleanup_at = 0.0
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _KEY_LOCKS_GUARD:
+        lock = _KEY_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _KEY_LOCKS[key] = lock
+        return lock
+
+
+def _cleanup_cache_once() -> None:
+    """每小时最多清一次：删 7 天没被访问的缩略图，别把备份盘撑满。"""
+    global _last_cleanup_at
+    now = time.time()
+    if now - _last_cleanup_at < 3600:
+        return
+    _last_cleanup_at = now
+    try:
+        cutoff = now - _CACHE_TTL_SECONDS
+        for path in _CACHE_DIR.glob("*"):
+            try:
+                if path.is_file() and path.stat().st_atime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[media-thumb] cache cleanup skipped: %s", exc)
+
+
 def _cache_path(url: str, suffix: str) -> Path:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha1(url.encode("utf-8")).hexdigest()
     return _CACHE_DIR / f"{key}{suffix}"
 
 
-@router.get("/api/media/thumb", summary="视频首帧/图片缩略图（服务器代理，规避 Referer 拦截）")
-def media_thumb(url: str = Query(...)):
-    src = _check_url(url)
-    jpg = _cache_path(src, ".jpg")
-    png = _cache_path(src, ".png")
-    for cached in (jpg, png):
-        if cached.exists() and cached.stat().st_size > 0:
-            return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
-
-    if _is_video(src):
-        out = jpg
-        cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-headers", "Referer: https://bhzn.top/\r\nUser-Agent: " + _UA + "\r\n",
-            "-ss", "0.5", "-i", src, "-frames:v", "1",
-            "-vf", "scale=480:-2", "-q:v", "5", str(out),
-        ]
+def _thumb_from_video(src: str, jpg: Path) -> FileResponse:
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-headers", "Referer: https://bhzn.top/\r\nUser-Agent: " + _UA + "\r\n",
+        "-ss", "0.5", "-i", src, "-frames:v", "1",
+        "-vf", "scale=480:-2", "-q:v", "5", str(jpg),
+    ]
+    with _FFMPEG_SEM:
         try:
             subprocess.run(cmd, timeout=60, check=True)
         except Exception as exc:
@@ -77,10 +108,12 @@ def media_thumb(url: str = Query(...)):
             except Exception as exc2:
                 logger.warning("[media-thumb] ffmpeg retry failed url=%s err=%s", src[:120], exc2)
                 raise HTTPException(422, "无法生成视频缩略图") from exc2
-        if not out.exists() or out.stat().st_size == 0:
-            raise HTTPException(422, "缩略图为空")
-        return FileResponse(out, media_type="image/jpeg")
+    if not jpg.exists() or jpg.stat().st_size == 0:
+        raise HTTPException(422, "缩略图为空")
+    return FileResponse(jpg, media_type="image/jpeg")
 
+
+def _thumb_from_image(src: str) -> FileResponse:
     try:
         with httpx.Client(timeout=30, follow_redirects=True, headers={"Referer": "https://bhzn.top/", "User-Agent": _UA}) as client:
             resp = client.get(src)
@@ -94,6 +127,27 @@ def media_thumb(url: str = Query(...)):
     out = _cache_path(src, suffix)
     out.write_bytes(resp.content)
     return FileResponse(out, media_type="image/png" if suffix == ".png" else "image/jpeg")
+
+
+@router.get("/api/media/thumb", summary="视频首帧/图片缩略图（服务器代理，规避 Referer 拦截）")
+def media_thumb(url: str = Query(...)):
+    src = _check_url(url)
+    jpg = _cache_path(src, ".jpg")
+    png = _cache_path(src, ".png")
+    _cleanup_cache_once()
+    for cached in (jpg, png):
+        if cached.exists() and cached.stat().st_size > 0:
+            return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
+
+    with _key_lock(jpg.name):
+        # 同一 URL 并发进来时，等第一个算完直接命中缓存
+        for cached in (jpg, png):
+            if cached.exists() and cached.stat().st_size > 0:
+                return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
+
+        if _is_video(src):
+            return _thumb_from_video(src, jpg)
+    return _thumb_from_image(src)
 
 
 @router.get("/api/media/proxy", summary="媒体流代理（支持 Range，供小程序预览视频）")
