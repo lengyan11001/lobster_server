@@ -340,7 +340,11 @@ Page({
     submitting: false,
     progressText: "正在生成",
     resultImages: [],
-    costHint: costHintFor(1)
+    costHint: costHintFor(1),
+    pickerOpen: false,
+    pickerItems: [],
+    pickerLoading: false,
+    extracting: false
   },
 
   imageSubmitLock: false,
@@ -352,6 +356,64 @@ Page({
   },
 
   onUnload() {
+  },
+
+  openAudioPicker() {
+    if (!(app.globalData.token && app.globalData.phone)) {
+      wx.showToast({ title: "请先在「我的」授权手机号", icon: "none" });
+      return;
+    }
+    this.setData({ pickerOpen: true, pickerLoading: true, pickerItems: [] });
+    app.request({ url: "/api/h5/recorder/files?page=1&page_size=30", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && data.items) || [])
+          .filter((row) => row.status === "completed")
+          .map((row) => ({
+            id: row.id,
+            name: String(row.display_name || row.file_name || "录音"),
+            time: String(row.created_at || "").replace("T", " ").slice(0, 16)
+          }));
+        this.setData({ pickerItems: rows });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ pickerLoading: false }));
+  },
+
+  closePicker() {
+    this.setData({ pickerOpen: false });
+  },
+
+  noop() {},
+
+  pickRecording(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.pickerItems[index];
+    if (!row || this.data.extracting) return;
+    this.setData({ extracting: true, pickerOpen: false, progressText: "AI 正在读录音，生成画面描述…" });
+    app.request({
+      method: "POST",
+      url: `/api/h5/recorder/files/${row.id}/extract-copy-fields`,
+      data: { target: "image" },
+      timeout: 240000
+    })
+      .then((data) => {
+        const prompt = String((data && data.prompt) || "").trim();
+        if (!prompt) throw new Error("没有生成出画面描述");
+        const patch = { prompt, promptLength: prompt.length, progressText: "正在生成" };
+        const ratio = String((data && data.ratio) || "");
+        const resolution = String((data && data.resolution) || "").toLowerCase();
+        const count = Number((data && data.count) || 1);
+        if (this.data.ratios.some((x) => x.value === ratio)) patch.ratio = ratio;
+        if (this.data.resolutions.some((x) => x.value === resolution)) patch.resolution = resolution;
+        if (this.data.counts.some((x) => Number(x.value) === count)) patch.count = count;
+        this.setData(patch);
+        wx.showToast({ title: "已按录音填好画面和参数", icon: "none" });
+      })
+      .catch((err) => {
+        this.setData({ progressText: "正在生成" });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      })
+      .then(() => this.setData({ extracting: false }));
   },
 
   refreshAuthState() {

@@ -37,7 +37,7 @@
 
 .topbar {
   display: grid;
-  grid-template-columns: 76rpx 1fr 76rpx;
+  grid-template-columns: 76rpx 1fr auto;
   align-items: center;
   height: 78rpx;
 }
@@ -572,3 +572,14 @@
   color: #001417;
   background: linear-gradient(135deg, #22f6de, #128dff);
 }
+
+.top-audio-btn { height: 56rpx; line-height: 56rpx; padding: 0 22rpx; font-size: 22rpx; color: #fff; background: rgba(255,255,255,0.18); border: 1rpx solid rgba(255,255,255,0.32); border-radius: 999rpx; }
+.audio-overlay { position: fixed; inset: 0; z-index: 120; display: flex; align-items: flex-end; background: rgba(2,6,23,0.55); }
+.audio-sheet { width: 100%; max-height: 80vh; overflow-y: auto; padding: 28rpx; background: #fff; border-radius: 24rpx 24rpx 0 0; }
+.audio-sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.audio-sheet-title { font-size: 30rpx; font-weight: 600; color: #0f172a; }
+.audio-sheet-close { font-size: 40rpx; color: #94a3b8; }
+.audio-empty { padding: 24rpx 0; font-size: 24rpx; color: #94a3b8; }
+.audio-pick { padding: 22rpx 0; border-top: 2rpx solid #f1f5f9; }
+.audio-pick-name { display: block; font-size: 28rpx; color: #0f172a; }
+.audio-pick-meta { display: block; margin-top: 6rpx; font-size: 22rpx; color: #94a3b8; }

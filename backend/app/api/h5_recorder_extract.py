@@ -282,6 +282,15 @@ _COPY_TARGETS = {
             "count 是建议配图张数，1-9 之间的整数，一般 3；title 可留空。"
         ),
     },
+    "image": {
+        "schema": '{"prompt":"画面描述","ratio":"9:16","resolution":"2k","count":1,"usage":"海报"}',
+        "rules": (
+            "prompt 是可直接用于文生图的画面描述，60-200 字：主体、场景、光线、风格、镜头，"
+            "并明确写“不要文字、不要 logo、不要水印”；"
+            "ratio 只能是 1:1、16:9、9:16、4:3、3:4；resolution 只能是 1k、2k、4k；"
+            "count 是张数，1-9 的整数，一般 1-3；usage 只能是 海报、详情页、朋友圈配图 之一。"
+        ),
+    },
     "article": {
         "schema": '{"title":"","topic":"文章主题","points":"要点与素材","tone":"专业干货"}',
         "rules": (
@@ -308,7 +317,7 @@ async def extract_copy_fields(
     body = await request.json() if await request.body() else {}
     target = str((body or {}).get("target") or "article").strip().lower()
     if target not in _COPY_TARGETS:
-        raise HTTPException(status_code=400, detail="target 只能是 moments 或 article")
+        raise HTTPException(status_code=400, detail="target 只能是 moments / article / image")
 
     current_user = online_user_for_mobile_user(db, current_user)
     row = db.query(RecorderAudioRecord).filter(
@@ -418,6 +427,34 @@ async def extract_copy_fields(
             "topic": topic,
             "count": count,
             "title": str(parsed.get("title") or "").strip()[:60],
+        }
+
+    if target == "image":
+        prompt = str(parsed.get("prompt") or "").strip()[:1200]
+        if not prompt:
+            raise HTTPException(status_code=502, detail="AI 没有返回画面描述")
+        ratio = str(parsed.get("ratio") or "").strip()
+        if ratio not in ("1:1", "16:9", "9:16", "4:3", "3:4"):
+            ratio = "9:16"
+        resolution = str(parsed.get("resolution") or "").strip().lower()
+        if resolution not in ("1k", "2k", "4k"):
+            resolution = "2k"
+        try:
+            count = int(parsed.get("count") or 1)
+        except Exception:
+            count = 1
+        count = max(1, min(9, count))
+        usage = str(parsed.get("usage") or "").strip()
+        if usage not in ("海报", "详情页", "朋友圈配图"):
+            usage = "海报"
+        return {
+            "ok": True,
+            "target": "image",
+            "prompt": prompt,
+            "ratio": ratio,
+            "resolution": resolution,
+            "count": count,
+            "usage": usage,
         }
 
     topic = str(parsed.get("topic") or "").strip()[:200]

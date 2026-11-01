@@ -3,7 +3,7 @@
   <view class="topbar">
     <button class="back-btn" bindtap="goBack">‹</button>
     <text class="page-title">AI图片生成</text>
-    <view class="top-spacer"></view>
+    <button class="top-audio-btn" bindtap="openAudioPicker">录音生成</button>
   </view>
 
   <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
@@ -146,6 +146,21 @@
       <view class="asset-picker-actions">
         <button class="ghost-action" bindtap="chooseReferenceImage">继续上传</button>
         <button class="primary-action" bindtap="confirmAssetPicker">添加选中</button>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{pickerOpen}}" class="audio-overlay" catchtap="closePicker">
+    <view class="audio-sheet" catchtap="noop">
+      <view class="audio-sheet-head">
+        <text class="audio-sheet-title">选一条已转写的录音</text>
+        <text class="audio-sheet-close" catchtap="closePicker">×</text>
+      </view>
+      <view wx:if="{{pickerLoading}}" class="audio-empty">加载中…</view>
+      <view wx:elif="{{!pickerItems.length}}" class="audio-empty">没有可用的录音（需转写完成）</view>
+      <view wx:for="{{pickerItems}}" wx:key="id" class="audio-pick" data-index="{{index}}" bindtap="pickRecording">
+        <text class="audio-pick-name">{{item.name}}</text>
+        <text class="audio-pick-meta">{{item.time}}</text>
       </view>
     </view>
   </view>
