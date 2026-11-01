@@ -38,8 +38,9 @@ Page({
   data: {
     topic: "",
     points: "",
-    tone: "专业干货",
-    tones: ["专业干货", "真诚故事", "犀利观点"],
+    audience: "",
+    tone: "专业观点",
+    tones: ["专业观点", "简洁商业", "故事叙事", "实用教程"],
     loading: false,
     title: "",
     summary: "",
@@ -114,7 +115,11 @@ Page({
   },
 
   setTone(e) {
-    this.setData({ tone: e.currentTarget.dataset.value || "专业干货" });
+    this.setData({ tone: e.currentTarget.dataset.value || "专业观点" });
+  },
+
+  onAudienceInput(e) {
+    this.setData({ audience: e.detail.value });
   },
 
   ensureAuth() {
@@ -133,7 +138,8 @@ Page({
     }
     if (!this.ensureAuth()) return;
     const points = String(this.data.points || "").trim();
-    const tone = this.data.tone || "专业干货";
+    const tone = this.data.tone || "专业观点";
+    const audience = String(this.data.audience || "").trim();
     const system = [
       "你是资深公众号主笔，擅长写可直接发布的微信文章。",
       "只返回严格 JSON：{\"title\":\"标题\",\"summary\":\"80字以内摘要\",\"body\":\"正文\"}。",
@@ -143,7 +149,8 @@ Page({
     const user = [
       `主题：${topic}`,
       points ? `要点与素材：${points}` : "",
-      `风格：${tone}`,
+      audience ? `目标读者：${audience}` : "",
+      `写作风格：${tone}`,
       "请直接输出 JSON。"
     ].filter(Boolean).join("\n");
 

@@ -29,6 +29,9 @@ Page({
   data: {
     topic: "",
     count: 3,
+    copyCount: 10,
+    copyRequirement: "",
+    imageRequirement: "",
     candidates: [],
     selectedIndex: -1,
     images: [],
@@ -105,6 +108,18 @@ Page({
     this.setData({ count: Number(e.currentTarget.dataset.value || 3) });
   },
 
+  setCopyCount(e) {
+    this.setData({ copyCount: Number(e.currentTarget.dataset.value || 10) });
+  },
+
+  onCopyRequirement(e) {
+    this.setData({ copyRequirement: e.detail.value });
+  },
+
+  onImageRequirement(e) {
+    this.setData({ imageRequirement: e.detail.value });
+  },
+
   selectCandidate(e) {
     this.setData({ selectedIndex: Number(e.currentTarget.dataset.index || 0) });
   },
@@ -128,7 +143,10 @@ Page({
     app.request({
       method: "POST",
       url: "/api/ip-content/generate/moments-candidates",
-      data: { extra_requirements: topic, count: 10 },
+      data: {
+        extra_requirements: [topic, String(this.data.copyRequirement || "").trim()].filter(Boolean).join("\n"),
+        count: Math.max(1, Math.min(20, Number(this.data.copyCount || 10)))
+      },
       timeout: 300000
     })
       .then((data) => {
@@ -153,7 +171,10 @@ Page({
     if (!this.ensureAuth()) return;
     const topic = String(this.data.topic || "").trim();
     const count = Math.max(1, Math.min(9, Number(this.data.count || 3)));
-    const prompt = `朋友圈配图：${topic}。文案参考：${picked.text.slice(0, 80)}。要求干净构图、真实质感、适合微信朋友圈配图，画面不要出现文字。`;
+    const imageReq = String(this.data.imageRequirement || "").trim();
+    const prompt = `朋友圈配图：${topic}。文案参考：${picked.text.slice(0, 80)}。`
+      + (imageReq ? `额外要求：${imageReq}。` : "")
+      + "要求干净构图、真实质感、适合微信朋友圈配图，画面不要出现文字。";
     this.setData({ loadingImage: true, images: [], progressText: "正在生成配图…" });
     app.request({
       method: "POST",

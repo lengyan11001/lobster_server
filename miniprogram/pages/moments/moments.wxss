@@ -29,3 +29,5 @@
 .pick { padding: 22rpx 0; border-top: 2rpx solid #f1f5f9; }
 .pick-name { display: block; font-size: 28rpx; color: #0f172a; }
 .pick-meta { display: block; margin-top: 6rpx; font-size: 22rpx; color: #94a3b8; }
+
+.input.small { min-height: 88rpx; margin-bottom: 16rpx; }

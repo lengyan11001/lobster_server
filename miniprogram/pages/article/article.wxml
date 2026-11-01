@@ -10,6 +10,8 @@
   <view class="panel">
     <text class="label">文章主题</text>
     <input class="input" value="{{topic}}" bindinput="onTopicInput" placeholder="例如：小户型收纳的三个反常识" />
+    <text class="label">目标读者（可选）</text>
+    <input class="input" value="{{audience}}" bindinput="onAudienceInput" placeholder="例如：中小企业老板、门店经营者" />
     <text class="label">要点 / 素材（可选）</text>
     <textarea class="textarea" value="{{points}}" bindinput="onPointsInput" placeholder="产品卖点、案例、想强调的观点" auto-height maxlength="800" />
     <view class="row">
