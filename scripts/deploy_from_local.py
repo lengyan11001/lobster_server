@@ -214,8 +214,27 @@ def deploy_target(target: Target, *, reset: bool = True) -> None:
         raise SystemExit(f"[ERR] deploy failed on {target.host}, code={code}")
 
 
+def _gui_release_confirm(action: str = "发布") -> None:
+    """GUI 人工闸门：必须有人在弹窗里输入随机码才继续（环境变量无法替代）。"""
+    import subprocess as _sp
+    from pathlib import Path as _Path
+
+    script = _Path(__file__).resolve().parent / "release_confirm.ps1"
+    if not script.is_file():
+        print("[BLOCKED] 缺少人工确认脚本 scripts/release_confirm.ps1", file=sys.stderr)
+        raise SystemExit(6)
+    rc = _sp.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Action", action],
+        check=False,
+    ).returncode
+    if rc != 0:
+        print(f"[BLOCKED] 人工确认未通过（exit={rc}），已中止。", file=sys.stderr)
+        raise SystemExit(6)
+
+
 def main() -> int:
     _require_user_deploy_confirmation()
+    _gui_release_confirm('部署')
     parser = argparse.ArgumentParser(description="Deploy lobster_server from Windows/Python without local bash.")
     parser.add_argument("--env", type=Path, default=ROOT / ".env.deploy", help=".env.deploy path")
     parser.add_argument("--test", action="store_true", help="Deploy only LOBSTER_DEPLOY_HOST_TEST")

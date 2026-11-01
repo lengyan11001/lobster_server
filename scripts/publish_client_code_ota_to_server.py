@@ -516,8 +516,27 @@ def _require_release_approval(zip_path: str, approved_version: str) -> str:
     return version
 
 
+def _gui_release_confirm(action: str = "发布") -> None:
+    """GUI 人工闸门：必须有人在弹窗里输入随机码才继续（环境变量无法替代）。"""
+    import subprocess as _sp
+    from pathlib import Path as _Path
+
+    script = _Path(__file__).resolve().parent / "release_confirm.ps1"
+    if not script.is_file():
+        print("[BLOCKED] 缺少人工确认脚本 scripts/release_confirm.ps1", file=sys.stderr)
+        raise SystemExit(6)
+    rc = _sp.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Action", action],
+        check=False,
+    ).returncode
+    if rc != 0:
+        print(f"[BLOCKED] 人工确认未通过（exit={rc}），已中止。", file=sys.stderr)
+        raise SystemExit(6)
+
+
 def main() -> int:
     _require_user_deploy_confirmation()
+    _gui_release_confirm('发布')
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path", type=Path, help="local OTA zip")
     ap.add_argument("--approved-version", default="", help="用户明确批准的版本号（必须与包内版本一致）")
