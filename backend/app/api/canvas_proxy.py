@@ -1011,6 +1011,25 @@ async def prepare_params(model: str, params: Dict[str, Any]) -> Dict[str, Any]:
             await _clean_media_lists(nested)
             _normalize_resolution(nested)
 
+    # minimax/h3 的枚举是大小写敏感的 480p/768P/1080p/2K，且必须给 content 数组。
+    if str(model or "").startswith("minimax/h3"):
+        _MM_RES = {"480p": "480p", "720p": "768P", "768p": "768P", "768": "768P",
+                   "1080p": "1080p", "2k": "2K", "4k": "2K"}
+
+        def _fix_mm(container: Dict[str, Any]) -> None:
+            raw = str(container.get("resolution") or "").strip().lower()
+            container["resolution"] = _MM_RES.get(raw, "768P")
+            text = str(container.get("prompt") or "").strip()
+            content = container.get("content")
+            if (not isinstance(content, list) or not content) and text:
+                container["content"] = [{"type": "text", "text": text}]
+
+        _fix_mm(params)
+        for nested_key in ("params", "input_params"):
+            nested = params.get(nested_key)
+            if isinstance(nested, dict):
+                _fix_mm(nested)
+
     # 该模型不接受 content（seedance 等）：把文字拆成 prompt，图片提到顶层
     if "seedance" in model or "super-seed" in model or "kling" in model:
         text = ""
