@@ -73,6 +73,7 @@ from .installation_slots import ensure_installation_slot, installation_slot_id_f
 from .mobile_identity import online_user_for_mobile_user
 from ..services import dispatch_devices
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
+from ..services.exec_routing import executor_for_payload
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import ensure_system_task_session
 from ..services.installation_slot_ownership import assert_installation_slot_owner
@@ -4069,6 +4070,9 @@ def _create_run_for_target(
         progress={
             "queued_at": now.isoformat(),
             "scheduled_at": (scheduled_at or now).isoformat(),
+            "executor": executor_for_payload(
+                db, user_id=task.user_id, task_kind=run_kind, payload=run_payload
+            ),
         },
         h5_message_id=message_id,
         created_at=now,
