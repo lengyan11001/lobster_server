@@ -1998,6 +1998,23 @@ def create_app() -> FastAPI:
         logger.warning("Mount canvas-web static skipped: %s", e)
     app.include_router(canvas_hub_public_router, prefix="")
     app.include_router(canvas_proxy_router, prefix="")
+    # 服务端执行器（默认关闭）：只有 LOBSTER_SERVER_EXEC_ACTIONS 里显式列出的能力
+    # 才会起循环；清空环境变量并重启即完全回到客户端执行。
+    try:
+        from .services.exec_routing import server_exec_actions
+
+        if "shanjian_material_mix" in server_exec_actions():
+            from .services import material_mix_runner
+
+            @app.on_event("startup")
+            async def _start_material_mix_runner() -> None:
+                import asyncio as _asyncio
+
+                _asyncio.create_task(material_mix_runner.background_loop())
+
+            logger.info("[启动] 服务端素材混剪执行器已注册（LOBSTER_SERVER_EXEC_ACTIONS 开启）")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[启动] 服务端素材混剪执行器未启动: %s", exc)
     return app
 
 
