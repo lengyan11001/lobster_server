@@ -422,10 +422,41 @@ def project_row_to_json(row: Any, *, with_snapshot: bool = False) -> Dict[str, A
     }
     if with_snapshot:
         # 兜底拆包：即使历史数据里存的是「字符串套 JSON」，也要能读出真正的画布
-        snapshot = snapshot_as_dict(row.snapshot)
+        snapshot = normalize_task_nodes(snapshot_as_dict(row.snapshot))
         data["snapshot"] = snapshot
         data["canvas"] = snapshot
     return data
+
+
+_TASK_NODE_TYPES = {"imageTask", "videoTask", "audioTask"}
+
+
+def normalize_task_nodes(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """读/复制画布时清掉任务节点的运行态。
+
+    2026-11-02 事故：副本继承了源模板里 status=failed 的任务节点，一进画布全红；
+    另外节点带着旧 taskId，前端会去上游重新轮询，把 completed 又刷成 failed。
+    规则：有产物（视频/图片/音频）→ completed 且去掉 taskId；无产物 → 回到待生成。
+    """
+    if not isinstance(snapshot, dict):
+        return snapshot
+    for node in snapshot.get("nodes") or []:
+        if not isinstance(node, dict) or str(node.get("type")) not in _TASK_NODE_TYPES:
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            continue
+        has_media = bool(
+            data.get("videoUrl") or data.get("generatedImages") or data.get("audioUrl") or data.get("url")
+        )
+        if has_media:
+            data["status"] = "completed"
+        else:
+            for key in ("status", "error", "taskType", "progress", "stage"):
+                data.pop(key, None)
+        for key in ("error", "taskId", "outputParams", "progress", "stage"):
+            data.pop(key, None)
+    return snapshot
 
 
 def _identifier_clause(identifier: str) -> Tuple[str, Dict[str, Any]]:
