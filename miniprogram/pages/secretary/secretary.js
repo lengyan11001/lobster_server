@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix17" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix18" + envInfo);
     this._bindBle();
   },
 
@@ -728,7 +728,7 @@ Page({
     this._stopTimer();
     this.setDevice({ isRecording: false, isPaused: false, timeText: "00:00:00" });
     wx.showToast({ title: "已发送停止指令，设备生成文件后自动出现", icon: "none" });
-    [3000, 8000, 15000].forEach((delay, idx) => {
+    [3000, 8000, 15000, 30000].forEach((delay, idx) => {
       setTimeout(() => {
         this.reload();
         this._requestFileList("after-stop#" + (idx + 1));
