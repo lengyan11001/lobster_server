@@ -31,6 +31,7 @@ Page({
       timeText: "00:00:00"
     },
     syncText: "",
+    syncing: false,
     diagOpen: false,
     diagLines: [],
     diagId: ""
@@ -227,28 +228,43 @@ Page({
   },
 
   /* 停录后把设备上的新文件自动拉下来并入库（H5 是原生桥做的，小程序自己补） */
+  _normalizeName(name) {
+    return String(name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\.(opus|atw|wav|mp3|m4a|aac|ogg|amr|silk)$/i, "");
+  },
+
   _autoSyncDeviceFiles(files) {
     const ble = this._ble;
     const list = Array.isArray(files) ? files : [];
     if (!ble || !list.length) return;
     const known = {};
     (this.data.items || []).forEach((row) => {
-      if (row.fileName) known[String(row.fileName)] = true;
+      if (row.fileName) known[this._normalizeName(row.fileName)] = true;
+      if (row.name) known[this._normalizeName(row.name)] = true;
     });
     this._queuedNames = this._queuedNames || {};
-    const todo = list.filter((file) => {
+    const sorted = list.slice().sort((a, b) => String((b && b.fileName) || "").localeCompare(String((a && a.fileName) || "")));
+    const todo = sorted.filter((file) => {
       const name = String((file && file.fileName) || "");
-      if (!name || known[name]) return false;
-      if (this._uploaded && this._uploaded[name]) return false;
-      if (this._uploading && this._uploading[name]) return false;
-      if (this._queuedNames[name]) return false;
+      if (!name) return false;
+      const key = this._normalizeName(name);
+      if (known[key]) return false;
+      if (this._uploaded && (this._uploaded[name] || this._uploaded[key])) return false;
+      if (this._uploading && (this._uploading[name] || this._uploading[key])) return false;
+      if (this._queuedNames[name] || this._queuedNames[key]) return false;
       return true;
     });
     this._logDiag("sync:plan", { total: list.length, missing: todo.length, known: (this.data.items || []).length });
     if (!todo.length) return;
     const capped = todo.slice(0, 10);
     this._logDiag("sync:queued", { count: capped.length, skipped: todo.length - capped.length });
-    capped.forEach((file) => { this._queuedNames[String((file && file.fileName) || "")] = true; });
+    capped.forEach((file) => {
+      const n = String((file && file.fileName) || "");
+      this._queuedNames[n] = true;
+      this._queuedNames[this._normalizeName(n)] = true;
+    });
     this._syncQueue = (this._syncQueue || []).concat(capped);
     if (this._syncing) return;
     this._runSyncQueue();
@@ -259,10 +275,11 @@ Page({
     const queue = this._syncQueue || [];
     if (!ble || !queue.length) {
       this._syncing = false;
-      this.setData({ syncText: "" });
+      this.setData({ syncing: false, syncText: "" });
       return;
     }
     this._syncing = true;
+    this.setData({ syncing: true });
     const file = queue.shift();
     const name = String((file && file.fileName) || "");
     const local = ble.getLocalPath ? ble.getLocalPath(name) : "";
@@ -282,16 +299,70 @@ Page({
     }
   },
 
+  _readHeader(path) {
+    try {
+      const fs = wx.getFileSystemManager();
+      const fd = fs.openSync(path, "r");
+      const buf = new ArrayBuffer(12);
+      fs.readSync(fd, buf, 0, 12, 0);
+      fs.closeSync(fd);
+      return new Uint8Array(buf);
+    } catch (err) {
+      return null;
+    }
+  },
+
+  /* 设备下载下来的可能是 ATW（私有格式），必须转成 Opus 才能上传转写 */
+  _prepareUploadFile(name, localPath) {
+    const rawName = String(name || "").replace(/^ble_/i, "");
+    const head = this._readHeader(localPath);
+    if (!head) return { ok: false, reason: "read_header_failed" };
+    const isAtw = head[0] === 0x5B && head[1] === 0x50;
+    let path = localPath;
+    let ext = ".opus";
+    if (isAtw) {
+      try {
+        const converter = require("../../utils/airec/atw-opus-converter");
+        const converted = converter.convert(localPath);
+        if (!converted) return { ok: false, reason: "atw_convert_failed" };
+        path = converted;
+      } catch (err) {
+        return { ok: false, reason: "atw_convert_error" };
+      }
+    } else if (head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46) {
+      ext = ".wav";
+    } else if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {
+      ext = ".mp3";
+    } else if (head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
+      ext = ".m4a";
+    } else if (!(head[0] === 0x4F && head[1] === 0x67 && head[2] === 0x67 && head[3] === 0x53)) {
+      return { ok: false, reason: "unknown_container" };
+    }
+    try {
+      const fs = wx.getFileSystemManager();
+      const target = `${wx.env.USER_DATA_PATH}/${rawName}${ext}`;
+      fs.copyFileSync(path, target);
+      return { ok: true, path: target, name: rawName + ext };
+    } catch (err) {
+      return { ok: true, path, name: rawName + ext };
+    }
+  },
+
   _uploadDeviceFile(file, localPath) {
     const name = String((file && file.fileName) || "");
     if (!localPath || !name) { this._runSyncQueue(); return; }
-    this._uploading = this._uploading || {};
-    this._uploading[name] = true;
-    this._logDiag("upload:start", { file: name, path: String(localPath).slice(-40) });
-    this.setData({ syncText: "正在上传 " + name + "…" });
+    const prepared = this._prepareUploadFile(name, localPath);
+    if (!prepared.ok) {
+      this._logDiag("upload:skip", { file: name, reason: prepared.reason });
+      this.setData({ syncText: "跳过 " + name + "（" + prepared.reason + "）" });
+      this._runSyncQueue();
+      return;
+    }
+    this._logDiag("upload:start", { file: prepared.name, from: name });
+    this.setData({ syncText: "正在上传 " + prepared.name + "…" });
     api.uploadFile({
       url: "/api/h5/recorder/files",
-      filePath: localPath,
+      filePath: prepared.path,
       name: "file",
       formData: {
         source_type: "device",
@@ -301,17 +372,19 @@ Page({
       timeout: 600000
     })
       .then(() => {
-        this._logDiag("upload:ok", { file: name });
+        this._logDiag("upload:ok", { file: prepared.name });
         this._uploaded = this._uploaded || {};
         this._uploaded[name] = true;
-        wx.showToast({ title: "已上传 " + name, icon: "none" });
+        this._uploaded[this._normalizeName(name)] = true;
+        wx.showToast({ title: "已上传 " + prepared.name, icon: "none" });
         this.reload();
       })
       .catch((err) => {
-        this._logDiag("upload:failed", { file: name, error: api.errorMessage(err) });
-        this.setData({ syncText: "上传失败：" + name + " · " + api.errorMessage(err) });
+        this._logDiag("upload:failed", { file: prepared.name, error: api.errorMessage(err) });
+        this.setData({ syncText: "上传失败：" + prepared.name + " · " + api.errorMessage(err) });
       })
       .then(() => {
+        this._uploading = this._uploading || {};
         this._uploading[name] = false;
         this._runSyncQueue();
       });
@@ -410,6 +483,14 @@ Page({
     } catch (err) {
       this._logDiag("files:request:error", String((err && err.message) || err));
     }
+  },
+
+  stopSync() {
+    this._syncQueue = [];
+    this._queuedNames = {};
+    this._syncing = false;
+    this._listInFlightAt = 0;
+    this.setData({ syncing: false, syncText: "已停止同步（设备上未同步的文件保持原样）" });
   },
 
   refreshDeviceFiles() {
