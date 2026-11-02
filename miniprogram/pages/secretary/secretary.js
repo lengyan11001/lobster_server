@@ -51,7 +51,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-manual-sync" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-gate" + envInfo);
     this._bindBle();
   },
 
@@ -140,7 +140,6 @@ Page({
     this.setDevice({ connected: true });
     try {
       ble.fetchAllDeviceInfo();
-      ble.fetchDeviceInfo();
       this._logDiag("files:request", "onShow");
       // 连上后设备还在回设备信息，隔 1.5s 再要文件列表，避免写队列堆积
       clearTimeout(this._firstListTimer);

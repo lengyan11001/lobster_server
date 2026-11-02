@@ -93,6 +93,8 @@ function AIRECBleManager() {
   this._deviceFoundBound = false
   this._notifyBound = false
   this._filesFetchAt = 0
+  this._replyExpect = { record: 0, init: 0, status: 0 }
+  this._dropLogCount = 0
   this._rxBuffer = null  // 控制通道粘包缓冲
 }
 
@@ -437,6 +439,7 @@ AIRECBleManager.prototype.syncTime = function() {
 AIRECBleManager.prototype.fetchDeviceInfo = function() {
   var self = this
   this._write(this._buildFrame(CMD.BATTERY))
+  self._awaitReply('status')
   setTimeout(function() { self._write(self._buildFrame(CMD.RECORD_STATUS)) }, 200)
   setTimeout(function() { self._write(self._buildFrame(CMD.GET_STORAGE)) }, 400)
 }
@@ -447,6 +450,7 @@ AIRECBleManager.prototype.fetchAllDeviceInfo = function() {
   this._write(this._buildFrame(CMD.GET_MAC))
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.BATTERY)) } }, 600)
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.GET_STORAGE)) } }, 1200)
+  self._awaitReply('status')
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.RECORD_STATUS)) } }, 1800)
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.VERSION)) } }, 2400)
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.GET_INIT_PARAM)) } }, 3000)
@@ -463,6 +467,7 @@ AIRECBleManager.prototype.fetchFileList = function() {
 
 AIRECBleManager.prototype.startRecord = function() {
   var self = this
+  this._awaitReply('record')
   this._write(this._buildFrame(CMD.START_RECORD))
   setTimeout(function() {
     self._write(self._buildFrame(CMD.START_RECORD2, self._strToBytes('R')))
@@ -474,6 +479,7 @@ AIRECBleManager.prototype.resumeRecord = function() { this._write(this._buildFra
 
 AIRECBleManager.prototype.endRecord = function() {
   var self = this
+  this._awaitReply('record')
   this._write(this._buildFrame(CMD.END_RECORD))
   setTimeout(function() { self.fetchFileList() }, 3000)
 }
@@ -484,7 +490,7 @@ AIRECBleManager.prototype.deleteFile = function(fileName) {
 }
 
 AIRECBleManager.prototype.fetchFirmwareVersion = function() { this._write(this._buildFrame(CMD.VERSION)) }
-AIRECBleManager.prototype.fetchInitParam = function() { this._write(this._buildFrame(CMD.GET_INIT_PARAM)) }
+AIRECBleManager.prototype.fetchInitParam = function() { this._awaitReply('init'); this._write(this._buildFrame(CMD.GET_INIT_PARAM)) }
 
 AIRECBleManager.prototype.setLedSwitch     = function(on) { this._write(this._buildFrame(CMD.LED_SWITCH,     new Uint8Array([on ? 1 : 0]))) }
 AIRECBleManager.prototype.setNoiseSwitch   = function(on) { this._write(this._buildFrame(CMD.NOISE_SWITCH,   new Uint8Array([on ? 1 : 0]))) }
@@ -649,6 +655,24 @@ AIRECBleManager.prototype._handleControlData = function(raw) {
   }
 }
 
+AIRECBleManager.prototype._awaitReply = function(kind) {
+  this._replyExpect[kind] = Date.now()
+}
+
+AIRECBleManager.prototype._replyFresh = function(kind, windowMs) {
+  var at = this._replyExpect[kind] || 0
+  return at > 0 && Date.now() - at <= (windowMs || 10000)
+}
+
+AIRECBleManager.prototype._dropFrame = function(cmd, dataLen) {
+  // 只记前 20 条，避免诊断里刷屏
+  if (this._dropLogCount >= 20) return
+  this._dropLogCount++
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[ble] drop unsolicited frame cmd=' + cmd + ' len=' + dataLen)
+  }
+}
+
 AIRECBleManager.prototype._processCmd = function(cmd, data) {
   var self = this
   switch (cmd) {
@@ -668,6 +692,7 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
       break
 
     case CMD.RECORD_STATUS:
+      if (!this._replyFresh('status', 12000)) { this._dropFrame(cmd, data.length); break }
       if (data.length >= 1 && this._device) {
         var st = data[0]
         // 0x00=录音中, 0x01=暂停, 0x02=未录音（与 Android SDK 一致）
@@ -711,6 +736,7 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
 
     case CMD.GET_FILES_END:
     case CMD.GET_FILES_FAIL: {
+      if (!this._filesFetchAt) { this._dropFrame(cmd, data.length); break }
       this._filesFetchAt = 0
       var rawList = this._pendingFiles.slice()
       var list = []
@@ -743,6 +769,9 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
 
     case CMD.START_RECORD:
     case CMD.START_RECORD2:
+      if (!this._replyFresh('record', 8000)) { this._dropFrame(cmd, data.length); break }
+      this._replyExpect.record = 0
+      // fallthrough 语义：继续走下面的处理
     case CMD.DEVICE_START_REC:
     case CMD.DEVICE_START_REC_2: {
       var recFn = data.length > 0 ? this._bytesToStr(data).trim() : ''
@@ -752,6 +781,8 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
     }
 
     case CMD.END_RECORD:
+      if (!this._replyFresh('record', 8000)) { this._dropFrame(cmd, data.length); break }
+      this._replyExpect.record = 0
     case CMD.DEVICE_END_REC: {
       var endFn = data.length > 4 ? this._bytesToStr(data.slice(0, data.length - 4)).trim() : ''
       if (this._device) this._device.isRecording = false
@@ -818,6 +849,8 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
       break
 
     case CMD.GET_INIT_PARAM:
+      if (!this._replyFresh('init', 12000)) { this._dropFrame(cmd, data.length); break }
+      this._replyExpect.init = 0
       if (data.length >= 9) {
         var offset = 0
         this.settings.noiseSwitch = data[offset++] !== 0
