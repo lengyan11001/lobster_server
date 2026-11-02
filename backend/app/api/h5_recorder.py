@@ -675,6 +675,31 @@ def _stt_task_reference(task_ids: list[str]) -> str:
     return f"batch:{len(unique)}:{unique[0][:36]}:{unique[-1][:36]}"[:128]
 
 
+def _stt_poll_with_retry(token: str, task_id: str, *, job_dir, attempts: int = 3):
+    """上游偶发 Cloudflare 5xx（520/522/524）时重试轮询，避免整条录音直接判失败。"""
+    import time as _time
+
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _stt_poll_task(token, task_id, job_dir=job_dir, timeout_seconds=1800)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            text = str(exc)
+            transient = any(k in text for k in ("52", "50", "Timeout", "timed out", "Cloudflare"))
+            if attempt >= attempts or not transient:
+                raise
+            delay = 5 * attempt
+            logger.warning(
+                "[recorder] STT 轮询失败(%s/3)，%ss 后重试: %s",
+                attempt,
+                delay,
+                text[:160],
+            )
+            _time.sleep(delay)
+    raise last_exc  # pragma: no cover
+
+
 def _transcribe_stt_range(
     *,
     token: str,
@@ -713,7 +738,7 @@ def _transcribe_stt_range(
                 task_id = created["task_id"]
             finally:
                 wav.unlink(missing_ok=True)
-        stt_data = _stt_poll_task(token, task_id, job_dir=chunk_dir, timeout_seconds=1800)
+        stt_data = _stt_poll_with_retry(token, task_id, job_dir=chunk_dir)
         _write_cached_stt_chunk(chunk_dir, stt_data, task_id)
 
     output = _extract_stt_output(stt_data)
