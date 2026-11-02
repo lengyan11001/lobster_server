@@ -47,6 +47,7 @@ from .installation_slots import apply_installation_signup_bonus_for_new_user, pa
 from .mobile_identity import (
     is_wechat_session_user,
     latest_mobile_binding,
+    merge_wechat_user_into_phone,
     online_user_for_mobile_binding,
     online_user_for_mobile_user,
 )
@@ -660,6 +661,13 @@ def mobile_wechat_login(
         db.refresh(user)
     latest_binding = latest_mobile_binding(db, user)
     phone = (legacy_phone or (latest_binding.phone if latest_binding else "") or _phone_from_user_email(user.email)).strip()
+    if phone:
+        phone_user, _ = _get_or_create_phone_user(db, phone, brand)
+        if phone_user and phone_user.id != user.id:
+            if merge_wechat_user_into_phone(db, user, phone_user):
+                user = phone_user
+                db.commit()
+                db.refresh(user)
     token = create_access_token(data=access_token_claims(user))
     if phone and body.device_id:
         device_id = _stored_mobile_device_id(body.device_id, brand)
@@ -733,6 +741,8 @@ def bind_mobile_device(
             raise HTTPException(status_code=403, detail="当前登录账号与手机号不一致，请先用该手机号登录")
         if not phone_verified:
             raise HTTPException(status_code=400, detail="绑定手机号账号需要使用微信手机号授权 code")
+        if merge_wechat_user_into_phone(db, current_user, phone_user):
+            bind_user = phone_user
     ref_bound = _apply_ref_agent_binding(db, phone_user, body, "phone_bind")
     if not ref_bound and not getattr(phone_user, "parent_user_id", None) and getattr(bind_user, "parent_user_id", None):
         phone_user.parent_user_id = int(bind_user.parent_user_id)
