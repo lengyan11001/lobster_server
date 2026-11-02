@@ -1,0 +1,65 @@
+<view class="page">
+  <view class="head">
+    <view class="head-text">
+      <text class="title">朋友圈图文</text>
+      <text class="sub">先出文案，再配 1-9 张图，一起存进作品</text>
+    </view>
+    <button class="ghost mini" bindtap="openAudioPicker">录音生成</button>
+  </view>
+
+  <view class="panel">
+    <text class="label">主题 / 卖点</text>
+    <textarea class="input" value="{{topic}}" bindinput="onTopicInput" placeholder="例如：小户型收纳神器，99 元三件套" auto-height maxlength="200" />
+    <view class="row">
+      <text class="label">配图数量</text>
+      <view class="chips">
+        <view wx:for="{{[1,3,6,9]}}" wx:key="*this" class="chip {{count === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setCount">{{item}} 张</view>
+      </view>
+    </view>
+    <view class="row">
+      <text class="label">文案条数</text>
+      <view class="chips">
+        <view wx:for="{{[5,10,20]}}" wx:key="*this" class="chip {{copyCount === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setCopyCount">{{item}} 条</view>
+      </view>
+    </view>
+    <text class="label">文案要求（可选）</text>
+    <textarea class="input small" value="{{copyRequirement}}" bindinput="onCopyRequirement" placeholder="例如：短句、多换行、不要硬性导流" auto-height maxlength="200" />
+    <text class="label">配图要求（可选）</text>
+    <textarea class="input small" value="{{imageRequirement}}" bindinput="onImageRequirement" placeholder="例如：人物真实、同城生活感、避免画面文字" auto-height maxlength="200" />
+    <button class="primary" loading="{{loadingCopy}}" disabled="{{loadingCopy}}" bindtap="generateCopy">生成朋友圈文案</button>
+  </view>
+
+  <view wx:if="{{candidates.length}}" class="panel">
+    <text class="label">文案候选（点选一条）</text>
+    <view wx:for="{{candidates}}" wx:key="key" class="candidate {{selectedIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectCandidate">
+      <text class="candidate-text">{{item.text}}</text>
+    </view>
+    <button class="primary" loading="{{loadingImage}}" disabled="{{loadingImage || selectedIndex < 0}}" bindtap="generateImages">按这条文案生成 {{count}} 张配图</button>
+    <button class="ghost" bindtap="copySelected" disabled="{{selectedIndex < 0}}">复制文案</button>
+  </view>
+
+  <view wx:if="{{images.length}}" class="panel">
+    <text class="label">配图（已存入作品）</text>
+    <view class="grid">
+      <image wx:for="{{images}}" wx:key="*this" class="thumb" src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewImage" />
+    </view>
+    <button class="ghost" bindtap="goWorks">去作品查看</button>
+  </view>
+
+  <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
+
+  <view wx:if="{{pickerOpen}}" class="overlay" catchtap="closePicker">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">选一条已转写的录音</text>
+        <text class="sheet-close" catchtap="closePicker">×</text>
+      </view>
+      <view wx:if="{{pickerLoading}}" class="empty">加载中…</view>
+      <view wx:elif="{{!pickerItems.length}}" class="empty">没有可用的录音（需转写完成）</view>
+      <view wx:for="{{pickerItems}}" wx:key="id" class="pick" data-index="{{index}}" bindtap="pickRecording">
+        <text class="pick-name">{{item.name}}</text>
+        <text class="pick-meta">{{item.time}}</text>
+      </view>
+    </view>
+  </view>
+</view>

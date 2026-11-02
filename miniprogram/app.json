@@ -2,6 +2,16 @@
   "lazyCodeLoading": "requiredComponents",
   "pages": [
     "pages/index/index",
+    "pages/assets/assets",
+    "pages/voice-create/voice-create",
+    "pages/avatar-create/avatar-create",
+    "pages/records/records",
+    "pages/montage/montage",
+    "pages/video-hub/video-hub",
+    "pages/article/article",
+    "pages/moments/moments",
+    "pages/moments-create/moments-create",
+    "pages/moments-detail/moments-detail",
     "pages/assistant/assistant",
     "pages/video-inspiration/video-inspiration",
     "pages/image-generate/image-generate",
@@ -10,7 +20,14 @@
     "pages/avatar-templates/avatar-templates",
     "pages/downloads/downloads",
     "pages/work-detail/work-detail",
-    "pages/profile/profile"
+    "pages/profile/profile",
+    "pages/airec/main/main",
+    "pages/airec/scan/scan",
+    "pages/airec/player/player",
+    "pages/secretary/secretary",
+    "pages/secretary-detail/secretary-detail",
+    "pages/ip-profile/ip-profile",
+    "pages/template-edit/template-edit"
   ],
   "window": {
     "navigationBarTitleText": "龙虾AI员工",
@@ -44,5 +61,8 @@
       "desc": "用于将你生成或收到的图片、视频素材保存到手机相册，便于本地查看、下载和分享"
     }
   },
-  "sitemapLocation": "sitemap.json"
+  "sitemapLocation": "sitemap.json",
+  "requiredBackgroundModes": [
+    "bluetooth"
+  ]
 }
