@@ -18,8 +18,10 @@ Page({
     extractOpen: false,
     extractFields: [],
     extractDocs: [],
-    extractKeywords: "",
-    extractCompetitors: "", 
+    extractKeywords: [],
+    extractCompetitors: [],
+    extractGenderIndex: 0,
+    templateName: "",
     playing: false,
     record: null
   },
@@ -150,9 +152,22 @@ Page({
         const docs = Object.keys(docTitles)
           .map((key) => ({ key, title: docTitles[key], checked: Boolean(String(memory[key] || "").trim()) }))
           .filter((x) => String(memory[x.key] || "").trim());
-        const kws = ((data && data.keywords) || []).map((k) => String((k && k.keyword) || k || "").trim()).filter(Boolean);
-        const cps = ((data && data.competitors) || []).map((c) => String((c && c.account) || "").trim()).filter(Boolean);
-        this.setData({ extractOpen: true, extractFields: fields, extractDocs: docs, extractKeywords: kws.join("\n"), extractCompetitors: cps.join("\n") });
+        const kws = ((data && data.keywords) || []).map((k) => ({
+          keyword: String((k && k.keyword) || k || "").trim(),
+          display_name: String((k && k.display_name) || "").trim()
+        })).filter((k) => k.keyword);
+        const cps = ((data && data.competitors) || []).map((c) => ({
+          platform: String((c && c.platform) || "other"),
+          account: String((c && c.account) || "").trim(),
+          nickname: String((c && c.nickname) || "").trim()
+        })).filter((c) => c.account);
+        const g = String(profile.gender || "").toLowerCase();
+        this.setData({
+          extractOpen: true, extractFields: fields, extractDocs: docs,
+          extractKeywords: kws, extractCompetitors: cps,
+          extractGenderIndex: g === "female" ? 1 : (g === "male" ? 2 : 0),
+          templateName: ""
+        });
       })
       .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); })
       .then(() => this.setData({ extracting: false }));
@@ -174,18 +189,83 @@ Page({
     this.setData({ extractDocs: list });
   },
 
-  onKeywordsInput(e) { this.setData({ extractKeywords: e.detail.value }); },
-  onCompetitorsInput(e) { this.setData({ extractCompetitors: e.detail.value }); },
+  onGenderChange(e) { this.setData({ extractGenderIndex: Number(e.detail.value || 0) }); },
+
+  onKwInput(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const field = e.currentTarget.dataset.field;
+    const list = this.data.extractKeywords.slice();
+    if (!list[idx]) return;
+    list[idx][field] = e.detail.value;
+    this.setData({ extractKeywords: list });
+  },
+  addKeyword() {
+    const list = this.data.extractKeywords.concat([{ keyword: "", display_name: "" }]);
+    this.setData({ extractKeywords: list });
+  },
+  removeKeyword(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const list = this.data.extractKeywords.slice();
+    list.splice(idx, 1);
+    this.setData({ extractKeywords: list });
+  },
+
+  onCpInput(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const field = e.currentTarget.dataset.field;
+    const list = this.data.extractCompetitors.slice();
+    if (!list[idx]) return;
+    list[idx][field] = e.detail.value;
+    this.setData({ extractCompetitors: list });
+  },
+  onCpPlatform(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const list = this.data.extractCompetitors.slice();
+    if (!list[idx]) return;
+    list[idx].platform = ["douyin", "channels", "xiaohongshu", "kuaishou", "other"][Number(e.detail.value || 0)];
+    this.setData({ extractCompetitors: list });
+  },
+  addCompetitor() {
+    const list = this.data.extractCompetitors.concat([{ platform: "other", account: "", nickname: "" }]);
+    this.setData({ extractCompetitors: list });
+  },
+  removeCompetitor(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const list = this.data.extractCompetitors.slice();
+    list.splice(idx, 1);
+    this.setData({ extractCompetitors: list });
+  },
+
+  onTemplateName(e) { this.setData({ templateName: e.detail.value }); },
 
   closeExtract() { this.setData({ extractOpen: false }); },
   extractNoop() {},
 
+  saveTemplate() {
+    const profile = {};
+    this.data.extractFields.forEach((x) => { if (String(x.value || "").trim()) profile[x.key] = String(x.value).trim(); });
+    const gender = ["", "female", "male"][this.data.extractGenderIndex];
+    if (gender) profile.gender = gender;
+    const name = String(this.data.templateName || "").trim() || ("提取模板 " + new Date().toLocaleDateString());
+    wx.showLoading({ title: "保存中" });
+    app.request({
+      method: "POST",
+      url: "/api/ip-content/schedule-templates",
+      data: { name, requirements: { basic_profile: profile, profile_name: profile.profile_name || "" } },
+      timeout: 60000
+    })
+      .then(() => { wx.hideLoading(); wx.showToast({ title: "已存为模板", icon: "success" }); })
+      .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); });
+  },
+
   saveExtract() {
     const profile = {};
     this.data.extractFields.forEach((x) => { if (String(x.value || "").trim()) profile[x.key] = String(x.value).trim(); });
+    const gender = ["", "female", "male"][this.data.extractGenderIndex];
+    if (gender) profile.gender = gender;
     const docs = this.data.extractDocs.filter((x) => x.checked).map((x) => x.key);
-    const keywords = String(this.data.extractKeywords || "").split("\n").map((x) => x.trim()).filter(Boolean);
-    const competitors = String(this.data.extractCompetitors || "").split("\n").map((x) => x.trim()).filter(Boolean).map((account) => ({ platform: "other", account }));
+    const keywords = (this.data.extractKeywords || []).map((x) => ({ keyword: String(x.keyword || "").trim(), display_name: String(x.display_name || "").trim() })).filter((x) => x.keyword);
+    const competitors = (this.data.extractCompetitors || []).map((x) => ({ platform: x.platform || "other", account: String(x.account || "").trim(), nickname: String(x.nickname || "").trim() })).filter((x) => x.account);
     const fields = Object.keys(profile);
     if (!fields.length && !docs.length) return wx.showToast({ title: "至少填一项", icon: "none" });
     wx.showLoading({ title: "写入中" });
