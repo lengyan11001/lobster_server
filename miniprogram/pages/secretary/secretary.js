@@ -123,7 +123,9 @@ Page({
       ble.fetchAllDeviceInfo();
       ble.fetchDeviceInfo();
       this._logDiag("files:request", "onShow");
-      ble.fetchFileList();
+      // 连上后设备还在回设备信息，隔 1.5s 再要文件列表，避免写队列堆积
+      clearTimeout(this._firstListTimer);
+      this._firstListTimer = setTimeout(() => this._requestFileList("onShow+1.5s"), 1500);
     } catch (err) {
       this._logDiag("files:request:error", String((err && err.message) || err));
     }
@@ -188,6 +190,7 @@ Page({
       }
     });
     ble.on("onFileListUpdated", (files) => {
+      this._listInFlightAt = 0;
       const list = Array.isArray(files) ? files : [];
       this._logDiag("files", { count: list.length, names: list.slice(0, 8).map((f) => String((f && f.fileName) || "")) });
       this._autoSyncDeviceFiles(files);
@@ -387,12 +390,26 @@ Page({
     [3000, 8000, 15000].forEach((delay, idx) => {
       setTimeout(() => {
         this.reload();
-        this._logDiag("files:request", "after-stop#" + (idx + 1));
-        try { ble.fetchFileList(); } catch (err) {
-          this._logDiag("files:request:error", String((err && err.message) || err));
-        }
+        this._requestFileList("after-stop#" + (idx + 1));
       }, delay);
     });
+  },
+
+  _requestFileList(tag) {
+    const ble = this._ble;
+    if (!ble || !ble.isConnected) return;
+    const now = Date.now();
+    if (this._listInFlightAt && now - this._listInFlightAt < 8000) {
+      this._logDiag("files:skip", { tag, reason: "in_flight" });
+      return;
+    }
+    this._listInFlightAt = now;
+    this._logDiag("files:request", tag);
+    try {
+      ble.fetchFileList();
+    } catch (err) {
+      this._logDiag("files:request:error", String((err && err.message) || err));
+    }
   },
 
   refreshDeviceFiles() {
@@ -405,8 +422,8 @@ Page({
       wx.showToast({ title: "录音中，请先停止再刷新", icon: "none" });
       return;
     }
-    this._logDiag("files:request", "manual");
-    try { ble.fetchFileList(); } catch (err) { this._logDiag("files:request:error", String((err && err.message) || err)); }
+    this._listInFlightAt = 0;
+    this._requestFileList("manual");
     wx.showToast({ title: "已请求设备文件列表", icon: "none" });
   },
 
