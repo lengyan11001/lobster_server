@@ -17561,38 +17561,54 @@ async function api(path, options = {}) {
       native.fetchRecorderFiles();
     }
 
-    // 设备固件抖动时会在 1 秒内反复发 start/stop；只有连续 1.5 秒保持同一状态才更新界面，
-    // 避免“正在录音/已停止”来回跳。
-    function scheduleRecorderRecordingState(recording, detail) {
+    // 设备固件抖动时会在 1 秒内反复发 start/stop。
+    // 规则：同一状态必须连续保持 2 秒才落到界面；中途翻转就重新计时。
+    function pushRecorderRecordingState(recording, detail) {
       const target = !!recording;
-      if (target === !!state.recorderDeviceState.recording) return;
-      clearTimeout(state.recorderStateTimer);
-      state.recorderStateTimer = setTimeout(() => {
-        renderRecorderDeviceState({
-          connected: true,
-          recording: target,
-          paused: !!detail.paused,
-          duration: Number(detail.duration || state.recorderDeviceState.duration || 0)
-        });
-      }, 2000);
+      const now = Date.now();
+      const pending = state.recorderStatePending;
+      if (!pending || pending.value !== target) {
+        state.recorderStatePending = { value: target, since: now, detail: detail || {} };
+      } else {
+        pending.detail = detail || pending.detail;
+      }
+      if (state.recorderStateTimer) return;
+      const tick = function() {
+        const p = state.recorderStatePending;
+        if (!p) { state.recorderStateTimer = null; return; }
+        if (Date.now() - p.since >= 2000) {
+          state.recorderStatePending = null;
+          state.recorderStateTimer = null;
+          renderRecorderDeviceState({
+            connected: true,
+            recording: p.value,
+            paused: !!p.detail.paused,
+            duration: Number(p.detail.duration || state.recorderDeviceState.duration || 0)
+          });
+        } else {
+          state.recorderStateTimer = setTimeout(tick, 300);
+        }
+      };
+      state.recorderStateTimer = setTimeout(tick, 300);
     }
 
     window.addEventListener("lobster-recorder", (event) => {
       const detail = event.detail || {};
       if (detail.type === "connected") {
         renderRecorderDeviceState({ connected: true, name: detail.name || "录音设备", alias: detail.alias || "", paused: !!detail.paused, duration: Number(detail.duration || 0), segmentDuration: Number(detail.segmentDuration || 0) });
-        scheduleRecorderRecordingState(detail.recording, detail);
+        pushRecorderRecordingState(detail.recording, detail);
       } else if (detail.type === "disconnected") {
         clearTimeout(state.recorderStateTimer);
+        state.recorderStateTimer = null;
+        state.recorderStatePending = null;
         renderRecorderDeviceState({ connected: false, recording: false, paused: false, duration: 0, name: "" });
         state.recorderSyncActive = false;
         if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "设备已断开，已同步录音仍可查看";
       } else if (detail.type === "recordState") {
-        scheduleRecorderRecordingState(detail.recording, detail);
+        pushRecorderRecordingState(detail.recording, detail);
       } else if (detail.type === "recordDuration") {
-        // 有实时时长说明设备确实在录，直接确认在录状态
-        clearTimeout(state.recorderStateTimer);
-        renderRecorderDeviceState({ connected: true, recording: true, duration: Number(detail.duration || 0) });
+        // 有时长只作为“在录”的证据，仍然走 2 秒稳定判定
+        pushRecorderRecordingState(true, detail);
       } else if (detail.type === "fileList") {
         state.recorderDeviceFiles = (detail.files || []).slice().sort((a, b) => String(b.fileName || b.createTime || "").localeCompare(String(a.fileName || a.createTime || ""))).slice(0, 20);
         renderRecorderDeviceFiles();
