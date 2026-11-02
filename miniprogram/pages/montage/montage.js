@@ -109,30 +109,34 @@ Page({
 
   addMaterial() {
     wx.chooseMedia({
-      count: 1,
+      count: 9,
       mediaType: ["image", "video"],
+      sourceType: ["album", "camera"],
       success: (res) => {
-        const file = (res.tempFiles || [])[0];
-        if (!file) return;
-        const type = file.fileType === "video" ? "video" : "image";
-        this.setData({ progressText: "素材上传中…" });
-        api.uploadFile({
-          url: "/api/assets/upload",
-          filePath: file.tempFilePath,
-          name: "file",
-          formData: { media_type: type, tags: "montage,miniprogram" },
-          token: app.globalData.token || ""
-        })
-          .then((data) => {
+        const files = res.tempFiles || [];
+        if (!files.length) return;
+        const materials = this.data.materials.slice();
+        let done = 0;
+        const uploadOne = (file) => {
+          const type = file.fileType === "video" ? "video" : "image";
+          this.setData({ progressText: `素材上传中… ${done + 1}/${files.length}` });
+          return api.uploadFile({
+            url: "/api/assets/upload",
+            filePath: file.tempFilePath,
+            name: "file",
+            formData: { media_type: type, tags: "montage,miniprogram" },
+            token: app.globalData.token || ""
+          }).then((data) => {
             const url = String((data && (data.source_url || data.url)) || "").trim();
-            if (!url) throw new Error("上传成功但没有返回链接");
-            const materials = this.data.materials.concat({ type, fileUrl: url });
-            this.setData({ materials, progressText: "" });
-          })
-          .catch((err) => {
-            this.setData({ progressText: "" });
+            if (url) materials.push({ type, fileUrl: url });
+          }).catch((err) => {
             wx.showToast({ title: api.errorMessage(err), icon: "none" });
+          }).then(() => {
+            done += 1;
+            this.setData({ materials: materials.slice(), progressText: done < files.length ? `素材上传中… ${done}/${files.length}` : "" });
           });
+        };
+        files.reduce((chain, file) => chain.then(() => uploadOne(file)), Promise.resolve());
       }
     });
   },
