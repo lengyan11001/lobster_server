@@ -1,7 +1,7 @@
 page {
   min-height: 100vh;
-  color: #f2f6ff;
-  background: #05070f;
+  color: #0f172a;
+  background: #f3f6fb;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -101,7 +101,7 @@ button::after {
   width: 16rpx;
   height: 16rpx;
   border-radius: 999rpx;
-  background: #b6c1d2;
+  background: #94a3b8;
 }
 
 .dot.ok {
@@ -154,7 +154,7 @@ button::after {
   height: 86rpx;
   padding: 0 24rpx;
   color: #0f172a;
-  background: #f2f6ff;
+  background: #f8fafc;
   border: 1rpx solid #dbe3ef;
   border-radius: 18rpx;
   font-size: 28rpx;
@@ -167,34 +167,3 @@ button::after {
   font-size: 27rpx;
 }
 
-/* ── 全局深色主题：内页与首页统一 ───────────────────────────── */
-page, .page, .home-shell, .view, .container { background: #05070f !important; color: #f2f6ff !important; }
-.panel, .card, .copy-card, .device-card, .recorder-section, .section, .tool-row, .item, .list-item,
-.sheet, .modal, .popup, .box, .form-card, .result-card, .candidate, .hist {
-  background: rgba(255,255,255,.045) !important;
-  border-color: rgba(255,255,255,.10) !important;
-  color: #f2f6ff !important;
-}
-.title, .card-title, .big-title, .copy-text, .content, .body, .name, .item-name, .label, .sheet-title,
-.text-strong, .record-title, .summary, .point, .value {
-  color: #f2f6ff !important;
-}
-.sub, .card-meta, .meta, .hint, .desc, .time, .card-sub, .tool-desc, .sheet-close, .empty, .tip, .muted {
-  color: #b6c1d2 !important;
-}
-.input, textarea, input, .input.small, .field {
-  background: rgba(255,255,255,.06) !important;
-  color: #f2f6ff !important;
-  border-color: rgba(255,255,255,.14) !important;
-}
-.input::placeholder, textarea::placeholder { color: #6b7280 !important; }
-.chip, .tag, .badge { background: #1f2937 !important; color: #cbd5e1 !important; border-color: rgba(255,255,255,.14) !important; }
-.chip.active, .chip.completed { background: rgba(52,211,153,.18) !important; color: #34d399 !important; }
-.chip.pending { background: rgba(34,211,238,.16) !important; color: #67e8f9 !important; }
-.chip.failed { background: rgba(239,68,68,.16) !important; color: #f87171 !important; }
-button.ghost, .ghost { background: rgba(255,255,255,.06) !important; color: #f2f6ff !important; border-color: rgba(255,255,255,.14) !important; }
-button.primary, .primary { background: linear-gradient(135deg, #22d3ee, #6366f1) !important; color: #fff !important; border: none !important; }
-button.danger, .danger { background: rgba(239,68,68,.18) !important; color: #f87171 !important; }
-.err, .error, .card-error { color: #f87171 !important; }
-.overlay { background: rgba(0,0,0,.6) !important; }
-.divider, .sep { background: rgba(255,255,255,.10) !important; }
