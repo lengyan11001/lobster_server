@@ -120,6 +120,48 @@ Page({
     wx.showLoading({ title: "提取中" });
     app.request({
       method: "POST",
+      url: `/api/h5/recorder/files/${this.data.id}/extract-profile?preview=1`,
+      data: {},
+      timeout: 240000
+    })
+      .then((data) => {
+        wx.hideLoading();
+        const profile = (data && data.profile) || {};
+        const memory = (data && data.memory) || {};
+        const labels = {
+          profile_name: "名称", industry: "行业", product: "产品/服务",
+          target_customer: "目标客户", advantages: "优势", role: "角色", video_style: "视频风格"
+        };
+        const lines = [];
+        Object.keys(labels).forEach((key) => {
+          const value = String(profile[key] || "").trim();
+          if (value) lines.push(labels[key] + "：" + value.slice(0, 40));
+        });
+        const docs = Object.keys(memory).filter((key) => String(memory[key] || "").trim());
+        const body = (lines.length || docs.length)
+          ? (lines.slice(0, 7).join("\n") + (docs.length ? `\n将写入个人记忆 ${docs.length} 份` : "") + "\n\n确认写入个人资料和记忆？")
+          : "没有提取到有效资料，仍要写入空结果吗？";
+        wx.showModal({
+          title: "确认提取结果",
+          content: body,
+          confirmText: "写入",
+          success: (res) => {
+            if (!res.confirm) { this.setData({ extracting: false }); return; }
+            this.applyExtractProfile();
+          }
+        });
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        this.setData({ extracting: false });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
+  },
+
+  applyExtractProfile() {
+    wx.showLoading({ title: "写入中" });
+    app.request({
+      method: "POST",
       url: `/api/h5/recorder/files/${this.data.id}/extract-profile`,
       data: {},
       timeout: 240000
@@ -129,15 +171,12 @@ Page({
         const docs = (data && data.memory_docs) || [];
         wx.hideLoading();
         wx.showModal({
-          title: "提取完成",
-          content: `已填充资料字段 ${fields.length} 个，生成个人记忆 ${docs.length} 份${docs.length ? "：" + docs.join("、") : ""}`,
+          title: "已写入",
+          content: `填充资料字段 ${fields.length} 个，生成个人记忆 ${docs.length} 份${docs.length ? "：" + docs.join("、") : ""}`,
           showCancel: false
         });
       })
-      .catch((err) => {
-        wx.hideLoading();
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
-      })
+      .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); })
       .then(() => this.setData({ extracting: false }));
   },
 

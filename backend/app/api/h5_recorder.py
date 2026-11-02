@@ -1863,6 +1863,7 @@ _EXTRACT_BUSINESS_KEYS = ("product", "target_customer", "advantages")
 async def extract_profile_from_recording(
     record_id: int,
     request: Request,
+    preview: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1918,6 +1919,8 @@ async def extract_profile_from_recording(
     data = resp.json() if resp.content else {}
     profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
     memory = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+    if preview:
+        return {"ok": True, "preview": True, "profile": profile, "memory": memory}
 
     template = (
         db.query(IPContentScheduleTemplate)
