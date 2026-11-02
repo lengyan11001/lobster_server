@@ -1,8 +1,5 @@
 {
-  "navigationBarTitleText": "数字人",
+  "navigationBarTitleText": "数字人口播",
   "enablePullDownRefresh": true,
-  "navigationBarBackgroundColor": "#050505",
-  "navigationBarTextStyle": "white",
-  "backgroundColor": "#050505",
-  "backgroundTextStyle": "light"
+  "usingComponents": {}
 }

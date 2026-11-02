@@ -576,7 +576,7 @@ Page({
   },
 
   goArticle() {
-    wx.navigateTo({ url: "/pages/gen-history/gen-history?feature=article" });
+    wx.navigateTo({ url: "/pages/article/history?feature=article" });
   },
 
   goRecords() {
@@ -612,7 +612,7 @@ Page({
   },
 
   goDigital() {
-    wx.navigateTo({ url: "/pages/digital-history/digital-history" });
+    wx.navigateTo({ url: "/pages/digital/history" });
   },
 
   goRoleTransfer() {
@@ -634,7 +634,7 @@ Page({
       return;
     }
     if (type === "montage") {
-      wx.navigateTo({ url: "/pages/gen-history/gen-history?feature=montage" });
+      wx.navigateTo({ url: "/pages/article/history?feature=montage" });
       return;
     }
     this.goVideoHub();
@@ -647,7 +647,7 @@ Page({
   selectPublicAvatarTemplate(evt) {
     // 数字人已切到 2.0：形象必须是在 2.0 里训练成功的档案，旧的 hifly 公共模板不再直接带入。
     wx.showToast({ title: "请在页面里选择已训练的数字人", icon: "none" });
-    wx.navigateTo({ url: "/pages/digital-history/digital-history" });
+    wx.navigateTo({ url: "/pages/digital/history" });
   },
 
   goProfile() {
