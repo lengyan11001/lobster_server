@@ -1199,3 +1199,25 @@ page {
 .bottom-space {
   height: 56rpx;
 }
+
+/* ── manage 风格配色（保持原结构，仅换视觉）──────────────── */
+page, .home-shell { background: #05070f !important; color: #f2f6ff !important; }
+.home-shell { padding: 20rpx 24rpx 0; box-sizing: border-box; }
+.hello-pill { color: #f2f6ff !important; }
+.profile-bubble { background: rgba(34,211,238,.15) !important; color: #67e8f9 !important; }
+.brand-stage { border-radius: 24rpx; overflow: hidden; }
+.brand-line { color: #f2f6ff !important; }
+.hero-nav-item { background: rgba(255,255,255,.045) !important; border: 1rpx solid rgba(255,255,255,.10) !important; border-radius: 20rpx !important; }
+.hero-nav-title { color: #f2f6ff !important; }
+.hero-nav-sub { color: #8b98ae !important; }
+.tool-card { background: rgba(255,255,255,.045) !important; border: 1rpx solid rgba(255,255,255,.10) !important; border-radius: 22rpx !important; }
+.tool-title { color: #f2f6ff !important; }
+.tool-sub { color: #8b98ae !important; }
+.showcase-title { color: #f2f6ff !important; }
+.showcase-subtitle { color: #8b98ae !important; }
+.showcase-head button { background: rgba(34,211,238,.14) !important; color: #67e8f9 !important; border-radius: 999rpx !important; }
+.template-card, .start-template { background: rgba(255,255,255,.045) !important; border: 1rpx solid rgba(255,255,255,.10) !important; border-radius: 20rpx !important; }
+.template-title { color: #f2f6ff !important; }
+.template-sub { color: #b6c1d2 !important; }
+.ability-slide { background: rgba(255,255,255,.045) !important; border: 1rpx solid rgba(255,255,255,.10) !important; border-radius: 20rpx !important; color: #f2f6ff !important; }
+.ability-slide text { color: #f2f6ff !important; }

@@ -187,37 +187,6 @@
 
   <view class="showcase-section">
     <view class="showcase-head">
-      <text class="showcase-title">AI数字人 · 销冠模板</text>
-      <button bindtap="goAvatarTemplates">查看全部 ></button>
-    </view>
-    <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
-      <view class="showcase-strip">
-        <view class="start-template" bindtap="goDigital">
-          <view class="plus-circle">+</view>
-          <text>开始定制</text>
-        </view>
-        <view wx:if="{{avatarTemplatesLoading && !publicAvatarTemplates.length}}" class="template-card template-loading">
-          <view class="template-skeleton"></view>
-          <text class="template-title">加载模板中</text>
-          <text class="template-sub">公共数字人</text>
-        </view>
-        <view wx:for="{{publicAvatarTemplates}}" wx:key="avatar" class="template-card {{item.tone}}" data-index="{{index}}" bindtap="selectPublicAvatarTemplate">
-          <image wx:if="{{item.image_url}}" class="template-img" src="{{item.image_url}}" mode="aspectFill" />
-          <view wx:else class="template-static">
-            <view class="avatar-glow"></view>
-            <view class="avatar-head">{{item.initial || 'AI'}}</view>
-            <view class="avatar-body"></view>
-          </view>
-          <view class="template-mask"></view>
-          <text class="template-title">{{item.title}}</text>
-          <text class="template-sub">公共数字人</text>
-        </view>
-      </view>
-    </scroll-view>
-  </view>
-
-  <view class="showcase-section">
-    <view class="showcase-head">
       <view class="showcase-title-box">
         <text class="showcase-title">AI视频 · 获客灵感 🔥</text>
         <text class="showcase-subtitle">短视频灵感和一键复创</text>
