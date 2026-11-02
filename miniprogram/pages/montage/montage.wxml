@@ -51,3 +51,19 @@
 
   <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
 </view>
+<view wx:if="{{assetOpen}}" class="am-mask" catchtap="closeAssetPicker">
+  <view class="am-sheet" catchtap="assetNoop">
+    <view class="am-head"><text class="am-title">选择素材</text><text class="am-close" catchtap="closeAssetPicker">×</text></view>
+    <view wx:if="{{assetLoading}}" class="am-empty">加载中…</view>
+    <view wx:elif="{{!assetItems.length}}" class="am-empty">素材库为空</view>
+    <scroll-view scroll-y class="am-body">
+      <view wx:for="{{assetItems}}" wx:key="id" class="am-item" data-index="{{index}}" catchtap="toggleAsset">
+        <view class="am-box {{item.checked ? 'on' : ''}}">{{item.checked ? '✓' : ''}}</view>
+        <image wx:if="{{item.type === 'image'}}" class="am-thumb" src="{{item.cover}}" mode="aspectFill" />
+        <view wx:else class="am-thumb video">视频</view>
+        <text class="am-name">{{item.name}}</text>
+      </view>
+    </scroll-view>
+    <button class="primary" catchtap="confirmAssets">加入素材</button>
+  </view>
+</view>

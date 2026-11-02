@@ -25,6 +25,9 @@ Page({
     duration: 30,
     materials: [],
     submitting: false,
+    assetOpen: false,
+    assetLoading: false,
+    assetItems: [],
     taskId: "",
     statusText: "",
     videoUrl: "",
@@ -139,6 +142,43 @@ Page({
         files.reduce((chain, file) => chain.then(() => uploadOne(file)), Promise.resolve());
       }
     });
+  },
+
+  openAssetPicker() {
+    this.setData({ assetOpen: true, assetLoading: true, assetItems: [] });
+    app.request({ url: "/api/assets?limit=100", timeout: 30000 })
+      .then((data) => {
+        const rows = (data && (data.assets || data.items || data.data)) || [];
+        const items = (Array.isArray(rows) ? rows : []).map((row) => ({
+          id: String(row.asset_id || row.id || row.source_url || ""),
+          url: String(row.source_url || row.url || ""),
+          type: String(row.media_type || (String(row.filename || "").match(/\.(mp4|mov|webm)$/i) ? "video" : "image")),
+          name: String(row.filename || row.name || "素材"),
+          cover: String(row.preview_url || row.cover_url || row.source_url || row.url || "")
+        })).filter((x) => x.url);
+        this.setData({ assetItems: items });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ assetLoading: false }));
+  },
+
+  closeAssetPicker() { this.setData({ assetOpen: false }); },
+  assetNoop() {},
+
+  toggleAsset(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const items = this.data.assetItems.slice();
+    if (!items[idx]) return;
+    items[idx].checked = !items[idx].checked;
+    this.setData({ assetItems: items });
+  },
+
+  confirmAssets() {
+    const picked = this.data.assetItems.filter((x) => x.checked);
+    if (!picked.length) return wx.showToast({ title: "先选素材", icon: "none" });
+    const materials = this.data.materials.slice();
+    picked.forEach((x) => materials.push({ type: x.type, fileUrl: x.url }));
+    this.setData({ materials, assetOpen: false });
   },
 
   removeMaterial(e) {
