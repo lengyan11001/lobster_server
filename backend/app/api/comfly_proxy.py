@@ -3772,7 +3772,7 @@ async def proxy_chat_completions(
         raise HTTPException(400, "缺少 model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     try:
         upstream_body, prepared_image_count = await _prepare_chat_image_urls_for_upstream(upstream_body)
     except Exception as e:
@@ -4764,7 +4764,7 @@ async def proxy_videos_generations_submit(
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
 
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
     segment_key = _video_segment_key_from_request(request)
@@ -5285,7 +5285,7 @@ async def proxy_xing_seedance_submit(request: Request):
     body = await request.json()
     model = str(body.get("model") or "seedance2.0-900").strip()
     _require_model_entry(model)
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
     pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
@@ -5360,7 +5360,7 @@ async def proxy_xai_video_submit(request: Request):
     body = await request.json()
     model = str(body.get("model") or "grok-imagine-video-1.5").strip()
     _require_model_entry(model)
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
     segment_key = _video_segment_key_from_request(request)
@@ -5471,7 +5471,7 @@ async def proxy_yunwu_video_create(
         raise HTTPException(400, "missing model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
 
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     internal_fallback = _is_trusted_internal_video_fallback(request)
@@ -5582,7 +5582,7 @@ async def proxy_seedance_tasks_submit(
     seedance_api_format = str(entry.get("api_format") or "").strip().lower()
     seedance_is_wan30 = seedance_api_format == "dashscope_wan30"
 
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     segment_key = _video_segment_key_from_request(request)
     hold_key = _video_charge_hold_key()
