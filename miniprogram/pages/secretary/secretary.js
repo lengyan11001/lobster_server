@@ -36,7 +36,7 @@ Page({
     syncText: "",
     syncing: false,
     segmentLabel: "分段设置",
-    powerOnRecord: false,
+    powerOnRecord: null,
     deviceFiles: [],
     listRows: [],
     diagOpen: false,
@@ -55,7 +55,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix4" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix5" + envInfo);
     this._bindBle();
   },
 
@@ -185,7 +185,7 @@ Page({
       this._logDiag("init:param", { segmentDuration: minutes });
       this.setData({
         segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段",
-        powerOnRecord: Boolean(settings && settings.powerOnRecord)
+        powerOnRecord: settings && typeof settings.powerOnRecord !== "undefined" ? Boolean(settings.powerOnRecord) : this.data.powerOnRecord
       });
     });
     this._onBle("onDeviceInfoUpdated", (device) => {
@@ -663,6 +663,11 @@ Page({
     const ble = this._ble;
     if (!ble || !ble.isConnected) {
       wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    if (this.data.powerOnRecord === null) {
+      try { ble.fetchInitParam(); } catch (err) {}
+      wx.showToast({ title: "正在读取设备设置，请稍后再点", icon: "none" });
       return;
     }
     const next = !this.data.powerOnRecord;

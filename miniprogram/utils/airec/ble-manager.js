@@ -479,7 +479,7 @@ AIRECBleManager.prototype.fetchFileList = function() {
     if (self._device) self._device.fileList = list
     self.lastFilesMeta = { count: list.length, elapsed: Date.now() - now, dropped: self._filesDropped || 0, fallback: true }
     self._emit('onFileListUpdated', list)
-  }, 8000)
+  }, 15000)
   this._write(this._buildFrame(CMD.GET_FILES))
 }
 
