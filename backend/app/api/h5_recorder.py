@@ -1882,6 +1882,8 @@ async def extract_profile_from_recording(
         _body = await request.json() if await request.body() else {}
     except Exception:
         _body = {}
+    extra_keywords = _body.get("keywords") if isinstance(_body.get("keywords"), list) else None
+    extra_competitors = _body.get("competitors") if isinstance(_body.get("competitors"), list) else None
     selected_fields = _body.get("fields") if isinstance(_body.get("fields"), list) else None
     selected_memory = _body.get("memory_keys") if isinstance(_body.get("memory_keys"), list) else None
     profile_override = _body.get("profile") if isinstance(_body.get("profile"), dict) else {}
@@ -1910,7 +1912,7 @@ async def extract_profile_from_recording(
                 json={
                     "text": text,
                     "title": row.display_name or row.file_name or "",
-                    "targets": ["profile", "memory"],
+                    "targets": ["profile", "keywords", "competitors", "memory"],
                 },
                 headers=headers,
             )
@@ -1929,8 +1931,11 @@ async def extract_profile_from_recording(
     for _k, _v in profile_override.items():
         if isinstance(_k, str) and isinstance(_v, str) and _v.strip():
             profile[_k] = _v.strip()
+    keywords = data.get("keywords") if isinstance(data.get("keywords"), list) else []
+    competitors = data.get("competitors") if isinstance(data.get("competitors"), list) else []
     if preview:
-        return {"ok": True, "preview": True, "profile": profile, "memory": memory}
+        return {"ok": True, "preview": True, "profile": profile, "memory": memory,
+                "keywords": keywords, "competitors": competitors}
 
     template = (
         db.query(IPContentScheduleTemplate)
@@ -1981,6 +1986,34 @@ async def extract_profile_from_recording(
     template.updated_at = datetime.utcnow()
     db.add(template)
     db.commit()
+
+    created_keywords = 0
+    created_competitors = 0
+    try:
+        from ..models import IPContentKeyword, ContentCompetitorAccount
+        for kw in (extra_keywords or []):
+            word = str((kw.get("keyword") if isinstance(kw, dict) else kw) or "").strip()
+            if not word:
+                continue
+            exists = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == owner.id, IPContentKeyword.keyword == word).first()
+            if exists:
+                continue
+            db.add(IPContentKeyword(user_id=owner.id, keyword=word[:128], status="active"))
+            created_keywords += 1
+        for cp in (extra_competitors or []):
+            if not isinstance(cp, dict):
+                continue
+            account = str(cp.get("account") or "").strip()
+            if not account:
+                continue
+            exists = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == owner.id, ContentCompetitorAccount.account == account[:128]).first()
+            if exists:
+                continue
+            db.add(ContentCompetitorAccount(user_id=owner.id, platform=str(cp.get("platform") or "other")[:32], account=account[:128], nickname=str(cp.get("nickname") or "")[:128], status="active"))
+            created_competitors += 1
+        db.commit()
+    except Exception:
+        db.rollback()
 
     created_docs: list[str] = []
     installation_id = _installation_id(request)

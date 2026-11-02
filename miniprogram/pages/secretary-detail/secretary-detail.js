@@ -18,6 +18,8 @@ Page({
     extractOpen: false,
     extractFields: [],
     extractDocs: [],
+    extractKeywords: "",
+    extractCompetitors: "", 
     playing: false,
     record: null
   },
@@ -147,7 +149,9 @@ Page({
         const docs = Object.keys(docTitles)
           .map((key) => ({ key, title: docTitles[key], checked: Boolean(String(memory[key] || "").trim()) }))
           .filter((x) => String(memory[x.key] || "").trim());
-        this.setData({ extractOpen: true, extractFields: fields, extractDocs: docs });
+        const kws = ((data && data.keywords) || []).map((k) => String((k && k.keyword) || k || "").trim()).filter(Boolean);
+        const cps = ((data && data.competitors) || []).map((c) => String((c && c.account) || "").trim()).filter(Boolean);
+        this.setData({ extractOpen: true, extractFields: fields, extractDocs: docs, extractKeywords: kws.join("\n"), extractCompetitors: cps.join("\n") });
       })
       .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); })
       .then(() => this.setData({ extracting: false }));
@@ -169,6 +173,9 @@ Page({
     this.setData({ extractDocs: list });
   },
 
+  onKeywordsInput(e) { this.setData({ extractKeywords: e.detail.value }); },
+  onCompetitorsInput(e) { this.setData({ extractCompetitors: e.detail.value }); },
+
   closeExtract() { this.setData({ extractOpen: false }); },
   extractNoop() {},
 
@@ -176,13 +183,15 @@ Page({
     const profile = {};
     this.data.extractFields.forEach((x) => { if (String(x.value || "").trim()) profile[x.key] = String(x.value).trim(); });
     const docs = this.data.extractDocs.filter((x) => x.checked).map((x) => x.key);
+    const keywords = String(this.data.extractKeywords || "").split("\n").map((x) => x.trim()).filter(Boolean);
+    const competitors = String(this.data.extractCompetitors || "").split("\n").map((x) => x.trim()).filter(Boolean).map((account) => ({ platform: "other", account }));
     const fields = Object.keys(profile);
     if (!fields.length && !docs.length) return wx.showToast({ title: "至少填一项", icon: "none" });
     wx.showLoading({ title: "写入中" });
     app.request({
       method: "POST",
       url: `/api/h5/recorder/files/${this.data.id}/extract-profile`,
-      data: { profile, fields, memory_keys: docs },
+      data: { profile, fields, memory_keys: docs, keywords, competitors },
       timeout: 240000
     })
       .then((data) => {
