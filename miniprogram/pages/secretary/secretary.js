@@ -57,7 +57,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix14" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix15" + envInfo);
     this._bindBle();
   },
 
@@ -254,11 +254,22 @@ Page({
           this.setDevice({ isRecording: true, isPaused: false });
           this._startTimer();
         }
-      } else if (this.data.device.isRecording && !this._justStarted) {
-        this._stopTimer();
-        this.setDevice({ isRecording: false, isPaused: false, timeText: "00:00:00" });
-        this._emptyRetryLeft = 3;
-        setTimeout(() => { this.reload(); try { ble.fetchFileList(); } catch (err) {} }, 3000);
+      } else {
+        // 设备在开始后很短时间就回 stop，说明它自己拒绝/中断了录音，
+        // 这时必须如实显示已停止，不能再被 _justStarted 吞掉。
+        if (this._justStarted && this._startAt && Date.now() - this._startAt < 2500) {
+          this._logDiag("record:earlyStop", { afterMs: Date.now() - this._startAt });
+        }
+        if (this.data.device.isRecording) {
+          this._stopTimer();
+          this.setDevice({ isRecording: false, isPaused: false, timeText: "00:00:00" });
+          this._emptyRetryLeft = 3;
+          setTimeout(() => {
+            this.reload();
+            try { ble.fetchFileList(); } catch (err) {}
+            try { ble.fetchRecordStatus(); } catch (err) {}
+          }, 1500);
+        }
       }
       this._justStarted = false;
     });
