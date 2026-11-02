@@ -132,12 +132,17 @@ Page({
         const profile = (data && data.profile) || {};
         const memory = (data && data.memory) || {};
         const labels = {
-          profile_name: "名称", industry: "行业", product: "产品/服务",
-          target_customer: "目标客户", advantages: "优势", role: "角色", video_style: "视频风格"
+          profile_name: "你的名字 / 称呼", gender: "性别", birth_decade: "出生年代",
+          province: "现在居住省份", city: "现在居住城市", hometown: "籍贯 / 家乡",
+          occupation: "你是做什么的", share_content: "主要想分享什么内容",
+          video_style: "希望的视频风格", after_view_action: "希望看完后做什么",
+          product: "在做什么产品 / 服务", target_customer: "目标客户", advantages: "优势"
         };
-        const fields = Object.keys(labels)
-          .map((key) => ({ key, label: labels[key], value: String(profile[key] || "").trim(), checked: Boolean(String(profile[key] || "").trim()) }))
-          .filter((x) => x.value);
+        const fields = Object.keys(labels).map((key) => ({
+          key,
+          label: labels[key],
+          value: String(profile[key] || "").trim()
+        }));
         const docTitles = { brand_product_intro: "品牌/产品介绍", product_service_faq: "产品服务问答", short_video_scripts: "短视频脚本" };
         const docs = Object.keys(docTitles)
           .map((key) => ({ key, title: docTitles[key], checked: Boolean(String(memory[key] || "").trim()) }))
@@ -148,27 +153,36 @@ Page({
       .then(() => this.setData({ extracting: false }));
   },
 
-  toggleExtractItem(e) {
-    const type = e.currentTarget.dataset.type;
+  onExtractInput(e) {
     const idx = Number(e.currentTarget.dataset.index || 0);
-    const list = (type === "doc" ? this.data.extractDocs : this.data.extractFields).slice();
+    const list = this.data.extractFields.slice();
+    if (!list[idx]) return;
+    list[idx].value = e.detail.value;
+    this.setData({ extractFields: list });
+  },
+
+  toggleExtractItem(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const list = this.data.extractDocs.slice();
     if (!list[idx]) return;
     list[idx].checked = !list[idx].checked;
-    this.setData(type === "doc" ? { extractDocs: list } : { extractFields: list });
+    this.setData({ extractDocs: list });
   },
 
   closeExtract() { this.setData({ extractOpen: false }); },
   extractNoop() {},
 
   saveExtract() {
-    const fields = this.data.extractFields.filter((x) => x.checked).map((x) => x.key);
+    const profile = {};
+    this.data.extractFields.forEach((x) => { if (String(x.value || "").trim()) profile[x.key] = String(x.value).trim(); });
     const docs = this.data.extractDocs.filter((x) => x.checked).map((x) => x.key);
-    if (!fields.length && !docs.length) return wx.showToast({ title: "至少选一项", icon: "none" });
+    const fields = Object.keys(profile);
+    if (!fields.length && !docs.length) return wx.showToast({ title: "至少填一项", icon: "none" });
     wx.showLoading({ title: "写入中" });
     app.request({
       method: "POST",
       url: `/api/h5/recorder/files/${this.data.id}/extract-profile`,
-      data: { fields, memory_keys: docs },
+      data: { profile, fields, memory_keys: docs },
       timeout: 240000
     })
       .then((data) => {

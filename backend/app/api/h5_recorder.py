@@ -1884,6 +1884,7 @@ async def extract_profile_from_recording(
         _body = {}
     selected_fields = _body.get("fields") if isinstance(_body.get("fields"), list) else None
     selected_memory = _body.get("memory_keys") if isinstance(_body.get("memory_keys"), list) else None
+    profile_override = _body.get("profile") if isinstance(_body.get("profile"), dict) else {}
 
     owner = _owner_user(db, current_user)
     base = str(request.base_url).rstrip("/")
@@ -1925,6 +1926,9 @@ async def extract_profile_from_recording(
     data = resp.json() if resp.content else {}
     profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
     memory = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+    for _k, _v in profile_override.items():
+        if isinstance(_k, str) and isinstance(_v, str) and _v.strip():
+            profile[_k] = _v.strip()
     if preview:
         return {"ok": True, "preview": True, "profile": profile, "memory": memory}
 
