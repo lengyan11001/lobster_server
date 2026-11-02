@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix26" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix27" + envInfo);
     this._bindBle();
   },
 
@@ -940,9 +940,15 @@ Page({
     this.setData({ loading: true });
     return app.request({ url: `/api/h5/recorder/files?page=${page}&page_size=20${suffix}`, timeout: 30000 })
       .then((data) => {
-        const rows = ((data && data.items) || []).map((row) => ({
+        const rows = ((data && data.items) || []).map((row) => {
+          const rawName = String(row.display_name || row.file_name || "录音");
+          const isDevice = String(row.source_type || "") === "device" || /^ble_/i.test(rawName);
+          const showName = isDevice
+            ? rawName.replace(/^ble_/i, "").replace(/\.(opus|atw|ka|bin|ops|wav|mp3|m4a|aac|ogg)$/i, "")
+            : rawName;
+          return {
           id: row.id,
-          name: String(row.display_name || row.file_name || "录音"),
+          name: showName || rawName,
           fileName: String(row.file_name || ""),
           status: String(row.status || ""),
           statusText: STATUS_TEXT[row.status] || row.status || "",
@@ -950,7 +956,8 @@ Page({
           summary: String(row.summary_text || "").slice(0, 80),
           errorText: this._errorText(row.error_message),
           time: fmtTime(row.created_at)
-        }));
+        };
+        });
         const merged = page === 1 ? rows : this.data.items.concat(rows);
         this.setData({ items: merged, page, hasMore: Boolean(data && data.has_next) }, () => this._rebuildList());
       })
