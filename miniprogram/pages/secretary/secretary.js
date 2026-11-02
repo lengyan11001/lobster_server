@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix21" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix22" + envInfo);
     this._bindBle();
   },
 
@@ -562,14 +562,19 @@ Page({
   },
 
   _readHeader(path) {
+    const fs = wx.getFileSystemManager();
+    // wxfile://usr/... 用 openSync/readSync 在部分机型会失败，优先用 readFileSync 带区间
     try {
-      const fs = wx.getFileSystemManager();
-      const fd = fs.openSync(path, "r");
-      const buf = new ArrayBuffer(12);
-      fs.readSync(fd, buf, 0, 12, 0);
-      fs.closeSync(fd);
+      const buf = fs.readFileSync(path, "binary", 0, 12);
       return new Uint8Array(buf);
     } catch (err) {
+      this._lastHeaderError = String((err && err.message) || err);
+    }
+    try {
+      const all = fs.readFileSync(path);
+      return new Uint8Array(all).slice(0, 12);
+    } catch (err2) {
+      this._lastHeaderError = String((err2 && err2.message) || err2);
       return null;
     }
   },
@@ -630,7 +635,7 @@ Page({
         atw_convert_failed: "ATW/KA 转码失败",
         atw_convert_error: "转码异常"
       })[prepared.reason] || prepared.reason;
-      this._logDiag("upload:skip", { file: name, reason: prepared.reason });
+      this._logDiag("upload:skip", { file: name, reason: prepared.reason, error: this._lastHeaderError || "" });
       this.setData({ syncText: "跳过 " + name + "：" + reasonText });
       wx.showToast({ title: reasonText, icon: "none" });
       this._runSyncQueue();
