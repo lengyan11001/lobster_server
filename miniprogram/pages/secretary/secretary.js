@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix25" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix26" + envInfo);
     this._bindBle();
   },
 
@@ -175,6 +175,16 @@ Page({
         if (!ble.isConnected && this._autoReconnectLeft > 0) this._scheduleAutoReconnect(2500);
       }, 12000);
     }, delay);
+  },
+
+  _errorText(msg) {
+    const m = String(msg || "").trim();
+    if (!m) return "";
+    if (m.indexOf("积分不足") >= 0 || m.indexOf("算力") >= 0) return "算力不足：转写已完成，摘要未生成";
+    if (/no valid speech|silence/i.test(m)) return "录音里没有有效人声";
+    if (/Invalid data|ffprobe/i.test(m)) return "音频格式无法识别";
+    if (/stt_token_missing/i.test(m)) return "语音识别未配置";
+    return m.slice(0, 90);
   },
 
   _sizeText(kb) {
@@ -391,6 +401,10 @@ Page({
     (this.data.items || []).forEach((row) => {
       if (!row.fileName) return;
       synced[this._normalizeName(row.fileName)] = row.id;
+    });
+    Object.keys(this._uploaded || {}).forEach((name) => {
+      const key = this._normalizeName(name);
+      if (key && !synced[key]) synced[key] = -1;
     });
     const rows = list
       .slice()
@@ -934,6 +948,7 @@ Page({
           statusText: STATUS_TEXT[row.status] || row.status || "",
           sourceLabel: String(row.source_label || row.device_name || "音频"),
           summary: String(row.summary_text || "").slice(0, 80),
+          errorText: this._errorText(row.error_message),
           time: fmtTime(row.created_at)
         }));
         const merged = page === 1 ? rows : this.data.items.concat(rows);
