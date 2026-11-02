@@ -55,7 +55,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix6" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix7" + envInfo);
     this._bindBle();
   },
 

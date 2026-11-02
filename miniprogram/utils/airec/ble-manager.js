@@ -756,12 +756,6 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
     case CMD.GET_FILES_FAIL: {
       if (!this._filesFetchAt) { this._dropFrame(cmd, data.length); break }
       var filesElapsed = Date.now() - this._filesFetchAt
-      // 刚发出去就来的空 END 基本都是流里的杂帧，当噪声丢掉，别把真列表截断成 0
-      if (this._pendingFiles.length === 0 && filesElapsed < 1200) {
-        this._filesDropped = (this._filesDropped || 0) + 1
-        this._dropFrame(cmd, data.length)
-        break
-      }
       clearTimeout(this._filesTimer)
       this.lastFilesMeta = { count: this._pendingFiles.length, elapsed: filesElapsed, dropped: this._filesDropped || 0 }
       this._filesFetchAt = 0
@@ -782,6 +776,19 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
         list[k].durationStr = '--:--'
       }
       this._emit('onFileListUpdated', list)
+      if (list.length === 0 && filesElapsed < 2500 && !this._filesEmptyRecheck) {
+        // 设备可能只是先回了个空 END，再回真列表（也可能确实是 0 条）：
+        // 立刻显示空，同时 2 秒后再确认一次，不让用户干等。
+        this._filesEmptyRecheck = true
+        var selfRecheck = this
+        setTimeout(function() {
+          selfRecheck._filesEmptyRecheck = false
+          if (selfRecheck.isConnected && !(selfRecheck._device && selfRecheck._device.isRecording)) {
+            selfRecheck._filesFetchAt = 0
+            selfRecheck.fetchFileList()
+          }
+        }, 2000)
+      }
       break
     }
 
