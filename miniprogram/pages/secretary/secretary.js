@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix22" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix23" + envInfo);
     this._bindBle();
   },
 
@@ -610,7 +610,11 @@ Page({
     } else if (head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
       ext = ".m4a";
     } else if (!(head[0] === 0x4F && head[1] === 0x67 && head[2] === 0x67 && head[3] === 0x53)) {
-      return { ok: false, reason: "unknown_container" };
+      // 未知容器：不再直接跳过，原样上传让服务端 ffprobe 判断；同时记下文件头便于定位
+      this._lastHeadHex = Array.prototype.map.call(head, function(b) {
+        return ("0" + b.toString(16)).slice(-2);
+      }).join("");
+      return { ok: true, path: localPath, name: rawName + ".bin", unknown: true };
     }
     try {
       const fs = wx.getFileSystemManager();
@@ -641,7 +645,7 @@ Page({
       this._runSyncQueue();
       return;
     }
-    this._logDiag("upload:start", { file: prepared.name, from: name });
+    this._logDiag("upload:start", { file: prepared.name, from: name, headHex: this._lastHeadHex || "" });
     this.setData({ syncText: "正在上传 " + prepared.name + "…" });
     api.uploadFile({
       url: "/api/h5/recorder/files",
