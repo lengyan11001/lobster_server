@@ -65,7 +65,7 @@ Page({
     }
     const line = stamp + " [" + tag + "] " + String(text || "").slice(0, 300);
     const lines = (this.data.diagLines || []).concat(line);
-    this.setData({ diagLines: lines.slice(-200) });
+    this.setData({ diagLines: lines.slice(-60) });
   },
 
   toggleDiag() {
@@ -197,8 +197,20 @@ Page({
       this._uploadDeviceFile(file, localPath);
     });
     ble.on("onFileDownloadProgress", (file, progress) => {
-      this._logDiag("download", { file: String((file && file.fileName) || ""), progress: Number(progress || 0) });
-      this.setData({ syncText: "正在下载 " + String((file && file.fileName) || "录音") + " · " + Number(progress || 0) + "%" });
+      const name = String((file && file.fileName) || "录音");
+      const pct = Math.max(0, Math.min(100, Number(progress || 0)));
+      this._lastProgress = this._lastProgress || {};
+      const prev = this._lastProgress[name];
+      const percentStep = pct >= 100 || !prev || Math.abs(pct - prev.pct) >= 10;
+      const timeStep = !prev || Date.now() - prev.at >= 1200;
+      this._lastProgress[name] = { pct, at: prev ? prev.at : 0 };
+      if (percentStep) {
+        this._logDiag("download", { file: name, progress: pct });
+      }
+      if (percentStep || timeStep) {
+        this._lastProgress[name].at = Date.now();
+        this.setData({ syncText: "正在下载 " + name + " · " + pct + "%" });
+      }
     });
     ble.on("onFileDownloadFailed", (file, reason) => {
       this._logDiag("download:failed", { file: String((file && file.fileName) || ""), reason: String(reason || "") });
@@ -220,16 +232,21 @@ Page({
     (this.data.items || []).forEach((row) => {
       if (row.fileName) known[String(row.fileName)] = true;
     });
+    this._queuedNames = this._queuedNames || {};
     const todo = list.filter((file) => {
       const name = String((file && file.fileName) || "");
       if (!name || known[name]) return false;
       if (this._uploaded && this._uploaded[name]) return false;
       if (this._uploading && this._uploading[name]) return false;
+      if (this._queuedNames[name]) return false;
       return true;
     });
     this._logDiag("sync:plan", { total: list.length, missing: todo.length, known: (this.data.items || []).length });
     if (!todo.length) return;
-    this._syncQueue = (this._syncQueue || []).concat(todo);
+    const capped = todo.slice(0, 10);
+    this._logDiag("sync:queued", { count: capped.length, skipped: todo.length - capped.length });
+    capped.forEach((file) => { this._queuedNames[String((file && file.fileName) || "")] = true; });
+    this._syncQueue = (this._syncQueue || []).concat(capped);
     if (this._syncing) return;
     this._runSyncQueue();
   },
