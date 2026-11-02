@@ -17,18 +17,18 @@
 .quick-sub { display: block; margin-top: 6rpx; color: #8b98ae; font-size: 19rpx; }
 
 .grid { display: flex; gap: 16rpx; margin-top: 18rpx; }
-.big-card { position: relative; flex: 1.15; min-height: 330rpx; border-radius: 22rpx; padding: 26rpx; box-sizing: border-box; overflow: hidden; background: rgba(255,255,255,.045); display: flex; flex-direction: column; justify-content: flex-end; }
+.big-card { position: relative; flex: 1.15; min-height: 330rpx; border-radius: 22rpx; padding: 26rpx; box-sizing: border-box; overflow: hidden; background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.10); box-shadow: 0 0 60rpx rgba(34,211,238,.08) inset; display: flex; flex-direction: column; justify-content: flex-end; }
 .big-tint { position: absolute; inset: 0; background: radial-gradient(circle at 80% 15%, rgba(255,255,255,.28), transparent 55%); }
 .big-play { position: absolute; right: 30rpx; top: 30rpx; width: 96rpx; height: 96rpx; border-radius: 50%; background: rgba(255,255,255,.22); color: #fff; font-size: 34rpx; display: flex; align-items: center; justify-content: center; }
 .big-title { position: relative; color: #fff; font-size: 40rpx; font-weight: 700; letter-spacing: 1rpx; }
 .big-sub { position: relative; margin-top: 8rpx; color: rgba(255,255,255,.85); font-size: 20rpx; }
 
 .col { flex: 1; display: flex; flex-direction: column; gap: 16rpx; }
-.small-card { flex: 1; border-radius: 22rpx; padding: 24rpx; background: rgba(255,255,255,.045); display: flex; align-items: flex-end; }
+.small-card { flex: 1; border-radius: 22rpx; padding: 24rpx; background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.10); display: flex; align-items: flex-end; }
 .small-card:last-child { background: rgba(34,211,238,.10); }
 .small-title { color: #fff; font-size: 30rpx; font-weight: 700; }
 
-.wide-card { flex: 1; border-radius: 22rpx; padding: 24rpx; min-height: 150rpx; background: rgba(255,255,255,.045); display: flex; flex-direction: column; justify-content: center; }
+.wide-card { flex: 1; border-radius: 22rpx; padding: 24rpx; min-height: 150rpx; background: rgba(255,255,255,.045); border: 1rpx solid rgba(255,255,255,.10); display: flex; flex-direction: column; justify-content: center; }
 .wide-card.alt { background: rgba(99,102,241,.12); }
 .wide-title { color: #fff; font-size: 28rpx; font-weight: 700; }
 .wide-sub { margin-top: 8rpx; color: rgba(255,255,255,.82); font-size: 19rpx; }
