@@ -1770,3 +1770,43 @@ async def extract_profile_from_recording(
         "template_created": created_template,
     }
 
+# ── 小程序录音设备诊断 ────────────────────────────────────────────────────
+# 小程序里 BLE 状态/文件列表/下载/上传都在手机上，服务端看不到。这里让小程序把
+# 现场日志 POST 上来落盘，出问题时用返回的 id 就能直接查。
+_RECORDER_DIAG_DIR = Path(os.environ.get("RECORDER_DIAG_DIR") or "/opt/lobster-server/diagnostics_uploads/mini_recorder")
+
+
+@router.post("/api/h5/recorder/diag", summary="小程序录音设备诊断上报")
+async def upload_recorder_diag(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user = online_user_for_mobile_user(db, current_user)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {"raw": (await request.body()).decode("utf-8", "replace")[:20000]}
+    diag_id = "rec_" + datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]
+    try:
+        target_dir = _RECORDER_DIAG_DIR / f"user_{current_user.id}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "diag_id": diag_id,
+            "user_id": int(current_user.id),
+            "created_at": datetime.utcnow().isoformat(),
+            "client": {
+                "ua": request.headers.get("User-Agent", ""),
+                "brand": request.headers.get("X-Lobster-Brand", ""),
+            },
+            "payload": payload,
+        }
+        (target_dir / f"{diag_id}.json").write_text(
+            json.dumps(record, ensure_ascii=False, indent=1)[:2000000], encoding="utf-8"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[recorder-diag] save failed user=%s err=%s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail="诊断保存失败") from exc
+    logger.info("[recorder-diag] saved id=%s user=%s", diag_id, current_user.id)
+    return {"ok": True, "diag_id": diag_id}
+

@@ -30,11 +30,15 @@ Page({
       isPaused: false,
       timeText: "00:00:00"
     },
-    syncText: ""
+    syncText: "",
+    diagOpen: false,
+    diagLines: [],
+    diagId: ""
   },
 
   onLoad() {
     this._ble = AIRECBleManager.getInstance();
+    this._logDiag("page", "onLoad");
     this._bindBle();
   },
 
@@ -49,12 +53,67 @@ Page({
 
   /* ── 录音设备状态与控制（对齐 H5 AI秘书的录音设备面板）────────── */
 
+  _logDiag(tag, detail) {
+    const now = new Date();
+    const pad = (n) => (n < 10 ? "0" + n : String(n));
+    const stamp = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+    let text = "";
+    try {
+      text = typeof detail === "string" ? detail : JSON.stringify(detail);
+    } catch (err) {
+      text = String(detail);
+    }
+    const line = stamp + " [" + tag + "] " + String(text || "").slice(0, 300);
+    const lines = (this.data.diagLines || []).concat(line);
+    this.setData({ diagLines: lines.slice(-200) });
+  },
+
+  toggleDiag() {
+    this.setData({ diagOpen: !this.data.diagOpen });
+  },
+
+  copyDiag() {
+    const text = (this.data.diagLines || []).join("\n");
+    if (!text) {
+      wx.showToast({ title: "还没有日志", icon: "none" });
+      return;
+    }
+    wx.setClipboardData({ data: text, success: () => wx.showToast({ title: "已复制诊断", icon: "success" }) });
+  },
+
+  uploadDiag() {
+    const lines = this.data.diagLines || [];
+    if (!lines.length) {
+      wx.showToast({ title: "还没有日志", icon: "none" });
+      return;
+    }
+    wx.showLoading({ title: "上传诊断" });
+    app.request({
+      method: "POST",
+      url: "/api/h5/recorder/diag",
+      data: {
+        device: this.data.device,
+        items: (this.data.items || []).slice(0, 20).map((x) => ({ id: x.id, name: x.name, fileName: x.fileName, status: x.status })),
+        lines
+      },
+      timeout: 60000
+    })
+      .then((data) => {
+        const id = String((data && data.diag_id) || "");
+        this.setData({ diagId: id });
+        wx.showToast({ title: id ? "已上传：" + id : "已上传", icon: "none" });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => wx.hideLoading());
+  },
+
   setDevice(patch) {
     this.setData({ device: Object.assign({}, this.data.device, patch) });
   },
 
   syncDeviceState() {
     const ble = this._ble;
+    this._logDiag("device", { connected: !!(ble && ble.isConnected) });
     if (!ble || !ble.isConnected) {
       this.setDevice({ connected: false, isRecording: false, isPaused: false, timeText: "00:00:00" });
       return;
@@ -70,10 +129,12 @@ Page({
     const ble = this._ble;
     if (!ble) return;
     ble.on("onConnected", (device) => {
+      this._logDiag("ble:connected", device);
       this.setDevice({ connected: true, name: String((device && device.name) || this.data.device.name || "录音设备") });
       try { ble.fetchAllDeviceInfo(); } catch (err) {}
     });
     ble.on("onDisconnected", () => {
+      this._logDiag("ble:disconnected");
       this._stopTimer();
       this.setDevice({ connected: false, isRecording: false, isPaused: false, timeText: "00:00:00" });
     });
@@ -120,15 +181,20 @@ Page({
       }
     });
     ble.on("onFileListUpdated", (files) => {
+      const list = Array.isArray(files) ? files : [];
+      this._logDiag("files", { count: list.length, names: list.slice(0, 8).map((f) => String((f && f.fileName) || "")) });
       this._autoSyncDeviceFiles(files);
     });
     ble.on("onFileDownloadComplete", (file, localPath) => {
+      this._logDiag("downloaded", { file: String((file && file.fileName) || ""), path: String(localPath || "").slice(-40) });
       this._uploadDeviceFile(file, localPath);
     });
     ble.on("onFileDownloadProgress", (file, progress) => {
+      this._logDiag("download", { file: String((file && file.fileName) || ""), progress: Number(progress || 0) });
       this.setData({ syncText: "正在下载 " + String((file && file.fileName) || "录音") + " · " + Number(progress || 0) + "%" });
     });
     ble.on("onFileDownloadFailed", (file, reason) => {
+      this._logDiag("download:failed", { file: String((file && file.fileName) || ""), reason: String(reason || "") });
       this.setData({ syncText: "下载失败：" + String(reason || "设备下载失败") });
     });
     ble.on("onRecordDurationUpdated", (sec) => {
@@ -154,6 +220,7 @@ Page({
       if (this._uploading && this._uploading[name]) return false;
       return true;
     });
+    this._logDiag("sync:plan", { total: list.length, missing: todo.length, known: (this.data.items || []).length });
     if (!todo.length) return;
     this._syncQueue = (this._syncQueue || []).concat(todo);
     if (this._syncing) return;
@@ -193,6 +260,7 @@ Page({
     if (!localPath || !name) { this._runSyncQueue(); return; }
     this._uploading = this._uploading || {};
     this._uploading[name] = true;
+    this._logDiag("upload:start", { file: name, path: String(localPath).slice(-40) });
     this.setData({ syncText: "正在上传 " + name + "…" });
     api.uploadFile({
       url: "/api/h5/recorder/files",
@@ -206,12 +274,14 @@ Page({
       timeout: 600000
     })
       .then(() => {
+        this._logDiag("upload:ok", { file: name });
         this._uploaded = this._uploaded || {};
         this._uploaded[name] = true;
         wx.showToast({ title: "已上传 " + name, icon: "none" });
         this.reload();
       })
       .catch((err) => {
+        this._logDiag("upload:failed", { file: name, error: api.errorMessage(err) });
         this.setData({ syncText: "上传失败：" + name + " · " + api.errorMessage(err) });
       })
       .then(() => {
