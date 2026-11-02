@@ -31,27 +31,27 @@
     <view class="clone-arrow">></view>
   </view>
 
-  <view class="tool-grid">
-    <button class="tool-card" bindtap="goVideoInspiration">
-      <view class="tool-icon video-icon"></view>
-      <text class="tool-title">AI视频灵感</text>
-      <text class="tool-sub">VIDEO IDEAS</text>
-    </button>
-    <button class="tool-card" bindtap="goImageGenerate">
-      <view class="tool-icon image-icon"></view>
-      <text class="tool-title">商业设计图</text>
-      <text class="tool-sub">COMMERCIAL</text>
-    </button>
-    <button class="tool-card" data-prompt="帮我写一段适合短视频口播的文案，要求有钩子、有卖点、有转化。" bindtap="goFeature">
-      <view class="tool-icon copy-icon"></view>
-      <text class="tool-title">文案智能体</text>
-      <text class="tool-sub">COPYWRITING</text>
-    </button>
-    <button class="tool-card" data-prompt="打开更多 AI 员工能力，并根据我的目标推荐下一步。" bindtap="goFeature">
-      <view class="tool-avatar">AI</view>
-      <text class="tool-title">更多AI</text>
-      <text class="tool-sub">持续开发中</text>
-    </button>
+  <view class="ref-grid">
+    <view class="ref-big" bindtap="goVideoHub">
+      <view class="ref-play">▶</view>
+      <text class="ref-big-title">超级AI混剪</text>
+      <text class="ref-big-sub">一键爆款成片 · 全网矩阵获客</text>
+    </view>
+    <view class="ref-col">
+      <view class="ref-small" bindtap="goMontageHistory"><text class="ref-small-title">素材智能剪辑</text></view>
+      <view class="ref-small alt" bindtap="goImageGenerate"><text class="ref-small-title">一键做海报</text></view>
+    </view>
+  </view>
+
+  <view class="ref-row">
+    <view class="ref-wide" bindtap="goVideoInspiration">
+      <text class="ref-wide-title">一键抄爆款模板</text>
+      <text class="ref-wide-sub">没有灵感 · 一键爆款复刻</text>
+    </view>
+    <view class="ref-wide alt" bindtap="goRecords">
+      <text class="ref-wide-title">我的成片库</text>
+      <text class="ref-wide-sub">全部生成结果</text>
+    </view>
   </view>
 
   <view class="ability-carousel">
