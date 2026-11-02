@@ -91,9 +91,21 @@ Page({
       if (this._ble.isConnected) this._ble.disconnect()
     } catch (err) {}
     try { this._ble.stopScan() } catch (err) {}
-    setTimeout(function() {
-      try { self._ble.startScan() } catch (err) {}
-    }, 600)
+    // 上次连接可能残留在系统 GATT 里（页面退出/设备重启后常见），
+    // 先关适配器再重开，确保广播能被重新发现。
+    try {
+      wx.closeBluetoothAdapter({
+        complete: function() {
+          setTimeout(function() {
+            try { self._ble.startScan() } catch (err) {}
+          }, 800)
+        }
+      })
+    } catch (err) {
+      setTimeout(function() {
+        try { self._ble.startScan() } catch (err) {}
+      }, 600)
+    }
   },
 
   _armEmptyTimer: function() {

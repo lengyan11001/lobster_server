@@ -56,7 +56,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix12" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix13" + envInfo);
     this._bindBle();
   },
 
@@ -210,7 +210,8 @@ Page({
         segmentDuration: minutes,
         powerOnRecord: settings ? Boolean(settings.powerOnRecord) : null,
         micGain: settings ? settings.micGain : null,
-        usbSwitch: settings ? Boolean(settings.usbSwitch) : null
+        usbSwitch: settings ? Boolean(settings.usbSwitch) : null,
+        diskFormatSupport: settings ? Boolean(settings.diskFormatSupport) : null
       });
       this.setData({
         segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段",
@@ -221,6 +222,18 @@ Page({
       if (!device) return;
       const used = Number(device.storageUsed || 0);
       const total = Number(device.storageTotal || 0);
+      if (this._formatCheckAt && Date.now() - this._formatCheckAt > 4000 && this._formatUsedBefore > 0) {
+        const before = this._formatUsedBefore;
+        this._formatCheckAt = 0;
+        this._formatUsedBefore = 0;
+        if (used >= before * 0.9) {
+          wx.showModal({
+            title: "格式化没有生效",
+            content: "存储仍是 " + this._sizeText(used) + "/" + this._sizeText(total) + "，设备的蓝牙格式化没有释放空间。请在录音笔上直接格式化，或换卡/升级固件。",
+            showCancel: false
+          });
+        }
+      }
       this.setDevice({
         name: String(device.name || this.data.device.name || "录音设备"),
         battery: typeof device.battery === "number" ? device.battery : this.data.device.battery,
@@ -711,6 +724,8 @@ Page({
         if (!res.confirm) return;
         try { ble.formatDisk(); } catch (err) {}
         this._logDiag("format:request", "");
+        this._formatUsedBefore = Number(this.data.device.storageUsed || 0);
+        this._formatCheckAt = Date.now();
         this.setData({ formatting: true });
         wx.showLoading({ title: "格式化中" });
         setTimeout(() => wx.hideLoading(), 3000);
