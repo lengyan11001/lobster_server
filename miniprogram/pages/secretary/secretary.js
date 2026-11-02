@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix24" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix25" + envInfo);
     this._bindBle();
   },
 
@@ -380,6 +380,7 @@ Page({
     return String(name || "")
       .trim()
       .toLowerCase()
+      .replace(/^ble_/, "")
       .replace(/\.(opus|atw|ka|bin|ops|wav|mp3|m4a|aac|ogg|amr|silk)$/i, "");
   },
 
