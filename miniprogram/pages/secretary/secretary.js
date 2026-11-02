@@ -708,10 +708,6 @@ Page({
       wx.showToast({ title: "设备正在录音，请先停止再刷新", icon: "none" });
       return;
     }
-    if (this.data.device.isRecording) {
-      wx.showToast({ title: "录音中，请先停止再刷新", icon: "none" });
-      return;
-    }
     this._listInFlightAt = 0;
     this._requestFileList("manual");
     wx.showToast({ title: "已请求设备文件列表", icon: "none" });
