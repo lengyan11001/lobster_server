@@ -29,7 +29,8 @@ Page({
       isRecording: false,
       isPaused: false,
       timeText: "00:00:00"
-    }
+    },
+    syncText: ""
   },
 
   onLoad() {
@@ -118,11 +119,105 @@ Page({
         this._stopTimer();
       }
     });
+    ble.on("onFileListUpdated", (files) => {
+      this._autoSyncDeviceFiles(files);
+    });
+    ble.on("onFileDownloadComplete", (file, localPath) => {
+      this._uploadDeviceFile(file, localPath);
+    });
+    ble.on("onFileDownloadProgress", (file, progress) => {
+      this.setData({ syncText: "正在下载 " + String((file && file.fileName) || "录音") + " · " + Number(progress || 0) + "%" });
+    });
+    ble.on("onFileDownloadFailed", (file, reason) => {
+      this.setData({ syncText: "下载失败：" + String(reason || "设备下载失败") });
+    });
     ble.on("onRecordDurationUpdated", (sec) => {
       this._pausedElapsed = 0;
       this._startAt = Date.now() - Number(sec || 0) * 1000;
       this.setDevice({ timeText: this._fmtDuration(sec) });
     });
+  },
+
+  /* 停录后把设备上的新文件自动拉下来并入库（H5 是原生桥做的，小程序自己补） */
+  _autoSyncDeviceFiles(files) {
+    const ble = this._ble;
+    const list = Array.isArray(files) ? files : [];
+    if (!ble || !list.length) return;
+    const known = {};
+    (this.data.items || []).forEach((row) => {
+      if (row.fileName) known[String(row.fileName)] = true;
+    });
+    const todo = list.filter((file) => {
+      const name = String((file && file.fileName) || "");
+      if (!name || known[name]) return false;
+      if (this._uploaded && this._uploaded[name]) return false;
+      if (this._uploading && this._uploading[name]) return false;
+      return true;
+    });
+    if (!todo.length) return;
+    this._syncQueue = (this._syncQueue || []).concat(todo);
+    if (this._syncing) return;
+    this._runSyncQueue();
+  },
+
+  _runSyncQueue() {
+    const ble = this._ble;
+    const queue = this._syncQueue || [];
+    if (!ble || !queue.length) {
+      this._syncing = false;
+      this.setData({ syncText: "" });
+      return;
+    }
+    this._syncing = true;
+    const file = queue.shift();
+    const name = String((file && file.fileName) || "");
+    const local = ble.getLocalPath ? ble.getLocalPath(name) : "";
+    if (local) {
+      this._uploadDeviceFile(file, local);
+      return;
+    }
+    this.setData({ syncText: "正在从设备下载 " + (name || "录音") + "…" });
+    this._uploading = this._uploading || {};
+    this._uploading[name] = true;
+    try {
+      ble.downloadFile(file);
+    } catch (err) {
+      this._uploading[name] = false;
+      this.setData({ syncText: "下载失败：" + (name || "录音") });
+      this._runSyncQueue();
+    }
+  },
+
+  _uploadDeviceFile(file, localPath) {
+    const name = String((file && file.fileName) || "");
+    if (!localPath || !name) { this._runSyncQueue(); return; }
+    this._uploading = this._uploading || {};
+    this._uploading[name] = true;
+    this.setData({ syncText: "正在上传 " + name + "…" });
+    api.uploadFile({
+      url: "/api/h5/recorder/files",
+      filePath: localPath,
+      name: "file",
+      formData: {
+        source_type: "device",
+        device_name: String((this.data.device && this.data.device.name) || "录音笔")
+      },
+      token: app.globalData.token || "",
+      timeout: 600000
+    })
+      .then(() => {
+        this._uploaded = this._uploaded || {};
+        this._uploaded[name] = true;
+        wx.showToast({ title: "已上传 " + name, icon: "none" });
+        this.reload();
+      })
+      .catch((err) => {
+        this.setData({ syncText: "上传失败：" + name + " · " + api.errorMessage(err) });
+      })
+      .then(() => {
+        this._uploading[name] = false;
+        this._runSyncQueue();
+      });
   },
 
   _fmtDuration(sec) {
@@ -238,6 +333,7 @@ Page({
         const rows = ((data && data.items) || []).map((row) => ({
           id: row.id,
           name: String(row.display_name || row.file_name || "录音"),
+          fileName: String(row.file_name || ""),
           status: String(row.status || ""),
           statusText: STATUS_TEXT[row.status] || row.status || "",
           sourceLabel: String(row.source_label || row.device_name || "音频"),
