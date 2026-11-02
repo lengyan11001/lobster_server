@@ -33,6 +33,7 @@ Page({
     syncText: "",
     syncing: false,
     segmentLabel: "分段设置",
+    powerOnRecord: false,
     deviceFiles: [],
     listRows: [],
     diagOpen: false,
@@ -51,7 +52,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-files-guard2" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix3" + envInfo);
     this._bindBle();
   },
 
@@ -171,7 +172,10 @@ Page({
     this._onBle("onInitParamUpdated", (settings) => {
       const minutes = Number((settings && settings.segmentDuration) || 0);
       this._logDiag("init:param", { segmentDuration: minutes });
-      this.setData({ segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段" });
+      this.setData({
+        segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段",
+        powerOnRecord: Boolean(settings && settings.powerOnRecord)
+      });
     });
     this._onBle("onDeviceInfoUpdated", (device) => {
       if (!device) return;
@@ -639,6 +643,19 @@ Page({
     this.setData({ syncing: false, syncText: "已停止同步（设备上未同步的文件保持原样）" });
   },
 
+  togglePowerOnRecord() {
+    const ble = this._ble;
+    if (!ble || !ble.isConnected) {
+      wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    const next = !this.data.powerOnRecord;
+    try { ble.setPowerOnRecord(next); } catch (err) {}
+    this._logDiag("poweron:set", { enabled: next });
+    this.setData({ powerOnRecord: next });
+    wx.showToast({ title: next ? "已开启开机自动录音" : "已关闭开机自动录音", icon: "none" });
+  },
+
   changeSegment() {
     const ble = this._ble;
     if (!ble || !ble.isConnected) {
@@ -664,6 +681,10 @@ Page({
     const ble = this._ble;
     if (!ble || !ble.isConnected) {
       wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    if (this.data.device.isRecording) {
+      wx.showToast({ title: "设备正在录音，请先停止再刷新", icon: "none" });
       return;
     }
     if (this.data.device.isRecording) {

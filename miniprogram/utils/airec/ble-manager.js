@@ -325,8 +325,14 @@ AIRECBleManager.prototype._setupCharacteristics = function() {
           } else if (uuid.indexOf('0011204A') >= 0) {
             self._handleAudioFileData(data)
           } else if (uuid.indexOf('0011201A') >= 0) {
-            if (data.length >= 2 && data[0] === 0xAA && data[1] === 0x55) {
-              self._handleControlData(data)
+            // 录音中 1201A 是实时音频流，里面也会出现 AA55，混进控制帧缓冲会把
+            // 正在传的文件列表搅坏（表现为 GET_FILES 一直收不到/被截断）。
+            if (!self._device || !self._device.isRecording) {
+              if (data.length >= 2 && data[0] === 0xAA && data[1] === 0x55) {
+                self._handleControlData(data)
+              } else {
+                self._handleAudioFileData(data)
+              }
             } else {
               self._handleAudioFileData(data)
             }
