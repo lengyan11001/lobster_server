@@ -17492,7 +17492,22 @@ async function api(path, options = {}) {
     }
 
     async function deleteRecorderRecord(id) {
-      if (!confirm("删除这条录音及转写结果？删除后不可恢复。")) return;
+      // 设备录音：必须同时删设备里的文件，否则下次同步又回来（2026-11-02）
+      const row = (state.recorderRecords || []).find((item) => String(item && item.id) === String(id)) || {};
+      const isDevice = String(row.source_type || "") === "device";
+      const fileName = String(row.file_name || "");
+      const prompt = isDevice
+        ? "删除这条录音（同时从录音设备删除该文件，否则下次同步会重新出现）？删除后不可恢复。"
+        : "删除这条录音及转写结果？删除后不可恢复。";
+      if (!confirm(prompt)) return;
+      if (isDevice && fileName) {
+        const native = recorderNative();
+        if (native && typeof native.deleteRecorderFile === "function") {
+          try { native.deleteRecorderFile(fileName); } catch (e) {}
+        } else {
+          toast("请在必火 App 中删除设备录音；本次只删除服务器记录");
+        }
+      }
       await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`, { method: "DELETE" });
       await loadRecorderRecords();
       await loadRecorderKnownNames();
