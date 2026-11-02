@@ -32,7 +32,9 @@ Page({
     },
     syncText: "",
     syncing: false,
+    segmentLabel: "分段设置",
     deviceFiles: [],
+    listRows: [],
     diagOpen: false,
     diagLines: [],
     diagId: ""
@@ -48,6 +50,7 @@ Page({
     } catch (err) {}
     this._bleHandlers = [];
     this._bleBound = false;
+    this._syncedNames = {};
     this._logDiag("page", "onLoad v2026-11-02-manual-sync" + envInfo);
     this._bindBle();
   },
@@ -64,6 +67,7 @@ Page({
   onShow() {
     this.reload();
     this.syncDeviceState();
+    this._loadSyncedNames();
   },
 
   /* ── 录音设备状态与控制（对齐 H5 AI秘书的录音设备面板）────────── */
@@ -165,6 +169,11 @@ Page({
       this._stopTimer();
       this.setDevice({ connected: false, isRecording: false, isPaused: false, timeText: "00:00:00" });
     });
+    this._onBle("onInitParamUpdated", (settings) => {
+      const minutes = Number((settings && settings.segmentDuration) || 0);
+      this._logDiag("init:param", { segmentDuration: minutes });
+      this.setData({ segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段" });
+    });
     this._onBle("onDeviceInfoUpdated", (device) => {
       if (!device) return;
       this.setDevice({
@@ -258,7 +267,7 @@ Page({
   /* 只列设备文件，由用户自己点“同步”（H5 就是这个逻辑） */
   _renderDeviceFiles(files) {
     const list = Array.isArray(files) ? files : [];
-    const synced = {};
+    const synced = this._syncedNames || {};
     (this.data.items || []).forEach((row) => {
       if (!row.fileName) return;
       synced[this._normalizeName(row.fileName)] = row.id;
@@ -279,12 +288,58 @@ Page({
       });
     this._logDiag("files:render", { total: rows.length, synced: rows.filter((x) => x.synced).length });
     this._lastDeviceList = list;
-    this.setData({ deviceFiles: rows });
+    this.setData({ deviceFiles: rows }, () => this._rebuildList());
+  },
+
+  /* 设备文件不再单独一块列表，和“设备录音”列表合成同一个列表 */
+  _rebuildList() {
+    const type = TABS[this.data.tabIndex].key;
+    const showDevice = type === "" || type === "device";
+    const deviceRows = showDevice
+      ? (this.data.deviceFiles || [])
+          .filter((f) => f && f.fileName && !f.synced)
+          .map((f) => ({
+            kind: "device",
+            key: "dev:" + f.fileName,
+            fileName: f.fileName,
+            name: f.fileName,
+            meta: [f.durationText, f.sizeText, "未同步"].filter(Boolean).join(" · ")
+          }))
+      : [];
+    const recRows = (this.data.items || []).map((r) => ({
+      kind: "record",
+      key: "rec:" + r.id,
+      id: r.id,
+      name: r.name,
+      status: r.status,
+      statusText: r.statusText,
+      summary: r.summary,
+      meta: [r.sourceLabel, r.time].filter(Boolean).join(" · ")
+    }));
+    this.setData({ listRows: deviceRows.concat(recRows) });
+  },
+
+  /* 拉全设备录音的已同步名单，避免把已入库的老文件又显示成“未同步” */
+  _loadSyncedNames() {
+    const map = {};
+    const walk = (page) => app.request({
+      url: `/api/h5/recorder/files?page=${page}&page_size=50&source_type=device`,
+      timeout: 30000
+    }).then((data) => {
+      ((data && data.items) || []).forEach((row) => {
+        if (row && row.file_name) map[this._normalizeName(row.file_name)] = row.id;
+      });
+      if (data && data.has_next && page < 10) return walk(page + 1);
+    });
+    return walk(1).then(() => {
+      this._syncedNames = map;
+      if (this._lastDeviceList) this._renderDeviceFiles(this._lastDeviceList);
+    }).catch(() => {});
   },
 
   syncDeviceFile(e) {
-    const index = Number(e.currentTarget.dataset.index || 0);
-    const row = this.data.deviceFiles[index];
+    const name = String(e.currentTarget.dataset.name || "");
+    const row = (this.data.deviceFiles || []).find((f) => f.fileName === name);
     if (!row) return;
     if (row.synced) {
       wx.showToast({ title: "这条已经同步过了", icon: "none" });
@@ -305,8 +360,8 @@ Page({
   },
 
   deleteDeviceFile(e) {
-    const index = Number(e.currentTarget.dataset.index || 0);
-    const row = this.data.deviceFiles[index];
+    const name = String(e.currentTarget.dataset.name || "");
+    const row = (this.data.deviceFiles || []).find((f) => f.fileName === name);
     if (!row) return;
     const ble = this._ble;
     const content = row.synced
@@ -331,22 +386,20 @@ Page({
           finish();
           return;
         }
-        const prevHandler = ble._callbacks ? ble._callbacks["onFileDeleted"] : null;
         let done = false;
+        const handler = (name, success) => {
+          if (String(name || "") !== row.fileName) return;
+          settle(Boolean(success));
+        };
         const settle = (success) => {
           if (done) return;
           done = true;
-          try {
-            if (prevHandler) this._onBle("onFileDeleted", prevHandler);
-            else ble.off("onFileDeleted");
-          } catch (err) {}
+          try { ble.off("onFileDeleted", handler); } catch (err) {}
+          this._bleHandlers = (this._bleHandlers || []).filter((h) => h.fn !== handler);
           if (!success) wx.showToast({ title: "设备删除失败", icon: "none" });
           finish();
         };
-        this._onBle("onFileDeleted", (name, success) => {
-          if (String(name || "") !== row.fileName) return;
-          settle(Boolean(success));
-        });
+        this._onBle("onFileDeleted", handler);
         try { ble.deleteFile(row.fileName); } catch (err) { settle(false); return; }
         setTimeout(() => settle(true), 3000);
       }
@@ -577,6 +630,26 @@ Page({
     this.setData({ syncing: false, syncText: "已停止同步（设备上未同步的文件保持原样）" });
   },
 
+  changeSegment() {
+    const ble = this._ble;
+    if (!ble || !ble.isConnected) {
+      wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    const options = [0, 5, 10, 15, 30, 60];
+    const labels = ["不分段", "5分钟", "10分钟", "15分钟", "30分钟", "60分钟"];
+    wx.showActionSheet({
+      itemList: labels,
+      success: (res) => {
+        const minutes = options[res.tapIndex];
+        try { ble.setSegmentDuration(minutes); } catch (err) {}
+        this._logDiag("segment:set", { minutes });
+        this.setData({ segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段" });
+        wx.showToast({ title: minutes > 0 ? "已设为每段" + minutes + "分钟" : "已设为不分段", icon: "none" });
+      }
+    });
+  },
+
   refreshDeviceFiles() {
     const ble = this._ble;
     if (!ble || !ble.isConnected) {
@@ -604,8 +677,9 @@ Page({
   switchTab(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
     if (index === this.data.tabIndex) return;
-    this.setData({ tabIndex: index, items: [], page: 1, hasMore: false });
+    this.setData({ tabIndex: index, items: [], listRows: [], page: 1, hasMore: false });
     this.fetchPage(1);
+    if (TABS[index].key === "device") this._loadSyncedNames();
   },
 
   fetchPage(page) {
@@ -625,7 +699,7 @@ Page({
           time: fmtTime(row.created_at)
         }));
         const merged = page === 1 ? rows : this.data.items.concat(rows);
-        this.setData({ items: merged, page, hasMore: Boolean(data && data.has_next) });
+        this.setData({ items: merged, page, hasMore: Boolean(data && data.has_next) }, () => this._rebuildList());
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ loading: false }));
@@ -634,6 +708,13 @@ Page({
   loadMore() {
     if (!this.data.hasMore || this.data.loading) return;
     this.fetchPage(this.data.page + 1);
+  },
+
+  openRow(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.listRows[index];
+    if (!row || row.kind !== "record" || !row.id) return;
+    wx.navigateTo({ url: `/pages/secretary-detail/secretary-detail?id=${row.id}` });
   },
 
   openDetail(e) {
