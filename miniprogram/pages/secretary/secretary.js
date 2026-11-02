@@ -32,6 +32,7 @@ Page({
     },
     syncText: "",
     syncing: false,
+    deviceFiles: [],
     diagOpen: false,
     diagLines: [],
     diagId: ""
@@ -194,7 +195,7 @@ Page({
       this._listInFlightAt = 0;
       const list = Array.isArray(files) ? files : [];
       this._logDiag("files", { count: list.length, names: list.slice(0, 8).map((f) => String((f && f.fileName) || "")) });
-      this._autoSyncDeviceFiles(files);
+      this._renderDeviceFiles(list);
     });
     ble.on("onFileDownloadComplete", (file, localPath) => {
       this._logDiag("downloaded", { file: String((file && file.fileName) || ""), path: String(localPath || "").slice(-40) });
@@ -235,39 +236,102 @@ Page({
       .replace(/\.(opus|atw|wav|mp3|m4a|aac|ogg|amr|silk)$/i, "");
   },
 
-  _autoSyncDeviceFiles(files) {
-    const ble = this._ble;
+  /* 只列设备文件，由用户自己点“同步”（H5 就是这个逻辑） */
+  _renderDeviceFiles(files) {
     const list = Array.isArray(files) ? files : [];
-    if (!ble || !list.length) return;
-    const known = {};
+    const synced = {};
     (this.data.items || []).forEach((row) => {
-      if (row.fileName) known[this._normalizeName(row.fileName)] = true;
-      if (row.name) known[this._normalizeName(row.name)] = true;
+      if (!row.fileName) return;
+      synced[this._normalizeName(row.fileName)] = row.id;
     });
-    this._queuedNames = this._queuedNames || {};
-    const sorted = list.slice().sort((a, b) => String((b && b.fileName) || "").localeCompare(String((a && a.fileName) || "")));
-    const todo = sorted.filter((file) => {
-      const name = String((file && file.fileName) || "");
-      if (!name) return false;
-      const key = this._normalizeName(name);
-      if (known[key]) return false;
-      if (this._uploaded && (this._uploaded[name] || this._uploaded[key])) return false;
-      if (this._uploading && (this._uploading[name] || this._uploading[key])) return false;
-      if (this._queuedNames[name] || this._queuedNames[key]) return false;
-      return true;
-    });
-    this._logDiag("sync:plan", { total: list.length, missing: todo.length, known: (this.data.items || []).length });
-    if (!todo.length) return;
-    const capped = todo.slice(0, 10);
-    this._logDiag("sync:queued", { count: capped.length, skipped: todo.length - capped.length });
-    capped.forEach((file) => {
-      const n = String((file && file.fileName) || "");
-      this._queuedNames[n] = true;
-      this._queuedNames[this._normalizeName(n)] = true;
-    });
-    this._syncQueue = (this._syncQueue || []).concat(capped);
-    if (this._syncing) return;
+    const rows = list
+      .slice()
+      .sort((a, b) => String((b && b.fileName) || "").localeCompare(String((a && a.fileName) || "")))
+      .map((file) => {
+        const name = String((file && file.fileName) || "");
+        const key = this._normalizeName(name);
+        return {
+          fileName: name,
+          sizeText: String((file && (file.fileSizeStr || file.fileSize)) || ""),
+          durationText: String((file && file.durationStr) || ""),
+          synced: Boolean(synced[key]),
+          recordId: synced[key] || 0
+        };
+      });
+    this._logDiag("files:render", { total: rows.length, synced: rows.filter((x) => x.synced).length });
+    this._lastDeviceList = list;
+    this.setData({ deviceFiles: rows });
+  },
+
+  syncDeviceFile(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.deviceFiles[index];
+    if (!row) return;
+    if (row.synced) {
+      wx.showToast({ title: "这条已经同步过了", icon: "none" });
+      return;
+    }
+    const ble = this._ble;
+    if (!ble || !ble.isConnected) {
+      wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    if (this.data.device.isRecording) {
+      wx.showToast({ title: "录音中，请先停止", icon: "none" });
+      return;
+    }
+    this._logDiag("sync:manual", { file: row.fileName });
+    this._syncQueue = [{ fileName: row.fileName }];
     this._runSyncQueue();
+  },
+
+  deleteDeviceFile(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.deviceFiles[index];
+    if (!row) return;
+    const ble = this._ble;
+    const content = row.synced
+      ? "同时删除服务器记录和设备里的文件（不可恢复）？"
+      : "从录音设备删除这个文件（不可恢复）？";
+    wx.showModal({
+      title: "删除设备录音",
+      content,
+      success: (res) => {
+        if (!res.confirm) return;
+        const finish = () => {
+          if (row.recordId) {
+            app.request({ method: "DELETE", url: `/api/h5/recorder/files/${row.recordId}`, timeout: 30000 })
+              .then(() => { this.reload(); this._requestFileList("after-delete"); })
+              .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+          } else {
+            this._requestFileList("after-delete");
+          }
+        };
+        if (!ble || !ble.isConnected) {
+          wx.showToast({ title: "设备未连接，只删服务器记录", icon: "none" });
+          finish();
+          return;
+        }
+        const prevHandler = ble._callbacks ? ble._callbacks["onFileDeleted"] : null;
+        let done = false;
+        const settle = (success) => {
+          if (done) return;
+          done = true;
+          try {
+            if (prevHandler) ble.on("onFileDeleted", prevHandler);
+            else ble.off("onFileDeleted");
+          } catch (err) {}
+          if (!success) wx.showToast({ title: "设备删除失败", icon: "none" });
+          finish();
+        };
+        ble.on("onFileDeleted", (name, success) => {
+          if (String(name || "") !== row.fileName) return;
+          settle(Boolean(success));
+        });
+        try { ble.deleteFile(row.fileName); } catch (err) { settle(false); return; }
+        setTimeout(() => settle(true), 3000);
+      }
+    });
   },
 
   _runSyncQueue() {
@@ -378,6 +442,7 @@ Page({
         this._uploaded[this._normalizeName(name)] = true;
         wx.showToast({ title: "已上传 " + prepared.name, icon: "none" });
         this.reload();
+        if (this._lastDeviceList) this._renderDeviceFiles(this._lastDeviceList);
       })
       .catch((err) => {
         this._logDiag("upload:failed", { file: prepared.name, error: api.errorMessage(err) });
