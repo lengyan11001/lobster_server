@@ -1,4 +1,7 @@
 <view class="home-shell">
+  <view class="space-layer stars-a"></view>
+  <view class="space-layer stars-b"></view>
+
   <view class="home-top">
     <view class="hello-pill">
       <view class="status-dot {{phoneBound ? 'online' : ''}}"></view>
@@ -12,65 +15,281 @@
     <image class="hero-bg" src="{{heroBgUrl}}" mode="aspectFill" />
     <image class="hero-lobster" src="{{lobsterUrl}}" mode="aspectFit" />
     <view class="hero-vignette"></view>
+    <view class="planet-glow"></view>
     <text class="brand-line">把不凡的创意变成现实</text>
   </view>
 
-  <view class="quick-row">
-    <view class="quick-item" bindtap="goAssets">
-      <text class="quick-title">素材库</text>
-      <text class="quick-sub">素材 · 形象 · 声音</text>
-    </view>
-    <view class="quick-item" bindtap="goIpProfile">
-      <text class="quick-title">个人IP</text>
-      <text class="quick-sub">资料 · 记忆</text>
-    </view>
-    <view class="quick-item" bindtap="goAirec">
-      <text class="quick-title">AI秘书</text>
-      <text class="quick-sub">录音笔 · 设备</text>
-    </view>
-  </view>
-
-  <view class="grid">
-    <view class="big-card" bindtap="goVideoHub">
-      <view class="big-tint"></view>
-      <view class="big-play">▶</view>
-      <text class="big-title">超级AI混剪</text>
-      <text class="big-sub">一键爆款成片 · 全网矩阵获客</text>
-    </view>
-
-    <view class="col">
-      <view class="small-card" bindtap="goMontageHistory">
-        <text class="small-title">素材智能剪辑</text>
+  <view class="clone-card" bindtap="goAssistant">
+    <view class="clone-copy">
+      <view class="clone-title-row">
+        <text class="clone-title">AI超级员工</text>
+        <text class="active-badge">ACTIVE</text>
       </view>
-      <view class="small-card" bindtap="goImageGenerate">
-        <text class="small-title">一键做海报</text>
+      <text class="clone-sub">OPENCLAW AI EMPLOYEE</text>
+      <text class="clone-desc">点击进入龙虾 OpenClaw 盒子，直接对话安排任务。</text>
+    </view>
+    <view class="clone-arrow">></view>
+  </view>
+
+  <view class="tool-grid">
+    <button class="tool-card" bindtap="goVideoInspiration">
+      <view class="tool-icon video-icon"></view>
+      <text class="tool-title">AI视频灵感</text>
+      <text class="tool-sub">VIDEO IDEAS</text>
+    </button>
+    <button class="tool-card" bindtap="goImageGenerate">
+      <view class="tool-icon image-icon"></view>
+      <text class="tool-title">商业设计图</text>
+      <text class="tool-sub">COMMERCIAL</text>
+    </button>
+    <button class="tool-card" data-prompt="帮我写一段适合短视频口播的文案，要求有钩子、有卖点、有转化。" bindtap="goFeature">
+      <view class="tool-icon copy-icon"></view>
+      <text class="tool-title">文案智能体</text>
+      <text class="tool-sub">COPYWRITING</text>
+    </button>
+    <button class="tool-card" data-prompt="打开更多 AI 员工能力，并根据我的目标推荐下一步。" bindtap="goFeature">
+      <view class="tool-avatar">AI</view>
+      <text class="tool-title">更多AI</text>
+      <text class="tool-sub">持续开发中</text>
+    </button>
+  </view>
+
+  <view class="ability-carousel">
+    <swiper
+      class="ability-swiper"
+      autoplay="{{true}}"
+      circular="{{true}}"
+      interval="3200"
+      duration="450"
+      current="{{abilityCurrent}}"
+      bindchange="onAbilityChange"
+    >
+      <swiper-item wx:for="{{abilitySlides}}" wx:key="type" class="ability-swiper-item">
+        <view class="ability-slide ability-slide-{{item.type}}" data-type="{{item.type}}" bindtap="tapAbilitySlide">
+          <view class="ability-slide-icon">{{item.icon}}</view>
+          <view class="ability-slide-copy">
+            <text>{{item.title}}</text>
+            <text>{{item.sub}}</text>
+          </view>
+          <text class="ability-slide-arrow">›</text>
+        </view>
+      </swiper-item>
+    </swiper>
+    <view class="ability-dots">
+      <view
+        wx:for="{{abilitySlides}}"
+        wx:key="type"
+        class="ability-dot {{abilityCurrent === index ? 'active' : ''}}"
+      ></view>
+    </view>
+  </view>
+
+  <view class="task-card">
+    <view class="task-card-summary">
+      <view class="task-icon">定</view>
+      <view class="task-copy">
+        <view class="task-title-row">
+          <text class="task-title">定时任务</text>
+          <text class="task-status {{phoneBound ? 'online' : ''}}">{{phoneBound ? 'ONLINE' : 'AUTH'}}</text>
+        </view>
+        <text class="task-sub">{{onlineText}}</text>
       </view>
+      <button class="task-toggle" bindtap="toggleTaskPanel">{{taskExpanded ? '收起' : '配置'}}</button>
+    </view>
+
+    <view wx:if="{{taskExpanded}}" class="task-panel">
+      <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
+        <text class="auth-title">授权后启用定时任务</text>
+        <text class="auth-text">{{authHint}}</text>
+        <view class="auth-actions">
+          <button class="task-ghost-btn" bindtap="login">快捷登录</button>
+          <button class="task-primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">手机号快捷登录</button>
+        </view>
+        <button class="sms-link" bindtap="showSmsBind">快捷验证失败，用短信验证码绑定</button>
+        <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
+          <input class="task-input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
+          <view class="sms-code-row">
+            <input class="task-input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
+            <button class="task-ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
+          </view>
+          <button class="task-primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+        </view>
+      </view>
+
+      <block wx:else>
+        <view class="task-field">
+          <text class="task-field-label">AI能力</text>
+          <view class="task-seg">
+            <button wx:for="{{capabilities}}" wx:key="id" class="{{taskAbility === item.id ? 'active' : ''}}" data-ability="{{item.id}}" bindtap="setTaskAbility">{{item.name}}</button>
+          </view>
+        </view>
+
+        <view class="task-field">
+          <text class="task-field-label">任务名称</text>
+          <input class="task-input" value="{{taskTitle}}" bindinput="onTaskTitleInput" placeholder="不填则自动使用能力名称" />
+        </view>
+
+        <view class="task-field">
+          <text class="task-field-label">执行方式</text>
+          <view class="task-seg">
+            <button class="{{scheduleType === 'once' ? 'active' : ''}}" data-type="once" bindtap="setScheduleType">一次性</button>
+            <button class="{{scheduleType === 'interval' ? 'active' : ''}}" data-type="interval" bindtap="setScheduleType">循环执行</button>
+          </view>
+        </view>
+
+        <view wx:if="{{scheduleType === 'interval'}}" class="task-field">
+          <text class="task-field-label">循环间隔</text>
+          <view class="interval-row">
+            <input class="task-input" type="number" value="{{intervalMinutes}}" bindinput="onIntervalInput" placeholder="间隔分钟" />
+            <text>分钟</text>
+          </view>
+        </view>
+
+        <view wx:if="{{taskAbility === 'hifly.video.create_by_tts'}}" class="digital-fields">
+          <picker mode="selector" range="{{avatarRows}}" range-key="title" value="{{avatarIndex}}" bindchange="onAvatarChange">
+            <view class="picker-box">
+              <text class="picker-label">数字人</text>
+              <text class="picker-value">{{hiflyLoading ? '加载中...' : (selectedAvatarTitle || '请选择')}}</text>
+            </view>
+          </picker>
+          <picker mode="selector" range="{{voiceRows}}" range-key="title" value="{{voiceIndex}}" bindchange="onVoiceChange">
+            <view class="picker-box">
+              <text class="picker-label">声音</text>
+              <text class="picker-value">{{hiflyLoading ? '加载中...' : (selectedVoiceTitle || '请选择')}}</text>
+            </view>
+          </picker>
+          <button class="task-ghost-btn auto-btn" bindtap="autoPickDigital">自动选择</button>
+        </view>
+
+        <view wx:if="{{taskAbility === 'ip_content_daily'}}" class="digital-fields">
+          <picker mode="selector" range="{{ipTemplates}}" range-key="title" value="{{ipTemplateIndex}}" bindchange="onIpTemplateChange">
+            <view class="picker-box">
+              <text class="picker-label">关键词和同行模板</text>
+              <text class="picker-value">{{ipTemplatesLoading ? '加载中...' : (selectedIpTemplateTitle || '请选择')}}</text>
+            </view>
+          </picker>
+          <view class="ip-task-checks">
+            <text class="picker-label">生成内容</text>
+            <checkbox-group bindchange="onIpDailyTaskChange">
+              <label wx:for="{{ipDailyTaskOptions}}" wx:key="value" class="ip-task-check">
+                <checkbox value="{{item.value}}" checked="{{item.checked}}" />
+                <text>{{item.label}}</text>
+              </label>
+            </checkbox-group>
+          </view>
+          <textarea class="task-input" value="{{ipRequirement}}" bindinput="onIpRequirementInput" placeholder="补充要求，可选" auto-height />
+        </view>
+
+        <button class="task-submit" loading="{{submittingTask}}" bindtap="createScheduledTask">下发定时任务</button>
+      </block>
     </view>
   </view>
 
-  <view class="grid">
-    <view class="wide-card" bindtap="goVideoInspiration">
-      <text class="wide-title">一键抄爆款模板</text>
-      <text class="wide-sub">没有灵感 · 一键爆款复刻</text>
+  <view class="showcase-section">
+    <view class="showcase-head">
+      <text class="showcase-title">AI数字人 · 销冠模板</text>
+      <button bindtap="goAvatarTemplates">查看全部 ></button>
     </view>
-    <view class="wide-card alt" bindtap="goRecords">
-      <text class="wide-title">我的成片库</text>
-      <text class="wide-sub">全部生成结果</text>
-    </view>
+    <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
+      <view class="showcase-strip">
+        <view class="start-template" bindtap="goDigital">
+          <view class="plus-circle">+</view>
+          <text>开始定制</text>
+        </view>
+        <view wx:if="{{avatarTemplatesLoading && !publicAvatarTemplates.length}}" class="template-card template-loading">
+          <view class="template-skeleton"></view>
+          <text class="template-title">加载模板中</text>
+          <text class="template-sub">公共数字人</text>
+        </view>
+        <view wx:for="{{publicAvatarTemplates}}" wx:key="avatar" class="template-card {{item.tone}}" data-index="{{index}}" bindtap="selectPublicAvatarTemplate">
+          <image wx:if="{{item.image_url}}" class="template-img" src="{{item.image_url}}" mode="aspectFill" />
+          <view wx:else class="template-static">
+            <view class="avatar-glow"></view>
+            <view class="avatar-head">{{item.initial || 'AI'}}</view>
+            <view class="avatar-body"></view>
+          </view>
+          <view class="template-mask"></view>
+          <text class="template-title">{{item.title}}</text>
+          <text class="template-sub">公共数字人</text>
+        </view>
+      </view>
+    </scroll-view>
   </view>
 
-  <view class="tools">
-    <view class="tool-row" bindtap="goMoments">
-      <view class="tool-badge">文</view>
-      <view class="tool-copy"><text class="tool-name">朋友圈图文</text><text class="tool-desc">文案 + 配图，一键成组</text></view>
-      <text class="tool-arrow">›</text>
+  <view class="showcase-section">
+    <view class="showcase-head">
+      <view class="showcase-title-box">
+        <text class="showcase-title">AI视频 · 获客灵感 🔥</text>
+        <text class="showcase-subtitle">短视频灵感和一键复创</text>
+      </view>
+      <button bindtap="goVideoInspiration">查看全部 ></button>
     </view>
-    <view class="tool-row" bindtap="goArticle">
-      <view class="tool-badge">章</view>
-      <view class="tool-copy"><text class="tool-name">公众号文案</text><text class="tool-desc">长文写作，直接发布</text></view>
-      <text class="tool-arrow">›</text>
-    </view>
+    <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
+      <view class="showcase-strip creative-strip">
+        <view class="start-template creative-start" bindtap="goVideoInspiration">
+          <view class="plus-circle">+</view>
+          <text>去复创</text>
+        </view>
+        <view class="template-card creative-card video-idea-card" data-idea="store-acquisition" bindtap="goVideoInspiration">
+          <image class="template-img" src="{{homeVideoCovers[0] || aiVideoBgUrl}}" mode="aspectFill" />
+          <view class="template-mask"></view>
+          <text class="template-title">线下门店获客</text>
+          <text class="template-sub">一键复创</text>
+        </view>
+        <view class="template-card creative-card video-idea-card cool" data-idea="product-seeding" bindtap="goVideoInspiration">
+          <image class="template-img" src="{{homeVideoCovers[1] || aiVideoBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">产品种草</text>
+          <text class="template-sub">一键复创</text>
+        </view>
+        <view class="template-card creative-card video-idea-card warm" data-idea="factory-live-acquisition" bindtap="goVideoInspiration">
+          <image class="template-img" src="{{homeVideoCovers[2] || aiVideoBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">工厂带货获客</text>
+          <text class="template-sub">一键复创</text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
 
+  <view class="showcase-section">
+    <view class="showcase-head">
+      <view class="showcase-title-box">
+        <text class="showcase-title">AI图片 · 商业设计</text>
+        <text class="showcase-subtitle">产品图、海报和获客素材</text>
+      </view>
+      <button bindtap="goImageGenerate">查看全部 ></button>
+    </view>
+    <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
+      <view class="showcase-strip creative-strip">
+        <view class="start-template creative-start" bindtap="goImageGenerate">
+          <view class="plus-circle">+</view>
+          <text>去设计</text>
+        </view>
+        <view class="template-card creative-card" bindtap="goImageGenerate">
+          <image class="template-img" src="{{homeImageCovers[0] || aiImageBgUrl}}" mode="aspectFill" />
+          <view class="template-mask"></view>
+          <text class="template-title">品牌产品海报</text>
+          <text class="template-sub">去设计</text>
+        </view>
+        <view class="template-card creative-card creative-card-alt" bindtap="goImageGenerate">
+          <image class="template-img" src="{{homeImageCovers[1] || aiImageBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">电商主图套装</text>
+          <text class="template-sub">去设计</text>
+        </view>
+        <view class="template-card creative-card creative-card-warm" bindtap="goImageGenerate">
+          <image class="template-img" src="{{homeImageCovers[2] || aiImageBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">社媒获客图</text>
+          <text class="template-sub">去设计</text>
+        </view>
+      </view>
+    </scroll-view>
   </view>
 
   <view class="bottom-space"></view>

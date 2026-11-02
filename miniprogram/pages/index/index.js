@@ -567,10 +567,6 @@ Page({
     wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
-  goMontageHistory() {
-    wx.navigateTo({ url: "/pages/article/history?feature=montage" });
-  },
-
   goMoments() {
     wx.navigateTo({ url: "/pages/moments/moments" });
   },
