@@ -147,6 +147,9 @@ Page({
       .then(() => {
         wx.showToast({ title: "已重新提交", icon: "success" });
         this.load();
+        [3000, 8000, 15000].forEach((delay) => {
+          setTimeout(() => { if (this.data.id) this.load(); }, delay);
+        });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => wx.hideLoading());
