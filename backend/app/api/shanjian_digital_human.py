@@ -2015,6 +2015,30 @@ def _profile_to_dict(row: ShanjianDigitalHumanProfile) -> Dict[str, Any]:
     }
 
 
+
+
+async def _mirror_media_to_tos(url: str, user_id: int, task_id: str, kind: str) -> str:
+    """把闪剪返回的临时视频/封面镜像到自己的 TOS，避免上游链接过期后 404。"""
+    url = _clean_text(url)
+    if not url or not url.startswith("http"):
+        return url
+    try:
+        from .assets import _get_tos_config, _upload_file_to_tos
+        if _get_tos_config() is None:
+            return url
+        import httpx, io
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True, trust_env=False) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200 or not resp.content:
+            return url
+        ext = "mp4" if kind == "video" else "jpg"
+        ctype = "video/mp4" if kind == "video" else "image/jpeg"
+        key = f"digital-human/{int(user_id)}/{task_id or 'task'}-{kind}.{ext}"
+        mirrored = await asyncio.to_thread(_upload_file_to_tos, io.BytesIO(resp.content), key, ctype)
+        return mirrored or url
+    except Exception:
+        return url
+
 def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
     _submit = row.submit_payload if isinstance(row.submit_payload, dict) else {}
     return {
@@ -2716,8 +2740,12 @@ async def query_video_task(
 
         row.status = status
         row.request_id = _clean_text(payload.get("requestId")) or row.request_id
+        prev_video_url = _clean_text(row.video_url)
         row.video_url = _clean_text(_pick_result_value(result, "videoUrl")) or row.video_url
         row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
+        if status == "succeed" and row.video_url and row.video_url != prev_video_url:
+            row.video_url = await _mirror_media_to_tos(row.video_url, row.user_id, row.task_id, "video")
+            row.cover_url = await _mirror_media_to_tos(row.cover_url, row.user_id, row.task_id, "cover")
         duration_value = _pick_result_value(result, "duration")
         postprocess: Optional[Dict[str, Any]] = None
         if (
@@ -2794,8 +2822,12 @@ async def query_video_task(
 
     row.status = status
     row.request_id = _clean_text(payload.get("requestId")) or row.request_id
+    prev_video_url = _clean_text(row.video_url)
     row.video_url = _clean_text(_pick_result_value(result, "videoUrl")) or row.video_url
     row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
+    if status == "succeed" and row.video_url and row.video_url != prev_video_url:
+        row.video_url = await _mirror_media_to_tos(row.video_url, row.user_id, row.task_id, "video")
+        row.cover_url = await _mirror_media_to_tos(row.cover_url, row.user_id, row.task_id, "cover")
     duration_value = _pick_result_value(result, "duration")
     try:
         row.duration = int(math.ceil(float(duration_value))) if duration_value not in (None, "") else row.duration
