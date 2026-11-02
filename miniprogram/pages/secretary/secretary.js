@@ -56,7 +56,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix11" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix12" + envInfo);
     this._bindBle();
   },
 
@@ -154,12 +154,13 @@ Page({
     }
   },
 
-  _sizeText(bytes) {
-    const n = Number(bytes || 0);
-    if (!n) return "0";
-    if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(1) + "G";
-    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + "M";
-    return Math.round(n / 1024) + "K";
+  // 设备上报的存储单位是 KB（SDK getStorageStr 也是 /1024 显示 MB）
+  _sizeText(kb) {
+    const bytes = Number(kb || 0) * 1024;
+    if (!bytes) return "0";
+    if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(1) + "G";
+    if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + "M";
+    return Math.round(bytes / 1024) + "K";
   },
 
   _onBle(event, fn) {
