@@ -25,6 +25,9 @@ Page({
       connected: false,
       name: "",
       battery: null,
+      storageUsed: 0,
+      storageTotal: 0,
+      storageText: "",
       isCharging: false,
       isRecording: false,
       isPaused: false,
@@ -52,7 +55,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix3" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix4" + envInfo);
     this._bindBle();
   },
 
@@ -150,6 +153,14 @@ Page({
     }
   },
 
+  _sizeText(bytes) {
+    const n = Number(bytes || 0);
+    if (!n) return "0";
+    if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(1) + "G";
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + "M";
+    return Math.round(n / 1024) + "K";
+  },
+
   _onBle(event, fn) {
     this._ble.on(event, fn);
     (this._bleHandlers = this._bleHandlers || []).push({ event, fn });
@@ -179,10 +190,15 @@ Page({
     });
     this._onBle("onDeviceInfoUpdated", (device) => {
       if (!device) return;
+      const used = Number(device.storageUsed || 0);
+      const total = Number(device.storageTotal || 0);
       this.setDevice({
         name: String(device.name || this.data.device.name || "录音设备"),
         battery: typeof device.battery === "number" ? device.battery : this.data.device.battery,
-        isCharging: Boolean(device.isCharging)
+        isCharging: Boolean(device.isCharging),
+        storageUsed: used,
+        storageTotal: total,
+        storageText: total > 0 ? this._sizeText(used) + "/" + this._sizeText(total) : ""
       });
     });
     this._onBle("onRecordStateChanged", (recording) => {
@@ -197,7 +213,7 @@ Page({
       } else if (this.data.device.isRecording && !this._justStarted) {
         this._stopTimer();
         this.setDevice({ isRecording: false, isPaused: false, timeText: "00:00:00" });
-        this._emptyRetryLeft = 2;
+        this._emptyRetryLeft = 3;
         setTimeout(() => { this.reload(); try { ble.fetchFileList(); } catch (err) {} }, 3000);
       }
       this._justStarted = false;
