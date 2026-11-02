@@ -17346,7 +17346,7 @@ async function api(path, options = {}) {
           </div>
           <div class="recorder-item-actions">
             <button type="button" class="ghost" data-recorder-detail="${Number(row.id)}">${row.status === "completed" ? "查看结果" : "查看进度"}</button>
-            ${row.status === "failed" ? `<button type="button" data-recorder-retry="${Number(row.id)}">重新处理</button>` : ""}
+            ${row.status === "failed" || row.error_message ? `<button type="button" data-recorder-retry="${Number(row.id)}">${row.status === "failed" ? "重新处理" : "重新生成摘要"}</button>` : ""}
             <button type="button" class="ghost" data-recorder-rename="${Number(row.id)}" data-recorder-name="${escapeHtml(row.display_name || row.file_name || "")}">改名</button>
             <button type="button" class="ghost danger-text" data-recorder-server-delete="${Number(row.id)}">删除</button>
           </div>
