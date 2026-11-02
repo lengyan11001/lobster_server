@@ -3,7 +3,8 @@ const hist = require("../../utils/gen-history");
 
 const CONFIG = {
   article: { title: "公众号文章", create: "/pages/article/article" },
-  montage: { title: "素材混剪", create: "/pages/montage/montage" }
+  montage: { title: "素材混剪", create: "/pages/montage/montage" },
+  storyboard: { title: "分镜头视频", create: "/pages/video-inspiration/video-inspiration" }
 };
 
 function fmt(v) { const d = new Date(Number(v || 0)); const p = (n) => (n < 10 ? "0" + n : "" + n); return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }

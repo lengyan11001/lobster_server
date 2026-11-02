@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const hist = require("../../utils/gen-history");
 const share = require("../../utils/share");
 
 const MODEL_ID = "grok-video-3";
@@ -956,6 +957,11 @@ Page({
     this.clearPendingTask();
     this.setData({ resultVideoUrl: url, submitting: false, progressText: "视频已生成" });
     this.saveVideoAsset(url, payload);
+    if (url) {
+      const entry = { title: "分镜头视频", content: String(this.data.prompt || ""), videoUrl: url, status: "completed" };
+      if (this._histId) hist.update(this._histId, entry);
+      else this._histId = hist.save("storyboard", entry);
+    }
     if (readyOptions.alreadyNotified) return;
     wx.showModal({
       title: "视频已生成",
