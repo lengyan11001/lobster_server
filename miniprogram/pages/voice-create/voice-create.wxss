@@ -1,0 +1,15 @@
+.page { min-height: 100vh; padding: 28rpx; background: #f3f6fb; }
+.head { padding: 12rpx 4rpx 20rpx; }
+.title { display: block; font-size: 40rpx; font-weight: 700; }
+.sub { display: block; margin-top: 8rpx; font-size: 24rpx; color: #64748b; }
+.panel { padding: 28rpx; background: #fff; border-radius: 24rpx; }
+.label { display: block; margin: 20rpx 0 12rpx; font-size: 24rpx; color: #64748b; }
+.input { width: 100%; height: 80rpx; padding: 0 20rpx; font-size: 28rpx; background: #f8fafc; border-radius: 14rpx; }
+.picker { padding: 22rpx; font-size: 28rpx; background: #f8fafc; border-radius: 14rpx; }
+.picker-box { position: relative; padding: 24rpx; font-size: 26rpx; color: #334155; background: #f8fafc; border-radius: 14rpx; }
+.clear { position: absolute; right: 18rpx; top: 14rpx; font-size: 32rpx; color: #ef4444; }
+.agree { display: flex; align-items: center; gap: 10rpx; margin: 20rpx 0; font-size: 24rpx; color: #475569; }
+.primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #2563eb; border-radius: 16rpx; }
+.primary[disabled] { opacity: 0.5; }
+.status { margin-top: 16rpx; font-size: 24rpx; color: #64748b; text-align: center; }
+@import "../../styles/dark.wxss";

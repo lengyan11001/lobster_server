@@ -106,3 +106,4 @@
 .dh-tpl { display: flex; align-items: center; justify-content: space-between; padding: 20rpx 24rpx; margin-bottom: 20rpx; background: #eff6ff; border-radius: 16rpx; }
 .dh-tpl-text { font-size: 24rpx; color: #1d4ed8; }
 .dh-tpl-link { font-size: 24rpx; color: #2563eb; }
+@import "../../styles/dark.wxss";

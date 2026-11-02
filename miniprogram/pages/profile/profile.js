@@ -32,7 +32,6 @@ Page({
     this.refreshState();
     if (app.globalData.token) {
       this.loadDevices();
-      this.loadScheduledRuns();
     }
   },
 
@@ -297,6 +296,10 @@ Page({
 
   goDownloads() {
     wx.switchTab({ url: "/pages/downloads/downloads" });
+  },
+
+  goIpProfile() {
+    wx.navigateTo({ url: "/pages/ip-profile/ip-profile" });
   },
 
   copyDiagnostics() {

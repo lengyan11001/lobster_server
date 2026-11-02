@@ -22,3 +22,4 @@
 .chip { padding: 10rpx 22rpx; border-radius: 999rpx; background: #f1f5f9; color: #475569; font-size: 24rpx; }
 .chip.active { background: #0f172a; color: #fff; }
 .primary { margin-top: 24rpx; }
+@import "../../styles/dark.wxss";

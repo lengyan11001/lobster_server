@@ -583,3 +583,4 @@
 .audio-pick { padding: 22rpx 0; border-top: 2rpx solid #f1f5f9; }
 .audio-pick-name { display: block; font-size: 28rpx; color: #0f172a; }
 .audio-pick-meta { display: block; margin-top: 6rpx; font-size: 22rpx; color: #94a3b8; }
+@import "../../styles/dark.wxss";

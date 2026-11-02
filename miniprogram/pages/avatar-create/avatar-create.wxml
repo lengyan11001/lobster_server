@@ -1,0 +1,40 @@
+<view class="page">
+  <view class="head">
+    <text class="title">新建形象分身</text>
+    <text class="sub">数字人 2.0：训练素材 + 授权视频 + 授权说明</text>
+  </view>
+
+  <view class="panel">
+    <text class="label">名称</text>
+    <input class="input" value="{{title}}" bindinput="onTitle" placeholder="给这个形象起个名字" />
+
+    <text class="label">素材类型</text>
+    <view class="seg">
+      <view class="seg-item {{sourceType === 'image' ? 'active' : ''}}" data-t="image" bindtap="setSourceType">图片</view>
+      <view class="seg-item {{sourceType === 'video' ? 'active' : ''}}" data-t="video" bindtap="setSourceType">视频</view>
+    </view>
+
+    <text class="label">{{sourceType === 'image' ? '训练图片' : '训练视频'}}</text>
+    <view class="picker-box" bindtap="chooseSource">
+      <text class="picker-text">{{sourceName || (sourceType === 'image' ? '选择清晰正面照片' : '选择清晰正面视频')}}</text>
+      <text wx:if="{{sourceName}}" class="clear" catchtap="clearSource">×</text>
+    </view>
+
+    <text class="label">录制读稿（可选）</text>
+    <textarea class="textarea" value="{{trainingText}}" bindinput="onTrainingText" auto-height maxlength="500" />
+
+    <text class="label">授权视频（必填）</text>
+    <view class="picker-box" bindtap="chooseAuthVideo">
+      <text class="picker-text">{{authVideoName || '选择本人授权视频'}}</text>
+      <text wx:if="{{authVideoName}}" class="clear" catchtap="clearAuthVideo">×</text>
+    </view>
+
+    <text class="label">授权说明（必填，需包含品牌名）</text>
+    <textarea class="textarea" value="{{authText}}" bindinput="onAuthText" auto-height maxlength="500" />
+
+    <label class="agree"><checkbox checked="{{agree}}" bindchange="toggleAgree" /><text>我确认已取得形象本人授权</text></label>
+
+    <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">开始克隆</button>
+    <view wx:if="{{statusText}}" class="status">{{statusText}}</view>
+  </view>
+</view>

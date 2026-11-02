@@ -1,0 +1,79 @@
+.container { padding-bottom: 60rpx; }
+
+.info-card {
+  background: #fff;
+  border-radius: 16rpx;
+  margin: 20rpx 24rpx;
+  padding: 28rpx 24rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06);
+}
+
+.file-name {
+  font-size: 28rpx; color: #333;
+  display: block; word-break: break-all;
+  font-weight: 500;
+}
+
+.file-size {
+  font-size: 22rpx; color: #999;
+  margin-top: 8rpx; display: block;
+}
+
+.loading-card {
+  text-align: center; padding: 60rpx 0;
+  color: #999; font-size: 26rpx;
+}
+
+.err-card {
+  background: #fff3cd;
+  border-radius: 16rpx;
+  margin: 0 24rpx 20rpx;
+  padding: 28rpx 24rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06);
+}
+
+.err-text { font-size: 26rpx; color: #856404; line-height: 1.6; }
+
+.player-card {
+  background: #fff;
+  border-radius: 16rpx;
+  margin: 0 24rpx 20rpx;
+  padding: 40rpx 32rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06);
+}
+
+.time-row {
+  display: flex; justify-content: space-between;
+  margin-bottom: 4rpx;
+}
+
+.time-text { font-size: 24rpx; color: #999; font-variant-numeric: tabular-nums; }
+
+.controls {
+  display: flex; align-items: center;
+  justify-content: center; gap: 60rpx;
+  margin-top: 32rpx;
+}
+
+.ctrl-btn {
+  display: flex; flex-direction: column;
+  align-items: center; gap: 6rpx;
+}
+
+.ctrl-icon { font-size: 48rpx; color: #333; }
+.ctrl-label { font-size: 20rpx; color: #999; }
+
+.play-btn {
+  width: 128rpx; height: 128rpx;
+  border-radius: 64rpx;
+  background: #4A90D9;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4rpx 16rpx rgba(74,144,217,0.4);
+}
+
+.play-btn.playing { background: #E74C3C; }
+
+.play-icon { font-size: 52rpx; color: #fff; }
+
+.action-card { margin: 0 24rpx; }
+.full-btn { width: 100%; }

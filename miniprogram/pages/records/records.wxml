@@ -1,0 +1,43 @@
+<view class="page">
+  <view class="head">
+    <text class="title">内容记录</text>
+    <text class="sub">数字人、图片、文章、PPT、音频的生成记录</text>
+  </view>
+
+  <view class="tabs">
+    <view wx:for="{{kinds}}" wx:key="key" class="tab {{kindIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="switchKind">{{item.label}}</view>
+  </view>
+
+  <view wx:if="{{loading && !items.length}}" class="empty">加载中…</view>
+  <view wx:elif="{{!items.length}}" class="empty">暂无{{kinds[kindIndex].label}}记录</view>
+
+  <view wx:for="{{items}}" wx:key="key" class="card" data-index="{{index}}" bindtap="openDetail">
+    <image wx:if="{{item.thumb}}" class="cover" src="{{item.thumb}}" mode="aspectFill" />
+    <view wx:else class="cover cover-empty">{{item.kindLabel}}</view>
+    <view class="card-body">
+      <text class="card-title">{{item.title}}</text>
+      <text class="card-summary">{{item.summary}}</text>
+      <text class="card-meta">{{item.kindLabel}} · {{item.time}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{items.length}}" class="more">
+    <button class="ghost" loading="{{loading}}" bindtap="loadMore">{{hasMore ? '加载更多' : '没有更多了'}}</button>
+  </view>
+
+  <view wx:if="{{detail}}" class="overlay" catchtap="closeDetail">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">{{detail.title}}</text>
+        <text class="sheet-close" catchtap="closeDetail">×</text>
+      </view>
+      <video wx:if="{{detail.videoUrl}}" class="video" src="{{detail.videoUrl}}" controls />
+      <image wx:for="{{detail.images}}" wx:key="*this" class="image" src="{{item}}" mode="widthFix" data-url="{{item}}" bindtap="previewImage" />
+      <text class="content" user-select="{{true}}">{{detail.content}}</text>
+      <view class="sheet-actions">
+        <button class="ghost half" bindtap="copyContent">复制内容</button>
+        <button class="danger half" bindtap="deleteDetail">删除记录</button>
+      </view>
+    </view>
+  </view>
+</view>

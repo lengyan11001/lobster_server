@@ -1,0 +1,193 @@
+.container { padding-bottom: 40rpx; }
+
+.card-title {
+  font-size: 30rpx; font-weight: 600;
+  color: #333; margin-bottom: 16rpx;
+}
+
+/* 按钮行 */
+.btn-row { margin-top: 20rpx; text-align: center; }
+.btn-row-multi {
+  display: flex; gap: 16rpx;
+  margin-top: 20rpx; justify-content: flex-end;
+}
+
+.full-btn { width: 100%; }
+.small-btn { display: inline-block; font-size: 26rpx; padding: 12rpx 32rpx; }
+
+.btn-orange {
+  background: #E67E22; color: #fff;
+  border-radius: 12rpx; font-size: 26rpx;
+  padding: 12rpx 32rpx; border: none;
+}
+.btn-orange::after { border: none; }
+
+.arrow { color: #999; }
+
+/* 开关行 */
+.switch-row {
+  display: flex; gap: 0;
+  padding: 4rpx 0;
+}
+.switch-item {
+  flex: 1;
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: 8rpx 0;
+}
+
+/* 选择器行 */
+.picker-row {
+  display: flex; gap: 16rpx;
+}
+.picker-item {
+  flex: 1;
+}
+
+/* 操作按钮行 */
+.action-btn-row {
+  display: flex; gap: 12rpx;
+  margin-top: 16rpx;
+}
+.action-btn-item {
+  flex: 1; font-size: 26rpx;
+  padding: 12rpx 0;
+}
+
+/* 录音 */
+.record-time {
+  text-align: center; font-size: 56rpx;
+  font-weight: 300; color: #4A90D9;
+  padding: 20rpx 0;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 2rpx;
+}
+.record-time.recording { color: #E74C3C; }
+
+.record-btns {
+  display: flex; gap: 16rpx;
+  justify-content: center;
+}
+
+.rec-btn { flex: 1; max-width: 240rpx; font-size: 28rpx; }
+.full-rec-btn { max-width: 100%; }
+
+/* 文件 */
+.file-header {
+  display: flex; align-items: center;
+  justify-content: space-between;
+}
+
+.refresh-btn {
+  font-size: 26rpx; color: #4A90D9;
+  padding: 8rpx 16rpx;
+}
+
+.filter-bar {
+  display: flex; gap: 0;
+  margin: 16rpx 0;
+  background: #f0f0f0;
+  border-radius: 8rpx;
+  overflow: hidden;
+}
+
+.filter-item {
+  flex: 1; text-align: center;
+  padding: 12rpx 0; font-size: 24rpx;
+  color: #666;
+}
+
+.filter-item.active {
+  background: #4A90D9; color: #fff;
+  border-radius: 8rpx;
+}
+
+.empty-files {
+  text-align: center; padding: 40rpx 0;
+  color: #999; font-size: 26rpx;
+}
+
+.file-item {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+
+.file-item:last-child { border-bottom: none; }
+
+.file-info { flex: 1; min-width: 0; }
+
+.file-name {
+  font-size: 26rpx; color: #333;
+  display: block;
+  overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-meta {
+  display: flex; gap: 16rpx;
+  font-size: 22rpx; color: #999;
+  margin-top: 4rpx;
+}
+
+.file-size { color: #bbb; }
+
+.file-status {
+  font-size: 22rpx; color: #27AE60;
+  margin-top: 4rpx; display: block;
+}
+
+.progress-bar {
+  height: 6rpx; background: #eee;
+  border-radius: 3rpx; margin-top: 8rpx;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%; background: #4A90D9;
+  border-radius: 3rpx;
+  transition: width 0.3s;
+}
+
+.file-actions {
+  display: flex; gap: 12rpx;
+  flex-shrink: 0; margin-left: 16rpx;
+}
+
+.action-btn {
+  font-size: 24rpx; padding: 8rpx 20rpx;
+  border-radius: 8rpx;
+}
+
+.action-btn.download { background: #4A90D9; color: #fff; }
+.action-btn.play { background: #27AE60; color: #fff; }
+.action-btn.delete { background: #f5f5f5; color: #E74C3C; }
+
+.progress-text {
+  font-size: 20rpx; color: #4A90D9;
+  margin-top: 4rpx; display: block;
+}
+
+.load-more {
+  text-align: center; padding: 20rpx 0;
+  font-size: 26rpx; color: #4A90D9;
+}
+
+/* 声波动画 */
+.wave-container {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 8rpx;
+  height: 60rpx;
+  margin: 12rpx 0;
+}
+
+.wave-bar {
+  width: 8rpx;
+  min-height: 8rpx;
+  background: #E74C3C;
+  border-radius: 4rpx;
+  transition: height 0.15s ease;
+}

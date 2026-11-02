@@ -1,0 +1,89 @@
+<view class="page">
+  <view class="tabs">
+    <view wx:for="{{tabs}}" wx:key="key" class="tab {{tabIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="switchTab">{{item.label}}</view>
+  </view>
+
+  <block wx:if="{{tabIndex === 0}}">
+    <view wx:if="{{loading}}" class="empty">加载中…</view>
+    <block wx:else>
+      <view class="panel">
+        <view wx:for="{{fields}}" wx:key="key" class="field">
+          <text class="label">{{item.label}}</text>
+          <textarea wx:if="{{item.multiline}}" class="textarea" value="{{item.value}}" data-key="{{item.key}}" bindinput="onField" auto-height maxlength="2000" />
+          <input wx:else class="input" value="{{item.value}}" data-key="{{item.key}}" bindinput="onField" />
+        </view>
+        <button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="save">保存资料</button>
+      </view>
+    </block>
+  </block>
+
+  <block wx:elif="{{tabIndex === 1}}">
+    <view class="btn-row">
+      <button class="primary small" bindtap="addMemoryText">新增文本</button>
+      <button class="ghost small" bindtap="uploadMemory">上传文件</button>
+    </view>
+    <view wx:if="{{memoryLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!memoryDocs.length}}" class="empty">还没有个人记忆文件</view>
+    <view wx:for="{{memoryDocs}}" wx:key="doc_id" class="row" data-index="{{index}}" bindtap="openDoc">
+      <view class="row-main">
+        <text class="row-title">{{item.title}}</text>
+        <text class="row-meta">{{item.notes || '记忆文件'}}</text>
+      </view>
+    </view>
+  </block>
+
+  <block wx:elif="{{tabIndex === 2}}">
+    <button class="primary small" bindtap="addKeyword">新增关键词</button>
+    <view wx:if="{{keywordLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!keywords.length}}" class="empty">还没有关键词</view>
+    <view wx:for="{{keywords}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="keywordMenu">
+      <view class="row-main">
+        <text class="row-title">{{item.display_name || item.keyword}}</text>
+        <text class="row-meta">{{item.status || ''}} · 长按操作</text>
+      </view>
+    </view>
+  </block>
+
+  <block wx:elif="{{tabIndex === 3}}">
+    <button class="primary small" bindtap="addCompetitor">新增同行</button>
+    <view wx:if="{{competitorLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!competitors.length}}" class="empty">还没有同行账号</view>
+    <view wx:for="{{competitors}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="competitorMenu">
+      <view class="row-main">
+        <text class="row-title">{{item.display_name || item.account_key}}</text>
+        <text class="row-meta">{{item.platform}} · {{item.status || ''}} · 长按操作</text>
+      </view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="btn-row">
+      <button class="primary small" bindtap="addTemplate">新增模板</button>
+      <button class="ghost small" bindtap="importTemplate">导入模板</button>
+    </view>
+    <view wx:if="{{templateLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!templates.length}}" class="empty">还没有模板</view>
+    <view wx:for="{{templates}}" wx:key="id" class="row">
+      <view class="row-main">
+        <text class="row-title">{{item.name}}</text>
+        <text class="row-meta">设备：{{item.device_name}}{{item.device_online ? ' · 在线' : ''}} · {{item.time}}</text>
+      </view>
+      <view class="row-actions">
+        <text wx:if="{{item.id === currentTemplateId}}" class="tag-current">当前</text>
+        <text wx:else class="link" data-index="{{index}}" catchtap="setCurrentTemplate">设为当前</text>
+        <text class="link" data-index="{{index}}" catchtap="editTemplate">编辑</text>
+        <text wx:if="{{!item.is_personal_default}}" class="link" data-index="{{index}}" catchtap="copyTemplate">复制</text>
+      </view>
+    </view>
+  </block>
+
+  <view wx:if="{{doc}}" class="overlay" catchtap="closeDoc">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">{{doc.title}}</text>
+        <text class="sheet-close" catchtap="closeDoc">×</text>
+      </view>
+      <text class="doc-content" user-select="{{true}}">{{doc.content}}</text>
+    </view>
+  </view>
+</view>

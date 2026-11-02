@@ -27,3 +27,4 @@
 .input { width:100%; box-sizing:border-box; background:#f8fafc; border-radius:12rpx; padding:16rpx; font-size:26rpx; }
 .input.small { min-height:100rpx; }
 .primary { margin-top:24rpx; }
+@import "../../styles/dark.wxss";

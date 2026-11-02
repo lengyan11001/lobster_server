@@ -1,0 +1,39 @@
+<view class="page">
+  <view class="panel">
+    <text class="label">模板名称</text>
+    <input class="input" value="{{name}}" bindinput="onName" placeholder="例如：产品A日更模板" />
+
+    <text class="label">语言</text>
+    <picker mode="selector" range="{{languages}}" value="{{langIndex}}" bindchange="pickLang">
+      <view class="picker">{{languages[langIndex]}}</view>
+    </picker>
+
+    <text class="label">生成要求（可选）</text>
+    <textarea class="textarea" value="{{note}}" bindinput="onNote" placeholder="例如：口播偏专业、每期带一个案例" auto-height maxlength="800" />
+  </view>
+
+  <view class="panel">
+    <text class="label">关联关键词（{{selectedKeywordIds.length}}）</text>
+    <view wx:if="{{!keywords.length}}" class="empty">还没有关键词，请先去「关键词」tab 新增</view>
+    <view class="chips">
+      <view wx:for="{{keywords}}" wx:key="id" class="chip {{item.checked ? 'active' : ''}}" data-index="{{index}}" bindtap="toggleKeyword">{{item.display_name || item.keyword}}</view>
+    </view>
+
+    <text class="label">关联同行（{{selectedCompetitorIds.length}}）</text>
+    <view wx:if="{{!competitors.length}}" class="empty">还没有同行账号</view>
+    <view class="chips">
+      <view wx:for="{{competitors}}" wx:key="id" class="chip {{item.checked ? 'active' : ''}}" data-index="{{index}}" bindtap="toggleCompetitor">{{item.display_name || item.account_key}}</view>
+    </view>
+
+    <text class="label">关联记忆文件（{{selectedMemoryIds.length}}）</text>
+    <view wx:if="{{!memories.length}}" class="empty">还没有记忆文件</view>
+    <view class="chips">
+      <view wx:for="{{memories}}" wx:key="doc_id" class="chip {{item.checked ? 'active' : ''}}" data-index="{{index}}" bindtap="toggleMemory">{{item.title}}</view>
+    </view>
+  </view>
+
+  <view class="actions">
+    <button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="save">{{editingId ? '保存修改' : '创建模板'}}</button>
+    <button wx:if="{{editingId}}" class="danger" bindtap="remove">删除模板</button>
+  </view>
+</view>

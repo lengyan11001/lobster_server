@@ -1,0 +1,178 @@
+<view class="container">
+
+  <!-- 未连接：连接按钮 -->
+  <view class="card" wx:if="{{!connected}}">
+    <button class="btn-primary full-btn" bindtap="onConnectTap">扫描并连接设备</button>
+  </view>
+
+  <!-- 已连接：设备信息 -->
+  <view class="card" wx:if="{{connected}}">
+    <view class="card-title">设备信息</view>
+    <view class="row">
+      <text class="label">名称</text>
+      <text class="value">{{deviceName}}</text>
+    </view>
+    <view class="row" wx:if="{{macAddress}}">
+      <text class="label">SN</text>
+      <text class="value">{{macAddress}}</text>
+    </view>
+    <view class="row">
+      <text class="label">电量</text>
+      <text class="value">{{battery}}%{{isCharging ? ' ⚡充电中' : ''}}</text>
+    </view>
+    <view class="row">
+      <text class="label">存储</text>
+      <text class="value">{{storageStr}}</text>
+    </view>
+    <view class="row" wx:if="{{firmwareVersion}}">
+      <text class="label">固件</text>
+      <text class="value">{{firmwareVersion}}</text>
+    </view>
+    <view class="btn-row-multi">
+      <button class="btn-orange small-btn" bindtap="onOtaTap">OTA升级</button>
+      <button class="btn-danger small-btn" bindtap="onDisconnectTap">断开连接</button>
+    </view>
+  </view>
+
+  <!-- 设备设置 -->
+  <view class="card" wx:if="{{connected}}">
+    <view class="card-title">⚙️ 设备设置</view>
+
+    <!-- 开关行 1 -->
+    <view class="switch-row">
+      <view class="switch-item">
+        <text class="label">录音灯</text>
+        <switch checked="{{settings.ledSwitch}}" bindchange="onLedChange" color="#4A90D9"/>
+      </view>
+      <view class="switch-item">
+        <text class="label">USB</text>
+        <switch checked="{{settings.usbSwitch}}" bindchange="onUsbChange" color="#4A90D9"/>
+      </view>
+    </view>
+
+    <!-- 开关行 2 -->
+    <view class="switch-row">
+      <view class="switch-item">
+        <text class="label">开机录音</text>
+        <switch checked="{{settings.powerOnRecord}}" bindchange="onPowerOnRecChange" color="#4A90D9"/>
+      </view>
+      <view class="switch-item">
+        <text class="label">降噪</text>
+        <switch checked="{{settings.noiseSwitch}}" bindchange="onNoiseChange" color="#4A90D9"/>
+      </view>
+    </view>
+
+    <!-- 开关行 3 -->
+    <view class="switch-row">
+      <view class="switch-item">
+        <text class="label">分贝检测</text>
+        <switch checked="{{decibelEnabled}}" bindchange="onDecibelChange" color="#4A90D9"/>
+      </view>
+      <view class="switch-item">
+        <text class="label">按键启动</text>
+        <switch color="#4A90D9"/>
+      </view>
+    </view>
+
+    <!-- 选择器行 1 -->
+    <view class="picker-row">
+      <view class="picker-item row" bindtap="onSegmentTap">
+        <text class="label">分段录音</text>
+        <text class="value arrow">{{settings.segmentDuration > 0 ? settings.segmentDuration + '分钟' : '不分段'}} ›</text>
+      </view>
+      <view class="picker-item row" bindtap="onIdleTap">
+        <text class="label">空闲关机</text>
+        <text class="value arrow">{{settings.idleShutdown > 0 ? settings.idleShutdown + '分钟' : '不关机'}} ›</text>
+      </view>
+    </view>
+
+    <!-- 选择器行 2 -->
+    <view class="row" bindtap="onMicGainTap">
+      <text class="label">麦克风增益</text>
+      <text class="value arrow">增益 {{settings.micGain}} ›</text>
+    </view>
+
+    <!-- 操作按钮行 -->
+    <view class="action-btn-row">
+      <button class="btn-primary action-btn-item" bindtap="onSafeCodeTap">安全码</button>
+      <button class="btn-primary action-btn-item" bindtap="onActivateCodeTap">激活码</button>
+      <button class="btn-danger action-btn-item" bindtap="onFormatTap">格式化</button>
+    </view>
+  </view>
+
+  <!-- 录音控制 -->
+  <view class="card" wx:if="{{connected}}">
+    <view class="card-title">录音</view>
+    <view class="record-time {{isRecording && !isPaused ? 'recording' : ''}}">{{recordTimeStr}}</view>
+    <!-- 声波动画 -->
+    <view class="wave-container" wx:if="{{isRecording && !isPaused && decibelEnabled}}">
+      <view wx:for="{{waveBars}}" wx:key="index"
+            class="wave-bar"
+            style="height: {{item}}%"></view>
+    </view>
+    <view class="record-btns">
+      <!-- 未录音：只显示开始 -->
+      <button class="btn-primary rec-btn full-rec-btn" bindtap="onStartRecTap"
+              wx:if="{{!isRecording}}">开始录音</button>
+      <!-- 录音中：显示暂停/继续 + 保存 -->
+      <button class="btn-primary rec-btn" bindtap="onPauseRecTap"
+              wx:if="{{isRecording}}">{{isPaused ? '继续' : '暂停'}}</button>
+      <button class="btn-danger rec-btn" bindtap="onStopRecTap"
+              wx:if="{{isRecording}}">保存</button>
+    </view>
+  </view>
+
+  <!-- 文件列表 -->
+  <view class="card" wx:if="{{connected}}">
+    <view class="file-header">
+      <text class="card-title">🎵 音频文件</text>
+      <view class="refresh-btn" bindtap="onRefreshFiles">刷新</view>
+    </view>
+
+    <!-- 过滤 -->
+    <view class="filter-bar">
+      <view class="filter-item {{currentFilter === 0 ? 'active' : ''}}"
+            bindtap="onFilterTap" data-filter="0">全部</view>
+      <view class="filter-item {{currentFilter === 1 ? 'active' : ''}}"
+            bindtap="onFilterTap" data-filter="1">设备</view>
+      <view class="filter-item {{currentFilter === 2 ? 'active' : ''}}"
+            bindtap="onFilterTap" data-filter="2">本地</view>
+    </view>
+
+    <!-- 文件项 -->
+    <view wx:if="{{displayFiles.length === 0}}" class="empty-files">
+      <text>暂无文件</text>
+    </view>
+    <view class="file-item" wx:for="{{displayFiles}}" wx:key="fileName">
+      <view class="file-info" bindtap="onFileTap" data-index="{{index}}">
+        <text class="file-name">{{item.fileName}}</text>
+        <view class="file-meta">
+          <text>{{item.createTime}}</text>
+          <text class="file-size">{{item.fileSizeStr}}</text>
+        </view>
+        <!-- 下载进度 -->
+        <view class="progress-bar" wx:if="{{item.downloading}}">
+          <view class="progress-fill" style="width: {{item.progress}}%"></view>
+          <text class="progress-text">{{item.progress}}%</text>
+        </view>
+        <!-- 已下载状态 -->
+        <text class="file-status" wx:if="{{item.downloaded && !item.downloading}}">✓ 已下载</text>
+      </view>
+      <view class="file-actions">
+        <!-- 下载按钮 -->
+        <view class="action-btn download" bindtap="onDownloadTap" data-index="{{index}}"
+              wx:if="{{!item.downloaded && !item.downloading}}">下载</view>
+        <!-- 播放按钮（已下载才显示） -->
+        <view class="action-btn play" bindtap="onFileTap" data-index="{{index}}"
+              wx:if="{{item.downloaded}}">▶ 播放</view>
+        <!-- 删除按钮 -->
+        <view class="action-btn delete" bindtap="onDeleteTap" data-index="{{index}}">删除</view>
+      </view>
+    </view>
+
+    <!-- 加载更多 -->
+    <view class="load-more" wx:if="{{hasMore}}" bindtap="onLoadMore">
+      <text>加载更多</text>
+    </view>
+  </view>
+</view>

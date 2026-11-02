@@ -265,3 +265,4 @@
   width: 100%;
   margin-top: 14rpx;
 }
+@import "../../styles/dark.wxss";
