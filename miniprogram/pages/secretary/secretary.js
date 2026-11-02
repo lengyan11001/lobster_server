@@ -55,7 +55,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix7" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix8" + envInfo);
     this._bindBle();
   },
 
@@ -179,6 +179,17 @@ Page({
       this._logDiag("ble:disconnected");
       this._stopTimer();
       this.setDevice({ connected: false, isRecording: false, isPaused: false, timeText: "00:00:00" });
+    });
+    this._onBle("onFormatResult", (success, message) => {
+      this._logDiag("format:result", { success: Boolean(success), message: String(message || "") });
+      wx.showToast({ title: success ? "格式化完成" : String(message || "格式化失败"), icon: "none" });
+      if (success) {
+        setTimeout(() => {
+          try { ble.fetchAllDeviceInfo(); } catch (err) {}
+          this._emptyRetryLeft = 3;
+          this._requestFileList("after-format");
+        }, 3000);
+      }
     });
     this._onBle("onInitParamUpdated", (settings) => {
       const minutes = Number((settings && settings.segmentDuration) || 0);
@@ -657,6 +668,31 @@ Page({
     this._syncing = false;
     this._listInFlightAt = 0;
     this.setData({ syncing: false, syncText: "已停止同步（设备上未同步的文件保持原样）" });
+  },
+
+  formatDeviceStorage() {
+    const ble = this._ble;
+    if (!ble || !ble.isConnected) {
+      wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    if (this.data.device.isRecording) {
+      wx.showToast({ title: "请先停止录音", icon: "none" });
+      return;
+    }
+    wx.showModal({
+      title: "格式化录音笔存储",
+      content: "会清空录音笔内的全部录音，不可恢复。当前文件列表是 0 条且存储几乎占满，通常需要格式化才能恢复写入。确定继续？",
+      confirmText: "格式化",
+      confirmColor: "#dc2626",
+      success: (res) => {
+        if (!res.confirm) return;
+        try { ble.formatDisk(); } catch (err) {}
+        this._logDiag("format:request", "");
+        wx.showLoading({ title: "格式化中" });
+        setTimeout(() => wx.hideLoading(), 4000);
+      }
+    });
   },
 
   togglePowerOnRecord() {
