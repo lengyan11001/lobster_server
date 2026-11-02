@@ -144,10 +144,20 @@ async def extract_digital_human_params(
         )
         for item in asset_rows:
             meta = item.meta if isinstance(item.meta, dict) else {}
+            names: list[str] = []
             group_name = str(meta.get("creative_candidate_group") or "").strip()
-            if not group_name:
-                continue
-            groups.setdefault(group_name, []).append(item)
+            if group_name:
+                names.append(group_name)
+            # 素材库分组标签（tags 逗号分隔）也作为可选分组
+            raw_tags = str(getattr(item, "tags", "") or "")
+            for tag in raw_tags.replace("，", ",").split(","):
+                tag = tag.strip()
+                if tag and tag not in names:
+                    names.append(tag)
+            for name in names:
+                bucket = groups.setdefault(name, [])
+                if item not in bucket:
+                    bucket.append(item)
     except Exception:
         groups = {}
     group_catalog = "、".join(f"{name}({len(rows)}个)" for name, rows in list(groups.items())[:20])
