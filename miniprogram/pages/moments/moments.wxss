@@ -9,3 +9,16 @@
 .card-meta { display: block; margin-top: 12rpx; font-size: 22rpx; color: #94a3b8; }
 .chip { font-size: 20rpx; padding: 4rpx 12rpx; border-radius: 999rpx; background: #ecfdf5; color: #059669; }
 .primary.small { margin: 0; font-size: 24rpx; padding: 0 22rpx; height: 60rpx; line-height: 60rpx; border-radius: 999rpx; }
+
+.overlay { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: rgba(15,23,42,.45); display: flex; align-items: flex-end; z-index: 99; }
+.sheet { width: 100%; background: #fff; border-radius: 24rpx 24rpx 0 0; padding: 28rpx 28rpx 40rpx; max-height: 82vh; overflow-y: auto; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16rpx; }
+.sheet-title { font-size: 32rpx; font-weight: 600; color: #0f172a; }
+.sheet-close { font-size: 40rpx; color: #94a3b8; padding: 0 10rpx; }
+.label { display: block; margin: 16rpx 0 8rpx; font-size: 24rpx; color: #475569; }
+.input { width: 100%; box-sizing: border-box; background: #f8fafc; border-radius: 12rpx; padding: 16rpx; font-size: 26rpx; }
+.input.small { min-height: 100rpx; }
+.chips { display: flex; gap: 12rpx; flex-wrap: wrap; }
+.chip { padding: 10rpx 22rpx; border-radius: 999rpx; background: #f1f5f9; color: #475569; font-size: 24rpx; }
+.chip.active { background: #0f172a; color: #fff; }
+.primary { margin-top: 24rpx; }

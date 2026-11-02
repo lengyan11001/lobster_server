@@ -1073,6 +1073,7 @@ Page({
         const taskId = String((data && (data.task_id || (data.record && data.record.task_id))) || "").trim();
         if (!taskId) throw new Error("没有拿到任务号");
         this.setData({ statusText: "已提交，排队生成中…", submitting: false });
+        setTimeout(() => { wx.navigateBack({ fail: () => {} }); }, 800);
         this.startPolling(taskId);
       })
       .catch((err) => {

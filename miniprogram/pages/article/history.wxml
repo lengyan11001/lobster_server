@@ -22,8 +22,22 @@
       <video wx:if="{{item.videoUrl}}" src="{{item.videoUrl}}" class="video" controls></video>
       <view class="actions">
         <button wx:if="{{item.content}}" class="ghost mini" catchtap="copyText" data-id="{{item.id}}">复制</button>
+        <button wx:if="{{item.taskId && item.status === 'processing'}}" class="ghost mini" catchtap="refreshStatus" data-id="{{item.id}}">刷新状态</button>
         <button class="ghost mini danger" catchtap="remove" data-id="{{item.id}}">删除</button>
       </view>
     </block>
+  </view>
+</view>
+
+<view wx:if="{{modalOpen}}" class="overlay" catchtap="closeModal">
+  <view class="sheet" catchtap="noop">
+    <view class="sheet-head"><text class="sheet-title">新建公众号文章</text><text class="sheet-close" catchtap="closeModal">×</text></view>
+    <text class="label">文章主题</text>
+    <textarea class="input" value="{{topic}}" bindinput="onTopic" placeholder="例如：AI 如何改变中小企业获客" auto-height maxlength="200" />
+    <text class="label">要点 / 素材（可选）</text>
+    <textarea class="input small" value="{{points}}" bindinput="onPoints" placeholder="可分条写" auto-height maxlength="2000" />
+    <text class="label">目标读者（可选）</text>
+    <textarea class="input small" value="{{audience}}" bindinput="onAudience" placeholder="例如：中小企业老板" auto-height maxlength="200" />
+    <button class="primary" loading="{{generating}}" bindtap="submitArticle">创建</button>
   </view>
 </view>

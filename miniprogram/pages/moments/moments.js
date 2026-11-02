@@ -4,7 +4,7 @@ const api = require("../../utils/api");
 function fmtTime(v) { return String(v || "").replace("T", " ").slice(0, 16); }
 
 Page({
-  data: { groups: [], loading: false },
+  data: { groups: [], loading: false, modalOpen: false, topic: "", copyCount: 10, copyRequirement: "", generating: false },
 
   onShow() {
     app.restoreSession();
@@ -38,7 +38,37 @@ Page({
   },
 
   goCreate() {
-    wx.navigateTo({ url: "/pages/moments-create/moments-create" });
+    this.setData({ modalOpen: true, topic: "", copyRequirement: "", copyCount: 10 });
+  },
+
+  closeModal() { this.setData({ modalOpen: false }); },
+  noop() {},
+
+  onTopic(e) { this.setData({ topic: e.detail.value }); },
+  onReq(e) { this.setData({ copyRequirement: e.detail.value }); },
+  setCopyCount(e) { this.setData({ copyCount: Number(e.currentTarget.dataset.value || 10) }); },
+
+  submitCreate() {
+    const topic = String(this.data.topic || "").trim();
+    if (!topic) return wx.showToast({ title: "先填主题或卖点", icon: "none" });
+    if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
+    this.setData({ generating: true });
+    app.request({
+      method: "POST",
+      url: "/api/ip-content/generate/moments-candidates",
+      data: {
+        extra_requirements: [topic, String(this.data.copyRequirement || "").trim()].filter(Boolean).join("\n"),
+        count: Math.max(1, Math.min(20, Number(this.data.copyCount || 10)))
+      },
+      timeout: 300000
+    })
+      .then(() => {
+        this.setData({ modalOpen: false });
+        wx.showToast({ title: "已提交，记录已生成", icon: "success" });
+        this.load();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ generating: false }));
   },
 
   openGroup(e) {

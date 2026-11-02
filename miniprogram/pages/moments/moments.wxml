@@ -18,3 +18,18 @@
     <text class="card-meta">{{item.time}} · 配图 {{item.imageCount}} 张</text>
   </view>
 </view>
+
+<view wx:if="{{modalOpen}}" class="overlay" catchtap="closeModal">
+  <view class="sheet" catchtap="noop">
+    <view class="sheet-head"><text class="sheet-title">新建朋友圈文案</text><text class="sheet-close" catchtap="closeModal">×</text></view>
+    <text class="label">主题 / 卖点</text>
+    <textarea class="input" value="{{topic}}" bindinput="onTopic" placeholder="例如：小户型收纳神器，99 元三件套" auto-height maxlength="200" />
+    <text class="label">文案条数</text>
+    <view class="chips">
+      <view wx:for="{{[5,10,20]}}" wx:key="*this" class="chip {{copyCount === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setCopyCount">{{item}} 条</view>
+    </view>
+    <text class="label">文案要求（可选）</text>
+    <textarea class="input small" value="{{copyRequirement}}" bindinput="onReq" placeholder="例如：短句、多换行、不要硬性导流" auto-height maxlength="200" />
+    <button class="primary" loading="{{generating}}" bindtap="submitCreate">创建</button>
+  </view>
+</view>

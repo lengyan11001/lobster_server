@@ -184,6 +184,7 @@ Page({
         this.setData({ taskId, statusText: "已提交，排队中…" });
         this._histId = hist.save("montage", { title: "素材混剪", content, taskId, status: "processing" });
         this.startPolling(taskId);
+        setTimeout(() => { wx.navigateBack({ fail: () => {} }); }, 800);
       })
       .catch((err) => {
         this.setData({ statusText: "" });
