@@ -873,7 +873,9 @@ async def upload_recording(
     background: BackgroundTasks,
     file: UploadFile = File(...),
     device_name: str = Form(default=""),
-    source_type: str = Form(default="device"),
+    # 2026-11-02：默认值必须是 local。之前默认 device，任何没带 source_type 的
+    # 手动上传（例如“必火听记录”网页）都会被打成“设备录音”，出现在设备 tab 里。
+    source_type: str = Form(default="local"),
     source_name: str = Form(default=""),
     installation_id: str = Form(default=""),
     current_user: User = Depends(get_current_user),
@@ -881,7 +883,7 @@ async def upload_recording(
 ):
     current_user = online_user_for_mobile_user(db, current_user)
     name = Path(file.filename or "recording.opus").name[:255]
-    source_type = str(source_type or "device").strip().lower()
+    source_type = str(source_type or "local").strip().lower()
     if source_type not in SOURCE_LABELS:
         source_type = "local"
     _validate_audio_upload(file, name, source_type)
