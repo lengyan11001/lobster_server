@@ -33,16 +33,16 @@
   ],
   "window": {
     "navigationBarTitleText": "龙虾AI员工",
-    "navigationBarBackgroundColor": "#07101f",
-    "navigationBarTextStyle": "white",
-    "backgroundColor": "#07101f",
-    "backgroundTextStyle": "light"
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f8fafc",
+    "backgroundTextStyle": "dark"
   },
   "tabBar": {
-    "color": "#8b96a8",
-    "selectedColor": "#10f5dd",
-    "backgroundColor": "#080b10",
-    "borderStyle": "black",
+    "color": "#94a3b8",
+    "selectedColor": "#06b6d4",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
     "list": [
       {
         "pagePath": "pages/index/index",
