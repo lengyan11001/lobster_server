@@ -453,9 +453,10 @@ Page({
     const head = this._readHeader(localPath);
     if (!head) return { ok: false, reason: "read_header_failed" };
     const isAtw = head[0] === 0x5B && head[1] === 0x50;
+    const isKa = head[0] === 0x4B && head[1] === 0x41;
     let path = localPath;
     let ext = ".opus";
-    if (isAtw) {
+    if (isAtw || isKa) {
       try {
         const converter = require("../../utils/airec/atw-opus-converter");
         const converted = converter.convert(localPath);

@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -1230,6 +1231,40 @@ def save_recording_as_memory(
     return {"ok": True, "document": _memory_summary(memory, include_content=True, source="own")}
 
 
+_PLAYBACK_TRANSCODE_SLOTS = threading.Semaphore(2)
+_PLAYABLE_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".webm", ".amr", ".flac"}
+
+
+def _playable_audio_path(source: Path) -> Path | None:
+    """小程序 InnerAudioContext 对 ogg/opus 支持不稳定：转一份 m4a 缓存后再返回。"""
+    suffix = source.suffix.lower()
+    if suffix in _PLAYABLE_SUFFIXES:
+        return source
+    target = source.with_name(source.name + ".play.m4a")
+    if target.is_file() and target.stat().st_size > 0:
+        return target
+    with _PLAYBACK_TRANSCODE_SLOTS:
+        if target.is_file() and target.stat().st_size > 0:
+            return target
+        tmp = target.with_name(target.name + ".tmp")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source),
+                 "-vn", "-c:a", "aac", "-b:a", "96k", str(tmp)],
+                check=True, timeout=180,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+            tmp.replace(target)
+            return target
+        except Exception:
+            logger.warning("playback transcode failed: %s", source, exc_info=True)
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return None
+
+
 @router.get("/api/h5/recorder/files/{record_id}/audio")
 def recording_audio(record_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     current_user = online_user_for_mobile_user(db, current_user)
@@ -1242,8 +1277,11 @@ def recording_audio(record_id: int, current_user: User = Depends(get_current_use
     source = Path(row.audio_path or "")
     if not source.is_file():
         raise HTTPException(status_code=410, detail="原始录音文件已不存在")
-    media_type = mimetypes.guess_type(source.name)[0] or ("audio/ogg" if source.suffix.lower() == ".opus" else "application/octet-stream")
-    return FileResponse(str(source), media_type=media_type)
+    playable = _playable_audio_path(source)
+    if playable is None:
+        raise HTTPException(status_code=415, detail="这条录音是设备私有格式，暂时无法播放；请删除后重新同步")
+    media_type = mimetypes.guess_type(playable.name)[0] or "application/octet-stream"
+    return FileResponse(str(playable), media_type=media_type)
 
 
 @router.post("/api/h5/recorder/files/{record_id}/retry")
