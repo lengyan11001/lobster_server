@@ -16,10 +16,6 @@
   </view>
 
   <view class="quick-row">
-    <view class="quick-item" bindtap="goRecords">
-      <text class="quick-title">内容记录</text>
-      <text class="quick-sub">视频 · 图文 · 文章</text>
-    </view>
     <view class="quick-item" bindtap="goAssets">
       <text class="quick-title">素材库</text>
       <text class="quick-sub">素材 · 形象 · 声音</text>
@@ -28,27 +24,29 @@
       <text class="quick-title">个人IP</text>
       <text class="quick-sub">资料 · 记忆</text>
     </view>
+    <view class="quick-item" bindtap="goAirec">
+      <text class="quick-title">AI秘书</text>
+      <text class="quick-sub">录音笔 · 设备</text>
+    </view>
   </view>
 
   <view class="grid">
     <view class="big-card" bindtap="goVideoHub">
-      <view class="big-tint"></view>
       <view class="big-play">▶</view>
       <text class="big-title">超级AI混剪</text>
       <text class="big-sub">一键爆款成片 · 全网矩阵获客</text>
     </view>
-
     <view class="col">
-      <view class="small-card" bindtap="goVideoHub">
+      <view class="small-card" bindtap="goMontageHistory">
         <text class="small-title">素材智能剪辑</text>
       </view>
-      <view class="small-card" bindtap="goImageGenerate">
+      <view class="small-card alt" bindtap="goImageGenerate">
         <text class="small-title">一键做海报</text>
       </view>
     </view>
   </view>
 
-  <view class="grid">
+  <view class="wide-row">
     <view class="wide-card" bindtap="goVideoInspiration">
       <text class="wide-title">一键抄爆款模板</text>
       <text class="wide-sub">没有灵感 · 一键爆款复刻</text>
@@ -68,16 +66,6 @@
     <view class="tool-row" bindtap="goArticle">
       <view class="tool-badge">章</view>
       <view class="tool-copy"><text class="tool-name">公众号文案</text><text class="tool-desc">长文写作，直接发布</text></view>
-      <text class="tool-arrow">›</text>
-    </view>
-    <view class="tool-row" bindtap="goVideoHub">
-      <view class="tool-badge">视</view>
-      <view class="tool-copy"><text class="tool-name">视频创作</text><text class="tool-desc">数字人 / 分镜 / 混剪</text></view>
-      <text class="tool-arrow">›</text>
-    </view>
-    <view class="tool-row" bindtap="goAirec">
-      <view class="tool-badge">录</view>
-      <view class="tool-copy"><text class="tool-name">AI秘书</text><text class="tool-desc">录音笔 · 蓝牙设备</text></view>
       <text class="tool-arrow">›</text>
     </view>
   </view>
