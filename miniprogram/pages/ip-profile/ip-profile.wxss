@@ -27,3 +27,4 @@
 
 .btn-row { display: flex; gap: 16rpx; margin-bottom: 18rpx; }
 .ghost.small { height: 68rpx; line-height: 68rpx; font-size: 24rpx; width: 240rpx; margin: 0; color: #2563eb; background: #eff6ff; border-radius: 14rpx; }
+@import "../../styles/dark.wxss";

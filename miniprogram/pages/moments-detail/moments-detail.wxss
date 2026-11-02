@@ -6,3 +6,4 @@
 .img-grid { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 16rpx; }
 .img { width: 200rpx; height: 200rpx; border-radius: 12rpx; background: #f1f5f9; }
 .ghost.mini, .primary.mini { margin: 0; height: 60rpx; line-height: 60rpx; padding: 0 24rpx; font-size: 24rpx; border-radius: 999rpx; }
+@import "../../styles/dark.wxss";

@@ -43,3 +43,4 @@
 .tool-arrow { color: #5b677a; font-size: 34rpx; }
 
 .bottom-space { height: 40rpx; }
+@import "../../styles/dark.wxss";

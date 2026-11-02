@@ -746,3 +746,4 @@ page {
   font-size: 28rpx;
   font-weight: 950;
 }
+@import "../../styles/dark.wxss";

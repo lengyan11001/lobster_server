@@ -11,3 +11,4 @@
 .actions { display: flex; flex-direction: column; gap: 16rpx; margin-top: 8rpx; }
 .primary { height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #2563eb; border-radius: 16rpx; }
 .danger { height: 76rpx; line-height: 76rpx; font-size: 26rpx; color: #fff; background: #ef4444; border-radius: 16rpx; }
+@import "../../styles/dark.wxss";

@@ -324,3 +324,4 @@ page {
   border-radius: 28rpx;
   font-size: 26rpx;
 }
+@import "../../styles/dark.wxss";

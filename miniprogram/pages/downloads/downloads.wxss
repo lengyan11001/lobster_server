@@ -982,3 +982,4 @@ page {
   background: linear-gradient(135deg, #10f5dd, #67e8f9);
   border-color: rgba(103,232,249,0.72);
 }
+@import "../../styles/dark.wxss";

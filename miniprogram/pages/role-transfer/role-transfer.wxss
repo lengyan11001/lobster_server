@@ -631,3 +631,4 @@
   font-weight: 900;
   line-height: 82rpx;
 }
+@import "../../styles/dark.wxss";

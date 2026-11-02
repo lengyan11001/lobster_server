@@ -342,3 +342,4 @@ page {
 .bottom-space {
   height: 52rpx;
 }
+@import "../../styles/dark.wxss";
