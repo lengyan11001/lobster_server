@@ -41,6 +41,7 @@ Page({
 
   copyText(e) {
     const idx = Number(e.currentTarget.dataset.index || 0);
+    const count = Math.max(1, Math.min(9, Number(e.currentTarget.dataset.count || 1)));
     const item = this.data.items[idx];
     if (!item) return;
     wx.setClipboardData({ data: item.content, success: () => wx.showToast({ title: "已复制", icon: "success" }) });
@@ -48,6 +49,7 @@ Page({
 
   generateImages(e) {
     const idx = Number(e.currentTarget.dataset.index || 0);
+    const count = Math.max(1, Math.min(9, Number(e.currentTarget.dataset.count || 1)));
     const item = this.data.items[idx];
     if (!item || !item.recordId || this.data.generatingIndex >= 0) return;
     const prompt = `朋友圈配图：${item.content.slice(0, 120)}。要求真实质感、干净构图，适合微信朋友圈，画面不要出现文字。`;
@@ -56,7 +58,7 @@ Page({
     app.request({
       method: "POST",
       url: "/api/comfly-proxy/v1/images/generations",
-      data: { model: IMAGE_MODEL, prompt, image_size: "1:1", aspect_ratio: "1:1", ratio: "1:1", num_images: 1, n: 1, response_format: "url" },
+      data: { model: IMAGE_MODEL, prompt, image_size: "1:1", aspect_ratio: "1:1", ratio: "1:1", num_images: count, n: count, response_format: "url" },
       timeout: 300000
     })
       .then((data) => {

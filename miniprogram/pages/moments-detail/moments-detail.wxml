@@ -6,7 +6,8 @@
     <text class="copy-text">{{item.content}}</text>
     <view class="copy-actions">
       <button class="ghost mini" catchtap="copyText" data-index="{{index}}">复制</button>
-      <button class="primary mini" loading="{{generatingIndex === index}}" catchtap="generateImages" data-index="{{index}}">生成配图</button>
+      <button class="primary mini" loading="{{generatingIndex === index}}" catchtap="generateImages" data-index="{{index}}" data-count="1">配图 1 张</button>
+      <button class="primary mini" loading="{{generatingIndex === index}}" catchtap="generateImages" data-index="{{index}}" data-count="3">配图 3 张</button>
     </view>
     <view wx:if="{{item.images.length}}" class="img-grid">
       <image wx:for="{{item.images}}" wx:for-item="img" wx:for-index="imgIndex" wx:key="imgIndex" src="{{img}}" mode="aspectFill" class="img" data-url="{{img}}" catchtap="previewImage" />
