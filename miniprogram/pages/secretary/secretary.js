@@ -46,12 +46,19 @@ Page({
       const mini = (acc && acc.miniProgram) || {};
       envInfo = " env=" + String(mini.envVersion || "") + " ver=" + String(mini.version || "");
     } catch (err) {}
+    this._bleHandlers = [];
+    this._bleBound = false;
     this._logDiag("page", "onLoad v2026-11-02-manual-sync" + envInfo);
     this._bindBle();
   },
 
   onUnload() {
     this._stopTimer();
+    try {
+      (this._bleHandlers || []).forEach((h) => this._ble.off(h.event, h.fn));
+    } catch (err) {}
+    this._bleHandlers = [];
+    this._bleBound = false;
   },
 
   onShow() {
@@ -139,20 +146,26 @@ Page({
     }
   },
 
+  _onBle(event, fn) {
+    this._ble.on(event, fn);
+    (this._bleHandlers = this._bleHandlers || []).push({ event, fn });
+  },
+
   _bindBle() {
     const ble = this._ble;
-    if (!ble) return;
-    ble.on("onConnected", (device) => {
+    if (!ble || this._bleBound) return;
+    this._bleBound = true;
+    this._onBle("onConnected", (device) => {
       this._logDiag("ble:connected", device);
       this.setDevice({ connected: true, name: String((device && device.name) || this.data.device.name || "录音设备") });
       try { ble.fetchAllDeviceInfo(); } catch (err) {}
     });
-    ble.on("onDisconnected", () => {
+    this._onBle("onDisconnected", () => {
       this._logDiag("ble:disconnected");
       this._stopTimer();
       this.setDevice({ connected: false, isRecording: false, isPaused: false, timeText: "00:00:00" });
     });
-    ble.on("onDeviceInfoUpdated", (device) => {
+    this._onBle("onDeviceInfoUpdated", (device) => {
       if (!device) return;
       this.setDevice({
         name: String(device.name || this.data.device.name || "录音设备"),
@@ -160,7 +173,7 @@ Page({
         isCharging: Boolean(device.isCharging)
       });
     });
-    ble.on("onRecordStateChanged", (recording) => {
+    this._onBle("onRecordStateChanged", (recording) => {
       this._logDiag("record:state", { recording: Boolean(recording) });
       if (recording) {
         if (!this.data.device.isRecording) {
@@ -176,7 +189,7 @@ Page({
       }
       this._justStarted = false;
     });
-    ble.on("onRecordPaused", () => {
+    this._onBle("onRecordPaused", () => {
       this._logDiag("record:paused");
       if (this.data.device.isPaused) {
         this.setDevice({ isPaused: false });
@@ -187,7 +200,7 @@ Page({
         this.setDevice({ isPaused: true });
       }
     });
-    ble.on("onRecordStatusQueried", (recording, paused) => {
+    this._onBle("onRecordStatusQueried", (recording, paused) => {
       this._logDiag("record:queried", { recording: Boolean(recording), paused: Boolean(paused) });
       this.setDevice({ isRecording: Boolean(recording), isPaused: Boolean(paused) });
       if (recording && !paused) {
@@ -197,17 +210,17 @@ Page({
         this._stopTimer();
       }
     });
-    ble.on("onFileListUpdated", (files) => {
+    this._onBle("onFileListUpdated", (files) => {
       this._listInFlightAt = 0;
       const list = Array.isArray(files) ? files : [];
       this._logDiag("files", { count: list.length, names: list.slice(0, 8).map((f) => String((f && f.fileName) || "")) });
       this._renderDeviceFiles(list);
     });
-    ble.on("onFileDownloadComplete", (file, localPath) => {
+    this._onBle("onFileDownloadComplete", (file, localPath) => {
       this._logDiag("downloaded", { file: String((file && file.fileName) || ""), path: String(localPath || "").slice(-40) });
       this._uploadDeviceFile(file, localPath);
     });
-    ble.on("onFileDownloadProgress", (file, progress) => {
+    this._onBle("onFileDownloadProgress", (file, progress) => {
       const name = String((file && file.fileName) || "录音");
       const pct = Math.max(0, Math.min(100, Number(progress || 0)));
       this._lastProgress = this._lastProgress || {};
@@ -223,11 +236,11 @@ Page({
         this.setData({ syncText: "正在下载 " + name + " · " + pct + "%" });
       }
     });
-    ble.on("onFileDownloadFailed", (file, reason) => {
+    this._onBle("onFileDownloadFailed", (file, reason) => {
       this._logDiag("download:failed", { file: String((file && file.fileName) || ""), reason: String(reason || "") });
       this.setData({ syncText: "下载失败：" + String(reason || "设备下载失败") });
     });
-    ble.on("onRecordDurationUpdated", (sec) => {
+    this._onBle("onRecordDurationUpdated", (sec) => {
       this._pausedElapsed = 0;
       this._startAt = Date.now() - Number(sec || 0) * 1000;
       this.setDevice({ timeText: this._fmtDuration(sec) });
@@ -324,13 +337,13 @@ Page({
           if (done) return;
           done = true;
           try {
-            if (prevHandler) ble.on("onFileDeleted", prevHandler);
+            if (prevHandler) this._onBle("onFileDeleted", prevHandler);
             else ble.off("onFileDeleted");
           } catch (err) {}
           if (!success) wx.showToast({ title: "设备删除失败", icon: "none" });
           finish();
         };
-        ble.on("onFileDeleted", (name, success) => {
+        this._onBle("onFileDeleted", (name, success) => {
           if (String(name || "") !== row.fileName) return;
           settle(Boolean(success));
         });
