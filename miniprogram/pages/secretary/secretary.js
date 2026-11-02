@@ -35,7 +35,6 @@ Page({
     },
     syncText: "",
     syncing: false,
-    segmentLabel: "分段设置",
     powerOnRecord: null,
     usbSwitch: null,
     formatting: false,
@@ -253,7 +252,6 @@ Page({
         diskFormatSupport: settings ? Boolean(settings.diskFormatSupport) : null
       });
       this.setData({
-        segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段",
         powerOnRecord: settings && typeof settings.powerOnRecord !== "undefined" ? Boolean(settings.powerOnRecord) : this.data.powerOnRecord,
         usbSwitch: settings && typeof settings.usbSwitch !== "undefined" ? Boolean(settings.usbSwitch) : this.data.usbSwitch
       });
@@ -841,26 +839,6 @@ Page({
         setTimeout(() => {
           try { ble.fetchInitParam(); } catch (err) {}
         }, 1200);
-      }
-    });
-  },
-
-  changeSegment() {
-    const ble = this._ble;
-    if (!ble || !ble.isConnected) {
-      wx.showToast({ title: "请先连接录音设备", icon: "none" });
-      return;
-    }
-    const options = [0, 5, 10, 15, 30, 60];
-    const labels = ["不分段", "5分钟", "10分钟", "15分钟", "30分钟", "60分钟"];
-    wx.showActionSheet({
-      itemList: labels,
-      success: (res) => {
-        const minutes = options[res.tapIndex];
-        try { ble.setSegmentDuration(minutes); } catch (err) {}
-        this._logDiag("segment:set", { minutes });
-        this.setData({ segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段" });
-        wx.showToast({ title: minutes > 0 ? "已设为每段" + minutes + "分钟" : "已设为不分段", icon: "none" });
       }
     });
   },

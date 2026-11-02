@@ -17271,13 +17271,6 @@ async function api(path, options = {}) {
       if ($("recorderStartBtn")) $("recorderStartBtn").disabled = !value.connected || value.recording || !supportsControl;
       if ($("recorderStopBtn")) $("recorderStopBtn").disabled = !value.connected || !value.recording || !supportsControl;
       if ($("recorderRefreshBtn")) $("recorderRefreshBtn").disabled = !value.connected;
-      if ($("recorderSegmentBtn")) {
-        const minutes = Number(value.segmentDuration || 0);
-        $("recorderSegmentBtn").textContent = value.connected
-          ? (minutes > 0 ? `分段 ${minutes}分钟` : "不分段")
-          : "分段设置";
-        $("recorderSegmentBtn").disabled = !value.connected || !native;
-      }
     }
 
     function readRecorderNativeState() {
@@ -29236,22 +29229,6 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       } catch (err) {
         toast(err.message || "关联客户失败", "error");
       }
-    });
-    if ($("recorderSegmentBtn")) $("recorderSegmentBtn").addEventListener("click", () => {
-      const native = recorderNative();
-      if (!native || typeof native.setRecorderSegmentDuration !== "function") {
-        return toast("当前 App 版本还不支持设置分段，请更新 App 后再试");
-      }
-      const labels = ["不分段", "5分钟", "10分钟", "15分钟", "30分钟", "60分钟"];
-      const values = [0, 5, 10, 15, 30, 60];
-      const current = Number((state.recorderDeviceState || {}).segmentDuration || 0);
-      const pick = window.prompt("分段录音（只对之后录的音生效）\n" + labels.map((label, i) => `${i + 1}. ${label}${values[i] === current ? "（当前）" : ""}`).join("\n") + "\n请输入序号 1-6", String(Math.max(1, values.indexOf(current) + 1)));
-      if (pick === null) return;
-      const index = Number(pick) - 1;
-      if (!(index >= 0 && index < values.length)) return toast("请输入 1-6");
-      try { native.setRecorderSegmentDuration(values[index]); } catch (e) { return toast("设置失败，请重试"); }
-      renderRecorderDeviceState({ segmentDuration: values[index] });
-      toast(values[index] > 0 ? `已设为每段 ${values[index]} 分钟` : "已设为不分段");
     });
     if ($("recorderStartBtn")) $("recorderStartBtn").addEventListener("click", () => {
       const native = recorderNative();
