@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix18" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix19" + envInfo);
     this._bindBle();
   },
 
@@ -884,7 +884,11 @@ Page({
     if (index === this.data.tabIndex) return;
     this.setData({ tabIndex: index, items: [], listRows: [], page: 1, hasMore: false });
     this.fetchPage(1);
-    if (TABS[index].key === "device") this._loadSyncedNames();
+    if (TABS[index].key === "device") {
+      this._loadSyncedNames();
+      this._emptyRetryLeft = 2;
+      this._requestFileList("tab-device");
+    }
   },
 
   fetchPage(page) {
