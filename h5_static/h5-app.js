@@ -17590,7 +17590,15 @@ async function api(path, options = {}) {
       if (detail.type === "connected") {
         renderRecorderDeviceState({ connected: true, name: detail.name || "录音设备", alias: detail.alias || "", paused: !!detail.paused, duration: Number(detail.duration || 0), segmentDuration: Number(detail.segmentDuration || 0) });
         pushRecorderRecordingState(detail.recording, detail);
+        // 设备「不分段」会出问题，连上后统一保持 10 分钟（桥支持才下发）
+        const segNative = recorderNative();
+        const segMinutes = Number(detail.segmentDuration || 0);
+        if (segNative && typeof segNative.setRecorderSegmentDuration === "function" && segMinutes !== 10 && !state.recorderSegmentAutoSent) {
+          state.recorderSegmentAutoSent = true;
+          try { segNative.setRecorderSegmentDuration(10); } catch (e) {}
+        }
       } else if (detail.type === "disconnected") {
+        state.recorderSegmentAutoSent = false;
         clearTimeout(state.recorderStateTimer);
         state.recorderStateTimer = null;
         state.recorderStatePending = null;

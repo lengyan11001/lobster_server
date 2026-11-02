@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix16" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix17" + envInfo);
     this._bindBle();
   },
 
@@ -209,6 +209,7 @@ Page({
       this._logDiag("ble:connected", device);
       clearTimeout(this._autoTimer);
       this._autoReconnectLeft = 0;
+      this._segmentAutoSent = false;
       this._lastDevice = { deviceId: device.deviceId, name: device.name };
       try { wx.setStorageSync("recorder_last_device", this._lastDevice); } catch (err) {}
       this.setDevice({ connected: true, name: String((device && device.name) || this.data.device.name || "录音设备") });
@@ -255,6 +256,12 @@ Page({
         powerOnRecord: settings && typeof settings.powerOnRecord !== "undefined" ? Boolean(settings.powerOnRecord) : this.data.powerOnRecord,
         usbSwitch: settings && typeof settings.usbSwitch !== "undefined" ? Boolean(settings.usbSwitch) : this.data.usbSwitch
       });
+      // 设备端「不分段」会出问题，统一保持 10 分钟；只在没录音时自动下发一次
+      if (minutes !== 10 && !this._segmentAutoSent && ble.isConnected && !this.data.device.isRecording) {
+        this._segmentAutoSent = true;
+        try { ble.setSegmentDuration(10); } catch (err) {}
+        this._logDiag("segment:auto", { from: minutes, to: 10 });
+      }
     });
     this._onBle("onDeviceInfoUpdated", (device) => {
       if (!device) return;
