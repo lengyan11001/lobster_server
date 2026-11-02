@@ -122,7 +122,11 @@ Page({
     try {
       ble.fetchAllDeviceInfo();
       ble.fetchDeviceInfo();
-    } catch (err) {}
+      this._logDiag("files:request", "onShow");
+      ble.fetchFileList();
+    } catch (err) {
+      this._logDiag("files:request:error", String((err && err.message) || err));
+    }
   },
 
   _bindBle() {
@@ -147,6 +151,7 @@ Page({
       });
     });
     ble.on("onRecordStateChanged", (recording) => {
+      this._logDiag("record:state", { recording: Boolean(recording) });
       if (recording) {
         if (!this.data.device.isRecording) {
           this._startAt = Date.now();
@@ -162,6 +167,7 @@ Page({
       this._justStarted = false;
     });
     ble.on("onRecordPaused", () => {
+      this._logDiag("record:paused");
       if (this.data.device.isPaused) {
         this.setDevice({ isPaused: false });
         this._startTimer();
@@ -172,6 +178,7 @@ Page({
       }
     });
     ble.on("onRecordStatusQueried", (recording, paused) => {
+      this._logDiag("record:queried", { recording: Boolean(recording), paused: Boolean(paused) });
       this.setDevice({ isRecording: Boolean(recording), isPaused: Boolean(paused) });
       if (recording && !paused) {
         if (!this._startAt) { this._startAt = Date.now(); this._pausedElapsed = 0; }
@@ -321,6 +328,7 @@ Page({
       return;
     }
     if (this.data.device.isRecording) return;
+    this._logDiag("action:startRecord");
     this._justStarted = true;
     this._startAt = Date.now();
     this._pausedElapsed = 0;
@@ -354,14 +362,20 @@ Page({
   stopRecording() {
     const ble = this._ble;
     if (!ble || !this.data.device.isRecording) return;
-    try { ble.endRecord(); } catch (err) {}
+    this._logDiag("action:endRecord");
+    try { ble.endRecord(); } catch (err) { this._logDiag("action:endRecord:error", String((err && err.message) || err)); }
     this._stopTimer();
     this.setDevice({ isRecording: false, isPaused: false, timeText: "00:00:00" });
     wx.showToast({ title: "已发送停止指令，设备生成文件后自动出现", icon: "none" });
-    setTimeout(() => {
-      this.reload();
-      try { ble.fetchFileList(); } catch (err) {}
-    }, 5000);
+    [3000, 8000, 15000].forEach((delay, idx) => {
+      setTimeout(() => {
+        this.reload();
+        this._logDiag("files:request", "after-stop#" + (idx + 1));
+        try { ble.fetchFileList(); } catch (err) {
+          this._logDiag("files:request:error", String((err && err.message) || err));
+        }
+      }, delay);
+    });
   },
 
   refreshDeviceFiles() {
@@ -374,7 +388,8 @@ Page({
       wx.showToast({ title: "录音中，请先停止再刷新", icon: "none" });
       return;
     }
-    try { ble.fetchFileList(); } catch (err) {}
+    this._logDiag("files:request", "manual");
+    try { ble.fetchFileList(); } catch (err) { this._logDiag("files:request:error", String((err && err.message) || err)); }
     wx.showToast({ title: "已请求设备文件列表", icon: "none" });
   },
 
