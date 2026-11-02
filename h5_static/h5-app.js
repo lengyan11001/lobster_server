@@ -17574,7 +17574,7 @@ async function api(path, options = {}) {
           paused: !!detail.paused,
           duration: Number(detail.duration || state.recorderDeviceState.duration || 0)
         });
-      }, 1500);
+      }, 2000);
     }
 
     window.addEventListener("lobster-recorder", (event) => {
