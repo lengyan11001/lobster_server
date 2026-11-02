@@ -12,6 +12,8 @@
     "pages/moments/moments",
     "pages/moments-create/moments-create",
     "pages/moments-detail/moments-detail",
+    "pages/digital-history/digital-history",
+    "pages/gen-history/gen-history",
     "pages/assistant/assistant",
     "pages/video-inspiration/video-inspiration",
     "pages/image-generate/image-generate",

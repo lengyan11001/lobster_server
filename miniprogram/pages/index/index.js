@@ -128,10 +128,10 @@ Page({
         sub: "选择分身，生成口播视频"
       },
       {
-        type: "more",
-        icon: "AI",
-        title: "更多AI",
-        sub: "持续开发中"
+        type: "montage",
+        icon: "剪",
+        title: "AI素材混剪",
+        sub: "素材 + 文案，模板自动成片"
       }
     ],
     quickMessages: [
@@ -567,6 +567,34 @@ Page({
     wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
+  goMoments() {
+    wx.navigateTo({ url: "/pages/moments/moments" });
+  },
+
+  goVideoHub() {
+    wx.navigateTo({ url: "/pages/video-hub/video-hub" });
+  },
+
+  goArticle() {
+    wx.navigateTo({ url: "/pages/gen-history/gen-history?feature=article" });
+  },
+
+  goRecords() {
+    wx.navigateTo({ url: "/pages/records/records" });
+  },
+
+  goAssets() {
+    wx.navigateTo({ url: "/pages/assets/assets" });
+  },
+
+  goAirec() {
+    wx.navigateTo({ url: "/pages/secretary/secretary" });
+  },
+
+  goIpProfile() {
+    wx.navigateTo({ url: "/pages/ip-profile/ip-profile" });
+  },
+
   goFeature(evt) {
     const prompt = evt.currentTarget.dataset.prompt || "";
     if (prompt) wx.setStorageSync("lobster_message_prefill", prompt);
@@ -584,7 +612,7 @@ Page({
   },
 
   goDigital() {
-    wx.navigateTo({ url: "/pages/digital/digital" });
+    wx.navigateTo({ url: "/pages/digital-history/digital-history" });
   },
 
   goRoleTransfer() {
@@ -605,13 +633,11 @@ Page({
       this.goDigital();
       return;
     }
-    this.goFeature({
-      currentTarget: {
-        dataset: {
-          prompt: "打开更多 AI 员工能力，并根据我的目标推荐下一步。"
-        }
-      }
-    });
+    if (type === "montage") {
+      wx.navigateTo({ url: "/pages/gen-history/gen-history?feature=montage" });
+      return;
+    }
+    this.goVideoHub();
   },
 
   goAvatarTemplates() {
@@ -619,13 +645,9 @@ Page({
   },
 
   selectPublicAvatarTemplate(evt) {
-    const index = Number(evt.currentTarget.dataset.index || 0);
-    const item = this.data.publicAvatarTemplates[index];
-    if (!avatarTemplates.storeDigitalAvatarPrefill(item)) {
-      wx.showToast({ title: "数字人模板不可用", icon: "none" });
-      return;
-    }
-    wx.navigateTo({ url: "/pages/digital/digital" });
+    // 数字人已切到 2.0：形象必须是在 2.0 里训练成功的档案，旧的 hifly 公共模板不再直接带入。
+    wx.showToast({ title: "请在页面里选择已训练的数字人", icon: "none" });
+    wx.navigateTo({ url: "/pages/digital-history/digital-history" });
   },
 
   goProfile() {

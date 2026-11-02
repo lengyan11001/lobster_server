@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const hist = require("../../utils/gen-history");
 
 const CHAT_MODEL = "gpt-5.5";
 
@@ -173,6 +174,7 @@ Page({
         if (!raw) throw new Error("模型没有返回内容");
         const article = parseArticle(raw);
         this.setData({ title: article.title, summary: article.summary, body: article.body, progressText: "" });
+        hist.save("article", { title: article.title, summary: article.summary, content: article.body, status: "completed" });
       })
       .catch((err) => {
         this.setData({ progressText: "" });
