@@ -209,6 +209,120 @@ def _source_doc_key(doc_id: str, source_index: int) -> str:
     return f"{str(doc_id or '').strip()}:{max(0, int(source_index))}"[:64]
 
 
+# ── 设备私有格式（ATW: 5B50 / KA: 4B41）→ OGG Opus ─────────────────────────
+_OGG_CRC_TABLE: list[int] = []
+
+
+def _ogg_crc_table() -> list[int]:
+    if _OGG_CRC_TABLE:
+        return _OGG_CRC_TABLE
+    for i in range(256):
+        c = i << 24
+        for _ in range(8):
+            c = ((c << 1) ^ 0x04C11DB7) & 0xFFFFFFFF if (c & 0x80000000) else (c << 1) & 0xFFFFFFFF
+        _OGG_CRC_TABLE.append(c)
+    return _OGG_CRC_TABLE
+
+
+def _ogg_crc(data: bytes) -> int:
+    table = _ogg_crc_table()
+    crc = 0
+    for b in data:
+        crc = ((crc << 8) ^ table[((crc >> 24) ^ b) & 0xFF]) & 0xFFFFFFFF
+    return crc
+
+
+def _ogg_page(packets: list[bytes], serial: int, granule: int, seq: int, bos: bool, eos: bool) -> bytes:
+    seg: list[int] = []
+    payload = bytearray()
+    for pkt in packets:
+        n = len(pkt)
+        off = 0
+        while n >= 255:
+            seg.append(255)
+            payload += pkt[off:off + 255]
+            off += 255
+            n -= 255
+        seg.append(n)
+        payload += pkt[off:off + n]
+    page = bytearray(27 + len(seg))
+    page[0:4] = b"OggS"
+    page[4] = 0
+    page[5] = (2 if bos else 0) | (4 if eos else 0)
+    page[6:14] = int(granule).to_bytes(8, "little")
+    page[14:18] = int(serial).to_bytes(4, "little")
+    page[18:22] = int(seq).to_bytes(4, "little")
+    page[22:26] = b"\x00\x00\x00\x00"
+    page[26] = len(seg)
+    page[27:] = bytes(seg)
+    page += payload
+    crc = _ogg_crc(bytes(page))
+    page[22:26] = crc.to_bytes(4, "little")
+    return bytes(page)
+
+
+def _opus_head() -> bytes:
+    b = bytearray(19)
+    b[0:8] = b"OpusHead"
+    b[8] = 1
+    b[9] = 1
+    b[10:12] = (312).to_bytes(2, "little")
+    b[12:16] = (48000).to_bytes(4, "little")
+    b[16:18] = (0).to_bytes(2, "little")
+    b[18] = 0
+    return bytes(b)
+
+
+def _opus_tags() -> bytes:
+    vendor = b"AIREC"
+    return b"OpusTags" + len(vendor).to_bytes(4, "little") + vendor + (0).to_bytes(4, "little")
+
+
+def convert_private_opus(source: Path) -> Path | None:
+    """把设备私有 Opus 流（ATW/KA）转成标准 OGG Opus；不是这两种格式返回 None。"""
+    try:
+        raw = source.read_bytes()
+    except OSError:
+        return None
+    if len(raw) < 16:
+        return None
+    if raw[0] == 0x5B and raw[1] == 0x50:
+        sep = (0x5B, 0x50)
+    elif raw[0] == 0x4B and raw[1] == 0x41:
+        sep = (0x4B, 0x41)
+    else:
+        return None
+    positions = [i for i in range(len(raw) - 1) if raw[i] == sep[0] and raw[i + 1] == sep[1]]
+    if len(positions) < 2:
+        return None
+    gaps: dict[int, int] = {}
+    for a, b in zip(positions, positions[1:]):
+        step = b - a
+        gaps[step] = gaps.get(step, 0) + 1
+    stride = max(gaps, key=gaps.get)
+    if stride < 12 or stride > 502:
+        return None
+    frames = [raw[p:p + stride] for p in range(positions[0], len(raw) - stride + 1, stride)]
+    if not frames:
+        return None
+    serial = 0x41495243
+    seq = 0
+    out = bytearray()
+    out += _ogg_page([_opus_head()], serial, 0, seq, True, False)
+    seq += 1
+    out += _ogg_page([_opus_tags()], serial, 0, seq, False, False)
+    seq += 1
+    granule = 312
+    for i in range(0, len(frames), 50):
+        chunk = frames[i:i + 50]
+        granule += len(chunk) * 960
+        out += _ogg_page(chunk, serial, granule, seq, False, i + len(chunk) >= len(frames))
+        seq += 1
+    target = source.with_suffix(".opus")
+    target.write_bytes(out)
+    return target
+
+
 def _validate_audio_upload(file: UploadFile, name: str, source_type: str) -> None:
     if source_type == "device":
         return
@@ -856,13 +970,21 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
         try:
             row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
             if row:
-                row.status = "failed"
-                row.process_stage = "failed"
-                row.error_message = (
+                reason = (
                     "当前转写任务较多，排队已满，请稍后点击重新处理"
                     if isinstance(exc, WorkloadQueueFull)
                     else str(exc)[:2000]
                 )
+                has_transcript = bool(str(row.transcript_text or "").strip()) or bool(row.transcript_segments)
+                if has_transcript:
+                    # 转写已经成功，失败只在摘要这一步：同步/转写算完成，摘要单独标原因
+                    row.status = "completed"
+                    row.process_stage = "completed"
+                    row.error_message = "摘要生成失败：" + reason
+                else:
+                    row.status = "failed"
+                    row.process_stage = "failed"
+                    row.error_message = reason
                 db.commit()
         finally:
             db.close()
@@ -923,6 +1045,12 @@ async def upload_recording(
     if size <= 0:
         await asyncio.to_thread(shutil.rmtree, target_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="音频文件为空")
+    converted = await asyncio.to_thread(convert_private_opus, target)
+    if converted is not None:
+        logger.info("recorder private opus converted: %s -> %s", target.name, converted.name)
+        target = converted
+        name = converted.name
+        size = await asyncio.to_thread(lambda: converted.stat().st_size)
     row = _new_audio_record(
         db,
         user_id=user_id,
@@ -1303,6 +1431,13 @@ async def retry_recording(
         return {"ok": True, "already_processing": True, "record": _serialize(row, detail=True)}
     if not row.audio_path or not Path(row.audio_path).is_file():
         raise HTTPException(status_code=410, detail="原始录音文件已不存在，请重新同步")
+    converted = await asyncio.to_thread(convert_private_opus, Path(row.audio_path))
+    if converted is not None:
+        row.audio_path = str(converted)
+        row.file_name = converted.name
+        row.display_name = converted.name
+        row.file_size = await asyncio.to_thread(lambda: converted.stat().st_size)
+        db.commit()
 
     row.status = "processing"
     row.process_stage = "uploaded"
