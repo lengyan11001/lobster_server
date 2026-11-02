@@ -91,6 +91,8 @@ function AIRECBleManager() {
 
   this._callbacks = {}
   this._deviceFoundBound = false
+  this._notifyBound = false
+  this._filesFetchAt = 0
   this._rxBuffer = null  // 控制通道粘包缓冲
 }
 
@@ -171,6 +173,10 @@ AIRECBleManager.prototype.stopScan = function() {
 
 AIRECBleManager.prototype.connect = function(device) {
   var self = this
+  if (this._connected && this._deviceId === device.deviceId) {
+    this._emit('onConnected', this._device)
+    return
+  }
   this.stopScan()
   this._connecting = true
   this._device = {
@@ -304,6 +310,10 @@ AIRECBleManager.prototype._setupCharacteristics = function() {
 
       var notifyList = [rxUuid, audioFileUuid, audioRecordUuid].filter(Boolean)
       self._enableNotifySerial(notifyList, 0, function() {
+        // 只注册一次：重复 connect 会叠加监听，同一包被处理多次会把 _rxBuffer 拼坏，
+        // 表现就是录音状态 true/false 乱跳、文件列表重复。
+        if (!self._notifyBound) {
+        self._notifyBound = true
         wx.onBLECharacteristicValueChange(function(res) {
           if (res.deviceId !== self._deviceId) return
           var uuid = res.characteristicId.toUpperCase()
@@ -320,6 +330,7 @@ AIRECBleManager.prototype._setupCharacteristics = function() {
             }
           }
         })
+        }
 
         clearTimeout(self._connectTimer)
         self._connecting = false
@@ -442,6 +453,10 @@ AIRECBleManager.prototype.fetchAllDeviceInfo = function() {
 }
 
 AIRECBleManager.prototype.fetchFileList = function() {
+  // 同一时间只允许一个 GET_FILES 在飞，否则两轮回包会交叉写进 _pendingFiles
+  var now = Date.now()
+  if (this._filesFetchAt && now - this._filesFetchAt < 4000) return
+  this._filesFetchAt = now
   this._pendingFiles = []
   this._write(this._buildFrame(CMD.GET_FILES))
 }
@@ -696,7 +711,16 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
 
     case CMD.GET_FILES_END:
     case CMD.GET_FILES_FAIL: {
-      var list = this._pendingFiles.slice()
+      this._filesFetchAt = 0
+      var rawList = this._pendingFiles.slice()
+      var list = []
+      var seenName = {}
+      for (var r = 0; r < rawList.length; r++) {
+        var nm = String((rawList[r] && rawList[r].fileName) || '')
+        if (!nm || seenName[nm]) continue
+        seenName[nm] = true
+        list.push(rawList[r])
+      }
       if (this._device) this._device.fileList = list
       for (var k = 0; k < list.length; k++) {
         list[k].createTime = this._parseFileTime(list[k].fileName)
