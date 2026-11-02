@@ -40,7 +40,7 @@ Page({
 
   onLoad() {
     this._ble = AIRECBleManager.getInstance();
-    this._logDiag("page", "onLoad");
+    this._logDiag("page", "onLoad v2026-11-02-manual-sync");
     this._bindBle();
   },
 
