@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix19" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix20" + envInfo);
     this._bindBle();
   },
 
@@ -640,8 +640,12 @@ Page({
         this._uploaded[name] = true;
         this._uploaded[this._normalizeName(name)] = true;
         wx.showToast({ title: "已上传 " + prepared.name, icon: "none" });
-        this.reload();
+        // 先本地标记已同步，界面立刻变；再从服务器拉一次确认（避免 reload 未完成时仍是“未同步”）
+        this._syncedNames = this._syncedNames || {};
+        const norm = this._normalizeName(name);
+        if (!this._syncedNames[norm]) this._syncedNames[norm] = -1;
         if (this._lastDeviceList) this._renderDeviceFiles(this._lastDeviceList);
+        this.reload().then(() => this._loadSyncedNames()).catch(() => {});
       })
       .catch((err) => {
         this._logDiag("upload:failed", { file: prepared.name, error: api.errorMessage(err) });
