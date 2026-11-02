@@ -97,6 +97,9 @@ def merge_wechat_user_into_phone(db: Session, wechat_user: "User", phone_user: "
             "where table_schema='public' and column_name='user_id' and table_name<>'users'"
         )).fetchall()
         for (table,) in rows:
+            if table == "mobile_device_bindings":
+                # 保留微信账号的绑定行，旧 token 还能映射到手机账号
+                continue
             sp = db.begin_nested()
             try:
                 db.execute(text(f'update "{table}" set user_id=:new where user_id=:old'), {"new": phone_user.id, "old": wechat_user.id})

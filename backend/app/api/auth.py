@@ -510,6 +510,13 @@ async def get_current_user(
         raise credentials_exception
     assert_token_password_version(payload, user)
     validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+    try:
+        from .mobile_identity import online_user_for_mobile_user
+        canonical = online_user_for_mobile_user(db, user)
+        if canonical is not None and canonical.id != user.id:
+            user = canonical
+    except Exception:
+        pass
     # Do not keep the authentication read transaction checked out while the
     # endpoint waits on an upstream API or streams a response.
     db.commit()
