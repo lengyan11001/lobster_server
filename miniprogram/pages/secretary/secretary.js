@@ -55,7 +55,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix9" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix10" + envInfo);
     this._bindBle();
   },
 
@@ -193,7 +193,12 @@ Page({
     });
     this._onBle("onInitParamUpdated", (settings) => {
       const minutes = Number((settings && settings.segmentDuration) || 0);
-      this._logDiag("init:param", { segmentDuration: minutes });
+      this._logDiag("init:param", {
+        segmentDuration: minutes,
+        powerOnRecord: settings ? Boolean(settings.powerOnRecord) : null,
+        micGain: settings ? settings.micGain : null,
+        usbSwitch: settings ? Boolean(settings.usbSwitch) : null
+      });
       this.setData({
         segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段",
         powerOnRecord: settings && typeof settings.powerOnRecord !== "undefined" ? Boolean(settings.powerOnRecord) : this.data.powerOnRecord
@@ -706,11 +711,20 @@ Page({
       wx.showToast({ title: "正在读取设备设置，请稍后再点", icon: "none" });
       return;
     }
-    const next = !this.data.powerOnRecord;
-    try { ble.setPowerOnRecord(next); } catch (err) {}
-    this._logDiag("poweron:set", { enabled: next });
-    this.setData({ powerOnRecord: next });
-    wx.showToast({ title: next ? "已开启开机自动录音" : "已关闭开机自动录音", icon: "none" });
+    // 不用“取反”：显示值可能过期，取反会把“关”点成“开”。这里明确选要写入的值。
+    wx.showActionSheet({
+      itemList: ["关闭开机自动录音", "开启开机自动录音"],
+      success: (res) => {
+        const next = res.tapIndex === 1;
+        try { ble.setPowerOnRecord(next); } catch (err) {}
+        this._logDiag("poweron:set", { enabled: next });
+        this.setData({ powerOnRecord: next });
+        wx.showToast({ title: next ? "已设为开启" : "已设为关闭", icon: "none" });
+        setTimeout(() => {
+          try { ble.fetchInitParam(); } catch (err) {}
+        }, 1200);
+      }
+    });
   },
 
   changeSegment() {
