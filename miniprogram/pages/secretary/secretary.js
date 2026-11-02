@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix20" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix21" + envInfo);
     this._bindBle();
   },
 
@@ -577,6 +577,12 @@ Page({
   /* 设备下载下来的可能是 ATW（私有格式），必须转成 Opus 才能上传转写 */
   _prepareUploadFile(name, localPath) {
     const rawName = String(name || "").replace(/^ble_/i, "");
+    try {
+      const st = wx.getFileSystemManager().statSync(localPath);
+      if (st && Number(st.size) === 0) return { ok: false, reason: "empty_file" };
+    } catch (err) {
+      return { ok: false, reason: "stat_failed" };
+    }
     const head = this._readHeader(localPath);
     if (!head) return { ok: false, reason: "read_header_failed" };
     const isAtw = head[0] === 0x5B && head[1] === 0x50;
@@ -616,8 +622,17 @@ Page({
     if (!localPath || !name) { this._runSyncQueue(); return; }
     const prepared = this._prepareUploadFile(name, localPath);
     if (!prepared.ok) {
+      const reasonText = ({
+        empty_file: "设备只建了文件，没有写入音频（0 字节）",
+        stat_failed: "读不到下载文件",
+        read_header_failed: "读取文件头失败",
+        unknown_container: "未知音频格式",
+        atw_convert_failed: "ATW/KA 转码失败",
+        atw_convert_error: "转码异常"
+      })[prepared.reason] || prepared.reason;
       this._logDiag("upload:skip", { file: name, reason: prepared.reason });
-      this.setData({ syncText: "跳过 " + name + "（" + prepared.reason + "）" });
+      this.setData({ syncText: "跳过 " + name + "：" + reasonText });
+      wx.showToast({ title: reasonText, icon: "none" });
       this._runSyncQueue();
       return;
     }
