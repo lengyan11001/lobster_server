@@ -133,12 +133,13 @@ Page({
         wx.hideLoading();
         const profile = (data && data.profile) || {};
         const memory = (data && data.memory) || {};
+        // 与 online agent.js APE_FIELDS 的 key 完全一致
         const labels = {
-          profile_name: "你的名字 / 称呼", gender: "性别", birth_decade: "出生年代",
-          province: "现在居住省份", city: "现在居住城市", hometown: "籍贯 / 家乡",
-          occupation: "你是做什么的", share_content: "主要想分享什么内容",
+          profile_name: "你的名字 / 称呼", gender: "性别", birth_era: "出生年代",
+          current_province: "现在居住省份", current_city: "现在居住城市", hometown: "籍贯 / 家乡",
+          role: "你是做什么的", share_topic: "主要想分享什么内容",
           video_style: "希望的视频风格", after_view_action: "希望看完后做什么",
-          product: "在做什么产品 / 服务", target_customer: "目标客户", advantages: "优势"
+          product: "在做什么产品 / 服务", target_customer: "最想服务哪类客户", advantages: "比同行好在哪里"
         };
         const fields = Object.keys(labels).map((key) => ({
           key,
