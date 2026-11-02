@@ -209,6 +209,26 @@ def _source_doc_key(doc_id: str, source_index: int) -> str:
     return f"{str(doc_id or '').strip()}:{max(0, int(source_index))}"[:64]
 
 
+class _MintedRequest:
+    """内部调用带上指定用户的 token，避免小程序请求按微信账号扣费（微信账号余额常为 0）。"""
+
+    def __init__(self, headers: dict[str, str]):
+        self.headers = headers
+
+
+def _billing_request_for_user(db: Session, user_id: int, installation_id: str):
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        return None
+    token = create_access_token(access_token_claims(user))
+    auth = f"Bearer {token}"
+    return _MintedRequest({
+        "authorization": auth,
+        "Authorization": auth,
+        "X-Installation-Id": installation_id,
+    })
+
+
 # ── 设备私有格式（ATW: 5B50 / KA: 4B41）→ OGG Opus ─────────────────────────
 _OGG_CRC_TABLE: list[int] = []
 
@@ -911,7 +931,8 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
                 existing_text = str(row.transcript_text or "") if row else ""
                 existing_segments = row.transcript_segments if row and isinstance(row.transcript_segments, list) else []
                 existing_task_id = str(row.stt_task_id or "") if row else ""
-                effective_iid = (installation_id or "").strip() or (f"note-web-{int(row.user_id)}" if row else "")
+                owner_id = int(row.user_id) if row else 0
+                effective_iid = (installation_id or "").strip() or (f"note-web-{owner_id}" if owner_id else "")
             finally:
                 db.close()
             if existing_text.strip() or existing_segments:
@@ -931,7 +952,16 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
             finally:
                 db.close()
             dialogue = "\n".join(f"{x['speaker']}：{x['text']}" for x in segments) or text
-            answer = await _call_llm(request, effective_iid, [
+            bill_request = None
+            try:
+                _db = SessionLocal()
+                try:
+                    bill_request = _billing_request_for_user(_db, owner_id, effective_iid) if owner_id else None
+                finally:
+                    _db.close()
+            except Exception:
+                bill_request = None
+            answer = await _call_llm(bill_request or request, effective_iid, [
                 {
                     "role": "system",
                     "content": (
@@ -962,6 +992,7 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
                     row.stt_task_id = task_id
                     row.status = "completed"
                     row.process_stage = "completed"
+                    row.error_message = ""
                     db.commit()
             finally:
                 db.close()
@@ -980,7 +1011,7 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
                     # 转写已经成功，失败只在摘要这一步：同步/转写算完成，摘要单独标原因
                     row.status = "completed"
                     row.process_stage = "completed"
-                    row.error_message = "摘要生成失败：" + reason
+                    row.error_message = "" if str(row.summary_text or "").strip() else ("摘要生成失败：" + reason)
                 else:
                     row.status = "failed"
                     row.process_stage = "failed"
