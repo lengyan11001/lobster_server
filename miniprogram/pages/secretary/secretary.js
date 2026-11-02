@@ -37,6 +37,7 @@ Page({
     syncing: false,
     segmentLabel: "分段设置",
     powerOnRecord: null,
+    formatting: false,
     deviceFiles: [],
     listRows: [],
     diagOpen: false,
@@ -55,7 +56,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix10" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix11" + envInfo);
     this._bindBle();
   },
 
@@ -177,10 +178,21 @@ Page({
     });
     this._onBle("onDisconnected", () => {
       this._logDiag("ble:disconnected");
+      if (this.data.formatting) {
+        clearTimeout(this._formatTimer);
+        this.setData({ formatting: false });
+        wx.showModal({
+          title: "设备已断开",
+          content: "格式化时设备会重启并断开蓝牙，这是正常的。请等 30 秒左右再点「连接设备」重新连接。",
+          showCancel: false
+        });
+      }
       this._stopTimer();
       this.setDevice({ connected: false, isRecording: false, isPaused: false, timeText: "00:00:00" });
     });
     this._onBle("onFormatResult", (success, message) => {
+      clearTimeout(this._formatTimer);
+      this.setData({ formatting: false });
       this._logDiag("format:result", { success: Boolean(success), message: String(message || "") });
       wx.showToast({ title: success ? "格式化完成" : String(message || "格式化失败"), icon: "none" });
       if (success) {
@@ -602,6 +614,10 @@ Page({
       wx.showToast({ title: "请先连接录音设备", icon: "none" });
       return;
     }
+    if (this.data.formatting) {
+      wx.showToast({ title: "设备正在格式化，请稍后", icon: "none" });
+      return;
+    }
     if (this.data.device.isRecording) return;
     this._logDiag("action:startRecord");
     this._justStarted = true;
@@ -694,8 +710,19 @@ Page({
         if (!res.confirm) return;
         try { ble.formatDisk(); } catch (err) {}
         this._logDiag("format:request", "");
+        this.setData({ formatting: true });
         wx.showLoading({ title: "格式化中" });
-        setTimeout(() => wx.hideLoading(), 4000);
+        setTimeout(() => wx.hideLoading(), 3000);
+        clearTimeout(this._formatTimer);
+        this._formatTimer = setTimeout(() => {
+          if (!this.data.formatting) return;
+          this.setData({ formatting: false });
+          wx.showModal({
+            title: "没收到格式化结果",
+            content: "设备可能还在重启。请把录音笔关机再开机，然后重新连接查看存储占用。",
+            showCancel: false
+          });
+        }, 45000);
       }
     });
   },
@@ -752,6 +779,10 @@ Page({
     const ble = this._ble;
     if (!ble || !ble.isConnected) {
       wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    if (this.data.formatting) {
+      wx.showToast({ title: "设备正在格式化，请稍后", icon: "none" });
       return;
     }
     if (this.data.device.isRecording) {
