@@ -17288,7 +17288,7 @@ async function api(path, options = {}) {
     function renderRecorderDeviceFiles() {
       const host = $("recorderDeviceFiles");
       if (!host) return;
-      const canonicalName = (name) => String(name || "").trim().toLowerCase().replace(/(?:\.(?:opus|atw|wav|mp3|m4a|aac|ogg))+$/i, "");
+      const canonicalName = (name) => String(name || "").trim().toLowerCase().replace(/(?:\.(?:opus|atw|ka|bin|ops|wav|mp3|m4a|aac|ogg))+$/i, "");
       const syncedRows = Array.isArray(state.recorderSyncedFiles) ? state.recorderSyncedFiles : [];
       const syncedByName = new Map(syncedRows.map((row) => [canonicalName(row.file_name), row]));
       const knownNames = new Set((state.recorderKnownNames || []).map(canonicalName));

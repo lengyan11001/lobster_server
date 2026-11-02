@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix23" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix24" + envInfo);
     this._bindBle();
   },
 
@@ -380,7 +380,7 @@ Page({
     return String(name || "")
       .trim()
       .toLowerCase()
-      .replace(/\.(opus|atw|wav|mp3|m4a|aac|ogg|amr|silk)$/i, "");
+      .replace(/\.(opus|atw|ka|bin|ops|wav|mp3|m4a|aac|ogg|amr|silk)$/i, "");
   },
 
   /* 只列设备文件，由用户自己点“同步”（H5 就是这个逻辑） */
