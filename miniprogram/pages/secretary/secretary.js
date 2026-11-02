@@ -58,7 +58,7 @@ Page({
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
     this._autoReconnectLeft = 0;
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix27" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix28" + envInfo);
     this._bindBle();
   },
 
@@ -432,22 +432,54 @@ Page({
     }
   },
 
-  /* 设备文件不再单独一块列表，和“设备录音”列表合成同一个列表 */
+  /* 对齐 H5：设备录音 tab 一个文件一行，同步后带服务器状态；服务器有、设备已删的也保留 */
   _rebuildList() {
     const type = TABS[this.data.tabIndex].key;
-    const showDevice = type === "" || type === "device";
-    const deviceRows = showDevice
-      ? (this.data.deviceFiles || [])
-          .filter((f) => f && f.fileName && !f.synced)
-          .map((f) => ({
+    const items = this.data.items || [];
+    if (type === "device") {
+      const synced = this._syncedNames || {};
+      const uploaded = this._uploaded || {};
+      const onDevice = {};
+      const rows = (this.data.deviceFiles || [])
+        .filter((f) => f && f.fileName)
+        .map((f) => {
+          const key = this._normalizeName(f.fileName);
+          onDevice[key] = true;
+          const record = items.find((r) => this._normalizeName(r.fileName) === key);
+          const recordId = (record && record.id) || synced[key] || (uploaded[f.fileName] ? -1 : 0);
+          const isSynced = Boolean(recordId);
+          return {
             kind: "device",
             key: "dev:" + f.fileName,
             fileName: f.fileName,
             name: f.fileName,
-            meta: [f.durationText, f.sizeText, "未同步"].filter(Boolean).join(" · ")
-          }))
-      : [];
-    const recRows = (this.data.items || []).map((r) => ({
+            recordId: recordId > 0 ? recordId : 0,
+            synced: isSynced,
+            status: (record && record.status) || "",
+            statusText: isSynced ? ((record && record.statusText) || "已同步") : "待同步",
+            summary: (record && record.summary) || "",
+            errorText: (record && record.errorText) || "",
+            meta: [f.durationText, f.sizeText].filter(Boolean).join(" · ")
+          };
+        });
+      items.forEach((r) => {
+        if (onDevice[this._normalizeName(r.fileName)]) return;
+        rows.push({
+          kind: "record",
+          key: "rec:" + r.id,
+          id: r.id,
+          name: r.name,
+          status: r.status,
+          statusText: r.statusText,
+          summary: r.summary,
+          errorText: r.errorText,
+          meta: [r.sourceLabel, r.time].filter(Boolean).join(" · ")
+        });
+      });
+      this.setData({ listRows: rows });
+      return;
+    }
+    const recRows = items.map((r) => ({
       kind: "record",
       key: "rec:" + r.id,
       id: r.id,
@@ -455,9 +487,10 @@ Page({
       status: r.status,
       statusText: r.statusText,
       summary: r.summary,
+      errorText: r.errorText,
       meta: [r.sourceLabel, r.time].filter(Boolean).join(" · ")
     }));
-    this.setData({ listRows: deviceRows.concat(recRows) });
+    this.setData({ listRows: recRows });
   },
 
   /* 拉全设备录音的已同步名单，避免把已入库的老文件又显示成“未同步” */
@@ -973,8 +1006,10 @@ Page({
   openRow(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.listRows[index];
-    if (!row || row.kind !== "record" || !row.id) return;
-    wx.navigateTo({ url: `/pages/secretary-detail/secretary-detail?id=${row.id}` });
+    if (!row) return;
+    const id = row.kind === "record" ? row.id : (row.synced ? row.recordId : 0);
+    if (!id) return;
+    wx.navigateTo({ url: `/pages/secretary-detail/secretary-detail?id=${id}` });
   },
 
   openDetail(e) {
