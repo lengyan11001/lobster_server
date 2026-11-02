@@ -15,6 +15,9 @@ Page({
     loading: true,
     audioLoading: false,
     extracting: false,
+    extractOpen: false,
+    extractFields: [],
+    extractDocs: [],
     playing: false,
     record: null
   },
@@ -132,52 +135,50 @@ Page({
           profile_name: "名称", industry: "行业", product: "产品/服务",
           target_customer: "目标客户", advantages: "优势", role: "角色", video_style: "视频风格"
         };
-        const lines = [];
-        Object.keys(labels).forEach((key) => {
-          const value = String(profile[key] || "").trim();
-          if (value) lines.push(labels[key] + "：" + value.slice(0, 40));
-        });
-        const docs = Object.keys(memory).filter((key) => String(memory[key] || "").trim());
-        const body = (lines.length || docs.length)
-          ? (lines.slice(0, 7).join("\n") + (docs.length ? `\n将写入个人记忆 ${docs.length} 份` : "") + "\n\n确认写入个人资料和记忆？")
-          : "没有提取到有效资料，仍要写入空结果吗？";
-        wx.showModal({
-          title: "确认提取结果",
-          content: body,
-          confirmText: "写入",
-          success: (res) => {
-            if (!res.confirm) { this.setData({ extracting: false }); return; }
-            this.applyExtractProfile();
-          }
-        });
+        const fields = Object.keys(labels)
+          .map((key) => ({ key, label: labels[key], value: String(profile[key] || "").trim(), checked: Boolean(String(profile[key] || "").trim()) }))
+          .filter((x) => x.value);
+        const docTitles = { brand_product_intro: "品牌/产品介绍", product_service_faq: "产品服务问答", short_video_scripts: "短视频脚本" };
+        const docs = Object.keys(docTitles)
+          .map((key) => ({ key, title: docTitles[key], checked: Boolean(String(memory[key] || "").trim()) }))
+          .filter((x) => String(memory[x.key] || "").trim());
+        this.setData({ extractOpen: true, extractFields: fields, extractDocs: docs });
       })
-      .catch((err) => {
-        wx.hideLoading();
-        this.setData({ extracting: false });
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
-      });
+      .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); })
+      .then(() => this.setData({ extracting: false }));
   },
 
-  applyExtractProfile() {
+  toggleExtractItem(e) {
+    const type = e.currentTarget.dataset.type;
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const list = (type === "doc" ? this.data.extractDocs : this.data.extractFields).slice();
+    if (!list[idx]) return;
+    list[idx].checked = !list[idx].checked;
+    this.setData(type === "doc" ? { extractDocs: list } : { extractFields: list });
+  },
+
+  closeExtract() { this.setData({ extractOpen: false }); },
+  extractNoop() {},
+
+  saveExtract() {
+    const fields = this.data.extractFields.filter((x) => x.checked).map((x) => x.key);
+    const docs = this.data.extractDocs.filter((x) => x.checked).map((x) => x.key);
+    if (!fields.length && !docs.length) return wx.showToast({ title: "至少选一项", icon: "none" });
     wx.showLoading({ title: "写入中" });
     app.request({
       method: "POST",
       url: `/api/h5/recorder/files/${this.data.id}/extract-profile`,
-      data: {},
+      data: { fields, memory_keys: docs },
       timeout: 240000
     })
       .then((data) => {
-        const fields = (data && data.profile_fields) || [];
-        const docs = (data && data.memory_docs) || [];
         wx.hideLoading();
-        wx.showModal({
-          title: "已写入",
-          content: `填充资料字段 ${fields.length} 个，生成个人记忆 ${docs.length} 份${docs.length ? "：" + docs.join("、") : ""}`,
-          showCancel: false
-        });
+        this.setData({ extractOpen: false });
+        const filled = (data && data.profile_fields) || [];
+        const created = (data && data.memory_docs) || [];
+        wx.showModal({ title: "已写入", content: `资料 ${filled.length} 项，记忆 ${created.length} 份`, showCancel: false });
       })
-      .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); })
-      .then(() => this.setData({ extracting: false }));
+      .catch((err) => { wx.hideLoading(); wx.showToast({ title: api.errorMessage(err), icon: "none" }); });
   },
 
   retry() {

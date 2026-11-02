@@ -1878,6 +1878,12 @@ async def extract_profile_from_recording(
     text = str(row.transcript_text or "").strip()
     if row.status != "completed" or not text:
         raise HTTPException(status_code=409, detail="转写完成后才能提取资料")
+    try:
+        _body = await request.json() if await request.body() else {}
+    except Exception:
+        _body = {}
+    selected_fields = _body.get("fields") if isinstance(_body.get("fields"), list) else None
+    selected_memory = _body.get("memory_keys") if isinstance(_body.get("memory_keys"), list) else None
 
     owner = _owner_user(db, current_user)
     base = str(request.base_url).rstrip("/")
@@ -1948,6 +1954,8 @@ async def extract_profile_from_recording(
     basic = dict(req.get("basic_profile") or {})
     filled: list[str] = []
     for key in _EXTRACT_BASIC_KEYS:
+        if selected_fields is not None and key not in selected_fields:
+            continue
         value = str(profile.get(key) or "").strip()
         if value:
             basic[key] = value
@@ -1955,10 +1963,12 @@ async def extract_profile_from_recording(
     if basic:
         req["basic_profile"] = basic
     name_value = str(profile.get("profile_name") or "").strip()
-    if name_value:
+    if name_value and (selected_fields is None or "profile_name" in selected_fields):
         req["profile_name"] = name_value
         filled.append("profile_name")
     for key in _EXTRACT_BUSINESS_KEYS:
+        if selected_fields is not None and key not in selected_fields:
+            continue
         value = str(profile.get(key) or "").strip()
         if value:
             req[key] = value
@@ -1971,6 +1981,8 @@ async def extract_profile_from_recording(
     created_docs: list[str] = []
     installation_id = _installation_id(request)
     for doc_key, doc_title in _EXTRACT_MEMORY_TITLES.items():
+        if selected_memory is not None and doc_key not in selected_memory:
+            continue
         content = str(memory.get(doc_key) or "").strip()
         if not content:
             continue
