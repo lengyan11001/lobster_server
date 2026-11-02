@@ -57,11 +57,15 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix15" + envInfo);
+    try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
+    this._autoReconnectLeft = 0;
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix16" + envInfo);
     this._bindBle();
   },
 
   onUnload() {
+    clearTimeout(this._autoTimer);
+    try { if (this._ble) this._ble.stopScan(); } catch (err) {}
     this._stopTimer();
     try {
       (this._bleHandlers || []).forEach((h) => this._ble.off(h.event, h.fn));
@@ -156,6 +160,24 @@ Page({
   },
 
   // 设备上报的存储单位是 KB（SDK getStorageStr 也是 /1024 显示 MB）
+  _scheduleAutoReconnect(delay) {
+    clearTimeout(this._autoTimer);
+    this._autoTimer = setTimeout(() => {
+      const ble = this._ble;
+      if (!ble || ble.isConnected || ble._connecting) return;
+      if (this._autoReconnectLeft <= 0) this._autoReconnectLeft = 3;
+      if (this._autoReconnectLeft <= 0) return;
+      if (!this._lastDevice || !this._lastDevice.deviceId) return;
+      this._autoReconnectLeft -= 1;
+      this._logDiag("auto:scan", { left: this._autoReconnectLeft });
+      try { ble.startScan(); } catch (err) {}
+      this._autoTimer = setTimeout(() => {
+        try { ble.stopScan(); } catch (err) {}
+        if (!ble.isConnected && this._autoReconnectLeft > 0) this._scheduleAutoReconnect(2500);
+      }, 12000);
+    }, delay);
+  },
+
   _sizeText(kb) {
     const bytes = Number(kb || 0) * 1024;
     if (!bytes) return "0";
@@ -173,13 +195,29 @@ Page({
     const ble = this._ble;
     if (!ble || this._bleBound) return;
     this._bleBound = true;
+    this._onBle("onDeviceFound", (device) => {
+      if (!this._autoReconnectLeft) return;
+      const saved = this._lastDevice || {};
+      if (!saved.deviceId || device.deviceId !== saved.deviceId) return;
+      clearTimeout(this._autoTimer);
+      this._autoReconnectLeft = 0;
+      try { ble.stopScan(); } catch (err) {}
+      this._logDiag("auto:connect", { name: device.name });
+      try { ble.connect(device); } catch (err) {}
+    });
+
     this._onBle("onConnected", (device) => {
       this._logDiag("ble:connected", device);
+      clearTimeout(this._autoTimer);
+      this._autoReconnectLeft = 0;
+      this._lastDevice = { deviceId: device.deviceId, name: device.name };
+      try { wx.setStorageSync("recorder_last_device", this._lastDevice); } catch (err) {}
       this.setDevice({ connected: true, name: String((device && device.name) || this.data.device.name || "录音设备") });
       try { ble.fetchAllDeviceInfo(); } catch (err) {}
     });
     this._onBle("onDisconnected", () => {
       this._logDiag("ble:disconnected");
+      if (!this.data.formatting) this._scheduleAutoReconnect(1500);
       if (this.data.formatting) {
         clearTimeout(this._formatTimer);
         this.setData({ formatting: false });
