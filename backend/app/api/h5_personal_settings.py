@@ -154,10 +154,11 @@ def _memory_installation_id(request: Request) -> str:
 
 
 def _installation_id(request: Request) -> str:
-    iid = optional_installation_id_from_request(request)
-    if not iid:
-        raise HTTPException(status_code=400, detail="请先选择在线设备。")
-    return iid
+    # 小程序没有设备概念时按账号级处理，不再因为缺 installation_id 直接报错
+    try:
+        return optional_installation_id_from_request(request) or ""
+    except Exception:
+        return ""
 
 
 def _client_command_payload(content: str) -> dict[str, Any]:

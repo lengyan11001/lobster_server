@@ -12,29 +12,3 @@
 .primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #2563eb; border-radius: 16rpx; }
 .primary[disabled] { opacity: 0.5; }
 .status { margin-top: 16rpx; font-size: 24rpx; color: #64748b; text-align: center; }
-
-/* 深色主题（内联） */
-page, .page { background: #05070f !important; color: #f2f6ff !important; }
-.head, .home-top { background: transparent !important; }
-.title, .card-title, .tool-name, .copy-text, .content, .body, .sheet-title, .label, .name, .item-name, .record-title {
-  color: #f2f6ff !important;
-}
-.sub, .card-meta, .meta, .hint, .desc, .time, .tool-desc, .empty, .tip {
-  color: #8b98ae !important;
-}
-.panel, .card, .copy-card, .tool-row, .device-card, .candidate, .hist, .item, .list-item, .sheet {
-  background: rgba(255,255,255,.045) !important;
-  border-color: rgba(255,255,255,.10) !important;
-  color: #f2f6ff !important;
-}
-.input, textarea, input { background: rgba(255,255,255,.06) !important; color: #f2f6ff !important; border-color: rgba(255,255,255,.14) !important; }
-.chip { background: rgba(255,255,255,.06) !important; color: #b6c1d2 !important; }
-.chip.active { background: #22d3ee !important; color: #04121a !important; }
-.chip.completed { background: rgba(52,211,153,.18) !important; color: #34d399 !important; }
-.chip.pending { background: rgba(34,211,238,.16) !important; color: #67e8f9 !important; }
-.chip.failed, .err, .error, .card-error { color: #fb7185 !important; }
-button.ghost, .ghost { background: rgba(255,255,255,.06) !important; color: #f2f6ff !important; border-color: rgba(255,255,255,.14) !important; }
-button.primary, .primary { background: linear-gradient(135deg,#22d3ee,#6366f1) !important; color: #fff !important; }
-.danger, button.danger { background: rgba(251,113,133,.16) !important; color: #fb7185 !important; }
-.overlay { background: rgba(0,0,0,.55) !important; }
-
