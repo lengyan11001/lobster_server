@@ -93,7 +93,7 @@ function AIRECBleManager() {
   this._deviceFoundBound = false
   this._notifyBound = false
   this._filesFetchAt = 0
-  this._replyExpect = { record: 0, init: 0, status: 0 }
+  this._replyExpect = { record: 0, init: 0, status: 0, pause: 0 }
   this._dropLogCount = 0
   this._rxBuffer = null  // 控制通道粘包缓冲
 }
@@ -462,6 +462,18 @@ AIRECBleManager.prototype.fetchFileList = function() {
   if (this._filesFetchAt && now - this._filesFetchAt < 4000) return
   this._filesFetchAt = now
   this._pendingFiles = []
+  this._filesDropped = 0
+  clearTimeout(this._filesTimer)
+  var self = this
+  // 兜底：设备真的一條文件都没有时，也不会永远等不到 END
+  this._filesTimer = setTimeout(function() {
+    if (!self._filesFetchAt) return
+    var list = self._pendingFiles.slice()
+    self._filesFetchAt = 0
+    if (self._device) self._device.fileList = list
+    self.lastFilesMeta = { count: list.length, elapsed: Date.now() - now, dropped: self._filesDropped || 0, fallback: true }
+    self._emit('onFileListUpdated', list)
+  }, 8000)
   this._write(this._buildFrame(CMD.GET_FILES))
 }
 
@@ -474,8 +486,8 @@ AIRECBleManager.prototype.startRecord = function() {
   }, 100)
 }
 
-AIRECBleManager.prototype.pauseRecord  = function() { this._write(this._buildFrame(CMD.PAUSE_RECORD)) }
-AIRECBleManager.prototype.resumeRecord = function() { this._write(this._buildFrame(CMD.PAUSE_RECORD)) }
+AIRECBleManager.prototype.pauseRecord  = function() { this._awaitReply('pause'); this._write(this._buildFrame(CMD.PAUSE_RECORD)) }
+AIRECBleManager.prototype.resumeRecord = function() { this._awaitReply('pause'); this._write(this._buildFrame(CMD.PAUSE_RECORD)) }
 
 AIRECBleManager.prototype.endRecord = function() {
   var self = this
@@ -737,6 +749,15 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
     case CMD.GET_FILES_END:
     case CMD.GET_FILES_FAIL: {
       if (!this._filesFetchAt) { this._dropFrame(cmd, data.length); break }
+      var filesElapsed = Date.now() - this._filesFetchAt
+      // 刚发出去就来的空 END 基本都是流里的杂帧，当噪声丢掉，别把真列表截断成 0
+      if (this._pendingFiles.length === 0 && filesElapsed < 1200) {
+        this._filesDropped = (this._filesDropped || 0) + 1
+        this._dropFrame(cmd, data.length)
+        break
+      }
+      clearTimeout(this._filesTimer)
+      this.lastFilesMeta = { count: this._pendingFiles.length, elapsed: filesElapsed, dropped: this._filesDropped || 0 }
       this._filesFetchAt = 0
       var rawList = this._pendingFiles.slice()
       var list = []
@@ -794,6 +815,8 @@ AIRECBleManager.prototype._processCmd = function(cmd, data) {
 
     case CMD.PAUSE_RECORD:
     case CMD.PAUSE_FAIL:
+      if (!this._replyFresh('pause', 8000)) { this._dropFrame(cmd, data.length); break }
+      this._replyExpect.pause = 0
       this._emit('onRecordPaused')
       break
 

@@ -51,7 +51,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-gate" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-files-guard2" + envInfo);
     this._bindBle();
   },
 
@@ -193,6 +193,7 @@ Page({
       } else if (this.data.device.isRecording && !this._justStarted) {
         this._stopTimer();
         this.setDevice({ isRecording: false, isPaused: false, timeText: "00:00:00" });
+        this._emptyRetryLeft = 2;
         setTimeout(() => { this.reload(); try { ble.fetchFileList(); } catch (err) {} }, 3000);
       }
       this._justStarted = false;
@@ -222,6 +223,7 @@ Page({
       this._listInFlightAt = 0;
       const list = Array.isArray(files) ? files : [];
       this._logDiag("files", { count: list.length, names: list.slice(0, 8).map((f) => String((f && f.fileName) || "")) });
+      if (this._ble && this._ble.lastFilesMeta) this._logDiag("files:meta", this._ble.lastFilesMeta);
       this._renderDeviceFiles(list);
     });
     this._onBle("onFileDownloadComplete", (file, localPath) => {
@@ -288,6 +290,13 @@ Page({
     this._logDiag("files:render", { total: rows.length, synced: rows.filter((x) => x.synced).length });
     this._lastDeviceList = list;
     this.setData({ deviceFiles: rows }, () => this._rebuildList());
+    if (rows.length) {
+      this._emptyRetryLeft = 0;
+    } else if ((this._emptyRetryLeft || 0) > 0) {
+      this._emptyRetryLeft -= 1;
+      this._logDiag("files:retry", { left: this._emptyRetryLeft });
+      setTimeout(() => this._requestFileList("empty-retry"), 2500);
+    }
   },
 
   /* 设备文件不再单独一块列表，和“设备录音”列表合成同一个列表 */
@@ -651,6 +660,7 @@ Page({
   },
 
   refreshDeviceFiles() {
+    this._emptyRetryLeft = 2;
     const ble = this._ble;
     if (!ble || !ble.isConnected) {
       wx.showToast({ title: "请先连接录音设备", icon: "none" });
