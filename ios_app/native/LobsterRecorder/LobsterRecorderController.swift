@@ -100,6 +100,18 @@ final class LobsterRecorderController: NSObject {
         manager.deleteFile(fileName)
     }
 
+    func setSegmentDuration(minutes: Int) {
+        guard manager.isConnected else {
+            emit("segmentFailed", "{\"reason\":\"not_connected\"}")
+            return
+        }
+        let value = max(0, min(480, minutes))
+        manager.sendSegmentDuration(value)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.pushState()
+        }
+    }
+
     func startRecording() {
         manager.startRecord()
     }
@@ -222,7 +234,8 @@ final class LobsterRecorderController: NSObject {
         let syncing = !syncQueue.isEmpty
         return "{\"name\":\(json(name)),\"recording\":\(recording),\"paused\":\(paused),"
             + "\"duration\":\(recordDuration),\"fileCount\":\(files.count),"
-            + "\"syncing\":\(syncing),\"syncRemaining\":\(syncQueue.count)}"
+            + "\"syncing\":\(syncing),\"syncRemaining\":\(syncQueue.count),"
+            + "\"segmentDuration\":\(manager.isConnected ? manager.segmentDuration : 0)}"
     }
 
     private func pushState() {

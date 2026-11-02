@@ -104,6 +104,7 @@ import WebKit
         startRecorderRecording: function () { post('startRecorderRecording'); },
         stopRecorderRecording: function (refreshAfterStop) { post('stopRecorderRecording', { refresh: !!refreshAfterStop }); },
         deleteRecorderFile: function (fileName) { post('deleteRecorderFile', { fileName: fileName || '' }); },
+        setRecorderSegmentDuration: function (minutes) { post('setRecorderSegmentDuration', { minutes: Number(minutes) || 0 }); },
         __setState: function (json) { try { api.__state = JSON.parse(json || '{}'); } catch (e) { api.__state = {}; } },
         __emit: function (json) {
           try {
@@ -144,6 +145,8 @@ extension LobsterRecorderBridge: WKScriptMessageHandler {
             controller.stopRecording(refreshAfterStop: body["refresh"] as? Bool ?? true)
         case "deleteRecorderFile":
             controller.deleteFile(fileName: body["fileName"] as? String ?? "")
+        case "setRecorderSegmentDuration":
+            controller.setSegmentDuration(minutes: body["minutes"] as? Int ?? 0)
         default:
             break
         }
