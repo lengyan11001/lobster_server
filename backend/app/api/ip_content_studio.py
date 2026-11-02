@@ -7986,6 +7986,7 @@ def list_draft_records(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     query = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id)
     if task.strip():
         query = query.filter(IPContentDraftRecord.task == task.strip())
@@ -8007,6 +8008,7 @@ def delete_draft_record(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     clean_record_id = _clean_text(record_id, 64)
     row = (
         db.query(IPContentDraftRecord)
@@ -8029,6 +8031,7 @@ def delete_draft_record_group(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     clean_group_id = _clean_group_id(group_id)
     if not clean_group_id:
         raise HTTPException(status_code=400, detail="生成批次编号无效")
@@ -8110,6 +8113,7 @@ async def generate_industry_hot_oral(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     keyword_text_briefs = _keyword_text_seed_briefs(body.keyword_texts)
     keyword_query = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
     if body.keyword_ids:
@@ -8128,6 +8132,7 @@ async def generate_industry_hot_oral(
     rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _generate_and_save_ip_content_records(
+        auth_token=_server_bearer_for_user(current_user),
         db=db,
         current_user=current_user,
         request=request,
@@ -8151,6 +8156,7 @@ async def generate_professional_ip_oral(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     account_query = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.status == "active")
     if body.competitor_ids:
         account_query = account_query.filter(ContentCompetitorAccount.id.in_([int(x) for x in body.competitor_ids if str(x).isdigit()]))
@@ -8166,6 +8172,7 @@ async def generate_professional_ip_oral(
     rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _generate_and_save_ip_content_records(
+        auth_token=_server_bearer_for_user(current_user),
         db=db,
         current_user=current_user,
         request=request,
@@ -8189,6 +8196,7 @@ async def generate_moments_candidates(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    current_user = online_user_for_mobile_user(db, current_user)
     keyword_query = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
     if body.keyword_ids:
         keyword_query = keyword_query.filter(IPContentKeyword.id.in_([int(x) for x in body.keyword_ids if str(x).isdigit()]))
@@ -8219,6 +8227,7 @@ async def generate_moments_candidates(
     requested_count = min(max(int(body.count or 20), 1), 20)
     request_batch_size = requested_count if requested_count <= 5 else _env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20)
     generated = await _generate_and_save_ip_content_records(
+        auth_token=_server_bearer_for_user(current_user),
         db=db,
         current_user=current_user,
         request=request,
