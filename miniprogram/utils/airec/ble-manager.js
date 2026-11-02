@@ -459,7 +459,7 @@ AIRECBleManager.prototype.fetchAllDeviceInfo = function() {
   self._awaitReply('status')
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.RECORD_STATUS)) } }, 1800)
   setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.VERSION)) } }, 2400)
-  setTimeout(function() { if (self.isConnected) { self._write(self._buildFrame(CMD.GET_INIT_PARAM)) } }, 3000)
+  setTimeout(function() { if (self.isConnected) { self._awaitReply('init'); self._write(self._buildFrame(CMD.GET_INIT_PARAM)) } }, 3000)
 }
 
 AIRECBleManager.prototype.fetchFileList = function() {
