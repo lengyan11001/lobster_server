@@ -40,7 +40,13 @@ Page({
 
   onLoad() {
     this._ble = AIRECBleManager.getInstance();
-    this._logDiag("page", "onLoad v2026-11-02-manual-sync");
+    let envInfo = "";
+    try {
+      const acc = wx.getAccountInfoSync ? wx.getAccountInfoSync() : {};
+      const mini = (acc && acc.miniProgram) || {};
+      envInfo = " env=" + String(mini.envVersion || "") + " ver=" + String(mini.version || "");
+    } catch (err) {}
+    this._logDiag("page", "onLoad v2026-11-02-manual-sync" + envInfo);
     this._bindBle();
   },
 
