@@ -37,6 +37,7 @@ Page({
     syncing: false,
     segmentLabel: "分段设置",
     powerOnRecord: null,
+    usbSwitch: null,
     formatting: false,
     deviceFiles: [],
     listRows: [],
@@ -56,7 +57,7 @@ Page({
     this._bleHandlers = [];
     this._bleBound = false;
     this._syncedNames = {};
-    this._logDiag("page", "onLoad v2026-11-02-rec-fix13" + envInfo);
+    this._logDiag("page", "onLoad v2026-11-02-rec-fix14" + envInfo);
     this._bindBle();
   },
 
@@ -215,7 +216,8 @@ Page({
       });
       this.setData({
         segmentLabel: minutes > 0 ? "分段 " + minutes + "分钟" : "不分段",
-        powerOnRecord: settings && typeof settings.powerOnRecord !== "undefined" ? Boolean(settings.powerOnRecord) : this.data.powerOnRecord
+        powerOnRecord: settings && typeof settings.powerOnRecord !== "undefined" ? Boolean(settings.powerOnRecord) : this.data.powerOnRecord,
+        usbSwitch: settings && typeof settings.usbSwitch !== "undefined" ? Boolean(settings.usbSwitch) : this.data.usbSwitch
       });
     });
     this._onBle("onDeviceInfoUpdated", (device) => {
@@ -226,7 +228,7 @@ Page({
         const before = this._formatUsedBefore;
         this._formatCheckAt = 0;
         this._formatUsedBefore = 0;
-        if (used >= before * 0.9) {
+        if (Math.abs(used - before) < Math.max(1, total * 0.05)) {
           wx.showModal({
             title: "格式化没有生效",
             content: "存储仍是 " + this._sizeText(used) + "/" + this._sizeText(total) + "，设备的蓝牙格式化没有释放空间。请在录音笔上直接格式化，或换卡/升级固件。",
@@ -240,7 +242,7 @@ Page({
         isCharging: Boolean(device.isCharging),
         storageUsed: used,
         storageTotal: total,
-        storageText: total > 0 ? this._sizeText(used) + "/" + this._sizeText(total) : ""
+        storageText: total > 0 ? "可用 " + this._sizeText(used) + "/" + this._sizeText(total) : ""
       });
     });
     this._onBle("onRecordStateChanged", (recording) => {
@@ -739,6 +741,30 @@ Page({
             showCancel: false
           });
         }, 45000);
+      }
+    });
+  },
+
+  toggleUsbMode() {
+    const ble = this._ble;
+    if (!ble || !ble.isConnected) {
+      wx.showToast({ title: "请先连接录音设备", icon: "none" });
+      return;
+    }
+    if (this.data.usbSwitch === null) {
+      try { ble.fetchInitParam(); } catch (err) {}
+      wx.showToast({ title: "正在读取设备设置，请稍后再点", icon: "none" });
+      return;
+    }
+    wx.showActionSheet({
+      itemList: ["关闭 USB 模式", "开启 USB 模式"],
+      success: (res) => {
+        const next = res.tapIndex === 1;
+        try { ble.setUsbSwitch(next); } catch (err) {}
+        this._logDiag("usb:set", { enabled: next });
+        this.setData({ usbSwitch: next });
+        wx.showToast({ title: next ? "已开启 USB 模式" : "已关闭 USB 模式", icon: "none" });
+        setTimeout(() => { try { ble.fetchInitParam(); } catch (err) {} }, 1200);
       }
     });
   },
