@@ -184,7 +184,7 @@ def _deploy_command(remote_dir: str, *, reset: bool = True) -> str:
         return f"""cd {quoted_dir} && \
 PREV=$(git rev-parse HEAD) && echo "$PREV" > .deploy_rollback_commit && \
 echo "[backup] previous=$PREV" && \
-git fetch origin main && \
+git fetch --depth=1 origin main && \
 DIRTY_TRACKED="$(git status --porcelain --untracked-files=no)" && \
 if [ -n "$DIRTY_TRACKED" ]; then BACKUP_DIR=.deploy_dirty_backups; mkdir -p "$BACKUP_DIR"; BACKUP_PATCH="$BACKUP_DIR/$(date +%Y%m%d_%H%M%S)_$(git rev-parse --short HEAD).patch"; git diff > "$BACKUP_PATCH"; echo "[WARN] tracked dirty backup=$BACKUP_PATCH"; fi && \
 git reset --hard origin/main && \
@@ -192,7 +192,7 @@ LOBSTER_DEPLOY_CONFIRM=发 bash scripts/server_update_and_restart.sh && \
 echo "[verify] commit=$(git rev-parse --short HEAD)" && \
 (systemctl is-active lobster-backend lobster-mcp lobster-background lobster-h5 2>/dev/null || true)"""
     return f"""cd {quoted_dir} && \
-git fetch origin main && git pull origin main && \
+git fetch --depth=1 origin main && git pull origin main && \
 LOBSTER_DEPLOY_CONFIRM=发 bash scripts/server_update_and_restart.sh && \
 echo "[verify] commit=$(git rev-parse --short HEAD)" && \
 (systemctl is-active lobster-backend lobster-mcp lobster-background lobster-h5 2>/dev/null || true)"""
