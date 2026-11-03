@@ -96,15 +96,13 @@ def test_information_desk_returns_compact_snapshot_after_permission_grant(
     assert response.status_code == 200
     payload = response.json()
     assert payload["snapshot"]["status"] == "partial"
-    sections = payload["snapshot"]["sections"]
-    assert [section["category"] for section in sections] == ["热点榜"]
-    assert sections[0]["items"][0]["title"] == "平台话题"
-    assert sections[0]["items"][0]["cover_url"] == "https://cdn.test/cover.jpg"
-    assert [item["key"] for item in payload["snapshot"]["endpoint_status"]] == ["hot_total"]
+    assert payload["snapshot"]["sections"] == []
+    assert payload["snapshot"]["endpoint_status"] == []
+    assert payload["catalog"] == []
+    assert payload["mode"] == "search"
+    assert payload["next_collection_at"] is None
     assert "raw" not in payload["snapshot"]
     assert "request_body" not in payload["snapshot"]
-    assert {item["category"] for item in payload["catalog"]} == {"热点榜", "内容榜"}
-    assert len(payload["catalog"]) == 10
 
 
 def test_information_desk_admin_can_read_without_feature_row(
@@ -135,8 +133,9 @@ def test_tikhub_requests_follow_documented_parameters(monkeypatch):
 
     from backend.app.services import douyin_platform_information_desk as service
 
-    hot_total = next(item for item in service.DAILY_COLLECTION_ENDPOINTS if item["key"] == "hot_total")
-    hot_video = next(item for item in service.DAILY_COLLECTION_ENDPOINTS if item["key"] == "hot_video")
+    endpoints = {item["key"]: item for item in service._ALL_PUBLIC_ENDPOINTS}
+    hot_total = endpoints["hot_total"]
+    hot_video = endpoints["hot_video"]
     total_params, total_body = service._endpoint_request(hot_total, "2026-09-01")
     video_params, video_body = service._endpoint_request(hot_video, "2026-09-01")
 
@@ -319,21 +318,14 @@ def test_hot_search_uses_word_instead_of_numeric_label_and_prefers_main_word_lis
     ]
 
 
-def test_information_desk_only_requests_hot_and_content_boards():
-    """2026-09-27 需求：服务器侧只保留热门榜（热点榜）与内容榜单的请求。"""
+def test_information_desk_has_no_daily_board_collection():
+    """2026-11-03 需求：热门榜/内容榜不再预采集，信息台只保留关键词搜索。"""
     from backend.app.services import douyin_platform_information_desk as service
 
-    categories = {item["category"] for item in service.PUBLIC_DAILY_ENDPOINTS}
-    assert categories == {"热点榜", "内容榜"}
-
-    keys = {item["key"] for item in service.PUBLIC_DAILY_ENDPOINTS}
-    assert {"hot_rise", "hot_city", "hot_challenge", "hot_total"} <= keys
-    assert {"hot_video", "low_fan_video", "high_play_video", "high_like_video", "high_fan_video"} <= keys
-    dropped = {"hot_search", "music_hot_search", "hot_accounts", "hot_topic", "hot_total_topic",
-               "xingtu_catalog", "creator_hot_music", "rising_search_words", "publish_trend"}
-    assert not (dropped & keys)
-    assert all(item["key"] != "publish_trend" for item in service.DAILY_COLLECTION_ENDPOINTS)
-    assert service.INFORMATION_DESK_ENDPOINT_KEYS == frozenset(keys)
+    assert service.INFORMATION_DESK_CATEGORIES == ()
+    assert service.PUBLIC_DAILY_ENDPOINTS == ()
+    assert service.DAILY_COLLECTION_ENDPOINTS == ()
+    assert service.INFORMATION_DESK_ENDPOINT_KEYS == frozenset()
 
 
 def test_imitation_picker_and_error_hints(monkeypatch):
@@ -538,8 +530,8 @@ def _seed_snapshot(db, date_text: str = "2026-09-27"):
     db.commit()
 
 
-def test_information_desk_content_board_first(db_session, db_session_factory, test_user):
-    """内容榜要排在热点榜前面。"""
+def test_information_desk_hides_legacy_board_tabs(db_session, db_session_factory, test_user):
+    """历史快照里的内容榜/热点榜不再通过接口返回；搜索仍可检索历史素材。"""
     from backend.app.models import UserSkillVisibility
     from backend.app.services.user_feature_flags import DOUYIN_PLATFORM_INFORMATION_DESK_FEATURE_ID
 
@@ -547,7 +539,7 @@ def test_information_desk_content_board_first(db_session, db_session_factory, te
     _seed_snapshot(db_session)
 
     payload = _client(db_session_factory, test_user.id).get("/api/douyin/platform-information-desk").json()
-    assert [section["category"] for section in payload["snapshot"]["sections"]] == ["内容榜", "热点榜"]
+    assert payload["snapshot"]["sections"] == []
 
 
 def test_search_information_desk_matches_keywords(db_session, test_user):
@@ -559,8 +551,8 @@ def test_search_information_desk_matches_keywords(db_session, test_user):
     hit = service.search_information_desk(db_session, ["火锅"])
     assert hit["count"] == 1
     assert hit["items"][0]["id"] == "222"
-    assert hit["items"][0]["section_title"] == "视频热榜"
-    assert hit["items"][0]["category"] == "内容榜"
+    assert hit["items"][0]["section_title"] == "关键词搜索"
+    assert hit["items"][0]["category"] == "抖音搜索"
     assert hit["items"][0]["matched"] == ["火锅"]
 
     multi = service.search_information_desk(db_session, ["探店", "夜经济"])

@@ -182,7 +182,7 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("runtime_state_maintenance", runtime_state_maintenance_loop))
     else:
         logger.info("[background] runtime state maintenance disabled")
-    if _enabled_from_env("LOBSTER_BACKGROUND_DOUYIN_INFORMATION_DESK_ENABLED", True):
+    if _enabled_from_env("LOBSTER_BACKGROUND_DOUYIN_INFORMATION_DESK_ENABLED", False):
         factories.append(("douyin_platform_information_desk", douyin_platform_information_desk_background_loop))
     else:
         logger.info("[background] douyin platform information desk disabled")

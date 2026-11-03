@@ -120,13 +120,11 @@ _ALL_PUBLIC_ENDPOINTS: tuple[dict[str, Any], ...] = (
 )
 
 
-# 信息台只保留两个榜：热门榜（热点榜）与内容榜单。
-# 其余分类（热搜 / 音乐 / 话题 / 搜索 / 账号榜 / 创作者中心 / 星图 …）不再请求 TikHub。
-INFORMATION_DESK_CATEGORIES: tuple[str, ...] = ("内容榜", "热点榜")   # 内容榜排前面
-PUBLIC_DAILY_ENDPOINTS: tuple[dict[str, Any], ...] = tuple(
-    endpoint for endpoint in _ALL_PUBLIC_ENDPOINTS if endpoint["category"] in INFORMATION_DESK_CATEGORIES
-)
-INFORMATION_DESK_ENDPOINT_KEYS: frozenset[str] = frozenset(item["key"] for item in PUBLIC_DAILY_ENDPOINTS)
+# 2026-11-03 需求：不再预采集热门榜/内容榜，信息台改为用户输入关键词搜索。
+# 保留 _ALL_PUBLIC_ENDPOINTS 作为 TikHub 接口参考；每日采集集合为空。
+INFORMATION_DESK_CATEGORIES: tuple[str, ...] = ()
+PUBLIC_DAILY_ENDPOINTS: tuple[dict[str, Any], ...] = ()
+INFORMATION_DESK_ENDPOINT_KEYS: frozenset[str] = frozenset()
 
 
 # Keep the unattended request set aligned with the current OpenAPI contract.
@@ -157,7 +155,7 @@ _ENDPOINT_RUNTIME_OVERRIDES = {
     "xingtu_catalog": {"params": {"biz_scene": "douyin_flow_split_video_author_ranks"}},
     "xingtu_case_categories": {"params": {"platform_source": 1}},
 }
-for _endpoint in PUBLIC_DAILY_ENDPOINTS:
+for _endpoint in _ALL_PUBLIC_ENDPOINTS:
     _endpoint.update(_ENDPOINT_RUNTIME_OVERRIDES.get(_endpoint["key"], {}))
 
 # Content publish trend requires a valid content tag and date range. It stays
@@ -508,6 +506,8 @@ def _next_collection_at(now: datetime | None = None) -> datetime:
 
 
 def _catalog_payload() -> list[dict[str, Any]]:
+    if not PUBLIC_DAILY_ENDPOINTS:
+        return []
     daily_keys = {item["key"] for item in DAILY_COLLECTION_ENDPOINTS}
     return [
         {
@@ -522,18 +522,22 @@ def _catalog_payload() -> list[dict[str, Any]]:
     ]
 
 
-def _snapshot_payload(row: DouyinPlatformSnapshot | None) -> dict[str, Any] | None:
+def _snapshot_payload(row: DouyinPlatformSnapshot | None, include_retired: bool = False) -> dict[str, Any] | None:
     if row is None:
         return None
-    order = {name: index for index, name in enumerate(INFORMATION_DESK_CATEGORIES)}
-    sections = sorted(
-        (section for section in (row.sections or [])
-         if str((section or {}).get("category") or "") in INFORMATION_DESK_CATEGORIES),
-        key=lambda section: order.get(str((section or {}).get("category") or ""), len(order)),
-    )
+    raw_sections = [section for section in (row.sections or []) if isinstance(section, dict)]
+    if include_retired:
+        sections = raw_sections
+    else:
+        order = {name: index for index, name in enumerate(INFORMATION_DESK_CATEGORIES)}
+        sections = sorted(
+            (section for section in raw_sections
+             if str(section.get("category") or "") in INFORMATION_DESK_CATEGORIES),
+            key=lambda section: order.get(str(section.get("category") or ""), len(order)),
+        )
     endpoint_status = [
         item for item in (row.endpoint_status or [])
-        if str((item or {}).get("key") or "") in INFORMATION_DESK_ENDPOINT_KEYS
+        if include_retired or str((item or {}).get("key") or "") in INFORMATION_DESK_ENDPOINT_KEYS
     ]
     summary = dict(row.summary or {})
     if "endpoint_count" in summary or "success_count" in summary:
@@ -801,11 +805,11 @@ def search_information_desk(db: Any, keywords: list[str], limit: int = 60,
     if not rows or not words:
         return {"keywords": words, "snapshot_date": None, "days": span, "count": 0, "items": []}
     latest = rows[0]
-    latest_payload = _snapshot_payload(latest) or {}
+    latest_payload = _snapshot_payload(latest, include_retired=True) or {}
     hits: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row in rows:
-        snapshot = _snapshot_payload(row)
+        snapshot = _snapshot_payload(row, include_retired=True)
         if not snapshot:
             continue
         day = str(snapshot.get("snapshot_date") or getattr(row, "snapshot_date", "") or "")
@@ -828,8 +832,8 @@ def search_information_desk(db: Any, keywords: list[str], limit: int = 60,
                     **item,
                     "snapshot_date": day,
                     "section_key": (section or {}).get("key") or "",
-                    "section_title": (section or {}).get("title") or "",
-                    "category": (section or {}).get("category") or "",
+                    "section_title": "关键词搜索",
+                    "category": "抖音搜索",
                     "matched": matched,
                 })
     hits.sort(key=lambda row_: (-len(row_.get("matched") or []), str(row_.get("category") or ""), row_.get("rank") or 999))
@@ -977,6 +981,7 @@ def information_desk_response(db: Any) -> dict[str, Any]:
         "ok": True,
         "snapshot": _snapshot_payload(row),
         "last_fetched_at": row.fetched_at.isoformat() + "Z" if row and row.fetched_at else None,
-        "next_collection_at": _next_collection_at().isoformat(),
+        "next_collection_at": None,
+        "mode": "search",
         "catalog": _catalog_payload(),
     }
