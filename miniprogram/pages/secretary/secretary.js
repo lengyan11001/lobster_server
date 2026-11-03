@@ -764,16 +764,24 @@ Page({
       wx.showToast({ title: "设备正在格式化，请稍后", icon: "none" });
       return;
     }
-    if (this.data.device.isRecording) return;
-    this._logDiag("action:startRecord");
+    if (this.data.device.isRecording && !this.data.device.isPaused) return;
+    if (this.data.usbSwitch === true) {
+      wx.showToast({ title: "USB模式开着，录音可能写不进去，请先关闭", icon: "none" });
+    }
+    const wasPaused = Boolean(this.data.device.isPaused);
+    this._logDiag(wasPaused ? "action:resumeRecord" : "action:startRecord");
     this._justStarted = true;
-    this._startAt = Date.now();
-    this._pausedElapsed = 0;
-    this.setDevice({ isRecording: true, isPaused: false, timeText: "00:00:00" });
+    if (!wasPaused) {
+      this._startAt = Date.now();
+      this._pausedElapsed = 0;
+      this.setDevice({ isRecording: true, isPaused: false, timeText: "00:00:00" });
+    } else {
+      this.setDevice({ isRecording: true, isPaused: false });
+    }
     this._startTimer();
     try {
-      ble.startRecord();
-      wx.showToast({ title: "已开始录音", icon: "none" });
+      if (wasPaused) ble.resumeRecord(); else ble.startRecord();
+      wx.showToast({ title: wasPaused ? "继续录音" : "已开始录音", icon: "none" });
     } catch (err) {
       this._stopTimer();
       this.setDevice({ isRecording: false });
