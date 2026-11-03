@@ -38,26 +38,106 @@
         }
       },
       "assets": [
-        {"key": "icon_16", "url": "/client/oem/jinghai/icon_16.png", "size": 515, "sha256": "4eb17690d0e2679b636695a66652beefd9018e9e16ad0ebc4c83fa8b95d733cc"},
-        {"key": "icon_24", "url": "/client/oem/jinghai/icon_24.png", "size": 846, "sha256": "39a1acd2ea7972a59aebcb73b65ee9bcbda1c333f8a51a78496692886a7ca9b2"},
-        {"key": "icon_32", "url": "/client/oem/jinghai/icon_32.png", "size": 1215, "sha256": "0305b7005a62bb8cd4a19dde28ab8bc6aba473ecbb0a676aa9936c96ab287297"},
-        {"key": "icon_48", "url": "/client/oem/jinghai/icon_48.png", "size": 2020, "sha256": "b377d0256f967aff390e260724396dbb8eb90d3c5520b719f362bc289c7c17f4"},
-        {"key": "icon_64", "url": "/client/oem/jinghai/icon_64.png", "size": 2975, "sha256": "19e454fba24c6fa0e743d478886d9ec20eb0e330be968d8fd0940cb33c5d4128"},
-        {"key": "icon_128", "url": "/client/oem/jinghai/icon_128.png", "size": 6446, "sha256": "954de8fbb0c4f51ac82ef3380faf8a81068cecc7b3a52afee65782b7b44cd039"},
-        {"key": "icon_256", "url": "/client/oem/jinghai/icon_256.png", "size": 13653, "sha256": "2c6f462b4fe32a75a96600094d1e5f789fda276ef25b7d45ed9f2d6ff660af02"},
-        {"key": "icon_512", "url": "/client/oem/jinghai/icon_512.png", "size": 30205, "sha256": "b5275497cb80f99cd52b8fe3a766396a5d0c0e957a37f7ebd615486d8696d12f"},
-        {"key": "icon_1024", "url": "/client/oem/jinghai/icon_1024.png", "size": 81642, "sha256": "c13aca2ca0042715727d897cf2e287ecc05a026af7aa1fe5e2fe980b47292f5d"},
-        {"key": "icon_32_v3", "url": "/client/oem/jinghai/icon_32_v3.png", "size": 1146, "sha256": "aa76e8a9ee5bf9759259424b05f4f93b6a5d7183e7d2b0a7b200a86e5c04cb13"},
-        {"key": "icon_64_v3", "url": "/client/oem/jinghai/icon_64_v3.png", "size": 2709, "sha256": "2abfcf7040b741e017041a51d04bcc6b5b5647124721c6f093ca916ab8e58fbf"},
-        {"key": "icon_256_v3", "url": "/client/oem/jinghai/icon_256_v3.png", "size": 12899, "sha256": "46bea62eeefb14076e2cb237a5775cfe8d35b9499c8cf4739deb862e9c946c1f"},
-        {"key": "logo_source", "url": "/client/oem/jinghai/logo_source.png", "size": 181791, "sha256": "103ab643b953aed2947b2cf4b7814493a6e9e0f9db85b9de32dc546c0ee04531"},
-        {"key": "logo_mark_1024", "url": "/client/oem/jinghai/logo_mark_1024.png", "size": 81642, "sha256": "c13aca2ca0042715727d897cf2e287ecc05a026af7aa1fe5e2fe980b47292f5d"},
-        {"key": "desktop_ico", "url": "/client/oem/jinghai/desktop.ico", "size": 27170, "sha256": "1c68c9278ed20511ecd45a93960ffaa58cb95b6b74c6c52fb41e630a9f72c73d"},
-        {"key": "launcher_exe", "url": "/client/oem/jinghai/client_launcher.exe", "size": 33792, "sha256": "0603df472bb57612b5d95947cb40b54f8d70591752fb2379cf28eba908b61a88"}
+        {
+          "key": "icon_16",
+          "url": "/client/oem/jinghai/icon_16.png",
+          "size": 515,
+          "sha256": "4eb17690d0e2679b636695a66652beefd9018e9e16ad0ebc4c83fa8b95d733cc"
+        },
+        {
+          "key": "icon_24",
+          "url": "/client/oem/jinghai/icon_24.png",
+          "size": 846,
+          "sha256": "39a1acd2ea7972a59aebcb73b65ee9bcbda1c333f8a51a78496692886a7ca9b2"
+        },
+        {
+          "key": "icon_32",
+          "url": "/client/oem/jinghai/icon_32.png",
+          "size": 1215,
+          "sha256": "0305b7005a62bb8cd4a19dde28ab8bc6aba473ecbb0a676aa9936c96ab287297"
+        },
+        {
+          "key": "icon_48",
+          "url": "/client/oem/jinghai/icon_48.png",
+          "size": 2020,
+          "sha256": "b377d0256f967aff390e260724396dbb8eb90d3c5520b719f362bc289c7c17f4"
+        },
+        {
+          "key": "icon_64",
+          "url": "/client/oem/jinghai/icon_64.png",
+          "size": 2975,
+          "sha256": "19e454fba24c6fa0e743d478886d9ec20eb0e330be968d8fd0940cb33c5d4128"
+        },
+        {
+          "key": "icon_128",
+          "url": "/client/oem/jinghai/icon_128.png",
+          "size": 6446,
+          "sha256": "954de8fbb0c4f51ac82ef3380faf8a81068cecc7b3a52afee65782b7b44cd039"
+        },
+        {
+          "key": "icon_256",
+          "url": "/client/oem/jinghai/icon_256.png",
+          "size": 13653,
+          "sha256": "2c6f462b4fe32a75a96600094d1e5f789fda276ef25b7d45ed9f2d6ff660af02"
+        },
+        {
+          "key": "icon_512",
+          "url": "/client/oem/jinghai/icon_512.png",
+          "size": 30205,
+          "sha256": "b5275497cb80f99cd52b8fe3a766396a5d0c0e957a37f7ebd615486d8696d12f"
+        },
+        {
+          "key": "icon_1024",
+          "url": "/client/oem/jinghai/icon_1024.png",
+          "size": 81642,
+          "sha256": "c13aca2ca0042715727d897cf2e287ecc05a026af7aa1fe5e2fe980b47292f5d"
+        },
+        {
+          "key": "icon_32_v3",
+          "url": "/client/oem/jinghai/icon_32_v3.png",
+          "size": 1146,
+          "sha256": "aa76e8a9ee5bf9759259424b05f4f93b6a5d7183e7d2b0a7b200a86e5c04cb13"
+        },
+        {
+          "key": "icon_64_v3",
+          "url": "/client/oem/jinghai/icon_64_v3.png",
+          "size": 2709,
+          "sha256": "2abfcf7040b741e017041a51d04bcc6b5b5647124721c6f093ca916ab8e58fbf"
+        },
+        {
+          "key": "icon_256_v3",
+          "url": "/client/oem/jinghai/icon_256_v3.png",
+          "size": 12899,
+          "sha256": "46bea62eeefb14076e2cb237a5775cfe8d35b9499c8cf4739deb862e9c946c1f"
+        },
+        {
+          "key": "logo_source",
+          "url": "/client/oem/jinghai/logo_source.png",
+          "size": 181791,
+          "sha256": "103ab643b953aed2947b2cf4b7814493a6e9e0f9db85b9de32dc546c0ee04531"
+        },
+        {
+          "key": "logo_mark_1024",
+          "url": "/client/oem/jinghai/logo_mark_1024.png",
+          "size": 81642,
+          "sha256": "c13aca2ca0042715727d897cf2e287ecc05a026af7aa1fe5e2fe980b47292f5d"
+        },
+        {
+          "key": "desktop_ico",
+          "url": "/client/oem/jinghai/desktop.ico",
+          "size": 27170,
+          "sha256": "1c68c9278ed20511ecd45a93960ffaa58cb95b6b74c6c52fb41e630a9f72c73d"
+        },
+        {
+          "key": "launcher_exe",
+          "url": "/client/oem/jinghai/client_launcher.exe",
+          "size": 33792,
+          "sha256": "0603df472bb57612b5d95947cb40b54f8d70591752fb2379cf28eba908b61a88"
+        }
       ]
     },
     "bihuo": {
-      "version": "2026.10.20.2",
+      "version": "2026.11.03.4",
       "profile": {
         "mark": "bihuo",
         "display_name": "必火AI员工",
@@ -86,18 +166,78 @@
         }
       },
       "assets": [
-        {"key": "icon_16", "url": "/client/oem/bihuo/icon_16.png", "size": 670, "sha256": "5ead7eb4161325aa117cd94c256fa9e03ce8d395998ceaa6dc85eaf84d95c3cd"},
-        {"key": "icon_24", "url": "/client/oem/bihuo/icon_24.png", "size": 1311, "sha256": "dd1c521dc774e1cca5da5d899539dba8ae93364fd14c4cab328ef8265b58fd18"},
-        {"key": "icon_32", "url": "/client/oem/bihuo/icon_32.png", "size": 1889, "sha256": "d0a2f741a3273ccf69095b8971c512aacf36d975e7edfae3513ed5a9736ca647"},
-        {"key": "icon_48", "url": "/client/oem/bihuo/icon_48.png", "size": 3708, "sha256": "bff28182dd7823691ab964de83f561aa53325af381cf8ba2a133ababa4c844fd"},
-        {"key": "icon_64", "url": "/client/oem/bihuo/icon_64.png", "size": 6382, "sha256": "39e72c9db08de562bf5bb4c17197b5335e0e8135d9134a7d5c4c4c4ff94539bd"},
-        {"key": "icon_128", "url": "/client/oem/bihuo/icon_128.png", "size": 20779, "sha256": "a3bacb0a9dfcb4da4339090119752947effca7c5c3231da926797680d590861f"},
-        {"key": "icon_256", "url": "/client/oem/bihuo/icon_256.png", "size": 63547, "sha256": "13ac5d2581c78b566828f85f9d98709df9e85a89e05d3baaf4135d2c9c67c8ba"},
-        {"key": "icon_512", "url": "/client/oem/bihuo/icon_512.png", "size": 146589, "sha256": "27305f1a4940e2e91f8df5a848cbce64a9f3408049937a4098e46dcee68de60c"},
-        {"key": "icon_1024", "url": "/client/oem/bihuo/icon_1024.png", "size": 390834, "sha256": "9d58fedc2853336d945394839dc255279e4295439910856d834bdb8ba734559e"},
-        {"key": "logo_source", "url": "/client/oem/bihuo/logo_source.png", "size": 17160, "sha256": "3e60f414771bbdd156db657c7c566eaeb8b364595f487c303ae469ecb2beab8d"},
-        {"key": "desktop_ico", "url": "/client/oem/bihuo/desktop.ico", "size": 56342, "sha256": "69f9a1431aeacc3f7614a3036714d35972dbd99c80710f3b3975e75e8bfc0410"},
-        {"key": "launcher_exe", "url": "/client/oem/bihuo/client_launcher.exe", "size": 104960, "sha256": "ca2b20962a20bc1e60a0339320a7deb65788787de9703acf4569b6d1dc21aee9"}
+        {
+          "key": "icon_16",
+          "url": "/client/oem/bihuo/icon_16.png?v=2026.11.03.4",
+          "size": 564,
+          "sha256": "e72380d7ea817c6f484a82aba785f15e72154cef79218754aeb1c9a13d0e2cd7"
+        },
+        {
+          "key": "icon_24",
+          "url": "/client/oem/bihuo/icon_24.png?v=2026.11.03.4",
+          "size": 947,
+          "sha256": "2650014ae55c322b68229a2925358476c638f88615118323b9bcf27504bdcd81"
+        },
+        {
+          "key": "icon_32",
+          "url": "/client/oem/bihuo/icon_32.png?v=2026.11.03.4",
+          "size": 1393,
+          "sha256": "0e938b4773031f39293f5d068a0acc2694df6a4f69e9e5a207c3bd07cc1a013a"
+        },
+        {
+          "key": "icon_48",
+          "url": "/client/oem/bihuo/icon_48.png?v=2026.11.03.4",
+          "size": 2447,
+          "sha256": "1703e98b5c14e8ed223b6e12a00937a82915225a24f4cdb7b8a68c3d3c34f194"
+        },
+        {
+          "key": "icon_64",
+          "url": "/client/oem/bihuo/icon_64.png?v=2026.11.03.4",
+          "size": 3511,
+          "sha256": "da7305aba98db91827fecee9ef378998938c12d2517ccfb4d40fc65af312ef1a"
+        },
+        {
+          "key": "icon_128",
+          "url": "/client/oem/bihuo/icon_128.png?v=2026.11.03.4",
+          "size": 9101,
+          "sha256": "033157c120019e0bff6064d6d3e62f18de37070c33faace9319821ddaebfd3e8"
+        },
+        {
+          "key": "icon_256",
+          "url": "/client/oem/bihuo/icon_256.png?v=2026.11.03.4",
+          "size": 25177,
+          "sha256": "6a526c6904672b0448d19110f41aae82f379ae9118734fdae851e2aeda1380d5"
+        },
+        {
+          "key": "icon_512",
+          "url": "/client/oem/bihuo/icon_512.png?v=2026.11.03.4",
+          "size": 72009,
+          "sha256": "9f010b8ae7ba572b6a872b949ff4b2290ff02ab05008c8b1b6aed09c80846e4d"
+        },
+        {
+          "key": "icon_1024",
+          "url": "/client/oem/bihuo/icon_1024.png?v=2026.11.03.4",
+          "size": 221148,
+          "sha256": "c3dce0581df58a6dcff6da86f429a27a66d0c2c30283a7edbeb4e2e9a5d85575"
+        },
+        {
+          "key": "logo_source",
+          "url": "/client/oem/bihuo/logo_source.png?v=2026.11.03.4",
+          "size": 17160,
+          "sha256": "3e60f414771bbdd156db657c7c566eaeb8b364595f487c303ae469ecb2beab8d"
+        },
+        {
+          "key": "desktop_ico",
+          "url": "/client/oem/bihuo/desktop.ico?v=2026.11.03.4",
+          "size": 51977,
+          "sha256": "1e0a60752a986ae0d88b7d8ad007f158115ccc6a1ae3cb20d8a55cda8fa44f2b"
+        },
+        {
+          "key": "launcher_exe",
+          "url": "/client/oem/bihuo/client_launcher.exe?v=2026.11.03.4",
+          "size": 58368,
+          "sha256": "8d3c66b8f93df90b4bd0e276c19fa5fa0a973d4afe0723bd1afd850a27c78148"
+        }
       ]
     },
     "daka": {
@@ -132,18 +272,78 @@
         }
       },
       "assets": [
-        {"key": "icon_16", "url": "/client/oem/daka/icon_16.png", "size": 764, "sha256": "c48f9ce042c1d3641ab4205a674311abee076464e4bf551968b25fd61c0f9ed0"},
-        {"key": "icon_32", "url": "/client/oem/daka/icon_32.png", "size": 2355, "sha256": "1b81b5826f520f1f386b83f835d75b7154aabef10d50e6b9419a84618a2b9f65"},
-        {"key": "icon_48", "url": "/client/oem/daka/icon_48.png", "size": 4621, "sha256": "3f6b50155724fbc038a640c481fe8066e460c28c35472631e1f86bb9b7631d71"},
-        {"key": "icon_64", "url": "/client/oem/daka/icon_64.png", "size": 7448, "sha256": "cc8f9420a72a7a678de6e73f6b4e91eb762a3a86a910adebc488a95105d3d6b3"},
-        {"key": "icon_128", "url": "/client/oem/daka/icon_128.png", "size": 22948, "sha256": "9830c395311939269f234e54d36cf2fdb66b02c61b0a5cb4781f2327e408ec20"},
-        {"key": "icon_256", "url": "/client/oem/daka/icon_256.png", "size": 70671, "sha256": "0a9ddce550136230ed9310abfc6fb3409ae61a09c67c41a9d99ceb32f248d7a3"},
-        {"key": "icon_512", "url": "/client/oem/daka/icon_512.png", "size": 216333, "sha256": "d747926f745c8cb9ee4bbc56930045c221984ab6ef7a65640ec8dfdc818e1d6f"},
-        {"key": "icon_1024", "url": "/client/oem/daka/icon_1024.png", "size": 694652, "sha256": "ea1527ff91a64cf7ee176a9da4f3205fab525c5ebb4d9e0f41a1b905d2d4c21a"},
-        {"key": "logo_source", "url": "/client/oem/daka/logo_source.png", "size": 676831, "sha256": "8b7b1e1c57ad066d4db3f9e6d110aed8d19d3b0de625be89cf6197b75addcce0"},
-        {"key": "header_partner", "url": "/client/oem/daka/header_partner.jpg", "size": 92750, "sha256": "08021b64c58b38c338ac8c841558ffdd83dfa297a3988438e841881df65a36ff"},
-        {"key": "desktop_ico", "url": "/client/oem/daka/desktop.ico", "size": 107270, "sha256": "437398cfa6a558683bb7b0bedf88bc2e15c1d45cd5e750d8d34a51a888fbf011"},
-        {"key": "launcher_exe", "url": "/client/oem/daka/client_launcher.exe", "size": 113664, "sha256": "8606b6245fda808cb95f1798cbfad8b1ab4696834c55d9ac7219147975e2e820"}
+        {
+          "key": "icon_16",
+          "url": "/client/oem/daka/icon_16.png",
+          "size": 764,
+          "sha256": "c48f9ce042c1d3641ab4205a674311abee076464e4bf551968b25fd61c0f9ed0"
+        },
+        {
+          "key": "icon_32",
+          "url": "/client/oem/daka/icon_32.png",
+          "size": 2355,
+          "sha256": "1b81b5826f520f1f386b83f835d75b7154aabef10d50e6b9419a84618a2b9f65"
+        },
+        {
+          "key": "icon_48",
+          "url": "/client/oem/daka/icon_48.png",
+          "size": 4621,
+          "sha256": "3f6b50155724fbc038a640c481fe8066e460c28c35472631e1f86bb9b7631d71"
+        },
+        {
+          "key": "icon_64",
+          "url": "/client/oem/daka/icon_64.png",
+          "size": 7448,
+          "sha256": "cc8f9420a72a7a678de6e73f6b4e91eb762a3a86a910adebc488a95105d3d6b3"
+        },
+        {
+          "key": "icon_128",
+          "url": "/client/oem/daka/icon_128.png",
+          "size": 22948,
+          "sha256": "9830c395311939269f234e54d36cf2fdb66b02c61b0a5cb4781f2327e408ec20"
+        },
+        {
+          "key": "icon_256",
+          "url": "/client/oem/daka/icon_256.png",
+          "size": 70671,
+          "sha256": "0a9ddce550136230ed9310abfc6fb3409ae61a09c67c41a9d99ceb32f248d7a3"
+        },
+        {
+          "key": "icon_512",
+          "url": "/client/oem/daka/icon_512.png",
+          "size": 216333,
+          "sha256": "d747926f745c8cb9ee4bbc56930045c221984ab6ef7a65640ec8dfdc818e1d6f"
+        },
+        {
+          "key": "icon_1024",
+          "url": "/client/oem/daka/icon_1024.png",
+          "size": 694652,
+          "sha256": "ea1527ff91a64cf7ee176a9da4f3205fab525c5ebb4d9e0f41a1b905d2d4c21a"
+        },
+        {
+          "key": "logo_source",
+          "url": "/client/oem/daka/logo_source.png",
+          "size": 676831,
+          "sha256": "8b7b1e1c57ad066d4db3f9e6d110aed8d19d3b0de625be89cf6197b75addcce0"
+        },
+        {
+          "key": "header_partner",
+          "url": "/client/oem/daka/header_partner.jpg",
+          "size": 92750,
+          "sha256": "08021b64c58b38c338ac8c841558ffdd83dfa297a3988438e841881df65a36ff"
+        },
+        {
+          "key": "desktop_ico",
+          "url": "/client/oem/daka/desktop.ico",
+          "size": 107270,
+          "sha256": "437398cfa6a558683bb7b0bedf88bc2e15c1d45cd5e750d8d34a51a888fbf011"
+        },
+        {
+          "key": "launcher_exe",
+          "url": "/client/oem/daka/client_launcher.exe",
+          "size": 113664,
+          "sha256": "8606b6245fda808cb95f1798cbfad8b1ab4696834c55d9ac7219147975e2e820"
+        }
       ]
     },
     "hikong": {
@@ -176,21 +376,96 @@
         }
       },
       "assets": [
-        {"key": "icon_16", "url": "/client/oem/hikong/icon_16.png", "size": 578, "sha256": "32b24a7ea2161970e1f62f6947a36b7177392af4cbf39915dd2d44c667c24737"},
-        {"key": "icon_24", "url": "/client/oem/hikong/icon_24.png", "size": 1020, "sha256": "42db9ff13da5e11ee8e5faae3aa55f4ecba6ccdef79b5ca76d2bf69f6316309b"},
-        {"key": "icon_32", "url": "/client/oem/hikong/icon_32.png", "size": 1582, "sha256": "5d5ea36cf583342ce808f59a47c37c2c2df2b44425a90bfb5fdcea8839a38a06"},
-        {"key": "icon_48", "url": "/client/oem/hikong/icon_48.png", "size": 2761, "sha256": "c24447bf431074b9cd21f17675a48608d12e8e1eebea728407084ebe90cce36e"},
-        {"key": "icon_64", "url": "/client/oem/hikong/icon_64.png", "size": 4278, "sha256": "80aaff9593bd3921dab8dea7940690f840aa337d31a04d2cd92c4718ad1b2112"},
-        {"key": "icon_128", "url": "/client/oem/hikong/icon_128.png", "size": 10674, "sha256": "f2a852f33f47415f77bba332bb49cfd894361deb4eaffbc2e4d107f5099a8964"},
-        {"key": "icon_256", "url": "/client/oem/hikong/icon_256.png", "size": 28021, "sha256": "9da600be03281158859f4769a4ad0ce3e66e7a7e12f3ff0b914854d15221a505"},
-        {"key": "icon_512", "url": "/client/oem/hikong/icon_512.png", "size": 78276, "sha256": "5ab511a22900564d22c5027d0f3280a8f3d943da028f8af8141b1cf4370f6b16"},
-        {"key": "icon_1024", "url": "/client/oem/hikong/icon_1024.png", "size": 224427, "sha256": "afd2a469130c210630e6f582e0d25c254e5ec07049016da9a9b3ad1a97ae6809"},
-        {"key": "icon_32_v3", "url": "/client/oem/hikong/icon_32_v3.png", "size": 1863, "sha256": "4de33a37a68f2a7811b96210f133333cd100f9c4e36f59ff306e087c49a663a0"},
-        {"key": "icon_64_v3", "url": "/client/oem/hikong/icon_64_v3.png", "size": 5312, "sha256": "43a57be0f32c1a41d8c2e25b7c8795b03a1d63e276537ac68bc6cc614eca005d"},
-        {"key": "icon_256_v3", "url": "/client/oem/hikong/icon_256_v3.png", "size": 34390, "sha256": "ab57972f414c788a5438c4319307ca06a7b9ef4430806ee18d4ce45a5fa518bb"},
-        {"key": "logo_1024", "url": "/client/oem/hikong/logo_1024.png", "size": 204142, "sha256": "c0c79c06d6d01cf1cea92d9d00c5e13f821426cf1fd2948fa8527279e233da91"},
-        {"key": "desktop_ico", "url": "/client/oem/hikong/desktop.ico", "size": 52926, "sha256": "5140e644a6e9291c67c9e0ef1c6cd48f4674fb0051fb8e38b37a0e5c1f340642"},
-        {"key": "launcher_exe", "url": "/client/oem/hikong/client_launcher.exe", "size": 59392, "sha256": "d3999fc556372089047027e3a6c4b2c4a78cc513f9bed4326eed4053833e13b3"}
+        {
+          "key": "icon_16",
+          "url": "/client/oem/hikong/icon_16.png",
+          "size": 578,
+          "sha256": "32b24a7ea2161970e1f62f6947a36b7177392af4cbf39915dd2d44c667c24737"
+        },
+        {
+          "key": "icon_24",
+          "url": "/client/oem/hikong/icon_24.png",
+          "size": 1020,
+          "sha256": "42db9ff13da5e11ee8e5faae3aa55f4ecba6ccdef79b5ca76d2bf69f6316309b"
+        },
+        {
+          "key": "icon_32",
+          "url": "/client/oem/hikong/icon_32.png",
+          "size": 1582,
+          "sha256": "5d5ea36cf583342ce808f59a47c37c2c2df2b44425a90bfb5fdcea8839a38a06"
+        },
+        {
+          "key": "icon_48",
+          "url": "/client/oem/hikong/icon_48.png",
+          "size": 2761,
+          "sha256": "c24447bf431074b9cd21f17675a48608d12e8e1eebea728407084ebe90cce36e"
+        },
+        {
+          "key": "icon_64",
+          "url": "/client/oem/hikong/icon_64.png",
+          "size": 4278,
+          "sha256": "80aaff9593bd3921dab8dea7940690f840aa337d31a04d2cd92c4718ad1b2112"
+        },
+        {
+          "key": "icon_128",
+          "url": "/client/oem/hikong/icon_128.png",
+          "size": 10674,
+          "sha256": "f2a852f33f47415f77bba332bb49cfd894361deb4eaffbc2e4d107f5099a8964"
+        },
+        {
+          "key": "icon_256",
+          "url": "/client/oem/hikong/icon_256.png",
+          "size": 28021,
+          "sha256": "9da600be03281158859f4769a4ad0ce3e66e7a7e12f3ff0b914854d15221a505"
+        },
+        {
+          "key": "icon_512",
+          "url": "/client/oem/hikong/icon_512.png",
+          "size": 78276,
+          "sha256": "5ab511a22900564d22c5027d0f3280a8f3d943da028f8af8141b1cf4370f6b16"
+        },
+        {
+          "key": "icon_1024",
+          "url": "/client/oem/hikong/icon_1024.png",
+          "size": 224427,
+          "sha256": "afd2a469130c210630e6f582e0d25c254e5ec07049016da9a9b3ad1a97ae6809"
+        },
+        {
+          "key": "icon_32_v3",
+          "url": "/client/oem/hikong/icon_32_v3.png",
+          "size": 1863,
+          "sha256": "4de33a37a68f2a7811b96210f133333cd100f9c4e36f59ff306e087c49a663a0"
+        },
+        {
+          "key": "icon_64_v3",
+          "url": "/client/oem/hikong/icon_64_v3.png",
+          "size": 5312,
+          "sha256": "43a57be0f32c1a41d8c2e25b7c8795b03a1d63e276537ac68bc6cc614eca005d"
+        },
+        {
+          "key": "icon_256_v3",
+          "url": "/client/oem/hikong/icon_256_v3.png",
+          "size": 34390,
+          "sha256": "ab57972f414c788a5438c4319307ca06a7b9ef4430806ee18d4ce45a5fa518bb"
+        },
+        {
+          "key": "logo_1024",
+          "url": "/client/oem/hikong/logo_1024.png",
+          "size": 204142,
+          "sha256": "c0c79c06d6d01cf1cea92d9d00c5e13f821426cf1fd2948fa8527279e233da91"
+        },
+        {
+          "key": "desktop_ico",
+          "url": "/client/oem/hikong/desktop.ico",
+          "size": 52926,
+          "sha256": "5140e644a6e9291c67c9e0ef1c6cd48f4674fb0051fb8e38b37a0e5c1f340642"
+        },
+        {
+          "key": "launcher_exe",
+          "url": "/client/oem/hikong/client_launcher.exe",
+          "size": 59392,
+          "sha256": "d3999fc556372089047027e3a6c4b2c4a78cc513f9bed4326eed4053833e13b3"
+        }
       ]
     }
   }
