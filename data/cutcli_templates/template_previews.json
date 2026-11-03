@@ -78,5 +78,13 @@
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "news_brief"
+  },
+  "product_case_x72_v1": {
+    "preview_url": "/client/client-code/cutcli_templates/product_case_x72_v1.mp4?v=designer-20261103",
+    "source": "20261021-1.mp4",
+    "caption_source": "none",
+    "stt_model": "",
+    "duration_sec": 12.5,
+    "style": "product_case"
   }
 }

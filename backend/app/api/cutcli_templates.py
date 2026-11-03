@@ -49,6 +49,7 @@ _AUTO_CAPTION_MARKET_LABEL_TEMPLATE_ID = "auto_caption_market_label_v1"
 _AUTO_CAPTION_BLACK_GOLD_TEMPLATE_ID = "auto_caption_black_gold_quote_v1"
 _AUTO_CAPTION_TCM_WAIST_TEMPLATE_ID = "auto_caption_tcm_waist_banner_v1"
 _AUTO_CAPTION_NEWS_BRIEF_TEMPLATE_ID = "auto_caption_news_brief_v1"
+_PRODUCT_CASE_TEMPLATE_ID = "product_case_x72_v1"
 _CUTCLI_TEMPLATE_JOB_FEATURE = "cutcli_template"
 _STT_MODEL = "volcengine/speech-to-text/bigmodel-v2"
 _STT_API_BASE = (
@@ -612,6 +613,67 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             },
         },
     },
+    _PRODUCT_CASE_TEMPLATE_ID: {
+        "id": _PRODUCT_CASE_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "赛事级电子路书",
+        "description": "设计师竖屏产品混剪版式：顶部品类 + 主标题 + 车手背书，底部实战标语；保留原片时长与声音，适合装备、3C、赛事类产品展示。",
+        "aspect_ratio": "9:16",
+        "default_duration": 0,
+        "tags": ["产品", "装备", "赛事", "竖屏"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "render_modes": ["ffmpeg"],
+        "quality_label": "顶部三级标题 + 底部标语",
+        "sample_video_url": "/client/client-code/cutcli_templates/product_case_x72_v1.mp4",
+        "overlay_fields": _overlay_fields(
+            _overlay_field("top_text", "赛事级 电子路书", max_length=16),
+            _overlay_field("title", "HUGEROCK X72", max_length=24),
+            _overlay_field("subtitle", "源于车手\n专为车手打造", multiline=True, max_length=24),
+            _overlay_field("badge", "摒弃花里胡哨 只留实战工具", max_length=24),
+        ),
+        "caption_style": {
+            "id": "product_case",
+            "font_size": 9,
+            "font_size_pattern": "steady",
+            "caption_max_chars": 16,
+            "text_color": "#FFFFFF",
+            "border_color": "#000000",
+            "border_width": "0.07",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.95",
+            "ass_layout": "product_case",
+            "ass_font_size": 46,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00000000",
+            "ass_shadow": 3,
+            "ass_border": 4,
+            "ass_alignment": 2,
+            "ass_margin_v": 40,
+            "overlay_style": {
+                "layout": "product_case",
+                "show_pills": True,
+                "pill_left_title": "GPSTest",
+                "pill_left_sub": "专业测向搜星",
+                "pill_right_title": "Windy",
+                "pill_right_sub": "实时掌握天气",
+                "top_x_ratio": 0.42,
+                "top_y_ratio": 0.093,
+                "top_font_size": 84,
+                "title_x_ratio": 0.5,
+                "title_y_ratio": 0.173,
+                "headline_font_size": 128,
+                "subheadline_x_ratio": 0.124,
+                "subheadline_y_ratio": 0.305,
+                "subtitle_font_size": 54,
+                "badge_x_ratio": 0.5,
+                "badge_y_ratio": 0.84,
+                "badge_font_size": 72,
+            },
+        },
+    },
 }
 
 
@@ -835,6 +897,28 @@ def _orientation_defaults_for_style(style: Dict[str, Any]) -> Dict[str, Any]:
                 "title_x_ratio": 0.43,
                 "subheadline_x_ratio": 0.58,
                 "headline_font_size": 56,
+            },
+        }
+    if layout == "product_case":
+        return {
+            "font_size": 9,
+            "ass_font_size": 46,
+            "ass_margin_v": 40,
+            "caption_position": {"x": 0.0, "y": -0.95},
+            "overlay_style": {
+                "layout": "product_case",
+                "top_x_ratio": 0.42,
+                "top_y_ratio": 0.093,
+                "top_font_size": 84,
+                "title_x_ratio": 0.5,
+                "title_y_ratio": 0.173,
+                "headline_font_size": 128,
+                "subheadline_x_ratio": 0.124,
+                "subheadline_y_ratio": 0.305,
+                "subtitle_font_size": 54,
+                "badge_x_ratio": 0.5,
+                "badge_y_ratio": 0.84,
+                "badge_font_size": 72,
             },
         }
     if layout == "side_neon":
@@ -4788,6 +4872,65 @@ def _overlay_dialogues(
                 "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord5\\shad2}%s"
                 % (end, subtitle_x, y, fs, _escape_ass_text(subtitle))
             )
+        return lines
+
+    if layout == "product_case":
+        scale = max(0.5, min(2.0, width / 1280.0))
+        top_y = int(height * top_y_screen_ratio)
+        title_y = int(height * _float_value(overlay_style.get("title_y_ratio"), 0.173))
+        sub_y = int(height * _float_value(overlay_style.get("subheadline_y_ratio"), 0.305))
+        badge_y = int(height * _float_value(overlay_style.get("badge_y_ratio"), 0.84))
+        for i in range(12):
+            y0 = 0.36 * i / 12.0
+            y1 = 0.36 * (i + 1) / 12.0
+            a = max(0, min(255, int(0xAA * (1.0 - i / 11.0))))
+            y_a = int(height * y0)
+            y_b = int(height * y1)
+            lines.append(
+                "Dialogue: 1,0:00:00.00,%s,OverlayBox,,0,0,0,,{\\an7\\pos(0,%d)\\p1\\c&H000000&\\alpha&H%02X&}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}"
+                % (end, y_a, a, width, width, y_b - y_a, y_b - y_a)
+            )
+        for i in range(10):
+            y0 = 0.70 + 0.30 * i / 10.0
+            y1 = 0.70 + 0.30 * (i + 1) / 10.0
+            a = max(0, min(255, int(0x10 + (0x88 - 0x10) * i / 9.0)))
+            y_a = int(height * y0)
+            y_b = int(height * y1)
+            lines.append(
+                "Dialogue: 1,0:00:00.00,%s,OverlayBox,,0,0,0,,{\\an7\\pos(0,%d)\\p1\\c&H000000&\\alpha&H%02X&}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}"
+                % (end, y_a, a, width, width, y_b - y_a, y_b - y_a)
+            )
+        if overlay_style.get("show_pills", True):
+            pill_y0 = int(height * 0.705)
+            pill_y1 = int(height * 0.775)
+            pill_title_fs = max(20, int(round(44 * scale)))
+            pill_sub_fs = max(14, int(round(30 * scale)))
+            for x0, x1, pill_title, pill_sub in (
+                (0.16, 0.42, str(overlay_style.get("pill_left_title") or "GPSTest"), str(overlay_style.get("pill_left_sub") or "专业测向搜星")),
+                (0.50, 0.84, str(overlay_style.get("pill_right_title") or "Windy"), str(overlay_style.get("pill_right_sub") or "实时掌握天气")),
+            ):
+                x_a = int(width * x0)
+                x_b = int(width * x1)
+                lines.append(
+                    "Dialogue: 2,0:00:00.00,%s,OverlayBox,,0,0,0,,{\\an7\\pos(%d,%d)\\p1\\c&H00FFFFFF&\\alpha&H00&}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}"
+                    % (end, x_a, pill_y0, x_b - x_a, x_b - x_a, pill_y1 - pill_y0, pill_y1 - pill_y0)
+                )
+                cx = (x_a + x_b) // 2
+                cy = (pill_y0 + pill_y1) // 2
+                lines.append("Dialogue: 8,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H001A1A1A&\\bord0\\shad0}%s" % (end, cx, cy - int(pill_title_fs * 0.45), pill_title_fs, _escape_ass_text(pill_title)))
+                lines.append("Dialogue: 8,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00333333&\\bord0\\shad0}%s" % (end, cx, cy + int(pill_sub_fs * 0.55), pill_sub_fs, _escape_ass_text(pill_sub)))
+        if top_text:
+            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("top_font_size") or 84) * scale)), _overlay_plain_lines(top_text), width=int(width * 0.82), height_limit=int(height * 0.065), min_size=24)
+            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord4\\shad2}%s" % (end, top_x, top_y, fs, _escape_ass_text(top_text)))
+        if title:
+            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("headline_font_size") or 128) * scale)), _overlay_plain_lines(title), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=42)
+            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord6\\shad3}%s" % (end, title_x, title_y, fs, _escape_ass_text(title)))
+        if subtitle:
+            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("subtitle_font_size") or 54) * scale)), _overlay_plain_lines(subtitle), width=int(width * 0.56), height_limit=int(height * 0.085), min_size=22)
+            lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord4\\shad2}%s" % (end, subtitle_x, sub_y, fs, _escape_ass_text(subtitle)))
+        if badge:
+            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("badge_font_size") or 72) * scale)), _overlay_plain_lines(badge), width=int(width * 0.88), height_limit=int(height * 0.045), min_size=24)
+            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord3\\shad2}%s" % (end, badge_x, badge_y, fs, _escape_ass_text(badge)))
         return lines
 
     if layout == "top_banner":
