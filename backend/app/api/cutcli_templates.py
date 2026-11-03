@@ -632,6 +632,11 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "target_width": 1280,
             "target_height": 2276,
             "fit": "cover",
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+            "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+            "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+            "style_version": 2,
         },
         "quality_label": "顶部三级标题 + 底部标语（时长跟随素材）",
         "sample_video_url": "/client/client-code/cutcli_templates/product_case_x72_v1.mp4",
@@ -668,18 +673,23 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
                 "pill_left_sub": "专业测向搜星",
                 "pill_right_title": "Windy",
                 "pill_right_sub": "实时掌握天气",
-                "top_x_ratio": 0.42,
+                "top_x_ratio": 0.428,
                 "top_y_ratio": 0.093,
-                "top_font_size": 84,
+                "top_font_size": 157,
+                "top_scale_y": 112,
                 "title_x_ratio": 0.5,
                 "title_y_ratio": 0.173,
-                "headline_font_size": 128,
+                "headline_font_size": 180,
+                "title_scale_y": 188,
                 "subheadline_x_ratio": 0.124,
-                "subheadline_y_ratio": 0.305,
-                "subtitle_font_size": 54,
+                "subheadline_y_ratio": 0.314,
+                "subtitle_font_size": 113,
+                "subtitle_scale_x": 100,
+                "subtitle_scale_y": 96,
+                "subtitle_line_gap": 0.04,
                 "badge_x_ratio": 0.5,
                 "badge_y_ratio": 0.84,
-                "badge_font_size": 72,
+                "badge_font_size": 127,
             },
         },
     },
@@ -917,18 +927,23 @@ def _orientation_defaults_for_style(style: Dict[str, Any]) -> Dict[str, Any]:
             "caption_position": {"x": 0.0, "y": -0.95},
             "overlay_style": {
                 "layout": "product_case",
-                "top_x_ratio": 0.42,
+                "top_x_ratio": 0.428,
                 "top_y_ratio": 0.093,
-                "top_font_size": 84,
+                "top_font_size": 157,
+                "top_scale_y": 112,
                 "title_x_ratio": 0.5,
                 "title_y_ratio": 0.173,
-                "headline_font_size": 128,
+                "headline_font_size": 180,
+                "title_scale_y": 188,
                 "subheadline_x_ratio": 0.124,
-                "subheadline_y_ratio": 0.305,
-                "subtitle_font_size": 54,
+                "subheadline_y_ratio": 0.314,
+                "subtitle_font_size": 113,
+                "subtitle_scale_x": 100,
+                "subtitle_scale_y": 96,
+                "subtitle_line_gap": 0.04,
                 "badge_x_ratio": 0.5,
                 "badge_y_ratio": 0.84,
-                "badge_font_size": 72,
+                "badge_font_size": 127,
             },
         }
     if layout == "side_neon":
@@ -1046,6 +1061,16 @@ def _ensure_cutcli_template_seeds(db: Session) -> None:
         if not row:
             continue
         seeded_style = _caption_style_for_template(template)
+        code_meta = template.get("meta") if isinstance(template.get("meta"), dict) else {}
+        row_meta = row.meta if isinstance(row.meta, dict) else {}
+        code_style_version = code_meta.get("style_version")
+        if code_style_version and row_meta.get("style_version") != code_style_version:
+            row.caption_style = _json_clone(seeded_style)
+            row.overlay_fields = _json_clone(template.get("overlay_fields") or [])
+            row.meta = {**row_meta, **code_meta}
+            row.description = template.get("description") or row.description
+            row.quality_label = template.get("quality_label") or row.quality_label
+            changed = True
         row_style = _json_clone(row.caption_style or {})
         seeded_orientation = seeded_style.get("orientation_styles") if isinstance(seeded_style.get("orientation_styles"), dict) else {}
         row_orientation = row_style.get("orientation_styles") if isinstance(row_style.get("orientation_styles"), dict) else {}
@@ -4679,6 +4704,13 @@ def _vertical_unit_dialogues(
     return lines
 
 
+def _fit_product_text(raw_size: int, text: str, base_units: float, min_size: int) -> int:
+    units = max(1.0, _caption_visual_units(text))
+    if units > base_units:
+        raw_size = int(round(raw_size * base_units / units))
+    return max(int(min_size), int(raw_size))
+
+
 def _overlay_dialogues(
     caption_style: Dict[str, Any],
     *,
@@ -4890,6 +4922,10 @@ def _overlay_dialogues(
         title_y = int(height * _float_value(overlay_style.get("title_y_ratio"), 0.173))
         sub_y = int(height * _float_value(overlay_style.get("subheadline_y_ratio"), 0.305))
         badge_y = int(height * _float_value(overlay_style.get("badge_y_ratio"), 0.84))
+        top_scale_y = max(50, min(300, int(round(_float_value(overlay_style.get("top_scale_y"), 116)))))
+        title_scale_y = max(50, min(300, int(round(_float_value(overlay_style.get("title_scale_y"), 190)))))
+        subtitle_scale_x = max(50, min(300, int(round(_float_value(overlay_style.get("subtitle_scale_x"), 132)))))
+        subtitle_scale_y = max(50, min(300, int(round(_float_value(overlay_style.get("subtitle_scale_y"), 120)))))
         for i in range(12):
             y0 = 0.36 * i / 12.0
             y1 = 0.36 * (i + 1) / 12.0
@@ -4930,16 +4966,20 @@ def _overlay_dialogues(
                 lines.append("Dialogue: 8,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H001A1A1A&\\bord0\\shad0}%s" % (end, cx, cy - int(pill_title_fs * 0.45), pill_title_fs, _escape_ass_text(pill_title)))
                 lines.append("Dialogue: 8,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00333333&\\bord0\\shad0}%s" % (end, cx, cy + int(pill_sub_fs * 0.55), pill_sub_fs, _escape_ass_text(pill_sub)))
         if top_text:
-            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("top_font_size") or 84) * scale)), _overlay_plain_lines(top_text), width=int(width * 0.82), height_limit=int(height * 0.065), min_size=24)
-            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord4\\shad2}%s" % (end, top_x, top_y, fs, _escape_ass_text(top_text)))
+            fs = _fit_product_text(int(round(int(overlay_style.get("top_font_size") or 195) * scale)), top_text, 7.28, 24)
+            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\fscx100\\fscy%d\\c&H00FFFFFF&\\3c&H00000000&\\bord4\\shad2}%s" % (end, top_x, top_y, fs, top_scale_y, _escape_ass_text(top_text)))
         if title:
-            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("headline_font_size") or 128) * scale)), _overlay_plain_lines(title), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=42)
-            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord6\\shad3}%s" % (end, title_x, title_y, fs, _escape_ass_text(title)))
+            fs = _fit_product_text(int(round(int(overlay_style.get("headline_font_size") or 217) * scale)), title, 6.44, 42)
+            lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\fscx100\\fscy%d\\c&H00FFFFFF&\\3c&H00000000&\\bord6\\shad3}%s" % (end, title_x, title_y, fs, title_scale_y, _escape_ass_text(title)))
         if subtitle:
-            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("subtitle_font_size") or 54) * scale)), _overlay_plain_lines(subtitle), width=int(width * 0.56), height_limit=int(height * 0.085), min_size=22)
-            lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord4\\shad2}%s" % (end, subtitle_x, sub_y, fs, _escape_ass_text(subtitle)))
+            fs = _fit_product_text(int(round(int(overlay_style.get("subtitle_font_size") or 113) * scale)), subtitle, 6.0, 22)
+            sub_lines = _overlay_plain_lines(subtitle)
+            line_gap = int(height * _float_value(overlay_style.get("subtitle_line_gap"), 0.04))
+            for line_idx, line_text in enumerate(sub_lines):
+                line_y = sub_y - (len(sub_lines) - 1 - line_idx) * line_gap
+                lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\fscx%d\\fscy%d\\c&H00FFFFFF&\\3c&H00000000&\\bord4\\shad2}%s" % (end, subtitle_x, line_y, fs, subtitle_scale_x, subtitle_scale_y, _escape_ass_text(line_text)))
         if badge:
-            fs = _fit_overlay_font_size(int(round(int(overlay_style.get("badge_font_size") or 72) * scale)), _overlay_plain_lines(badge), width=int(width * 0.88), height_limit=int(height * 0.045), min_size=24)
+            fs = _fit_product_text(int(round(int(overlay_style.get("badge_font_size") or 200) * scale)), badge, 12.28, 24)
             lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord3\\shad2}%s" % (end, badge_x, badge_y, fs, _escape_ass_text(badge)))
         return lines
 
