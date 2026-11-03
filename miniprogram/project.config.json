@@ -33,7 +33,18 @@
   "condition": {},
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      { "type": "file", "value": "assets/daka_1024.png" },
+      { "type": "file", "value": "assets/daka_source.png" },
+      { "type": "file", "value": "assets/daka_logo.png" },
+      { "type": "file", "value": "assets/daka_512.png" },
+      { "type": "file", "value": "assets/daka_box.ico" },
+      { "type": "file", "value": "assets/daka_256.png" },
+      { "type": "file", "value": "assets/daka_64.png" },
+      { "type": "file", "value": "assets/daka_48.png" },
+      { "type": "file", "value": "assets/daka_32.png" },
+      { "type": "file", "value": "assets/daka_16.png" }
+    ],
     "include": []
   },
   "editorSetting": {}

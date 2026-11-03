@@ -1376,9 +1376,15 @@ def _mounted_publish_default(db: Session, user_id: int, platform: str) -> Option
     return None
 
 
+def _is_placeholder_installation_id(value: str) -> bool:
+    raw = str(value or "").strip().upper()
+    return bool(raw) and (raw.startswith("__") or "INSTALLATION_ID" in raw)
+
+
 def _mounted_default_installation_id(row: H5MountedAccountDefault) -> str:
     raw = _clean_text(row.installation_id, 128)
-    if raw:
+    # 工厂镜像会把占位符写进默认发布账号，占位符不能当槽位比较，否则永远“不在当前启用设备上”
+    if raw and not _is_placeholder_installation_id(raw):
         return raw
     payload = row.payload if isinstance(row.payload, dict) else {}
     raw = _clean_text(payload.get("installation_id"), 128)
