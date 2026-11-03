@@ -624,6 +624,15 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
         "render_modes": ["ffmpeg"],
+        "meta": {
+            "fixed_duration_ms": 12533,
+            "audio_bed_url": "/client/client-code/cutcli_templates/product_case_x72_v1_audio.m4a",
+            "audio_bed_volume": 1.0,
+            "source_audio_volume": 0.0,
+            "target_width": 1280,
+            "target_height": 2276,
+            "fit": "cover",
+        },
         "quality_label": "顶部三级标题 + 底部标语",
         "sample_video_url": "/client/client-code/cutcli_templates/product_case_x72_v1.mp4",
         "overlay_fields": _overlay_fields(
@@ -696,6 +705,7 @@ class TemplateListItem(BaseModel):
     generation_strategy: Dict[str, Any] = Field(default_factory=dict)
     caption_style: Dict[str, Any] = Field(default_factory=dict)
     overlay_fields: List[Dict[str, Any]] = Field(default_factory=list)
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CutcliSttTranscribeBody(BaseModel):
@@ -1008,7 +1018,7 @@ def _template_from_row(row: CutcliTemplate) -> Dict[str, Any]:
         "overlay_fields": _json_clone(row.overlay_fields or []),
         "caption_style": _json_clone(row.caption_style or {}),
         "generation_strategy": _json_clone(row.generation_strategy or {}),
-        "meta": _json_clone(row.meta or {}),
+        "meta": {**(_json_clone((_TEMPLATES.get(row.id) or {}).get("meta") or {})), **_json_clone(row.meta or {})},
         "enabled": bool(row.enabled),
         "sort_order": int(row.sort_order or 1000),
     }
