@@ -75,3 +75,7 @@ Thumbs.db
 
 # 商家上传的商品图片
 shop_uploads/
+# CutCLI template resources: TOS only, never Git
+client_static/client_code/cutcli_templates/designer/
+client_static/client_code/cutcli_templates/fonts/
+client_static/client_code/cutcli_templates/*.mp4
