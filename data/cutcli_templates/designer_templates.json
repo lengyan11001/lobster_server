@@ -21,7 +21,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_01.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -95,14 +95,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.mp4"
   },
   {
     "id": "designer_02",
@@ -126,7 +128,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_02.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -240,14 +242,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.mp4"
   },
   {
     "id": "designer_03",
@@ -271,7 +275,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_03.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -345,14 +349,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.mp4"
   },
   {
     "id": "designer_04",
@@ -376,7 +382,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_04.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -490,14 +496,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.mp4"
   },
   {
     "id": "designer_05",
@@ -521,7 +529,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_05.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -615,14 +623,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.mp4"
   },
   {
     "id": "designer_06",
@@ -646,7 +656,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_06.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -740,14 +750,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.mp4"
   },
   {
     "id": "designer_07",
@@ -771,7 +783,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_07.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -865,14 +877,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.mp4"
   },
   {
     "id": "designer_08",
@@ -896,7 +910,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_08.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -970,14 +984,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.mp4"
   },
   {
     "id": "designer_09",
@@ -1001,7 +1017,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_09.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1095,14 +1111,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.mp4"
   },
   {
     "id": "designer_10",
@@ -1126,7 +1144,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_10.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1240,14 +1258,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.mp4"
   },
   {
     "id": "designer_11",
@@ -1271,7 +1291,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_11.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1385,14 +1405,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.mp4"
   },
   {
     "id": "designer_12",
@@ -1416,7 +1438,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_12.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1490,14 +1512,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.mp4"
   },
   {
     "id": "designer_15",
@@ -1521,7 +1545,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_15.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1635,14 +1659,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.mp4"
   },
   {
     "id": "designer_16",
@@ -1666,7 +1692,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_16.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1760,14 +1786,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.mp4"
   },
   {
     "id": "designer_17",
@@ -1791,7 +1819,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_17.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -1905,14 +1933,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.mp4"
   },
   {
     "id": "designer_18",
@@ -1936,7 +1966,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_18.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -2050,14 +2080,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.mp4"
   },
   {
     "id": "designer_19",
@@ -2081,7 +2113,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_19.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -2215,14 +2247,16 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.mp4"
   },
   {
     "id": "designer_20",
@@ -2246,7 +2280,7 @@
       "ffmpeg"
     ],
     "quality_label": "设计师定时文字版式",
-    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_20.mp4",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.mp4",
     "overlay_fields": [
       {
         "key": "text_1",
@@ -2360,13 +2394,15 @@
     },
     "meta": {
       "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
       "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
       "source_audio_volume": 1.0,
       "audio_bed_url": "",
       "skip_stt": true,
-      "style_version": 1
-    }
+      "style_version": 2,
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.jpg"
+    },
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.mp4"
   }
 ]
