@@ -1004,7 +1004,7 @@ def _template_seed_row(template: Dict[str, Any], sort_order: int) -> Dict[str, A
         "preview_url": str(template.get("preview_url") or ""),
         "sample_video_url": str(template.get("sample_video_url") or ""),
         "sample_asset_id": str(template.get("sample_asset_id") or ""),
-        "render_modes": _json_clone(template.get("render_modes") or ["ffmpeg", "cutcli_cloud"]),
+        "render_modes": _json_clone(template.get("render_modes") or ["ffmpeg"]),
         "overlay_fields": _json_clone(template.get("overlay_fields") or []),
         "caption_style": _json_clone(template.get("caption_style") or {}),
         "generation_strategy": _json_clone(template.get("generation_strategy") or {}),
@@ -1029,7 +1029,7 @@ def _template_from_row(row: CutcliTemplate) -> Dict[str, Any]:
         "preview_url": row.preview_url or "",
         "sample_video_url": row.sample_video_url or "",
         "sample_asset_id": row.sample_asset_id or "",
-        "render_modes": _json_clone(row.render_modes or ["ffmpeg", "cutcli_cloud"]),
+        "render_modes": _json_clone(row.render_modes or ["ffmpeg"]),
         "overlay_fields": _json_clone(row.overlay_fields or []),
         "caption_style": _json_clone(row.caption_style or {}),
         "generation_strategy": _json_clone(row.generation_strategy or {}),
@@ -5341,7 +5341,7 @@ def list_cutcli_templates(
         row["sample_video_url"] = preview_url or _public_url(str(row.get("sample_video_url") or ""))
         row["sample_asset_id"] = _template_sample_asset_id(row["id"], row)
         row["render_path"] = f"/api/cutcli/templates/{row['id']}/render"
-        row["render_modes"] = row.get("render_modes") or ["ffmpeg", "cutcli_cloud"]
+        row["render_modes"] = row.get("render_modes") or ["ffmpeg"]
         row.setdefault("input_modes", ["upload", "asset_id"])
         row.setdefault("preserve_source_video", True)
         row.setdefault("overlay_fields", [])
