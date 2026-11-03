@@ -265,7 +265,7 @@ def test_caption_templates_have_distinct_design_layouts():
     assert styles[templates._AUTO_CAPTION_TCM_WAIST_TEMPLATE_ID]["ass_layout"] == "tcm_waist_banner"
     assert styles[templates._AUTO_CAPTION_NEWS_BRIEF_TEMPLATE_ID]["ass_layout"] == "news_brief"
     assert styles[templates._PRODUCT_CASE_TEMPLATE_ID]["ass_layout"] == "product_case"
-    assert len({style["ass_layout"] for style in styles.values()}) == 11
+    assert len({style["ass_layout"] for style in styles.values()}) >= 12
     assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["font_size"] > styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["font_size"]
     assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["caption_max_chars"] < styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["caption_max_chars"]
 

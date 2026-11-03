@@ -1,0 +1,2372 @@
+[
+  {
+    "id": "designer_01",
+    "kind": "auto_caption",
+    "name": "赛事级电子路书",
+    "description": "设计师竖屏产品混剪版式，顶部品类+主标题+车手背书，底部实战标语。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "装备",
+      "赛事",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_01.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "GPSTest / 专业",
+        "default": "GPSTest\n专业测向搜星",
+        "multiline": true,
+        "max_length": 22
+      },
+      {
+        "key": "text_2",
+        "label": "Windy / 实时掌握",
+        "default": "Windy\n实时掌握天气",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "摒弃花里胡哨 只留实战工",
+        "default": "摒弃花里胡哨 只留实战工具",
+        "multiline": false,
+        "max_length": 21
+      }
+    ],
+    "caption_style": {
+      "id": "designer_01",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 500000,
+            "end_ms": 12533333,
+            "x": 0.29762,
+            "y": 0.73888,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 82.01,
+            "scale_y": 82.24,
+            "color": "&H00FFFFFF",
+            "default": "GPSTest\n专业测向搜星"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 500000,
+            "end_ms": 12533333,
+            "x": 0.70234,
+            "y": 0.7388,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 82.01,
+            "scale_y": 82.24,
+            "color": "&H00FFFFFF",
+            "default": "Windy\n实时掌握天气"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 1000000,
+            "end_ms": 12533333,
+            "x": 0.5,
+            "y": 0.83989,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 82.01,
+            "scale_y": 82.24,
+            "color": "&H00FFFFFF",
+            "default": "摒弃花里胡哨 只留实战工具"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_02",
+    "kind": "auto_caption",
+    "name": "越野跑山导航",
+    "description": "越野跑山导航产品卖点版式，主标题+卖点清单+多场景文字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "越野",
+      "卖点",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_02.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "越野跑山导航",
+        "default": "越野跑山导航",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "2600 尼特高亮",
+        "default": "2600 尼特高亮",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "IP68 防尘防水",
+        "default": "IP68 防尘防水",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_5",
+        "label": "全地形越野适配",
+        "default": "全地形越野适配",
+        "multiline": false,
+        "max_length": 20
+      }
+    ],
+    "caption_style": {
+      "id": "designer_02",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 16333333,
+            "x": 0.5,
+            "y": 0.11657,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 101.0,
+            "scale_y": 115.0,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 16333333,
+            "x": 0.5,
+            "y": 0.20057,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 155.0,
+            "scale_y": 155.0,
+            "color": "&H00FFFFFF",
+            "default": "越野跑山导航"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 16333333,
+            "x": 0.44429,
+            "y": 0.74052,
+            "font_family": "阿里巴巴普惠体 3.0 95 ExtraBold",
+            "font_size": 82.4,
+            "scale_x": 92.0,
+            "scale_y": 92.0,
+            "color": "&H00FFFFFF",
+            "default": "2600 尼特高亮"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 16333333,
+            "x": 0.43443,
+            "y": 0.80273,
+            "font_family": "阿里巴巴普惠体 3.0 95 ExtraBold",
+            "font_size": 82.4,
+            "scale_x": 92.0,
+            "scale_y": 92.0,
+            "color": "&H00FFFFFF",
+            "default": "IP68 防尘防水"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 16333333,
+            "x": 0.45792,
+            "y": 0.86834,
+            "font_family": "阿里巴巴普惠体 3.0 95 ExtraBold",
+            "font_size": 82.4,
+            "scale_x": 92.0,
+            "scale_y": 92.0,
+            "color": "&H00FFFFFF",
+            "default": "全地形越野适配"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_03",
+    "kind": "auto_caption",
+    "name": "拼搏 KEEP GOING",
+    "description": "运动励志大字版式，拼搏/KEEP GOING 强强调。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "运动",
+      "励志",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_03.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "拼搏",
+        "default": "拼搏",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "让生活 / 更加美好",
+        "default": "让生活\n更加美好",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "KEEP GOING",
+        "default": "KEEP GOING",
+        "multiline": false,
+        "max_length": 20
+      }
+    ],
+    "caption_style": {
+      "id": "designer_03",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.34994,
+            "y": 0.12785,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 291.83,
+            "scale_y": 291.83,
+            "color": "&H000085F2",
+            "default": "拼搏"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.28237,
+            "y": 0.25669,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 102.83,
+            "scale_y": 102.83,
+            "color": "&H000085F2",
+            "default": "让生活\n更加美好"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.5,
+            "y": 0.35077,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 155.0,
+            "scale_y": 146.22,
+            "color": "&H00FFFFFF",
+            "default": "KEEP GOING"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_04",
+    "kind": "auto_caption",
+    "name": "追永无止境",
+    "description": "国风励志大字版式，追/永无止境+英文点缀。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "国风",
+      "励志",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_04.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "追 / 求",
+        "default": "追\n求",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "永无止境",
+        "default": "永无止境",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "XIONG ZHONG ",
+        "default": "XIONG ZHONG YOU QIU HE ZHENG TU ZI WU XIAN ZU",
+        "multiline": false,
+        "max_length": 53
+      },
+      {
+        "key": "text_4",
+        "label": "胸中有丘壑，征途自无险阻",
+        "default": "胸中有丘壑，征途自无险阻",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_5",
+        "label": "心怀燎原火 / 踏碎前路",
+        "default": "心怀燎原火\n踏碎前路千层雪",
+        "multiline": true,
+        "max_length": 21
+      }
+    ],
+    "caption_style": {
+      "id": "designer_04",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.17303,
+            "y": 0.19999,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 255.0,
+            "scale_y": 255.0,
+            "color": "&H00FFFFFF",
+            "default": "追\n求"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.59859,
+            "y": 0.14044,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 185.54,
+            "scale_y": 213.0,
+            "color": "&H00FFFFFF",
+            "default": "永无止境"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.59982,
+            "y": 0.27931,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 35.66,
+            "scale_x": 62.0,
+            "scale_y": 60.64,
+            "color": "&H00FFFFFF",
+            "default": "XIONG ZHONG YOU QIU HE ZHENG TU ZI WU XIAN ZU"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.59982,
+            "y": 0.25145,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 60.32,
+            "scale_y": 60.64,
+            "color": "&H00FFFFFF",
+            "default": "胸中有丘壑，征途自无险阻"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.5,
+            "y": 0.85263,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 74.0,
+            "scale_y": 74.39,
+            "color": "&H00FFFFFF",
+            "default": "心怀燎原火\n踏碎前路千层雪"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_05",
+    "kind": "auto_caption",
+    "name": "MORNING 松弛感",
+    "description": "清晨松弛感版式，生活需要/松弛感+手写小字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "生活",
+      "治愈",
+      "松弛",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_05.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "生活需要",
+        "default": "生活需要",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "松弛感",
+        "default": "松弛感",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "允许路途缓慢   / 认",
+        "default": "允许路途缓慢  \n认真耕耘  \n自有清风赴约",
+        "multiline": true,
+        "max_length": 30
+      },
+      {
+        "key": "text_4",
+        "label": "拾 得 时 光 的 馈 ",
+        "default": "拾 得 时 光 的 馈 赠",
+        "multiline": false,
+        "max_length": 21
+      }
+    ],
+    "caption_style": {
+      "id": "designer_05",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.39732,
+            "y": 0.13856,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 204.83,
+            "scale_y": 204.83,
+            "color": "&H00FFFFFF",
+            "default": "生活需要"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.64509,
+            "y": 0.24436,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 248.01,
+            "scale_y": 248.01,
+            "color": "&H00FFFFFF",
+            "default": "松弛感"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.20217,
+            "y": 0.29159,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 42.37,
+            "scale_x": 98.53,
+            "scale_y": 98.53,
+            "color": "&H00FFFFFF",
+            "default": "允许路途缓慢  \n认真耕耘  \n自有清风赴约"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.5,
+            "y": 0.81701,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "拾 得 时 光 的 馈 赠"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_06",
+    "kind": "auto_caption",
+    "name": "晨光点亮希望",
+    "description": "晨光励志版式，晨光点亮希望/行动铸就梦想。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "励志",
+      "晨光",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_06.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "晨光点亮希望",
+        "default": "晨光点亮希望",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "行动铸就梦想",
+        "default": "行动铸就梦想",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "全力以赴 勇者无敌 做生",
+        "default": "全力以赴 勇者无敌 做生活的勇士",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "你的拼搏不是为了感天动地",
+        "default": "你的拼搏不是为了感天动地\n而是为了你自己取得实质性的进步",
+        "multiline": true,
+        "max_length": 36
+      }
+    ],
+    "caption_style": {
+      "id": "designer_06",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.5,
+            "y": 0.12834,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 129.03,
+            "scale_y": 129.03,
+            "color": "&H00FFFFFF",
+            "default": "晨光点亮希望"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.5,
+            "y": 0.21316,
+            "font_family": "阿里巴巴普惠体 3.0 115 Black",
+            "font_size": 120.86,
+            "scale_x": 129.03,
+            "scale_y": 129.03,
+            "color": "&H000085F2",
+            "default": "行动铸就梦想"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.5,
+            "y": 0.28744,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 48.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "全力以赴 勇者无敌 做生活的勇士"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 5000000,
+            "x": 0.5,
+            "y": 0.86258,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 48.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "你的拼搏不是为了感天动地\n而是为了你自己取得实质性的进步"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_07",
+    "kind": "auto_caption",
+    "name": "城市 VOL.",
+    "description": "城市骑行 VOL. 版式，城市/骑行运动+英文点缀。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "城市",
+      "骑行",
+      "运动",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_07.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "城市VOL.",
+        "default": "城市VOL.",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "（骑行运动）",
+        "default": "（骑行运动）",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "shiyuenihaok",
+        "default": "shiyuenihaokuaileyunitongxing",
+        "multiline": false,
+        "max_length": 37
+      },
+      {
+        "key": "text_4",
+        "label": "十月你好｜快乐与你同行",
+        "default": "十月你好｜快乐与你同行",
+        "multiline": false,
+        "max_length": 20
+      }
+    ],
+    "caption_style": {
+      "id": "designer_07",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 14566666,
+            "x": 0.35956,
+            "y": 0.14467,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 148.33,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "城市VOL."
+          },
+          {
+            "key": "text_2",
+            "start_ms": 2133333,
+            "end_ms": 14566666,
+            "x": 0.61654,
+            "y": 0.22762,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "（骑行运动）"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 2200000,
+            "end_ms": 14566666,
+            "x": 0.5,
+            "y": 0.86391,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 32.96,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "shiyuenihaokuaileyunitongxing"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 2200000,
+            "end_ms": 14566666,
+            "x": 0.5,
+            "y": 0.81848,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "十月你好｜快乐与你同行"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_08",
+    "kind": "auto_caption",
+    "name": "人生的高度",
+    "description": "夜景励志版式，人生的高度/一半始于努力。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "夜景",
+      "励志",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_08.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "RENSHENG",
+        "default": "RENSHENG",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "人生的高度 / 一半始于",
+        "default": "人生的高度\n一半始于努力\n一半源于选择",
+        "multiline": true,
+        "max_length": 27
+      },
+      {
+        "key": "text_3",
+        "label": "时间从不怠慢   / 执",
+        "default": "时间从不怠慢  \n执着与勇敢",
+        "multiline": true,
+        "max_length": 22
+      }
+    ],
+    "caption_style": {
+      "id": "designer_08",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 10933333,
+            "x": 0.34827,
+            "y": 0.13534,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 53.86,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H000085F2",
+            "default": "RENSHENG"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 10933333,
+            "x": 0.3932,
+            "y": 0.24561,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 84.95,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "人生的高度\n一半始于努力\n一半源于选择"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 10933333,
+            "x": 0.27523,
+            "y": 0.90351,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 47.09,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "时间从不怠慢  \n执着与勇敢"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_09",
+    "kind": "auto_caption",
+    "name": "ORIENTAL MOOD 东方意境",
+    "description": "东方意境版式，ORIENTAL MOOD/东方意境+竖排小字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "国风",
+      "东方",
+      "意境",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_09.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "东方意境",
+        "default": "东方意境",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "ORIENTAL / M",
+        "default": "ORIENTAL\nMOOD",
+        "multiline": true,
+        "max_length": 21
+      },
+      {
+        "key": "text_3",
+        "label": "山水有清音 / 草木皆成",
+        "default": "山水有清音\n草木皆成章",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "万物自有节奏 不必急于奔",
+        "default": "万物自有节奏 不必急于奔赴\n静赏流云听风 便是东方独有的浪漫",
+        "multiline": true,
+        "max_length": 38
+      }
+    ],
+    "caption_style": {
+      "id": "designer_09",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 14833333,
+            "x": 0.83929,
+            "y": 0.2807,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 213.45,
+            "scale_y": 213.45,
+            "color": "&H00FFFFFF",
+            "default": "东方意境"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 14833333,
+            "x": 0.38393,
+            "y": 0.14662,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 131.63,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "ORIENTAL\nMOOD"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 14833333,
+            "x": 0.13405,
+            "y": 0.69476,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 63.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "山水有清音\n草木皆成章"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 14833333,
+            "x": 0.5,
+            "y": 0.92231,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 49.6,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "万物自有节奏 不必急于奔赴\n静赏流云听风 便是东方独有的浪漫"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_10",
+    "kind": "auto_caption",
+    "name": "自律的人终会发光",
+    "description": "自律励志版式，自律的人终会发光。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "自律",
+      "励志",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_10.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "自律的人 / 终会发光",
+        "default": "自律的人\n终会发光",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "每一次流汗   / 都是",
+        "default": "每一次流汗  \n都是与更好的自己相遇",
+        "multiline": true,
+        "max_length": 26
+      },
+      {
+        "key": "text_3",
+        "label": "今天的你 / 比昨天更强",
+        "default": "今天的你\n比昨天更强大",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "EVERY DROP O",
+        "default": "EVERY DROP OF SWEAT  \nIS A MEETING WITH A BETTER SELF",
+        "multiline": true,
+        "max_length": 61
+      },
+      {
+        "key": "text_5",
+        "label": "YOU ARE STRO",
+        "default": "YOU ARE STRONGER\nTODAY THAN YESTERDAY",
+        "multiline": true,
+        "max_length": 45
+      }
+    ],
+    "caption_style": {
+      "id": "designer_10",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 10400000,
+            "x": 0.39823,
+            "y": 0.14411,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 196.32,
+            "scale_y": 196.32,
+            "color": "&H00FFFFFF",
+            "default": "自律的人\n终会发光"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 10400000,
+            "x": 0.28775,
+            "y": 0.3263,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 40.3,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "每一次流汗  \n都是与更好的自己相遇"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 10400000,
+            "x": 0.81619,
+            "y": 0.86858,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 40.3,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "今天的你\n比昨天更强大"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 10400000,
+            "x": 0.26339,
+            "y": 0.38343,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 27.47,
+            "scale_x": 81.0,
+            "scale_y": 81.0,
+            "color": "&H00FFFFFF",
+            "default": "EVERY DROP OF SWEAT  \nIS A MEETING WITH A BETTER SELF"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 10400000,
+            "x": 0.80503,
+            "y": 0.93261,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 27.47,
+            "scale_x": 81.0,
+            "scale_y": 81.0,
+            "color": "&H00FFFFFF",
+            "default": "YOU ARE STRONGER\nTODAY THAN YESTERDAY"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_11",
+    "kind": "auto_caption",
+    "name": "跨越边界",
+    "description": "产品跨越边界版式，跨越边界/突破从未止步。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "户外",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_11.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "跨越边界",
+        "default": "跨越边界",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "突破从未止步",
+        "default": "突破从未止步",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "点亮征程",
+        "default": "点亮征程",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_5",
+        "label": "全地形拉力赛越野平板电脑",
+        "default": "全地形拉力赛越野平板电脑",
+        "multiline": false,
+        "max_length": 20
+      }
+    ],
+    "caption_style": {
+      "id": "designer_11",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 14600000,
+            "x": 0.5,
+            "y": 0.13096,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 237.93,
+            "scale_y": 237.93,
+            "color": "&H00FFFFFF",
+            "default": "跨越边界"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 14600000,
+            "x": 0.37559,
+            "y": 0.22821,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 107.66,
+            "scale_y": 107.66,
+            "color": "&H00FFFFFF",
+            "default": "突破从未止步"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 14600000,
+            "x": 0.34677,
+            "y": 0.79085,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 77.0,
+            "scale_y": 77.0,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 14600000,
+            "x": 0.76709,
+            "y": 0.79091,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 77.0,
+            "scale_y": 77.0,
+            "color": "&H00FFFFFF",
+            "default": "点亮征程"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 14600000,
+            "x": 0.5,
+            "y": 0.83724,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 77.0,
+            "scale_y": 77.0,
+            "color": "&H00FFFFFF",
+            "default": "全地形拉力赛越野平板电脑"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_12",
+    "kind": "auto_caption",
+    "name": "向光而行",
+    "description": "HUGEROCK X72 向光而行版式，产品+远景大字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "户外",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_12.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "向光而行",
+        "default": "向光而行",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "自有前程",
+        "default": "自有前程",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "2600 Nits 高亮",
+        "default": "2600 Nits 高亮阳光屏\n直射强光下路线依然通透清晰",
+        "multiline": true,
+        "max_length": 37
+      }
+    ],
+    "caption_style": {
+      "id": "designer_12",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 15066666,
+            "x": 0.32202,
+            "y": 0.19187,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 158.89,
+            "scale_y": 158.89,
+            "color": "&H00FFFFFF",
+            "default": "向光而行"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 15066666,
+            "x": 0.32201,
+            "y": 0.2804,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 158.89,
+            "scale_y": 158.89,
+            "color": "&H00FFFFFF",
+            "default": "自有前程"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 15066666,
+            "x": 0.5,
+            "y": 0.84788,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 78.65,
+            "scale_y": 78.65,
+            "color": "&H00FFFFFF",
+            "default": "2600 Nits 高亮阳光屏\n直射强光下路线依然通透清晰"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_15",
+    "kind": "auto_caption",
+    "name": "为每一段征途守护",
+    "description": "产品守护版式，为每一段征途守护+HUGEROCK X72。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "户外",
+      "守护",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_15.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "为每一段征途守护",
+        "default": "为每一段征途守护",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "纵入荒漠 不惧无网",
+        "default": "纵入荒漠 不惧无网",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "摩旅，是一场自由的奔赴",
+        "default": "摩旅，是一场自由的奔赴",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "稳定锁星，安心奔赴山海远",
+        "default": "稳定锁星，安心奔赴山海远方",
+        "multiline": false,
+        "max_length": 21
+      },
+      {
+        "key": "text_5",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      }
+    ],
+    "caption_style": {
+      "id": "designer_15",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.5,
+            "y": 0.14035,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 130.0,
+            "scale_y": 158.0,
+            "color": "&H00FFFFFF",
+            "default": "为每一段征途守护"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.36095,
+            "y": 0.20768,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 84.0,
+            "scale_y": 84.0,
+            "color": "&H00FFFFFF",
+            "default": "纵入荒漠 不惧无网"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.29489,
+            "y": 0.30413,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 50.0,
+            "scale_y": 50.0,
+            "color": "&H00FFFFFF",
+            "default": "摩旅，是一场自由的奔赴"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.33685,
+            "y": 0.33609,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 50.0,
+            "scale_y": 50.0,
+            "color": "&H00FFFFFF",
+            "default": "稳定锁星，安心奔赴山海远方"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.5,
+            "y": 0.82206,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 113.0,
+            "scale_y": 169.0,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_16",
+    "kind": "auto_caption",
+    "name": "Ride Wild 向野出发",
+    "description": "Ride Wild/向野出发 户外版式，多场景文字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "户外",
+      "越野",
+      "多场景",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_16.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "深山峡谷戈壁 方向始终清",
+        "default": "深山峡谷戈壁 方向始终清晰",
+        "multiline": false,
+        "max_length": 21
+      },
+      {
+        "key": "text_3",
+        "label": "向野出发",
+        "default": "向野出发",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "X I A N G Y ",
+        "default": "X I A N G Y E C H U F A",
+        "multiline": false,
+        "max_length": 31
+      }
+    ],
+    "caption_style": {
+      "id": "designer_16",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.81492,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 129.63,
+            "scale_y": 130.0,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.86323,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 62.0,
+            "scale_y": 62.18,
+            "color": "&H00FFFFFF",
+            "default": "深山峡谷戈壁 方向始终清晰"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.16204,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 227.0,
+            "scale_y": 227.0,
+            "color": "&H00FFFFFF",
+            "default": "向野出发"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.24311,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 86.0,
+            "scale_y": 86.24,
+            "color": "&H00FFFFFF",
+            "default": "X I A N G Y E C H U F A"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_17",
+    "kind": "auto_caption",
+    "name": "纵驰山野 笃定前行",
+    "description": "纵驰山野/笃定前行 户外版式，多场景文字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "户外",
+      "越野",
+      "多场景",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_17.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "纵驰山野，笃定前行",
+        "default": "纵驰山野，笃定前行",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "行向旷野",
+        "default": "行向旷野",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "星定前路",
+        "default": "星定前路",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_5",
+        "label": "XING DING / ",
+        "default": "XING DING\nQIAN LU",
+        "multiline": true,
+        "max_length": 25
+      }
+    ],
+    "caption_style": {
+      "id": "designer_17",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.20398,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 100.0,
+            "scale_y": 100.28,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.10059,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 112.0,
+            "scale_y": 144.0,
+            "color": "&H00FFFFFF",
+            "default": "纵驰山野，笃定前行"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.62066,
+            "y": 0.77732,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 175.0,
+            "scale_y": 175.0,
+            "color": "&H00FFFFFF",
+            "default": "行向旷野"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.42934,
+            "y": 0.6896,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 175.0,
+            "scale_y": 175.0,
+            "color": "&H00FFFFFF",
+            "default": "星定前路"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.20504,
+            "y": 0.78733,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 44.0,
+            "scale_y": 44.12,
+            "color": "&H00FFFFFF",
+            "default": "XING DING\nQIAN LU"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_18",
+    "kind": "auto_caption",
+    "name": "ADVENTURE 越野领航者",
+    "description": "ADVENTURE/越野领航者 户外版式，多场景文字。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "户外",
+      "越野",
+      "多场景",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_18.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "星轨指引前路 出发即是远",
+        "default": "星轨指引前路 出发即是远方",
+        "multiline": false,
+        "max_length": 21
+      },
+      {
+        "key": "text_3",
+        "label": "ADVENTURE",
+        "default": "ADVENTURE",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "越野・领航者",
+        "default": "越野・领航者",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_5",
+        "label": "跨过沙海峡谷 告别丢星焦",
+        "default": "跨过沙海峡谷 告别丢星焦虑\n硬核赛事平板 为长途穿越而生",
+        "multiline": true,
+        "max_length": 36
+      }
+    ],
+    "caption_style": {
+      "id": "designer_18",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 16300000,
+            "x": 0.5,
+            "y": 0.79737,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 105.27,
+            "scale_y": 105.57,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 16300000,
+            "x": 0.5,
+            "y": 0.85195,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 78.0,
+            "scale_y": 78.22,
+            "color": "&H00FFFFFF",
+            "default": "星轨指引前路 出发即是远方"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 16300000,
+            "x": 0.5,
+            "y": 0.10964,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 175.0,
+            "scale_y": 175.28,
+            "color": "&H00FFFFFF",
+            "default": "ADVENTURE"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 16300000,
+            "x": 0.5,
+            "y": 0.19086,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 145.01,
+            "scale_y": 145.01,
+            "color": "&H00FFFFFF",
+            "default": "越野・领航者"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 16300000,
+            "x": 0.5,
+            "y": 0.29323,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 70.66,
+            "scale_y": 70.46,
+            "color": "&H00FFFFFF",
+            "default": "跨过沙海峡谷 告别丢星焦虑\n硬核赛事平板 为长途穿越而生"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_19",
+    "kind": "auto_caption",
+    "name": "驰骋沙海无垠",
+    "description": "驰骋/沙海无垠 沙漠产品版式，强日光可视卖点。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "沙漠",
+      "产品",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_19.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "驰骋",
+        "default": "驰骋",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "沙海无垠",
+        "default": "沙海无垠",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "Chi Cheng",
+        "default": "Chi Cheng",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "(烈日灼黄沙) / 屏幕",
+        "default": "(烈日灼黄沙)\n屏幕依旧清晰",
+        "multiline": true,
+        "max_length": 22
+      },
+      {
+        "key": "text_5",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_6",
+        "label": "大漠强光可视 无惧日光直",
+        "default": "大漠强光可视 无惧日光直射",
+        "multiline": false,
+        "max_length": 21
+      }
+    ],
+    "caption_style": {
+      "id": "designer_19",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.32481,
+            "y": 0.14415,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 296.0,
+            "scale_y": 276.0,
+            "color": "&H00FFFFFF",
+            "default": "驰骋"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.5,
+            "y": 0.2619,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 260.0,
+            "scale_y": 200.0,
+            "color": "&H00FFFFFF",
+            "default": "沙海无垠"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.70838,
+            "y": 0.17619,
+            "font_family": "阿里巴巴普惠体 3.0 95 ExtraBold",
+            "font_size": 82.4,
+            "scale_x": 97.0,
+            "scale_y": 97.37,
+            "color": "&H000085F2",
+            "default": "Chi Cheng"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.25199,
+            "y": 0.3985,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 68.95,
+            "scale_x": 88.22,
+            "scale_y": 88.22,
+            "color": "&H00FFFFFF",
+            "default": "(烈日灼黄沙)\n屏幕依旧清晰"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.5,
+            "y": 0.81579,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 68.95,
+            "scale_x": 88.22,
+            "scale_y": 88.22,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.5,
+            "y": 0.76817,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 68.95,
+            "scale_x": 88.22,
+            "scale_y": 88.22,
+            "color": "&H00FFFFFF",
+            "default": "大漠强光可视 无惧日光直射"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  },
+  {
+    "id": "designer_20",
+    "kind": "auto_caption",
+    "name": "跨越每一个极限",
+    "description": "跨越每一个极限 户外产品版式，HUGEROCK X72。",
+    "aspect_ratio": "source",
+    "default_duration": 0,
+    "tags": [
+      "户外",
+      "产品",
+      "极限",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师定时文字版式",
+    "sample_video_url": "/client/client-code/cutcli_templates/designer/designer_20.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "EXTREME",
+        "default": "EXTREME",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_2",
+        "label": "跨越 / 每一个",
+        "default": "跨越\n每一个",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_3",
+        "label": "极 /   限",
+        "default": "极\n  限",
+        "multiline": true,
+        "max_length": 20
+      },
+      {
+        "key": "text_4",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 20
+      },
+      {
+        "key": "text_5",
+        "label": "大漠强光可视路书 / 无",
+        "default": "大漠强光可视路书\n无网也能奔赴旷野",
+        "multiline": true,
+        "max_length": 25
+      }
+    ],
+    "caption_style": {
+      "id": "designer_20",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 9600000,
+            "x": 0.5,
+            "y": 0.211,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 262.83,
+            "scale_y": 262.83,
+            "color": "&H00FFFFFF",
+            "default": "EXTREME"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 9600000,
+            "x": 0.38785,
+            "y": 0.21476,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 176.0,
+            "scale_y": 176.0,
+            "color": "&H00FFFFFF",
+            "default": "跨越\n每一个"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 9600000,
+            "x": 0.66395,
+            "y": 0.19584,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 247.95,
+            "scale_y": 247.95,
+            "color": "&H000085F2",
+            "default": "极\n  限"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 9600000,
+            "x": 0.5,
+            "y": 0.77491,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 128.99,
+            "scale_y": 128.99,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 9600000,
+            "x": 0.5,
+            "y": 0.85412,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 78.0,
+            "scale_y": 78.0,
+            "color": "&H00FFFFFF",
+            "default": "大漠强光可视路书\n无网也能奔赴旷野"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "/client/client-code/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1
+    }
+  }
+]

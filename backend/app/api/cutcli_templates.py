@@ -50,6 +50,18 @@ _AUTO_CAPTION_BLACK_GOLD_TEMPLATE_ID = "auto_caption_black_gold_quote_v1"
 _AUTO_CAPTION_TCM_WAIST_TEMPLATE_ID = "auto_caption_tcm_waist_banner_v1"
 _AUTO_CAPTION_NEWS_BRIEF_TEMPLATE_ID = "auto_caption_news_brief_v1"
 _PRODUCT_CASE_TEMPLATE_ID = "product_case_x72_v1"
+_HIDDEN_TEMPLATE_IDS = {
+    _AUTO_CAPTION_TEMPLATE_ID,
+    _AUTO_CAPTION_CLEAN_TEMPLATE_ID,
+    _AUTO_CAPTION_NEON_TEMPLATE_ID,
+    _AUTO_CAPTION_PUNCH_TEMPLATE_ID,
+    _AUTO_CAPTION_HEALTH_BANNER_TEMPLATE_ID,
+    _AUTO_CAPTION_QUOTE_FOCUS_TEMPLATE_ID,
+    _AUTO_CAPTION_MARKET_LABEL_TEMPLATE_ID,
+    _AUTO_CAPTION_BLACK_GOLD_TEMPLATE_ID,
+    _AUTO_CAPTION_TCM_WAIST_TEMPLATE_ID,
+    _AUTO_CAPTION_NEWS_BRIEF_TEMPLATE_ID,
+}
 _CUTCLI_TEMPLATE_JOB_FEATURE = "cutcli_template"
 _STT_MODEL = "volcengine/speech-to-text/bigmodel-v2"
 _STT_API_BASE = (
@@ -695,6 +707,15 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
     },
 }
 
+_DESIGNER_MANIFEST = _ROOT_DIR / "data" / "cutcli_templates" / "designer_templates.json"
+if _DESIGNER_MANIFEST.exists():
+    try:
+        for _designer_item in json.loads(_DESIGNER_MANIFEST.read_text(encoding="utf-8")):
+            if isinstance(_designer_item, dict) and _designer_item.get("id"):
+                _TEMPLATES[str(_designer_item["id"])] = _designer_item
+    except Exception as _designer_exc:
+        logger.warning("[cutcli-template] designer manifest load failed: %s", _designer_exc)
+
 
 class TemplateListItem(BaseModel):
     id: str
@@ -1029,7 +1050,7 @@ def _template_from_row(row: CutcliTemplate) -> Dict[str, Any]:
         "preview_url": row.preview_url or "",
         "sample_video_url": row.sample_video_url or "",
         "sample_asset_id": row.sample_asset_id or "",
-        "render_modes": _json_clone(row.render_modes or ["ffmpeg"]),
+        "render_modes": ["ffmpeg"],
         "overlay_fields": _json_clone(row.overlay_fields or []),
         "caption_style": _json_clone(row.caption_style or {}),
         "generation_strategy": _json_clone(row.generation_strategy or {}),
@@ -1096,10 +1117,10 @@ def _list_cutcli_template_defs(db: Session) -> List[Dict[str, Any]]:
             .all()
         )
         if rows:
-            return [_template_from_row(row) for row in rows]
+            return [_template_from_row(row) for row in rows if row.id not in _HIDDEN_TEMPLATE_IDS]
     except Exception as exc:
         logger.warning("[cutcli-template] DB list failed, using code fallback: %s", exc)
-    return [dict(item) for item in _TEMPLATES.values()]
+    return [dict(item) for item in _TEMPLATES.values() if str(item.get("id") or "") not in _HIDDEN_TEMPLATE_IDS]
 
 
 def _get_cutcli_template_def(db: Optional[Session], template_id: str) -> Optional[Dict[str, Any]]:
@@ -4981,6 +5002,35 @@ def _overlay_dialogues(
         if badge:
             fs = _fit_product_text(int(round(int(overlay_style.get("badge_font_size") or 200) * scale)), badge, 12.28, 24)
             lines.append("Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord3\\shad2}%s" % (end, badge_x, badge_y, fs, _escape_ass_text(badge)))
+        return lines
+
+    if layout == "designer_timeline":
+        track_list = overlay_style.get("text_tracks") or []
+        for tr in track_list:
+            if not isinstance(tr, dict):
+                continue
+            key = str(tr.get("key") or "").strip()
+            text = _overlay_text_value(overlay_texts, style, key) or str(tr.get("default") or "")
+            if not text.strip():
+                continue
+            try:
+                start_sec = max(0.0, min(float(duration_sec), float(tr.get("start_ms") or 0) / 1_000_000.0))
+                end_sec = max(start_sec + 0.2, min(float(duration_sec), float(tr.get("end_ms") or duration_sec * 1_000_000.0) / 1_000_000.0))
+            except Exception:
+                continue
+            if start_sec >= float(duration_sec):
+                continue
+            fs = max(10, int(round(float(tr.get("font_size") or 60) * width / 1280.0)))
+            fscx = max(10, int(round(float(tr.get("scale_x") or 100))))
+            fscy = max(10, int(round(float(tr.get("scale_y") or 100))))
+            x = int(width * float(tr.get("x") or 0.5))
+            y = int(height * float(tr.get("y") or 0.5))
+            family = str(tr.get("font_family") or "Microsoft YaHei")
+            color = str(tr.get("color") or "&H00FFFFFF")
+            lines.append(
+                "Dialogue: 7,%s,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fn%s\\fs%d\\fscx%d\\fscy%d\\q2\\c%s\\bord0\\shad2}%s"
+                % (_ass_time(int(start_sec * 1_000_000)), _ass_time(int(end_sec * 1_000_000)), x, y, family, fs, fscx, fscy, color, _escape_ass_text(text))
+            )
         return lines
 
     if layout == "top_banner":
