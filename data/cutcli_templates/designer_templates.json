@@ -4,7 +4,7 @@
     "kind": "auto_caption",
     "name": "赛事级电子路书",
     "description": "设计师竖屏产品混剪版式，顶部品类+主标题+车手背书，底部实战标语。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "产品",
@@ -102,7 +102,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.mp4"
   },
@@ -111,7 +114,7 @@
     "kind": "auto_caption",
     "name": "越野跑山导航",
     "description": "越野跑山导航产品卖点版式，主标题+卖点清单+多场景文字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "产品",
@@ -249,7 +252,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.mp4"
   },
@@ -258,7 +264,7 @@
     "kind": "auto_caption",
     "name": "拼搏 KEEP GOING",
     "description": "运动励志大字版式，拼搏/KEEP GOING 强强调。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "运动",
@@ -356,7 +362,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.mp4"
   },
@@ -365,7 +374,7 @@
     "kind": "auto_caption",
     "name": "追永无止境",
     "description": "国风励志大字版式，追/永无止境+英文点缀。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "国风",
@@ -503,7 +512,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.mp4"
   },
@@ -512,7 +524,7 @@
     "kind": "auto_caption",
     "name": "MORNING 松弛感",
     "description": "清晨松弛感版式，生活需要/松弛感+手写小字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "生活",
@@ -630,7 +642,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.mp4"
   },
@@ -639,7 +654,7 @@
     "kind": "auto_caption",
     "name": "晨光点亮希望",
     "description": "晨光励志版式，晨光点亮希望/行动铸就梦想。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "励志",
@@ -757,7 +772,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.mp4"
   },
@@ -766,7 +784,7 @@
     "kind": "auto_caption",
     "name": "城市 VOL.",
     "description": "城市骑行 VOL. 版式，城市/骑行运动+英文点缀。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "城市",
@@ -884,7 +902,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.mp4"
   },
@@ -893,7 +914,7 @@
     "kind": "auto_caption",
     "name": "人生的高度",
     "description": "夜景励志版式，人生的高度/一半始于努力。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "夜景",
@@ -991,7 +1012,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.mp4"
   },
@@ -1000,7 +1024,7 @@
     "kind": "auto_caption",
     "name": "ORIENTAL MOOD 东方意境",
     "description": "东方意境版式，ORIENTAL MOOD/东方意境+竖排小字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "国风",
@@ -1118,7 +1142,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.mp4"
   },
@@ -1127,7 +1154,7 @@
     "kind": "auto_caption",
     "name": "自律的人终会发光",
     "description": "自律励志版式，自律的人终会发光。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "自律",
@@ -1265,7 +1292,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.mp4"
   },
@@ -1274,7 +1304,7 @@
     "kind": "auto_caption",
     "name": "跨越边界",
     "description": "产品跨越边界版式，跨越边界/突破从未止步。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "产品",
@@ -1412,7 +1442,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.mp4"
   },
@@ -1421,7 +1454,7 @@
     "kind": "auto_caption",
     "name": "向光而行",
     "description": "HUGEROCK X72 向光而行版式，产品+远景大字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "产品",
@@ -1519,7 +1552,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.mp4"
   },
@@ -1528,7 +1564,7 @@
     "kind": "auto_caption",
     "name": "为每一段征途守护",
     "description": "产品守护版式，为每一段征途守护+HUGEROCK X72。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "产品",
@@ -1666,7 +1702,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.mp4"
   },
@@ -1675,7 +1714,7 @@
     "kind": "auto_caption",
     "name": "Ride Wild 向野出发",
     "description": "Ride Wild/向野出发 户外版式，多场景文字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "户外",
@@ -1793,7 +1832,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.mp4"
   },
@@ -1802,7 +1844,7 @@
     "kind": "auto_caption",
     "name": "纵驰山野 笃定前行",
     "description": "纵驰山野/笃定前行 户外版式，多场景文字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "户外",
@@ -1940,7 +1982,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.mp4"
   },
@@ -1949,7 +1994,7 @@
     "kind": "auto_caption",
     "name": "ADVENTURE 越野领航者",
     "description": "ADVENTURE/越野领航者 户外版式，多场景文字。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "户外",
@@ -2087,7 +2132,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.mp4"
   },
@@ -2096,7 +2144,7 @@
     "kind": "auto_caption",
     "name": "驰骋沙海无垠",
     "description": "驰骋/沙海无垠 沙漠产品版式，强日光可视卖点。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "沙漠",
@@ -2254,7 +2302,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.mp4"
   },
@@ -2263,7 +2314,7 @@
     "kind": "auto_caption",
     "name": "跨越每一个极限",
     "description": "跨越每一个极限 户外产品版式，HUGEROCK X72。",
-    "aspect_ratio": "source",
+    "aspect_ratio": "9:16",
     "default_duration": 0,
     "tags": [
       "户外",
@@ -2401,7 +2452,10 @@
       "audio_bed_url": "",
       "skip_stt": true,
       "style_version": 2,
-      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.jpg"
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.jpg",
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.mp4"
   }
