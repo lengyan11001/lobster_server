@@ -58,8 +58,19 @@ class InstallationIdBindRequest(BaseModel):
     force_new: bool = False
 
 
+def _is_placeholder_installation_id(value: str) -> bool:
+    """工厂定制包会原样发送 __LOBSTER_INSTALLATION_ID__ 这类模板占位符，不能当真 ID 落库。"""
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    upper = raw.upper()
+    return upper.startswith("__") or "INSTALLATION_ID" in upper or upper in {"NULL", "NONE", "UNDEFINED"}
+
+
 def _normalize_installation_id(raw: Optional[str]) -> str:
     value = (raw or "").strip()
+    if not value or _is_placeholder_installation_id(value):
+        return ""
     return value if _INSTALLATION_ID_RE.fullmatch(value) else ""
 
 
@@ -758,7 +769,9 @@ def bind_unique_installation_id(
     if not device_id:
         device_id = current_installation_id
     if not device_id:
-        raise HTTPException(status_code=400, detail="missing or invalid device id")
+        # 工厂包可能把 installation_id/device_id 都填成占位符；这里必须给一个真实种子，
+        # 否则 bind 只能 400，客户端永远记录不上。
+        device_id = _new_unique_installation_id(db, brand_mark=brand_mark)
 
     # Old clients do not send a machine identity. Falling back to device_id
     # preserves their previous behavior while new clients can separate two
@@ -981,6 +994,42 @@ def bind_unique_installation_id(
             installation_id = preferred_id
             signed = False
             signature_reason = ""
+    # 占位符兜底：工厂包未替换模板变量时，退回该机器已有的真实 ID，绝不把占位符写进库
+    if _is_placeholder_installation_id(installation_id):
+        fallback = _normalize_installation_id(current_installation_id) or _normalize_installation_id(
+            known_machine.installation_id if known_machine is not None else ""
+        )
+        logger.warning(
+            "[installation-identity] placeholder rejected incoming=%s fallback=%s user=%s machine=%s",
+            installation_id,
+            fallback,
+            getattr(current_user, "id", ""),
+            machine_id,
+        )
+        # 没有真实旧槽位时，必须发一个服务端签名的槽位；machine_id 是未签名的，
+        # 客户端会按 incoming_unsigned 拒收，等于没修。
+        installation_id = fallback or _unique_signed_installation_id_for_user(
+            db, current_user, device_id, brand_mark, machine_id
+        )
+
+    # 只要返回值和客户端当前槽位不同，就必须是 signed；未签名的不同值客户端
+    # 一定按 incoming_unsigned 拒收，会导致每次启动都重复 bind，永远记录不上。
+    if (
+        current_installation_id
+        and installation_id
+        and installation_id != current_installation_id
+        and not _is_signed_installation_id_for_user(installation_id, current_user.id)
+    ):
+        logger.warning(
+            "[installation-identity] unsigned slot change rejected current=%s returned=%s user=%s machine=%s",
+            current_installation_id,
+            installation_id,
+            getattr(current_user, "id", ""),
+            machine_id,
+        )
+        installation_id = current_installation_id
+        signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
+
     # Splitting a copied online slot is allocation, not migration.  Keep the
     # original device's tasks/templates untouched.
     replaced = (
