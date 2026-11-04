@@ -4576,6 +4576,13 @@ def _execute_server_side_run(
                 payload = dict(payload)
                 payload["_workflow_node_execution"] = True
                 run.payload = payload
+            # 节点演示只出 1 条文案 + 3 张图：完整 20 条要跑 4 批 LLM，
+            # 线上实测 5~15 分钟，用户以为"没启动"。演示标记由建任务侧写入。
+            task_row = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first()
+            if task_row is not None and _is_demo_once_task(task_row):
+                payload = dict(payload)
+                payload["_demo_light"] = True
+                run.payload = payload
         if run.task_kind == "ip_content_daily":
             ip_label = _ip_content_kind_label(payload)
             progress("start", f"服务器开始执行 {ip_label}", {"timeout_seconds": timeout_seconds})

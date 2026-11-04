@@ -5913,6 +5913,7 @@ async def run_ip_content_daily_scheduled(
     progress: ScheduleProgress = None,
 ) -> dict[str, Any]:
     runtime_options = dict(options or {})
+    demo_light = bool(runtime_options.pop("_demo_light", False))
     # Workflow nodes are the only IP-daily execution path that automatically
     # materializes Moments images.  Manual/scheduled studio runs retain the
     # existing manual image-generation behavior.
@@ -6057,12 +6058,16 @@ async def run_ip_content_daily_scheduled(
             "reference_image_count": len(template_reference_image_urls),
         },
     )
-    scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 2, minimum=1, maximum=3)
-    scheduled_llm_timeout_seconds = _env_float(
-        "IP_CONTENT_STUDIO_SCHEDULE_LLM_TIMEOUT_SEC",
-        _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
-        minimum=_LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS,
-        maximum=900.0,
+    scheduled_llm_attempts = 1 if demo_light else _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 2, minimum=1, maximum=3)
+    scheduled_llm_timeout_seconds = (
+        60.0
+        if demo_light
+        else _env_float(
+            "IP_CONTENT_STUDIO_SCHEDULE_LLM_TIMEOUT_SEC",
+            _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
+            minimum=_LLM_PROXY_MIN_CALL_TIMEOUT_SECONDS,
+            maximum=900.0,
+        )
     )
     sync_results: list[dict[str, Any]] = []
     if opts.sync_before:
@@ -6295,9 +6300,9 @@ async def run_ip_content_daily_scheduled(
             platform="wechat_moments",
             rows=moment_rows,
             fallback_sources=moment_fallback_sources,
-            count=min(max(int(opts.moments_count or 20), 1), 20),
+            count=1 if demo_light else min(max(int(opts.moments_count or 20), 1), 20),
             extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
-            batch_size=_env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
+            batch_size=1 if demo_light else _env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
             reference_image_urls=template_reference_image_urls,
         )
 
