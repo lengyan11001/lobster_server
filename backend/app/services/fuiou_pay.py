@@ -56,18 +56,21 @@ def _fuiou_config(brand_mark: Optional[str] = None) -> dict[str, str]:
         return cfg
     try:
         parsed = json.loads(raw)
-        entry = parsed.get(mark) if isinstance(parsed, dict) else None
-        if not isinstance(entry, dict):
-            return cfg
     except (TypeError, ValueError):
-        logger.warning("[fuiou] invalid FUIOU_BRAND_CONFIGS_JSON")
-        return cfg
+        logger.error("[fuiou] FUIOU_BRAND_CONFIGS_JSON 不是合法 JSON，已拒绝按默认商户号扣款")
+        return {**cfg, "mchnt_cd": "", "mchnt_key": ""}
+    entry = parsed.get(mark) if isinstance(parsed, dict) else None
+    if not isinstance(entry, dict):
+        # 指定了品牌但品牌配置缺失：不再静默落到默认商户号（可能是另一个品牌的商户号）
+        logger.error("[fuiou] 品牌 %s 未配置商户号，已拒绝按默认商户号扣款", mark)
+        return {**cfg, "mchnt_cd": "", "mchnt_key": ""}
     # Require both merchant id and key before enabling an OEM override. Other
     # fields may inherit the system-level defaults.
     mchnt_cd = str(entry.get("mchnt_cd") or entry.get("FUIOU_MCHNT_CD") or "").strip()
     mchnt_key = str(entry.get("mchnt_key") or entry.get("FUIOU_MCHNT_KEY") or "").strip()
     if not mchnt_cd or not mchnt_key:
-        return cfg
+        logger.error("[fuiou] 品牌 %s 的 mchnt_cd/mchnt_key 不完整，已拒绝按默认商户号扣款", mark)
+        return {**cfg, "mchnt_cd": "", "mchnt_key": ""}
     aliases = {name: (name, f"FUIOU_{name.upper()}") for name in names}
     for name, keys in aliases.items():
         for key in keys:
