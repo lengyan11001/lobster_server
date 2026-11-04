@@ -74,9 +74,62 @@ def test_sutui_balance_deduplicates_server_tokens(monkeypatch):
     results = asyncio.run(provider_balances.query_sutui_balances("now"))
 
     assert len(results) == 2
-    assert [item["balance"] for item in results] == [100.0, 25.0]
+    assert [item["balance"] for item in results] == [1.0, 0.25]
     assert all(item["provider_group"] == "sutui_apiz" for item in results)
     assert all("token-a" not in item["url"] and "token-b" not in item["url"] for item in results)
+
+
+def test_sutui_balance_normalized_from_points_to_credit(monkeypatch):
+    for name in list(provider_balances.os.environ):
+        if name.startswith("SUTUI_SERVER_TOKEN"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SUTUI_SERVER_TOKENS_BIHUO", "token-x")
+    monkeypatch.setenv("SUTUI_API_BASE", "https://api.apiz.ai")
+
+    async def fake_get_json(url, headers):
+        return 200, {"code": 200, "data": {"balance": 130935.1553, "balance_yuan": 1309.35, "unit": "积分"}}, ""
+
+    monkeypatch.setattr(provider_balances, "_get_json", fake_get_json)
+    results = asyncio.run(provider_balances.query_sutui_balances("now"))
+
+    item = results[0]
+    assert item["balance"] == 1309.35
+    assert item["raw_balance"] == 130935.1553
+    assert item["balance_divisor"] == 100.0
+    assert item["balance_unit"] == "credit"
+
+
+def test_sutui_balance_falls_back_to_divide_100(monkeypatch):
+    for name in list(provider_balances.os.environ):
+        if name.startswith("SUTUI_SERVER_TOKEN"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SUTUI_SERVER_TOKENS_BIHUO", "token-y")
+    monkeypatch.setenv("SUTUI_API_BASE", "https://api.apiz.ai")
+
+    async def fake_get_json(url, headers):
+        return 200, {"code": 200, "data": {"balance": 15750}}, ""
+
+    monkeypatch.setattr(provider_balances, "_get_json", fake_get_json)
+    results = asyncio.run(provider_balances.query_sutui_balances("now"))
+
+    assert results[0]["balance"] == 157.5
+
+
+def test_default_low_threshold_is_150():
+    assert provider_balance_monitor._DEFAULT_LOW_THRESHOLD == 150.0
+
+
+def test_credit_balance_compared_against_150():
+    item = {
+        "provider": "sutui_apiz_bihuo_1",
+        "provider_group": "sutui_apiz",
+        "ok": True,
+        "balance": 120.0,
+        "balance_unit": "credit",
+    }
+    assert provider_balance_monitor._is_low_balance(item, 150.0) is True
+    item["balance"] = 160.0
+    assert provider_balance_monitor._is_low_balance(item, 150.0) is False
 
 
 def test_sms_monitor_uses_primary_aliyun_channel(monkeypatch):

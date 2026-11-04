@@ -13,7 +13,7 @@ from ..api.provider_balances import collect_provider_balances
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_SEC = 3600.0
-_DEFAULT_LOW_THRESHOLD = 50.0
+_DEFAULT_LOW_THRESHOLD = 150.0
 _DEFAULT_TIMEOUT_SEC = 30.0
 _DEFAULT_EXCLUDED_PROVIDERS = {"yunwu"}
 

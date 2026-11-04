@@ -20,6 +20,7 @@ router = APIRouter()
 
 _TIMEOUT = 30.0
 _QUOTA_DIVISOR = 500000
+_SUTUI_BALANCE_DIVISOR = 100.0
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 
@@ -439,12 +440,19 @@ async def query_sutui_balances(checked_at: str) -> list[Dict[str, Any]]:
             "status_code": status_code,
             "code": code,
             "checked_at": checked_at,
-            "balance_unit": "upstream_credit",
+            "balance_unit": "credit",
         }
         if balance is not None:
-            item["balance"] = balance
+            # APIZ 接口返回的是「积分」，1 credit = 100 积分；优先用接口给的 balance_yuan
+            yuan = data.get("balance_yuan") if isinstance(data, dict) else None
+            if isinstance(yuan, (int, float)) and not isinstance(yuan, bool):
+                normalized = float(yuan)
+            else:
+                normalized = float(balance) / _SUTUI_BALANCE_DIVISOR
+            item["balance"] = round(normalized, 6)
             item["balance_field"] = balance_key
             item["raw_balance"] = raw_balance
+            item["balance_divisor"] = _SUTUI_BALANCE_DIVISOR
         if not ok:
             item["error"] = str((payload or {}).get("detail") or (payload or {}).get("msg") or text or f"HTTP {status_code}")[:500]
         return item
