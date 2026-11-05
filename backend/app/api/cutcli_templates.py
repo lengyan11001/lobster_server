@@ -5865,3 +5865,23 @@ async def render_cutcli_template_by_id(
         current_user=current_user,
         db=db,
     )
+
+
+class AiTrimSelectBody(BaseModel):
+    sentences: List[Dict[str, Any]] = []
+    target_seconds: float = 0
+
+
+@router.post("/api/cutcli/ai-trim/select")
+async def ai_trim_select(body: AiTrimSelectBody, request: Request, user: User = Depends(get_current_user)):
+    from ..services.ai_trim_select import select_sentences
+
+    auth = (request.headers.get("authorization") or "").strip()
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else auth
+    result = await select_sentences(
+        body.sentences,
+        target_seconds=float(body.target_seconds or 0),
+        token=token,
+        installation_id=(request.headers.get("x-installation-id") or "").strip(),
+    )
+    return {"ok": True, **result}
