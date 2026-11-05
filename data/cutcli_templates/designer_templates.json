@@ -132,7 +132,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 1280,
+      "canvas_height": 2276
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.mp4"
   },
@@ -282,7 +284,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 480,
+      "canvas_height": 848
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_02.mp4"
   },
@@ -419,7 +423,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 276,
+      "canvas_height": 490
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_03.mp4"
   },
@@ -614,7 +620,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 278,
+      "canvas_height": 494
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_04.mp4"
   },
@@ -780,7 +788,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 278,
+      "canvas_height": 494
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_05.mp4"
   },
@@ -946,7 +956,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 338,
+      "canvas_height": 600
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_06.mp4"
   },
@@ -1112,7 +1124,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 1080,
+      "canvas_height": 1920
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_07.mp4"
   },
@@ -1249,7 +1263,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 1080,
+      "canvas_height": 1920
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_08.mp4"
   },
@@ -1415,7 +1431,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 720,
+      "canvas_height": 1280
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_09.mp4"
   },
@@ -1610,7 +1628,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 340,
+      "canvas_height": 600
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_10.mp4"
   },
@@ -1805,7 +1825,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 1920,
+      "canvas_height": 3414
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_11.mp4"
   },
@@ -1942,7 +1964,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 3840,
+      "canvas_height": 6826
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_12.mp4"
   },
@@ -2137,7 +2161,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 1920,
+      "canvas_height": 3414
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_15.mp4"
   },
@@ -2303,7 +2329,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 720,
+      "canvas_height": 1280
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_16.mp4"
   },
@@ -2498,7 +2526,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 720,
+      "canvas_height": 1280
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_17.mp4"
   },
@@ -2693,7 +2723,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 720,
+      "canvas_height": 1280
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_18.mp4"
   },
@@ -2917,7 +2949,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 3840,
+      "canvas_height": 6826
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_19.mp4"
   },
@@ -3112,7 +3146,9 @@
       "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.jpg",
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 1920,
+      "canvas_height": 3414
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.mp4"
   },
@@ -3496,6 +3532,19 @@
             "shadow_distance": 5.0,
             "border_width": 0.08
           }
+        ],
+        "decorations": [
+          {
+            "x": 0.5,
+            "y": 0.77871,
+            "w": 937.5,
+            "h": 152.4,
+            "radius": 0.0,
+            "color": "#ffffff",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 13366
+          }
         ]
       }
     },
@@ -3511,7 +3560,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 768,
+      "canvas_height": 1344
     }
   },
   {
@@ -3807,6 +3858,19 @@
             "shadow_distance": 5.0,
             "border_width": 0.08
           }
+        ],
+        "decorations": [
+          {
+            "x": 0.5,
+            "y": 0.13629,
+            "w": 1302.0,
+            "h": 389.9,
+            "radius": 0.0,
+            "color": "#949494",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 14066
+          }
         ]
       }
     },
@@ -3822,7 +3886,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 768,
+      "canvas_height": 1366
     }
   },
   {
@@ -4046,7 +4112,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 768,
+      "canvas_height": 1366
     }
   },
   {
@@ -4270,7 +4338,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 720,
+      "canvas_height": 1280
     }
   },
   {
@@ -4552,7 +4622,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 720,
+      "canvas_height": 1280
     }
   },
   {
@@ -4863,7 +4935,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 768,
+      "canvas_height": 1344
     }
   },
   {
@@ -5159,6 +5233,30 @@
             "shadow_distance": 5.0,
             "border_width": 0.0400865375995636
           }
+        ],
+        "decorations": [
+          {
+            "x": 0.5,
+            "y": 0.63534,
+            "w": 1486.0,
+            "h": 381.0,
+            "radius": 0.0,
+            "color": "#2e2e2e",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 10466
+          },
+          {
+            "x": 0.28912,
+            "y": 0.54697,
+            "w": 520.1,
+            "h": 111.7,
+            "radius": 79.2,
+            "color": "#ff8920",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 10466
+          }
         ]
       }
     },
@@ -5174,7 +5272,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 768,
+      "canvas_height": 1344
     }
   },
   {
@@ -5456,7 +5556,9 @@
       "style_version": 1,
       "target_width": 1280,
       "target_height": 2276,
-      "fit": "cover"
+      "fit": "cover",
+      "canvas_width": 768,
+      "canvas_height": 1344
     }
   }
 ]
