@@ -80,7 +80,7 @@ def test_h5_home_ai_marketing_entries_do_not_expose_removed_items():
     ):
         assert f'data-marketing-ability="{key}"' in home_block
 
-    for hidden_label in ("创意视频", "爆款TVC", "爆款复刻", "多段视频混剪", "PPT制作", "电商详情页"):
+    for hidden_label in ("创意视频", "爆款TVC", "爆款复刻", "剪辑大师", "PPT制作", "电商详情页"):
         assert hidden_label not in home_block
 
     for removed_key in ("creative_general", "ai_shop_diagnosis", "ai_product_selection"):

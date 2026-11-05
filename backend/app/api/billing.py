@@ -825,7 +825,7 @@ def _feature_charge_trusted(request: Request) -> bool:
     return host in {"127.0.0.1", "::1", "localhost"}
 
 
-@router.post("/api/billing/feature-charge", summary="本机功能按次扣费（如多段混剪成片 100 积分/条）")
+@router.post("/api/billing/feature-charge", summary="本机功能按次扣费（如剪辑大师成片 100 积分/条）")
 def feature_charge(
     body: FeatureChargeIn,
     request: Request,

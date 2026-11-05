@@ -352,7 +352,7 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
     },
     {
         "id": MULTI_CLIP_MIXER_SKILL_ID,
-        "name": "多段视频混剪入口",
+        "name": "剪辑大师入口",
         "store_visibility": "入口权限",
         "unlock_price_yuan": None,
         "unlock_price_credits": None,
