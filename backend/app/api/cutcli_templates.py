@@ -5878,10 +5878,14 @@ async def ai_trim_select(body: AiTrimSelectBody, request: Request, user: User = 
 
     auth = (request.headers.get("authorization") or "").strip()
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else auth
-    result = await select_sentences(
-        body.sentences,
-        target_seconds=float(body.target_seconds or 0),
-        token=token,
-        installation_id=(request.headers.get("x-installation-id") or "").strip(),
-    )
-    return {"ok": True, **result}
+    try:
+        result = await select_sentences(
+            body.sentences,
+            target_seconds=float(body.target_seconds or 0),
+            token=token,
+            installation_id=(request.headers.get("x-installation-id") or "").strip(),
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.warning("[cutcli] ai-trim select failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:300], "keep": []}
