@@ -709,13 +709,75 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
 }
 
 _DESIGNER_MANIFEST = _ROOT_DIR / "data" / "cutcli_templates" / "designer_templates.json"
-if _DESIGNER_MANIFEST.exists():
+# 服务器本地覆盖文件（不进 git）：不改代码、不重启，丢一个 json 就能加/改模板。
+_DESIGNER_MANIFEST_LOCAL = _DESIGNER_MANIFEST.with_name("designer_templates.local.json")
+
+
+def _clone_json(value: Any) -> Any:
     try:
-        for _designer_item in json.loads(_DESIGNER_MANIFEST.read_text(encoding="utf-8")):
-            if isinstance(_designer_item, dict) and _designer_item.get("id"):
-                _TEMPLATES[str(_designer_item["id"])] = _designer_item
-    except Exception as _designer_exc:
-        logger.warning("[cutcli-template] designer manifest load failed: %s", _designer_exc)
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    except Exception:
+        return value
+
+
+_BUILTIN_TEMPLATES: Dict[str, Dict[str, Any]] = _clone_json(_TEMPLATES)
+_designer_manifest_state: Dict[str, Any] = {"signature": "<unloaded>", "ids": []}
+_designer_manifest_lock = threading.Lock()
+
+
+def _designer_manifest_signature() -> Tuple[Any, ...]:
+    def _stat(path: Path) -> Optional[Tuple[int, int]]:
+        try:
+            st = path.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except Exception:
+            return None
+
+    return (_stat(_DESIGNER_MANIFEST), _stat(_DESIGNER_MANIFEST_LOCAL))
+
+
+def _refresh_designer_manifest(force: bool = False) -> None:
+    """热加载设计师模板清单。
+
+    模板是服务器侧配置：改 `data/cutcli_templates/designer_templates.json` 后
+    下一次请求即生效，不需要重启服务，更不需要客户端 OTA 发版。
+    """
+    signature = _designer_manifest_signature()
+    if not force and signature == _designer_manifest_state.get("signature"):
+        return
+    with _designer_manifest_lock:
+        signature = _designer_manifest_signature()
+        if not force and signature == _designer_manifest_state.get("signature"):
+            return
+        merged: Dict[str, Dict[str, Any]] = {}
+        for path in (_DESIGNER_MANIFEST, _DESIGNER_MANIFEST_LOCAL):
+            if not path.exists():
+                continue
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, list):
+                    raise ValueError("designer manifest must be a json list")
+            except Exception as exc:
+                logger.warning("[cutcli-template] designer manifest load failed (%s): %s", path.name, exc)
+                return
+            for item in loaded:
+                if isinstance(item, dict) and item.get("id"):
+                    merged[str(item["id"])] = item
+        items: List[Dict[str, Any]] = list(merged.values())
+        _TEMPLATES.clear()
+        _TEMPLATES.update(_clone_json(_BUILTIN_TEMPLATES))
+        for item in items:
+            _TEMPLATES[str(item["id"])] = item
+        current_ids = set(merged.keys())
+        managed = set(_designer_manifest_state.get("managed") or ())
+        managed |= current_ids
+        _designer_manifest_state["signature"] = signature
+        _designer_manifest_state["ids"] = sorted(current_ids)
+        _designer_manifest_state["managed"] = sorted(managed)
+        logger.info("[cutcli-template] designer manifest loaded: %s templates", len(items))
+
+
+_refresh_designer_manifest(force=True)
 
 
 class TemplateListItem(BaseModel):
@@ -1061,7 +1123,25 @@ def _template_from_row(row: CutcliTemplate) -> Dict[str, Any]:
     }
 
 
+_MANIFEST_SYNC_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("kind", "kind"),
+    ("name", "name"),
+    ("description", "description"),
+    ("aspect_ratio", "aspect_ratio"),
+    ("tags", "tags"),
+    ("input_modes", "input_modes"),
+    ("preserve_source_video", "preserve_source_video"),
+    ("quality_label", "quality_label"),
+    ("preview_url", "preview_url"),
+    ("sample_video_url", "sample_video_url"),
+    ("sample_asset_id", "sample_asset_id"),
+    ("overlay_fields", "overlay_fields"),
+    ("enabled", "enabled"),
+)
+
+
 def _ensure_cutcli_template_seeds(db: Session) -> None:
+    _refresh_designer_manifest()
     try:
         existing = {row.id for row in db.query(CutcliTemplate.id).all()}
     except Exception as exc:
@@ -1085,20 +1165,47 @@ def _ensure_cutcli_template_seeds(db: Session) -> None:
         seeded_style = _caption_style_for_template(template)
         code_meta = template.get("meta") if isinstance(template.get("meta"), dict) else {}
         row_meta = row.meta if isinstance(row.meta, dict) else {}
-        code_style_version = code_meta.get("style_version")
-        if code_style_version and row_meta.get("style_version") != code_style_version:
+        # 服务器侧清单即事实来源：字段有变化就同步，无需改代码/发版。
+        for _attr, _key in _MANIFEST_SYNC_FIELDS:
+            if _key not in template:
+                continue
+            _value = template.get(_key)
+            if _value is None:
+                continue
+            if _attr == "enabled":
+                _value = bool(_value)
+            if _json_clone(getattr(row, _attr)) != _json_clone(_value):
+                setattr(row, _attr, _json_clone(_value))
+                changed = True
+        if _json_clone(row.caption_style or {}) != _json_clone(seeded_style):
             row.caption_style = _json_clone(seeded_style)
-            row.overlay_fields = _json_clone(template.get("overlay_fields") or [])
-            row.meta = {**row_meta, **code_meta}
-            row.description = template.get("description") or row.description
-            row.quality_label = template.get("quality_label") or row.quality_label
             changed = True
+        if code_meta:
+            _merged_meta = {**row_meta, **code_meta}
+            if _json_clone(_merged_meta) != _json_clone(row_meta):
+                row.meta = _json_clone(_merged_meta)
+                changed = True
+        if template.get("sort_order"):
+            _sort_order = int(template.get("sort_order") or 0)
+            if int(row.sort_order or 0) != _sort_order:
+                row.sort_order = _sort_order
+                changed = True
         row_style = _json_clone(row.caption_style or {})
         seeded_orientation = seeded_style.get("orientation_styles") if isinstance(seeded_style.get("orientation_styles"), dict) else {}
         row_orientation = row_style.get("orientation_styles") if isinstance(row_style.get("orientation_styles"), dict) else {}
         if seeded_orientation and not row_orientation.get("landscape"):
             row_style = _ensure_orientation_style_defaults(row_style)
             row.caption_style = row_style
+            changed = True
+    current_ids = set(_designer_manifest_state.get("ids") or ())
+    managed_ids = set(_designer_manifest_state.get("managed") or ())
+    for stale_id in sorted((existing & managed_ids) - current_ids):
+        try:
+            stale_row = db.get(CutcliTemplate, stale_id)
+        except Exception:
+            stale_row = None
+        if stale_row is not None and stale_row.enabled:
+            stale_row.enabled = False
             changed = True
     if changed:
         try:
@@ -1109,6 +1216,7 @@ def _ensure_cutcli_template_seeds(db: Session) -> None:
 
 
 def _list_cutcli_template_defs(db: Session) -> List[Dict[str, Any]]:
+    _refresh_designer_manifest()
     try:
         _ensure_cutcli_template_seeds(db)
         rows = (
@@ -1125,6 +1233,7 @@ def _list_cutcli_template_defs(db: Session) -> List[Dict[str, Any]]:
 
 
 def _get_cutcli_template_def(db: Optional[Session], template_id: str) -> Optional[Dict[str, Any]]:
+    _refresh_designer_manifest()
     tid = (template_id or "").strip()
     if not tid:
         return None
