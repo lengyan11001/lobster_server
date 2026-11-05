@@ -1949,6 +1949,30 @@
             "shadow_distance": 5.0,
             "border_width": 0.08
           }
+        ],
+        "decorations": [
+          {
+            "x": 0.32899,
+            "y": 0.22061,
+            "w": 134.0,
+            "h": 1.3,
+            "radius": 0.0,
+            "color": "#f28500",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 15066
+          },
+          {
+            "x": 0.32909,
+            "y": 0.30822,
+            "w": 134.0,
+            "h": 1.3,
+            "radius": 0.0,
+            "color": "#f28500",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 15066
+          }
         ]
       }
     },
@@ -2145,6 +2169,19 @@
             "shadow_alpha": 0.5040384531021118,
             "shadow_distance": 5.0,
             "border_width": 0.08
+          }
+        ],
+        "decorations": [
+          {
+            "x": 0.09718,
+            "y": 0.2601,
+            "w": 31.2,
+            "h": 8.7,
+            "radius": 0.0,
+            "color": "#ffffff",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 15000
           }
         ]
       }
