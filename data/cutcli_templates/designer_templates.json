@@ -136,7 +136,8 @@
       "canvas_width": 1280,
       "canvas_height": 2276
     },
-    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.mp4"
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_01.mp4",
+    "enabled": false
   },
   {
     "id": "designer_02",
@@ -178,22 +179,22 @@
       },
       {
         "key": "text_3",
-        "label": "2600 尼特高亮",
-        "default": "2600 尼特高亮",
+        "label": "✓ 2600 尼特高亮",
+        "default": "✓ 2600 尼特高亮",
         "multiline": false,
         "max_length": 20
       },
       {
         "key": "text_4",
-        "label": "IP68 防尘防水",
-        "default": "IP68 防尘防水",
+        "label": "✓ IP68 防尘防水",
+        "default": "✓ IP68 防尘防水",
         "multiline": false,
         "max_length": 20
       },
       {
         "key": "text_5",
-        "label": "全地形越野适配",
-        "default": "全地形越野适配",
+        "label": "✓ 全地形越野适配",
+        "default": "✓ 全地形越野适配",
         "multiline": false,
         "max_length": 20
       }
@@ -241,7 +242,7 @@
             "scale_x": 92.0,
             "scale_y": 92.0,
             "color": "&H00FFFFFF",
-            "default": "2600 尼特高亮"
+            "default": "✓ 2600 尼特高亮"
           },
           {
             "key": "text_4",
@@ -254,7 +255,7 @@
             "scale_x": 92.0,
             "scale_y": 92.0,
             "color": "&H00FFFFFF",
-            "default": "IP68 防尘防水"
+            "default": "✓ IP68 防尘防水"
           },
           {
             "key": "text_5",
@@ -267,7 +268,20 @@
             "scale_x": 92.0,
             "scale_y": 92.0,
             "color": "&H00FFFFFF",
-            "default": "全地形越野适配"
+            "default": "✓ 全地形越野适配"
+          }
+        ],
+        "decorations": [
+          {
+            "x": 0.5,
+            "y": 0.2013,
+            "w": 1102.0,
+            "h": 236.0,
+            "radius": 45.0,
+            "color": "#ff8920",
+            "alpha": 1.0,
+            "start_ms": 0,
+            "end_ms": 16333
           }
         ]
       }
