@@ -1362,7 +1362,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5022355914115906,
             "shadow_distance": 9.775240898132324,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "vertical_text": true
           },
           {
             "key": "text_2",
@@ -1406,7 +1407,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.3628966212272644,
             "shadow_distance": 9.777644157409668,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "vertical_text": true
           },
           {
             "key": "text_4",
@@ -4502,7 +4504,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "vertical_text": true
           },
           {
             "key": "text_2",
