@@ -2458,5 +2458,1745 @@
       "fit": "cover"
     },
     "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_20.mp4"
+  },
+  {
+    "id": "designer_23",
+    "kind": "auto_caption",
+    "name": "孩子写作业磨蹭怎么办",
+    "description": "育儿口播定时字幕版式，顶部固定标题 + 逐句字幕。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "育儿",
+      "口播",
+      "字幕",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_23.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_23.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "很多家长都头疼",
+        "default": "很多家长都头疼",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "孩子写作业磨磨蹭蹭",
+        "default": "孩子写作业磨磨蹭蹭",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "催一催动一动",
+        "default": "催一催动一动",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "不催就发呆",
+        "default": "不催就发呆",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "今天教你一个",
+        "default": "今天教你一个",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_6",
+        "label": "不用吼不用骂的办法",
+        "default": "不用吼不用骂的办法",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_7",
+        "label": "帮孩子改掉拖拉",
+        "default": "帮孩子改掉拖拉",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_8",
+        "label": "主动写作业",
+        "default": "主动写作业",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_9",
+        "label": "想知道怎么做",
+        "default": "想知道怎么做",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_10",
+        "label": "接着往下看",
+        "default": "接着往下看",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_11",
+        "label": "家长们注意了",
+        "default": "家长们注意了",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_12",
+        "label": "孩子写作业磨蹭怎么办",
+        "default": "孩子写作业磨蹭怎么办",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_23",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 1500000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "很多家长都头疼"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 1500000,
+            "end_ms": 3366666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "孩子写作业磨磨蹭蹭"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 3433333,
+            "end_ms": 4400000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "催一催动一动"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 4400000,
+            "end_ms": 5466666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "不催就发呆"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 5700000,
+            "end_ms": 6766666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "今天教你一个"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 6766666,
+            "end_ms": 8433333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "不用吼不用骂的办法"
+          },
+          {
+            "key": "text_7",
+            "start_ms": 8433333,
+            "end_ms": 9866666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "帮孩子改掉拖拉"
+          },
+          {
+            "key": "text_8",
+            "start_ms": 10066666,
+            "end_ms": 11166666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "主动写作业"
+          },
+          {
+            "key": "text_9",
+            "start_ms": 11166666,
+            "end_ms": 12300000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "想知道怎么做"
+          },
+          {
+            "key": "text_10",
+            "start_ms": 12300000,
+            "end_ms": 13366666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00000000",
+            "default": "接着往下看"
+          },
+          {
+            "key": "text_11",
+            "start_ms": 0,
+            "end_ms": 13366666,
+            "x": 0.5,
+            "y": 0.10331,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 80.32,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H0000DEFF",
+            "default": "家长们注意了"
+          },
+          {
+            "key": "text_12",
+            "start_ms": 0,
+            "end_ms": 13366666,
+            "x": 0.5,
+            "y": 0.17015,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 80.32,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "孩子写作业磨蹭怎么办"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_23.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_24",
+    "kind": "auto_caption",
+    "name": "每天3分钟 气血旺",
+    "description": "养生口播定时字幕版式，顶部大字 + 逐句字幕。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "养生",
+      "口播",
+      "字幕",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_24.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_24.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "千万不要直接喝冷水",
+        "default": "千万不要直接喝冷水",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "很多人一直都做错了",
+        "default": "很多人一直都做错了",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "早上阳气刚刚升起",
+        "default": "早上阳气刚刚升起",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "一杯冷水下去",
+        "default": "一杯冷水下去",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "很容易耗掉我们的气血",
+        "default": "很容易耗掉我们的气血",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_6",
+        "label": "想养好气血",
+        "default": "想养好气血",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_7",
+        "label": "早上第一杯水该怎么喝",
+        "default": "早上第一杯水该怎么喝",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_8",
+        "label": "下一条我教你正确做法",
+        "default": "下一条我教你正确做法",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_9",
+        "label": "每天3分钟   / 气血旺到",
+        "default": "每天3分钟  \n气血旺到冒红光",
+        "multiline": true,
+        "max_length": 27
+      }
+    ],
+    "caption_style": {
+      "id": "designer_24",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 1800000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "千万不要直接喝冷水"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 2000000,
+            "end_ms": 3766666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "很多人一直都做错了"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 3766666,
+            "end_ms": 5500000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "早上阳气刚刚升起"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 5500000,
+            "end_ms": 6766666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "一杯冷水下去"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 6766666,
+            "end_ms": 8366666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "很容易耗掉我们的气血"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 8366666,
+            "end_ms": 9600000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "想养好气血"
+          },
+          {
+            "key": "text_7",
+            "start_ms": 9866666,
+            "end_ms": 11800000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "早上第一杯水该怎么喝"
+          },
+          {
+            "key": "text_8",
+            "start_ms": 12066666,
+            "end_ms": 14066666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 65.92,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "下一条我教你正确做法"
+          },
+          {
+            "key": "text_9",
+            "start_ms": 0,
+            "end_ms": 14066666,
+            "x": 0.5,
+            "y": 0.13965,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 84.41,
+            "scale_x": 112.25,
+            "scale_y": 112.25,
+            "color": "&H00374AAB",
+            "default": "每天3分钟  \n气血旺到冒红光"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_24.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_25",
+    "kind": "auto_caption",
+    "name": "情绪稳定",
+    "description": "情绪口播定时字幕版式，中部主题 + 逐句字幕。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "情绪",
+      "口播",
+      "字幕",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_25.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_25.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "真正厉害的人",
+        "default": "真正厉害的人",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "都自带情绪稳定",
+        "default": "都自带情绪稳定",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "不被别人的一句话裹挟",
+        "default": "不被别人的一句话裹挟",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "不被突发的事情打乱节奏",
+        "default": "不被突发的事情打乱节奏",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "Emotional stab",
+        "default": "Emotional stability",
+        "multiline": false,
+        "max_length": 31
+      },
+      {
+        "key": "text_6",
+        "label": "「情绪稳定」",
+        "default": "「情绪稳定」",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_25",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 1000000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "真正厉害的人"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 1000000,
+            "end_ms": 2533333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "都自带情绪稳定"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 2533333,
+            "end_ms": 4733333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "不被别人的一句话裹挟"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 4733333,
+            "end_ms": 7000000,
+            "x": 0.5,
+            "y": 0.78001,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "不被突发的事情打乱节奏"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 7000000,
+            "x": 0.5,
+            "y": 0.67474,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 40.53,
+            "scale_x": 136.59,
+            "scale_y": 136.59,
+            "color": "&H00FFFFFF",
+            "default": "Emotional stability"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 0,
+            "end_ms": 7000000,
+            "x": 0.5,
+            "y": 0.6008,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 106.54,
+            "scale_x": 136.59,
+            "scale_y": 136.59,
+            "color": "&H00FFFFFF",
+            "default": "「情绪稳定」"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_25.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_28",
+    "kind": "auto_caption",
+    "name": "ROADBOOK 驭途",
+    "description": "户外产品大字版式，ROADBOOK/驭途/奔赴旷野。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "户外",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_28.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_28.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "ROADBOOK",
+        "default": "ROADBOOK",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "驭途",
+        "default": "驭途",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "奔赴旷野",
+        "default": "奔赴旷野",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "BEN FU",
+        "default": "BEN FU",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "无信号亦可锁定方位 / 赴山",
+        "default": "无信号亦可锁定方位\n赴山海自有清晰前路",
+        "multiline": true,
+        "max_length": 31
+      },
+      {
+        "key": "text_6",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_28",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.06693,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 201.64,
+            "scale_y": 349.0,
+            "color": "&H00FFFFFF",
+            "default": "ROADBOOK"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.29638,
+            "y": 0.16842,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 116.49,
+            "scale_x": 204.0,
+            "scale_y": 204.0,
+            "color": "&H000085F2",
+            "default": "驭途"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.73815,
+            "y": 0.16424,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 86.0,
+            "scale_y": 86.0,
+            "color": "&H000085F2",
+            "default": "奔赴旷野"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.73815,
+            "y": 0.20559,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 82.4,
+            "scale_x": 86.0,
+            "scale_y": 86.0,
+            "color": "&H000085F2",
+            "default": "BEN FU"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.85521,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 70.16,
+            "scale_y": 70.16,
+            "color": "&H00FFFFFF",
+            "default": "无信号亦可锁定方位\n赴山海自有清晰前路"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 0,
+            "end_ms": 16000000,
+            "x": 0.5,
+            "y": 0.7485,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 108.05,
+            "scale_y": 193.59,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_28.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_29",
+    "kind": "auto_caption",
+    "name": "EXTREME 无畏",
+    "description": "户外产品大字版式，EXTREME/无畏/HUGEROCK。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "产品",
+      "户外",
+      "大字",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_29.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_29.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "EXTREME",
+        "default": "EXTREME",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "环境考验设备 / 强悍支撑远",
+        "default": "环境考验设备\n强悍支撑远征",
+        "multiline": true,
+        "max_length": 25
+      },
+      {
+        "key": "text_3",
+        "label": "稳定锁星 耐造抗造 / 每一",
+        "default": "稳定锁星 耐造抗造\n每一段穿越皆有方向",
+        "multiline": true,
+        "max_length": 31
+      },
+      {
+        "key": "text_4",
+        "label": "畏",
+        "default": "畏",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "无",
+        "default": "无",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_6",
+        "label": "向野出发",
+        "default": "向野出发",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_7",
+        "label": "WANDER",
+        "default": "WANDER",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_8",
+        "label": "HUGEROCK X72",
+        "default": "HUGEROCK X72",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_29",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.07321,
+            "y": 0.5,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 299.0,
+            "scale_y": 386.0,
+            "color": "&H00FFFFFF",
+            "default": "EXTREME"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.63845,
+            "y": 0.15609,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 117.39,
+            "scale_y": 117.39,
+            "color": "&H00FFFFFF",
+            "default": "环境考验设备\n强悍支撑远征"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.77814,
+            "y": 0.30064,
+            "font_family": "阿里巴巴普惠体 3.0 65 Medium",
+            "font_size": 66.57,
+            "scale_x": 49.41,
+            "scale_y": 49.41,
+            "color": "&H00FFFFFF",
+            "default": "稳定锁星 耐造抗造\n每一段穿越皆有方向"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.53866,
+            "y": 0.72607,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 187.9,
+            "scale_x": 146.0,
+            "scale_y": 146.0,
+            "color": "&H000085F2",
+            "default": "畏"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.32335,
+            "y": 0.72699,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 116.49,
+            "scale_x": 146.0,
+            "scale_y": 146.0,
+            "color": "&H000085F2",
+            "default": "无"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.31667,
+            "y": 0.78991,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 60.36,
+            "scale_x": 62.0,
+            "scale_y": 62.0,
+            "color": "&H00FFFFFF",
+            "default": "向野出发"
+          },
+          {
+            "key": "text_7",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.32339,
+            "y": 0.66971,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 60.36,
+            "scale_x": 62.0,
+            "scale_y": 62.0,
+            "color": "&H00FFFFFF",
+            "default": "WANDER"
+          },
+          {
+            "key": "text_8",
+            "start_ms": 0,
+            "end_ms": 15000000,
+            "x": 0.54669,
+            "y": 0.83323,
+            "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+            "font_size": 82.4,
+            "scale_x": 108.05,
+            "scale_y": 108.0,
+            "color": "&H00FFFFFF",
+            "default": "HUGEROCK X72"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_29.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_30",
+    "kind": "auto_caption",
+    "name": "比喝油还长肉的5种食物",
+    "description": "减脂口播定时字幕版式，顶部大字 + 逐句字幕。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "减脂",
+      "口播",
+      "字幕",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_30.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_30.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "比喝油还长肉的",
+        "default": "比喝油还长肉的",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "【5种食物】",
+        "default": "【5种食物】",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "很多人减脂总不掉秤",
+        "default": "很多人减脂总不掉秤",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "不是你吃的多",
+        "default": "不是你吃的多",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "是选错了食物",
+        "default": "是选错了食物",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_6",
+        "label": "这5样东西热量比油还吓人",
+        "default": "这5样东西热量比油还吓人",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_7",
+        "label": "平时看着清淡",
+        "default": "平时看着清淡",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_8",
+        "label": "其实特别容易长胖",
+        "default": "其实特别容易长胖",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_9",
+        "label": "想瘦的赶紧收藏",
+        "default": "想瘦的赶紧收藏",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_30",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 11733333,
+            "x": 0.5,
+            "y": 0.09148,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 142.15,
+            "scale_y": 142.15,
+            "color": "&H000085F2",
+            "default": "比喝油还长肉的"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 0,
+            "end_ms": 11733333,
+            "x": 0.5,
+            "y": 0.16917,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 122.0,
+            "scale_y": 122.0,
+            "color": "&H0000DEFF",
+            "default": "【5种食物】"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 0,
+            "end_ms": 2133333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "很多人减脂总不掉秤"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 2133333,
+            "end_ms": 3166666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "不是你吃的多"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 3166666,
+            "end_ms": 4700000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "是选错了食物"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 4700000,
+            "end_ms": 7500000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "这5样东西热量比油还吓人"
+          },
+          {
+            "key": "text_7",
+            "start_ms": 7500000,
+            "end_ms": 8533333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "平时看着清淡"
+          },
+          {
+            "key": "text_8",
+            "start_ms": 8533333,
+            "end_ms": 10100000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "其实特别容易长胖"
+          },
+          {
+            "key": "text_9",
+            "start_ms": 10100000,
+            "end_ms": 11733333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "想瘦的赶紧收藏"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_30.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_31",
+    "kind": "auto_caption",
+    "name": "新型养生加盟",
+    "description": "养生招商口播定时字幕版式，中部标题 + 逐句字幕。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "养生",
+      "招商",
+      "口播",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_31.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_31.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "大健康时代",
+        "default": "大健康时代",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "养生赛道迎来新机遇",
+        "default": "养生赛道迎来新机遇",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "不用大店面",
+        "default": "不用大店面",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "门槛低市场广",
+        "default": "门槛低市场广",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "想找稳定副业",
+        "default": "想找稳定副业",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_6",
+        "label": "开店创业的朋友",
+        "default": "开店创业的朋友",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_7",
+        "label": "这个新兴养生项目",
+        "default": "这个新兴养生项目",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_8",
+        "label": "新型养生加盟",
+        "default": "新型养生加盟",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_9",
+        "label": "养生新风口",
+        "default": "养生新风口",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_31",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 1200000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "大健康时代"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 1200000,
+            "end_ms": 3300000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "养生赛道迎来新机遇"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 3300000,
+            "end_ms": 4366666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "不用大店面"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 4366666,
+            "end_ms": 5933333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "门槛低市场广"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 5933333,
+            "end_ms": 7266666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "想找稳定副业"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 7266666,
+            "end_ms": 8766666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "开店创业的朋友"
+          },
+          {
+            "key": "text_7",
+            "start_ms": 8766666,
+            "end_ms": 10466666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "这个新兴养生项目"
+          },
+          {
+            "key": "text_8",
+            "start_ms": 0,
+            "end_ms": 10466666,
+            "x": 0.5,
+            "y": 0.63534,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 142.9,
+            "scale_y": 142.9,
+            "color": "&H00FFFFFF",
+            "default": "新型养生加盟"
+          },
+          {
+            "key": "text_9",
+            "start_ms": 0,
+            "end_ms": 10466666,
+            "x": 0.28912,
+            "y": 0.54697,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 72.0,
+            "scale_y": 72.0,
+            "color": "&H00FFFFFF",
+            "default": "养生新风口"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_31.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
+  },
+  {
+    "id": "designer_32",
+    "kind": "auto_caption",
+    "name": "一个女生最致命的缺陷",
+    "description": "情感口播定时字幕版式，中部大字 + 逐句字幕。",
+    "aspect_ratio": "9:16",
+    "default_duration": 0,
+    "tags": [
+      "情感",
+      "口播",
+      "字幕",
+      "竖屏"
+    ],
+    "input_modes": [
+      "upload",
+      "asset_id"
+    ],
+    "preserve_source_video": true,
+    "render_modes": [
+      "ffmpeg"
+    ],
+    "quality_label": "设计师口播定时文字版式",
+    "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_32.mp4",
+    "preview_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_32.mp4",
+    "overlay_fields": [
+      {
+        "key": "text_1",
+        "label": "一个女生最致命的缺陷",
+        "default": "一个女生最致命的缺陷",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_2",
+        "label": "不是不够漂亮",
+        "default": "不是不够漂亮",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_3",
+        "label": "也不是不够优秀",
+        "default": "也不是不够优秀",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_4",
+        "label": "而是没有底线的心软",
+        "default": "而是没有底线的心软",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_5",
+        "label": "凡事都先委屈自己",
+        "default": "凡事都先委屈自己",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_6",
+        "label": "好好爱自己",
+        "default": "好好爱自己",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_7",
+        "label": "一个女生",
+        "default": "一个女生",
+        "multiline": false,
+        "max_length": 24
+      },
+      {
+        "key": "text_8",
+        "label": "最致命的缺陷",
+        "default": "最致命的缺陷",
+        "multiline": false,
+        "max_length": 24
+      }
+    ],
+    "caption_style": {
+      "id": "designer_32",
+      "ass_layout": "designer_timeline",
+      "overlay_style": {
+        "layout": "designer_timeline",
+        "text_tracks": [
+          {
+            "key": "text_1",
+            "start_ms": 0,
+            "end_ms": 1900000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "一个女生最致命的缺陷"
+          },
+          {
+            "key": "text_2",
+            "start_ms": 1900000,
+            "end_ms": 3200000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "不是不够漂亮"
+          },
+          {
+            "key": "text_3",
+            "start_ms": 3200000,
+            "end_ms": 4566666,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "也不是不够优秀"
+          },
+          {
+            "key": "text_4",
+            "start_ms": 4566666,
+            "end_ms": 6400000,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "而是没有底线的心软"
+          },
+          {
+            "key": "text_5",
+            "start_ms": 6400000,
+            "end_ms": 8333333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "凡事都先委屈自己"
+          },
+          {
+            "key": "text_6",
+            "start_ms": 8333333,
+            "end_ms": 9133333,
+            "x": 0.5,
+            "y": 0.78,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 71.42,
+            "scale_x": 100.0,
+            "scale_y": 100.0,
+            "color": "&H00FFFFFF",
+            "default": "好好爱自己"
+          },
+          {
+            "key": "text_7",
+            "start_ms": 0,
+            "end_ms": 9133333,
+            "x": 0.35791,
+            "y": 0.57769,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 166.35,
+            "scale_y": 166.35,
+            "color": "&H00FFFFFF",
+            "default": "一个女生"
+          },
+          {
+            "key": "text_8",
+            "start_ms": 0,
+            "end_ms": 9133333,
+            "x": 0.5,
+            "y": 0.67669,
+            "font_family": "阿里巴巴普惠体 3.0 75 SemiBold",
+            "font_size": 82.4,
+            "scale_x": 166.35,
+            "scale_y": 166.35,
+            "color": "&H000085F2",
+            "default": "最致命的缺陷"
+          }
+        ]
+      }
+    },
+    "meta": {
+      "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
+      "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
+      "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
+      "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/designer/designer_32.jpg",
+      "source_audio_volume": 1.0,
+      "audio_bed_url": "",
+      "skip_stt": true,
+      "style_version": 1,
+      "target_width": 1280,
+      "target_height": 2276,
+      "fit": "cover"
+    }
   }
 ]
