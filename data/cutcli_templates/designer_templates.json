@@ -71,7 +71,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6013942360877991,
             "shadow_distance": 9.835336685180664,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.08
           },
           {
             "key": "text_2",
@@ -93,7 +94,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6013942360877991,
             "shadow_distance": 9.835336685180664,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.1
           },
           {
             "key": "text_3",
@@ -115,7 +117,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6013942360877991,
             "shadow_distance": 9.835336685180664,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -376,7 +379,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40319710969924927,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -398,7 +402,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40319710969924927,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.12
           },
           {
             "key": "text_3",
@@ -420,7 +425,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40319710969924927,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.12
           }
         ]
       }
@@ -529,7 +535,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40088942646980286,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -551,7 +558,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40088942646980286,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -573,7 +581,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40088942646980286,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -595,7 +604,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40088942646980286,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -617,7 +627,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40088942646980286,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -719,7 +730,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.39775240421295166,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -741,7 +753,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.39775240421295166,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -763,7 +776,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.39775240421295166,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_4",
@@ -785,7 +799,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           }
         ]
       }
@@ -887,7 +902,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5008293390274048,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -909,7 +925,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5008293390274048,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -931,7 +948,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.1981009542942047,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -953,7 +971,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.1981009542942047,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -1055,7 +1074,9 @@
             "shadow_color": "#000000FF",
             "shadow_alpha": 0.280000001192093,
             "shadow_distance": 3.0,
-            "border_width": 0.059999998658895
+            "border_width": 0.059999998658895,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.05
           },
           {
             "key": "text_2",
@@ -1077,7 +1098,9 @@
             "shadow_color": "#000000FF",
             "shadow_alpha": 0.280000001192093,
             "shadow_distance": 3.0,
-            "border_width": 0.059999998658895
+            "border_width": 0.059999998658895,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.1
           },
           {
             "key": "text_3",
@@ -1099,7 +1122,9 @@
             "shadow_color": "#000000FF",
             "shadow_alpha": 0.340000003576279,
             "shadow_distance": 2.0,
-            "border_width": 0.059999998658895
+            "border_width": 0.059999998658895,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.1
           },
           {
             "key": "text_4",
@@ -1121,7 +1146,9 @@
             "shadow_color": "#000000FF",
             "shadow_alpha": 0.280000001192093,
             "shadow_distance": 3.0,
-            "border_width": 0.059999998658895
+            "border_width": 0.059999998658895,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.1
           }
         ]
       }
@@ -1216,7 +1243,9 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.3981490433216095,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.5
           },
           {
             "key": "text_2",
@@ -1238,7 +1267,9 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.3981490433216095,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.17,
+            "letter_spacing": 0.1
           },
           {
             "key": "text_3",
@@ -1260,7 +1291,9 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.3981490433216095,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22,
+            "letter_spacing": 0.1
           }
         ]
       }
@@ -1363,7 +1396,9 @@
             "shadow_alpha": 0.5022355914115906,
             "shadow_distance": 9.775240898132324,
             "border_width": 0.08,
-            "vertical_text": true
+            "vertical_text": true,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.05
           },
           {
             "key": "text_2",
@@ -1385,7 +1420,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5136778950691223,
             "shadow_distance": 10.13822078704834,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -1408,7 +1444,9 @@
             "shadow_alpha": 0.3628966212272644,
             "shadow_distance": 9.777644157409668,
             "border_width": 0.08,
-            "vertical_text": true
+            "vertical_text": true,
+            "line_spacing": 0.22,
+            "letter_spacing": 0.2
           },
           {
             "key": "text_4",
@@ -1430,7 +1468,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40399038791656494,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.52
           }
         ]
       }
@@ -1539,7 +1578,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5035216212272644,
             "shadow_distance": 10.025239944458008,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -1561,7 +1601,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5035216212272644,
             "shadow_distance": 10.025239944458008,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_3",
@@ -1583,7 +1624,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5035216212272644,
             "shadow_distance": 10.025239944458008,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_4",
@@ -1605,7 +1647,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5035216212272644,
             "shadow_distance": 10.025239944458008,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_5",
@@ -1627,7 +1670,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5035216212272644,
             "shadow_distance": 10.025239944458008,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -1736,7 +1780,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40191105008125305,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -1758,7 +1803,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40191105008125305,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -1780,7 +1826,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40191105008125305,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -1802,7 +1849,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40191105008125305,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -1824,7 +1872,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.40191105008125305,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           }
         ]
       }
@@ -1919,7 +1968,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.302632212638855,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -1941,7 +1991,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.302632212638855,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -1963,7 +2014,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.302632212638855,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.32
           }
         ],
         "decorations": [
@@ -2096,7 +2148,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4981850981712342,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -2118,7 +2171,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4981850981712342,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -2140,7 +2194,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4981850981712342,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -2162,7 +2217,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4981850981712342,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -2184,7 +2240,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5040384531021118,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           }
         ],
         "decorations": [
@@ -2299,7 +2356,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_2",
@@ -2321,7 +2379,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_3",
@@ -2343,7 +2402,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -2365,7 +2425,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -2474,7 +2535,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -2496,7 +2558,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -2518,7 +2581,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -2540,7 +2604,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -2562,7 +2627,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           }
         ]
       }
@@ -2671,7 +2737,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_2",
@@ -2693,7 +2760,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -2715,7 +2783,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -2737,7 +2806,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -2759,7 +2829,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -2875,7 +2946,8 @@
             "shadow_color": "#bcbcbc",
             "shadow_alpha": 0.545396625995636,
             "shadow_distance": 9.634615898132324,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -2897,7 +2969,8 @@
             "shadow_color": "#bcbcbc",
             "shadow_alpha": 0.545396625995636,
             "shadow_distance": 9.634615898132324,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -2919,7 +2992,8 @@
             "shadow_color": "#bcbcbc",
             "shadow_alpha": 0.3011658787727356,
             "shadow_distance": 4.694712162017822,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -2941,7 +3015,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.545396625995636,
             "shadow_distance": 4.770432949066162,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_5",
@@ -2963,7 +3038,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.545396625995636,
             "shadow_distance": 5.231971263885498,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_6",
@@ -2985,7 +3061,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.545396625995636,
             "shadow_distance": 5.231971263885498,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ]
       }
@@ -3094,7 +3171,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4052523970603943,
             "shadow_distance": 4.692307472229004,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_2",
@@ -3116,7 +3194,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4052523970603943,
             "shadow_distance": 4.692307472229004,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.12
           },
           {
             "key": "text_3",
@@ -3138,7 +3217,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4052523970603943,
             "shadow_distance": 4.692307472229004,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -3160,7 +3240,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4052523970603943,
             "shadow_distance": 4.692307472229004,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.12
           },
           {
             "key": "text_5",
@@ -3182,7 +3263,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.4052523970603943,
             "shadow_distance": 4.692307472229004,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           }
         ]
       }
@@ -3341,7 +3423,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -3363,7 +3446,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -3385,7 +3469,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -3407,7 +3492,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -3429,7 +3515,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_6",
@@ -3451,7 +3538,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_7",
@@ -3473,7 +3561,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_8",
@@ -3495,7 +3584,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_9",
@@ -3517,7 +3607,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_10",
@@ -3539,7 +3630,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_11",
@@ -3561,7 +3653,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.0,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_12",
@@ -3583,7 +3676,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.8999999761581421,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           }
         ],
         "decorations": [
@@ -3733,7 +3827,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -3755,7 +3850,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -3777,7 +3873,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -3799,7 +3896,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -3821,7 +3919,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_6",
@@ -3843,7 +3942,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_7",
@@ -3865,7 +3965,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_8",
@@ -3887,7 +3988,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_9",
@@ -3909,7 +4011,9 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.599879801273346,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22,
+            "letter_spacing": 0.1
           }
         ],
         "decorations": [
@@ -4038,7 +4142,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49837741255760193,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -4060,7 +4165,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49837741255760193,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -4082,7 +4188,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49837741255760193,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -4104,7 +4211,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49837741255760193,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -4126,7 +4234,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49837741255760193,
             "shadow_distance": 5.0,
-            "border_width": 0.03655768930912018
+            "border_width": 0.03655768930912018,
+            "line_spacing": 0.02
           },
           {
             "key": "text_6",
@@ -4148,7 +4257,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49837741255760193,
             "shadow_distance": 5.0,
-            "border_width": 0.03655768930912018
+            "border_width": 0.03655768930912018,
+            "line_spacing": 0.02
           }
         ]
       }
@@ -4264,7 +4374,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_2",
@@ -4286,7 +4397,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.08
           },
           {
             "key": "text_3",
@@ -4308,7 +4420,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_4",
@@ -4330,7 +4443,9 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02,
+            "letter_spacing": 0.05
           },
           {
             "key": "text_5",
@@ -4352,7 +4467,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_6",
@@ -4374,7 +4490,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           }
         ]
       }
@@ -4505,7 +4622,8 @@
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
             "border_width": 0.08,
-            "vertical_text": true
+            "vertical_text": true,
+            "line_spacing": -0.13
           },
           {
             "key": "text_2",
@@ -4527,7 +4645,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_3",
@@ -4549,7 +4668,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.22
           },
           {
             "key": "text_4",
@@ -4571,7 +4691,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.0
           },
           {
             "key": "text_5",
@@ -4593,7 +4714,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.0
           },
           {
             "key": "text_6",
@@ -4615,7 +4737,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_7",
@@ -4637,7 +4760,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           },
           {
             "key": "text_8",
@@ -4659,7 +4783,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.49617788195610046,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": -0.13
           }
         ]
       }
@@ -4796,7 +4921,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.04749999940395355
+            "border_width": 0.04749999940395355,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -4818,7 +4944,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.0511658638715744
+            "border_width": 0.0511658638715744,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -4840,7 +4967,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -4862,7 +4990,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -4884,7 +5013,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_6",
@@ -4906,7 +5036,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_7",
@@ -4928,7 +5059,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_8",
@@ -4950,7 +5082,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_9",
@@ -4972,7 +5105,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.6021514534950256,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           }
         ]
       }
@@ -5109,7 +5243,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -5131,7 +5266,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -5153,7 +5289,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -5175,7 +5312,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -5197,7 +5335,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_6",
@@ -5219,7 +5358,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_7",
@@ -5241,7 +5381,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.597079336643219,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_8",
@@ -5263,7 +5404,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.0400865375995636
+            "border_width": 0.0400865375995636,
+            "line_spacing": 0.02
           },
           {
             "key": "text_9",
@@ -5285,7 +5427,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.0400865375995636
+            "border_width": 0.0400865375995636,
+            "line_spacing": 0.02
           }
         ],
         "decorations": [
@@ -5439,7 +5582,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5038942098617554,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_2",
@@ -5461,7 +5605,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5038942098617554,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_3",
@@ -5483,7 +5628,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5038942098617554,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_4",
@@ -5505,7 +5651,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5038942098617554,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_5",
@@ -5527,7 +5674,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5038942098617554,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_6",
@@ -5549,7 +5697,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.5038942098617554,
             "shadow_distance": 5.0,
-            "border_width": 0.08
+            "border_width": 0.08,
+            "line_spacing": 0.02
           },
           {
             "key": "text_7",
@@ -5571,7 +5720,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.04983894154429436
+            "border_width": 0.04983894154429436,
+            "line_spacing": 0.02
           },
           {
             "key": "text_8",
@@ -5593,7 +5743,8 @@
             "shadow_color": "#000000",
             "shadow_alpha": 0.9,
             "shadow_distance": 5.0,
-            "border_width": 0.04983894154429436
+            "border_width": 0.04983894154429436,
+            "line_spacing": 0.02
           }
         ]
       }
