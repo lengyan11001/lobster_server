@@ -21,18 +21,51 @@ _SYSTEM_PROMPT = (
 
 
 def _model() -> str:
-    return (getattr(settings, "lobster_default_sutui_chat_model", None) or "deepseek-v3").strip()
+    # 留空 = 交给服务端默认链路（优先 deepseek），用户充值后自动生效
+    return (getattr(settings, "lobster_default_sutui_chat_model", None) or "").strip()
 
 
 def _base() -> str:
     return f"http://127.0.0.1:{int(getattr(settings, 'port', 8000) or 8000)}"
 
 
+def _message_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return ""
+
+
 def _content_text(data: Dict[str, Any]) -> str:
     try:
-        return str(data["choices"][0]["message"]["content"] or "")
+        text = _message_text(data["choices"][0]["message"])
+        if text.strip():
+            return text
     except Exception:
-        return str(data.get("text") or data.get("content") or "")
+        pass
+    try:
+        text = _message_text(data["choices"][0])
+        if text.strip():
+            return text
+    except Exception:
+        pass
+    for key in ("text", "content", "output_text", "result", "response"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -71,7 +104,6 @@ async def select_sentences(
 
     hint = f"目标时长约 {target_seconds:.0f} 秒（仅作参考上限，不要为凑时长删有效内容）。" if target_seconds else "没有目标时长，按内容决定长度。"
     payload = {
-        "model": _model(),
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": hint + "\n\n" + "\n".join(lines)},
@@ -79,6 +111,9 @@ async def select_sentences(
         "stream": False,
         "temperature": 0.1,
     }
+    model = _model()
+    if model:
+        payload["model"] = model
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
