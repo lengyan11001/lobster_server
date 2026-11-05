@@ -62,7 +62,16 @@
             "scale_x": 82.01,
             "scale_y": 82.24,
             "color": "&H00FFFFFF",
-            "default": "GPSTest\n专业测向搜星"
+            "default": "GPSTest\n专业测向搜星",
+            "bg_style": 1,
+            "bg_color": "#bcbcbc",
+            "bg_alpha": 0.6135576923076923,
+            "bg_radius": 0.33493990384615385,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6013942360877991,
+            "shadow_distance": 9.835336685180664,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -75,7 +84,16 @@
             "scale_x": 82.01,
             "scale_y": 82.24,
             "color": "&H00FFFFFF",
-            "default": "Windy\n实时掌握天气"
+            "default": "Windy\n实时掌握天气",
+            "bg_style": 1,
+            "bg_color": "#bcbcbc",
+            "bg_alpha": 0.6118028846153846,
+            "bg_radius": 0.3345072115384615,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6013942360877991,
+            "shadow_distance": 9.835336685180664,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -88,7 +106,16 @@
             "scale_x": 82.01,
             "scale_y": 82.24,
             "color": "&H00FFFFFF",
-            "default": "摒弃花里胡哨 只留实战工具"
+            "default": "摒弃花里胡哨 只留实战工具",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6013942360877991,
+            "shadow_distance": 9.835336685180664,
+            "border_width": 0.08
           }
         ]
       }
@@ -322,7 +349,16 @@
             "scale_x": 291.83,
             "scale_y": 291.83,
             "color": "&H000085F2",
-            "default": "拼搏"
+            "default": "拼搏",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40319710969924927,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -335,7 +371,16 @@
             "scale_x": 102.83,
             "scale_y": 102.83,
             "color": "&H000085F2",
-            "default": "让生活\n更加美好"
+            "default": "让生活\n更加美好",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40319710969924927,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -348,7 +393,16 @@
             "scale_x": 155.0,
             "scale_y": 146.22,
             "color": "&H00FFFFFF",
-            "default": "KEEP GOING"
+            "default": "KEEP GOING",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40319710969924927,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -446,7 +500,16 @@
             "scale_x": 255.0,
             "scale_y": 255.0,
             "color": "&H00FFFFFF",
-            "default": "追\n求"
+            "default": "追\n求",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40088942646980286,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -459,7 +522,16 @@
             "scale_x": 185.54,
             "scale_y": 213.0,
             "color": "&H00FFFFFF",
-            "default": "永无止境"
+            "default": "永无止境",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40088942646980286,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -472,7 +544,16 @@
             "scale_x": 62.0,
             "scale_y": 60.64,
             "color": "&H00FFFFFF",
-            "default": "XIONG ZHONG YOU QIU HE ZHENG TU ZI WU XIAN ZU"
+            "default": "XIONG ZHONG YOU QIU HE ZHENG TU ZI WU XIAN ZU",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40088942646980286,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -485,7 +566,16 @@
             "scale_x": 60.32,
             "scale_y": 60.64,
             "color": "&H00FFFFFF",
-            "default": "胸中有丘壑，征途自无险阻"
+            "default": "胸中有丘壑，征途自无险阻",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40088942646980286,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -498,7 +588,16 @@
             "scale_x": 74.0,
             "scale_y": 74.39,
             "color": "&H00FFFFFF",
-            "default": "心怀燎原火\n踏碎前路千层雪"
+            "default": "心怀燎原火\n踏碎前路千层雪",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40088942646980286,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -589,7 +688,16 @@
             "scale_x": 204.83,
             "scale_y": 204.83,
             "color": "&H00FFFFFF",
-            "default": "生活需要"
+            "default": "生活需要",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.39775240421295166,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -602,7 +710,16 @@
             "scale_x": 248.01,
             "scale_y": 248.01,
             "color": "&H00FFFFFF",
-            "default": "松弛感"
+            "default": "松弛感",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.39775240421295166,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -615,7 +732,16 @@
             "scale_x": 98.53,
             "scale_y": 98.53,
             "color": "&H00FFFFFF",
-            "default": "允许路途缓慢  \n认真耕耘  \n自有清风赴约"
+            "default": "允许路途缓慢  \n认真耕耘  \n自有清风赴约",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.39775240421295166,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -628,7 +754,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "拾 得 时 光 的 馈 赠"
+            "default": "拾 得 时 光 的 馈 赠",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -719,7 +854,16 @@
             "scale_x": 129.03,
             "scale_y": 129.03,
             "color": "&H00FFFFFF",
-            "default": "晨光点亮希望"
+            "default": "晨光点亮希望",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5008293390274048,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -732,7 +876,16 @@
             "scale_x": 129.03,
             "scale_y": 129.03,
             "color": "&H000085F2",
-            "default": "行动铸就梦想"
+            "default": "行动铸就梦想",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5008293390274048,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -745,7 +898,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "全力以赴 勇者无敌 做生活的勇士"
+            "default": "全力以赴 勇者无敌 做生活的勇士",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.1981009542942047,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -758,7 +920,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "你的拼搏不是为了感天动地\n而是为了你自己取得实质性的进步"
+            "default": "你的拼搏不是为了感天动地\n而是为了你自己取得实质性的进步",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.1981009542942047,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -849,7 +1020,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "城市VOL."
+            "default": "城市VOL.",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000FF",
+            "shadow_alpha": 0.280000001192093,
+            "shadow_distance": 3.0,
+            "border_width": 0.059999998658895
           },
           {
             "key": "text_2",
@@ -862,7 +1042,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "（骑行运动）"
+            "default": "（骑行运动）",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000FF",
+            "shadow_alpha": 0.280000001192093,
+            "shadow_distance": 3.0,
+            "border_width": 0.059999998658895
           },
           {
             "key": "text_3",
@@ -875,7 +1064,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "shiyuenihaokuaileyunitongxing"
+            "default": "shiyuenihaokuaileyunitongxing",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000FF",
+            "shadow_alpha": 0.340000003576279,
+            "shadow_distance": 2.0,
+            "border_width": 0.059999998658895
           },
           {
             "key": "text_4",
@@ -888,7 +1086,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "十月你好｜快乐与你同行"
+            "default": "十月你好｜快乐与你同行",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000FF",
+            "shadow_alpha": 0.280000001192093,
+            "shadow_distance": 3.0,
+            "border_width": 0.059999998658895
           }
         ]
       }
@@ -972,7 +1179,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H000085F2",
-            "default": "RENSHENG"
+            "default": "RENSHENG",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.3981490433216095,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -985,7 +1201,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "人生的高度\n一半始于努力\n一半源于选择"
+            "default": "人生的高度\n一半始于努力\n一半源于选择",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.3981490433216095,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -998,7 +1223,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "时间从不怠慢  \n执着与勇敢"
+            "default": "时间从不怠慢  \n执着与勇敢",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.3981490433216095,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -1089,7 +1323,16 @@
             "scale_x": 213.45,
             "scale_y": 213.45,
             "color": "&H00FFFFFF",
-            "default": "东方意境"
+            "default": "东方意境",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5022355914115906,
+            "shadow_distance": 9.775240898132324,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1102,7 +1345,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "ORIENTAL\nMOOD"
+            "default": "ORIENTAL\nMOOD",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5136778950691223,
+            "shadow_distance": 10.13822078704834,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1115,7 +1367,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "山水有清音\n草木皆成章"
+            "default": "山水有清音\n草木皆成章",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.3628966212272644,
+            "shadow_distance": 9.777644157409668,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -1128,7 +1389,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "万物自有节奏 不必急于奔赴\n静赏流云听风 便是东方独有的浪漫"
+            "default": "万物自有节奏 不必急于奔赴\n静赏流云听风 便是东方独有的浪漫",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40399038791656494,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -1226,7 +1496,16 @@
             "scale_x": 196.32,
             "scale_y": 196.32,
             "color": "&H00FFFFFF",
-            "default": "自律的人\n终会发光"
+            "default": "自律的人\n终会发光",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5035216212272644,
+            "shadow_distance": 10.025239944458008,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1239,7 +1518,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "每一次流汗  \n都是与更好的自己相遇"
+            "default": "每一次流汗  \n都是与更好的自己相遇",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5035216212272644,
+            "shadow_distance": 10.025239944458008,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1252,7 +1540,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "今天的你\n比昨天更强大"
+            "default": "今天的你\n比昨天更强大",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5035216212272644,
+            "shadow_distance": 10.025239944458008,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -1265,7 +1562,16 @@
             "scale_x": 81.0,
             "scale_y": 81.0,
             "color": "&H00FFFFFF",
-            "default": "EVERY DROP OF SWEAT  \nIS A MEETING WITH A BETTER SELF"
+            "default": "EVERY DROP OF SWEAT  \nIS A MEETING WITH A BETTER SELF",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5035216212272644,
+            "shadow_distance": 10.025239944458008,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -1278,7 +1584,16 @@
             "scale_x": 81.0,
             "scale_y": 81.0,
             "color": "&H00FFFFFF",
-            "default": "YOU ARE STRONGER\nTODAY THAN YESTERDAY"
+            "default": "YOU ARE STRONGER\nTODAY THAN YESTERDAY",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5035216212272644,
+            "shadow_distance": 10.025239944458008,
+            "border_width": 0.08
           }
         ]
       }
@@ -1376,7 +1691,16 @@
             "scale_x": 237.93,
             "scale_y": 237.93,
             "color": "&H00FFFFFF",
-            "default": "跨越边界"
+            "default": "跨越边界",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40191105008125305,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1389,7 +1713,16 @@
             "scale_x": 107.66,
             "scale_y": 107.66,
             "color": "&H00FFFFFF",
-            "default": "突破从未止步"
+            "default": "突破从未止步",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40191105008125305,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1402,7 +1735,16 @@
             "scale_x": 77.0,
             "scale_y": 77.0,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40191105008125305,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -1415,7 +1757,16 @@
             "scale_x": 77.0,
             "scale_y": 77.0,
             "color": "&H00FFFFFF",
-            "default": "点亮征程"
+            "default": "点亮征程",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40191105008125305,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -1428,7 +1779,16 @@
             "scale_x": 77.0,
             "scale_y": 77.0,
             "color": "&H00FFFFFF",
-            "default": "全地形拉力赛越野平板电脑"
+            "default": "全地形拉力赛越野平板电脑",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.40191105008125305,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -1512,7 +1872,16 @@
             "scale_x": 158.89,
             "scale_y": 158.89,
             "color": "&H00FFFFFF",
-            "default": "向光而行"
+            "default": "向光而行",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.302632212638855,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1525,7 +1894,16 @@
             "scale_x": 158.89,
             "scale_y": 158.89,
             "color": "&H00FFFFFF",
-            "default": "自有前程"
+            "default": "自有前程",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.302632212638855,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1538,7 +1916,16 @@
             "scale_x": 78.65,
             "scale_y": 78.65,
             "color": "&H00FFFFFF",
-            "default": "2600 Nits 高亮阳光屏\n直射强光下路线依然通透清晰"
+            "default": "2600 Nits 高亮阳光屏\n直射强光下路线依然通透清晰",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.302632212638855,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -1636,7 +2023,16 @@
             "scale_x": 130.0,
             "scale_y": 158.0,
             "color": "&H00FFFFFF",
-            "default": "为每一段征途守护"
+            "default": "为每一段征途守护",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4981850981712342,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1649,7 +2045,16 @@
             "scale_x": 84.0,
             "scale_y": 84.0,
             "color": "&H00FFFFFF",
-            "default": "纵入荒漠 不惧无网"
+            "default": "纵入荒漠 不惧无网",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4981850981712342,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1662,7 +2067,16 @@
             "scale_x": 50.0,
             "scale_y": 50.0,
             "color": "&H00FFFFFF",
-            "default": "摩旅，是一场自由的奔赴"
+            "default": "摩旅，是一场自由的奔赴",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4981850981712342,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -1675,7 +2089,16 @@
             "scale_x": 50.0,
             "scale_y": 50.0,
             "color": "&H00FFFFFF",
-            "default": "稳定锁星，安心奔赴山海远方"
+            "default": "稳定锁星，安心奔赴山海远方",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4981850981712342,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -1688,7 +2111,16 @@
             "scale_x": 113.0,
             "scale_y": 169.0,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5040384531021118,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -1779,7 +2211,16 @@
             "scale_x": 129.63,
             "scale_y": 130.0,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1792,7 +2233,16 @@
             "scale_x": 62.0,
             "scale_y": 62.18,
             "color": "&H00FFFFFF",
-            "default": "深山峡谷戈壁 方向始终清晰"
+            "default": "深山峡谷戈壁 方向始终清晰",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1805,7 +2255,16 @@
             "scale_x": 227.0,
             "scale_y": 227.0,
             "color": "&H00FFFFFF",
-            "default": "向野出发"
+            "default": "向野出发",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -1818,7 +2277,16 @@
             "scale_x": 86.0,
             "scale_y": 86.24,
             "color": "&H00FFFFFF",
-            "default": "X I A N G Y E C H U F A"
+            "default": "X I A N G Y E C H U F A",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -1916,7 +2384,16 @@
             "scale_x": 100.0,
             "scale_y": 100.28,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -1929,7 +2406,16 @@
             "scale_x": 112.0,
             "scale_y": 144.0,
             "color": "&H00FFFFFF",
-            "default": "纵驰山野，笃定前行"
+            "default": "纵驰山野，笃定前行",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -1942,7 +2428,16 @@
             "scale_x": 175.0,
             "scale_y": 175.0,
             "color": "&H00FFFFFF",
-            "default": "行向旷野"
+            "default": "行向旷野",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -1955,7 +2450,16 @@
             "scale_x": 175.0,
             "scale_y": 175.0,
             "color": "&H00FFFFFF",
-            "default": "星定前路"
+            "default": "星定前路",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -1968,7 +2472,16 @@
             "scale_x": 44.0,
             "scale_y": 44.12,
             "color": "&H00FFFFFF",
-            "default": "XING DING\nQIAN LU"
+            "default": "XING DING\nQIAN LU",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -2066,7 +2579,16 @@
             "scale_x": 105.27,
             "scale_y": 105.57,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -2079,7 +2601,16 @@
             "scale_x": 78.0,
             "scale_y": 78.22,
             "color": "&H00FFFFFF",
-            "default": "星轨指引前路 出发即是远方"
+            "default": "星轨指引前路 出发即是远方",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -2092,7 +2623,16 @@
             "scale_x": 175.0,
             "scale_y": 175.28,
             "color": "&H00FFFFFF",
-            "default": "ADVENTURE"
+            "default": "ADVENTURE",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -2105,7 +2645,16 @@
             "scale_x": 145.01,
             "scale_y": 145.01,
             "color": "&H00FFFFFF",
-            "default": "越野・领航者"
+            "default": "越野・领航者",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -2118,7 +2667,16 @@
             "scale_x": 70.66,
             "scale_y": 70.46,
             "color": "&H00FFFFFF",
-            "default": "跨过沙海峡谷 告别丢星焦虑\n硬核赛事平板 为长途穿越而生"
+            "default": "跨过沙海峡谷 告别丢星焦虑\n硬核赛事平板 为长途穿越而生",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -2223,7 +2781,16 @@
             "scale_x": 296.0,
             "scale_y": 276.0,
             "color": "&H00FFFFFF",
-            "default": "驰骋"
+            "default": "驰骋",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#bcbcbc",
+            "shadow_alpha": 0.545396625995636,
+            "shadow_distance": 9.634615898132324,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -2236,7 +2803,16 @@
             "scale_x": 260.0,
             "scale_y": 200.0,
             "color": "&H00FFFFFF",
-            "default": "沙海无垠"
+            "default": "沙海无垠",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#bcbcbc",
+            "shadow_alpha": 0.545396625995636,
+            "shadow_distance": 9.634615898132324,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -2249,7 +2825,16 @@
             "scale_x": 97.0,
             "scale_y": 97.37,
             "color": "&H000085F2",
-            "default": "Chi Cheng"
+            "default": "Chi Cheng",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#bcbcbc",
+            "shadow_alpha": 0.3011658787727356,
+            "shadow_distance": 4.694712162017822,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -2262,7 +2847,16 @@
             "scale_x": 88.22,
             "scale_y": 88.22,
             "color": "&H00FFFFFF",
-            "default": "(烈日灼黄沙)\n屏幕依旧清晰"
+            "default": "(烈日灼黄沙)\n屏幕依旧清晰",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.545396625995636,
+            "shadow_distance": 4.770432949066162,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -2275,7 +2869,16 @@
             "scale_x": 88.22,
             "scale_y": 88.22,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.545396625995636,
+            "shadow_distance": 5.231971263885498,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -2288,7 +2891,16 @@
             "scale_x": 88.22,
             "scale_y": 88.22,
             "color": "&H00FFFFFF",
-            "default": "大漠强光可视 无惧日光直射"
+            "default": "大漠强光可视 无惧日光直射",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.545396625995636,
+            "shadow_distance": 5.231971263885498,
+            "border_width": 0.08
           }
         ]
       }
@@ -2386,7 +2998,16 @@
             "scale_x": 262.83,
             "scale_y": 262.83,
             "color": "&H00FFFFFF",
-            "default": "EXTREME"
+            "default": "EXTREME",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4052523970603943,
+            "shadow_distance": 4.692307472229004,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -2399,7 +3020,16 @@
             "scale_x": 176.0,
             "scale_y": 176.0,
             "color": "&H00FFFFFF",
-            "default": "跨越\n每一个"
+            "default": "跨越\n每一个",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4052523970603943,
+            "shadow_distance": 4.692307472229004,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -2412,7 +3042,16 @@
             "scale_x": 247.95,
             "scale_y": 247.95,
             "color": "&H000085F2",
-            "default": "极\n  限"
+            "default": "极\n  限",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4052523970603943,
+            "shadow_distance": 4.692307472229004,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -2425,7 +3064,16 @@
             "scale_x": 128.99,
             "scale_y": 128.99,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4052523970603943,
+            "shadow_distance": 4.692307472229004,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -2438,7 +3086,16 @@
             "scale_x": 78.0,
             "scale_y": 78.0,
             "color": "&H00FFFFFF",
-            "default": "大漠强光可视路书\n无网也能奔赴旷野"
+            "default": "大漠强光可视路书\n无网也能奔赴旷野",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.4052523970603943,
+            "shadow_distance": 4.692307472229004,
+            "border_width": 0.08
           }
         ]
       }
@@ -2586,7 +3243,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "很多家长都头疼"
+            "default": "很多家长都头疼",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -2599,7 +3265,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "孩子写作业磨磨蹭蹭"
+            "default": "孩子写作业磨磨蹭蹭",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -2612,7 +3287,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "催一催动一动"
+            "default": "催一催动一动",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -2625,7 +3309,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "不催就发呆"
+            "default": "不催就发呆",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -2638,7 +3331,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "今天教你一个"
+            "default": "今天教你一个",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -2651,7 +3353,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "不用吼不用骂的办法"
+            "default": "不用吼不用骂的办法",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_7",
@@ -2664,7 +3375,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "帮孩子改掉拖拉"
+            "default": "帮孩子改掉拖拉",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_8",
@@ -2677,7 +3397,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "主动写作业"
+            "default": "主动写作业",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_9",
@@ -2690,7 +3419,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "想知道怎么做"
+            "default": "想知道怎么做",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_10",
@@ -2703,7 +3441,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00000000",
-            "default": "接着往下看"
+            "default": "接着往下看",
+            "bg_style": 1,
+            "bg_color": "#ffffff",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_11",
@@ -2716,7 +3463,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H0000DEFF",
-            "default": "家长们注意了"
+            "default": "家长们注意了",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.0,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_12",
@@ -2729,7 +3485,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "孩子写作业磨蹭怎么办"
+            "default": "孩子写作业磨蹭怎么办",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.8999999761581421,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -2855,7 +3620,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "千万不要直接喝冷水"
+            "default": "千万不要直接喝冷水",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -2868,7 +3642,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "很多人一直都做错了"
+            "default": "很多人一直都做错了",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -2881,7 +3664,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "早上阳气刚刚升起"
+            "default": "早上阳气刚刚升起",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -2894,7 +3686,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "一杯冷水下去"
+            "default": "一杯冷水下去",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -2907,7 +3708,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "很容易耗掉我们的气血"
+            "default": "很容易耗掉我们的气血",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -2920,7 +3730,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "想养好气血"
+            "default": "想养好气血",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_7",
@@ -2933,7 +3752,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "早上第一杯水该怎么喝"
+            "default": "早上第一杯水该怎么喝",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_8",
@@ -2946,7 +3774,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "下一条我教你正确做法"
+            "default": "下一条我教你正确做法",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_9",
@@ -2959,7 +3796,16 @@
             "scale_x": 112.25,
             "scale_y": 112.25,
             "color": "&H00374AAB",
-            "default": "每天3分钟  \n气血旺到冒红光"
+            "default": "每天3分钟  \n气血旺到冒红光",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.599879801273346,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -3064,7 +3910,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "真正厉害的人"
+            "default": "真正厉害的人",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49837741255760193,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -3077,7 +3932,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "都自带情绪稳定"
+            "default": "都自带情绪稳定",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49837741255760193,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -3090,7 +3954,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "不被别人的一句话裹挟"
+            "default": "不被别人的一句话裹挟",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49837741255760193,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -3103,7 +3976,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "不被突发的事情打乱节奏"
+            "default": "不被突发的事情打乱节奏",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49837741255760193,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -3116,7 +3998,16 @@
             "scale_x": 136.59,
             "scale_y": 136.59,
             "color": "&H00FFFFFF",
-            "default": "Emotional stability"
+            "default": "Emotional stability",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49837741255760193,
+            "shadow_distance": 5.0,
+            "border_width": 0.03655768930912018
           },
           {
             "key": "text_6",
@@ -3129,7 +4020,16 @@
             "scale_x": 136.59,
             "scale_y": 136.59,
             "color": "&H00FFFFFF",
-            "default": "「情绪稳定」"
+            "default": "「情绪稳定」",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49837741255760193,
+            "shadow_distance": 5.0,
+            "border_width": 0.03655768930912018
           }
         ]
       }
@@ -3234,7 +4134,16 @@
             "scale_x": 201.64,
             "scale_y": 349.0,
             "color": "&H00FFFFFF",
-            "default": "ROADBOOK"
+            "default": "ROADBOOK",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -3247,7 +4156,16 @@
             "scale_x": 204.0,
             "scale_y": 204.0,
             "color": "&H000085F2",
-            "default": "驭途"
+            "default": "驭途",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -3260,7 +4178,16 @@
             "scale_x": 86.0,
             "scale_y": 86.0,
             "color": "&H000085F2",
-            "default": "奔赴旷野"
+            "default": "奔赴旷野",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -3273,7 +4200,16 @@
             "scale_x": 86.0,
             "scale_y": 86.0,
             "color": "&H000085F2",
-            "default": "BEN FU"
+            "default": "BEN FU",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -3286,7 +4222,16 @@
             "scale_x": 70.16,
             "scale_y": 70.16,
             "color": "&H00FFFFFF",
-            "default": "无信号亦可锁定方位\n赴山海自有清晰前路"
+            "default": "无信号亦可锁定方位\n赴山海自有清晰前路",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -3299,7 +4244,16 @@
             "scale_x": 108.05,
             "scale_y": 193.59,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -3418,7 +4372,16 @@
             "scale_x": 299.0,
             "scale_y": 386.0,
             "color": "&H00FFFFFF",
-            "default": "EXTREME"
+            "default": "EXTREME",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -3431,7 +4394,16 @@
             "scale_x": 117.39,
             "scale_y": 117.39,
             "color": "&H00FFFFFF",
-            "default": "环境考验设备\n强悍支撑远征"
+            "default": "环境考验设备\n强悍支撑远征",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -3444,7 +4416,16 @@
             "scale_x": 49.41,
             "scale_y": 49.41,
             "color": "&H00FFFFFF",
-            "default": "稳定锁星 耐造抗造\n每一段穿越皆有方向"
+            "default": "稳定锁星 耐造抗造\n每一段穿越皆有方向",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -3457,7 +4438,16 @@
             "scale_x": 146.0,
             "scale_y": 146.0,
             "color": "&H000085F2",
-            "default": "畏"
+            "default": "畏",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -3470,7 +4460,16 @@
             "scale_x": 146.0,
             "scale_y": 146.0,
             "color": "&H000085F2",
-            "default": "无"
+            "default": "无",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -3483,7 +4482,16 @@
             "scale_x": 62.0,
             "scale_y": 62.0,
             "color": "&H00FFFFFF",
-            "default": "向野出发"
+            "default": "向野出发",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_7",
@@ -3496,7 +4504,16 @@
             "scale_x": 62.0,
             "scale_y": 62.0,
             "color": "&H00FFFFFF",
-            "default": "WANDER"
+            "default": "WANDER",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_8",
@@ -3509,7 +4526,16 @@
             "scale_x": 108.05,
             "scale_y": 108.0,
             "color": "&H00FFFFFF",
-            "default": "HUGEROCK X72"
+            "default": "HUGEROCK X72",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.49617788195610046,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -3635,7 +4661,16 @@
             "scale_x": 142.15,
             "scale_y": 142.15,
             "color": "&H000085F2",
-            "default": "比喝油还长肉的"
+            "default": "比喝油还长肉的",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.04749999940395355
           },
           {
             "key": "text_2",
@@ -3648,7 +4683,16 @@
             "scale_x": 122.0,
             "scale_y": 122.0,
             "color": "&H0000DEFF",
-            "default": "【5种食物】"
+            "default": "【5种食物】",
+            "bg_style": 0,
+            "bg_color": "#000000",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.0511658638715744
           },
           {
             "key": "text_3",
@@ -3661,7 +4705,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "很多人减脂总不掉秤"
+            "default": "很多人减脂总不掉秤",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -3674,7 +4727,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "不是你吃的多"
+            "default": "不是你吃的多",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -3687,7 +4749,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "是选错了食物"
+            "default": "是选错了食物",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -3700,7 +4771,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "这5样东西热量比油还吓人"
+            "default": "这5样东西热量比油还吓人",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_7",
@@ -3713,7 +4793,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "平时看着清淡"
+            "default": "平时看着清淡",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_8",
@@ -3726,7 +4815,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "其实特别容易长胖"
+            "default": "其实特别容易长胖",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_9",
@@ -3739,7 +4837,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "想瘦的赶紧收藏"
+            "default": "想瘦的赶紧收藏",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.6021514534950256,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           }
         ]
       }
@@ -3865,7 +4972,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "大健康时代"
+            "default": "大健康时代",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -3878,7 +4994,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "养生赛道迎来新机遇"
+            "default": "养生赛道迎来新机遇",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -3891,7 +5016,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "不用大店面"
+            "default": "不用大店面",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -3904,7 +5038,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "门槛低市场广"
+            "default": "门槛低市场广",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -3917,7 +5060,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "想找稳定副业"
+            "default": "想找稳定副业",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -3930,7 +5082,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "开店创业的朋友"
+            "default": "开店创业的朋友",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_7",
@@ -3943,7 +5104,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "这个新兴养生项目"
+            "default": "这个新兴养生项目",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.597079336643219,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_8",
@@ -3956,7 +5126,16 @@
             "scale_x": 142.9,
             "scale_y": 142.9,
             "color": "&H00FFFFFF",
-            "default": "新型养生加盟"
+            "default": "新型养生加盟",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.0400865375995636
           },
           {
             "key": "text_9",
@@ -3969,7 +5148,16 @@
             "scale_x": 72.0,
             "scale_y": 72.0,
             "color": "&H00FFFFFF",
-            "default": "养生新风口"
+            "default": "养生新风口",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.0400865375995636
           }
         ]
       }
@@ -4088,7 +5276,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "一个女生最致命的缺陷"
+            "default": "一个女生最致命的缺陷",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5038942098617554,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_2",
@@ -4101,7 +5298,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "不是不够漂亮"
+            "default": "不是不够漂亮",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5038942098617554,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_3",
@@ -4114,7 +5320,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "也不是不够优秀"
+            "default": "也不是不够优秀",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5038942098617554,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_4",
@@ -4127,7 +5342,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "而是没有底线的心软"
+            "default": "而是没有底线的心软",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5038942098617554,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_5",
@@ -4140,7 +5364,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "凡事都先委屈自己"
+            "default": "凡事都先委屈自己",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5038942098617554,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_6",
@@ -4153,7 +5386,16 @@
             "scale_x": 100.0,
             "scale_y": 100.0,
             "color": "&H00FFFFFF",
-            "default": "好好爱自己"
+            "default": "好好爱自己",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": true,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.5038942098617554,
+            "shadow_distance": 5.0,
+            "border_width": 0.08
           },
           {
             "key": "text_7",
@@ -4166,7 +5408,16 @@
             "scale_x": 166.35,
             "scale_y": 166.35,
             "color": "&H00FFFFFF",
-            "default": "一个女生"
+            "default": "一个女生",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.04983894154429436
           },
           {
             "key": "text_8",
@@ -4179,7 +5430,16 @@
             "scale_x": 166.35,
             "scale_y": 166.35,
             "color": "&H000085F2",
-            "default": "最致命的缺陷"
+            "default": "最致命的缺陷",
+            "bg_style": 0,
+            "bg_color": "",
+            "bg_alpha": 1.0,
+            "bg_radius": 0.0,
+            "shadow": false,
+            "shadow_color": "#000000",
+            "shadow_alpha": 0.9,
+            "shadow_distance": 5.0,
+            "border_width": 0.04983894154429436
           }
         ]
       }
