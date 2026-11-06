@@ -18,8 +18,8 @@
 
   <view class="grid-card">
     <view class="grid">
-      <view wx:for="{{grid}}" wx:key="index" class="cell {{index === 12 ? 'center' : (index % 2 === 0 ? '' : '')}} {{item ? 'on' : ''}}">
-        <text wx:if="{{item}}" class="cell-text">{{item}}</text>
+      <view wx:for="{{grid}}" wx:key="index" class="cell {{item.ring}} {{item.text ? 'on' : ''}}">
+        <text wx:if="{{item.text}}" class="cell-text">{{item.text}}</text>
         <view wx:else class="ph"></view>
       </view>
     </view>
@@ -29,9 +29,16 @@
 
   <view wx:if="{{topics.length}}" class="topics">
     <view class="topics-head"><text class="topics-title">生成选题</text><text class="topics-count">{{topics.length}} 条</text></view>
-    <view wx:for="{{topics}}" wx:key="*this" class="topic" data-text="{{item}}" catchtap="copyTopic">
+    <view wx:for="{{topics}}" wx:key="index" class="topic" data-text="{{item.text}}" catchtap="copyTopic">
       <view class="topic-badge">{{index + 1}}</view>
-      <text class="topic-text">{{item}}</text>
+      <view class="topic-main">
+        <text class="topic-text">{{item.text}}</text>
+        <view wx:if="{{item.inner || item.outer}}" class="topic-tags">
+          <text wx:if="{{item.inner}}" class="tag inner">{{item.inner}}</text>
+          <text wx:if="{{item.inner && item.outer}}" class="tag x">×</text>
+          <text wx:if="{{item.outer}}" class="tag outer">{{item.outer}}</text>
+        </view>
+      </view>
       <text class="topic-copy">复制</text>
     </view>
   </view>

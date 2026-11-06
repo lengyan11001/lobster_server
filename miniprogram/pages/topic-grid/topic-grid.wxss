@@ -19,9 +19,11 @@ page { background: #f5f7fb; }
 .grid { display: flex; flex-wrap: wrap; }
 .cell { width: 20%; height: 108rpx; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 6rpx; border: 1rpx solid #f1f5f9; background: #fbfdff; border-radius: 10rpx; margin: 0; }
 .cell-text { font-size: 19rpx; line-height: 1.25; color: #334155; text-align: center; word-break: break-all; overflow: hidden; }
+.cell.inner.on { background: #e0f2fe; border-color: #bae6fd; }
+.cell.outer.on { background: #fef3c7; border-color: #fde68a; }
 .cell.center { background: linear-gradient(135deg,#06b6d4,#2563eb); border-color: transparent; }
 .cell.center .cell-text { color: #fff; font-size: 24rpx; font-weight: 700; }
-.cell.on { background: #f0fdff; }
+
 .cell.center.on { background: linear-gradient(135deg,#06b6d4,#2563eb); }
 .ph { width: 12rpx; height: 12rpx; border-radius: 50%; background: #e2e8f0; }
 
@@ -35,3 +37,10 @@ page { background: #f5f7fb; }
 .topic-badge { width: 42rpx; height: 42rpx; border-radius: 12rpx; background: #e0f2fe; color: #0369a1; font-size: 22rpx; font-weight: 700; text-align: center; line-height: 42rpx; margin-right: 16rpx; flex: none; }
 .topic-text { flex: 1; font-size: 25rpx; line-height: 1.55; color: #0f172a; }
 .topic-copy { font-size: 20rpx; color: #06b6d4; margin-left: 12rpx; flex: none; }
+
+.topic-main { flex: 1; }
+.topic-tags { display: flex; align-items: center; flex-wrap: wrap; margin-top: 10rpx; }
+.tag { font-size: 20rpx; border-radius: 8rpx; padding: 4rpx 12rpx; margin-right: 8rpx; }
+.tag.inner { background: #e0f2fe; color: #0369a1; }
+.tag.outer { background: #fef3c7; color: #92400e; }
+.tag.x { color: #94a3b8; padding: 0 2rpx; }

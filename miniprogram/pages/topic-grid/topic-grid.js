@@ -5,7 +5,7 @@ Page({
   data: {
     keyword: "",
     loading: false,
-    grid: new Array(25).fill(""),
+    grid: new Array(25).fill(null).map((_, i) => ({ text: "", ring: i === 12 ? "center" : ([6,7,8,11,13,16,17,18].indexOf(i) >= 0 ? "inner" : "outer") })),
     centerIndex: 12,
     filled: 0,
     topics: [],
@@ -34,7 +34,8 @@ Page({
   generate() {
     const keyword = String(this.data.keyword || "").trim();
     if (!keyword) return wx.showToast({ title: "先填一个关键词", icon: "none" });
-    this.setData({ loading: true, topics: [], grid: new Array(25).fill(""), filled: 0, statusText: "AI 正在拆解 5x5 宫格…" });
+    const emptyGrid = new Array(25).fill(null).map((_, i) => ({ text: "", ring: i === 12 ? "center" : ([6,7,8,11,13,16,17,18].indexOf(i) >= 0 ? "inner" : "outer") }));
+    this.setData({ loading: true, topics: [], grid: emptyGrid, filled: 0, statusText: "AI 正在拆解 5x5 宫格…" });
     app.request({
       method: "POST",
       url: "/api/ip-content/grid-topics",
@@ -54,8 +55,8 @@ Page({
   },
 
   fillGrid(center, inner, outer, topics) {
-    const grid = new Array(25).fill("");
-    grid[12] = center;
+    const grid = new Array(25).fill(null).map((_, i) => ({ text: "", ring: i === 12 ? "center" : ([6,7,8,11,13,16,17,18].indexOf(i) >= 0 ? "inner" : "outer") }));
+    grid[12].text = center;
     this.setData({ grid: grid.slice(), filled: 1, statusText: "中心词已填入，正在生成内圈…" });
     const innerIdx = [6,7,8,11,13,16,17,18];
     let step = 0;
@@ -65,7 +66,7 @@ Page({
         this.fillOuter(grid, outer, topics);
         return;
       }
-      grid[innerIdx[step]] = inner[step];
+      grid[innerIdx[step]].text = inner[step];
       step += 1;
       this.setData({ grid: grid.slice(), filled: 1 + step, statusText: "内圈关键词 " + step + "/8" });
     }, 220);
@@ -81,7 +82,7 @@ Page({
         this.setData({ loading: false, topics, statusText: topics.length ? "已生成 " + topics.length + " 条选题" : "没有生成出选题" });
         return;
       }
-      grid[outerIdx[step]] = outer[step];
+      grid[outerIdx[step]].text = outer[step];
       step += 1;
       this.setData({ grid: grid.slice(), filled: 9 + step, statusText: "外圈人群/场景 " + step + "/16" });
     }, 160);

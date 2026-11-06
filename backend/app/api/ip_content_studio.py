@@ -8515,8 +8515,8 @@ async def generate_grid_topics(
         "只输出严格 JSON："
         '{"center":"中心词","inner":["8个行业关键词/子话题/痛点"],'
         '"outer":["16个人群+场景/需求组合词，每个不超过8字"],'
-        '"topics":["10条可直接开拍的选题，每条不超过40字，必须有具体人群+场景+冲突/价值"]}。'
-        "inner 必须 8 个，outer 必须 16 个，topics 必须 10 条。"
+        '"topics":[{"text":"选题，不超过40字","inner":"用到的内圈词","outer":"用到的外圈词"}]}。'
+        "inner 必须 8 个，outer 必须 16 个，topics 必须 10 条；每个选题必须能看出由哪个内圈词 × 哪个外圈词组合而来。"
         "结合个人记忆里的产品、客户、优势来写，不要编造记忆里没有的事实。"
     )
     user_prompt = f"中心词：{keyword}\n" + (f"\n【个人记忆】\n{memory_block}\n" if memory_block else "") + "请输出 JSON。"
@@ -8543,6 +8543,19 @@ async def generate_grid_topics(
     parsed = _extract_json_object(content)
     inner = [str(x).strip() for x in (parsed.get("inner") or []) if str(x).strip()][:8]
     outer = [str(x).strip() for x in (parsed.get("outer") or []) if str(x).strip()][:16]
-    topics = [str(x).strip() for x in (parsed.get("topics") or []) if str(x).strip()][:20]
+    topics = []
+    for item in (parsed.get("topics") or [])[:20]:
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+            if text:
+                topics.append({
+                    "text": text,
+                    "inner": str(item.get("inner") or "").strip(),
+                    "outer": str(item.get("outer") or "").strip(),
+                })
+        else:
+            text = str(item).strip()
+            if text:
+                topics.append({"text": text, "inner": "", "outer": ""})
     center = str(parsed.get("center") or keyword).strip()[:20]
     return {"ok": True, "center": center, "inner": inner, "outer": outer, "topics": topics, "keyword": keyword}
