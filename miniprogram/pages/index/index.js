@@ -571,6 +571,10 @@ Page({
     wx.navigateTo({ url: "/pages/article/history?feature=montage" });
   },
 
+  goTopicGrid() {
+    wx.navigateTo({ url: "/pages/topic-grid/topic-grid" });
+  },
+
   goMoments() {
     wx.navigateTo({ url: "/pages/moments/moments" });
   },

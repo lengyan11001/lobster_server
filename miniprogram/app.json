@@ -10,6 +10,7 @@
     "pages/video-hub/video-hub",
     "pages/article/article",
     "pages/moments/moments",
+    "pages/topic-grid/topic-grid",
     "pages/moments-create/moments-create",
     "pages/moments-detail/moments-detail",
     "pages/digital/history",

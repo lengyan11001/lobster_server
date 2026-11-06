@@ -58,6 +58,11 @@
   </view>
 
   <view class="tools">
+    <view class="tool-row" bindtap="goTopicGrid">
+      <view class="tool-badge">题</view>
+      <view class="tool-copy"><text class="tool-name">宫格选题</text><text class="tool-desc">一个关键词生成 5x5 选题</text></view>
+      <text class="tool-arrow">›</text>
+    </view>
     <view class="tool-row" bindtap="goMoments">
       <view class="tool-badge">文</view>
       <view class="tool-copy"><text class="tool-name">朋友圈图文</text><text class="tool-desc">文案 + 配图，一键成组</text></view>

@@ -8467,3 +8467,82 @@ def download_system_template(
     filename = quote("%s.txt" % (row.name or "system-template"))
     return Response(content=body, media_type="text/plain; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''%s" % filename})
+
+class GridTopicsBody(BaseModel):
+    keyword: str = Field("", max_length=40)
+    count: int = Field(10, ge=1, le=20)
+
+
+@router.post("/api/ip-content/grid-topics", summary="宫格选题：中心词 + 内圈关键词 + 外圈人群场景 + 选题")
+async def generate_grid_topics(
+    body: GridTopicsBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user = online_user_for_mobile_user(db, current_user)
+    keyword = _clean_text(body.keyword, 40)
+    if not keyword:
+        row = (
+            db.query(IPContentKeyword)
+            .filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
+            .order_by(IPContentKeyword.updated_at.desc(), IPContentKeyword.id.desc())
+            .first()
+        )
+        keyword = str(row.keyword or "").strip() if row else ""
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请先填写一个关键词")
+
+    memory_block = ""
+    try:
+        mem_rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(OpenClawMemoryDocument.target_user_id == current_user.id, OpenClawMemoryDocument.status == "active")
+            .order_by(OpenClawMemoryDocument.updated_at.desc())
+            .limit(5)
+            .all()
+        )
+        parts = []
+        for mem in mem_rows:
+            content = str(mem.content_text or "").strip()
+            if content:
+                parts.append("【" + str(mem.title or "个人记忆") + "】\n" + content[:1200])
+        memory_block = "\n\n".join(parts)[:5000]
+    except Exception:
+        memory_block = ""
+
+    system_prompt = (
+        "你是短视频选题策划。围绕中心词构建 5x5 宫格并输出选题。"
+        "只输出严格 JSON："
+        '{"center":"中心词","inner":["8个行业关键词/子话题/痛点"],'
+        '"outer":["16个人群+场景/需求组合词，每个不超过8字"],'
+        '"topics":["10条可直接开拍的选题，每条不超过40字，必须有具体人群+场景+冲突/价值"]}。'
+        "inner 必须 8 个，outer 必须 16 个，topics 必须 10 条。"
+        "结合个人记忆里的产品、客户、优势来写，不要编造记忆里没有的事实。"
+    )
+    user_prompt = f"中心词：{keyword}\n" + (f"\n【个人记忆】\n{memory_block}\n" if memory_block else "") + "请输出 JSON。"
+    payload = {
+        "model": (os.environ.get("LOBSTER_DEFAULT_SUTUI_CHAT_MODEL") or "openai/gpt-4.1-mini"),
+        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        "temperature": 0.6,
+        "stream": False,
+    }
+    headers = {"Content-Type": "application/json", "Authorization": _server_bearer_for_user(current_user)}
+    try:
+        async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"生成失败：{str(exc)[:200]}") from exc
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"生成失败：{resp.status_code}")
+    data = resp.json() if resp.content else {}
+    content = ""
+    try:
+        content = str(data["choices"][0]["message"]["content"] or "")
+    except Exception:
+        content = str(data.get("text") or "")
+    parsed = _json_object(content)
+    inner = [str(x).strip() for x in (parsed.get("inner") or []) if str(x).strip()][:8]
+    outer = [str(x).strip() for x in (parsed.get("outer") or []) if str(x).strip()][:16]
+    topics = [str(x).strip() for x in (parsed.get("topics") or []) if str(x).strip()][:20]
+    center = str(parsed.get("center") or keyword).strip()[:20]
+    return {"ok": True, "center": center, "inner": inner, "outer": outer, "topics": topics, "keyword": keyword}
