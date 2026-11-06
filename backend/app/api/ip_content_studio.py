@@ -8540,7 +8540,7 @@ async def generate_grid_topics(
         content = str(data["choices"][0]["message"]["content"] or "")
     except Exception:
         content = str(data.get("text") or "")
-    parsed = _json_object(content)
+    parsed = _extract_json_object(content)
     inner = [str(x).strip() for x in (parsed.get("inner") or []) if str(x).strip()][:8]
     outer = [str(x).strip() for x in (parsed.get("outer") or []) if str(x).strip()][:16]
     topics = [str(x).strip() for x in (parsed.get("topics") or []) if str(x).strip()][:20]
