@@ -9,8 +9,25 @@ Page({
     centerIndex: 12,
     filled: 0,
     topics: [],
-    statusText: ""
+    statusText: "",
+    chips: []
   },
+
+  onLoad() {
+    app.restoreSession();
+    app.request({ url: "/api/ip-content/keywords", timeout: 20000 })
+      .then((data) => {
+        const rows = (data && (data.items || data.keywords)) || [];
+        const chips = (Array.isArray(rows) ? rows : [])
+          .map((row) => String((row && row.keyword) || row || "").trim())
+          .filter(Boolean)
+          .slice(0, 8);
+        this.setData({ chips });
+      })
+      .catch(() => {});
+  },
+
+  pickChip(e) { this.setData({ keyword: e.currentTarget.dataset.word || "" }); },
 
   onKeyword(e) { this.setData({ keyword: e.detail.value }); },
 
