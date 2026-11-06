@@ -1,5 +1,7 @@
 page { background: #f5f7fb; }
-.page { padding: 24rpx 24rpx 60rpx; min-height: 100vh; box-sizing: border-box; }
+.page { padding: 0; height: 100vh; display: flex; flex-direction: column; box-sizing: border-box; }
+.fixed-top { padding: 24rpx 24rpx 0; flex: none; background: #f5f7fb; z-index: 5; }
+.topic-scroll { flex: 1; padding: 0 24rpx 60rpx; box-sizing: border-box; }
 
 .hero { background: linear-gradient(135deg, #06b6d4, #2563eb); border-radius: 22rpx; padding: 28rpx; color: #fff; box-shadow: 0 10rpx 30rpx rgba(37,99,235,.18); }
 .hero-title { display: block; font-size: 38rpx; font-weight: 700; letter-spacing: 1rpx; }
@@ -29,7 +31,7 @@ page { background: #f5f7fb; }
 
 .status-pill { display: inline-block; margin-top: 16rpx; font-size: 21rpx; color: #0891b2; background: #e0f7fa; border-radius: 99rpx; padding: 8rpx 20rpx; }
 
-.topics { margin-top: 24rpx; }
+.topics { margin-top: 20rpx; }
 .topics-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12rpx; }
 .topics-title { font-size: 30rpx; font-weight: 700; color: #0f172a; }
 .topics-count { font-size: 21rpx; color: #94a3b8; }
@@ -44,3 +46,6 @@ page { background: #f5f7fb; }
 .tag.inner { background: #e0f2fe; color: #0369a1; }
 .tag.outer { background: #fef3c7; color: #92400e; }
 .tag.x { color: #94a3b8; padding: 0 2rpx; }
+
+.cell.hit { box-shadow: 0 0 0 4rpx #f59e0b inset; }
+.topic.active { border-color: #f59e0b; box-shadow: 0 0 0 2rpx rgba(245,158,11,.25); }

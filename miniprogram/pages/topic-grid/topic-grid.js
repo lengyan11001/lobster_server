@@ -10,7 +10,9 @@ Page({
     filled: 0,
     topics: [],
     statusText: "",
-    chips: []
+    chips: [],
+    activeTopic: -1,
+    hits: new Array(25).fill(false)
   },
 
   onLoad() {
@@ -86,6 +88,23 @@ Page({
       step += 1;
       this.setData({ grid: grid.slice(), filled: 9 + step, statusText: "外圈人群/场景 " + step + "/16" });
     }, 160);
+  },
+
+  selectTopic(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    if (idx === this.data.activeTopic) {
+      this.setData({ activeTopic: -1, hits: new Array(25).fill(false) });
+      return;
+    }
+    const topic = this.data.topics[idx];
+    if (!topic) return;
+    const hits = new Array(25).fill(false);
+    this.data.grid.forEach((cell, i) => {
+      const text = String((cell && cell.text) || "").trim();
+      if (!text) return;
+      if (text === String(topic.inner || "").trim() || text === String(topic.outer || "").trim()) hits[i] = true;
+    });
+    this.setData({ activeTopic: idx, hits });
   },
 
   copyTopic(e) {
