@@ -104,6 +104,8 @@ class CreateVideoBody(_TokenBody):
     template_scene: str = ""
     style_id: str = ""
     materials: List[Dict[str, Any]] = Field(default_factory=list)
+    asset_groups: List[str] = Field(default_factory=list)
+    digital_human_asset_groups: List[str] = Field(default_factory=list)
     material_sound_switch: bool = False
     introduce_name: str = ""
     introduce_description: str = ""
@@ -984,6 +986,8 @@ def _template_meta_from_body(body: CreateVideoBody) -> Optional[Dict[str, Any]]:
         materials.append(row)
     if not (style_id or template_scene or materials or _clean_text(body.introduce_name) or _clean_text(body.introduce_description)):
         return None
+    raw_groups = body.digital_human_asset_groups or body.asset_groups
+    asset_groups = _clean_digital_human_asset_groups({"digital_human_asset_groups": raw_groups})
     template_meta: Dict[str, Any] = {
         "template_scene": template_scene or "realMan",
         "style_id": style_id,
@@ -1000,6 +1004,8 @@ def _template_meta_from_body(body: CreateVideoBody) -> Optional[Dict[str, Any]]:
         "resource_preprocess_method": _clean_text(body.resource_preprocess_method) or "roughCut",
         "material_composition": _clean_text(body.material_composition) or "random",
     }
+    if asset_groups:
+        template_meta["asset_groups"] = asset_groups
     if body.video_duration is not None and not body.long_video:
         template_meta["requested_video_duration"] = int(body.video_duration)
     return template_meta
