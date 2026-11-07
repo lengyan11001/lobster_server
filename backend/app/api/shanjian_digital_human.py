@@ -1203,9 +1203,38 @@ _SHANJIAN_ASSET_KEYWORD_MIN_LEN = 3
 _SHANJIAN_ASSET_KEYWORD_MAX_LEN = 6
 
 
+_MATERIAL_GATE_CONFIG_FILE = Path(__file__).resolve().parent.parent.parent.parent / "custom_configs.json"
+_MATERIAL_GATE_BLOCK = "digital_human_material_gate"
+
+
+def _material_gate_mode() -> str:
+    """数字人素材筛选策略：broad(默认，尽量出片) / strict(关键词闸门)。
+
+    优先级：custom_configs.json 里的 digital_human_material_gate.mode
+            > 环境变量 SHANJIAN_ASSET_KEYWORD_GATE=1（严格）
+            > 默认 broad。
+    配置文件是每次请求现读的，改完立即生效，不用重启。
+    """
+    raw = ""
+    try:
+        data = json.loads(_MATERIAL_GATE_CONFIG_FILE.read_text(encoding="utf-8"))
+        block = ((data.get("configs") or {}).get(_MATERIAL_GATE_BLOCK)) if isinstance(data, dict) else None
+        if isinstance(block, dict):
+            raw = str(block.get("mode") or block.get("value") or "").strip().lower()
+        elif isinstance(block, str):
+            raw = block.strip().lower()
+    except Exception:
+        raw = ""
+    if raw in {"broad", "strict"}:
+        return raw
+    env = str(os.environ.get("SHANJIAN_ASSET_KEYWORD_GATE") or "").strip().lower()
+    if env in {"1", "true", "yes", "on", "enabled", "enable"}:
+        return "strict"
+    return "broad"
+
+
 def _shanjian_asset_keyword_gate_enabled() -> bool:
-    raw = str(os.environ.get("SHANJIAN_ASSET_KEYWORD_GATE") or "").strip().lower()
-    return raw not in {"0", "false", "no", "off", "disabled", "disable"}
+    return _material_gate_mode() == "strict"
 
 
 def _normalize_tag_text(tag: str) -> str:
@@ -1296,7 +1325,7 @@ def _approve_candidates_by_script(
     candidates: List[Dict[str, Any]],
     script: str,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-    """选材硬闸门：标签/文件名必须命中文案里的 ≥3 字关键词，否则不进池子。"""
+    """选材硬闸门（strict 模式）：标签/文件名必须命中文案里的 ≥3 字关键词。"""
     if not _shanjian_asset_keyword_gate_enabled():
         hits = {
             str(item.get("id") or ""): {"keywords": [], "source": "gate_off"}
@@ -1326,13 +1355,47 @@ def _approve_candidates_by_script(
     return approved, dropped, hits
 
 
+def _broad_material_score(script: str, item: Dict[str, Any]) -> int:
+    """宽口径打分：口播文案 n-gram 命中素材「文件名 + 标签」越多分越高（与素材混剪一致）。"""
+    text = (" ".join([str(item.get("name") or ""), " ".join(item.get("tags") or [])])).lower()
+    if not text or not script:
+        return 0
+    score = 0
+    for size in (6, 5, 4, 3, 2):
+        for start in range(0, max(0, len(script) - size + 1)):
+            piece = script[start:start + size]
+            if piece and piece in text:
+                score += size * size
+    return score
+
+
 def _rank_approved_materials(
     approved: List[Dict[str, Any]],
     *,
     hits: Dict[str, Dict[str, Any]],
-    limit: int = 8,
+    script: str = "",
+    limit: int = 0,
 ) -> List[Dict[str, Any]]:
-    """本地排序：命中词更多、最长命中词更长、标签命中优先于文件名命中。"""
+    """本地排序。
+
+    broad：按文案命中分排序，零分素材也保留；同分视频优先、再按素材新旧。
+    strict：命中词更多、最长命中词更长、标签命中优先于文件名命中，最多 8 条。
+    """
+    mode = _material_gate_mode()
+    if mode != "strict":
+        text = _clean_text(script).lower()
+        ordered = [
+            item
+            for _index, item in sorted(
+                enumerate(approved),
+                key=lambda pair: (
+                    -_broad_material_score(text, pair[1]),
+                    0 if str(pair[1].get("type") or "") == "video" else 1,
+                    pair[0],
+                ),
+            )
+        ]
+        return ordered[: max(1, int(limit or 20))]
     def sort_key(indexed: tuple) -> tuple:
         index, item = indexed
         matched = hits.get(str(item.get("id") or "")) or {}
@@ -1342,11 +1405,11 @@ def _rank_approved_materials(
         return (-len(keywords), -longest, source_rank, index)
 
     ordered = [item for _index, item in sorted(enumerate(approved), key=sort_key)]
-    return ordered[: max(1, int(limit))]
+    return ordered[: max(1, int(limit or 8))]
 
 def _materials_from_group_candidates(candidates: List[Dict[str, Any]], current_user_id: int) -> List[Dict[str, Any]]:
     materials: List[Dict[str, Any]] = []
-    for item in candidates[:8]:
+    for item in candidates[:20]:
         kind = item.get("type")
         if kind not in {"image", "video"}:
             continue
@@ -1391,7 +1454,7 @@ async def _apply_asset_group_materials(
         candidates=candidates,
         script=script,
     )
-    ranked = _rank_approved_materials(approved, hits=hits)
+    ranked = _rank_approved_materials(approved, hits=hits, script=script)
     selection["approved_ids"] = [item["id"] for item in approved]
     selection["matched_keywords"] = {
         asset_id: list((value or {}).get("keywords") or [])
@@ -2989,3 +3052,43 @@ async def query_video_task(
         "message": error_message,
         "raw": payload,
     }
+
+
+class MaterialGateModeBody(BaseModel):
+    mode: str = Field(default="broad", max_length=16)
+
+
+@router.get("/api/digital-human/material-gate", summary="数字人素材筛选策略")
+def get_digital_human_material_gate(current_user: User = Depends(get_current_user)):
+    return {"ok": True, "mode": _material_gate_mode()}
+
+
+@router.post("/api/digital-human/material-gate", summary="切换数字人素材筛选策略（broad/strict）")
+def set_digital_human_material_gate(
+    body: MaterialGateModeBody,
+    current_user: User = Depends(get_current_user),
+):
+    if str(getattr(current_user, "role", "") or "").strip().lower() != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以切换素材筛选策略")
+    mode = str(body.mode or "").strip().lower()
+    if mode not in {"broad", "strict"}:
+        raise HTTPException(status_code=400, detail="mode must be broad or strict")
+    data: Dict[str, Any] = {}
+    try:
+        loaded = json.loads(_MATERIAL_GATE_CONFIG_FILE.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        data = {}
+    configs = data.get("configs") if isinstance(data.get("configs"), dict) else {}
+    configs[_MATERIAL_GATE_BLOCK] = {
+        "mode": mode,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "updated_by": int(current_user.id),
+    }
+    data["configs"] = configs
+    data.setdefault("custom_models", [])
+    _MATERIAL_GATE_CONFIG_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return {"ok": True, "mode": mode}
