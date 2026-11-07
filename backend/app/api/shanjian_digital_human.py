@@ -2380,6 +2380,56 @@ async def refresh_stale_video_tasks(
     return refreshed
 
 
+class ProfileRetrainBody(BaseModel):
+    token: Optional[str] = None
+
+
+@router.post("/api/shanjian-digital-human/profile/{profile_id}/retrain", summary="用已存素材重新训练数字人（换 key / 失效重训）")
+async def retrain_profile(
+    profile_id: int,
+    body: ProfileRetrainBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user = online_user_for_mobile_user(db, current_user)
+    row = (
+        db.query(ShanjianDigitalHumanProfile)
+        .filter(
+            ShanjianDigitalHumanProfile.id == int(profile_id),
+            ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="未找到对应的数字人档案")
+    payload = dict(row.train_payload or {})
+    if not _clean_text(payload.get("videoUrl")) and not _clean_text(payload.get("imageUrl")):
+        raise HTTPException(status_code=400, detail="该数字人没有保存训练素材，需要重新上传")
+    mode = _normalize_mode(row.train_mode)
+    endpoint_path = "/v1/virtualman/fast/train" if mode == "fast_video" else "/v1/virtualman/train"
+    _release_db_transaction(db)
+    try:
+        upstream = await _post(endpoint_path, body.token, payload)
+    except HTTPException:
+        raise
+    data = _data(upstream)
+    task_id = _clean_text(data.get("taskId"))
+    if not task_id:
+        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+    row.task_id = task_id
+    row.request_id = _clean_text(upstream.get("requestId")) or row.request_id
+    row.status = "processing"
+    row.virtualman_id = None
+    row.error_message = None
+    row.train_result = upstream
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info("[shanjian-dh] retrain profile=%s user=%s task=%s", row.id, current_user.id, task_id)
+    return {"ok": True, "task_id": task_id, "profile": _profile_to_dict(row)}
+
+
 @router.post("/api/shanjian-digital-human/profile/task")
 async def query_profile_task(
     body: ProfileTaskBody,
