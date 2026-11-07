@@ -11514,6 +11514,9 @@ async function api(path, options = {}) {
           preview = `<img class="asset-preview-large" ${libraryMediaSourceHtml(mediaUrl, filenameFromUrl(mediaUrl, "avatar"))} alt="">`;
         }
       }
+      const retrainAction = (source === "shanjian" && !isVoice)
+        ? `<button class="ghost" type="button" data-retrain-shanjian-id="${escapeHtml(String(row.source_record_id || row.id || ""))}">重新训练（用原素材）</button>`
+        : "";
       const deleteActions = source === "hifly" || (source === "shanjian" && !isVoice)
         ? `<button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.source_record_id || row.id || ""))}" data-delete-hifly-source="${escapeHtml(source)}">删除</button>`
         : `<span class="asset-status">同步自 ${escapeHtml(sourceLabel)}，请在原创建入口管理</span>`;
@@ -11528,6 +11531,7 @@ async function api(path, options = {}) {
         </div>
         ${row.message ? `<div class="asset-preview-text">${escapeHtml(row.message)}</div>` : ""}
         <div class="work-dispatch-actions">
+          ${retrainAction}
           ${mediaUrl ? mediaActionHtml(mediaUrl, mediaType === "video" ? "下载视频" : (isVoice ? "下载音频" : "下载图片"), `${row.title || (isVoice ? "voice" : "avatar")}${mediaType === "video" ? ".mp4" : (isVoice ? ".mp3" : ".jpg")}`, mediaType) : ""}
           ${deleteActions}
         </div>`;
@@ -13141,6 +13145,21 @@ async function api(path, options = {}) {
           btn.disabled = false;
           btn.textContent = oldText || "开始克隆";
         }
+      }
+    }
+
+    async function retrainShanjianAvatar(id, btn) {
+      if (!id) return toast("缺少数字人 ID");
+      if (!confirm("用之前保存的训练素材重新提交训练？不需要重新录制，训练完成后才能生成视频。")) return;
+      const oldText = btn ? btn.textContent : "";
+      if (btn) { btn.disabled = true; btn.textContent = "提交中..."; }
+      try {
+        await api(`/api/shanjian-digital-human/profile/${encodeURIComponent(id)}/retrain`, { method: "POST", blocking: "正在提交重新训练", json: {} });
+        toast("已用原素材重新提交训练");
+        closeAssetPreviewDialog();
+        await loadAssetLibraryAvatars();
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = oldText; }
       }
     }
 
@@ -30243,6 +30262,13 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     $("mobileMediaPreviewBackdrop")?.addEventListener("click", closeMobileMediaPreview);
     $("mobileMediaPreviewCloseBtn")?.addEventListener("click", closeMobileMediaPreview);
     $("assetPreviewBody")?.addEventListener("click", (evt) => {
+      const retrainBtn = evt.target.closest("[data-retrain-shanjian-id]");
+      if (retrainBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        retrainShanjianAvatar(retrainBtn.dataset.retrainShanjianId || "", retrainBtn).catch((err) => toast(err.message || "重新训练失败"));
+        return;
+      }
       const btn = evt.target.closest("[data-delete-hifly-asset]");
       if (!btn) return;
       deleteHiflyAsset(btn.dataset.deleteHiflyAsset || "", btn.dataset.deleteHiflyId || "", btn.dataset.deleteHiflySource || "hifly").catch((err) => toast(err.message || "删除失败"));

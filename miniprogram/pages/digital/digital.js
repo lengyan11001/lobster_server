@@ -442,6 +442,31 @@ Page({
       .then(() => this.setData({ profilesLoading: false }));
   },
 
+  retrainProfile(e) {
+    const id = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) || "");
+    if (!id) return;
+    wx.showModal({
+      title: "重新训练数字人",
+      content: "将使用之前保存的训练素材重新提交，不需要重新录制。训练完成后才能生成视频。",
+      confirmText: "开始训练",
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "提交中", mask: true });
+        app.request({ method: "POST", url: "/api/shanjian-digital-human/profile/" + encodeURIComponent(id) + "/retrain", data: {}, timeout: 60000 })
+          .then(() => {
+            wx.hideLoading();
+            wx.showToast({ title: "已提交重新训练", icon: "none" });
+            this.loadProfiles();
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            const msg = api.errorMessage(err);
+            wx.showToast({ title: msg, icon: "none" });
+          });
+      }
+    });
+  },
+
   loadVoices() {
     if (!app.globalData.token) return Promise.resolve();
     this.setData({ voicesLoading: true });

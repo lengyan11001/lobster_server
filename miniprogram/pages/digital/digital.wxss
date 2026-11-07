@@ -9,7 +9,7 @@
 .empty { padding: 24rpx; font-size: 24rpx; color: #94a3b8; line-height: 1.6; }
 .hscroll { white-space: nowrap; }
 .avatar-row { display: flex; gap: 16rpx; }
-.avatar-card { width: 160rpx; padding: 8rpx; border: 2rpx solid transparent; border-radius: 16rpx; background: #f8fafc; }
+.avatar-card { position: relative; width: 160rpx; padding: 8rpx; border: 2rpx solid transparent; border-radius: 16rpx; background: #f8fafc; }
 .avatar-card.active { border-color: #2563eb; background: #eff6ff; }
 .avatar-img { width: 144rpx; height: 180rpx; border-radius: 12rpx; background: #e2e8f0; }
 .avatar-empty { display: flex; align-items: center; justify-content: center; font-size: 40rpx; color: #94a3b8; }
@@ -106,3 +106,4 @@
 .dh-tpl { display: flex; align-items: center; justify-content: space-between; padding: 20rpx 24rpx; margin-bottom: 20rpx; background: #eff6ff; border-radius: 16rpx; }
 .dh-tpl-text { font-size: 24rpx; color: #1d4ed8; }
 .dh-tpl-link { font-size: 24rpx; color: #2563eb; }
+.avatar-retrain{position:absolute;right:6rpx;top:6rpx;padding:2rpx 10rpx;border-radius:999rpx;background:rgba(37,99,235,.9);color:#fff;font-size:20rpx;line-height:1.6;}

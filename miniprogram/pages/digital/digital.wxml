@@ -33,6 +33,7 @@
           <view wx:if="{{item.kind === 'video'}}" class="play-badge">▶</view>
           <text class="avatar-name">{{item.title}}</text>
           <text class="avatar-status {{item.ready ? 'ok' : ''}}">{{item.status_text}}</text>
+          <view wx:if="{{item.id}}" class="avatar-retrain" catchtap="retrainProfile" data-id="{{item.id}}">重训</view>
         </view>
       </view>
     </scroll-view>
