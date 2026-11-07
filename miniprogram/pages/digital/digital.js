@@ -55,6 +55,7 @@ function normalizeProfiles(items) {
       title: String(row.title || `数字人 ${id}`),
       initial: String(row.title || "人").trim().slice(0, 1) || "人",
       status_text: String(row.status_text || status || "未知"),
+      taskId: String(row.task_id || row.taskId || ""),
       ready: READY_STATUS.indexOf(status) >= 0,
       is_default: Boolean(row.is_default),
       cover_url: assetUrl(row.cover_url || ""),
@@ -433,6 +434,18 @@ Page({
         if (index < 0) index = profiles.findIndex((row) => row.ready);
         if (index < 0 && profiles.length) index = 0;
         this.setData({ profiles, profileIndex: index });
+        const pending = profiles.filter((p) => !p.ready && p.taskId);
+        if (pending.length) {
+          Promise.all(pending.map((p) => app.request({
+            method: "POST",
+            url: "/api/shanjian-digital-human/profile/task",
+            data: { task_id: p.taskId },
+            timeout: 60000
+          }).catch(() => null))).then((rows) => {
+            const changed = rows.some((r) => r && String((r.profile && r.profile.status) || r.status || "").toLowerCase() !== "processing");
+            if (changed) this.loadProfiles();
+          });
+        }
       })
       .catch((err) => {
         const msg = api.errorMessage(err);

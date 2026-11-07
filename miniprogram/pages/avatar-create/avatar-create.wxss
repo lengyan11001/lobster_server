@@ -16,3 +16,13 @@
 .primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #2563eb; border-radius: 16rpx; }
 .primary[disabled] { opacity: 0.5; }
 .status { margin-top: 16rpx; font-size: 24rpx; color: #64748b; text-align: center; }
+
+.cap-btns { display:flex; margin-top:12rpx; }
+.cap-btns button { flex:1; margin-right:12rpx; }
+.cap-btns button:last-child { margin-right:0; }
+.cap-mask { position:fixed; left:0; right:0; top:0; bottom:0; background:#000; z-index:99; display:flex; flex-direction:column; }
+.cap-camera { flex:1; width:100%; }
+.cap-script { position:absolute; left:24rpx; right:24rpx; top:120rpx; color:#fff; font-size:26rpx; line-height:1.6; background:rgba(0,0,0,.45); padding:18rpx 20rpx; border-radius:14rpx; max-height:40vh; overflow:hidden; }
+.cap-bar { height:160rpx; display:flex; align-items:center; justify-content:space-between; padding:0 40rpx; background:#000; }
+.cap-shutter { width:110rpx; height:110rpx; border-radius:50%; background:#fff; color:#0f172a; font-size:24rpx; text-align:center; line-height:110rpx; }
+.cap-btn { color:#fff; font-size:26rpx; padding:20rpx; }

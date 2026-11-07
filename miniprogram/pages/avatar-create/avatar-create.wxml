@@ -19,6 +19,10 @@
       <text class="picker-text">{{sourceName || (sourceType === 'image' ? '选择清晰正面照片' : '选择清晰正面视频')}}</text>
       <text wx:if="{{sourceName}}" class="clear" catchtap="clearSource">×</text>
     </view>
+    <view class="cap-btns">
+      <button class="ghost" data-mode="photo" data-target="source" bindtap="openCapture">拍照</button>
+      <button class="ghost" data-mode="video" data-target="source" bindtap="openCapture">录制视频</button>
+    </view>
 
     <text class="label">录制读稿（可选）</text>
     <textarea class="textarea" value="{{trainingText}}" bindinput="onTrainingText" auto-height maxlength="500" />
@@ -28,6 +32,9 @@
       <text class="picker-text">{{authVideoName || '选择本人授权视频'}}</text>
       <text wx:if="{{authVideoName}}" class="clear" catchtap="clearAuthVideo">×</text>
     </view>
+    <view class="cap-btns">
+      <button class="ghost" data-mode="video" data-target="auth" bindtap="openCapture">按授权说明录制</button>
+    </view>
 
     <text class="label">授权说明（必填，需包含品牌名）</text>
     <textarea class="textarea" value="{{authText}}" bindinput="onAuthText" auto-height maxlength="500" />
@@ -36,5 +43,15 @@
 
     <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">开始克隆</button>
     <view wx:if="{{statusText}}" class="status">{{statusText}}</view>
+  </view>
+</view>
+<view wx:if="{{captureOpen}}" class="cap-mask">
+  <camera class="cap-camera" device-position="{{cameraPos}}" flash="off">
+    <cover-view class="cap-script">{{captureScript}}</cover-view>
+  </camera>
+  <view class="cap-bar">
+    <text class="cap-btn" bindtap="switchCamera">切换</text>
+    <view class="cap-shutter" bindtap="captureAction">{{captureMode === 'photo' ? '拍照' : (recording ? '停止' : '开始')}}</view>
+    <text class="cap-btn" bindtap="closeCapture">关闭</text>
   </view>
 </view>
