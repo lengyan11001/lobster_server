@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import os
+import random
 import shutil
 import subprocess
 import tempfile
@@ -1355,20 +1356,6 @@ def _approve_candidates_by_script(
     return approved, dropped, hits
 
 
-def _broad_material_score(script: str, item: Dict[str, Any]) -> int:
-    """宽口径打分：口播文案 n-gram 命中素材「文件名 + 标签」越多分越高（与素材混剪一致）。"""
-    text = (" ".join([str(item.get("name") or ""), " ".join(item.get("tags") or [])])).lower()
-    if not text or not script:
-        return 0
-    score = 0
-    for size in (6, 5, 4, 3, 2):
-        for start in range(0, max(0, len(script) - size + 1)):
-            piece = script[start:start + size]
-            if piece and piece in text:
-                score += size * size
-    return score
-
-
 def _rank_approved_materials(
     approved: List[Dict[str, Any]],
     *,
@@ -1378,23 +1365,13 @@ def _rank_approved_materials(
 ) -> List[Dict[str, Any]]:
     """本地排序。
 
-    broad：按文案命中分排序，零分素材也保留；同分视频优先、再按素材新旧。
-    strict：命中词更多、最长命中词更长、标签命中优先于文件名命中，最多 8 条。
+    broad：分组内随机挑选（默认）；strict：关键词命中排序，最多 8 条。
     """
     mode = _material_gate_mode()
     if mode != "strict":
-        text = _clean_text(script).lower()
-        ordered = [
-            item
-            for _index, item in sorted(
-                enumerate(approved),
-                key=lambda pair: (
-                    -_broad_material_score(text, pair[1]),
-                    0 if str(pair[1].get("type") or "") == "video" else 1,
-                    pair[0],
-                ),
-            )
-        ]
+        # 宽口径：分组内随机挑，不按文案打分、不做 AI 判断
+        ordered = list(approved)
+        random.shuffle(ordered)
         return ordered[: max(1, int(limit or 20))]
     def sort_key(indexed: tuple) -> tuple:
         index, item = indexed
