@@ -84,6 +84,15 @@ async def create_information_desk_imitation(
     # 等 prepare 探到真实时长后再按实际秒数扣费（失败/提交不成功不扣）。
     cap_plan = billing.estimate_imitation(_max_seconds(), body.resolution)
     billing.check_balance(db, current_user, billing.Decimal(str(cap_plan["credits"])))
+    # 2026-11-07 线上事故：check_balance 会开启一个只读事务，随后 prepare_imitation
+    # 下载/裁剪/上传原视频可能耗时 1-3 分钟；Postgres 的
+    # idle_in_transaction_session_timeout 会在这个空等期间杀掉连接，
+    # 等上游任务已提交、再扣费时就会 PendingRollbackError -> 500。
+    # 在慢调用前显式结束事务，扣费/落库时重新开新事务。
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
     result = await prepare_imitation(body.image_url, body.item_id, body.prompt,
                                      video_url=body.video_url, mode=body.mode,
                                      resolution=body.resolution,
@@ -105,6 +114,13 @@ async def create_information_desk_imitation(
                                  reason=f"douyin_imitation:{body.item_id or str(body.video_url)[:80]}")
     except HTTPException as exc:  # 提交前已校验过余额，这里兜底不把已提交的任务搞丢
         logger.warning("[douyin-imitation] 扣费失败（任务已提交）: %s", getattr(exc, "detail", exc))
+        charged = billing.Decimal("0")
+    except Exception as exc:  # 2026-11-07: 数据库事务异常也不能丢已提交的上游任务
+        logger.exception("[douyin-imitation] 扣费异常（任务已提交）: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         charged = billing.Decimal("0")
     row = DouyinImitationTask(
         user_id=int(current_user.id), task_id=str(result.get("task_id") or ""),
