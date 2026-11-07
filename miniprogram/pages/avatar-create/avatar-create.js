@@ -33,7 +33,7 @@ Page({
   setSourceType(e) { this.setData({ sourceType: String(e.currentTarget.dataset.t || "image"), sourcePath: "", sourceName: "" }); },
   onTrainingText(e) { this.setData({ trainingText: e.detail.value }); },
   onAuthText(e) { this.setData({ authText: e.detail.value }); },
-  toggleAgree(e) { this.setData({ agree: Boolean(e.detail.value) }); },
+  toggleAgree(e) { const values = (e.detail && e.detail.value) || []; this.setData({ agree: values.length > 0 }); },
 
   chooseSource() {
     const type = this.data.sourceType;

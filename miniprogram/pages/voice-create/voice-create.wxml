@@ -19,7 +19,7 @@
       <text wx:if="{{fileName}}" class="clear" catchtap="clearFile">×</text>
     </view>
 
-    <label class="agree"><checkbox checked="{{agree}}" bindchange="toggleAgree" /><text>我确认已取得声音本人授权</text></label>
+    <checkbox-group bindchange="toggleAgree"><label class="agree"><checkbox value="1" checked="{{agree}}" /><text>我确认已取得声音本人授权</text></label></checkbox-group>
 
     <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">开始克隆</button>
     <view wx:if="{{statusText}}" class="status">{{statusText}}</view>

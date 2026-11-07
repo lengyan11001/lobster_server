@@ -32,7 +32,7 @@
     <text class="label">授权说明（必填，需包含品牌名）</text>
     <textarea class="textarea" value="{{authText}}" bindinput="onAuthText" auto-height maxlength="500" />
 
-    <label class="agree"><checkbox checked="{{agree}}" bindchange="toggleAgree" /><text>我确认已取得形象本人授权</text></label>
+    <checkbox-group bindchange="toggleAgree"><label class="agree"><checkbox value="1" checked="{{agree}}" /><text>我确认已取得形象本人授权</text></label></checkbox-group>
 
     <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">开始克隆</button>
     <view wx:if="{{statusText}}" class="status">{{statusText}}</view>

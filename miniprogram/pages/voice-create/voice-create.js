@@ -18,7 +18,7 @@ Page({
 
   onTitle(e) { this.setData({ title: e.detail.value }); },
   pickLang(e) { this.setData({ langIndex: Number(e.detail.value || 0) }); },
-  toggleAgree(e) { this.setData({ agree: Boolean(e.detail.value) }); },
+  toggleAgree(e) { const values = (e.detail && e.detail.value) || []; this.setData({ agree: values.length > 0 }); },
 
   chooseFile() {
     wx.chooseMessageFile({
