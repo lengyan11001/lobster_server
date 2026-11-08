@@ -28,7 +28,12 @@ Page({
     captureTarget: "source",
     cameraPos: "front",
     recording: false,
-    captureScript: ""
+    recordSeconds: 0,
+    capturedPath: "",
+    capturedKind: "",
+    captureStatus: "",
+    captureScript: "",
+    recordTimeText: "00:00"
   },
 
   onLoad() {
@@ -47,8 +52,26 @@ Page({
     const script = target === "auth"
       ? String(this.data.authText || "").trim()
       : String(this.data.trainingText || "").trim();
-    this.setData({ captureOpen: true, captureMode: mode, captureTarget: target, recording: false, cameraPos: "front", captureScript: script });
-    setTimeout(() => { this._camera = wx.createCameraContext(); }, 300);
+    this.setData({
+      captureOpen: true, captureMode: mode, captureTarget: target,
+      recording: false, recordSeconds: 0, recordTimeText: "00:00", capturedPath: "", capturedKind: "",
+      cameraPos: "front", captureScript: script,
+      captureStatus: "正在打开摄像头…"
+    });
+    setTimeout(() => {
+      this._camera = wx.createCameraContext();
+      this.setData({ captureStatus: mode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照" });
+    }, 400);
+  },
+
+  onCameraError() {
+    this.setData({ captureStatus: "无法打开摄像头，请在系统设置里允许微信使用相机" });
+  },
+
+  switchCaptureMode(e) {
+    if (this.data.recording) return;
+    const mode = String(e.currentTarget.dataset.mode || "photo");
+    this.setData({ captureMode: mode, capturedPath: "", capturedKind: "", captureStatus: mode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照" });
   },
 
   switchCamera() {
@@ -56,55 +79,58 @@ Page({
   },
 
   closeCapture() {
-    if (this.data.recording) {
-      try { this._camera && this._camera.stopRecord(); } catch (err) {}
-    }
-    this.setData({ captureOpen: false, recording: false });
+    clearInterval(this._capTimer);
+    if (this.data.recording) { try { this._camera && this._camera.stopRecord(); } catch (err) {} }
+    this.setData({ captureOpen: false, recording: false, capturedPath: "", capturedKind: "" });
   },
 
   captureAction() {
     if (!this._camera) this._camera = wx.createCameraContext();
+    if (this.data.capturedPath) return;
     if (this.data.captureMode === "photo") {
       this._camera.takePhoto({
         quality: "high",
-        success: (res) => {
-          this.applyCapture(res.tempImagePath, "image");
-        },
+        success: (res) => this.setData({ capturedPath: res.tempImagePath, capturedKind: "image", captureStatus: "照片已拍好，点「使用素材」确认" }),
         fail: () => wx.showToast({ title: "拍照失败", icon: "none" })
       });
       return;
     }
     if (this.data.recording) {
       this._camera.stopRecord({
-        success: (res) => this.applyCapture(res.tempVideoPath, "video"),
-        fail: () => wx.showToast({ title: "录制失败", icon: "none" })
+        success: (res) => { clearInterval(this._capTimer); this.setData({ recording: false, capturedPath: res.tempVideoPath, capturedKind: "video", captureStatus: "视频已录好，点「使用素材」确认" }); },
+        fail: () => { clearInterval(this._capTimer); this.setData({ recording: false }); }
       });
-      this.setData({ recording: false });
       return;
     }
-    this._camera.startRecord({
-      timeoutCallback: () => { this.setData({ recording: false }); wx.showToast({ title: "已到 60 秒，自动停止", icon: "none" }); }
-    });
-    this.setData({ recording: true });
-    setTimeout(() => {
-      if (this.data.recording) {
-        this._camera.stopRecord({
-          success: (res) => this.applyCapture(res.tempVideoPath, "video"),
-          fail: () => {}
-        });
-        this.setData({ recording: false });
-      }
-    }, 60000);
+    this.setData({ recording: true, recordSeconds: 0, recordTimeText: "00:00", captureStatus: "正在录像…再按一次停止" });
+    this._camera.startRecord({ timeoutCallback: () => this.stopRecordingAuto() });
+    this._capTimer = setInterval(() => {
+      const sec = this.data.recordSeconds + 1;
+      const mm = String(Math.floor(sec / 60)).padStart(2, "0");
+      const ss = String(sec % 60).padStart(2, "0");
+      this.setData({ recordSeconds: sec, recordTimeText: mm + ":" + ss });
+    }, 1000);
   },
 
-  applyCapture(path, kind) {
+  stopRecordingAuto() {
+    clearInterval(this._capTimer);
+    this.setData({ recording: false, captureStatus: "已到 60 秒自动停止" });
+  },
+
+  retakeCapture() {
+    this.setData({ capturedPath: "", capturedKind: "", recordSeconds: 0, recordTimeText: "00:00", captureStatus: this.data.captureMode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照" });
+  },
+
+  useCapture() {
+    const path = this.data.capturedPath;
+    const kind = this.data.capturedKind;
     if (!path) return;
     if (this.data.captureTarget === "auth") {
-      this.setData({ authVideoPath: path, authVideoName: "已拍摄授权视频", captureOpen: false, recording: false });
+      this.setData({ authVideoPath: path, authVideoName: "已拍摄授权视频", captureOpen: false, capturedPath: "" });
     } else if (kind === "video") {
-      this.setData({ sourceType: "video", sourcePath: path, sourceName: "已拍摄视频", captureOpen: false, recording: false });
+      this.setData({ sourceType: "video", sourcePath: path, sourceName: "已拍摄视频", captureOpen: false, capturedPath: "" });
     } else {
-      this.setData({ sourceType: "image", sourcePath: path, sourceName: "已拍摄照片", captureOpen: false, recording: false });
+      this.setData({ sourceType: "image", sourcePath: path, sourceName: "已拍摄照片", captureOpen: false, capturedPath: "" });
     }
   },
 

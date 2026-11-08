@@ -45,13 +45,39 @@
     <view wx:if="{{statusText}}" class="status">{{statusText}}</view>
   </view>
 </view>
-<view wx:if="{{captureOpen}}" class="cap-mask">
-  <camera class="cap-camera" device-position="{{cameraPos}}" flash="off">
-    <cover-view class="cap-script">{{captureScript}}</cover-view>
-  </camera>
-  <view class="cap-bar">
-    <text class="cap-btn" bindtap="switchCamera">切换</text>
-    <view class="cap-shutter" bindtap="captureAction">{{captureMode === 'photo' ? '拍照' : (recording ? '停止' : '开始')}}</view>
-    <text class="cap-btn" bindtap="closeCapture">关闭</text>
+<view wx:if="{{captureOpen}}" class="cap-sheet">
+  <view class="cap-head">
+    <view class="cap-head-text">
+      <text class="cap-title">拍摄素材</text>
+      <text class="cap-sub">{{captureScript ? '已开启提词器 · 前置摄像头' : '默认使用前置摄像头'}}</text>
+    </view>
+    <view class="cap-close" bindtap="closeCapture">×</view>
+  </view>
+
+  <view class="cap-toolbar">
+    <view class="cap-modes">
+      <view class="cap-mode {{captureMode === 'photo' ? 'active' : ''}}" data-mode="photo" bindtap="switchCaptureMode">拍照</view>
+      <view class="cap-mode {{captureMode === 'video' ? 'active' : ''}}" data-mode="video" bindtap="switchCaptureMode">录像</view>
+    </view>
+    <view class="cap-switch" bindtap="switchCamera">⟲ 切换</view>
+  </view>
+
+  <view class="cap-stage">
+    <camera wx:if="{{!capturedPath}}" class="cap-live" device-position="{{cameraPos}}" flash="off" binderror="onCameraError">
+      <cover-view wx:if="{{captureScript}}" class="cap-teleprompter">{{captureScript}}</cover-view>
+      <cover-view wx:if="{{recording}}" class="cap-badge"><cover-view class="cap-dot"></cover-view><cover-view class="cap-time">{{recordTimeText}}</cover-view></cover-view>
+    </camera>
+    <image wx:elif="{{capturedKind === 'image'}}" class="cap-preview" src="{{capturedPath}}" mode="aspectFill" />
+    <video wx:else class="cap-preview" src="{{capturedPath}}" controls />
+  </view>
+
+  <text class="cap-status">{{captureStatus}}</text>
+
+  <view class="cap-actions">
+    <button wx:if="{{capturedPath}}" class="cap-ghost" bindtap="retakeCapture">重拍</button>
+    <view wx:if="{{!capturedPath}}" class="cap-shutter {{recording ? 'recording' : ''}}" bindtap="captureAction">
+      <view class="cap-shutter-inner"></view>
+    </view>
+    <button wx:if="{{capturedPath}}" class="cap-use" bindtap="useCapture">使用素材</button>
   </view>
 </view>
