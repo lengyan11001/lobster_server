@@ -100,11 +100,11 @@ def _cache_path(url: str, suffix: str) -> Path:
     return _CACHE_DIR / f"{key}{suffix}"
 
 
-def _thumb_from_video(src: str, jpg: Path) -> FileResponse:
+def _thumb_from_video(src: str, jpg: Path, seek: float = 0.5) -> FileResponse:
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-headers", "Referer: https://bhzn.top/\r\nUser-Agent: " + _UA + "\r\n",
-        "-ss", "0.5", "-i", src, "-frames:v", "1",
+        "-ss", str(seek), "-i", src, "-frames:v", "1",
         "-vf", "scale=480:-2", "-q:v", "5", str(jpg),
     ]
     with _FFMPEG_SEM:
@@ -113,7 +113,7 @@ def _thumb_from_video(src: str, jpg: Path) -> FileResponse:
         except Exception as exc:
             logger.warning("[media-thumb] ffmpeg failed url=%s err=%s", src[:120], exc)
             try:
-                cmd[cmd.index("0.5")] = "0"
+                cmd[cmd.index(str(seek))] = "0"
                 subprocess.run(cmd, timeout=60, check=True)
             except Exception as exc2:
                 logger.warning("[media-thumb] ffmpeg retry failed url=%s err=%s", src[:120], exc2)
@@ -175,7 +175,8 @@ def media_thumb(url: str = Query(...)):
             content_type = ""
 
         try:
-            return _thumb_from_video(src, jpg)
+            is_image = content_type.startswith("image/")
+            return _thumb_from_video(src, jpg, 0 if is_image else 0.5)
         except HTTPException:
             return _thumb_from_image(src)
 
