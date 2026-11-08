@@ -6,21 +6,13 @@ function brandShortName() {
   return String(config.APP_NAME || config.BRAND_MARK || "").replace(/\s*(AI员工|AI智能体|AI助手)\s*$/i, "").trim();
 }
 
-function defaultTrainingText() {
-  return "大家好，我正在录制数字人训练素材。接下来我会保持自然的表情和语速，清晰完整地朗读这段内容。希望这个数字人能够真实呈现我的形象和声音，帮助我更高效地进行内容创作。感谢大家的关注与支持。";
-}
-
-function defaultAuthText() {
-  return `案例：我是xxx（真实姓名），我授权【${brandShortName()}】使用视频中的肖像、声音，为我生成定制数字人及声音，并在本人【${brandShortName()}】账号中创作使用。`;
-}
-
 Page({
   data: {
     title: "",
     sourceType: "image",
     sourcePath: "",
     sourceName: "",
-    trainingText: "大家好，我正在录制数字人训练素材。接下来我会保持自然的表情和语速，清晰完整地朗读这段内容。希望这个数字人能够真实呈现我的形象和声音，帮助我更高效地进行内容创作。感谢大家的关注与支持。",
+    trainingText: "",
     authVideoPath: "",
     authVideoName: "",
     authText: "",
@@ -40,9 +32,7 @@ Page({
     recordTimeText: "00:00"
   },
 
-  onLoad() {
-    this.setData({ authText: defaultAuthText() });
-  },
+  onLoad() {},
 
   onTitle(e) { this.setData({ title: e.detail.value }); },
   setSourceType(e) { this.setData({ sourceType: String(e.currentTarget.dataset.t || "image"), sourcePath: "", sourceName: "" }); },
@@ -55,9 +45,7 @@ Page({
     const target = String(e.currentTarget.dataset.target || "source");
     const script = mode !== "video"
       ? ""
-      : (target === "auth"
-        ? (String(this.data.authText || "").trim() || defaultAuthText())
-        : (String(this.data.trainingText || "").trim() || defaultTrainingText()));
+      : (target === "auth" ? String(this.data.authText || "").trim() : String(this.data.trainingText || "").trim());
     this.setData({
       captureOpen: true, captureMode: mode, captureTarget: target,
       recording: false, recordSeconds: 0, recordTimeText: "00:00", capturedPath: "", capturedKind: "",
@@ -79,9 +67,7 @@ Page({
     const mode = String(e.currentTarget.dataset.mode || "photo");
     const script = mode !== "video"
       ? ""
-      : (this.data.captureTarget === "auth"
-        ? (String(this.data.authText || "").trim() || defaultAuthText())
-        : (String(this.data.trainingText || "").trim() || defaultTrainingText()));
+      : (this.data.captureTarget === "auth" ? String(this.data.authText || "").trim() : String(this.data.trainingText || "").trim());
     this.setData({ captureMode: mode, captureScript: script, capturedPath: "", capturedKind: "", captureStatus: mode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照" });
   },
 

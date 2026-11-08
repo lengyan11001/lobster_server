@@ -107,3 +107,5 @@
 .dh-tpl-text { font-size: 24rpx; color: #1d4ed8; }
 .dh-tpl-link { font-size: 24rpx; color: #2563eb; }
 .avatar-retrain{position:absolute;right:6rpx;top:6rpx;padding:2rpx 10rpx;border-radius:999rpx;background:rgba(37,99,235,.9);color:#fff;font-size:20rpx;line-height:1.6;}
+
+.avatar-fallback { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#e0f2fe; color:#0369a1; font-size:32rpx; font-weight:600; }

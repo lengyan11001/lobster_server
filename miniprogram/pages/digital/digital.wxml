@@ -28,7 +28,8 @@
     <scroll-view wx:else scroll-x class="hscroll">
       <view class="avatar-row">
         <view wx:for="{{profiles}}" wx:key="id" class="avatar-card {{profileIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectProfile" bindlongpress="previewProfile">
-          <image wx:if="{{item.thumb}}" class="avatar-img" src="{{item.thumb}}" mode="aspectFill" />
+          <image wx:if="{{item.thumb && !item.thumbFailed}}" class="avatar-img" src="{{item.thumb}}" mode="aspectFill" data-index="{{index}}" binderror="onThumbError" />
+          <view wx:else class="avatar-fallback">{{item.initial}}</view>
           <view wx:else class="avatar-img avatar-empty">{{item.initial}}</view>
           <view wx:if="{{item.kind === 'video'}}" class="play-badge">▶</view>
           <text class="avatar-name">{{item.title}}</text>

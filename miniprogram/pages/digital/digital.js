@@ -845,6 +845,14 @@ Page({
     this.previewMedia(row.fileUrl, row.type === "video" ? "video" : "image");
   },
 
+  onThumbError(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const profiles = this.data.profiles.slice();
+    if (!profiles[idx]) return;
+    profiles[idx].thumbFailed = true;
+    this.setData({ profiles });
+  },
+
   selectProfile(e) { this.setData({ profileIndex: Number(e.currentTarget.dataset.index || 0) }); },
 
   selectVoice(e) {
