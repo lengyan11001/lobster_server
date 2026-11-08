@@ -1333,19 +1333,32 @@ _LIVE_PERSONAL_TEMPLATE_ACTIONS = {
 }
 
 
+# H5 能力卡（非工作流模板）也会下发这些动作，payload 里没有 workflow_node_id。
+# 2026-11-08 用户 13927485337：能力卡「数字人口播视频」按 h5_ability 建单，
+# 守卫因为找不到 node_id 直接返回 False，任务 params 里没有 requirements /
+# 关键词 / 记忆文件，客户端报「数字人生成缺少：IP人设定位资料调查…」。
+_ABILITY_PERSONA_SOURCE_KINDS = {"h5_ability", "h5_abilities", "h5_capability"}
+
+
 def _workflow_uses_live_personal_template(task_kind: str, payload: Dict[str, Any]) -> bool:
     if task_kind not in _LIVE_PERSONAL_TEMPLATE_TASK_KINDS:
         return False
     context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
     action = _clean_profile_text(payload.get("action"), 80).lower()
     capability_id = _clean_profile_text(payload.get("capability_id"), 128).lower()
-    return bool(
+    source_kind = str(context.get("source") or payload.get("source") or "").strip().lower()
+    node_id = str(context.get("workflow_node_id") or "").strip()
+    explicitly_live = bool(
         str(payload.get("template_source") or "").strip().lower() == "personal_current"
         or str(context.get("template_source") or "").strip().lower() == "personal_current"
         or str(context.get("workflow_template_id") or "").strip()
-        or action in _LIVE_PERSONAL_TEMPLATE_ACTIONS and str(context.get("workflow_node_id") or "").strip()
-        or capability_id == _HIFLY_TTS_CAPABILITY_ID and str(context.get("workflow_node_id") or "").strip()
     )
+    if explicitly_live:
+        return True
+    uses_persona = action in _LIVE_PERSONAL_TEMPLATE_ACTIONS or capability_id == _HIFLY_TTS_CAPABILITY_ID
+    if not uses_persona:
+        return False
+    return bool(node_id or source_kind in _ABILITY_PERSONA_SOURCE_KINDS)
 
 
 def _live_personal_template_validation(

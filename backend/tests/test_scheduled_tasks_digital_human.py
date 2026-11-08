@@ -395,3 +395,65 @@ def test_digital_human_workflow_without_personal_template_stays_plain(db_session
     params = payload["params"]
     assert "use_template" not in params
     assert not params.get("style_id")
+
+
+def _ability_context():
+    return {
+        "requirements": {"industry": "装修", "role": "老板"},
+        "keyword_ids": [11, 12],
+        "keywords": ["装修"],
+        "keyword_texts": ["装修"],
+        "memory_doc_ids": ["31"],
+        "memory_docs": [{"id": 31, "title": "品牌资料", "content": "真实业绩"}],
+        "language": "zh-CN",
+        "target_language": "zh-CN",
+        "digital_human_template": {"style_id": "style-1"},
+        "digital_human_resources": {
+            "avatars": [{"profile_id": 6, "virtualman_id": "virtualman-1"}],
+            "voices": [{"voice": "voice-1"}],
+        },
+        "virtualman_candidates": [{"profile_id": 6, "virtualman_id": "virtualman-1"}],
+        "voice_candidates": ["voice-1"],
+        "virtualman_id": "virtualman-1",
+        "voice": "voice-1",
+    }
+
+
+def test_h5_ability_digital_human_payload_gets_live_persona(monkeypatch):
+    """2026-11-08：H5 能力卡按 h5_ability 建单，没有 workflow_node_id。
+
+    守卫必须仍然认定为「跟随当前 IP 人设」，否则 params 里没有 requirements /
+    关键词 / 记忆文件，客户端直接报「数字人生成缺少：IP人设定位资料调查…」。
+    """
+    monkeypatch.setattr(
+        scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": _ability_context()
+    )
+    monkeypatch.setattr(
+        scheduled_tasks, "_h5_dh_personal_default_template", lambda db, user_id, installation_id="": object()
+    )
+    payload = {
+        "action": "shanjian_digital_human_video",
+        "h5_context": {"source": "h5_ability", "ability_key": "hifly.video.create_by_tts"},
+        "params": {
+            "script_source": "ip_daily_industry_hot_oral",
+            "script_sources": ["ip_daily_industry_hot_oral"],
+            "virtualman_selection_mode": "daily_round_robin",
+        },
+    }
+    assert scheduled_tasks._workflow_uses_live_personal_template("client_workflow", payload) is True
+
+    out = scheduled_tasks._refresh_live_personal_template_payload(
+        object(), task_kind="client_workflow", payload=payload, target_user_id=54
+    )
+    params = out["params"]
+    assert params["requirements"] == {"industry": "装修", "role": "老板"}
+    assert params["keyword_ids"] == [11, 12]
+    assert params["keyword_texts"] == ["装修"]
+    assert params["memory_doc_ids"] == ["31"]
+    assert params["virtualman_candidates"][0]["virtualman_id"] == "virtualman-1"
+    assert out["template_validation"]["ok"] is True
+
+
+def test_non_persona_workflow_node_stays_untouched():
+    payload = {"action": "publish_content", "h5_context": {"source": "h5_ability"}}
+    assert scheduled_tasks._workflow_uses_live_personal_template("client_workflow", payload) is False
