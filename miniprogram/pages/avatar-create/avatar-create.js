@@ -20,7 +20,7 @@ Page({
     sourceType: "image",
     sourcePath: "",
     sourceName: "",
-    trainingText: defaultTrainingText(),
+    trainingText: "",
     authVideoPath: "",
     authVideoName: "",
     authText: "",
@@ -40,14 +40,14 @@ Page({
     recordTimeText: "00:00"
   },
 
-  onLoad() {
-    this.setData({ authText: defaultAuthText() });
-  },
+  onLoad() {},
 
   onTitle(e) { this.setData({ title: e.detail.value }); },
   setSourceType(e) { this.setData({ sourceType: String(e.currentTarget.dataset.t || "image"), sourcePath: "", sourceName: "" }); },
   onTrainingText(e) { this.setData({ trainingText: e.detail.value }); },
+  fillTrainingSample() { this.setData({ trainingText: defaultTrainingText() }); },
   onAuthText(e) { this.setData({ authText: e.detail.value }); },
+  fillAuthSample() { this.setData({ authText: defaultAuthText() }); },
   toggleAgree(e) { const values = (e.detail && e.detail.value) || []; this.setData({ agree: values.length > 0 }); },
 
   openCapture(e) {
@@ -55,9 +55,7 @@ Page({
     const target = String(e.currentTarget.dataset.target || "source");
     const script = mode !== "video"
       ? ""
-      : (target === "auth"
-        ? (String(this.data.authText || "").trim() || defaultAuthText())
-        : (String(this.data.trainingText || "").trim() || defaultTrainingText()));
+      : (target === "auth" ? String(this.data.authText || "").trim() : String(this.data.trainingText || "").trim());
     this.setData({
       captureOpen: true, captureMode: mode, captureTarget: target,
       recording: false, recordSeconds: 0, recordTimeText: "00:00", capturedPath: "", capturedKind: "",
@@ -79,9 +77,7 @@ Page({
     const mode = String(e.currentTarget.dataset.mode || "photo");
     const script = mode !== "video"
       ? ""
-      : (this.data.captureTarget === "auth"
-        ? (String(this.data.authText || "").trim() || defaultAuthText())
-        : (String(this.data.trainingText || "").trim() || defaultTrainingText()));
+      : (this.data.captureTarget === "auth" ? String(this.data.authText || "").trim() : String(this.data.trainingText || "").trim());
     this.setData({ captureMode: mode, captureScript: script, capturedPath: "", capturedKind: "", captureStatus: mode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照" });
   },
 

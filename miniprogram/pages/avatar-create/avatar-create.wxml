@@ -27,6 +27,7 @@
     <block wx:if="{{sourceType === 'video'}}">
       <text class="label">训练朗读文案</text>
       <textarea class="textarea" value="{{trainingText}}" bindinput="onTrainingText" auto-height maxlength="1000" placeholder="拍摄训练视频时显示在画面底部，方便照着朗读" />
+      <text class="fill-link" bindtap="fillTrainingSample">填入上游示例文案</text>
       <text class="field-hint">拍训练视频时会作为提词器显示，可在拍摄前修改。</text>
     </block>
 
@@ -42,6 +43,7 @@
 
     <text class="label">授权说明</text>
     <textarea class="textarea" value="{{authText}}" bindinput="onAuthText" auto-height maxlength="500" placeholder="请输入授权视频中本人朗读的内容" />
+      <text class="fill-link" bindtap="fillAuthSample">填入上游授权示例</text>
 
     <checkbox-group bindchange="toggleAgree">
       <label class="agree"><checkbox value="1" checked="{{agree}}" /><text class="agree-text">我确认已取得形象本人授权，并同意将上述素材用于本账号数字人训练。</text></label>

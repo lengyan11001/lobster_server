@@ -55,3 +55,5 @@
 .cap-shutter { width: 116rpx; height: 116rpx; border-radius: 50%; background: #fff; border: 6rpx solid #2563eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 14rpx 36rpx rgba(37,99,235,.2); }
 .cap-shutter-inner { width: 84rpx; height: 84rpx; border-radius: 50%; background: #2563eb; }
 .cap-shutter.recording .cap-shutter-inner { width: 48rpx; height: 48rpx; border-radius: 10rpx; background: #ef4444; }
+
+.fill-link { display:inline-block; margin-top:10rpx; font-size:22rpx; color:#2563eb; }
