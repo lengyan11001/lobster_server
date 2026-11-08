@@ -64,10 +64,7 @@
   </view>
 
   <view class="cap-toolbar">
-    <view class="cap-modes">
-      <view class="cap-mode {{captureMode === 'photo' ? 'active' : ''}}" data-mode="photo" bindtap="switchCaptureMode">拍照</view>
-      <view class="cap-mode {{captureMode === 'video' ? 'active' : ''}}" data-mode="video" bindtap="switchCaptureMode">录像</view>
-    </view>
+
     <view class="cap-switch" bindtap="switchCamera">⟲ 切换</view>
   </view>
 
