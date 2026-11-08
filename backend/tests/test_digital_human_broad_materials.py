@@ -109,3 +109,26 @@ def test_resolve_group_materials_reads_assets_by_group(db_session, test_user):
     picked = resolve_group_materials(db_session, [test_user.id], ["数字人口播素材"])
     assert len(picked) == MATERIAL_PICK_LIMIT
     assert all(item["fileUrl"].startswith("https://cdn.example.com/g") for item in picked)
+
+
+def test_recorder_resolver_uses_full_asset_scope():
+    """录音生成必须和云端一样按分组查全库，而不是只看最近 300 条。"""
+    calls = []
+
+    def _resolver(groups):
+        calls.append(list(groups))
+        return [
+            {"asset_id": f"r{i}", "type": "image", "fileUrl": f"https://cdn.example.com/r{i}.jpg", "name": f"r{i}.jpg"}
+            for i in range(20)
+        ]
+
+    params = h5_recorder_extract._normalize_ai_params(
+        {"use_materials": True, "material_group": ""},
+        {"数字人口播素材": [_FakeAsset("only-recent")]},
+        [],
+        ["数字人口播素材"],
+        resolver=_resolver,
+    )
+    assert calls == [["数字人口播素材"]]
+    assert len(params["materials"]) == 20
+    assert params["material_group"] == "数字人口播素材"

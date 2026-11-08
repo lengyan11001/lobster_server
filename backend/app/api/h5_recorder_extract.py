@@ -46,6 +46,7 @@ def _normalize_ai_params(
     groups: dict[str, list],
     style_templates: list[dict[str, str]],
     template_groups: list[str] | None = None,
+    resolver=None,
 ) -> dict[str, Any]:
     """把 AI 返回的松散 JSON 收敛成 mini program 能直接落地的参数。"""
     use_materials = _as_bool(parsed.get("use_materials"), True)
@@ -60,7 +61,10 @@ def _normalize_ai_params(
     if not chosen_groups and groups:
         chosen_groups = [max(groups, key=lambda name: len(groups[name]))]
     materials = []
-    if use_materials and chosen_groups:
+    if use_materials and chosen_groups and resolver is not None:
+        # 和云端数字人成片共用同一个取数实现（全库按分组取，不受 300 条窗口限制）。
+        materials = resolver(chosen_groups)
+    elif use_materials and chosen_groups:
         pool = []
         seen: set[str] = set()
         for name in chosen_groups:
@@ -313,7 +317,15 @@ async def extract_digital_human_params(
             template_groups = [str(item).strip() for item in raw_groups if str(item).strip()][:20]
     except Exception:
         template_groups = []
-    params = _normalize_ai_params(parsed, groups, style_templates, template_groups)
+    from ..services.digital_human_materials import resolve_group_materials
+
+    params = _normalize_ai_params(
+        parsed,
+        groups,
+        style_templates,
+        template_groups,
+        resolver=lambda names: resolve_group_materials(db, [owner.id], names),
+    )
     return {
         "ok": True,
         "title": title or (row.display_name or row.file_name or "")[:20],
