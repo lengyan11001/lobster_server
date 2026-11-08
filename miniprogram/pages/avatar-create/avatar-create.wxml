@@ -64,7 +64,7 @@
 
   <view class="cap-stage">
     <camera wx:if="{{!capturedPath}}" class="cap-live" device-position="{{cameraPos}}" flash="off" binderror="onCameraError">
-      <cover-view wx:if="{{captureScript}}" class="cap-teleprompter">{{captureScript}}</cover-view>
+      <cover-view wx:if="{{captureScript && captureMode === 'video'}}" class="cap-teleprompter">{{captureScript}}</cover-view>
       <cover-view wx:if="{{recording}}" class="cap-badge"><cover-view class="cap-dot"></cover-view><cover-view class="cap-time">{{recordTimeText}}</cover-view></cover-view>
     </camera>
     <image wx:elif="{{capturedKind === 'image'}}" class="cap-preview" src="{{capturedPath}}" mode="aspectFill" />
