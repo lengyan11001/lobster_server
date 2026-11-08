@@ -22,3 +22,4 @@
 .chip { padding: 10rpx 22rpx; border-radius: 999rpx; background: #f1f5f9; color: #475569; font-size: 24rpx; }
 .chip.active { background: #0f172a; color: #fff; }
 .primary { margin-top: 24rpx; }
+.add-fab { width: 64rpx; height: 64rpx; border-radius: 50%; background: #ffffff; border: 1rpx solid #e2e8f0; color: #06b6d4; font-size: 40rpx; line-height: 62rpx; text-align: center; box-shadow: 0 4rpx 14rpx rgba(15,23,42,.08); }

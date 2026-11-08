@@ -4,7 +4,7 @@
       <text class="title">朋友圈文案</text>
       <text class="sub">按批次查看生成记录，点进去看文案和配图</text>
     </view>
-    <button class="primary small" bindtap="goCreate">+ 新增</button>
+    <view class="add-fab" bindtap="goCreate">＋</view>
   </view>
 
   <view wx:if="{{loading && !groups.length}}" class="empty">加载中…</view>

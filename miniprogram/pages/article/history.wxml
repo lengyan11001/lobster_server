@@ -1,7 +1,7 @@
 <view class="page">
   <view class="head">
     <view><text class="title">{{title}}</text><text class="sub">点开查看生成内容，右上角新建</text></view>
-    <button class="primary small" bindtap="goCreate">+ 新增</button>
+    <view class="add-fab" bindtap="goCreate">＋</view>
   </view>
 
   <view wx:if="{{!items.length}}" class="empty">还没有生成记录</view>
