@@ -167,9 +167,10 @@ def media_thumb(url: str = Query(...)):
         # 通过 content-type 判断视频：素材 URL 带 token 后没有扩展名，不能只看后缀
         content_type = ""
         try:
+            # 不能用 HEAD：本站 /api/assets/file 只允许 GET，会返回 405 不跟随跳转
             with httpx.Client(timeout=10, follow_redirects=True, headers={"Referer": "https://bhzn.top/", "User-Agent": _UA}) as client:
-                head = client.head(src)
-                content_type = (head.headers.get("content-type") or "").lower()
+                with client.stream("GET", src) as resp:
+                    content_type = (resp.headers.get("content-type") or "").lower()
         except Exception:
             content_type = ""
 
