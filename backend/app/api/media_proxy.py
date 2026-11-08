@@ -147,7 +147,7 @@ def media_thumb(url: str = Query(...)):
     _cleanup_cache_once()
     for cached in (jpg, png):
         if cached.exists() and cached.stat().st_size > 0:
-            if cached.suffix != ".jpg" or _is_jpeg_file(cached):
+            if (cached.suffix != ".jpg" or _is_jpeg_file(cached)) and cached.stat().st_size <= 1500000:
                 return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
             try:
                 cached.unlink()
@@ -157,7 +157,7 @@ def media_thumb(url: str = Query(...)):
     with _key_lock(jpg.name):
         for cached in (jpg, png):
             if cached.exists() and cached.stat().st_size > 0:
-                if cached.suffix != ".jpg" or _is_jpeg_file(cached):
+                if (cached.suffix != ".jpg" or _is_jpeg_file(cached)) and cached.stat().st_size <= 1500000:
                     return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
                 try:
                     cached.unlink()
@@ -174,9 +174,10 @@ def media_thumb(url: str = Query(...)):
         except Exception:
             content_type = ""
 
-        if _is_video(src, content_type):
+        try:
             return _thumb_from_video(src, jpg)
-    return _thumb_from_image(src)
+        except HTTPException:
+            return _thumb_from_image(src)
 
 
 @router.get("/api/media/proxy", summary="媒体流代理（支持 Range，供小程序预览视频）")
