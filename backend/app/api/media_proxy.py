@@ -39,6 +39,16 @@ def _check_url(url: str) -> str:
     return raw
 
 
+
+
+def _is_jpeg_file(path) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2)
+        return head == b"\xff\xd8"
+    except Exception:
+        return False
+
 def _is_video(url: str, content_type: str = "") -> bool:
     if "video/" in (content_type or ""):
         return True
@@ -137,15 +147,33 @@ def media_thumb(url: str = Query(...)):
     _cleanup_cache_once()
     for cached in (jpg, png):
         if cached.exists() and cached.stat().st_size > 0:
-            return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
+            if cached.suffix != ".jpg" or _is_jpeg_file(cached):
+                return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
+            try:
+                cached.unlink()
+            except OSError:
+                pass
 
     with _key_lock(jpg.name):
-        # 同一 URL 并发进来时，等第一个算完直接命中缓存
         for cached in (jpg, png):
             if cached.exists() and cached.stat().st_size > 0:
-                return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
+                if cached.suffix != ".jpg" or _is_jpeg_file(cached):
+                    return FileResponse(cached, media_type="image/jpeg" if cached.suffix == ".jpg" else "image/png")
+                try:
+                    cached.unlink()
+                except OSError:
+                    pass
 
-        if _is_video(src):
+        # 通过 content-type 判断视频：素材 URL 带 token 后没有扩展名，不能只看后缀
+        content_type = ""
+        try:
+            with httpx.Client(timeout=10, follow_redirects=True, headers={"Referer": "https://bhzn.top/", "User-Agent": _UA}) as client:
+                head = client.head(src)
+                content_type = (head.headers.get("content-type") or "").lower()
+        except Exception:
+            content_type = ""
+
+        if _is_video(src, content_type):
             return _thumb_from_video(src, jpg)
     return _thumb_from_image(src)
 
