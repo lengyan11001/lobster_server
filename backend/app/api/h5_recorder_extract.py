@@ -10,12 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Asset, OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..models import Asset, IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..services.digital_human_materials import MATERIAL_PICK_LIMIT, broad_pick
 from .auth import access_token_claims, create_access_token, get_current_user
 from .h5_personal_settings import _owner_user
 from .mobile_identity import online_user_for_mobile_user
 
 router = APIRouter()
+
+# 与 ip_content_studio 同一份「个人默认配置」行名。
+_PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
@@ -41,22 +45,43 @@ def _normalize_ai_params(
     parsed: dict[str, Any],
     groups: dict[str, list],
     style_templates: list[dict[str, str]],
+    template_groups: list[str] | None = None,
 ) -> dict[str, Any]:
     """把 AI 返回的松散 JSON 收敛成 mini program 能直接落地的参数。"""
     use_materials = _as_bool(parsed.get("use_materials"), True)
-    group_name = str(parsed.get("material_group") or "").strip()
+    requested_group = str(parsed.get("material_group") or "").strip()
+    # 统一宽松策略：AI 点名了分组就用它；没点名/点错了就用当前模板的分组；
+    # 再兜底到素材最多的分组。绝不因为分组名为空就交白卷。
+    chosen_groups: list[str] = []
+    if requested_group and requested_group in groups:
+        chosen_groups = [requested_group]
+    elif template_groups:
+        chosen_groups = [name for name in template_groups if name in groups]
+    if not chosen_groups and groups:
+        chosen_groups = [max(groups, key=lambda name: len(groups[name]))]
     materials = []
-    if use_materials and group_name and group_name in groups:
-        for item in groups[group_name][:8]:
-            media_type = str(item.media_type or "").lower()
-            if media_type not in ("image", "video"):
-                continue
-            materials.append({
-                "asset_id": item.asset_id,
-                "type": media_type,
-                "fileUrl": str(item.source_url or ""),
-                "name": str(item.filename or item.asset_id),
-            })
+    if use_materials and chosen_groups:
+        pool = []
+        seen: set[str] = set()
+        for name in chosen_groups:
+            for item in groups[name]:
+                asset_id = str(getattr(item, "asset_id", "") or "")
+                media_type = str(getattr(item, "media_type", "") or "").lower()
+                if media_type not in ("image", "video"):
+                    continue
+                url = str(getattr(item, "source_url", "") or "").strip()
+                if not url or (asset_id and asset_id in seen):
+                    continue
+                if asset_id:
+                    seen.add(asset_id)
+                pool.append({
+                    "asset_id": asset_id,
+                    "type": media_type,
+                    "fileUrl": url,
+                    "name": str(getattr(item, "filename", "") or asset_id),
+                })
+        materials = broad_pick(pool, MATERIAL_PICK_LIMIT)
+    group_name = chosen_groups[0] if chosen_groups else ""
     template_name = str(parsed.get("template_name") or "").strip()
     template_style_id = ""
     if template_name:
@@ -270,7 +295,25 @@ async def extract_digital_human_params(
     except Exception:
         duration_seconds = 30
     duration_seconds = max(10, min(180, duration_seconds))
-    params = _normalize_ai_params(parsed, groups, style_templates)
+    template_groups: list[str] = []
+    try:
+        tpl_row = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.user_id == owner.id,
+                IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+                IPContentScheduleTemplate.status == "active",
+            )
+            .order_by(IPContentScheduleTemplate.updated_at.desc())
+            .first()
+        )
+        tpl_meta = tpl_row.meta if tpl_row and isinstance(tpl_row.meta, dict) else {}
+        raw_groups = tpl_meta.get("digital_human_asset_groups")
+        if isinstance(raw_groups, list):
+            template_groups = [str(item).strip() for item in raw_groups if str(item).strip()][:20]
+    except Exception:
+        template_groups = []
+    params = _normalize_ai_params(parsed, groups, style_templates, template_groups)
     return {
         "ok": True,
         "title": title or (row.display_name or row.file_name or "")[:20],

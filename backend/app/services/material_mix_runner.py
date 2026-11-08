@@ -91,12 +91,24 @@ def build_mix_body(db: Any, run: ScheduledTaskRun) -> Dict[str, Any]:
     if not audio_url and not (content and speaker):
         raise RuntimeError("素材混剪缺少驱动：既没有音频，也没有文案+声音")
 
+    materials = _mix_materials(db, params)
+    if not materials:
+        groups = [
+            str(item).strip()
+            for item in (params.get("digital_human_asset_groups") or params.get("asset_groups") or [])
+            if str(item).strip()
+        ]
+        if groups:
+            from .digital_human_materials import resolve_group_materials
+
+            materials = resolve_group_materials(db, [run.user_id], groups)
+
     body: Dict[str, Any] = {
         "scene": "oralMixCutting",
         "style_id": style_id,
         "title": str(run.title or params.get("title") or "素材混剪")[:80],
         "language": _pick(params, "language") or "zh-CN",
-        "materials": _mix_materials(db, params),
+        "materials": materials,
         "material_sound_switch": bool(params.get("material_sound_switch")),
         "header_switch": bool(params.get("header_switch", True)),
         "material_switch": bool(params.get("material_switch", True)),

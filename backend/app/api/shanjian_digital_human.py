@@ -1374,11 +1374,12 @@ def _rank_approved_materials(
     broad：分组内随机挑选（默认）；strict：关键词命中排序，最多 8 条。
     """
     mode = _material_gate_mode()
+    mode = _material_gate_mode()
     if mode != "strict":
-        # 宽口径：分组内随机挑，不按文案打分、不做 AI 判断
-        ordered = list(approved)
-        random.shuffle(ordered)
-        return ordered[: max(1, int(limit or 20))]
+        # 统一宽松策略：分组内随机，最多 20 条，不做文案关键词闸门。
+        from ..services.digital_human_materials import broad_pick
+
+        return broad_pick(approved, limit or 20)
     def sort_key(indexed: tuple) -> tuple:
         index, item = indexed
         matched = hits.get(str(item.get("id") or "")) or {}
