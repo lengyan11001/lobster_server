@@ -427,6 +427,14 @@ def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") 
         ]
     current_meta = current_template.meta if current_template and isinstance(current_template.meta, dict) else {}
     personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    asset_groups_raw = current_meta.get("digital_human_asset_groups")
+    if asset_groups_raw is None:
+        asset_groups_raw = personal_meta.get("digital_human_asset_groups")
+    digital_human_asset_groups = [
+        _h5_dh_clean_text(item, 40)
+        for item in (asset_groups_raw if isinstance(asset_groups_raw, list) else [])
+        if _h5_dh_clean_text(item, 40)
+    ][:20]
     template_value, template_configured = _h5_dh_selected_meta_value(
         current_meta,
         "digital_human_template",
@@ -471,6 +479,7 @@ def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") 
         "digital_human_resources": digital_human_resources,
         "digital_human_template_configured": bool(template_configured or template_value is not None),
         "digital_human_resources_configured": bool(resources_configured or resources_value is not None),
+        "digital_human_asset_groups": digital_human_asset_groups,
         "virtualman_candidates": virtualman_candidates,
         "virtualman_id": virtualman_id,
         "voice_candidates": voice_candidates,
@@ -1567,6 +1576,7 @@ def _refresh_live_personal_template_payload(
             "memory_docs",
             "language",
             "target_language",
+            "digital_human_asset_groups",
         ):
             if key in context_params:
                 inner[key] = copy.deepcopy(context_params[key])
@@ -1648,6 +1658,7 @@ def _refresh_live_personal_template_payload(
                 "memory_docs",
                 "language",
                 "target_language",
+                "digital_human_asset_groups",
             ):
                 if key in context_params:
                     params[key] = copy.deepcopy(context_params[key])

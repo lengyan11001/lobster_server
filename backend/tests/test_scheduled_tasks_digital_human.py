@@ -457,3 +457,28 @@ def test_h5_ability_digital_human_payload_gets_live_persona(monkeypatch):
 def test_non_persona_workflow_node_stays_untouched():
     payload = {"action": "publish_content", "h5_context": {"source": "h5_ability"}}
     assert scheduled_tasks._workflow_uses_live_personal_template("client_workflow", payload) is False
+
+
+def test_h5_ability_digital_human_payload_gets_asset_groups(monkeypatch):
+    """2026-11-08：模板里的「数字人素材分组」必须进 params，否则素材数为 0。
+
+    云端 `_apply_asset_group_materials` 只在 template_meta / body 带 asset_groups 时
+    才挑素材；客户端只转发 source 里存在的 digital_human_asset_groups。
+    """
+    context = _ability_context()
+    context["digital_human_asset_groups"] = ["数字人口播素材"]
+    monkeypatch.setattr(
+        scheduled_tasks, "_h5_dh_context_params", lambda db, user_id, installation_id="": context
+    )
+    monkeypatch.setattr(
+        scheduled_tasks, "_h5_dh_personal_default_template", lambda db, user_id, installation_id="": object()
+    )
+    payload = {
+        "action": "shanjian_digital_human_video",
+        "h5_context": {"source": "h5_ability", "ability_key": "hifly.video.create_by_tts"},
+        "params": {"script_source": "ip_daily_industry_hot_oral", "template_mode": "active_personal_template"},
+    }
+    out = scheduled_tasks._refresh_live_personal_template_payload(
+        object(), task_kind="client_workflow", payload=payload, target_user_id=54
+    )
+    assert out["params"]["digital_human_asset_groups"] == ["数字人口播素材"]
