@@ -1128,6 +1128,25 @@ def _voice_param_text(value: Any, default: str, min_value: float, max_value: flo
     return text or default
 
 
+def _hifly_pitch_text(value: Any) -> str:
+    """HiFly 自带音色的「语调」范围是 0.1~2.0。
+
+    客户端默认会带 0（表示“不调整”），直接按范围校验会报
+    「语调必须在 0.1 到 2 之间」。这里把 <=0 当作 1.0，超出范围夹到边界，
+    避免数字人整条链路因为一个默认值直接 400。
+    """
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        num = 0.0
+    if num <= 0:
+        num = 1.0
+    elif num < 0.1 or num > 2.0:
+        logger.warning("[hifly] pitch=%s 超出 0.1~2，已按边界处理", value)
+        num = max(0.1, min(2.0, num))
+    return f"{num:.2f}".rstrip("0").rstrip(".") or "1"
+
+
 def _status_text(status: int) -> str:
     return {
         1: "等待中",
@@ -2640,7 +2659,10 @@ async def edit_my_voice_params(
         await _qwen_ensure_voice_id(db, row, voice_id)
     rate = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
     volume = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
-    pitch = _voice_param_text(body.pitch, "0" if (is_minimax_voice or is_qwen_voice) else "1.0", -12.0 if (is_minimax_voice or is_qwen_voice) else 0.1, 12.0 if (is_minimax_voice or is_qwen_voice) else 2.0, "语调")
+    if is_minimax_voice or is_qwen_voice:
+        pitch = _voice_param_text(body.pitch, "0", -12.0, 12.0, "语调")
+    else:
+        pitch = _hifly_pitch_text(body.pitch)
     emotion = _minimax_emotion(body.emotion) if is_minimax_voice else ""
     instructions = _qwen_instructions(body.instructions) if is_qwen_voice else ""
     payload = {"voice": voice_id, "rate": rate, "volume": volume, "pitch": pitch}
@@ -3493,12 +3515,10 @@ async def create_my_video_by_tts(
     if not is_qwen_voice and body.volume is not None:
         voice_params["volume"] = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
     if not is_qwen_voice and body.pitch is not None:
-        voice_params["pitch"] = _voice_param_text(
-            body.pitch,
-            "0" if is_minimax_voice else "1.0",
-            -12.0 if is_minimax_voice else 0.1,
-            12.0 if is_minimax_voice else 2.0,
-            "语调",
+        voice_params["pitch"] = (
+            _voice_param_text(body.pitch, "0", -12.0, 12.0, "语调")
+            if is_minimax_voice
+            else _hifly_pitch_text(body.pitch)
         )
     if is_minimax_voice:
         if body.emotion is not None:
