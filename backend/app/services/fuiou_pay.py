@@ -60,9 +60,14 @@ def _fuiou_config(brand_mark: Optional[str] = None) -> dict[str, str]:
         logger.error("[fuiou] FUIOU_BRAND_CONFIGS_JSON 不是合法 JSON，已拒绝按默认商户号扣款")
         return {**cfg, "mchnt_cd": "", "mchnt_key": ""}
     entry = parsed.get(mark) if isinstance(parsed, dict) else None
+    if entry is None:
+        # 品牌没有单独商户号：按业务约定回退到系统默认商户
+        # （鲸海 jinghai / 打卡 daka 等 OEM 都走必火的默认商户）。
+        logger.info("[fuiou] 品牌 %s 未单独配置商户号，使用默认商户 %s", mark, cfg.get("mchnt_cd", ""))
+        return cfg
     if not isinstance(entry, dict):
-        # 指定了品牌但品牌配置缺失：不再静默落到默认商户号（可能是另一个品牌的商户号）
-        logger.error("[fuiou] 品牌 %s 未配置商户号，已拒绝按默认商户号扣款", mark)
+        # 品牌配置写坏了（不是对象）才拒绝，避免半截配置串到别的商户。
+        logger.error("[fuiou] 品牌 %s 的配置不是对象，已拒绝按默认商户号扣款", mark)
         return {**cfg, "mchnt_cd": "", "mchnt_key": ""}
     # Require both merchant id and key before enabling an OEM override. Other
     # fields may inherit the system-level defaults.

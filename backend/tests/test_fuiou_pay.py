@@ -203,3 +203,39 @@ class TestUtils:
         from backend.app.services.fuiou_pay import _now_ts
 
         assert re.fullmatch(r"\d{14}", _now_ts())
+
+
+class TestBrandFallback:
+    """鲸海(jinghai)/打卡(daka) 这类没有独立商户号的 OEM 要走默认商户。"""
+
+    def test_brand_without_entry_uses_default_merchant(self, patch_fuiou_settings, monkeypatch):
+        from backend.app.services.fuiou_pay import _fuiou_config, fuiou_configured
+
+        monkeypatch.setattr(
+            patch_fuiou_settings,
+            "fuiou_brand_configs_json",
+            '{"hikong": {"mchnt_cd": "0001", "mchnt_key": "k1", "order_prefix": "67982"}}',
+            raising=False,
+        )
+        cfg = _fuiou_config("jinghai")
+        assert cfg["mchnt_cd"] == patch_fuiou_settings.fuiou_mchnt_cd
+        assert cfg["mchnt_key"] == patch_fuiou_settings.fuiou_mchnt_key
+        assert cfg["order_prefix"] == patch_fuiou_settings.fuiou_order_prefix
+        assert fuiou_configured("jinghai") is True
+
+    def test_brand_entry_incomplete_is_still_rejected(self, patch_fuiou_settings, monkeypatch):
+        from backend.app.services.fuiou_pay import fuiou_configured
+
+        monkeypatch.setattr(
+            patch_fuiou_settings,
+            "fuiou_brand_configs_json",
+            '{"hikong": {"mchnt_cd": "0001"}}',
+            raising=False,
+        )
+        assert fuiou_configured("hikong") is False
+
+    def test_invalid_brand_json_is_rejected(self, patch_fuiou_settings, monkeypatch):
+        from backend.app.services.fuiou_pay import fuiou_configured
+
+        monkeypatch.setattr(patch_fuiou_settings, "fuiou_brand_configs_json", "[broken", raising=False)
+        assert fuiou_configured("jinghai") is False

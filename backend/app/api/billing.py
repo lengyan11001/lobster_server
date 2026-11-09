@@ -1020,7 +1020,8 @@ async def create_fuiou_recharge_order(
         raise HTTPException(status_code=400, detail="当前未启用自有充值")
     brand_mark = user_brand_mark(current_user)
     if not fuiou_configured(brand_mark):
-        raise HTTPException(status_code=400, detail="未配置富友支付（FUIOU_MCHNT_CD / FUIOU_MCHNT_KEY / FUIOU_PRECREATE_URL）")
+        logger.error("[recharge] fuiou not configured brand=%s", brand_mark)
+        raise HTTPException(status_code=400, detail="充值通道暂不可用，请联系管理员")
     pricing = _get_billing_pricing()
     amount_yuan, amount_fen, credits = _calc_amount_from_body(body, pricing)
     total_fen = amount_fen if amount_fen else amount_yuan * 100
@@ -1150,7 +1151,8 @@ async def fuiou_query_recharge_order(
         raise HTTPException(status_code=404, detail="order not found")
     brand_mark = getattr(order, "brand_mark", None)
     if not fuiou_configured(brand_mark):
-        raise HTTPException(status_code=400, detail="未配置富友支付")
+        logger.error("[recharge] fuiou not configured brand=%s (query)", brand_mark)
+        raise HTTPException(status_code=400, detail="充值通道暂不可用，请联系管理员")
     out_trade_no = (out_trade_no or "").strip()
     if not out_trade_no:
         raise HTTPException(status_code=400, detail="请传 out_trade_no")

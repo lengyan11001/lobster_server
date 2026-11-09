@@ -35,7 +35,7 @@ class TestFuiouCreate:
         monkeypatch.setattr(patch_fuiou_settings, "fuiou_mchnt_cd", "")
         response = client.post("/api/recharge/fuiou-create", json={"price_yuan": 1, "credits": 100})
         assert response.status_code == 400
-        assert "未配置富友支付" in response.json()["detail"]
+        assert "充值通道暂不可用" in response.json()["detail"]
 
     def test_create_success_returns_qr_code(self, client, patch_httpx_post, make_fuiou_response):
         captured = patch_httpx_post(
