@@ -4629,7 +4629,10 @@ def _execute_server_side_run(
                 # "第 3/3 张" + 已完成，实际 image_urls 是空的（user 352）。
                 if image_count < 3:
                     first_error = ""
-                    for item in image_generation.get("image_errors") or []:
+                    # 图片生成结果里既有历史的 image_errors，也有生成器返回的 errors，
+                    # 两个都读，避免把「积分不足」这类真实原因吞掉。
+                    raw_errors = image_generation.get("image_errors") or image_generation.get("errors") or []
+                    for item in raw_errors:
                         if isinstance(item, dict) and str(item.get("error") or "").strip():
                             first_error = str(item.get("error")).strip()
                             break
