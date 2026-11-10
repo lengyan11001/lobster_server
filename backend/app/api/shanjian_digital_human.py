@@ -465,12 +465,67 @@ async def _download_audio_bytes(audio_url: str) -> tuple[bytes, str]:
         raise HTTPException(status_code=400, detail=f"下载音频失败: {type(exc).__name__}: {exc}") from exc
 
 
+def _clamp_speed_ratio(value: Any) -> float:
+    try:
+        speed = float(value or 1.0)
+    except (TypeError, ValueError):
+        speed = 1.0
+    if speed != speed:  # NaN
+        speed = 1.0
+    return max(0.5, min(speed, 2.0))
+
+
+def _apply_audio_speed(data: bytes, media_type: str, speed_ratio: Any) -> tuple[bytes, str]:
+    """按语速倍率重采样驱动音频。
+
+    闪剪 /v1/virtualman/video 的 audioUrl 分支没有 speedRatio 参数，上传音频
+    后调语速会被上游忽略（数字人2.0 音频驱动“改了速度没效果”）。这里在转存
+    TOS 之前用 ffmpeg atempo 真正变速，时长随倍率变化，口型跟着音频走。
+    """
+    speed = _clamp_speed_ratio(speed_ratio)
+    if not data or abs(speed - 1.0) < 0.01:
+        return data, media_type
+    try:
+        ffmpeg = _find_asset_ffmpeg()
+    except Exception:  # _find_asset_ffmpeg 在缺 ffmpeg 时抛 HTTPException
+        ffmpeg = ""
+    if not ffmpeg:
+        raise HTTPException(status_code=503, detail="服务器缺少 ffmpeg，暂时无法按设置调整音频速度")
+    ext = _audio_ext_from_content(media_type, "")
+    with tempfile.TemporaryDirectory(prefix="shanjian-atempo-") as tmp:
+        src = Path(tmp) / f"in{ext}"
+        dst = Path(tmp) / f"out{ext}"
+        src.write_bytes(data)
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(src),
+                "-vn",
+                "-filter:a",
+                f"atempo={speed:.3f}",
+                str(dst),
+            ],
+            capture_output=True,
+            timeout=300,
+        )
+        if proc.returncode != 0 or not dst.exists() or dst.stat().st_size <= 0:
+            detail = (proc.stderr or b"")[:300].decode("utf-8", errors="ignore").strip()
+            raise HTTPException(status_code=502, detail=f"音频变速失败: {detail or 'ffmpeg 未生成输出'}")
+        return dst.read_bytes(), media_type
+
+
 async def _persist_audio_for_shanjian(
     *,
     audio_url: str,
     db: Session,
     current_user: User,
     title: str,
+    speed_ratio: Any = 1.0,
 ) -> tuple[str, str]:
     raw = _clean_text(audio_url)
     _release_db_transaction(db)
@@ -479,6 +534,16 @@ async def _persist_audio_for_shanjian(
         raise HTTPException(status_code=400, detail="音频内容为空，无法提交数字人任务")
     media_type = (content_type or "audio/mpeg").split(";", 1)[0].strip() or "audio/mpeg"
     ext = _audio_ext_from_content(media_type, raw)
+    speed = _clamp_speed_ratio(speed_ratio)
+    if abs(speed - 1.0) >= 0.01:
+        data, media_type = await asyncio.to_thread(_apply_audio_speed, data, media_type, speed)
+        ext = _audio_ext_from_content(media_type, raw)
+        logger.info(
+            "[shanjian-dh] audio speed applied user_id=%s speed=%.2f size=%s",
+            getattr(current_user, "id", ""),
+            speed,
+            len(data),
+        )
     asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type)
     if not public_url:
         raise HTTPException(status_code=503, detail="数字人口播音频转存 TOS 失败，无法提交闪剪")
@@ -500,6 +565,7 @@ async def _persist_audio_for_shanjian(
             # 按口径（2026-09-22）素材库与内容库都不展示，仍可按 asset_id 取用。
             "asset_origin": "intermediate",
             "content_visibility": "hidden",
+            "speed_ratio": speed,
         },
     )
     db.add(asset)
@@ -2611,6 +2677,7 @@ async def create_video(
             db=db,
             current_user=current_user,
             title=title,
+            speed_ratio=body.speed_ratio,
         )
         audio_asset_id = audio_asset_id or persisted_audio_asset_id
 
