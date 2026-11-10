@@ -4988,6 +4988,47 @@ def _recover_stranded_pending_server_side_runs(
     return recovered
 
 
+def _reap_no_progress_runs(db: Session, now: Optional[datetime] = None) -> int:
+    """客户端 watchdog 已判定「长时间无进展」但事件没落终态的 run，这里兜底收尾。"""
+    now = now or datetime.utcnow()
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(ScheduledTaskRun.status == "processing")
+        .order_by(ScheduledTaskRun.started_at.desc())
+        .limit(300)
+        .all()
+    )
+    count = 0
+    for row in rows:
+        progress = row.progress if isinstance(row.progress, dict) else {}
+        if str(progress.get("stage") or "") != "no_progress_timeout":
+            continue
+        message = str(progress.get("text") or "执行无进展，已自动中断").strip()
+        row.status = "failed"
+        row.error = message[:1000]
+        row.result_text = message[:4000]
+        row.finished_at = row.finished_at or now
+        row.updated_at = now
+        row.progress = _merge_run_progress(
+            row,
+            {
+                "stage": "no_progress_timeout",
+                "text": message,
+                "failed_at": now.isoformat(),
+                "reaped_at": now.isoformat(),
+            },
+        )
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task:
+            task.last_error = message[:500]
+            task.updated_at = now
+        _sync_h5_message_from_run(db, row, now)
+        count += 1
+    if count:
+        db.commit()
+    return count
+
+
 def _fail_stale_server_side_runs(db: Session, now: Optional[datetime] = None) -> int:
     now = now or datetime.utcnow()
     count = 0
@@ -6188,6 +6229,10 @@ def list_scheduled_task_runs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    try:
+        _reap_no_progress_runs(db)
+    except Exception:
+        db.rollback()
     owner_user = online_user_for_mobile_user(db, current_user)
     _enqueue_due_tasks(db, owner_user.id, _header_installation_id(request))
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
@@ -6740,6 +6785,50 @@ def _assert_worker_can_update(
         raise HTTPException(status_code=409, detail="任务已结束")
 
 
+def _apply_terminal_run_event(
+    db: Session,
+    row: ScheduledTaskRun,
+    event_type: Any,
+    payload: Dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """把客户端上报的 failed/error/timeout 事件落成终态（2026-11-10 用户 142 stuck 修复）。"""
+    terminal_type = str(event_type or "").strip().lower()
+    if terminal_type not in {"failed", "error", "timeout"}:
+        return False
+    if str(row.status or "").strip().lower() in _FINAL_STATUSES:
+        return False
+    now = now or datetime.utcnow()
+    event_payload = payload if isinstance(payload, dict) else {}
+    message = (
+        str(event_payload.get("text") or event_payload.get("message") or event_payload.get("error") or "").strip()
+        or "任务执行失败"
+    )
+    row.status = "failed"
+    row.error = message[:1000]
+    row.result_text = message[:4000]
+    row.finished_at = now
+    row.updated_at = now
+    row.progress = _merge_run_progress(
+        row,
+        {
+            **event_payload,
+            "stage": str(event_payload.get("stage") or "failed"),
+            "text": message,
+            "failed_at": now.isoformat(),
+        },
+    )
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+    if task:
+        task.last_error = message[:500]
+        task.updated_at = now
+    _sync_h5_message_from_run(db, row, now)
+    _add_h5_event(db, row.h5_message_id, row.user_id, terminal_type, event_payload)
+    db.commit()
+    return True
+
+
 @router.post("/api/scheduled-tasks/runs/{run_id}/event", summary="本地 online 提交任务进度")
 def submit_scheduled_task_event(
     run_id: str,
@@ -6807,6 +6896,9 @@ def submit_scheduled_task_event(
         _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", event_payload)
         db.commit()
         return {"ok": True, "status": row.status, "cancelled": True}
+
+    if _apply_terminal_run_event(db, row, body.type, event_payload, now=now):
+        return {"ok": True, "status": row.status, "failed": True}
 
     progress = dict(body.payload or {})
     client_process_id = _header_client_process_id(request)

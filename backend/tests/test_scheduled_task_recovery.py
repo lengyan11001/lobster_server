@@ -432,3 +432,36 @@ def test_wechat_transcript_reuses_terminal_job_for_same_scheduled_run(db_session
 
     assert result["job_id"] == "wct_resume_test"
     assert result["status"] == "completed"
+
+
+def test_terminal_failed_event_marks_run_failed(db_session, test_user):
+    row = _run(run_id="terminal-run", user_id=test_user.id, task_kind="client_workflow")
+    db_session.add(row)
+    db_session.commit()
+
+    ok = scheduled_tasks._apply_terminal_run_event(
+        db_session,
+        row,
+        "failed",
+        {"stage": "no_progress_timeout", "text": "执行无进展超过 40 分钟，本地已中断并释放队列"},
+    )
+    db_session.refresh(row)
+
+    assert ok is True
+    assert row.status == "failed"
+    assert row.finished_at is not None
+    assert "无进展" in (row.error or "")
+
+
+def test_reap_no_progress_runs_closes_stuck_processing(db_session, test_user):
+    row = _run(run_id="stuck-run", user_id=test_user.id, task_kind="client_workflow")
+    row.progress = {"stage": "no_progress_timeout", "text": "执行无进展超过 40 分钟，本地已中断并释放队列"}
+    db_session.add(row)
+    db_session.commit()
+
+    count = scheduled_tasks._reap_no_progress_runs(db_session)
+    db_session.refresh(row)
+
+    assert count >= 1
+    assert row.status == "failed"
+    assert row.finished_at is not None
