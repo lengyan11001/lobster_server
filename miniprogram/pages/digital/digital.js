@@ -769,7 +769,7 @@ Page({
   loadAssets() {
     if (!app.globalData.token) return Promise.resolve();
     this.setData({ assetsLoading: true });
-    return app.request({ url: "/api/assets?limit=120", timeout: 30000 })
+    return app.request({ url: "/api/assets?origin=all&limit=200", timeout: 30000 })
       .then((data) => {
         const rows = ((data && (data.assets || data.items)) || []).map((row) => {
           const id = String(row.asset_id || row.id || "");
