@@ -495,6 +495,14 @@ def _pre_deduct_idempotent_store(db: Session, user_id: int, idem_key: str, paylo
     _billing_idempotent_store(db, user_id, idem_key, payload, endpoint="pre_deduct")
 
 
+def _record_call_idempotent_cached(db: Session, user_id: int, idem_key: str) -> Optional[dict]:
+    return _billing_idempotent_cached(db, user_id, idem_key, endpoint="record_call")
+
+
+def _record_call_idempotent_store(db: Session, user_id: int, idem_key: str, payload: dict) -> None:
+    _billing_idempotent_store(db, user_id, idem_key, payload, endpoint="record_call")
+
+
 def _refund_idempotent_cached(db: Session, user_id: int, idem_key: str) -> Optional[dict]:
     return _billing_idempotent_cached(db, user_id, idem_key, endpoint="refund")
 
@@ -516,6 +524,12 @@ def pre_deduct(
         iid = (x_installation_id or "").strip() or None
     else:
         iid = _installation_id_for_capability_checks(x_installation_id)
+    # 结算幂等：同一任务重复轮询/补偿重试时只结算一次，避免重复退款。
+    idem_key = _billing_idempotency_key(request)
+    if idem_key:
+        cached_settle = _record_call_idempotent_cached(db, current_user.id, idem_key)
+        if cached_settle is not None:
+            return cached_settle
     if not user_can_use_capability(db, current_user.id, body.capability_id, iid):
         raise HTTPException(
             status_code=403,
@@ -1159,12 +1173,14 @@ def record_call(
         )
     except Exception:
         pass
-    return {
+    response = {
         "id": log.id,
         "capability_id": log.capability_id,
         "success": log.success,
         "credits_charged": credits_json_float(credits_charged),
     }
+    _record_call_idempotent_store(db, current_user.id, idem_key, response)
+    return response
 
 
 @router.get("/capabilities/my-call-logs", summary="我的能力调用记录")

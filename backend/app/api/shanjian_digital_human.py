@@ -12,6 +12,7 @@ import random
 import shutil
 import subprocess
 import tempfile
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..core.config import settings
 from ..db import get_db
@@ -173,7 +175,12 @@ def _billing_base() -> str:
     return base
 
 
-def _billing_headers(request: Request, acting_user: Optional[User] = None) -> Dict[str, str]:
+def _billing_headers(
+    request: Request,
+    acting_user: Optional[User] = None,
+    *,
+    idem_key: str = "",
+) -> Dict[str, str]:
     token = ""
     if acting_user is not None:
         # 小程序是微信账号，额度挂在绑定手机号账号上：计费时用手机号账号的身份。
@@ -195,6 +202,9 @@ def _billing_headers(request: Request, acting_user: Optional[User] = None) -> Di
     )
     if billing_key:
         headers["X-Lobster-Mcp-Billing"] = billing_key
+    if idem_key:
+        # 结算/退款必须带幂等键：客户端重复轮询或补偿重试时只动一次账。
+        headers["X-Billing-Idempotency-Key"] = str(idem_key)[:128]
     return headers
 
 
@@ -246,6 +256,7 @@ async def _shanjian_pre_deduct(
     template_meta: Optional[Dict[str, Any]],
     estimated_seconds: int,
     title: str,
+    idem_seed: str = "",
 ) -> Dict[str, Any]:
     unit = _billing_unit_credits(template_meta)
     expected_credits = int(max(1, estimated_seconds)) * unit
@@ -264,7 +275,11 @@ async def _shanjian_pre_deduct(
         },
     }
     async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
-        resp = await client.post(f"{_billing_base()}/capabilities/pre-deduct", json=body, headers=_billing_headers(request, acting_user))
+        resp = await client.post(
+            f"{_billing_base()}/capabilities/pre-deduct",
+            json=body,
+            headers=_billing_headers(request, acting_user, idem_key=(f"{idem_seed}:pre" if idem_seed else "")),
+        )
     if resp.status_code == 402:
         try:
             detail = (resp.json() if resp.content else {}).get("detail", "balance insufficient")
@@ -282,6 +297,8 @@ async def _shanjian_pre_deduct(
         charged = float(expected_credits)
     return {
         "billing_status": "pre_deducted",
+        "billing_version": 2,
+        "idem_seed": idem_seed,
         "capability_id": _SHANJIAN_BILLING_CAPABILITY_ID,
         "provider": "shanjian",
         "unit_credits": unit,
@@ -293,7 +310,14 @@ async def _shanjian_pre_deduct(
     }
 
 
-async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *, reason: str, acting_user: Optional[User] = None) -> Dict[str, Any]:
+async def _shanjian_refund_billing(
+    request: Request,
+    billing: Dict[str, Any],
+    *,
+    reason: str,
+    acting_user: Optional[User] = None,
+    idem_key: str = "",
+) -> Dict[str, Any]:
     if not isinstance(billing, dict) or billing.get("billing_status") in {"settled", "refunded"}:
         return billing if isinstance(billing, dict) else {}
     credits = float(billing.get("credits_pre_deducted") or 0)
@@ -305,7 +329,11 @@ async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *,
     body = {"capability_id": billing.get("capability_id") or _SHANJIAN_BILLING_CAPABILITY_ID, "credits": credits}
     try:
         async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
-            resp = await client.post(f"{_billing_base()}/capabilities/refund", json=body, headers=_billing_headers(request, acting_user))
+            resp = await client.post(
+                f"{_billing_base()}/capabilities/refund",
+                json=body,
+                headers=_billing_headers(request, acting_user, idem_key=idem_key),
+            )
         if resp.status_code >= 400:
             logger.warning("[shanjian-billing] refund failed http=%s body=%s", resp.status_code, (resp.text or "")[:300])
             billing["billing_status"] = "refund_failed"
@@ -355,8 +383,14 @@ async def _shanjian_settle_billing(
         "credits_pre_deducted": float(billing.get("credits_pre_deducted") or 0),
         "credits_final": final_credits,
     }
+    seed = str(billing.get("idem_seed") or "").strip()
+    settle_key = f"{seed}:settle" if seed else f"shanjian:{row.user_id}:{row.task_id}:settle"
     async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
-        resp = await client.post(f"{_billing_base()}/capabilities/record-call", json=body, headers=_billing_headers(request, acting_user))
+        resp = await client.post(
+            f"{_billing_base()}/capabilities/record-call",
+            json=body,
+            headers=_billing_headers(request, acting_user, idem_key=settle_key),
+        )
     if resp.status_code >= 400:
         logger.warning("[shanjian-billing] settle failed http=%s body=%s", resp.status_code, (resp.text or "")[:300])
         billing["billing_status"] = "settle_failed"
@@ -398,9 +432,32 @@ async def _finalize_row_billing(
             stage=stage,
         )
     elif status == "failed":
-        billing = await _shanjian_refund_billing(request, billing, reason=error_message or f"{stage}_failed", acting_user=acting_user)
-    submit_payload["billing"] = billing
-    row.submit_payload = submit_payload
+        seed = str(billing.get("idem_seed") or "").strip()
+        if not seed:
+            # 老任务没有幂等种子：历史上可能已经退过款（甚至重复退过），
+            # 再自动退一次会继续多退。只记日志，不再动账。
+            logger.warning(
+                "[shanjian-billing] legacy task without idem_seed, skip auto refund task_id=%s user_id=%s",
+                row.task_id,
+                row.user_id,
+            )
+            return
+        billing = await _shanjian_refund_billing(
+            request,
+            billing,
+            reason=error_message or f"{stage}_failed",
+            acting_user=acting_user,
+            idem_key=f"{seed}:refund",
+        )
+    merged = dict(submit_payload)
+    merged["billing"] = billing
+    row.submit_payload = merged
+    try:
+        # JSON 列原地改 dict 不会被 SQLAlchemy 标记为 dirty，之前 billing_status
+        # 永远停在 pre_deducted，幂等保护形同虚设。
+        flag_modified(row, "submit_payload")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _url_hint(value: str) -> str:
@@ -2490,7 +2547,64 @@ async def refresh_stale_video_tasks(
                 db.rollback()
             except Exception:  # noqa: BLE001
                 pass
-    return refreshed
+
+    # 结算补偿：任务已经是终态、但 billing 还停在 pre_deducted —— 说明那次
+    # 带结算的轮询没跑成（客户端提前关页 / 请求在结算前失败 / 多段提交竞态）。
+    # 只处理带 idem_seed 的新任务：历史任务可能已经被人工或旧逻辑退过款，
+    # 再退一次会继续多退。
+    settled = 0
+    pending_rows = (
+        db.query(ShanjianDigitalHumanVideoTask)
+        .filter(
+            ShanjianDigitalHumanVideoTask.status.in_(("succeed", "failed")),
+            ShanjianDigitalHumanVideoTask.updated_at < cutoff,
+        )
+        .order_by(ShanjianDigitalHumanVideoTask.updated_at.desc())
+        .limit(max(20, int(limit) * 4))
+        .all()
+    )
+    for row in pending_rows:
+        if settled >= max(1, int(limit)):
+            break
+        submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
+        billing = submit_payload.get("billing") if isinstance(submit_payload.get("billing"), dict) else {}
+        if not billing or not str(billing.get("idem_seed") or "").strip():
+            continue
+        if str(billing.get("billing_status") or "") in ("settled", "refunded", "legacy_skip"):
+            continue
+        user = db.query(User).filter(User.id == row.user_id).first()
+        if user is None:
+            continue
+        try:
+            await _finalize_row_billing(
+                acting_user=user,
+                request=_service_request_for_user(user, str(getattr(row, "installation_id", "") or "")),
+                row=row,
+                status=row.status,
+                duration_value=row.duration,
+                video_url=row.video_url or "",
+                stage="reconcile",
+                error_message=row.error_message or "",
+            )
+            db.commit()
+            settled += 1
+            logger.info(
+                "[shanjian-billing] reconciled task_id=%s user_id=%s status=%s",
+                row.task_id,
+                row.user_id,
+                row.status,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[shanjian-billing] reconcile failed task_id=%s err=%s",
+                row.task_id,
+                str(exc)[:200],
+            )
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    return refreshed + settled
 
 
 class ProfileRetrainBody(BaseModel):
@@ -2714,12 +2828,14 @@ async def create_video(
         submit_payload["template"] = template_meta
         submit_payload["template_source"] = template_source
     _release_db_transaction(db)
+    billing_seed = f"shanjian:{int(current_user.id)}:{uuid.uuid4().hex}"
     billing = await _shanjian_pre_deduct(
         request=request,
         acting_user=current_user,
         template_meta=template_meta,
         estimated_seconds=_estimate_billing_seconds(body, template_meta, text),
         title=title,
+        idem_seed=billing_seed,
     )
     submit_payload["billing"] = billing
 
