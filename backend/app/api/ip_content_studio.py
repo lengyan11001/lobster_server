@@ -2184,6 +2184,53 @@ def _oral_body_length(draft: Any) -> int:
     return len("".join(text.split()))
 
 
+def _resolve_oral_target_seconds(db: Session, user_id: int) -> int:
+    """老客户端不传时长时，回落到 IP 设置里配置的口播预估时长。"""
+    def _seconds_of(meta: Any) -> int:
+        if not isinstance(meta, dict):
+            return 0
+        try:
+            value = int(float(meta.get("digital_human_script_seconds") or 0))
+        except (TypeError, ValueError):
+            return 0
+        return value if 5 <= value <= 600 else 0
+
+    try:
+        row = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.user_id == int(user_id),
+                IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+                IPContentScheduleTemplate.status == "active",
+            )
+            .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+            .first()
+        )
+    except Exception:
+        return 0
+    if row is None:
+        return 0
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    seconds = _seconds_of(meta)
+    if seconds:
+        return seconds
+    current_id = _current_template_id_from_meta(meta)
+    if not current_id:
+        return 0
+    try:
+        current = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.id == int(current_id),
+                IPContentScheduleTemplate.user_id == int(user_id),
+            )
+            .first()
+        )
+    except Exception:
+        return 0
+    return _seconds_of(current.meta if current and isinstance(current.meta, dict) else {})
+
+
 def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0, target_chars: int = 0) -> str:
     task_key = (task or "").strip().lower()
     plat = (platform or "").strip().lower()
@@ -8236,6 +8283,10 @@ async def generate_industry_hot_oral(
                 sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
     rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
+    oral_seconds = int(getattr(body, "target_seconds", 0) or 0)
+    oral_chars = int(getattr(body, "target_chars", 0) or 0)
+    if oral_seconds <= 0 and oral_chars <= 0:
+        oral_seconds = _resolve_oral_target_seconds(db, int(current_user.id))
     generated = await _generate_and_save_ip_content_records(
         auth_token=_server_bearer_for_user(current_user),
         db=db,
@@ -8249,8 +8300,8 @@ async def generate_industry_hot_oral(
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
-        target_seconds=int(getattr(body, "target_seconds", 0) or 0),
-        target_chars=int(getattr(body, "target_chars", 0) or 0),
+        target_seconds=oral_seconds,
+        target_chars=oral_chars,
         task_label="行业热门口播文案",
     )
     return {"ok": True, "task": "industry_hot_oral", "sync_results": sync_results, **generated}
@@ -8282,6 +8333,10 @@ async def generate_professional_ip_oral(
                 sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
     rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=_source_limit(40))
     memories = _memory_payload_from_docs(body.memory_docs)
+    oral_seconds = int(getattr(body, "target_seconds", 0) or 0)
+    oral_chars = int(getattr(body, "target_chars", 0) or 0)
+    if oral_seconds <= 0 and oral_chars <= 0:
+        oral_seconds = _resolve_oral_target_seconds(db, int(current_user.id))
     generated = await _generate_and_save_ip_content_records(
         auth_token=_server_bearer_for_user(current_user),
         db=db,
@@ -8295,8 +8350,8 @@ async def generate_professional_ip_oral(
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
-        target_seconds=int(getattr(body, "target_seconds", 0) or 0),
-        target_chars=int(getattr(body, "target_chars", 0) or 0),
+        target_seconds=oral_seconds,
+        target_chars=oral_chars,
         task_label="专业 IP 口播文案",
     )
     return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}
