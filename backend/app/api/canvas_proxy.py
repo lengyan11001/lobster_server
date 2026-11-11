@@ -810,9 +810,10 @@ async def _reconcile_stale_canvas_tasks(db: Session, user: User, uid: int, limit
     """
     if uid <= 0:
         return
+    from sqlalchemy import text as _sql_text
     try:
         rows = db.execute(
-            text(
+            _sql_text(
                 "SELECT task_id, model FROM canvas_task"
                 " WHERE user_id = :uid AND status IN ('submitted', 'pending', 'queued')"
                 " AND updated_at < :cut ORDER BY id DESC LIMIT :limit"
