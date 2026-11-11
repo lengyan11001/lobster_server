@@ -2176,27 +2176,12 @@ def _synced_within_24h(last_fetch_at, now=None) -> bool:
         return False
 
 
-def _trim_oral_script(text: str, max_chars: int) -> str:
-    """把口播正文压到目标字数内，优先在句末/停顿标点截断。"""
-    raw = str(text or "").strip()
-    if not raw or max_chars <= 0:
-        return raw
-    if len("".join(raw.split())) <= max_chars:
-        return raw
-    units = 0
-    cut = len(raw)
-    for idx, ch in enumerate(raw):
-        if not ch.isspace():
-            units += 1
-        if units >= max_chars:
-            cut = idx + 1
-            break
-    head = raw[:cut]
-    for mark in ("。", "！", "？", "；", ".", "!", "?", ";", "，", ","):
-        pos = head.rfind(mark)
-        if pos >= max(8, int(len(head) * 0.55)):
-            return head[: pos + 1].strip()
-    return head.strip()
+def _oral_body_length(draft: Any) -> int:
+    """口播正文长度（按非空白字符数）。"""
+    if not isinstance(draft, dict):
+        return 0
+    text = str(draft.get("body") or draft.get("content") or "")
+    return len("".join(text.split()))
 
 
 def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0, target_chars: int = 0) -> str:
@@ -2207,17 +2192,19 @@ def _draft_requirements(task: str, platform: str, count: int, target_seconds: in
     chars = max(0, min(int(target_chars or 0), 3000))
     if chars:
         chars_low = max(10, int(round(chars * 0.9)))
-        chars_high = max(chars_low + 5, int(round(chars * 1.1)))
         length_rule = (
-            f"口播正文控制在 {chars_low} 到 {chars_high} 字（目标 {chars} 字），不得超过 {chars_high} 字；"
-            "宁可少写也不要超长。"
+            f"【硬性字数限制·最高优先级】每条口播正文必须控制在 {chars_low} 到 {chars} 字，"
+            f"超过 {chars} 字直接视为不合格。写之前先规划句子长度，写完后逐条数字数（含标点），"
+            "超了就删减到范围内再输出；宁可少写，也不要超一个字。"
         )
     elif seconds:
         cn_low = max(10, int(round(seconds * 4 * 0.9)))
-        cn_high = max(cn_low + 5, int(round(seconds * 4 * 1.1)))
+        cn_high = max(cn_low + 5, int(round(seconds * 4)))
         length_rule = (
-            f"口播正文控制在 {cn_low} 到 {cn_high} 字（约 {seconds} 秒，按 4 字/秒），不得超过 {cn_high} 字；"
-            "英文按约 2.2 词/秒控制。宁可少写也不要超长。"
+            f"【硬性字数限制·最高优先级】每条口播正文必须控制在 {cn_low} 到 {cn_high} 字"
+            f"（目标 {seconds} 秒，按 4 字/秒，超过 {cn_high} 字直接视为不合格）。"
+            "写之前先规划句子长度，写完后逐条数字数（含标点），超了就删减到范围内再输出；"
+            "宁可少写，也不要超一个字。英文按约 2.2 词/秒控制。"
         )
     else:
         length_rule = "暂不限制字数或口播时长，优先把观点、案例、行业判断讲透。"
@@ -5677,9 +5664,9 @@ async def _generate_and_save_ip_content_records(
     requirements_text = _draft_requirements(task_key, platform, target_count, target_seconds, target_chars)
     max_chars = 0
     if int(target_chars or 0) > 0:
-        max_chars = max(10, int(round(int(target_chars) * 1.1)))
+        max_chars = max(10, int(target_chars))
     elif int(target_seconds or 0) > 0:
-        max_chars = max(10, int(round(int(target_seconds) * 4 * 1.1)))
+        max_chars = max(10, int(round(int(target_seconds) * 4)))
     cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
@@ -5779,13 +5766,49 @@ async def _generate_and_save_ip_content_records(
                 llm_timeout_seconds=llm_timeout_seconds,
             )
             drafts = list(generated.get("drafts") or [])
-            if max_chars:
-                for draft in drafts:
-                    if not isinstance(draft, dict):
-                        continue
-                    for key in ("body", "content"):
-                        if isinstance(draft.get(key), str) and draft.get(key).strip():
-                            draft[key] = _trim_oral_script(draft[key], max_chars)
+            if max_chars and task_key in {"task1_industry", "task1_ip"}:
+                lengths = [_oral_body_length(draft) for draft in drafts]
+                over = [n for n in lengths if n > max_chars]
+                if over:
+                    logger.info(
+                        "[ip-content] 口播超字数，触发重写 count=%s longest=%s max=%s",
+                        len(over),
+                        max(over),
+                        max_chars,
+                    )
+                    retry_extra = (
+                        f"{batch_extra}\n\n"
+                        f"【重写要求·硬性】上一版有 {len(over)} 条正文超过 {max_chars} 字（最长 {max(over)} 字）。"
+                        f"这一版每一条都必须压到 {max_chars} 字以内，超一个字都不合格；"
+                        "先想好要讲几个点再动笔，宁少勿多。"
+                    )
+                    try:
+                        regenerated = await _call_ip_content_llm(
+                            request=request,
+                            auth_token=auth_token,
+                            brand_mark=user_brand_mark(current_user),
+                            installation_id=installation_id,
+                            task=task_key,
+                            platform=platform,
+                            count=missing_count,
+                            rows=rows,
+                            memories=memories,
+                            extra_requirements=retry_extra,
+                            fallback_sources=fallback_sources,
+                            llm_attempts=llm_attempts,
+                            llm_timeout_seconds=llm_timeout_seconds,
+                        )
+                        retry_drafts = list(regenerated.get("drafts") or [])
+                        if retry_drafts:
+                            drafts = retry_drafts
+                            generated = regenerated
+                            logger.info(
+                                "[ip-content] 重写后最长=%s max=%s",
+                                max((_oral_body_length(d) for d in drafts), default=0),
+                                max_chars,
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("[ip-content] 超字数重写失败: %s", str(exc)[:200])
             all_drafts.extend(drafts)
             if not source_items:
                 source_items = list(generated.get("source_items") or [])
