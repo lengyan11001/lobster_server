@@ -34,7 +34,7 @@ Page({
     app.restoreSession();
     this.refreshState();
     if (app.globalData.token) {
-      this.loadDevices();
+      this.loadDevices(true);
     }
   },
 
