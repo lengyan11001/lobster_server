@@ -456,7 +456,11 @@ def normalize_task_nodes(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         if has_media:
             data["status"] = "completed"
         else:
-            for key in ("status", "error", "taskType", "progress", "stage"):
+            # 2026-11-11：以前这里把 status 整个删掉，前端 useState(data.status||"pending")
+            # 就会把空任务节点渲染成「排队中」，而且没有 taskId 也不会轮询，永远出不来。
+            # 明确写成 idle，前端显示「待生成」而不是排队中。
+            data["status"] = "idle"
+            for key in ("error", "taskType", "progress", "stage"):
                 data.pop(key, None)
         for key in ("error", "taskId", "outputParams", "progress", "stage"):
             data.pop(key, None)
