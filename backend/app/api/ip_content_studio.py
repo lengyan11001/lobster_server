@@ -2166,6 +2166,39 @@ def _item_brief(row: TikHubSourceItem, idx: int) -> dict[str, Any]:
     }
 
 
+def _synced_within_24h(last_fetch_at, now=None) -> bool:
+    """生成前的数据同步按天做一次：24 小时内同步过就跳过。"""
+    if not last_fetch_at:
+        return False
+    try:
+        return ((now or _utcnow()) - last_fetch_at) < timedelta(hours=24)
+    except Exception:
+        return False
+
+
+def _trim_oral_script(text: str, max_chars: int) -> str:
+    """把口播正文压到目标字数内，优先在句末/停顿标点截断。"""
+    raw = str(text or "").strip()
+    if not raw or max_chars <= 0:
+        return raw
+    if len("".join(raw.split())) <= max_chars:
+        return raw
+    units = 0
+    cut = len(raw)
+    for idx, ch in enumerate(raw):
+        if not ch.isspace():
+            units += 1
+        if units >= max_chars:
+            cut = idx + 1
+            break
+    head = raw[:cut]
+    for mark in ("。", "！", "？", "；", ".", "!", "?", ";", "，", ","):
+        pos = head.rfind(mark)
+        if pos >= max(8, int(len(head) * 0.55)):
+            return head[: pos + 1].strip()
+    return head.strip()
+
+
 def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0, target_chars: int = 0) -> str:
     task_key = (task or "").strip().lower()
     plat = (platform or "").strip().lower()
@@ -5642,6 +5675,11 @@ async def _generate_and_save_ip_content_records(
     all_drafts: list[dict[str, Any]] = []
     source_items: list[dict[str, Any]] = [_item_payload(row) for row in rows]
     requirements_text = _draft_requirements(task_key, platform, target_count, target_seconds, target_chars)
+    max_chars = 0
+    if int(target_chars or 0) > 0:
+        max_chars = max(10, int(round(int(target_chars) * 1.1)))
+    elif int(target_seconds or 0) > 0:
+        max_chars = max(10, int(round(int(target_seconds) * 4 * 1.1)))
     cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
@@ -5741,6 +5779,13 @@ async def _generate_and_save_ip_content_records(
                 llm_timeout_seconds=llm_timeout_seconds,
             )
             drafts = list(generated.get("drafts") or [])
+            if max_chars:
+                for draft in drafts:
+                    if not isinstance(draft, dict):
+                        continue
+                    for key in ("body", "content"):
+                        if isinstance(draft.get(key), str) and draft.get(key).strip():
+                            draft[key] = _trim_oral_script(draft[key], max_chars)
             all_drafts.extend(drafts)
             if not source_items:
                 source_items = list(generated.get("source_items") or [])
@@ -8153,7 +8198,13 @@ async def generate_industry_hot_oral(
     _finish_db_transaction_before_external_io(db)
     sync_results = []
     if body.sync_before:
+        now = _utcnow()
         for row in keywords:
+            # 生成前同步按天做一次就够：24 小时内同步过的关键词直接跳过，
+            # 避免每次点生成都打一遍 TikHub（又慢又费额度）。
+            if _synced_within_24h(row.last_fetch_at, now):
+                sync_results.append({"ok": True, "skipped": True, "reason": "synced_within_24h", "keyword_id": row.id})
+                continue
             try:
                 sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
             except Exception as exc:
@@ -8195,7 +8246,11 @@ async def generate_professional_ip_oral(
     _finish_db_transaction_before_external_io(db)
     sync_results = []
     if body.sync_before:
+        now = _utcnow()
         for row in accounts:
+            if _synced_within_24h(row.last_fetch_at, now):
+                sync_results.append({"ok": True, "skipped": True, "reason": "synced_within_24h", "competitor_id": row.id})
+                continue
             try:
                 sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
             except Exception as exc:
