@@ -5816,8 +5816,8 @@ async def _generate_and_save_ip_content_records(
             )
             drafts = list(generated.get("drafts") or [])
             if max_chars and task_key in {"task1_industry", "task1_ip"}:
-                # 字数必须达标：超上限就带反馈重写，最多两轮；仍超就记 error 方便追。
-                for attempt in (1, 2):
+                # 超上限带反馈重写一次；还超就按原文生成（不阻塞、不截断）。
+                for attempt in (1,):
                     lengths = [_oral_body_length(draft) for draft in drafts]
                     over = [n for n in lengths if n > max_chars]
                     if not over:
@@ -5861,8 +5861,8 @@ async def _generate_and_save_ip_content_records(
                         break
                 final_longest = max((_oral_body_length(d) for d in drafts), default=0)
                 if final_longest > max_chars:
-                    logger.error(
-                        "[ip-content] 口播重写后仍超字数 longest=%s max=%s task=%s user=%s",
+                    logger.warning(
+                        "[ip-content] 口播重写后仍超字数，按原文生成 longest=%s max=%s task=%s user=%s",
                         final_longest,
                         max_chars,
                         task_key,
