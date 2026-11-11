@@ -200,7 +200,7 @@ Page({
             images,
             videoUrl: kind === "video" && raw ? mediaUrl(raw, "proxy") : "",
             saveable: Boolean(raw && (kind === "video" || kind === "image")),
-            saveUrl: raw ? mediaUrl(raw, "attachment") : "",
+            saveUrl: raw ? mediaUrl(raw, "proxy") : "",
             saveType: kind === "video" ? "video" : (kind === "image" ? "image" : "")
           }
         });
