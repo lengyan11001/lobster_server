@@ -799,6 +799,60 @@ def _prompt_from_body(body: Dict[str, Any]) -> str:
     return ""
 
 
+_STALE_CANVAS_TASK_SECONDS = 120
+
+
+async def _reconcile_stale_canvas_tasks(db: Session, user: User, uid: int, limit: int = 5) -> None:
+    """把库里长期停在 submitted/pending 的画布任务跟上游对一次状态。
+
+    浏览器关掉时任务还没跑完，后端只在「客户端轮询 query」时才回写状态，
+    于是任务记录会一直显示「排队中」。打开任务列表时顺手对账，避免假排队。
+    """
+    if uid <= 0:
+        return
+    try:
+        rows = db.execute(
+            text(
+                "SELECT task_id, model FROM canvas_task"
+                " WHERE user_id = :uid AND status IN ('submitted', 'pending', 'queued')"
+                " AND updated_at < :cut ORDER BY id DESC LIMIT :limit"
+            ),
+            {"uid": uid, "cut": time.time() - _STALE_CANVAS_TASK_SECONDS, "limit": int(limit)},
+        ).fetchall()
+    except Exception as exc:  # noqa: BLE001 对账失败不影响列表
+        logger.debug("[canvas] 待对账任务查询失败: %s", exc)
+        return
+    if not rows:
+        return
+    try:
+        headers = await _apiz_headers()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[canvas] 对账取 key 失败: %s", exc)
+        return
+    async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
+        for row in rows:
+            tid = str(getattr(row, "task_id", "") or "").strip()
+            if not tid:
+                continue
+            try:
+                resp = await client.post(
+                    f"{_apiz_base()}/api/v3/tasks/query",
+                    json={"task_id": tid},
+                    headers=headers,
+                )
+                if resp.status_code >= 400:
+                    continue
+                payload = resp.json()
+                data = payload.get("data") if isinstance(payload, dict) else None
+                if isinstance(data, dict):
+                    _sync_canvas_task_from_upstream(
+                        db, user, uid, data, str(getattr(row, "model", "") or ""), "api/v3/tasks/query"
+                    )
+                    logger.info("[canvas] 任务对账 task=%s -> %s", tid, data.get("status"))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[canvas] 任务对账失败 task=%s: %s", tid, exc)
+
+
 def _sync_canvas_task_from_upstream(db: Session, user: User, uid: int, data: Any, model: str, path: str) -> None:
     """把上游任务状态写回我们自己的任务记录；上游判定失败时退回预扣（只退一次）。"""
     if not isinstance(data, dict):
@@ -1261,6 +1315,10 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         limit = int(request.query_params.get("page_size") or body.get("page_size") or body.get("limit") or 12)
         raw_status = str(body.get("status") or request.query_params.get("status") or "").strip()
         statuses = [part.strip() for part in raw_status.replace("，", ",").split(",") if part.strip()]
+        # 打开任务记录时顺手把停在「提交中」的旧任务跟上游对一次账，
+        # 否则浏览器关掉前的任务会永远显示「排队中」。
+        if not statuses or any(item in ("pending", "processing") for item in statuses):
+            await _reconcile_stale_canvas_tasks(db, user, uid)
         payload = canvas_hub.list_canvas_tasks(db, uid, limit, page=page, statuses=statuses)
         items = payload.get("list") or []
         total = int(payload.get("total") or 0)
