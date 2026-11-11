@@ -451,6 +451,16 @@ def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") 
         resources_value = personal_meta.get("digital_human_resources")
     digital_human_resources = _h5_dh_normalize_resources(resources_value)
     digital_human_template = template_value if isinstance(template_value, dict) else {}
+    # IP 设置里配的「口播预估时长」：数字人节点生成文案时按它控制字数。
+    script_seconds_raw = current_meta.get("digital_human_script_seconds")
+    if script_seconds_raw in (None, ""):
+        script_seconds_raw = personal_meta.get("digital_human_script_seconds")
+    try:
+        digital_human_script_seconds = int(float(script_seconds_raw or 0))
+    except (TypeError, ValueError):
+        digital_human_script_seconds = 0
+    if not (5 <= digital_human_script_seconds <= 600):
+        digital_human_script_seconds = 0
     virtualman_candidates = [
         item for item in digital_human_resources["avatars"]
         if item.get("virtualman_id")
@@ -480,6 +490,7 @@ def _h5_dh_context_params(db: Session, user_id: int, installation_id: str = "") 
         "digital_human_template_configured": bool(template_configured or template_value is not None),
         "digital_human_resources_configured": bool(resources_configured or resources_value is not None),
         "digital_human_asset_groups": digital_human_asset_groups,
+        "digital_human_script_seconds": digital_human_script_seconds,
         "virtualman_candidates": virtualman_candidates,
         "virtualman_id": virtualman_id,
         "voice_candidates": voice_candidates,
