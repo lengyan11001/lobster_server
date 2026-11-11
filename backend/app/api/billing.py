@@ -809,6 +809,7 @@ class RechargeCreateBody(BaseModel):
     payment_type: Optional[str] = None
     order_type: Optional[str] = None
     openid: Optional[str] = None
+    code: Optional[str] = None
 
 
 class FeatureChargeIn(BaseModel):
@@ -1232,6 +1233,29 @@ async def create_fuiou_jsapi_order(
     openid = str(body.openid or "").strip()
     if not openid:
         openid = str(getattr(current_user, "wechat_openid", None) or "").strip()
+    if not openid and body.code:
+        try:
+            import httpx as _httpx
+            _r = await _httpx.AsyncClient(timeout=15.0, trust_env=False).__aenter__()
+            try:
+                _resp = await _r.get(
+                    "https://api.weixin.qq.com/sns/jscode2session",
+                    params={
+                        "appid": os.environ.get("WECHAT_APP_ID", ""),
+                        "secret": os.environ.get("WECHAT_APP_SECRET", ""),
+                        "js_code": body.code,
+                        "grant_type": "authorization_code",
+                    },
+                )
+                _data = _resp.json() if _resp.content else {}
+            finally:
+                await _r.aclose()
+            openid = str((_data or {}).get("openid") or "").strip()
+            if openid:
+                current_user.wechat_openid = openid
+                db.commit()
+        except Exception:
+            logger.warning("[fuiou] exchange openid failed", exc_info=True)
     if not openid:
         raise HTTPException(status_code=400, detail="缺少 openid，请先微信登录")
     sub_appid = (os.environ.get("FUIOU_SUB_APPID") or "").strip()

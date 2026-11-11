@@ -31,10 +31,17 @@ Page({
     if (!pkg) return wx.showToast({ title: "请选择套餐", icon: "none" });
     if (this.data.paying) return;
     this.setData({ paying: true, statusText: "正在创建订单…" });
+    wx.login({
+      success: (loginRes) => this.doPay(pkg, loginRes.code || ""),
+      fail: () => this.doPay(pkg, "")
+    });
+  },
+
+  doPay(pkg, code) {
     app.request({
       method: "POST",
       url: "/api/recharge/fuiou-jsapi",
-      data: { package_index: pkg.index, price_yuan: pkg.price || undefined },
+      data: { package_index: pkg.index, price_yuan: pkg.price || undefined, code },
       timeout: 60000
     })
       .then((data) => {
