@@ -859,6 +859,44 @@ def _concat_tts_audio_segments(audio_segments: List[bytes]) -> bytes:
     return b"".join(chunks)
 
 
+def _tts_speed_value(rate: Any) -> float:
+    try:
+        speed = float(rate or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    if speed != speed:  # NaN
+        return 1.0
+    return max(0.5, min(speed, 2.0))
+
+
+def _atempo_audio_bytes(raw: bytes, speed: float) -> bytes:
+    """按倍率真正变速（ffmpeg atempo）。
+
+    千问 TTS（qwen3-tts-flash / cosyvoice）没有 rate 参数，实测传 1.0 和 1.8
+    合成出来的音频时长几乎一样，所以「调整语速没效果」。这里在返回音频前
+    用 atempo 真变速，数字人口型和成片时长会跟着变。
+    """
+    if not raw or abs(speed - 1.0) < 0.01:
+        return raw
+    exe = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe") or ""
+    if not exe:
+        raise HTTPException(status_code=503, detail="服务器缺少 ffmpeg，暂时无法按语速合成")
+    with tempfile.TemporaryDirectory(prefix="qwen-atempo-") as tmp:
+        src = Path(tmp) / "in.mp3"
+        dst = Path(tmp) / "out.mp3"
+        src.write_bytes(raw)
+        proc = subprocess.run(
+            [exe, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+             "-vn", "-filter:a", f"atempo={speed:.3f}", str(dst)],
+            capture_output=True,
+            timeout=300,
+        )
+        if proc.returncode != 0 or not dst.exists() or dst.stat().st_size <= 0:
+            detail = (proc.stderr or b"")[:200].decode("utf-8", "ignore").strip()
+            raise HTTPException(status_code=502, detail=f"语速处理失败: {detail or 'ffmpeg 未生成输出'}")
+        return dst.read_bytes()
+
+
 async def _preview_tts_audio(
     *,
     provider: str,
@@ -908,6 +946,11 @@ async def _preview_tts_audio(
         })
 
     audio_bytes = await asyncio.to_thread(_concat_tts_audio_segments, audio_segments)
+    speed = _tts_speed_value(rate)
+    if provider == _QWEN_PROVIDER and abs(speed - 1.0) >= 0.01:
+        # 千问 TTS 不认 rate，这里按用户设置真正变速（目前只有 qwen 分支需要）
+        audio_bytes = await asyncio.to_thread(_atempo_audio_bytes, audio_bytes, speed)
+        duration_seconds = max(1, int(round(duration_seconds / speed)))
     return {
         "audio_bytes": audio_bytes,
         "duration_seconds": max(1, duration_seconds),
