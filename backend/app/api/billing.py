@@ -36,6 +36,7 @@ from ..services.fuiou_pay import (
     fuiou_order_query,
     gen_order_no as fuiou_gen_order_no,
     parse_notify as fuiou_parse_notify,
+    fuiou_wx_pre_create,
 )
 from ..services.brand_context import BRAND_FIXED_AGENT_PHONES, PHONE_EMAIL_SUFFIX, user_brand_mark, user_for_account
 
@@ -806,6 +807,7 @@ class RechargeCreateBody(BaseModel):
     credits: Optional[int] = None
     payment_type: Optional[str] = None
     order_type: Optional[str] = None
+    openid: Optional[str] = None
 
 
 class FeatureChargeIn(BaseModel):
@@ -1213,3 +1215,81 @@ def complete_recharge(
     if not _apply_paid_to_order(order, paid_fen, None, db, channel_label="管理员确认到账"):
         raise HTTPException(status_code=400, detail="金额校验未通过")
     return {"ok": True, "message": f"已到账 {order.credits} 积分", "order_id": order.id}
+
+@router.post("/api/recharge/fuiou-jsapi", summary="小程序/公众号支付：返回 wx.requestPayment 参数")
+async def create_fuiou_jsapi_order(
+    body: RechargeCreateBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not _use_independent_recharge():
+        raise HTTPException(status_code=400, detail="当前未启用自有充值")
+    brand_mark = user_brand_mark(current_user)
+    if not fuiou_configured(brand_mark):
+        raise HTTPException(status_code=400, detail="未配置富友支付")
+    openid = str(body.openid or "").strip()
+    if not openid:
+        openid = str(getattr(current_user, "wechat_openid", None) or "").strip()
+    if not openid:
+        raise HTTPException(status_code=400, detail="缺少 openid，请先微信登录")
+    sub_appid = (os.environ.get("FUIOU_SUB_APPID") or "").strip()
+    if not sub_appid:
+        raise HTTPException(status_code=400, detail="未配置 FUIOU_SUB_APPID")
+
+    pricing = _get_billing_pricing()
+    amount_yuan, amount_fen, credits = _calc_amount_from_body(body, pricing)
+    total_fen = amount_fen if amount_fen else amount_yuan * 100
+    mchnt_order_no = fuiou_gen_order_no(brand_mark)
+    inventory_agent = _reserve_oem_inventory(db, current_user, credits)
+    order = RechargeOrder(
+        user_id=current_user.id,
+        amount_yuan=amount_yuan,
+        amount_fen=amount_fen,
+        credits=credits,
+        status="pending",
+        out_trade_no=mchnt_order_no,
+        payment_method="fuiou_letpay",
+        brand_mark=brand_mark,
+        agent_user_id=inventory_agent.id if inventory_agent else None,
+        agent_reserved_credits=quantize_credits(credits) if inventory_agent else None,
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    base_url = _get_public_base_url()
+    notify_url = f"{base_url.rstrip('/')}/api/recharge/fuiou-notify"
+    term_ip = (request.client.host if request.client else "") or "127.0.0.1"
+    try:
+        result = await fuiou_wx_pre_create(
+            mchnt_order_no=mchnt_order_no,
+            order_amt_fen=total_fen,
+            notify_url=notify_url,
+            goods_des=f"recharge {credits} credits",
+            openid=openid,
+            sub_appid=sub_appid,
+            trade_type="LETPAY",
+            term_ip=term_ip,
+            brand_mark=brand_mark,
+        )
+    except Exception as exc:
+        if inventory_agent:
+            _release_oem_inventory(db, order)
+            order.status = "cancelled"
+            db.commit()
+        logger.exception("[fuiou] jsapi order failed: %s", exc)
+        raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
+    if not result.get("ok"):
+        if inventory_agent:
+            _release_oem_inventory(db, order)
+            order.status = "cancelled"
+            db.commit()
+        raise HTTPException(status_code=502, detail=result.get("result_msg") or "富友下单返回异常")
+    return {
+        "order_id": order.id,
+        "out_trade_no": order.out_trade_no,
+        "amount_yuan": total_fen / 100,
+        "credits": order.credits,
+        "pay_params": result.get("pay_params") or {},
+        "status": order.status,
+    }

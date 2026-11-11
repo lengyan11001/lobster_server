@@ -1,0 +1,11 @@
+.page { padding: 28rpx; background:#f5f7fb; min-height:100vh; box-sizing:border-box; }
+.title { display:block; font-size:38rpx; font-weight:700; color:#0f172a; }
+.sub { display:block; margin-top:6rpx; font-size:22rpx; color:#94a3b8; }
+.list { margin-top:24rpx; }
+.pkg { background:#fff; border:2rpx solid #eef2f7; border-radius:18rpx; padding:24rpx; margin-bottom:16rpx; display:flex; align-items:baseline; }
+.pkg.active { border-color:#06b6d4; background:#f0fdff; }
+.pkg-price { font-size:38rpx; font-weight:700; color:#0f172a; margin-right:18rpx; }
+.pkg-credits { font-size:26rpx; color:#0f172a; margin-right:18rpx; }
+.pkg-label { font-size:22rpx; color:#94a3b8; }
+.primary { margin-top:24rpx; }
+.status { display:block; margin-top:16rpx; text-align:center; font-size:24rpx; color:#0891b2; }

@@ -160,3 +160,7 @@
 .selectable {
   user-select: text;
 }
+
+.menu-row { display:flex; align-items:center; justify-content:space-between; background:#fff; border-radius:18rpx; padding:24rpx; margin-top:18rpx; }
+.menu-title { font-size:27rpx; color:#0f172a; }
+.menu-arrow { color:#cbd5e1; font-size:34rpx; }

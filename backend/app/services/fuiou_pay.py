@@ -401,3 +401,91 @@ def parse_notify(data: dict[str, Any], brand_mark: Optional[str] = None) -> tupl
         logger.info("[fuiou] notify non-success result_code=%s", data.get("result_code"))
         return False, data
     return True, data
+
+def _sign_wx_precreate(params: dict[str, str], mchnt_key: str) -> str:
+    raw = "|".join([
+        params.get("mchnt_cd", ""),
+        params.get("trade_type", ""),
+        params.get("order_amt", ""),
+        params.get("mchnt_order_no", ""),
+        params.get("txn_begin_ts", ""),
+        params.get("goods_des", ""),
+        params.get("term_id", ""),
+        params.get("term_ip", ""),
+        params.get("notify_url", ""),
+        params.get("random_str", ""),
+        params.get("version", ""),
+        mchnt_key,
+    ])
+    return _md5(raw)
+
+
+def _verify_wx_precreate_resp(resp: dict[str, Any], mchnt_key: str) -> bool:
+    sign = str(resp.get("sign") or "")
+    if not sign:
+        return False
+    raw = "|".join([
+        str(resp.get("result_code") or ""),
+        str(resp.get("result_msg") or ""),
+        str(resp.get("mchnt_cd") or ""),
+        str(resp.get("reserved_fy_trace_no") or ""),
+        str(resp.get("random_str") or ""),
+        mchnt_key,
+    ])
+    return sign.lower() == _md5(raw)
+
+
+async def fuiou_wx_pre_create(
+    *,
+    mchnt_order_no: str,
+    order_amt_fen: int,
+    notify_url: str,
+    goods_des: str,
+    openid: str,
+    sub_appid: str,
+    trade_type: str = "LETPAY",
+    term_ip: str = "127.0.0.1",
+    brand_mark: Optional[str] = None,
+) -> dict[str, Any]:
+    """公众号/小程序统一下单：返回 wx.requestPayment 所需参数。"""
+    cfg = _fuiou_config(brand_mark)
+    url = (os.environ.get("FUIOU_WX_PRECREATE_URL") or "").strip() or "https://aipay-cloud.fuioupay.com/aggregatePay/wxPreCreate"
+    mchnt_key = cfg["mchnt_key"]
+    if not mchnt_key:
+        raise RuntimeError("未配置 FUIOU_MCHNT_KEY")
+    params: dict[str, str] = {
+        "version": "1.0",
+        "mchnt_cd": cfg["mchnt_cd"],
+        "random_str": _random_str(),
+        "order_amt": str(int(order_amt_fen)),
+        "mchnt_order_no": mchnt_order_no[:30],
+        "txn_begin_ts": _now_ts(),
+        "goods_des": (goods_des or "recharge")[:128],
+        "term_id": (cfg["term_id"] or "88888888")[:8],
+        "term_ip": term_ip[:16],
+        "notify_url": notify_url[:256],
+        "trade_type": (trade_type or "LETPAY").upper(),
+        "sub_openid": openid[:128],
+        "sub_appid": sub_appid[:32],
+    }
+    params["sign"] = _sign_wx_precreate(params, mchnt_key)
+    data = await _post_json(url, params)
+    code = str(data.get("result_code") or "").strip()
+    ok = code == "000000"
+    pay_params = {}
+    if ok:
+        pay_params = {
+            "timeStamp": str(data.get("sdk_timestamp") or ""),
+            "nonceStr": str(data.get("sdk_noncestr") or ""),
+            "package": str(data.get("sdk_package") or ""),
+            "signType": str(data.get("sdk_signtype") or "MD5"),
+            "paySign": str(data.get("sdk_paysign") or ""),
+            "appId": str(data.get("sdk_appid") or ""),
+        }
+    return {
+        "ok": ok and bool(pay_params.get("paySign")),
+        "pay_params": pay_params,
+        "raw": data,
+        "result_code": code,
+        "result_msg": str(data.get("result_msg") or ""),
+    }

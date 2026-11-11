@@ -7,6 +7,11 @@
     </view>
   </view>
 
+  <view class="menu-row" bindtap="goRecharge">
+    <text class="menu-title">充值算力</text>
+    <text class="menu-arrow">›</text>
+  </view>
+
   <view wx:if="{{!phoneBound}}" class="section bind-section">
     <text class="section-title">账号绑定</text>
     <text class="muted">绑定手机号后，手机端才能找到你的电脑端 online，并下发 AI 员工、数字人和素材任务。</text>
