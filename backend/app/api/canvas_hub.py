@@ -460,7 +460,8 @@ def normalize_task_nodes(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             # 就会把空任务节点渲染成「排队中」，而且没有 taskId 也不会轮询，永远出不来。
             # 明确写成 idle，前端显示「待生成」而不是排队中。
             data["status"] = "idle"
-            for key in ("error", "taskType", "progress", "stage"):
+            # 空节点没有真实任务，别留「已预扣 x 积分」误导用户
+            for key in ("error", "taskType", "progress", "stage", "chargedPoints"):
                 data.pop(key, None)
         for key in ("error", "taskId", "outputParams", "progress", "stage"):
             data.pop(key, None)
