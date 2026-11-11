@@ -14,25 +14,25 @@ def test_oral_prompt_unlimited_by_default():
 def test_oral_prompt_uses_target_seconds():
     text = _draft_requirements("task1_industry", "douyin", 1, 25)
     assert "暂不限制" not in text
-    assert "90 到 100 字" in text
+    assert "90 到 115 字" in text
     assert "硬性字数限制" in text
 
 
 def test_professional_oral_prompt_uses_target_seconds():
     text = _draft_requirements("task1_ip", "douyin", 1, 40)
     assert "暂不限制" not in text
-    assert "144 到 160 字" in text
+    assert "144 到 184 字" in text
 
 
 def test_manual_target_chars_reaches_prompt():
     text = _draft_requirements("task1_industry", "douyin", 1, 0, 150)
     assert "暂不限制" not in text
-    assert "135 到 150 字" in text
+    assert "135 到 172 字" in text
 
 
 def test_target_chars_wins_over_seconds():
     text = _draft_requirements("task1_ip", "douyin", 1, 60, 80)
-    assert "72 到 80 字" in text
+    assert "72 到 92 字" in text
     assert "60 秒" not in text
 
 

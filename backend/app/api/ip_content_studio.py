@@ -2192,19 +2192,21 @@ def _draft_requirements(task: str, platform: str, count: int, target_seconds: in
     chars = max(0, min(int(target_chars or 0), 3000))
     if chars:
         chars_low = max(10, int(round(chars * 0.9)))
+        chars_high = max(chars_low + 5, int(round(chars * 1.15)))
         length_rule = (
-            f"【硬性字数限制·最高优先级】每条口播正文必须控制在 {chars_low} 到 {chars} 字，"
-            f"超过 {chars} 字直接视为不合格。写之前先规划句子长度，写完后逐条数字数（含标点），"
-            "超了就删减到范围内再输出；宁可少写，也不要超一个字。"
+            f"【硬性字数限制·最高优先级】每条口播正文控制在 {chars_low} 到 {chars_high} 字"
+            f"（目标 {chars} 字，允许上下浮动，但超过 {chars_high} 字直接视为不合格）。"
+            "写之前先规划句子长度，写完后逐条数字数（含标点），超了就删减到范围内再输出；"
+            "宁可少写一点，也不要比上限多太多。"
         )
     elif seconds:
         cn_low = max(10, int(round(seconds * 4 * 0.9)))
-        cn_high = max(cn_low + 5, int(round(seconds * 4)))
+        cn_high = max(cn_low + 5, int(round(seconds * 4 * 1.15)))
         length_rule = (
-            f"【硬性字数限制·最高优先级】每条口播正文必须控制在 {cn_low} 到 {cn_high} 字"
-            f"（目标 {seconds} 秒，按 4 字/秒，超过 {cn_high} 字直接视为不合格）。"
+            f"【硬性字数限制·最高优先级】每条口播正文控制在 {cn_low} 到 {cn_high} 字"
+            f"（目标 {seconds} 秒、约 {seconds * 4} 字，允许上下浮动，但超过 {cn_high} 字直接视为不合格）。"
             "写之前先规划句子长度，写完后逐条数字数（含标点），超了就删减到范围内再输出；"
-            "宁可少写，也不要超一个字。英文按约 2.2 词/秒控制。"
+            "宁可少写一点，也不要比上限多太多。英文按约 2.2 词/秒控制。"
         )
     else:
         length_rule = "暂不限制字数或口播时长，优先把观点、案例、行业判断讲透。"
@@ -5664,9 +5666,9 @@ async def _generate_and_save_ip_content_records(
     requirements_text = _draft_requirements(task_key, platform, target_count, target_seconds, target_chars)
     max_chars = 0
     if int(target_chars or 0) > 0:
-        max_chars = max(10, int(target_chars))
+        max_chars = max(10, int(round(int(target_chars) * 1.15)))
     elif int(target_seconds or 0) > 0:
-        max_chars = max(10, int(round(int(target_seconds) * 4)))
+        max_chars = max(10, int(round(int(target_seconds) * 4 * 1.15)))
     cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
