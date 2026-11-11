@@ -599,6 +599,8 @@ class DraftRequestBody(BaseModel):
 
 
 class AutoDraftRequestBody(BaseModel):
+    # 口播预估时长（秒）：>0 时要求文案按这个时长控制字数。
+    target_seconds: int = Field(0, ge=0, le=600)
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
     keyword_ids: list[int] = Field(default_factory=list)
     keyword_texts: list[str] = Field(default_factory=list)
@@ -2162,15 +2164,25 @@ def _item_brief(row: TikHubSourceItem, idx: int) -> dict[str, Any]:
     }
 
 
-def _draft_requirements(task: str, platform: str, count: int) -> str:
+def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0) -> str:
     task_key = (task or "").strip().lower()
     plat = (platform or "").strip().lower()
     current_year = _utcnow().year
+    seconds = max(0, min(int(target_seconds or 0), 600))
+    if seconds:
+        cn_low = max(10, int(round(seconds * 4 * 0.9)))
+        cn_high = max(cn_low + 5, int(round(seconds * 4 * 1.1)))
+        length_rule = (
+            f"口播正文控制在 {cn_low} 到 {cn_high} 字（约 {seconds} 秒，按 4 字/秒），不得超过 {cn_high} 字；"
+            "英文按约 2.2 词/秒控制。宁可少写也不要超长。"
+        )
+    else:
+        length_rule = "暂不限制字数或口播时长，优先把观点、案例、行业判断讲透。"
     if task_key == "task1_industry":
         return (
             f"任务一：基于行业榜单/热门话题生成 {count} 条行业热门口播文案。"
             "每条要有标题、开场钩子、口播正文、转化/互动收口；不要生成图片提示词、配图提示或画面建议。"
-            "暂不限制字数或口播时长，优先把观点、案例、行业判断讲透。"
+            f"{length_rule}"
             "必须写出一个具体业务场景或案例拆解：问题是什么、判断依据是什么、给用户的启发是什么。"
             "可以有评论互动收口，但要服务于口播观点，不要硬凑。"
             "如果本轮同步到了多个关键词的新数据，5 条内容方向必须明显有差异，尽量覆盖不同关键词、不同痛点、不同案例。"
@@ -2180,7 +2192,7 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
     if task_key == "task1_ip":
         return (
             f"任务一：基于同行最新作品和本地知识库生成 {count} 条个人专业 IP 口播文案。"
-            "暂不限制字数或口播时长，优先写出深度。"
+            f"{length_rule}"
             "要体现专业判断、案例感和个人观点；每条至少包含一个具体场景、案例或反常识判断，并说明为什么。"
             "不能抄袭同行原文，只提炼选题结构和表达角度。"
             "不要生成图片提示词、配图提示或画面建议。"
@@ -5568,6 +5580,7 @@ async def _generate_and_save_ip_content_records(
     memories: list[dict[str, Any]],
     extra_requirements: str,
     count: int,
+    target_seconds: int = 0,
     group_id: str = "",
     batch_size: Optional[int] = None,
     llm_attempts: int = 3,
@@ -5617,7 +5630,7 @@ async def _generate_and_save_ip_content_records(
     all_records: list[IPContentDraftRecord] = []
     all_drafts: list[dict[str, Any]] = []
     source_items: list[dict[str, Any]] = [_item_payload(row) for row in rows]
-    requirements_text = _draft_requirements(task_key, platform, target_count)
+    requirements_text = _draft_requirements(task_key, platform, target_count, target_seconds)
     cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
@@ -8149,6 +8162,7 @@ async def generate_industry_hot_oral(
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
+        target_seconds=int(getattr(body, "target_seconds", 0) or 0),
         task_label="行业热门口播文案",
     )
     return {"ok": True, "task": "industry_hot_oral", "sync_results": sync_results, **generated}
@@ -8189,6 +8203,7 @@ async def generate_professional_ip_oral(
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
+        target_seconds=int(getattr(body, "target_seconds", 0) or 0),
         task_label="专业 IP 口播文案",
     )
     return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}
