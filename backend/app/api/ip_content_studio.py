@@ -5816,20 +5816,24 @@ async def _generate_and_save_ip_content_records(
             )
             drafts = list(generated.get("drafts") or [])
             if max_chars and task_key in {"task1_industry", "task1_ip"}:
-                lengths = [_oral_body_length(draft) for draft in drafts]
-                over = [n for n in lengths if n > max_chars]
-                if over:
+                # 字数必须达标：超上限就带反馈重写，最多两轮；仍超就记 error 方便追。
+                for attempt in (1, 2):
+                    lengths = [_oral_body_length(draft) for draft in drafts]
+                    over = [n for n in lengths if n > max_chars]
+                    if not over:
+                        break
                     logger.info(
-                        "[ip-content] 口播超字数，触发重写 count=%s longest=%s max=%s",
+                        "[ip-content] 口播超字数 attempt=%s count=%s longest=%s max=%s",
+                        attempt,
                         len(over),
                         max(over),
                         max_chars,
                     )
                     retry_extra = (
                         f"{batch_extra}\n\n"
-                        f"【重写要求·硬性】上一版有 {len(over)} 条正文超过 {max_chars} 字（最长 {max(over)} 字）。"
-                        f"这一版每一条都必须压到 {max_chars} 字以内，超一个字都不合格；"
-                        "先想好要讲几个点再动笔，宁少勿多。"
+                        f"【重写要求·硬性·第 {attempt} 次】上一版有 {len(over)} 条正文超过 {max_chars} 字"
+                        f"（最长 {max(over)} 字）。这一版每一条都必须压到 {max_chars} 字以内，超一个字都不合格。"
+                        "先想好只讲 2 到 3 个点，句子写短，宁少勿多。"
                     )
                     try:
                         regenerated = await _call_ip_content_llm(
@@ -5848,16 +5852,24 @@ async def _generate_and_save_ip_content_records(
                             llm_timeout_seconds=llm_timeout_seconds,
                         )
                         retry_drafts = list(regenerated.get("drafts") or [])
-                        if retry_drafts:
-                            drafts = retry_drafts
-                            generated = regenerated
-                            logger.info(
-                                "[ip-content] 重写后最长=%s max=%s",
-                                max((_oral_body_length(d) for d in drafts), default=0),
-                                max_chars,
-                            )
+                        if not retry_drafts:
+                            break
+                        drafts = retry_drafts
+                        generated = regenerated
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("[ip-content] 超字数重写失败: %s", str(exc)[:200])
+                        logger.warning("[ip-content] 超字数重写失败 attempt=%s: %s", attempt, str(exc)[:200])
+                        break
+                final_longest = max((_oral_body_length(d) for d in drafts), default=0)
+                if final_longest > max_chars:
+                    logger.error(
+                        "[ip-content] 口播重写后仍超字数 longest=%s max=%s task=%s user=%s",
+                        final_longest,
+                        max_chars,
+                        task_key,
+                        getattr(current_user, "id", ""),
+                    )
+                else:
+                    logger.info("[ip-content] 口播字数达标 longest=%s max=%s", final_longest, max_chars)
             all_drafts.extend(drafts)
             if not source_items:
                 source_items = list(generated.get("source_items") or [])
