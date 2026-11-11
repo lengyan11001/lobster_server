@@ -51,9 +51,9 @@
       <text class="wide-title">一键抄爆款模板</text>
       <text class="wide-sub">没有灵感 · 一键爆款复刻</text>
     </view>
-    <view class="wide-card alt" bindtap="goRecords">
-      <text class="wide-title">我的成片库</text>
-      <text class="wide-sub">全部生成结果</text>
+    <view class="wide-card alt" bindtap="goDigital">
+      <text class="wide-title">AI数字人</text>
+      <text class="wide-sub">形象 · 声音 · 口播成片</text>
     </view>
   </view>
 

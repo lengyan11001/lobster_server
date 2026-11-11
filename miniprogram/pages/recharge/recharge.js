@@ -2,11 +2,34 @@ const app = getApp();
 const api = require("../../utils/api");
 
 Page({
-  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "" },
+  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "", balanceText: "--", payAmount: "0.00" },
 
   onShow() {
     app.restoreSession();
     this.load();
+    this.loadBalance();
+  },
+
+  loadBalance() {
+    if (!app.globalData.token) {
+      this.setData({ balanceText: "--" });
+      return;
+    }
+    app.request({ url: "/auth/me", timeout: 20000 })
+      .then((data) => {
+        const credits = Number((data && data.credits) || 0);
+        const parts = credits.toFixed(2).split(".");
+        this.setData({ balanceText: parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + parts[1] });
+      })
+      .catch(() => {});
+  },
+
+  syncPayAmount() {
+    const pkg = this.data.packages[this.data.selected];
+    const amount = this.data.mode === "package"
+      ? Number((pkg && pkg.price) || 0)
+      : Number(this.data.customAmount || 0);
+    this.setData({ payAmount: amount.toFixed(2) });
   },
 
   load() {
@@ -19,14 +42,14 @@ Page({
           credits: Number(row.credits || 0),
           label: String(row.label || row.name || (row.price_yuan ? row.price_yuan + " 元" : "套餐"))
         }));
-        this.setData({ packages });
+        this.setData({ packages }, () => this.syncPayAmount());
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
   },
 
-  select(e) { this.setData({ selected: Number(e.currentTarget.dataset.index || 0), mode: "package" }); },
-  setMode(e) { this.setData({ mode: String(e.currentTarget.dataset.mode || "package") }); },
-  onCustomAmount(e) { this.setData({ customAmount: e.detail.value }); },
+  select(e) { this.setData({ selected: Number(e.currentTarget.dataset.index || 0), mode: "package" }, () => this.syncPayAmount()); },
+  setMode(e) { this.setData({ mode: String(e.currentTarget.dataset.mode || "package") }, () => this.syncPayAmount()); },
+  onCustomAmount(e) { this.setData({ customAmount: e.detail.value }, () => this.syncPayAmount()); },
 
   pay() {
     const pkg = this.data.packages[this.data.selected];
@@ -80,6 +103,7 @@ Page({
           if (status === "paid" || status === "completed") {
             this.setData({ paying: false, statusText: "充值成功" });
             wx.showToast({ title: "充值成功", icon: "success" });
+            this.loadBalance();
             return;
           }
           if (n < tries) setTimeout(tick, 2000);

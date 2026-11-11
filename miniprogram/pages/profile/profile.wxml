@@ -1,89 +1,137 @@
 <view class="page">
+
   <view class="hero">
+    <view class="orb orb-a"></view>
+    <view class="orb orb-b"></view>
     <view class="hero-row">
       <view class="avatar">{{avatarText}}</view>
-      <view class="hero-main">
-        <text class="hero-name">{{phoneBound ? phone : (wechatLoggedIn ? '已微信登录' : '未绑定手机号')}}</text>
-        <text class="hero-sub">{{phoneBound ? '已关联 online 账号' : (wechatLoggedIn ? '请继续授权手机号' : '授权手机号后关联电脑端')}}</text>
+      <view class="hero-id">
+        <view class="name-row">
+          <text class="name">{{identityName}}</text>
+          <view wx:if="{{phoneBound}}" class="badge">已绑定</view>
+          <view wx:elif="{{wechatLoggedIn}}" class="badge warn">待绑定</view>
+        </view>
+        <text class="sub">{{identitySub}}</text>
       </view>
-      <view wx:if="{{phoneBound}}" class="hero-badge">已绑定</view>
-    </view>
-    <view class="wallet">
-      <view class="wallet-left">
-        <text class="wallet-label">算力余额</text>
-        <text class="wallet-value">{{creditsText}}</text>
-      </view>
-      <view class="wallet-btn" bindtap="goRecharge">充值</view>
     </view>
   </view>
 
-  <view class="quick-grid">
-    <view class="quick" bindtap="goIpProfile">
-      <view class="quick-icon">IP</view>
-      <text class="quick-name">个人IP设置</text>
+  <view class="wallet">
+    <view class="wallet-left">
+      <text class="wallet-label">算力余额</text>
+      <view class="wallet-value">
+        <text class="num">{{creditsText}}</text>
+        <text class="unit">算力</text>
+      </view>
     </view>
-    <view class="quick" bindtap="goDownloads">
-      <view class="quick-icon">作</view>
-      <text class="quick-name">我的作品</text>
-    </view>
-    <view class="quick" bindtap="goRecharge">
-      <view class="quick-icon">充</view>
-      <text class="quick-name">充值算力</text>
-    </view>
-    <view class="quick" bindtap="loadDevices">
-      <view class="quick-icon">备</view>
-      <text class="quick-name">刷新设备</text>
+    <view class="wallet-btn" hover-class="tap" bindtap="goRecharge">
+      <text class="plus">＋</text>
+      <text>充值</text>
     </view>
   </view>
 
-  <view wx:if="{{!phoneBound}}" class="card bind-card">
-    <text class="card-title">账号绑定</text>
-    <text class="card-desc">绑定手机号后，手机端才能找到你的电脑端 online，并下发 AI 员工、数字人和素材任务。</text>
-    <view wx:if="{{wechatLoggedIn}}" class="bind-state">
-      <view class="dot ok"></view>
-      <text>微信登录已完成，请继续授权手机号。</text>
+  <view wx:if="{{!phoneBound}}" class="panel login">
+    <text class="login-title">{{wechatLoggedIn ? '还差一步，绑定手机号' : '登录后同步你的账号'}}</text>
+    <text class="login-desc">授权手机号后，手机端可直接调度电脑端 online，算力与内容记录跨设备同步。</text>
+
+    <view class="steps">
+      <view class="step {{wechatLoggedIn ? 'done' : ''}}">
+        <view class="step-dot">{{wechatLoggedIn ? '✓' : '1'}}</view>
+        <text class="step-text">微信登录</text>
+      </view>
+      <view class="step-line {{wechatLoggedIn ? 'done' : ''}}"></view>
+      <view class="step">
+        <view class="step-dot">2</view>
+        <text class="step-text">授权手机号</text>
+      </view>
     </view>
-    <view class="bind-actions">
-      <button class="btn-ghost" loading="{{loginBusy}}" disabled="{{loginBusy}}" bindtap="login">{{wechatLoggedIn ? '重新登录' : '微信登录'}}</button>
-      <button class="btn-primary" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+
+    <button class="btn-primary" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">手机号一键登录</button>
+    <view class="login-alt">
+      <text class="link" bindtap="login">{{loginBusy ? '登录中…' : '仅微信登录'}}</text>
+      <text class="sep">·</text>
+      <text class="link" bindtap="showSmsBind">短信验证码绑定</text>
     </view>
-    <view wx:if="{{loginDebug || lastError}}" class="debug-box">
+
+    <view wx:if="{{loginDebug || lastError}}" class="debug">
       <text wx:if="{{loginDebug}}" class="debug-line">{{loginDebug}}</text>
       <text wx:if="{{lastError}}" class="debug-error">{{lastError}}</text>
-      <button class="debug-copy" bindtap="copyDiagnostics">复制诊断信息</button>
+      <text class="debug-copy" bindtap="copyDiagnostics">复制诊断信息</text>
     </view>
-    <text class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</text>
-    <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
-      <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
-      <view class="sms-code-row">
-        <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
-        <button class="btn-ghost sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
+
+    <view wx:if="{{smsBindVisible}}" class="sms">
+      <view class="field">
+        <text class="field-label">手机号</text>
+        <input class="field-input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="已开通 online 的手机号" />
       </view>
-      <button class="btn-primary sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+      <view class="field">
+        <text class="field-label">验证码</text>
+        <view class="field-code">
+          <input class="field-input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
+          <button class="code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取验证码'}}</button>
+        </view>
+      </view>
+      <button class="btn-primary" loading="{{smsBinding}}" bindtap="bindBySms">绑定并登录</button>
     </view>
   </view>
 
-  <view class="card">
-    <view class="card-head">
-      <text class="card-title">在线设备</text>
-      <text class="card-link" bindtap="loadDevices">刷新</text>
-    </view>
-    <view class="device-state">
-      <view class="dot {{onlineAvailable ? 'ok' : 'warn'}}"></view>
-      <text>{{onlineAvailable ? '检测到 online 设备' : '暂未检测到 online 设备'}}</text>
-    </view>
-    <view wx:for="{{onlineDevices}}" wx:key="installation_id" class="device-row">
-      <view class="device-dot {{item.online ? 'on' : ''}}"></view>
-      <view class="device-info">
-        <text class="device-name">{{item.display_name || item.installation_id}}</text>
-        <text class="device-time">{{item.online ? '在线' : '离线'}} · {{item.last_seen_at}}</text>
+  <view class="panel">
+    <text class="panel-title">账号与安全</text>
+    <view class="rows">
+      <view class="row" hover-class="tap" bindtap="onWechatRowTap">
+        <view class="row-ic ic-wechat">微</view>
+        <text class="row-label">微信登录</text>
+        <view class="row-right">
+          <text class="row-value {{wechatLoggedIn || phoneBound ? 'ok' : ''}}">{{wechatLoggedIn || phoneBound ? '已登录' : '未登录'}}</text>
+          <text class="chevron">›</text>
+        </view>
+      </view>
+      <view class="row">
+        <view class="row-ic ic-phone">手</view>
+        <text class="row-label">绑定手机</text>
+        <view class="row-right">
+          <text class="row-value">{{phoneBound ? phone : '未绑定'}}</text>
+          <button wx:if="{{!phoneBound}}" class="mini-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">绑定</button>
+        </view>
+      </view>
+      <view class="row" hover-class="tap" bindtap="copyDiagnostics">
+        <view class="row-ic ic-diag">诊</view>
+        <text class="row-label">诊断信息</text>
+        <view class="row-right">
+          <text class="row-value">复制</text>
+          <text class="chevron">›</text>
+        </view>
       </view>
     </view>
-    <view wx:if="{{onlineDevices.length === 0}}" class="empty-line">当前没有在线的电脑端 online。</view>
+  </view>
+
+  <view class="panel" id="devices">
+    <view class="panel-head">
+      <text class="panel-title">在线设备</text>
+      <view class="refresh" hover-class="tap" bindtap="loadDevices">
+        <text class="refresh-ic">↻</text>
+        <text>刷新</text>
+      </view>
+    </view>
+    <view class="dev-state">
+      <view class="pulse {{onlineAvailable ? 'on' : ''}}"></view>
+      <text>{{onlineAvailable ? '已连接 ' + onlineDevices.length + ' 台电脑端 online' : '暂未检测到电脑端 online'}}</text>
+    </view>
+    <view wx:for="{{onlineDevices}}" wx:key="installation_id" class="dev">
+      <view class="dev-ic"><view class="i-monitor sm"></view></view>
+      <view class="dev-main">
+        <text class="dev-name">{{item.display_name || item.installation_id}}</text>
+        <text class="dev-time">{{item.last_seen_at}}</text>
+      </view>
+      <view class="dev-pill {{item.online ? 'on' : ''}}">{{item.online ? '在线' : '离线'}}</view>
+    </view>
+    <view wx:if="{{onlineDevices.length === 0}}" class="empty">在电脑上启动 online 客户端后，设备会自动出现在这里</view>
   </view>
 
   <view class="footer">
-    <text class="device-id">当前手机：{{deviceId}}</text>
-    <button class="logout-btn" bindtap="logout">退出登录</button>
+    <text class="foot-id">设备号 {{deviceId}}</text>
+    <button class="logout" bindtap="logout">退出登录</button>
+    <text class="foot-brand">必火 AI · 让创意落地</text>
   </view>
+
 </view>

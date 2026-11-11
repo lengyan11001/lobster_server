@@ -1,6 +1,6 @@
 {
   "description": "必火AI员工小程序",
-  "appid": "wxbbf4a4f9a0fdd872",
+  "appid": "wx88b00d981faeb5b3",
   "compileType": "miniprogram",
   "libVersion": "3.8.12",
   "projectname": "bihuo-ai-mobile",
@@ -34,16 +34,46 @@
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [
-      { "type": "file", "value": "assets/daka_1024.png" },
-      { "type": "file", "value": "assets/daka_source.png" },
-      { "type": "file", "value": "assets/daka_logo.png" },
-      { "type": "file", "value": "assets/daka_512.png" },
-      { "type": "file", "value": "assets/daka_box.ico" },
-      { "type": "file", "value": "assets/daka_256.png" },
-      { "type": "file", "value": "assets/daka_64.png" },
-      { "type": "file", "value": "assets/daka_48.png" },
-      { "type": "file", "value": "assets/daka_32.png" },
-      { "type": "file", "value": "assets/daka_16.png" }
+      {
+        "type": "file",
+        "value": "assets/daka_1024.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_source.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_logo.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_512.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_box.ico"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_256.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_64.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_48.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_32.png"
+      },
+      {
+        "type": "file",
+        "value": "assets/daka_16.png"
+      }
     ],
     "include": []
   },

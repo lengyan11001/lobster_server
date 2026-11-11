@@ -9,6 +9,8 @@ Page({
     phoneBound: false,
     wechatLoggedIn: false,
     avatarText: "AI",
+    identityName: "未登录",
+    identitySub: "微信登录后同步算力、内容记录与设备",
     deviceId: "",
     onlineAvailable: false,
     onlineDevices: [],
@@ -41,7 +43,22 @@ Page({
   },
 
   goRecharge() {
+    if (!app.globalData.token) {
+      this.focusLogin();
+      return;
+    }
     wx.navigateTo({ url: "/pages/recharge/recharge" });
+  },
+
+  focusLogin() {
+    wx.pageScrollTo({ selector: ".login", duration: 300, fail: () => {} });
+    wx.showToast({ title: "请先登录", icon: "none" });
+  },
+
+  onPullDownRefresh() {
+    this.refreshState();
+    if (app.globalData.token) this.loadDevices(true);
+    setTimeout(() => wx.stopPullDownRefresh(), 700);
   },
 
   loadCredits() {
@@ -49,7 +66,9 @@ Page({
     app.request({ url: "/auth/me", timeout: 20000 })
       .then((data) => {
         const credits = Number((data && data.credits) || 0);
-        this.setData({ creditsText: credits.toFixed(2) });
+        const parts = credits.toFixed(2).split(".");
+        const grouped = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        this.setData({ creditsText: grouped + "." + parts[1] });
       })
       .catch(() => {});
   },
@@ -57,21 +76,36 @@ Page({
   refreshState() {
     this.loadCredits();
     const phone = app.globalData.phone || "";
+    const loggedIn = Boolean(app.globalData.token);
+    const phoneBound = Boolean(loggedIn && phone);
+    const wechatLoggedIn = Boolean(loggedIn && !phone);
+    let identityName = "未登录";
+    let identitySub = "微信登录后同步算力、内容记录与设备";
+    if (phoneBound) {
+      identityName = phone.replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2");
+      identitySub = "已关联电脑端 online";
+    } else if (wechatLoggedIn) {
+      identityName = "微信用户";
+      identitySub = "还差一步：授权手机号";
+    }
     this.setData({
       phone,
-      phoneBound: Boolean(app.globalData.token && phone),
-      wechatLoggedIn: Boolean(app.globalData.token && !phone),
-      avatarText: phone ? phone.slice(-2) : "AI",
+      phoneBound,
+      wechatLoggedIn,
+      identityName,
+      identitySub,
+      avatarText: phone ? phone.slice(-2) : (wechatLoggedIn ? "微" : "AI"),
       deviceId: app.globalData.deviceId
     });
   },
 
-  loadDevices() {
+  loadDevices(silent) {
+    const quiet = silent === true;
     if (!app.globalData.token) {
-      wx.showToast({ title: "请先登录绑定", icon: "none" });
+      this.focusLogin();
       return;
     }
-    wx.showLoading({ title: "刷新中", mask: true });
+    if (!quiet) wx.showLoading({ title: "刷新中", mask: true });
     app
       .request({ url: "/api/mobile/devices" })
       .then((data) => {
@@ -82,7 +116,9 @@ Page({
         });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
+      .finally(() => {
+        if (!quiet) wx.hideLoading();
+      });
   },
 
   loadScheduledRuns() {
@@ -113,6 +149,14 @@ Page({
 
   setLoginDebug(text) {
     this.setData({ loginDebug: text || "" });
+  },
+
+  onWechatRowTap() {
+    if (app.globalData.token) {
+      wx.showToast({ title: "微信已登录", icon: "none" });
+      return;
+    }
+    this.login();
   },
 
   showLoginError(title, err) {

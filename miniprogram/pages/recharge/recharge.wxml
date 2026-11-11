@@ -1,20 +1,50 @@
 <view class="page">
-  <view class="head"><text class="title">充值算力</text><text class="sub">选择套餐，微信支付</text></view>
+
+  <view class="head">
+    <text class="title">充值算力</text>
+    <text class="sub">微信支付 · 支付后自动到账</text>
+  </view>
+
+  <view class="balance">
+    <view class="balance-copy">
+      <text class="b-label">当前算力余额</text>
+      <view class="b-value"><text class="b-num">{{balanceText}}</text><text class="b-unit">算力</text></view>
+    </view>
+    <view class="b-orb"></view>
+  </view>
+
   <view class="modes">
-    <view class="mode {{mode === 'package' ? 'active' : ''}}" data-mode="package" bindtap="setMode">套餐</view>
+    <view class="mode {{mode === 'package' ? 'active' : ''}}" data-mode="package" bindtap="setMode">选择套餐</view>
     <view class="mode {{mode === 'custom' ? 'active' : ''}}" data-mode="custom" bindtap="setMode">自定义金额</view>
   </view>
-  <view wx:if="{{mode === 'custom'}}" class="custom-box">
-    <text class="custom-label">充值金额（元）</text>
-    <input class="custom-input" type="digit" value="{{customAmount}}" bindinput="onCustomAmount" placeholder="最低 1 元" />
-  </view>
-  <view class="list" wx:if="{{mode === 'package'}}">
+
+  <view wx:if="{{mode === 'package'}}" class="grid">
     <view wx:for="{{packages}}" wx:key="index" class="pkg {{selected === index ? 'active' : ''}}" data-index="{{index}}" bindtap="select">
+      <view wx:if="{{selected === index}}" class="pkg-check">✓</view>
       <text class="pkg-price">¥{{item.price}}</text>
       <text class="pkg-credits">{{item.credits}} 算力</text>
       <text class="pkg-label">{{item.label}}</text>
     </view>
+    <view wx:if="{{packages.length === 0}}" class="empty">暂无可用套餐</view>
   </view>
-  <button class="primary" loading="{{paying}}" disabled="{{paying}}" bindtap="pay">微信支付</button>
+
+  <view wx:else class="custom">
+    <text class="c-label">充值金额（元）</text>
+    <view class="c-row">
+      <text class="c-yen">¥</text>
+      <input class="c-input" type="digit" value="{{customAmount}}" bindinput="onCustomAmount" placeholder="最低 1 元" />
+    </view>
+    <text class="c-hint">输入金额后点击下方按钮，使用微信支付完成充值</text>
+  </view>
+
+  <view class="pay-bar">
+    <view class="pay-info">
+      <text class="pay-label">应付金额</text>
+      <view class="pay-amount"><text class="pay-yen">¥</text><text class="pay-num">{{payAmount}}</text></view>
+    </view>
+    <button class="pay-btn" loading="{{paying}}" disabled="{{paying}}" bindtap="pay">微信支付</button>
+  </view>
+
   <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
+
 </view>

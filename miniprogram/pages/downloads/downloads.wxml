@@ -1,206 +1,94 @@
-<view class="works-page">
-  <view class="space-layer stars-a"></view>
-  <view class="space-layer stars-b"></view>
+<view class="works">
 
-  <view class="works-head">
-    <text class="works-title">我的作品</text>
-    <button class="refresh-btn" loading="{{loading}}" bindtap="loadWorks">刷新</button>
+  <view class="head">
+    <view class="head-copy">
+      <text class="title">作品</text>
+      <text class="sub">内容记录 · 全部生成结果</text>
+    </view>
+    <view class="refresh" hover-class="tap" bindtap="refresh">
+      <text class="refresh-ic">↻</text>
+      <text class="refresh-tx">刷新</text>
+    </view>
   </view>
 
-  <view class="media-tabs">
-    <button class="{{mediaTab === 'video' ? 'active' : ''}}" data-tab="video" bindtap="setMediaTab">
-      <view class="tab-icon tab-video"></view>
-      <text>视频</text>
-    </button>
-    <button class="{{mediaTab === 'image' ? 'active' : ''}}" data-tab="image" bindtap="setMediaTab">
-      <view class="tab-icon tab-image"></view>
-      <text>图片</text>
-    </button>
-    <button class="{{mediaTab === 'text' ? 'active' : ''}}" data-tab="text" bindtap="setMediaTab">
-      <view class="tab-icon tab-text"></view>
-      <text>文本</text>
-    </button>
-    <button class="{{mediaTab === 'audio' ? 'active' : ''}}" data-tab="audio" bindtap="setMediaTab">
-      <view class="tab-icon tab-audio"></view>
-      <text>音频</text>
-    </button>
+  <scroll-view class="tabs" scroll-x enhanced show-scrollbar="{{false}}">
+    <view wx:for="{{tabs}}" wx:key="key" class="tab {{tab === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="switchTab">{{item.label}}</view>
+  </scroll-view>
+
+  <view wx:if="{{!phoneBound}}" class="login-card">
+    <text class="login-title">登录后查看作品</text>
+    <text class="login-desc">内容记录跟随账号，换手机也能继续查看和下载。</text>
+    <button class="login-btn" bindtap="goLogin">去登录</button>
   </view>
-
-  <view wx:if="{{mediaTab === 'video'}}" class="kind-tabs">
-    <button class="{{videoKind === 'digital' ? 'active' : ''}}" data-kind="digital" bindtap="setVideoKind">数字人视频</button>
-    <button class="{{videoKind === 'super' ? 'active' : ''}}" data-kind="super" bindtap="setVideoKind">超级视频</button>
-  </view>
-
-  <block wx:if="{{authPanelVisible && !phoneBound}}">
-    <view class="auth-card">
-      <text class="auth-title">授权后查看作品</text>
-      <text class="auth-text">{{authHint}}</text>
-      <view class="auth-actions">
-        <button class="ghost-btn" bindtap="login">快捷登录</button>
-        <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">手机号快捷登录</button>
-      </view>
-    </view>
-  </block>
-
-  <block wx:elif="{{!phoneBound && !authPanelVisible}}">
-    <view class="empty-card">
-      <text>登录后查看生成作品</text>
-      <button class="primary-btn" bindtap="login">快捷登录</button>
-    </view>
-  </block>
-
-  <block wx:elif="{{mediaTab === 'text' || mediaTab === 'audio'}}">
-    <view class="empty-card">
-      <text>这里暂时还没有作品</text>
-    </view>
-  </block>
-
-  <block wx:elif="{{((mediaTab === 'image') || (mediaTab === 'video' && videoKind === 'super')) && loading && mediaWorks.length === 0}}">
-    <view class="empty-card">
-      <text>{{mediaTab === 'image' ? '正在加载图片作品...' : '正在加载视频作品...'}}</text>
-    </view>
-  </block>
-
-  <block wx:elif="{{((mediaTab === 'image') || (mediaTab === 'video' && videoKind === 'super')) && mediaWorks.length === 0}}">
-    <view class="empty-card">
-      <text>{{mediaTab === 'image' ? '这里暂时还没有图片作品' : '这里暂时还没有超级视频'}}</text>
-    </view>
-  </block>
-
-  <block wx:elif="{{mediaTab === 'image' || (mediaTab === 'video' && videoKind === 'super')}}">
-    <view wx:if="{{mediaTab === 'video' && videoKind === 'super'}}" class="work-list">
-      <view wx:for="{{mediaWorks}}" wx:key="id" wx:for-index="index" class="work-card media-list-card" data-index="{{index}}" bindtap="openMediaWork">
-        <view class="work-cover">
-          <image wx:if="{{item.cover_url}}" class="cover-img" src="{{item.cover_url}}" mode="aspectFill" />
-          <video wx:elif="{{item.is_success && item.playable_url}}" class="cover-video" src="{{item.playable_url}}" show-center-play-btn="{{false}}" show-play-btn="{{false}}" controls="{{false}}" muted object-fit="cover"></video>
-          <view wx:else class="cover-placeholder">{{item.work_type_label || 'AI'}}</view>
-          <view wx:if="{{item.is_processing}}" class="cover-state">
-            <text>生成中</text>
-            <text>预计5-10分钟</text>
-          </view>
-          <view wx:if="{{item.is_failed}}" class="cover-state failed">
-            <text>生成失败</text>
-            <text>{{item.error_message || '请重新提交任务'}}</text>
-          </view>
-          <view wx:if="{{item.is_success}}" class="play-btn">▶</view>
-        </view>
-
-        <view class="work-main">
-          <view class="work-line">
-            <text class="type-chip">{{item.work_type_label}}</text>
-            <text class="status-chip {{item.status}}">{{item.status_label}}</text>
-          </view>
-          <text class="work-title">{{item.title}}</text>
-          <text class="work-prompt">{{item.prompt || 'AI视频生成任务'}}</text>
-        </view>
-        <view class="card-meta-row">
-          <text>任务时间：{{item.created_at_text || '--'}}</text>
-          <text wx:if="{{item.is_success}}">视频结果：可播放</text>
-          <text wx:elif="{{item.is_processing}}">视频结果：生成中</text>
-          <text wx:elif="{{item.is_failed}}">视频结果：失败</text>
-        </view>
-        <view wx:if="{{item.publish_draft}}" class="publish-row" catchtap="noop">
-          <text>{{item.publish_status_label}} · {{item.publish_target_label}}</text>
-          <button wx:if="{{item.can_publish}}" data-index="{{index}}" catchtap="publishMediaWork">{{item.publish_status === 'failed' ? '重新发布' : '发布'}}</button>
-        </view>
-      </view>
-    </view>
-
-    <view wx:else class="media-grid-list">
-      <view wx:for="{{mediaWorks}}" wx:key="id" wx:for-index="index" class="media-work-card" data-index="{{index}}" bindtap="openMediaWork">
-        <image wx:if="{{item.media_type === 'image' && (item.preview_url || item.url)}}" class="media-work-img" src="{{item.preview_url || item.url}}" mode="aspectFill" />
-        <view wx:elif="{{item.media_type === 'image' && item.is_processing}}" class="media-work-img media-work-file">生成中</view>
-        <view wx:elif="{{item.media_type === 'image' && item.is_failed}}" class="media-work-img media-work-file">失败</view>
-        <view wx:else class="media-work-img media-work-file">{{item.media_type}}</view>
-        <view class="media-work-body">
-          <view class="media-work-line">
-            <text class="type-chip media-chip">{{item.work_type_label}}</text>
-            <text class="status-chip media-chip {{item.status}}">{{item.status_label}}</text>
-          </view>
-          <text class="media-work-title">{{item.media_type === 'image' ? (item.prompt || item.title) : item.title}}</text>
-          <text class="media-work-time">{{item.created_at_text || '--'}}</text>
-        </view>
-        <view wx:if="{{item.publish_draft}}" class="publish-row compact" catchtap="noop">
-          <text>{{item.publish_status_label}} · {{item.publish_target_label}}</text>
-          <button wx:if="{{item.can_publish}}" data-index="{{index}}" catchtap="publishMediaWork">{{item.publish_status === 'failed' ? '重新发布' : '发布'}}</button>
-        </view>
-      </view>
-    </view>
-  </block>
-
-  <block wx:elif="{{mediaTab !== 'video' || videoKind !== 'digital'}}">
-    <view class="empty-card">
-      <text>这里暂时还没有作品</text>
-    </view>
-  </block>
-
-  <block wx:elif="{{loading && works.length === 0}}">
-    <view class="empty-card">
-      <text>正在加载作品...</text>
-    </view>
-  </block>
-
-  <block wx:elif="{{works.length === 0}}">
-    <view class="empty-card">
-      <text>还没有数字人视频</text>
-      <button class="primary-btn" bindtap="goCreate">去创作</button>
-    </view>
-  </block>
 
   <block wx:else>
-    <view class="work-list">
-      <view wx:for="{{works}}" wx:key="id" wx:for-index="index" class="work-card media-list-card" data-index="{{index}}" bindtap="openWork">
-        <view class="work-cover">
-          <image wx:if="{{item.cover_url}}" class="cover-img" src="{{item.cover_url}}" mode="aspectFill" />
-          <video wx:elif="{{item.is_success && item.playable_url}}" class="cover-video" src="{{item.playable_url}}" show-center-play-btn="{{false}}" show-play-btn="{{false}}" controls="{{false}}" muted object-fit="cover"></video>
-          <view wx:else class="cover-placeholder">{{item.work_type_label || 'AI'}}</view>
-          <view wx:if="{{item.is_processing}}" class="cover-state">
-            <text>生成中</text>
-            <text>预计5-10分钟</text>
-          </view>
-          <view wx:if="{{item.is_success}}" class="play-btn">▶</view>
-        </view>
-
-        <view class="work-main">
-          <view class="work-line">
-            <text class="type-chip">{{item.work_type_label}}</text>
-            <text class="status-chip {{item.status}}">{{item.status_label}}</text>
-          </view>
-          <text class="work-title">{{item.title}}</text>
-          <text class="work-prompt">{{item.prompt || item.message || '暂无创作参数'}}</text>
-        </view>
-        <view class="card-meta-row">
-          <text>任务时间：{{item.created_at_text || '--'}}</text>
-          <text wx:if="{{item.is_success}}">视频结果：可播放</text>
-          <text wx:elif="{{item.is_processing}}">视频结果：生成中</text>
-          <text wx:elif="{{item.is_failed}}">视频结果：失败</text>
+    <view wx:if="{{loading && items.length === 0}}" class="skeleton">
+      <view wx:for="{{skeletons}}" wx:key="*this" class="sk-row">
+        <view class="sk-thumb"></view>
+        <view class="sk-lines">
+          <view class="sk-line w40"></view>
+          <view class="sk-line w85"></view>
+          <view class="sk-line w65"></view>
         </view>
       </view>
+    </view>
+
+    <view wx:elif="{{items.length === 0}}" class="empty">
+      <view class="empty-ic">▤</view>
+      <text class="empty-title">还没有内容记录</text>
+      <text class="empty-desc">在首页创作的数字人、图片、文章会自动汇总到这里</text>
+      <button class="empty-btn" bindtap="goCreate">去创作</button>
+    </view>
+
+    <view wx:else class="list">
+      <view wx:for="{{items}}" wx:key="key" class="item" data-index="{{index}}" bindtap="openDetail" hover-class="tap">
+        <view class="thumb">
+          <image wx:if="{{item.thumb}}" class="thumb-img" src="{{item.thumb}}" mode="aspectFill" />
+          <view wx:else class="thumb-empty kind-{{item.kind}}">{{item.kindLabel}}</view>
+          <view wx:if="{{item.isVideo}}" class="play"><text>▶</text></view>
+        </view>
+        <view class="body">
+          <view class="line">
+            <text class="chip kind-{{item.kind}}">{{item.kindLabel}}</text>
+            <text class="time">{{item.time}}</text>
+          </view>
+          <text class="item-title">{{item.title}}</text>
+          <text class="item-summary">{{item.summary || item.kindLabel + '内容'}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{items.length}}" class="more">
+      <button class="more-btn" loading="{{loadingMore}}" bindtap="loadMore">{{hasMore ? '加载更多' : '没有更多了'}}</button>
     </view>
   </block>
 
-  <view wx:if="{{previewVisible}}" class="video-modal" catchtap="closePreview">
-    <view class="video-modal-panel" catchtap="noop">
-      <view class="modal-head">
-        <view class="modal-title-wrap">
-          <text class="modal-title">{{previewItem.title || 'AI视频作品'}}</text>
-          <text class="modal-sub">{{previewItem.work_type_label || 'AI视频'}} · {{previewItem.status_label || '已完成'}}</text>
+  <view wx:if="{{detail}}" class="overlay" catchtap="closeDetail">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-grip"></view>
+      <view class="sheet-head">
+        <view class="sheet-head-main">
+          <view class="sheet-line">
+            <text class="chip kind-{{detail.kind}}">{{detail.kindLabel}}</text>
+            <text class="sheet-time">{{detail.time}}</text>
+          </view>
+          <text class="sheet-title">{{detail.title}}</text>
         </view>
-        <button class="modal-close" bindtap="closePreview">×</button>
+        <text class="sheet-close" catchtap="closeDetail">✕</text>
       </view>
-      <video
-        class="modal-video"
-        src="{{previewVideoUrl}}"
-        controls
-        autoplay
-        show-fullscreen-btn
-        show-play-btn
-        object-fit="contain"
-      ></video>
-      <view class="modal-actions">
-        <button class="modal-btn primary" bindtap="savePreviewWork">保存</button>
-        <button class="modal-btn" open-type="share">分享</button>
+
+      <scroll-view class="sheet-body" scroll-y>
+        <video wx:if="{{detail.videoUrl}}" class="sheet-video" src="{{detail.videoUrl}}" controls object-fit="contain"></video>
+        <image wx:for="{{detail.images}}" wx:key="*this" class="sheet-image" src="{{item}}" mode="widthFix" data-url="{{item}}" bindtap="previewImage" />
+        <text wx:if="{{detail.content}}" class="sheet-content" user-select="{{true}}">{{detail.content}}</text>
+      </scroll-view>
+
+      <view class="sheet-actions">
+        <button class="act ghost" bindtap="copyContent">复制文字</button>
+        <button wx:if="{{detail.saveable}}" class="act primary" bindtap="saveDetail">保存</button>
+        <button class="act danger" bindtap="deleteDetail">删除</button>
       </view>
     </view>
   </view>
+
 </view>
