@@ -39,6 +39,10 @@ Page({
     this.clearSmsCountdown();
   },
 
+  goRecharge() {
+    wx.navigateTo({ url: "/pages/recharge/recharge" });
+  },
+
   refreshState() {
     const phone = app.globalData.phone || "";
     this.setData({
