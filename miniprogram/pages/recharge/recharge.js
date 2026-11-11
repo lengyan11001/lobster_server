@@ -2,7 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 
 Page({
-  data: { packages: [], selected: 0, paying: false, statusText: "" },
+  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "" },
 
   onShow() {
     app.restoreSession();
@@ -24,11 +24,14 @@ Page({
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
   },
 
-  select(e) { this.setData({ selected: Number(e.currentTarget.dataset.index || 0) }); },
+  select(e) { this.setData({ selected: Number(e.currentTarget.dataset.index || 0), mode: "package" }); },
+  setMode(e) { this.setData({ mode: String(e.currentTarget.dataset.mode || "package") }); },
+  onCustomAmount(e) { this.setData({ customAmount: e.detail.value }); },
 
   pay() {
     const pkg = this.data.packages[this.data.selected];
-    if (!pkg) return wx.showToast({ title: "请选择套餐", icon: "none" });
+    if (this.data.mode === "package" && !pkg) return wx.showToast({ title: "请选择套餐", icon: "none" });
+    if (this.data.mode === "custom" && !(Number(this.data.customAmount) > 0)) return wx.showToast({ title: "请输入充值金额", icon: "none" });
     if (this.data.paying) return;
     this.setData({ paying: true, statusText: "正在创建订单…" });
     wx.login({
@@ -38,10 +41,14 @@ Page({
   },
 
   doPay(pkg, code) {
+    const payload = this.data.mode === "package"
+      ? { package_index: pkg.index }
+      : { price_yuan: Math.max(1, Math.round(Number(this.data.customAmount) || 0)) };
+    payload.code = code;
     app.request({
       method: "POST",
       url: "/api/recharge/fuiou-jsapi",
-      data: { package_index: pkg.index, price_yuan: pkg.price || undefined, code },
+      data: payload,
       timeout: 60000
     })
       .then((data) => {
