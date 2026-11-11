@@ -601,6 +601,8 @@ class DraftRequestBody(BaseModel):
 class AutoDraftRequestBody(BaseModel):
     # 口播预估时长（秒）：>0 时要求文案按这个时长控制字数。
     target_seconds: int = Field(0, ge=0, le=600)
+    # 用户手填的目标字数：>0 时优先于 target_seconds。
+    target_chars: int = Field(0, ge=0, le=3000)
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
     keyword_ids: list[int] = Field(default_factory=list)
     keyword_texts: list[str] = Field(default_factory=list)
@@ -2164,12 +2166,20 @@ def _item_brief(row: TikHubSourceItem, idx: int) -> dict[str, Any]:
     }
 
 
-def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0) -> str:
+def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0, target_chars: int = 0) -> str:
     task_key = (task or "").strip().lower()
     plat = (platform or "").strip().lower()
     current_year = _utcnow().year
     seconds = max(0, min(int(target_seconds or 0), 600))
-    if seconds:
+    chars = max(0, min(int(target_chars or 0), 3000))
+    if chars:
+        chars_low = max(10, int(round(chars * 0.9)))
+        chars_high = max(chars_low + 5, int(round(chars * 1.1)))
+        length_rule = (
+            f"口播正文控制在 {chars_low} 到 {chars_high} 字（目标 {chars} 字），不得超过 {chars_high} 字；"
+            "宁可少写也不要超长。"
+        )
+    elif seconds:
         cn_low = max(10, int(round(seconds * 4 * 0.9)))
         cn_high = max(cn_low + 5, int(round(seconds * 4 * 1.1)))
         length_rule = (
@@ -5581,6 +5591,7 @@ async def _generate_and_save_ip_content_records(
     extra_requirements: str,
     count: int,
     target_seconds: int = 0,
+    target_chars: int = 0,
     group_id: str = "",
     batch_size: Optional[int] = None,
     llm_attempts: int = 3,
@@ -5630,7 +5641,7 @@ async def _generate_and_save_ip_content_records(
     all_records: list[IPContentDraftRecord] = []
     all_drafts: list[dict[str, Any]] = []
     source_items: list[dict[str, Any]] = [_item_payload(row) for row in rows]
-    requirements_text = _draft_requirements(task_key, platform, target_count, target_seconds)
+    requirements_text = _draft_requirements(task_key, platform, target_count, target_seconds, target_chars)
     cross_run_note = _cross_run_dedup_note(db, int(current_user.id), record_task)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
@@ -8163,6 +8174,7 @@ async def generate_industry_hot_oral(
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
         target_seconds=int(getattr(body, "target_seconds", 0) or 0),
+        target_chars=int(getattr(body, "target_chars", 0) or 0),
         task_label="行业热门口播文案",
     )
     return {"ok": True, "task": "industry_hot_oral", "sync_results": sync_results, **generated}
@@ -8204,6 +8216,7 @@ async def generate_professional_ip_oral(
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),
         target_seconds=int(getattr(body, "target_seconds", 0) or 0),
+        target_chars=int(getattr(body, "target_chars", 0) or 0),
         task_label="专业 IP 口播文案",
     )
     return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}

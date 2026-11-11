@@ -24,3 +24,16 @@ def test_professional_oral_prompt_uses_target_seconds():
 def test_manual_style_zero_seconds_is_unlimited():
     text = _draft_requirements("task1_ip", "douyin", 1, 0)
     assert "暂不限制字数或口播时长" in text
+
+
+def test_manual_target_chars_reaches_prompt():
+    text = _draft_requirements("task1_industry", "douyin", 1, 0, 150)
+    assert "暂不限制" not in text
+    assert "135 到 165 字" in text
+    assert "目标 150 字" in text
+
+
+def test_target_chars_wins_over_seconds():
+    text = _draft_requirements("task1_ip", "douyin", 1, 60, 80)
+    assert "72 到 88 字" in text
+    assert "60 秒" not in text
