@@ -4,6 +4,7 @@ const share = require("../../utils/share");
 
 Page({
   data: {
+    creditsText: "--",
     phone: "",
     phoneBound: false,
     wechatLoggedIn: false,
@@ -43,7 +44,18 @@ Page({
     wx.navigateTo({ url: "/pages/recharge/recharge" });
   },
 
+  loadCredits() {
+    if (!app.globalData.token) { this.setData({ creditsText: "--" }); return; }
+    app.request({ url: "/auth/me", timeout: 20000 })
+      .then((data) => {
+        const credits = Number((data && data.credits) || 0);
+        this.setData({ creditsText: credits.toFixed(2) });
+      })
+      .catch(() => {});
+  },
+
   refreshState() {
+    this.loadCredits();
     const phone = app.globalData.phone || "";
     this.setData({
       phone,
