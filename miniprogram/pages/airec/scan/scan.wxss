@@ -51,3 +51,11 @@
   text-align: center; padding: 120rpx 0;
   color: #999; font-size: 28rpx;
 }
+
+.last-bar { display: flex; align-items: center; padding: 16rpx 32rpx 4rpx; background: #fff; }
+.last-label { font-size: 22rpx; color: #94a3b8; }
+.last-name { margin-left: 10rpx; font-size: 24rpx; color: #0f172a; font-weight: 600; }
+.last-hint { margin-left: auto; font-size: 22rpx; color: #2563eb; }
+.last-cancel { margin-left: 16rpx; font-size: 22rpx; color: #94a3b8; text-decoration: underline; }
+.last-tag { margin-left: 12rpx; padding: 2rpx 12rpx; border-radius: 999rpx; background: #eff6ff; color: #2563eb; font-size: 18rpx; }
+.device-title-row { display: flex; align-items: center; }

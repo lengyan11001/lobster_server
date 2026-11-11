@@ -33,6 +33,9 @@ Page({
       isPaused: false,
       timeText: "00:00:00"
     },
+    autoConnecting: false,
+    autoConnectName: "",
+    hasLastDevice: false,
     syncText: "",
     syncing: false,
     powerOnRecord: null,
@@ -57,13 +60,20 @@ Page({
     this._bleBound = false;
     this._syncedNames = {};
     try { this._lastDevice = wx.getStorageSync("recorder_last_device") || null; } catch (err) { this._lastDevice = null; }
+    this.setData({ hasLastDevice: Boolean(this._lastDevice && this._lastDevice.deviceId) });
     this._autoReconnectLeft = 0;
+    this._autoConnectTried = false;
+    this._autoConnectTimer = null;
+    this._autoConnecting = false;
+    this._pageVisible = true;
+    this._suppressAutoOnNextShow = false;
     this._logDiag("page", "onLoad v2026-11-02-rec-fix28" + envInfo);
     this._bindBle();
   },
 
   onUnload() {
     clearTimeout(this._autoTimer);
+    clearTimeout(this._autoConnectTimer);
     try { if (this._ble) this._ble.stopScan(); } catch (err) {}
     this._stopTimer();
     try {
@@ -74,9 +84,22 @@ Page({
   },
 
   onShow() {
+    this._pageVisible = true;
     this.reload();
     this.syncDeviceState();
     this._loadSyncedNames();
+    if (this._suppressAutoOnNextShow) {
+      this._suppressAutoOnNextShow = false;
+    } else {
+      this._tryAutoConnect();
+    }
+  },
+
+  onHide() {
+    // 去扫描页/后台时别再抢着自动重连，避免和扫描页互相抢占设备
+    this._pageVisible = false;
+    // 只是切后台时允许回来再试一次；从扫描页返回则不自动抢设备
+    if (!this._suppressAutoOnNextShow) this._autoConnectTried = false;
   },
 
   /* ── 录音设备状态与控制（对齐 H5 AI秘书的录音设备面板）────────── */
@@ -158,10 +181,53 @@ Page({
     }
   },
 
+  // 进入页面时自动连接上次用过的录音设备（只扫一次，15s 没找到就停下等用户手动连）
+  _tryAutoConnect() {
+    const ble = this._ble;
+    if (!ble || ble.isConnected || ble._connecting) return;
+    const saved = this._lastDevice || {};
+    if (!saved.deviceId) return;
+    if (this._autoConnectTried) return;
+    this._autoConnectTried = true;
+    this._autoConnecting = true;
+    this.setData({ autoConnecting: true, autoConnectName: String(saved.name || "上次设备") });
+    this._logDiag("auto:start", saved);
+    try { ble.startScan(); } catch (err) {}
+    clearTimeout(this._autoConnectTimer);
+    this._autoConnectTimer = setTimeout(() => {
+      if (ble.isConnected) return;
+      try { ble.stopScan(); } catch (err) {}
+      this._stopAutoConnect("timeout");
+      wx.showToast({ title: "没找到上次的录音设备", icon: "none" });
+    }, 15000);
+  },
+
+  _stopAutoConnect(reason) {
+    if (!this._autoConnecting && !this.data.autoConnecting) return;
+    this._autoConnecting = false;
+    clearTimeout(this._autoConnectTimer);
+    this.setData({ autoConnecting: false, autoConnectName: "" });
+    this._logDiag("auto:stop", reason || "");
+  },
+
+  retryLastDevice() {
+    this._autoConnectTried = false;
+    this._autoConnecting = false;
+    this._tryAutoConnect();
+  },
+
+  cancelAutoConnect() {
+    const active = this._autoConnecting || this.data.autoConnecting;
+    try { this._ble.stopScan(); } catch (err) {}
+    this._stopAutoConnect("manual-cancel");
+    if (active) wx.showToast({ title: "已取消自动连接", icon: "none" });
+  },
+
   // 设备上报的存储单位是 KB（SDK getStorageStr 也是 /1024 显示 MB）
   _scheduleAutoReconnect(delay) {
     clearTimeout(this._autoTimer);
     this._autoTimer = setTimeout(() => {
+      if (!this._pageVisible) return;
       const ble = this._ble;
       if (!ble || ble.isConnected || ble._connecting) return;
       if (this._autoReconnectLeft <= 0) this._autoReconnectLeft = 3;
@@ -205,29 +271,55 @@ Page({
     if (!ble || this._bleBound) return;
     this._bleBound = true;
     this._onBle("onDeviceFound", (device) => {
-      if (!this._autoReconnectLeft) return;
+      if (!this._autoConnecting && !this._autoReconnectLeft) return;
       const saved = this._lastDevice || {};
-      if (!saved.deviceId || device.deviceId !== saved.deviceId) return;
+      if (!saved.deviceId) return;
+      const sameId = device.deviceId === saved.deviceId;
+      const sameName = Boolean(saved.name) && device.name === saved.name;
+      if (!sameId && !sameName) return;
+      if (!sameId) {
+        // 设备 ID 变了（换机/重装后常见），按名字认领并更新缓存
+        this._lastDevice = { deviceId: device.deviceId, name: device.name };
+        try { wx.setStorageSync("recorder_last_device", this._lastDevice); } catch (err) {}
+      }
       clearTimeout(this._autoTimer);
       this._autoReconnectLeft = 0;
+      this._stopAutoConnect("found");
       try { ble.stopScan(); } catch (err) {}
-      this._logDiag("auto:connect", { name: device.name });
+      this._logDiag("auto:connect", { name: device.name, sameId });
       try { ble.connect(device); } catch (err) {}
+    });
+
+    this._onBle("onScanFailed", (msg) => {
+      this._stopAutoConnect("scan-failed");
+      // 蓝牙没开/权限没给时允许下次进页面再试一次
+      this._autoConnectTried = false;
+      this._logDiag("scan:failed", String(msg || ""));
+    });
+
+    this._onBle("onBluetoothStateChanged", (enabled) => {
+      if (enabled) return;
+      this._stopAutoConnect("bluetooth-off");
+      this._autoConnectTried = false;
+      this._logDiag("bluetooth:off", "");
     });
 
     this._onBle("onConnected", (device) => {
       this._logDiag("ble:connected", device);
       clearTimeout(this._autoTimer);
       this._autoReconnectLeft = 0;
+      this._stopAutoConnect("connected");
       this._segmentAutoSent = false;
       this._lastDevice = { deviceId: device.deviceId, name: device.name };
       try { wx.setStorageSync("recorder_last_device", this._lastDevice); } catch (err) {}
+      this.setData({ hasLastDevice: true });
       this.setDevice({ connected: true, name: String((device && device.name) || this.data.device.name || "录音设备") });
       try { ble.fetchAllDeviceInfo(); } catch (err) {}
     });
     this._onBle("onDisconnected", () => {
       this._logDiag("ble:disconnected");
-      if (!this.data.formatting) this._scheduleAutoReconnect(1500);
+      this._stopAutoConnect("disconnected");
+      if (!this.data.formatting && this._pageVisible) this._scheduleAutoReconnect(1500);
       if (this.data.formatting) {
         clearTimeout(this._formatTimer);
         this.setData({ formatting: false });
@@ -1055,6 +1147,8 @@ Page({
   },
 
   goDevices() {
+    this._suppressAutoOnNextShow = true;
+    this.cancelAutoConnect();
     wx.navigateTo({ url: "/pages/airec/scan/scan" });
   }
 });

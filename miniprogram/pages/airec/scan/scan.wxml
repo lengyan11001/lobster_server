@@ -5,12 +5,22 @@
     <view class="rescan-btn" bindtap="onRescan">重新扫描</view>
   </view>
 
+  <view class="last-bar" wx:if="{{lastName}}">
+    <text class="last-label">上次设备</text>
+    <text class="last-name">{{lastName}}</text>
+    <text wx:if="{{autoConnecting}}" class="last-hint">自动连接中…</text>
+    <text wx:if="{{autoConnecting}}" class="last-cancel" bindtap="cancelAutoConnect">取消</text>
+  </view>
+
   <view class="device-list" wx:if="{{devices.length > 0}}">
     <view class="section-header">发现 {{devices.length}} 台设备，点击连接</view>
     <view class="device-item" wx:for="{{devices}}" wx:key="deviceId"
           bindtap="onDeviceTap" data-index="{{index}}">
       <view class="device-info">
-        <text class="device-name">{{item.name}}</text>
+        <view class="device-title-row">
+          <text class="device-name">{{item.name}}</text>
+          <text wx:if="{{item.deviceId === lastDeviceId}}" class="last-tag">上次</text>
+        </view>
         <text class="device-id">{{item.deviceId}}</text>
       </view>
       <view class="device-rssi">
