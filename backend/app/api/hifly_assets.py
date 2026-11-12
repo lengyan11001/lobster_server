@@ -869,31 +869,95 @@ def _tts_speed_value(rate: Any) -> float:
     return max(0.5, min(speed, 2.0))
 
 
-def _atempo_audio_bytes(raw: bytes, speed: float) -> bytes:
-    """按倍率真正变速（ffmpeg atempo）。
+def _probe_audio_sample_rate(path: str, fallback: int = 24000) -> int:
+    exe = shutil.which("ffprobe") or shutil.which("ffprobe.exe") or ""
+    if not exe:
+        return fallback
+    try:
+        proc = subprocess.run(
+            [exe, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        value = (proc.stdout or "").strip().splitlines()
+        return int(value[0]) if value and value[0].isdigit() else fallback
+    except Exception:  # noqa: BLE001
+        return fallback
 
-    千问 TTS（qwen3-tts-flash / cosyvoice）没有 rate 参数，实测传 1.0 和 1.8
-    合成出来的音频时长几乎一样，所以「调整语速没效果」。这里在返回音频前
-    用 atempo 真变速，数字人口型和成片时长会跟着变。
+
+def _postprocess_tts_audio(
+    raw: bytes,
+    *,
+    speed: Any = 1.0,
+    volume: Any = 1.0,
+    pitch: Any = 0.0,
+) -> bytes:
+    """按参数后处理 TTS 音频：语速 / 音量 / 语调。
+
+    千问 TTS（qwen3-tts-flash / cosyvoice / 3.1）不认 rate、volume、pitch，
+    三个参数传上去全部无效。这里用 ffmpeg 真正处理：
+      - 语调：asetrate + aresample + atempo 反向补偿，只改音高不改时长
+      - 音量：volume 增益
+      - 语速：atempo（0.5~2.0，超出会串联）
     """
-    if not raw or abs(speed - 1.0) < 0.01:
+    if not raw:
         return raw
+    sp = _tts_speed_value(speed)
+    try:
+        vol = float(volume if volume not in (None, "") else 1.0)
+    except (TypeError, ValueError):
+        vol = 1.0
+    if vol != vol:
+        vol = 1.0
+    vol = max(0.1, min(vol, 2.0))
+    try:
+        semitone = float(pitch if pitch not in (None, "") else 0.0)
+    except (TypeError, ValueError):
+        semitone = 0.0
+    if semitone != semitone:
+        semitone = 0.0
+    semitone = max(-12.0, min(semitone, 12.0))
+
+    needs_speed = abs(sp - 1.0) >= 0.01
+    needs_volume = abs(vol - 1.0) >= 0.01
+    needs_pitch = abs(semitone) >= 0.01
+    if not (needs_speed or needs_volume or needs_pitch):
+        return raw
+
     exe = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe") or ""
     if not exe:
-        raise HTTPException(status_code=503, detail="服务器缺少 ffmpeg，暂时无法按语速合成")
-    with tempfile.TemporaryDirectory(prefix="qwen-atempo-") as tmp:
+        raise HTTPException(status_code=503, detail="服务器缺少 ffmpeg，暂时无法按声音参数合成")
+    with tempfile.TemporaryDirectory(prefix="qwen-filter-") as tmp:
         src = Path(tmp) / "in.mp3"
         dst = Path(tmp) / "out.mp3"
         src.write_bytes(raw)
+        filters: List[str] = []
+        if needs_pitch:
+            factor = 2 ** (semitone / 12.0)
+            sample_rate = _probe_audio_sample_rate(str(src), _QWEN_TTS_SAMPLE_RATE)
+            filters.append(f"asetrate={sample_rate}*{factor:.6f}")
+            filters.append(f"aresample={sample_rate}")
+            filters.append(f"atempo={1.0 / factor:.6f}")
+        if needs_volume:
+            filters.append(f"volume={vol:.3f}")
+        if needs_speed:
+            remaining = sp
+            while remaining > 2.0:
+                filters.append("atempo=2.000")
+                remaining /= 2.0
+            while remaining < 0.5:
+                filters.append("atempo=0.500")
+                remaining /= 0.5
+            filters.append(f"atempo={remaining:.3f}")
         proc = subprocess.run(
             [exe, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
-             "-vn", "-filter:a", f"atempo={speed:.3f}", str(dst)],
+             "-vn", "-filter:a", ",".join(filters), str(dst)],
             capture_output=True,
             timeout=300,
         )
         if proc.returncode != 0 or not dst.exists() or dst.stat().st_size <= 0:
             detail = (proc.stderr or b"")[:200].decode("utf-8", "ignore").strip()
-            raise HTTPException(status_code=502, detail=f"语速处理失败: {detail or 'ffmpeg 未生成输出'}")
+            raise HTTPException(status_code=502, detail=f"声音参数处理失败: {detail or 'ffmpeg 未生成输出'}")
         return dst.read_bytes()
 
 
@@ -947,10 +1011,13 @@ async def _preview_tts_audio(
 
     audio_bytes = await asyncio.to_thread(_concat_tts_audio_segments, audio_segments)
     speed = _tts_speed_value(rate)
-    if provider == _QWEN_PROVIDER and abs(speed - 1.0) >= 0.01:
-        # 千问 TTS 不认 rate，这里按用户设置真正变速（目前只有 qwen 分支需要）
-        audio_bytes = await asyncio.to_thread(_atempo_audio_bytes, audio_bytes, speed)
-        duration_seconds = max(1, int(round(duration_seconds / speed)))
+    if provider == _QWEN_PROVIDER:
+        # 千问 TTS 不认 rate/volume/pitch，这里按用户设置真正后处理
+        audio_bytes = await asyncio.to_thread(
+            lambda: _postprocess_tts_audio(audio_bytes, speed=speed, volume=volume, pitch=pitch)
+        )
+        if abs(speed - 1.0) >= 0.01:
+            duration_seconds = max(1, int(round(duration_seconds / speed)))
     return {
         "audio_bytes": audio_bytes,
         "duration_seconds": max(1, duration_seconds),
@@ -2735,14 +2802,15 @@ async def edit_my_voice_params(
             # 试听 demo 也要按语速真变速（千问 TTS 不认 rate，这条路径原来直接
             # 调 _qwen_tts_audio，绕过了 _preview_tts_audio 的 atempo）
             _preview_speed = _tts_speed_value(rate)
-            if abs(_preview_speed - 1.0) >= 0.01:
-                preview["audio_bytes"] = await asyncio.to_thread(
-                    _atempo_audio_bytes, preview.get("audio_bytes") or b"", _preview_speed
+            preview["audio_bytes"] = await asyncio.to_thread(
+                lambda: _postprocess_tts_audio(
+                    preview.get("audio_bytes") or b"", speed=_preview_speed, volume=volume, pitch=pitch
                 )
-                if preview.get("duration_seconds"):
-                    preview["duration_seconds"] = max(
-                        1, int(round(float(preview["duration_seconds"]) / _preview_speed))
-                    )
+            )
+            if abs(_preview_speed - 1.0) >= 0.01 and preview.get("duration_seconds"):
+                preview["duration_seconds"] = max(
+                    1, int(round(float(preview["duration_seconds"]) / _preview_speed))
+                )
             demo_asset = await _persist_voice_demo_asset(
                 db,
                 current_user.id,
