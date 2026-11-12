@@ -3672,6 +3672,18 @@ async def create_my_video_by_tts(
                 instructions=instructions,
                 language_type=translation_result.get("language_type") or speech_language,
             )
+            # 千问 TTS 不认 rate/volume/pitch，数字人口播这里要自己后处理，
+            # 否则「我的声音」里改的三个参数在成片里完全没作用。
+            _tts_speed = _tts_speed_value(rate)
+            tts_result["audio_bytes"] = await asyncio.to_thread(
+                lambda: _postprocess_tts_audio(
+                    tts_result.get("audio_bytes") or b"", speed=_tts_speed, volume=volume, pitch=pitch
+                )
+            )
+            if abs(_tts_speed - 1.0) >= 0.01 and tts_result.get("duration_seconds"):
+                tts_result["duration_seconds"] = max(
+                    1, int(round(float(tts_result["duration_seconds"]) / _tts_speed))
+                )
             tts_provider = _QWEN_PROVIDER
         else:
             emotion = voice_params.get("emotion") or _MINIMAX_DEFAULT_EMOTION
