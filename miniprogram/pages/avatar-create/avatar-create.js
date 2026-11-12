@@ -20,10 +20,10 @@ Page({
     sourceType: "image",
     sourcePath: "",
     sourceName: "",
-    trainingText: "",
+    trainingText: defaultTrainingText(),
     authVideoPath: "",
     authVideoName: "",
-    authText: "",
+    authText: defaultAuthText(),
     agree: false,
     submitting: false,
     statusText: "",
@@ -46,8 +46,13 @@ Page({
   setSourceType(e) { this.setData({ sourceType: String(e.currentTarget.dataset.t || "image"), sourcePath: "", sourceName: "" }); },
   onTrainingText(e) { this.setData({ trainingText: e.detail.value }); },
   fillTrainingSample() { this.setData({ trainingText: defaultTrainingText() }); },
-  onAuthText(e) { this.setData({ authText: e.detail.value }); },
-  fillAuthSample() { this.setData({ authText: defaultAuthText() }); },
+  copyAuthText() {
+    wx.setClipboardData({
+      data: String(this.data.authText || ""),
+      success: () => wx.showToast({ title: "授权文案已复制", icon: "success" })
+    });
+  },
+
   toggleAgree(e) { const values = (e.detail && e.detail.value) || []; this.setData({ agree: values.length > 0 }); },
 
   openCapture(e) {

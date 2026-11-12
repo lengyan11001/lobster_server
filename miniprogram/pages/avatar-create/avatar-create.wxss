@@ -57,3 +57,8 @@
 .cap-shutter.recording .cap-shutter-inner { width: 48rpx; height: 48rpx; border-radius: 10rpx; background: #ef4444; }
 
 .fill-link { display:inline-block; margin-top:10rpx; font-size:22rpx; color:#2563eb; }
+
+.auth-fixed { padding: 20rpx; background: #f8fafc; border: 1rpx solid #e8eef6; border-radius: 14rpx; }
+.auth-fixed-text { display: block; font-size: 26rpx; line-height: 1.75; color: #334155; }
+.auth-fixed-actions { display: flex; justify-content: flex-end; margin-top: 12rpx; }
+.auth-fixed-actions .fill-link { margin-top: 0; }
