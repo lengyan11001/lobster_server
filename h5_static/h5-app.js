@@ -11654,7 +11654,7 @@ async function api(path, options = {}) {
       if (requestId !== state.assetLibraryDigitalRequest) return;
       try {
         const pageSize = Number(state.assetLibraryDigitalPageSize || 8);
-        const data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`, {
+        const data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}&include_pending=1`, {
           maxAttempts: 1,
           timeoutMs: 15000,
         });

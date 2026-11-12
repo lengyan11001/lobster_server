@@ -4121,6 +4121,7 @@ def list_h5_digital_library(
     kind: str = Query("avatar"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    include_pending: bool = Query(False, description="素材库展示训练中/失败的形象分身"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -4149,17 +4150,25 @@ def list_h5_digital_library(
 
     page_offset = (page - 1) * size
     fetch_size = page_offset + size
-    # 模板里关联形象/分身只能用训练成功的：未完成 / 失败的直接不进这个库
     hifly_query = db.query(UserHiflyAvatarAsset).filter(
         UserHiflyAvatarAsset.user_id == current_user.id,
         UserHiflyAvatarAsset.status == "success",
     )
-    shanjian_query = db.query(ShanjianDigitalHumanProfile).filter(
-        ShanjianDigitalHumanProfile.user_id == int(current_user.id),
-        ShanjianDigitalHumanProfile.status == "succeed",
-        ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
-        ShanjianDigitalHumanProfile.virtualman_id != "",
-    )
+    # 素材库（include_pending=1）要把刚提交的训练也显示出来，否则用户提交完
+    # 在形象分身里什么都看不到；模板关联仍然只取训练成功的（默认行为）。
+    pending_statuses = ("submitting", "processing", "failed")
+    if include_pending:
+        shanjian_query = db.query(ShanjianDigitalHumanProfile).filter(
+            ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+            ShanjianDigitalHumanProfile.status.in_((*pending_statuses, "succeed")),
+        )
+    else:
+        shanjian_query = db.query(ShanjianDigitalHumanProfile).filter(
+            ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+            ShanjianDigitalHumanProfile.status == "succeed",
+            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+            ShanjianDigitalHumanProfile.virtualman_id != "",
+        )
     hifly_total = hifly_query.count()
     shanjian_total = shanjian_query.count()
     hifly_rows = (

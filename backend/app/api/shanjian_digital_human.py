@@ -665,6 +665,7 @@ def _pick_result_value(result: Dict[str, Any], *keys: str) -> Any:
 
 def _task_status_text(status: str) -> str:
     mapping = {
+        "submitting": "提交中",
         "processing": "处理中",
         "succeed": "已完成",
         "failed": "失败",
@@ -2433,43 +2434,68 @@ async def create_profile(
         current_user=current_user,
     )
     _release_db_transaction(db)
-    # 注意：不在云端压缩素材（服务器压力）。
-    # 超限素材由 online/设备端本机压好后再提交；云端只把上游的报错换成人话。
-    try:
-        upstream = await _post(endpoint, body.token, payload)
-    except HTTPException as exc:
-        detail = str(getattr(exc, "detail", exc) or "")
-        if _is_shanjian_material_rejection(detail):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "训练素材分辨率超过 2000x2000，请在 online（本机）里提交（会自动压好副本），"
-                    "或换一个分辨率更小的素材。"
-                ),
-            ) from exc
-        raise
-    data = _data(upstream)
-    task_id = _clean_text(data.get("taskId"))
-    if not task_id:
-        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
-    if body.make_default:
-        _clear_default_profiles(db, int(current_user.id))
+    # 提交前先落一条本地记录：上游超时/拒绝/断网时也必须能在列表里查到这次提交，
+    # 而不是什么都没有。
     row = ShanjianDigitalHumanProfile(
         user_id=int(current_user.id),
         title=_clean_text(body.title)[:80] or "未命名数字人",
         train_mode=_normalize_mode(body.mode),
-        status="processing",
-        is_default=bool(body.make_default),
-        task_id=task_id,
-        request_id=_clean_text(upstream.get("requestId")),
+        status="submitting",
+        is_default=False,
         source_asset_id=source_asset_id,
         source_url=source_url,
         auth_video_asset_id=auth_asset_id,
         auth_video_url=_clean_text(payload.get("authVideoUrl")),
         auth_text=_clean_text(payload.get("authText")),
         train_payload=payload,
-        train_result=upstream,
+        train_result={},
     )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    # 注意：不在云端压缩素材（服务器压力）。
+    # 超限素材由 online/设备端本机压好后再提交；云端只把上游的报错换成人话。
+    try:
+        upstream = await _post(endpoint, body.token, payload)
+    except Exception as exc:  # noqa: BLE001
+        detail = str(getattr(exc, "detail", exc) or "")
+        friendly = detail
+        if _is_shanjian_material_rejection(detail):
+            friendly = (
+                "训练素材分辨率超过 2000x2000，请在 online（本机）里提交（会自动压好副本），"
+                "或换一个分辨率更小的素材。"
+            )
+        row.status = "failed"
+        row.error_message = (friendly or "提交训练失败")[:2000]
+        row.train_result = {"error": detail[:1000]}
+        row.updated_at = datetime.utcnow()
+        db.add(row)
+        db.commit()
+        if isinstance(exc, HTTPException):
+            if _is_shanjian_material_rejection(detail):
+                raise HTTPException(status_code=400, detail=friendly) from exc
+            raise
+        raise HTTPException(status_code=502, detail=friendly or "提交训练失败") from exc
+
+    data = _data(upstream)
+    task_id = _clean_text(data.get("taskId"))
+    if not task_id:
+        row.status = "failed"
+        row.error_message = "闪剪未返回 taskId"
+        row.train_result = upstream
+        row.updated_at = datetime.utcnow()
+        db.add(row)
+        db.commit()
+        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+    if body.make_default:
+        _clear_default_profiles(db, int(current_user.id))
+    row.status = "processing"
+    row.is_default = bool(body.make_default)
+    row.task_id = task_id
+    row.request_id = _clean_text(upstream.get("requestId"))
+    row.train_result = upstream
+    row.updated_at = datetime.utcnow()
     db.add(row)
     db.commit()
     db.refresh(row)

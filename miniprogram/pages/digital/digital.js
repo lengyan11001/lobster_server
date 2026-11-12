@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const media = require("../../utils/media");
 const share = require("../../utils/share");
 const config = require("../../config");
 
@@ -547,13 +548,15 @@ Page({
     if (!trainAgree) return wx.showToast({ title: "请先勾选肖像授权", icon: "none" });
     this.setData({ trainSubmitting: true, trainStatus: "上传素材中…" });
     wx.showLoading({ title: "上传中" });
-    api.uploadFile({
-      url: "/api/assets/upload",
-      filePath: trainFile,
-      name: "file",
-      formData: { media_type: trainMode === "image" ? "image" : "video", tags: "digital_human_v2,profile_train" },
-      token: app.globalData.token || ""
-    })
+    const prepare = trainMode === "image" ? media.compressImage(trainFile, 2000) : Promise.resolve(trainFile);
+    prepare
+      .then((uploadPath) => api.uploadFile({
+        url: "/api/assets/upload",
+        filePath: uploadPath,
+        name: "file",
+        formData: { media_type: trainMode === "image" ? "image" : "video", tags: "digital_human_v2,profile_train" },
+        token: app.globalData.token || ""
+      }))
       .then((data) => {
         const url = assetUrl((data && (data.source_url || data.url)) || "");
         if (!url) throw new Error("素材上传失败，没有返回地址");

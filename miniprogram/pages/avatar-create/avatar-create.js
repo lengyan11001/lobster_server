@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const config = require("../../config");
+const media = require("../../utils/media");
 
 function brandShortName() {
   return String(config.APP_NAME || config.BRAND_MARK || "").replace(/\s*(AI员工|AI智能体|AI助手)\s*$/i, "").trim();
@@ -204,9 +205,14 @@ Page({
     }
     if (!d.agree) return wx.showToast({ title: "请先勾选授权确认", icon: "none" });
 
-    this.setData({ submitting: true, statusText: "1/3 上传训练素材" });
+    this.setData({ submitting: true, statusText: "1/3 处理训练素材" });
     const mediaType = d.sourceType === "image" ? "image" : "video";
-    this.upload(d.sourcePath, mediaType)
+    const prepare = d.sourceType === "image" ? media.compressImage(d.sourcePath, 2000) : Promise.resolve(d.sourcePath);
+    prepare
+      .then((uploadPath) => {
+        this.setData({ statusText: "1/3 上传训练素材" });
+        return this.upload(uploadPath, mediaType);
+      })
       .then((sourceId) => {
         this.setData({ statusText: "2/3 上传授权视频" });
         return this.upload(d.authVideoPath, "video").then((authId) => {

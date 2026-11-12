@@ -22,7 +22,7 @@
       </view>
       <button class="capture-btn" data-mode="{{sourceType === 'image' ? 'photo' : 'video'}}" data-target="source" bindtap="openCapture">拍摄</button>
     </view>
-    <text class="field-hint">{{sourceType === 'image' ? '上传清晰正面图片，建议人物占画面主体。' : '拍摄训练视频时会显示提词，建议人物正面出镜。'}}</text>
+    <text class="field-hint">{{sourceType === 'image' ? '上传清晰正面图片，建议人物占画面主体；超过 2000x2000 会自动压缩。' : '拍摄训练视频时会显示提词，建议人物正面出镜。'}}</text>
 
     <block wx:if="{{sourceType === 'video'}}">
       <text class="label">训练朗读文案</text>

@@ -64,6 +64,34 @@ function albumSave(item, localPath) {
   });
 }
 
+function compressImage(path, maxSize) {
+  const limit = Number(maxSize || 2000);
+  return new Promise((resolve) => {
+    if (!path || !wx.getImageInfo || !wx.compressImage) return resolve(path || "");
+    wx.getImageInfo({
+      src: path,
+      success(info) {
+        const width = Number(info.width || 0);
+        const height = Number(info.height || 0);
+        if (!width || !height || (width <= limit && height <= limit)) {
+          resolve(path);
+          return;
+        }
+        const scale = Math.min(limit / width, limit / height);
+        wx.compressImage({
+          src: path,
+          quality: 92,
+          compressedWidth: Math.max(1, Math.round(width * scale)),
+          compressedHeight: Math.max(1, Math.round(height * scale)),
+          success(res) { resolve(res.tempFilePath || path); },
+          fail() { resolve(path); }
+        });
+      },
+      fail() { resolve(path); }
+    });
+  });
+}
+
 function saveToAlbum(item) {
   const directUrl = item.download_url || item.preview_url || item.url || "";
   const fallbackUrl = item.proxy_download_url || item.proxy_preview_url || "";
