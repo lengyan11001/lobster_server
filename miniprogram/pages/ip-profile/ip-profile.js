@@ -43,8 +43,13 @@ Page({
     tabs: TABS,
     tabIndex: 0,
     loading: true,
-    saving: false,
-    fields: [],
+    surveys: [],
+    currentSurveyId: 0,
+    editorVisible: false,
+    editorId: 0,
+    editorName: "",
+    editorFields: [],
+    editorSaving: false,
     memoryLoading: false,
     memoryDocs: [],
     keywordLoading: false,
@@ -91,62 +96,94 @@ Page({
 
   switchTab(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
-    this.setData({ tabIndex: index });
+    this.setData({ tabIndex: index, editorVisible: false });
     this.reloadCurrent();
   },
   loadProfile() {
     this.setData({ loading: true });
     return this.loadInstallationId()
-      .then(() => app.request({
-        url: "/api/ip-content/personal-default",
-        header: this.iidHeader(),
-        timeout: 30000
-      }))
-      .then((data) => {
-        const item = (data && data.item) || {};
-        const requirements = (item && item.requirements) || {};
-        const basic = (requirements.basic_profile && typeof requirements.basic_profile === "object") ? requirements.basic_profile : {};
-        const business = (requirements.business_description && typeof requirements.business_description === "object") ? requirements.business_description : {};
+      .then(() => Promise.all([
+        app.request({ url: "/api/ip-content/personal-default", header: this.iidHeader(), timeout: 30000 }).catch(() => null),
+        app.request({ url: "/api/ip-content/profile-surveys", timeout: 30000 }).catch(() => null)
+      ]))
+      .then((results) => {
+        const defData = results[0];
+        const listData = results[1];
+        const item = (defData && defData.item) || this._defaultItem || {};
         this._defaultItem = item;
-        this._surveyId = Number(item.survey_id || (item.survey && item.survey.id) || 0) || null;
-        const fields = FIELD_DEFS.map((def) => {
-          let value = "";
-          if (def.key === "name") value = requirements.profile_name || basic.name || "";
-          else if (def.key === "product" || def.key === "target_customer" || def.key === "advantages") {
-            value = requirements[def.key] || business[def.key] || "";
-          } else {
-            value = basic[def.key] || requirements[def.key] || "";
-          }
-          return Object.assign({}, def, { value: String(value || "") });
-        });
-        this.setData({ fields });
-      })
-      .then(() => {
-        if (this._surveyId) return null;
-        // 老数据可能只有资料调查记录、没有绑定到个人默认配置：
-        // 复用最新一条，避免下一次保存又新增一条。
-        return app.request({ url: "/api/ip-content/profile-surveys", timeout: 20000 })
-          .then((data) => {
-            const items = (data && data.items) || [];
-            if (items.length) this._surveyId = Number(items[0].id) || null;
-          })
-          .catch(() => null);
+        const currentSurveyId = Number(item.survey_id || (item.survey && item.survey.id) || 0) || 0;
+        if (listData && Array.isArray(listData.items)) {
+          const rows = listData.items.map((row) => ({
+            id: Number(row.id || 0),
+            name: String(row.name || "资料调查"),
+            time: String(row.updated_at || "").replace("T", " ").slice(0, 16),
+            requirements: row.requirements && typeof row.requirements === "object" ? row.requirements : {}
+          })).filter((row) => row.id);
+          this._surveys = rows;
+          this.setData({ surveys: rows.map((row) => ({ id: row.id, name: row.name, time: row.time })) });
+        }
+        this.setData({ currentSurveyId });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ loading: false }));
   },
 
-  onField(e) {
-    const key = e.currentTarget.dataset.key;
-    const value = e.detail.value;
-    const fields = this.data.fields.map((item) => item.key === key ? Object.assign({}, item, { value }) : item);
-    this.setData({ fields });
+  fieldsFromRequirements(requirements) {
+    const req = requirements || {};
+    const basic = req.basic_profile && typeof req.basic_profile === "object" ? req.basic_profile : {};
+    const business = req.business_description && typeof req.business_description === "object" ? req.business_description : {};
+    return FIELD_DEFS.map((def) => {
+      let value = "";
+      if (def.key === "name") value = req.profile_name || basic.name || "";
+      else if (def.key === "product" || def.key === "target_customer" || def.key === "advantages") {
+        value = req[def.key] || business[def.key] || "";
+      } else {
+        value = basic[def.key] || req[def.key] || "";
+      }
+      return Object.assign({}, def, { value: String(value || "") });
+    });
   },
 
-  collectRequirements() {
+  newSurvey() {
+    this.setData({
+      editorVisible: true,
+      editorId: 0,
+      editorName: "默认资料",
+      editorFields: FIELD_DEFS.map((def) => Object.assign({}, def, { value: "" }))
+    });
+  },
+
+  editSurvey(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = (this._surveys || [])[index];
+    if (!row) return;
+    this.setData({
+      editorVisible: true,
+      editorId: row.id,
+      editorName: row.name || "默认资料",
+      editorFields: this.fieldsFromRequirements(row.requirements)
+    });
+  },
+
+  closeEditor() {
+    this.setData({ editorVisible: false });
+  },
+
+  onEditorName(e) {
+    this.setData({ editorName: e.detail.value || "" });
+  },
+
+  onEditorField(e) {
+    const key = e.currentTarget.dataset.key;
+    const value = e.detail.value || "";
+    const editorFields = this.data.editorFields.map((item) => item.key === key ? Object.assign({}, item, { value }) : item);
+    this.setData({ editorFields });
+  },
+
+  collectRequirements(fields) {
     const basic = {};
     const business = {};
-    this.data.fields.forEach((item) => {
+    (fields || []).forEach((item) => {
       const text = String(item.value || "").trim();
       if (item.key === "product" || item.key === "target_customer" || item.key === "advantages") {
         business[item.key] = text;
@@ -168,70 +205,81 @@ Page({
     return requirements;
   },
 
-  save() {
-    if (this.data.saving) return;
-    const requirements = this.collectRequirements();
-    const hasAny = this.data.fields.some((item) => String(item.value || "").trim());
-    if (!hasAny) {
-      wx.showToast({ title: "请先填写资料", icon: "none" });
-      return;
-    }
+  syncDefaultSurvey(surveyId, requirements) {
     const existing = this._defaultItem || {};
-    const surveyId = Number(this._surveyId || 0) || 0;
-    const surveyName = "个人资料调查";
-    const header = this.iidHeader();
-    this.setData({ saving: true });
-    const surveyBody = { name: surveyName, requirements, meta: { source: "h5_personal_profile" } };
-    const createSurvey = () => app.request({
-      method: "POST",
-      url: "/api/ip-content/profile-surveys",
-      header,
-      data: surveyBody,
+    return app.request({
+      method: "PUT",
+      url: "/api/ip-content/personal-default",
+      header: this.iidHeader(),
+      data: {
+        name: existing.name || "个人默认配置",
+        keyword_ids: Array.isArray(existing.keyword_ids) ? existing.keyword_ids : [],
+        competitor_ids: Array.isArray(existing.competitor_ids) ? existing.competitor_ids : [],
+        memory_doc_ids: Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : [],
+        memory_docs: Array.isArray(existing.memory_docs) ? existing.memory_docs : [],
+        requirements,
+        survey_id: surveyId,
+        meta: Object.assign({}, existing.meta || {}, { source: "online_personal_profile", survey_id: surveyId })
+      },
       timeout: 60000
+    }).then((data) => {
+      this._defaultItem = (data && data.item) || this._defaultItem;
+      this.setData({ currentSurveyId: Number(surveyId || 0) || 0 });
     });
-    const saveSurvey = surveyId
-      ? app.request({
-          method: "PATCH",
-          url: "/api/ip-content/profile-surveys/" + surveyId,
-          header,
-          data: surveyBody,
-          timeout: 60000
-        }).catch((err) => {
-          // 记录被删过就重新建一条，避免保存卡死
-          if (String(api.errorMessage(err)).indexOf("不存在") >= 0) return createSurvey();
-          throw err;
-        })
-      : createSurvey();
-    saveSurvey
+  },
+
+  saveSurvey() {
+    if (this.data.editorSaving) return;
+    const name = String(this.data.editorName || "").trim() || "默认资料";
+    const requirements = this.collectRequirements(this.data.editorFields);
+    const editingId = Number(this.data.editorId || 0) || 0;
+    const header = this.iidHeader();
+    const body = { name, requirements, meta: { source: "online_personal_profile" } };
+    this.setData({ editorSaving: true });
+    const saveRequest = editingId
+      ? app.request({ method: "PATCH", url: "/api/ip-content/profile-surveys/" + editingId, header, data: body, timeout: 60000 })
+      : app.request({ method: "POST", url: "/api/ip-content/profile-surveys", header, data: body, timeout: 60000 });
+    saveRequest
       .then((data) => {
         const item = (data && data.item) || {};
-        const savedSurveyId = Number(item.id || surveyId || 0) || null;
-        this._surveyId = savedSurveyId;
-        // 与 H5/online 一致：资料调查只保留一条，再更新个人默认配置，不新建模板
-        return app.request({
-          method: "PUT",
-          url: "/api/ip-content/personal-default",
-          header,
-          data: {
-            name: existing.name || "个人默认配置",
-            keyword_ids: Array.isArray(existing.keyword_ids) ? existing.keyword_ids : [],
-            competitor_ids: Array.isArray(existing.competitor_ids) ? existing.competitor_ids : [],
-            memory_doc_ids: Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : [],
-            memory_docs: Array.isArray(existing.memory_docs) ? existing.memory_docs : [],
-            requirements,
-            survey_id: savedSurveyId,
-            meta: Object.assign({}, existing.meta || {}, { source: "h5_personal_profile", survey_id: savedSurveyId })
-          },
-          timeout: 60000
-        });
+        const savedId = Number(item.id || editingId || 0) || null;
+        // 与 online 一致：记录先落库，再同步个人默认配置，最后刷新列表
+        this.setData({ editorVisible: false, editorSaving: false });
+        return this.syncDefaultSurvey(savedId, requirements)
+          .then(() => {
+            this.loadProfile();
+            wx.showToast({ title: "已保存", icon: "success" });
+          })
+          .catch(() => {
+            this.loadProfile();
+            wx.showToast({ title: "已保存，同步默认配置失败", icon: "none" });
+          });
       })
-      .then((data) => {
-        this._defaultItem = (data && data.item) || this._defaultItem;
-        wx.showToast({ title: "已保存", icon: "success" });
-        this.loadProfile();
-      })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .then(() => this.setData({ saving: false }));
+      .catch((err) => {
+        this.setData({ editorSaving: false });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
+  },
+
+  deleteSurvey(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = (this._surveys || [])[index];
+    if (!row) return;
+    wx.showModal({
+      title: "删除资料调查",
+      content: "确认删除「" + row.name + "」？",
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "删除中", mask: true });
+        app.request({ method: "DELETE", url: "/api/ip-content/profile-surveys/" + row.id, timeout: 30000 })
+          .then(() => {
+            wx.showToast({ title: "已删除", icon: "success" });
+            this.loadProfile();
+          })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+          .then(() => wx.hideLoading());
+      }
+    });
   },
 
   loadMemory() {

@@ -27,3 +27,25 @@
 
 .btn-row { display: flex; gap: 16rpx; margin-bottom: 18rpx; }
 .ghost.small { height: 68rpx; line-height: 68rpx; font-size: 24rpx; width: 240rpx; margin: 0; color: #2563eb; background: #eff6ff; border-radius: 14rpx; }
+
+/* 资料调查 */
+.survey-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18rpx; }
+.survey-head-copy { flex: 1; min-width: 0; }
+.survey-title { display: block; font-size: 34rpx; font-weight: 700; color: #0f172a; }
+.survey-sub { display: block; margin-top: 6rpx; font-size: 21rpx; color: #94a3b8; }
+.survey-add { margin: 0; padding: 0 28rpx; width: auto; }
+.survey-row { display: flex; align-items: center; padding: 22rpx; margin-bottom: 14rpx; background: #fff; border: 1rpx solid #eef2f7; border-radius: 18rpx; }
+.survey-row.active { border-color: #a5f3fc; background: #f0fdff; }
+.survey-row-main { flex: 1; min-width: 0; }
+.survey-row-title { display: flex; align-items: center; }
+.survey-row-name { font-size: 27rpx; font-weight: 600; color: #0f172a; }
+.survey-row-meta { display: block; margin-top: 6rpx; font-size: 21rpx; color: #94a3b8; }
+.survey-row-actions { display: flex; gap: 18rpx; margin-left: 16rpx; }
+.danger-text { color: #dc2626; }
+.field-hint { display: block; margin-top: 8rpx; margin-bottom: 12rpx; font-size: 21rpx; color: #94a3b8; }
+.editor-sheet { display: flex; flex-direction: column; max-height: 88vh; overflow: hidden; }
+.editor-sheet .sheet-body { flex: 1; height: 60vh; margin-top: 16rpx; }
+.sheet-actions { display: flex; margin-top: 18rpx; }
+.sheet-actions .half { flex: 1; height: 84rpx; line-height: 84rpx; font-size: 26rpx; border-radius: 16rpx; }
+.sheet-actions .ghost.half { margin-right: 12rpx; background: #f1f5f9; color: #334155; }
+.sheet-actions .primary.half { margin: 0; background: linear-gradient(135deg, #06b6d4, #2563eb); }

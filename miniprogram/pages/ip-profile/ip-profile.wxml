@@ -4,17 +4,53 @@
   </view>
 
   <block wx:if="{{tabIndex === 0}}">
-    <view wx:if="{{loading}}" class="empty">加载中…</view>
-    <block wx:else>
-      <view class="panel">
-        <view wx:for="{{fields}}" wx:key="key" class="field">
-          <text class="label">{{item.label}}</text>
-          <textarea wx:if="{{item.multiline}}" class="textarea" value="{{item.value}}" data-key="{{item.key}}" bindinput="onField" auto-height maxlength="2000" />
-          <input wx:else class="input" value="{{item.value}}" data-key="{{item.key}}" bindinput="onField" />
-        </view>
-        <button class="primary" loading="{{saving}}" disabled="{{saving}}" bindtap="save">保存资料</button>
+    <view class="survey-head">
+      <view class="survey-head-copy">
+        <text class="survey-title">资料调查</text>
+        <text class="survey-sub">每条调查记录可以关联到不同的个人 IP 模板</text>
       </view>
-    </block>
+      <button class="primary small survey-add" bindtap="newSurvey">新增资料</button>
+    </view>
+
+    <view wx:if="{{loading && !surveys.length}}" class="empty">加载中…</view>
+    <view wx:elif="{{!surveys.length}}" class="empty">暂无资料调查记录</view>
+
+    <view wx:for="{{surveys}}" wx:key="id" class="survey-row {{item.id === currentSurveyId ? 'active' : ''}}">
+      <view class="survey-row-main">
+        <view class="survey-row-title">
+          <text class="survey-row-name">{{item.name}}</text>
+          <text wx:if="{{item.id === currentSurveyId}}" class="tag-current">当前</text>
+        </view>
+        <text class="survey-row-meta">更新于 {{item.time}}</text>
+      </view>
+      <view class="survey-row-actions">
+        <text class="link" data-index="{{index}}" bindtap="editSurvey">编辑</text>
+        <text class="link danger-text" data-index="{{index}}" bindtap="deleteSurvey">删除</text>
+      </view>
+    </view>
+
+    <view wx:if="{{editorVisible}}" class="overlay" catchtap="closeEditor">
+      <view class="sheet editor-sheet" catchtap="noop">
+        <view class="sheet-head">
+          <text class="sheet-title">{{editorId ? '编辑资料调查' : '新增资料调查'}}</text>
+          <text class="sheet-close" catchtap="closeEditor">×</text>
+        </view>
+        <scroll-view class="sheet-body" scroll-y>
+          <text class="label">资料名称</text>
+          <input class="input" value="{{editorName}}" bindinput="onEditorName" placeholder="例如：默认资料、餐饮项目资料" maxlength="160" />
+          <text class="field-hint">仅用于区分不同资料，不会作为人设姓名写入生成内容。</text>
+          <view wx:for="{{editorFields}}" wx:key="key" class="field">
+            <text class="label">{{item.label}}</text>
+            <textarea wx:if="{{item.multiline}}" class="textarea" value="{{item.value}}" data-key="{{item.key}}" bindinput="onEditorField" auto-height maxlength="2000" />
+            <input wx:else class="input" value="{{item.value}}" data-key="{{item.key}}" bindinput="onEditorField" />
+          </view>
+        </scroll-view>
+        <view class="sheet-actions">
+          <button class="ghost half" bindtap="closeEditor">取消</button>
+          <button class="primary half" loading="{{editorSaving}}" disabled="{{editorSaving}}" bindtap="saveSurvey">保存</button>
+        </view>
+      </view>
+    </view>
   </block>
 
   <block wx:elif="{{tabIndex === 1}}">
