@@ -36,7 +36,7 @@ class TemplateListBody(TokenBody):
     search_key: str = ""
     search_value: str = ""
     sort_by: str = "desc"
-    # 2026-10-15: 闪剪上游支持按比例筛模板（实测 realMan/virtualman 各有 10 个 16:9），
+    # 2026-10-15: 数字人2.0上游支持按比例筛模板（实测 realMan/virtualman 各有 10 个 16:9），
     # 不传 = 上游默认只返回 9:16 那批。格式严格：宽:高（如 9:16）。
     ratio: str = ""
 
@@ -130,23 +130,23 @@ def _raise_business_error(payload: Dict[str, Any]) -> None:
     code = str(payload.get("code") or "").strip()
     if code in {"", "Succeed"}:
         return
-    message = str(payload.get("message") or payload.get("msg") or "闪剪接口返回业务错误")
-    raise HTTPException(status_code=502, detail=f"闪剪错误 {code}: {message}")
+    message = str(payload.get("message") or payload.get("msg") or "数字人2.0接口返回业务错误")
+    raise HTTPException(status_code=502, detail=f"数字人2.0错误 {code}: {message}")
 
 
 async def _get(path: str, token: Optional[str], params: Dict[str, Any]) -> Dict[str, Any]:
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(_url(path), headers=_headers(token), params=params)
     if resp.status_code == 401:
-        raise HTTPException(status_code=401, detail="闪剪 OpenAPI Token 无效或已过期")
+        raise HTTPException(status_code=401, detail="数字人2.0 OpenAPI Token 无效或已过期")
     if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"闪剪 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+        raise HTTPException(status_code=502, detail=f"数字人2.0 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
         payload = resp.json()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="闪剪返回格式不是 JSON") from exc
+        raise HTTPException(status_code=502, detail="数字人2.0返回格式不是 JSON") from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=502, detail="闪剪返回格式无效")
+        raise HTTPException(status_code=502, detail="数字人2.0返回格式无效")
     _raise_business_error(payload)
     return payload
 
@@ -157,15 +157,15 @@ async def _post(path: str, token: Optional[str], body: Dict[str, Any]) -> Dict[s
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(_url(path), headers=headers, json=body)
     if resp.status_code == 401:
-        raise HTTPException(status_code=401, detail="闪剪 OpenAPI Token 无效或已过期")
+        raise HTTPException(status_code=401, detail="数字人2.0 OpenAPI Token 无效或已过期")
     if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"闪剪 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+        raise HTTPException(status_code=502, detail=f"数字人2.0 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:
         payload = resp.json()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="闪剪返回格式不是 JSON") from exc
+        raise HTTPException(status_code=502, detail="数字人2.0返回格式不是 JSON") from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=502, detail="闪剪返回格式无效")
+        raise HTTPException(status_code=502, detail="数字人2.0返回格式无效")
     _raise_business_error(payload)
     return payload
 
@@ -256,10 +256,10 @@ def _resolve_virtualman_for_submit(
             ShanjianDigitalHumanProfile.user_id == int(current_user.id),
         ).first()
         if not row:
-            raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人档案")
+            raise HTTPException(status_code=404, detail="未找到对应的数字人档案")
         resolved = _clean_text(row.virtualman_id)
         if row.status != "succeed" or not resolved:
-            raise HTTPException(status_code=400, detail="该闪剪数字人还未训练完成，暂时不能用于智能剪辑")
+            raise HTTPException(status_code=400, detail="该数字人2.0还未训练完成，暂时不能用于智能剪辑")
         return resolved
     if vmid:
         return vmid
@@ -273,7 +273,7 @@ def _resolve_virtualman_for_submit(
     ).first()
     if row and _clean_text(row.virtualman_id):
         return _clean_text(row.virtualman_id)
-    raise HTTPException(status_code=400, detail="请先创建并训练一个自己的闪剪数字人，或显式传入 virtualman_id")
+    raise HTTPException(status_code=400, detail="请先创建并训练一个自己的数字人2.0形象，或显式传入 virtualman_id")
 
 
 _TEMPLATE_LAYER_KEYS = (
@@ -320,7 +320,7 @@ def _template_layers(item: Any) -> Dict[str, Any]:
 async def list_templates(
     body: TemplateListBody,
     # 2026-10-15: 这几个接口之前不需要登录就能调（实测不带 token 返回 200），
-    # 等于任何人都可以借我们的服务器去打闪剪 OpenAPI。查询类虽然不直接计费，
+    # 等于任何人都可以借我们的服务器去打数字人2.0 OpenAPI。查询类虽然不直接计费，
     # 但被外部滥用、被扫接口、占上游调用频率都是风险，这里统一要求登录。
     current_user: User = Depends(get_current_user),
 ):
@@ -580,7 +580,7 @@ async def submit_clip(
     data = _data(upstream)
     task_id = str(data.get("taskId") or "").strip()
     if not task_id:
-        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+        raise HTTPException(status_code=502, detail="数字人2.0未返回 taskId")
     logger.info(
         "[shanjian-smart-clip] accepted user_id=%s scene=%s style_id=%s task_id=%s request_id=%s",
         current_user.id,

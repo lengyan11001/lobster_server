@@ -155,13 +155,13 @@ async def _execute_run(db: Any, run: ScheduledTaskRun) -> None:
         _set_progress(db, run, stage="prepare_failed", text=str(exc)[:200])
         return
 
-    _set_progress(db, run, stage="submitted", text="已提交闪剪混剪")
+    _set_progress(db, run, stage="submitted", text="已提交数字人2.0混剪")
     async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
         resp = await client.post(f"{base}/api/shanjian-smart-clip/submit", json=body, headers=headers)
         data = resp.json() if resp.content else {}
         if resp.status_code >= 400 or not data.get("task_id"):
             run.status = "failed"
-            run.error = ("提交闪剪失败：" + str((data or {}).get("detail") or resp.text[:200]))[:500]
+            run.error = ("提交数字人2.0失败：" + str((data or {}).get("detail") or resp.text[:200]))[:500]
             _set_progress(db, run, stage="submit_failed")
             return
         task_id = str(data["task_id"])
@@ -180,7 +180,7 @@ async def _execute_run(db: Any, run: ScheduledTaskRun) -> None:
                 payload_info = info.json() if info.content else {}
             except Exception as exc:  # noqa: BLE001
                 logger.info("[mix-runner] poll error run=%s err=%s", run.id, exc)
-                _set_progress(db, run, text="等待闪剪返回…")
+                _set_progress(db, run, text="等待数字人2.0返回…")
                 continue
             status = str((payload_info or {}).get("status") or "").lower()
             if status == "succeed":
@@ -214,11 +214,11 @@ async def _execute_run(db: Any, run: ScheduledTaskRun) -> None:
                 return
             if status == "failed":
                 run.status = "failed"
-                run.error = str((payload_info or {}).get("message") or "闪剪返回失败")[:500]
+                run.error = str((payload_info or {}).get("message") or "数字人2.0返回失败")[:500]
                 run.finished_at = datetime.utcnow()
                 _set_progress(db, run, stage="failed", text=run.error[:200])
                 return
-            _set_progress(db, run, text="闪剪处理中…")
+            _set_progress(db, run, text="数字人2.0处理中…")
 
     run.status = "failed"
     run.error = "素材混剪超时未完成（30 分钟）"

@@ -1477,7 +1477,7 @@ def _live_personal_template_validation(
         }
 
     if action == "shanjian_material_mix":
-        # 素材混剪不需要数字人形象，但必须有闪剪模板和声音（纯音频驱动时可免声音）。
+        # 素材混剪不需要数字人形象，但必须有数字人2.0模板和声音（纯音频驱动时可免声音）。
         resources = context.get("digital_human_resources")
         resources = resources if isinstance(resources, dict) else {}
         voices = resources.get("voices") if isinstance(resources.get("voices"), list) else []

@@ -7696,7 +7696,7 @@ body.h5-action-blocked {
   border-color: #f2c8cd;
 }
 
-/* 2026-10-15: 闪剪模板分类（支持正文 / 不含正文）+ 图层标签 */
+/* 2026-10-15: 数字人2.0模板分类（支持正文 / 不含正文）+ 图层标签 */
 .personal-digital-human-picker-categories {
   display: flex;
   flex-wrap: wrap;

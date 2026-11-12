@@ -12769,7 +12769,7 @@ async function api(path, options = {}) {
       return data;
     }
 
-    // 数字人 2.0 训练素材分辨率上限（闪剪限制）：在手机本地读，不消耗服务器
+    // 数字人 2.0 训练素材分辨率上限（上游限制）：在手机本地读，不消耗服务器
     const SHANJIAN_TRAINING_MAX_EDGE = 2000;
 
     function readLocalMediaEdge(file) {
@@ -21837,7 +21837,7 @@ async function api(path, options = {}) {
       </div>`;
     }
 
-    // 2026-10-15 v2（客户确认后去掉分类）：闪剪模板抽样 110/110 全都带字幕/正文层，
+    // 2026-10-15 v2（客户确认后去掉分类）：数字人2.0模板抽样 110/110 全都带字幕/正文层，
     // “支持正文/不含正文”没有区分度，只保留场景选择。
     function syncPersonalDigitalHumanTemplateSceneUI() {
       const sceneRow = $("personalDigitalHumanTemplateScenes");
@@ -25139,7 +25139,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       const templateId = isWork ? "workHiflyTemplate" : "taskHiflyTemplate";
       if (hiflyTemplateModeValue(modeId) === "template" && workflowParamValue(templateId)) return true;
       const ok = window.confirm(
-        "这次「剪辑方式」是【不套模板】，成片不会经过闪剪剪辑（就是数字人原片）。\n\n" +
+        "这次「剪辑方式」是【不套模板】，成片不会经过模板剪辑（就是数字人原片）。\n\n" +
         "确认：照这样下发。\n取消：帮你切到「套用剪辑模板」，先选好模板再下发。"
       );
       if (ok) return true;

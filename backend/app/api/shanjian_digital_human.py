@@ -535,7 +535,7 @@ def _clamp_speed_ratio(value: Any) -> float:
 def _apply_audio_speed(data: bytes, media_type: str, speed_ratio: Any) -> tuple[bytes, str]:
     """按语速倍率重采样驱动音频。
 
-    闪剪 /v1/virtualman/video 的 audioUrl 分支没有 speedRatio 参数，上传音频
+    数字人2.0 /v1/virtualman/video 的 audioUrl 分支没有 speedRatio 参数，上传音频
     后调语速会被上游忽略（数字人2.0 音频驱动“改了速度没效果”）。这里在转存
     TOS 之前用 ffmpeg atempo 真正变速，时长随倍率变化，口型跟着音频走。
     """
@@ -603,7 +603,7 @@ async def _persist_audio_for_shanjian(
         )
     asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type)
     if not public_url:
-        raise HTTPException(status_code=503, detail="数字人口播音频转存 TOS 失败，无法提交闪剪")
+        raise HTTPException(status_code=503, detail="数字人口播音频转存 TOS 失败，无法提交数字人2.0")
     asset = Asset(
         asset_id=asset_id,
         user_id=int(current_user.id),
@@ -618,7 +618,7 @@ async def _persist_audio_for_shanjian(
             "source": "shanjian_digital_human_audio_transfer",
             "original_url_hint": _url_hint(raw),
             "content_type": media_type,
-            # 过程件：这段配音只是喂给闪剪生成口播视频的输入，不是交付给用户的成品。
+            # 过程件：这段配音只是喂给数字人2.0生成口播视频的输入，不是交付给用户的成品。
             # 按口径（2026-09-22）素材库与内容库都不展示，仍可按 asset_id 取用。
             "asset_origin": "intermediate",
             "content_visibility": "hidden",
@@ -1294,7 +1294,7 @@ def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
 # ── 分组素材选材：宁可不带也不能带错 ─────────────────────────────────────────
 # 模型（DeepSeek）必须明确回答"素材主题是否对得上文案"；另外再做一层本地关键词闸门：
 # 选中的素材必须能在文案里找到它的标签/文件名关键词，否则丢掉。全部丢光就不再传素材
-# （闪剪按模板自带素材出片），不会拿不相关素材凑数。
+# （数字人2.0按模板自带素材出片），不会拿不相关素材凑数。
 
 # ── 分组素材选材：B 管准入、A 管排序 ─────────────────────────────────────────
 # B（关键词闸门，本地、硬保证）：候选素材的标签/文件名必须在文案里找到 ≥3 字的关键词
@@ -1540,7 +1540,7 @@ async def _apply_asset_group_materials(
     row: ShanjianDigitalHumanVideoTask,
     template_meta: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """选材只用本地关键词闸门：命中文案的素材才会带给闪剪，没命中就不传。"""
+    """选材只用本地关键词闸门：命中文案的素材才会带给数字人2.0，没命中就不传。"""
     groups = _template_asset_groups(template_meta)
     if not groups:
         return template_meta
@@ -1649,8 +1649,8 @@ def _template_meta_from_submit_payload(submit_payload: Optional[dict]) -> Option
     return None
 
 
-# ── 闪剪素材分辨率兜底：能压就压，压不了就丢，绝不整单失败 ─────────────────────
-# 闪剪成片要求素材最长边 <= 2000（上游 InvalidFile.Resolution）。素材库/个人模板
+# ── 数字人2.0素材分辨率兜底：能压就压，压不了就丢，绝不整单失败 ─────────────────────
+# 数字人2.0成片要求素材最长边 <= 2000（上游 InvalidFile.Resolution）。素材库/个人模板
 # 分组的素材可能来自任意设备，客户端预处理不一定命中，所以在云端提交剪辑前逐个
 # 体检：超限的压缩成合规副本再用，压缩失败的直接把该素材丢掉，剩下的照样出片。
 
@@ -1677,7 +1677,7 @@ def _shanjian_ffprobe_bin(ffmpeg: str) -> str:
 
 
 def _probe_material_dimensions(media_url: str) -> Optional[tuple[int, int]]:
-    """Probe one remote 闪剪 material. None means unknown, so keep it."""
+    """Probe one remote 数字人2.0 material. None means unknown, so keep it."""
     try:
         ffmpeg = _find_asset_ffmpeg()
     except Exception:
@@ -1740,7 +1740,7 @@ def _shrink_material_bytes(
     height: int,
     max_edge: int,
 ) -> bytes:
-    """Downscale one material so the 闪剪 render API accepts it."""
+    """Downscale one material so the 数字人2.0 render API accepts it."""
     target_w, target_h = _shanjian_target_dimensions(width, height, max_edge)
     kind = str(media_type or "").strip().lower()
     if kind == "image":
@@ -2036,7 +2036,7 @@ def _build_realman_clip_payload(*, title: str, template_meta: Dict[str, Any], vi
 
 
 async def _post_with_queue(path: str, token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """闪剪并发满了就排队等，不许直接失败：任务保持执行中，等到空位再提交。"""
+    """数字人2.0并发满了就排队等，不许直接失败：任务保持执行中，等到空位再提交。"""
     import asyncio
 
     waited = 0.0
@@ -2102,7 +2102,7 @@ async def _submit_realman_clip_task(
     clip_task_id = _clean_text(clip_data.get("taskId"))
     if not clip_task_id:
         logger.warning("[shanjian-dh] realman clip missing taskId user_id=%s response=%s", getattr(current_user, "id", ""), str(clip_upstream)[:1000])
-        raise HTTPException(status_code=502, detail="闪剪模板剪辑未返回 taskId")
+        raise HTTPException(status_code=502, detail="数字人2.0模板剪辑未返回 taskId")
 
     submit_payload = dict(row.submit_payload or {})
     template_state = dict(prepared_template or {})
@@ -2189,7 +2189,7 @@ def _profile_to_dict(row: ShanjianDigitalHumanProfile) -> Dict[str, Any]:
 
 
 async def _mirror_media_to_tos(url: str, user_id: int, task_id: str, kind: str) -> str:
-    """把闪剪返回的临时视频/封面镜像到自己的 TOS，避免上游链接过期后 404。"""
+    """把数字人2.0返回的临时视频/封面镜像到自己的 TOS，避免上游链接过期后 404。"""
     url = _clean_text(url)
     if not url or not url.startswith("http"):
         return url
@@ -2250,9 +2250,9 @@ def _resolve_profile_for_video(
             ShanjianDigitalHumanProfile.user_id == int(current_user.id),
         ).first()
         if not row:
-            raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人档案")
+            raise HTTPException(status_code=404, detail="未找到对应的数字人档案")
         if row.status != "succeed" or not _clean_text(row.virtualman_id):
-            raise HTTPException(status_code=400, detail="该闪剪数字人还未训练完成，暂时不能用于出片")
+            raise HTTPException(status_code=400, detail="该数字人2.0还未训练完成，暂时不能用于出片")
         return row, _clean_text(row.virtualman_id)
     if vmid:
         row = db.query(ShanjianDigitalHumanProfile).filter(
@@ -2267,7 +2267,7 @@ def _resolve_profile_for_video(
     ).order_by(ShanjianDigitalHumanProfile.updated_at.desc()).first()
     if row and _clean_text(row.virtualman_id):
         return row, _clean_text(row.virtualman_id)
-    raise HTTPException(status_code=400, detail="请先创建并训练一个自己的闪剪数字人，或显式传入 virtualman_id")
+    raise HTTPException(status_code=400, detail="请先创建并训练一个自己的数字人2.0形象，或显式传入 virtualman_id")
 
 
 def _profile_endpoint_and_payload(
@@ -2366,7 +2366,7 @@ async def delete_profile(
         ShanjianDigitalHumanProfile.status != "deleted",
     ).first()
     if not row:
-        raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人档案")
+        raise HTTPException(status_code=404, detail="未找到对应的数字人档案")
 
     was_default = bool(row.is_default)
     row.status = "deleted"
@@ -2407,7 +2407,7 @@ async def delete_video_task(
         ShanjianDigitalHumanVideoTask.status != "deleted",
     ).first()
     if not row:
-        raise HTTPException(status_code=404, detail="未找到对应的闪剪视频任务")
+        raise HTTPException(status_code=404, detail="未找到对应的数字人2.0视频任务")
 
     row.status = "deleted"
     row.error_message = row.error_message or "deleted by user"
@@ -2482,12 +2482,12 @@ async def create_profile(
     task_id = _clean_text(data.get("taskId"))
     if not task_id:
         row.status = "failed"
-        row.error_message = "闪剪未返回 taskId"
+        row.error_message = "数字人2.0未返回 taskId"
         row.train_result = upstream
         row.updated_at = datetime.utcnow()
         db.add(row)
         db.commit()
-        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+        raise HTTPException(status_code=502, detail="数字人2.0未返回 taskId")
     if body.make_default:
         _clear_default_profiles(db, int(current_user.id))
     row.status = "processing"
@@ -2668,7 +2668,7 @@ async def retrain_profile(
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
     if not task_id:
-        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+        raise HTTPException(status_code=502, detail="数字人2.0未返回 taskId")
     row.task_id = task_id
     row.request_id = _clean_text(upstream.get("requestId")) or row.request_id
     row.status = "processing"
@@ -2702,7 +2702,7 @@ async def query_profile_task(
             ShanjianDigitalHumanProfile.user_id == int(current_user.id),
         ).first()
     if not row:
-        raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人任务")
+        raise HTTPException(status_code=404, detail="未找到对应的数字人2.0任务")
 
     db.expire_on_commit = False
     _release_db_transaction(db)
@@ -2752,7 +2752,7 @@ async def set_default_profile(
         ShanjianDigitalHumanProfile.user_id == int(current_user.id),
     ).first()
     if not row:
-        raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人档案")
+        raise HTTPException(status_code=404, detail="未找到对应的数字人档案")
     _clear_default_profiles(db, int(current_user.id))
     row.is_default = True
     row.updated_at = datetime.utcnow()
@@ -2762,7 +2762,7 @@ async def set_default_profile(
     return {"ok": True, "profile": _profile_to_dict(row)}
 
 
-# 2026-10-21：闪剪账号并发上限 5，夜里批量触发时第 6 个会被 Concurrency.Limit 拒掉。
+# 2026-10-21：数字人2.0账号并发上限 5，夜里批量触发时第 6 个会被 Concurrency.Limit 拒掉。
 # 这里不判失败，任务先收下，排队等空位再提交（客户端超时 30 分钟）。
 _SHANJIAN_CONCURRENCY_RETRY_SECONDS = 20.0
 _SHANJIAN_CONCURRENCY_MAX_WAIT_SECONDS = 1500.0
@@ -2781,7 +2781,7 @@ async def _post_virtualman_with_queue(token: str, payload: Dict[str, Any]) -> Di
                 raise
             await asyncio.sleep(_SHANJIAN_CONCURRENCY_RETRY_SECONDS)
             waited += _SHANJIAN_CONCURRENCY_RETRY_SECONDS
-            logger.info("[shanjian-dh] 闪剪并发已满，任务排队中 waited=%.0fs", waited)
+            logger.info("[shanjian-dh] 数字人2.0并发已满，任务排队中 waited=%.0fs", waited)
 
 @router.post("/api/shanjian-digital-human/video/create")
 async def create_video(
@@ -3028,7 +3028,7 @@ async def query_video_task(
             ShanjianDigitalHumanVideoTask.user_id == int(current_user.id),
         ).first()
     if not row:
-        raise HTTPException(status_code=404, detail="未找到对应的闪剪视频任务")
+        raise HTTPException(status_code=404, detail="未找到对应的数字人2.0视频任务")
 
     db.expire_on_commit = False
     submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
