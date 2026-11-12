@@ -97,3 +97,37 @@ def test_bind_keeps_valid_current_slot_when_machine_row_is_placeholder(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["installation_id"] == current
+
+
+def test_machine_id_rotation_with_legacy_keeps_signed_slot(
+    db_session, db_session_factory, test_user
+):
+    """machine_id 变化但带 legacy 旧机器时，必须保留原 signed 槽位，不能当成克隆机分槽。"""
+    slot = f"u{test_user.id}-" + "a" * 32
+    old_machine = "mw" + "1" * 48
+    new_machine = "mw" + "2" * 48
+    db_session.add(
+        UserMachineIdentity(
+            user_id=test_user.id,
+            machine_instance_id=old_machine,
+            installation_id=slot,
+            last_seen_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    client = _client_for_user(db_session_factory, test_user.id)
+    resp = client.post(
+        "/api/installation-id/bind",
+        json={
+            "installation_id": slot,
+            "device_id": "b" * 32,
+            "machine_instance_id": new_machine,
+            "legacy_machine_instance_id": old_machine,
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["installation_id"] == slot
+    assert payload["signature_reason"] != "duplicate_machine"
