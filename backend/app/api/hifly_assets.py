@@ -2732,6 +2732,17 @@ async def edit_my_voice_params(
                 text=preview_text,
                 instructions=instructions,
             )
+            # 试听 demo 也要按语速真变速（千问 TTS 不认 rate，这条路径原来直接
+            # 调 _qwen_tts_audio，绕过了 _preview_tts_audio 的 atempo）
+            _preview_speed = _tts_speed_value(rate)
+            if abs(_preview_speed - 1.0) >= 0.01:
+                preview["audio_bytes"] = await asyncio.to_thread(
+                    _atempo_audio_bytes, preview.get("audio_bytes") or b"", _preview_speed
+                )
+                if preview.get("duration_seconds"):
+                    preview["duration_seconds"] = max(
+                        1, int(round(float(preview["duration_seconds"]) / _preview_speed))
+                    )
             demo_asset = await _persist_voice_demo_asset(
                 db,
                 current_user.id,
