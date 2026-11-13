@@ -1,4 +1,4 @@
-param([string]$Action = "release", [string]$Summary = "")
+﻿param([string]$Action = "release", [string]$Summary = "")
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 

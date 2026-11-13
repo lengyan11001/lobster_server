@@ -621,9 +621,19 @@ def main() -> int:
         f"SHA256: {digest}",
         f"变更说明: {note or '(无)'}",
         f"目标: {args.public_base}",
-        "变更文件:",
     ]
-    summary_lines.extend("  - " + item for item in paths)
+    if len(paths) <= 60:
+        summary_lines.append(f"包含文件（{len(paths)} 个）:")
+        summary_lines.extend("  - " + item for item in paths)
+    else:
+        groups: dict[str, int] = {}
+        for item in paths:
+            parts = item.replace("\\", "/").split("/")
+            key = "/".join(parts[:2]) if len(parts) > 1 else parts[0]
+            groups[key] = groups.get(key, 0) + 1
+        summary_lines.append(f"包含文件: {len(paths)} 个，按目录汇总:")
+        for key, count in sorted(groups.items(), key=lambda kv: (-kv[1], kv[0]))[:30]:
+            summary_lines.append(f"  - {key}: {count} 个")
     summary = "\n".join(summary_lines)
     print("")
     print("================ 发布内容确认 ================")
