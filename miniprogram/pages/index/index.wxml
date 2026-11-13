@@ -12,9 +12,9 @@
     <view class="profile-pill" bindtap="goProfile">{{phoneBound ? '我的' : '授权登录'}}</view>
   </view>
 
-  <view class="hero">
-    <text class="hero-title">必火AI营销Plus</text>
-    <text class="hero-sub">必火 AI · 让创意落地</text>
+  <view class="intro">
+    <text class="intro-title">必火AI营销Plus</text>
+    <text class="intro-sub">必火 AI · 让创意落地</text>
   </view>
 
   <view class="banner" bindtap="goVideoHub" hover-class="press">
@@ -25,17 +25,17 @@
 
   <view class="quick-row">
     <view class="quick-card" bindtap="goAssets" hover-class="press">
-      <image class="quick-icon" src="/assets/design/icon-assets.jpg" mode="aspectFill" />
+      <view class="quick-icon-space"></view>
       <text class="quick-title">素材库</text>
       <text class="quick-sub">素材 · 形象</text>
     </view>
     <view class="quick-card" bindtap="goIpProfile" hover-class="press">
-      <image class="quick-icon" src="/assets/design/icon-ip.jpg" mode="aspectFill" />
+      <view class="quick-icon-space"></view>
       <text class="quick-title">个人IP</text>
       <text class="quick-sub">资料 · 记忆</text>
     </view>
     <view class="quick-card" bindtap="goAirec" hover-class="press">
-      <image class="quick-icon" src="/assets/design/icon-secretary.jpg" mode="aspectFill" />
+      <view class="quick-icon-space"></view>
       <text class="quick-title">AI秘书</text>
       <text class="quick-sub">录音笔</text>
     </view>
@@ -43,9 +43,8 @@
 
   <view class="matrix">
     <view class="mix-card" bindtap="goVideoHub" hover-class="press">
-      <image class="fill-img" src="/assets/design/works-card-bg.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-mix.jpg" mode="aspectFill" />
       <view class="mask-cover"></view>
-      <image class="mix-icon" src="/assets/design/icon-mix.jpg" mode="aspectFill" />
       <view class="mix-copy">
         <text class="mix-title">超级AI混剪</text>
         <text class="mix-sub">一键爆款成片 · 全网矩阵获客</text>
@@ -53,18 +52,18 @@
     </view>
     <view class="matrix-col">
       <view class="mini-card" bindtap="goMontageHistory" hover-class="press">
-        <image class="fill-img" src="/assets/design/home-clip.jpg" mode="aspectFill" />
+        <image class="fill-img" src="/assets/design/home-space.jpg" mode="aspectFill" />
         <view class="mask-bottom"></view>
         <view class="mini-row">
-          <image class="mini-icon" src="/assets/design/icon-clip.jpg" mode="aspectFill" />
+          <view class="mini-icon-space"></view>
           <text class="mini-title">素材智能剪辑</text>
         </view>
       </view>
       <view class="mini-card" bindtap="goImageGenerate" hover-class="press">
-        <image class="fill-img" src="/assets/design/home-poster.jpg" mode="aspectFill" />
+        <image class="fill-img" src="/assets/design/home-matrix.jpg" mode="aspectFill" />
         <view class="mask-bottom"></view>
         <view class="mini-row">
-          <image class="mini-icon" src="/assets/design/icon-poster.jpg" mode="aspectFill" />
+          <view class="mini-icon-space"></view>
           <text class="mini-title">一键做海报</text>
         </view>
       </view>
@@ -73,32 +72,32 @@
 
   <view class="duo-row">
     <view class="duo-card" bindtap="goVideoInspiration" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-copy.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-space.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="duo-inner">
         <view class="duo-copy">
           <text class="duo-title">一键抄爆款</text>
           <text class="duo-sub">没有灵感 · 一键复刻</text>
         </view>
-        <image class="duo-icon" src="/assets/design/icon-copy.jpg" mode="aspectFill" />
+        <view class="duo-icon-space"></view>
       </view>
     </view>
     <view class="duo-card" bindtap="goDigital" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-avatar.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-mix.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="duo-inner">
         <view class="duo-copy">
           <text class="duo-title">AI数字人</text>
           <text class="duo-sub">形象 · 声音 · 口播成片</text>
         </view>
-        <image class="duo-icon" src="/assets/design/icon-avatar.jpg" mode="aspectFill" />
+        <view class="duo-icon-space"></view>
       </view>
     </view>
   </view>
 
   <view class="tool-list">
     <view class="tool-card" bindtap="goTopicGrid" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-grid.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-space.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="tool-copy">
         <text class="tool-title">宫格选题</text>
@@ -106,7 +105,7 @@
       </view>
     </view>
     <view class="tool-card" bindtap="goMoments" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-moments.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-leaves.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="tool-copy">
         <text class="tool-title">朋友圈图文</text>
@@ -114,7 +113,7 @@
       </view>
     </view>
     <view class="tool-card" bindtap="goArticle" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-article.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-abstract.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="tool-copy">
         <text class="tool-title">公众号文案</text>
