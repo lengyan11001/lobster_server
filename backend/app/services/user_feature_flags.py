@@ -12,6 +12,8 @@ X_LEADS_FEATURE_ID = "x_leads"
 X_LEADS_ACCESS_KEY = "x_leads_access"
 TIKTOK_LEADS_FEATURE_ID = "tiktok_leads"
 TIKTOK_LEADS_ACCESS_KEY = "tiktok_leads_access"
+CHANNELS_LEADS_FEATURE_ID = "channels_leads"
+CHANNELS_LEADS_ACCESS_KEY = "channels_leads_access"
 OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID = "openai_official_image_channel"
 OPENAI_OFFICIAL_IMAGE_CHANNEL_ACCESS_KEY = "openai_official_image_channel_access"
 HOME_AI_CHAT_ENTRY_ID = "home_ai_chat_entry"
@@ -133,6 +135,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 1,
         "feature_key": TIKTOK_LEADS_ACCESS_KEY,
+    },
+    {
+        "id": CHANNELS_LEADS_FEATURE_ID,
+        "name": "视频号获客入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": CHANNELS_LEADS_ACCESS_KEY,
     },
     {
         "id": OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,

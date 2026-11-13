@@ -246,14 +246,13 @@ def test_admin_skill_visibility_lists_and_saves_social_leads_permissions(db_sess
     packages = data["all_packages"]
     package_by_id = {pkg["id"]: pkg for pkg in packages}
 
-    assert [pkg["id"] for pkg in packages[:4]] == [
-        "douyin_leads",
-        "reddit_leads",
-        "x_leads",
-        "tiktok_leads",
-    ]
+    package_ids = [pkg["id"] for pkg in packages]
+    for expected in ("douyin_leads", "reddit_leads", "x_leads", "tiktok_leads", "channels_leads"):
+        assert expected in package_ids
     assert package_by_id["tiktok_leads"]["store_visibility"] == "入口权限"
     assert package_by_id["tiktok_leads"]["feature_key"] == "tiktok_leads_access"
+    assert package_by_id["channels_leads"]["store_visibility"] == "入口权限"
+    assert package_by_id["channels_leads"]["feature_key"] == "channels_leads_access"
 
     remove_res = client.post(
         f"/admin/api/user-skill-visibility/{user.id}",
