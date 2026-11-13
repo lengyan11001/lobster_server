@@ -194,6 +194,20 @@ def _expand_bare_root_paths(paths: list[str], names: set[str]) -> list[str]:
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
+        marker = None
+        if "OTA_PATHS.json" in names:
+            try:
+                marker = json.loads(zf.read("OTA_PATHS.json").decode("utf-8"))
+            except Exception:
+                marker = None
+    if isinstance(marker, dict) and isinstance(marker.get("paths"), list):
+        version_rels = {"CLIENT_CODE_VERSION.json", "static/client_version.json"}
+        exact = []
+        for item in marker.get("paths") or []:
+            rel = str(item or "").replace("\\", "/").strip("/")
+            if rel and rel in names and rel not in exact:
+                exact.append(rel)
+        return [p for p in exact if p not in version_rels] + [p for p in exact if p in version_rels]
     skill_roots = sorted(
         {
             "/".join(name.split("/")[:2])
@@ -470,7 +484,29 @@ def _release_version_of_zip(zip_path: str) -> str:
     return ""
 
 
-def _require_release_approval(zip_path: str, approved_version: str) -> str:
+def _release_note_of_zip(zip_path: str) -> str:
+    try:
+        import zipfile
+        with zipfile.ZipFile(zip_path) as zf:
+            for name in ("CLIENT_CODE_VERSION.json", "static/client_version.json"):
+                if name in zf.namelist():
+                    data = json.loads(zf.read(name).decode("utf-8"))
+                    return str(data.get("note") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _human_size(size: int) -> str:
+    value = float(size or 0)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024.0 or unit == "GB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024.0
+    return f"{int(size)} B"
+
+
+def _require_release_approval(zip_path: str, approved_version: str, *, write_ledger: bool = True) -> str:
     """版本级发布闸门：必须同时满足
        1) --approved-version 与包内版本一致
        2) 环境变量 LOBSTER_RELEASE_APPROVED 与 --approved-version 一致
@@ -506,18 +542,19 @@ def _require_release_approval(zip_path: str, approved_version: str) -> str:
         note = io.open(approval_file, encoding="utf-8").read().strip().splitlines()[0][:200]
     except Exception:
         note = ""
-    try:
-        with io.open(_RELEASE_LEDGER, "a", encoding="utf-8") as fh:
-            fh.write(
-                "%s release version=%s approval=%s\\n"
-                % (__import__("datetime").datetime.now().isoformat(timespec="seconds"), version, note)
-            )
-    except Exception:
-        pass
+    if write_ledger:
+        try:
+            with io.open(_RELEASE_LEDGER, "a", encoding="utf-8") as fh:
+                fh.write(
+                    "%s release version=%s approval=%s\\n"
+                    % (__import__("datetime").datetime.now().isoformat(timespec="seconds"), version, note)
+                )
+        except Exception:
+            pass
     return version
 
 
-def _gui_release_confirm(action: str = "发布") -> None:
+def _gui_release_confirm(action: str = "发布", summary: str = "") -> None:
     """GUI 人工闸门：必须有人在弹窗里输入随机码才继续（环境变量无法替代）。"""
     import subprocess as _sp
     from pathlib import Path as _Path
@@ -527,7 +564,7 @@ def _gui_release_confirm(action: str = "发布") -> None:
         print("[BLOCKED] 缺少人工确认脚本 scripts/release_confirm.ps1", file=sys.stderr)
         raise SystemExit(6)
     rc = _sp.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Action", action],
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Action", action, "-Summary", summary],
         check=False,
     ).returncode
     if rc != 0:
@@ -537,7 +574,6 @@ def _gui_release_confirm(action: str = "发布") -> None:
 
 def main() -> int:
     _require_user_deploy_confirmation()
-    _gui_release_confirm('发布')
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path", type=Path, help="local OTA zip")
     ap.add_argument("--approved-version", default="", help="用户明确批准的版本号（必须与包内版本一致）")
@@ -554,7 +590,6 @@ def main() -> int:
         help="explicit HTTPS URL already uploaded to OSS/TOS/CDN; if provided, manifest uses this directly",
     )
     args = ap.parse_args()
-    _require_release_approval(str(args.zip_path), args.approved_version)
 
     zip_path = args.zip_path.resolve()
     if not zip_path.is_file():
@@ -567,11 +602,37 @@ def main() -> int:
         )
         return 2
 
+    # Precheck before showing the human confirmation so a canceled/mistyped
+    # confirmation does not write a release-ledger entry.
+    version = _require_release_approval(str(zip_path), args.approved_version, write_ledger=False)
+    note = _release_note_of_zip(str(zip_path))
+    paths = manifest_paths_for_zip(zip_path)
+
     sha256 = hashlib.sha256()
     with zip_path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             sha256.update(chunk)
     digest = sha256.hexdigest()
+
+    summary_lines = [
+        f"发布版本: {version} build {args.build}",
+        f"发布包: {zip_path}",
+        f"包大小: {_human_size(zip_path.stat().st_size)}",
+        f"SHA256: {digest}",
+        f"变更说明: {note or '(无)'}",
+        f"目标: {args.public_base}",
+        "变更文件:",
+    ]
+    summary_lines.extend("  - " + item for item in paths)
+    summary = "\n".join(summary_lines)
+    print("")
+    print("================ 发布内容确认 ================")
+    print(summary)
+    print("==============================================")
+    print("")
+
+    _gui_release_confirm('发布', summary=summary)
+    _require_release_approval(str(zip_path), args.approved_version, write_ledger=True)
 
     env = load_deploy()
     host = env["LOBSTER_DEPLOY_HOST"]
