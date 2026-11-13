@@ -34,6 +34,7 @@ from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
 from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
+from ..services import content_language as content_lang
 from .comfly_proxy import (
     _execute_image_generation_request,
     _extract_image_result_urls,
@@ -596,6 +597,7 @@ class DraftRequestBody(BaseModel):
     item_ids: list[int] = Field(default_factory=list)
     extra_requirements: str = ""
     count: int = Field(5, ge=1, le=20)
+    language: str = Field("", description="目标语种 code；留空取个人 IP 模板")
 
 
 class AutoDraftRequestBody(BaseModel):
@@ -2231,7 +2233,29 @@ def _resolve_oral_target_seconds(db: Session, user_id: int) -> int:
     return _seconds_of(current.meta if current and isinstance(current.meta, dict) else {})
 
 
-def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0, target_chars: int = 0) -> str:
+def _preferred_content_language(db: Session, current_user: User) -> str:
+    """个人 IP 模板里选的语种；查不到时回落简体中文。"""
+    try:
+        row = _personal_default_row_for_slot(db, int(current_user.id), "")
+        if row is None or not isinstance(row.requirements, dict):
+            row = (
+                db.query(IPContentScheduleTemplate)
+                .filter(
+                    IPContentScheduleTemplate.user_id == int(current_user.id),
+                    IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+                    IPContentScheduleTemplate.status == "active",
+                )
+                .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+                .first()
+            )
+        if row is not None and isinstance(row.requirements, dict):
+            return content_lang.from_requirements(row.requirements)
+    except Exception:  # noqa: BLE001
+        pass
+    return content_lang.DEFAULT_LANGUAGE
+
+
+def _draft_requirements(task: str, platform: str, count: int, target_seconds: int = 0, target_chars: int = 0, language: str = "") -> str:
     task_key = (task or "").strip().lower()
     plat = (platform or "").strip().lower()
     current_year = _utcnow().year
@@ -2304,7 +2328,7 @@ def _draft_requirements(task: str, platform: str, count: int, target_seconds: in
         return f"生成 {count} 条抖音口播/标题文案，强开头、强节奏、适合评论互动。"
     if plat == "wechat_channels":
         return f"生成 {count} 条视频号文案，稳重可信，适合中高净值/熟人社交传播。"
-    return f"生成 {count} 条可直接审核发布的中文内容草稿。"
+    return f"生成 {count} 条可直接审核发布的{content_lang.label(language)}内容草稿。"
 
 
 def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> list[dict[str, str]]:
@@ -5370,12 +5394,14 @@ async def _call_ip_content_llm(
     fallback_sources: Optional[list[dict[str, Any]]] = None,
     llm_attempts: int = 3,
     llm_timeout_seconds: float = _LLM_DEFAULT_CALL_TIMEOUT_SECONDS,
+    language: str = "",
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 5), 20))
     fallback_sources = fallback_sources or []
     if not rows and not fallback_sources and not any((m.get("title") or m.get("content")) for m in memories):
         raise HTTPException(status_code=400, detail="请先同步关键词/同行数据，或选择至少一份记忆资料。")
-    task_requirements = _draft_requirements(task, platform, count)
+    lang = content_lang.normalize(language)
+    task_requirements = _draft_requirements(task, platform, count, language=lang)
     source_briefs = [_item_brief(row, idx + 1) for idx, row in enumerate(rows[:30])]
     if not source_briefs and fallback_sources:
         for idx, item in enumerate(fallback_sources[:30], start=1):
@@ -5413,7 +5439,8 @@ async def _call_ip_content_llm(
         else "当前任务是口播文案：只返回标题、开场钩子、口播正文和收口；严禁返回 image_prompt、image_prompts、配图提示、画面建议。"
     )
     system_prompt = (
-        "你是中文短视频、朋友圈和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核、可直接发布的草稿。"
+        "你是短视频、朋友圈和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核、可直接发布的草稿。"
+        f"{content_lang.instruction(lang)}"
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
         f"{json_schema}。"
         f"{format_rule}"
@@ -5440,6 +5467,8 @@ async def _call_ip_content_llm(
             "count": count,
             "platform": platform,
             "current_year": current_year,
+            "language": content_lang.label(lang),
+            "language_rule": content_lang.instruction(lang),
             "tikhub_sources": source_briefs,
             "memory_docs": memory_payload,
             "source_usage_rule": (
@@ -5668,6 +5697,7 @@ async def _generate_and_save_ip_content_records(
     progress: ScheduleProgress = None,
     task_label: str = "",
     reference_image_urls: Optional[list[str]] = None,
+    language: str = "",
 ) -> dict[str, Any]:
     target_count = max(1, min(int(count or 5), 20))
     clean_group_id = _clean_group_id(group_id) or uuid.uuid4().hex
@@ -5813,6 +5843,7 @@ async def _generate_and_save_ip_content_records(
                 fallback_sources=fallback_sources,
                 llm_attempts=llm_attempts,
                 llm_timeout_seconds=llm_timeout_seconds,
+                language=language,
             )
             drafts = list(generated.get("drafts") or [])
             if max_chars and task_key in {"task1_industry", "task1_ip"}:
@@ -5850,6 +5881,7 @@ async def _generate_and_save_ip_content_records(
                             fallback_sources=fallback_sources,
                             llm_attempts=llm_attempts,
                             llm_timeout_seconds=llm_timeout_seconds,
+                            language=language,
                         )
                         retry_drafts = list(regenerated.get("drafts") or [])
                         if not retry_drafts:
@@ -6333,6 +6365,7 @@ async def run_ip_content_daily_scheduled(
             progress=progress,
             task_label=task_label,
             reference_image_urls=reference_image_urls,
+            language=content_lang.from_requirements(requirements),
         )
         group_payload: dict[str, Any] = {
             "status": generated.get("status") or "completed",
@@ -7955,7 +7988,8 @@ async def generate_drafts(
         raise HTTPException(status_code=400, detail="请先查询榜单/同行数据，或选择至少一份记忆资料")
 
     count = max(1, min(int(body.count or 5), 20))
-    task_requirements = _draft_requirements(body.task, body.platform, count)
+    lang = content_lang.normalize(body.language) if str(body.language or "").strip() else _preferred_content_language(db, current_user)
+    task_requirements = _draft_requirements(body.task, body.platform, count, language=lang)
     source_briefs = [_item_brief(row, idx + 1) for idx, row in enumerate(rows[:30])]
     current_year = _utcnow().year
     memory_payload = [
@@ -7964,7 +7998,8 @@ async def generate_drafts(
         if m.get("content") or m.get("title")
     ]
     system_prompt = (
-        "你是中文短视频和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核的内容草稿。"
+        f"{content_lang.instruction(lang)}"
+        "你是短视频和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核的内容草稿。"
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
         "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\",\"image_prompts\":[\"\",\"\",\"\"]}]}。"
         "不要抄袭同行原文，不要编造资料里没有的硬性数据；可以提炼热点结构、话题角度和表达策略。"
@@ -7980,6 +8015,8 @@ async def generate_drafts(
             "需要条数": count,
             "平台": body.platform,
             "当前年份": current_year,
+            "目标语种": content_lang.label(lang),
+            "语种规则": content_lang.instruction(lang),
             "TikHub数据源": source_briefs,
             "记忆资料": memory_payload,
         },
@@ -8315,6 +8352,7 @@ async def generate_industry_hot_oral(
         target_seconds=oral_seconds,
         target_chars=oral_chars,
         task_label="行业热门口播文案",
+        language=_preferred_content_language(db, current_user),
     )
     return {"ok": True, "task": "industry_hot_oral", "sync_results": sync_results, **generated}
 
@@ -8365,6 +8403,7 @@ async def generate_professional_ip_oral(
         target_seconds=oral_seconds,
         target_chars=oral_chars,
         task_label="专业 IP 口播文案",
+        language=_preferred_content_language(db, current_user),
     )
     return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}
 
@@ -8423,6 +8462,7 @@ async def generate_moments_candidates(
         batch_size=request_batch_size,
         reference_image_urls=reference_image_urls,
         task_label="朋友圈文案",
+        language=_preferred_content_language(db, current_user),
     )
     return {"ok": True, "task": "moments_candidate", "sync_results": sync_results, **generated}
 

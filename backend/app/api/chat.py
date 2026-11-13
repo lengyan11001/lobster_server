@@ -63,7 +63,7 @@ _LOBSTER_CHAT_POLICY_DIR = _BASE_DIR / "openclaw" / "workspace"
 _LOBSTER_CHAT_POLICY_INTRO_PATH = _LOBSTER_CHAT_POLICY_DIR / "LOBSTER_CHAT_POLICY_INTRO.md"
 _LOBSTER_CHAT_POLICY_TOOLS_PATH = _LOBSTER_CHAT_POLICY_DIR / "LOBSTER_CHAT_POLICY_TOOLS.md"
 _LOBSTER_CHAT_POLICY_CLOSING = (
-    "回答使用中文，简洁友好。"
+    "回答语言跟随用户当前任务里明确要求的语种（例如【目标语种】）；没有明确要求时使用中文，简洁友好。"
     " 当用户发送新的短消息（如问候、新问题）时，请直接针对该新消息简短回复，不要重复或延续上一条长回复的内容。"
 )
 
