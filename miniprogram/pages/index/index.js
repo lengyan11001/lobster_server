@@ -147,6 +147,9 @@ Page({
   smsTimer: null,
 
   onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 0 });
+    }
     share.showShareMenu();
     app.restoreSession();
     this.refreshState();

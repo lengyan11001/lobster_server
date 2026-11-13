@@ -65,6 +65,9 @@ Page({
   },
 
   onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 1 });
+    }
     app.restoreSession();
     this.setData({ phoneBound: Boolean(app.globalData.token && app.globalData.phone) });
     this.refresh();

@@ -41,8 +41,8 @@
     "backgroundTextStyle": "dark"
   },
   "tabBar": {
-    "color": "#7A8494",
-    "selectedColor": "#00D6B9",
+    "color": "#8A8A8A",
+    "selectedColor": "#FFFFFF",
     "backgroundColor": "#000000",
     "borderStyle": "black",
     "list": [
@@ -64,7 +64,8 @@
         "iconPath": "assets/tab/profile.png",
         "selectedIconPath": "assets/tab/profile_on.png"
       }
-    ]
+    ],
+    "custom": true
   },
   "permission": {
     "scope.writePhotosAlbum": {

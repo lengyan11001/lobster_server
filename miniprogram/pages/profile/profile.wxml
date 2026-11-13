@@ -1,6 +1,6 @@
 <view class="page">
   <view class="top-bg">
-    <image class="top-bg-img" src="/assets/design/works-top.jpg" mode="aspectFill" />
+    <image class="top-bg-img" src="/assets/design/profile-bg.jpg" mode="aspectFill" />
     <view class="top-bg-mask"></view>
   </view>
 

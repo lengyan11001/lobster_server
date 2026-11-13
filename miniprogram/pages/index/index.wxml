@@ -25,19 +25,34 @@
 
   <view class="quick-row">
     <view class="quick-card" bindtap="goAssets" hover-class="press">
-      <view class="quick-icon-space"></view>
-      <text class="quick-title">素材库</text>
-      <text class="quick-sub">素材 · 形象</text>
+      <image class="fill-img" src="/assets/design/home-assets.jpg" mode="aspectFill" />
+      <view class="quick-shade"></view>
+      <view class="mask-bottom"></view>
+      <view class="quick-copy">
+        <view class="quick-icon-space"></view>
+        <text class="quick-title">素材库</text>
+        <text class="quick-sub">素材 · 形象</text>
+      </view>
     </view>
     <view class="quick-card" bindtap="goIpProfile" hover-class="press">
-      <view class="quick-icon-space"></view>
-      <text class="quick-title">个人IP</text>
-      <text class="quick-sub">资料 · 记忆</text>
+      <image class="fill-img" src="/assets/design/home-ip.jpg" mode="aspectFill" />
+      <view class="quick-shade"></view>
+      <view class="mask-bottom"></view>
+      <view class="quick-copy">
+        <view class="quick-icon-space"></view>
+        <text class="quick-title">个人IP</text>
+        <text class="quick-sub">资料 · 记忆</text>
+      </view>
     </view>
     <view class="quick-card" bindtap="goAirec" hover-class="press">
-      <view class="quick-icon-space"></view>
-      <text class="quick-title">AI秘书</text>
-      <text class="quick-sub">录音笔</text>
+      <image class="fill-img" src="/assets/design/home-secretary.jpg" mode="aspectFill" />
+      <view class="quick-shade"></view>
+      <view class="mask-bottom"></view>
+      <view class="quick-copy">
+        <view class="quick-icon-space"></view>
+        <text class="quick-title">AI秘书</text>
+        <text class="quick-sub">录音笔</text>
+      </view>
     </view>
   </view>
 
@@ -52,7 +67,7 @@
     </view>
     <view class="matrix-col">
       <view class="mini-card" bindtap="goMontageHistory" hover-class="press">
-        <image class="fill-img" src="/assets/design/home-space.jpg" mode="aspectFill" />
+        <image class="fill-img" src="/assets/design/home-clip.jpg" mode="aspectFill" />
         <view class="mask-bottom"></view>
         <view class="mini-row">
           <view class="mini-icon-space"></view>
@@ -60,7 +75,7 @@
         </view>
       </view>
       <view class="mini-card" bindtap="goImageGenerate" hover-class="press">
-        <image class="fill-img" src="/assets/design/home-matrix.jpg" mode="aspectFill" />
+        <image class="fill-img" src="/assets/design/home-poster.jpg" mode="aspectFill" />
         <view class="mask-bottom"></view>
         <view class="mini-row">
           <view class="mini-icon-space"></view>
@@ -72,7 +87,7 @@
 
   <view class="duo-row">
     <view class="duo-card" bindtap="goVideoInspiration" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-space.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-copy.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="duo-inner">
         <view class="duo-copy">
@@ -83,7 +98,7 @@
       </view>
     </view>
     <view class="duo-card" bindtap="goDigital" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-mix.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-avatar.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="duo-inner">
         <view class="duo-copy">
@@ -97,7 +112,7 @@
 
   <view class="tool-list">
     <view class="tool-card" bindtap="goTopicGrid" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-space.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-grid.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="tool-copy">
         <text class="tool-title">宫格选题</text>
@@ -105,7 +120,7 @@
       </view>
     </view>
     <view class="tool-card" bindtap="goMoments" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-leaves.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-moments.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="tool-copy">
         <text class="tool-title">朋友圈图文</text>
@@ -113,7 +128,7 @@
       </view>
     </view>
     <view class="tool-card" bindtap="goArticle" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-abstract.jpg" mode="aspectFill" />
+      <image class="fill-img" src="/assets/design/home-article.jpg" mode="aspectFill" />
       <view class="mask-left"></view>
       <view class="tool-copy">
         <text class="tool-title">公众号文案</text>
