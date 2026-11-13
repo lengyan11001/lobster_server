@@ -2,14 +2,14 @@
     "schema_version":  1,
     "brand":  "bihuo",
     "package_name":  "com.bihuo.lobsterh5",
-    "version_code":  29,
-    "version_name":  "1.1.27",
-    "apk_url":  "/client/oem/bihuo/android-1.1.27.apk",
-    "sha256":  "ba8ec3e9b16ec58df30ce4031390eb8d37cb8137a36f2a1450f7266532d26d8a",
-    "size":  300150,
-    "published_at":  "2026-10-26T03:36:47Z",
+    "version_code":  30,
+    "version_name":  "1.1.28",
+    "apk_url":  "/client/oem/bihuo/android-1.1.28.apk",
+    "sha256":  "9aaa686225945dc92d6323821697fef2acc507c8cb6ac3397c50b9329758fefa",
+    "size":  201847,
+    "published_at":  "2026-11-13T05:57:59Z",
     "force_update":  false,
     "min_supported_version_code":  1,
     "title":  "发现新版本",
-    "notes":  "录音笔：设备别名、自动连接、来电暂停恢复"
+    "notes":  "更新 App 图标（必火新 logo）"
 }
