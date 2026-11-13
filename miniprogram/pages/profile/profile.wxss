@@ -3,7 +3,7 @@ page { background: #000000; color: #fff; }
 .page { position: relative; min-height: 100vh; padding: 0 30rpx 220rpx; background: radial-gradient(circle at 50% 0%, rgba(25,87,232,0.16), transparent 52%), #000000; overflow: hidden; }
 
 .top-bg { position: absolute; left: 0; top: 0; width: 100%; height: 900rpx; z-index: 0; }
-.top-bg-img { width: 100%; height: 100%; opacity: 0.65; filter: blur(1rpx); }
+.top-bg-img { width: 100%; height: 100%; opacity: 0.65; }
 .top-bg-mask { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.22) 50%, rgba(0,0,0,0.85) 100%); }
 
 .top-actions { position: relative; z-index: 2; display: flex; justify-content: flex-end; gap: 24rpx; padding-top: 16rpx; }
@@ -196,4 +196,4 @@ page { background: #000000; color: #fff; }
 }
 .foot-brand { margin-top: 24rpx; color: rgba(255,255,255,0.18); font-size: 18rpx; letter-spacing: 4rpx; }
 
-.press { opacity: 0.85; }
+.press { opacity: 0.9; }
