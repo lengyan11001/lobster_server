@@ -358,6 +358,18 @@ Page({
     wx.switchTab({ url: "/pages/downloads/downloads" });
   },
 
+  goAvatarAssets() {
+    wx.navigateTo({ url: "/pages/assets/assets?tab=avatar" });
+  },
+
+  goVoiceAssets() {
+    wx.navigateTo({ url: "/pages/assets/assets?tab=voice" });
+  },
+
+  goMediaAssets() {
+    wx.navigateTo({ url: "/pages/assets/assets?tab=image" });
+  },
+
   goIpProfile() {
     wx.navigateTo({ url: "/pages/ip-profile/ip-profile" });
   },

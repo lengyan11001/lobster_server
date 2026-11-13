@@ -41,22 +41,28 @@
     "backgroundTextStyle": "dark"
   },
   "tabBar": {
-    "color": "#94a3b8",
-    "selectedColor": "#06b6d4",
-    "backgroundColor": "#ffffff",
-    "borderStyle": "white",
+    "color": "#7A8494",
+    "selectedColor": "#00D6B9",
+    "backgroundColor": "#000000",
+    "borderStyle": "black",
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "AI员工"
+        "text": "AI员工",
+        "iconPath": "assets/tab/home.png",
+        "selectedIconPath": "assets/tab/home_on.png"
       },
       {
         "pagePath": "pages/downloads/downloads",
-        "text": "作品"
+        "text": "作品",
+        "iconPath": "assets/tab/works.png",
+        "selectedIconPath": "assets/tab/works_on.png"
       },
       {
         "pagePath": "pages/profile/profile",
-        "text": "我的"
+        "text": "我的",
+        "iconPath": "assets/tab/profile.png",
+        "selectedIconPath": "assets/tab/profile_on.png"
       }
     ]
   },

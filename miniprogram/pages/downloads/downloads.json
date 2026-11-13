@@ -1,8 +1,8 @@
 {
   "navigationBarTitleText": "作品",
-  "navigationBarBackgroundColor": "#f6f8fc",
-  "navigationBarTextStyle": "black",
-  "backgroundColor": "#f6f8fc",
-  "backgroundTextStyle": "dark",
+  "navigationBarBackgroundColor": "#000000",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#000000",
+  "backgroundTextStyle": "light",
   "enablePullDownRefresh": true
 }

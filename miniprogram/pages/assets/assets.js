@@ -45,6 +45,13 @@ Page({
     currentCount: 0
   },
 
+  onLoad(options) {
+    const map = { image: 0, video: 1, audio: 2, avatar: 3, voice: 4 };
+    const wanted = String((options && options.tab) || "").toLowerCase();
+    const index = map[wanted];
+    if (index != null) this.setData({ tabIndex: index, isDigital: index >= 3 });
+  },
+
   onShow() {
     this.loadUploads();
     if (this.data.isDigital) this.loadDigital();

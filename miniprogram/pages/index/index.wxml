@@ -1,79 +1,123 @@
-<view class="home-shell">
-  <view class="home-top">
-    <view class="hello-pill">
-      <view class="status-dot {{phoneBound ? 'online' : ''}}"></view>
-      <text wx:if="{{phoneBound}}">你好，{{phone}}</text>
-      <text wx:else>{{appName}}</text>
-    </view>
-    <button class="profile-bubble" bindtap="goProfile">{{phoneBound ? '我的' : '授权'}}</button>
+<view class="home">
+  <view class="top-bg">
+    <image class="top-bg-img" src="/assets/design/home-top.jpg" mode="aspectFill" />
+    <view class="top-bg-mask"></view>
   </view>
 
-  <view class="brand-stage">
-    <image class="hero-bg" src="{{heroBgUrl}}" mode="aspectFill" />
-    <image class="hero-lobster" src="{{lobsterUrl}}" mode="aspectFit" />
-    <view class="hero-vignette"></view>
-    <text class="brand-line">把不凡的创意变成现实</text>
+  <view class="top-bar">
+    <view class="hello-pill">
+      <view class="hello-dot {{phoneBound ? 'on' : ''}}"></view>
+      <text>{{phoneBound ? phone : appName}}</text>
+    </view>
+    <view class="profile-pill" bindtap="goProfile">{{phoneBound ? '我的' : '授权登录'}}</view>
+  </view>
+
+  <view class="hero">
+    <text class="hero-title">必火AI营销Plus</text>
+    <text class="hero-sub">必火 AI · 让创意落地</text>
+  </view>
+
+  <view class="banner" bindtap="goVideoHub" hover-class="press">
+    <image class="fill-img" src="/assets/design/home-banner.jpg" mode="aspectFill" />
+    <view class="banner-mask"></view>
+    <text class="banner-title">把不凡的创意变成现实</text>
   </view>
 
   <view class="quick-row">
-    <view class="quick-item" bindtap="goAssets">
-      <text class="quick-title">素材库</text>
-      <text class="quick-sub">素材 · 形象 · 声音</text>
-    </view>
-    <view class="quick-item" bindtap="goIpProfile">
-      <text class="quick-title">个人IP</text>
-      <text class="quick-sub">资料 · 记忆</text>
-    </view>
-    <view class="quick-item" bindtap="goAirec">
-      <text class="quick-title">AI秘书</text>
-      <text class="quick-sub">录音笔 · 设备</text>
-    </view>
-  </view>
-
-  <view class="grid">
-    <view class="big-card" bindtap="goVideoHub">
-      <view class="big-play">▶</view>
-      <text class="big-title">超级AI混剪</text>
-      <text class="big-sub">一键爆款成片 · 全网矩阵获客</text>
-    </view>
-    <view class="col">
-      <view class="small-card" bindtap="goMontageHistory">
-        <text class="small-title">素材智能剪辑</text>
+    <view class="quick-card" bindtap="goAssets" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-assets.jpg" mode="aspectFill" />
+      <view class="mask-bottom"></view>
+      <view class="quick-copy">
+        <text class="quick-title">素材库</text>
+        <text class="quick-sub">素材 · 形象</text>
       </view>
-      <view class="small-card alt" bindtap="goImageGenerate">
-        <text class="small-title">一键做海报</text>
+    </view>
+    <view class="quick-card" bindtap="goIpProfile" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-ip.jpg" mode="aspectFill" />
+      <view class="mask-bottom"></view>
+      <view class="quick-copy">
+        <text class="quick-title">个人IP</text>
+        <text class="quick-sub">资料 · 记忆</text>
+      </view>
+    </view>
+    <view class="quick-card" bindtap="goAirec" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-secretary.jpg" mode="aspectFill" />
+      <view class="mask-bottom"></view>
+      <view class="quick-copy">
+        <text class="quick-title">AI秘书</text>
+        <text class="quick-sub">录音笔</text>
       </view>
     </view>
   </view>
 
-  <view class="wide-row">
-    <view class="wide-card" bindtap="goVideoInspiration">
-      <text class="wide-title">一键抄爆款模板</text>
-      <text class="wide-sub">没有灵感 · 一键爆款复刻</text>
+  <view class="matrix">
+    <view class="mix-card" bindtap="goVideoHub" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-mix.jpg" mode="aspectFill" />
+      <view class="mask-cover"></view>
+      <view class="mix-copy">
+        <text class="mix-title">超级AI混剪</text>
+        <text class="mix-sub">一键爆款成片 · 全网矩阵获客</text>
+      </view>
     </view>
-    <view class="wide-card alt" bindtap="goDigital">
-      <text class="wide-title">AI数字人</text>
-      <text class="wide-sub">形象 · 声音 · 口播成片</text>
-    </view>
-  </view>
-
-  <view class="tools">
-    <view class="tool-row" bindtap="goTopicGrid">
-      <view class="tool-badge">题</view>
-      <view class="tool-copy"><text class="tool-name">宫格选题</text><text class="tool-desc">一个关键词生成 5x5 选题</text></view>
-      <text class="tool-arrow">›</text>
-    </view>
-    <view class="tool-row" bindtap="goMoments">
-      <view class="tool-badge">文</view>
-      <view class="tool-copy"><text class="tool-name">朋友圈图文</text><text class="tool-desc">文案 + 配图，一键成组</text></view>
-      <text class="tool-arrow">›</text>
-    </view>
-    <view class="tool-row" bindtap="goArticle">
-      <view class="tool-badge">章</view>
-      <view class="tool-copy"><text class="tool-name">公众号文案</text><text class="tool-desc">长文写作，直接发布</text></view>
-      <text class="tool-arrow">›</text>
+    <view class="matrix-col">
+      <view class="mini-card" bindtap="goMontageHistory" hover-class="press">
+        <image class="fill-img" src="/assets/design/home-clip.jpg" mode="aspectFill" />
+        <view class="mask-bottom"></view>
+        <text class="mini-title">素材智能剪辑</text>
+      </view>
+      <view class="mini-card" bindtap="goImageGenerate" hover-class="press">
+        <image class="fill-img" src="/assets/design/home-poster.jpg" mode="aspectFill" />
+        <view class="mask-bottom"></view>
+        <text class="mini-title">一键做海报</text>
+      </view>
     </view>
   </view>
 
-  <view class="bottom-space"></view>
+  <view class="duo-row">
+    <view class="duo-card" bindtap="goVideoInspiration" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-copy.jpg" mode="aspectFill" />
+      <view class="mask-left"></view>
+      <view class="duo-copy">
+        <text class="duo-title">一键抄爆款</text>
+        <text class="duo-sub">没有灵感 · 一键复刻</text>
+      </view>
+    </view>
+    <view class="duo-card" bindtap="goDigital" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-avatar.jpg" mode="aspectFill" />
+      <view class="mask-left"></view>
+      <view class="duo-copy">
+        <text class="duo-title">AI数字人</text>
+        <text class="duo-sub">形象 · 声音 · 口播成片</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="tool-list">
+    <view class="tool-card" bindtap="goTopicGrid" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-grid.jpg" mode="aspectFill" />
+      <view class="mask-left"></view>
+      <view class="tool-copy">
+        <text class="tool-title">宫格选题</text>
+        <text class="tool-sub">一个关键词生成 5x5 选题</text>
+      </view>
+    </view>
+    <view class="tool-card" bindtap="goMoments" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-moments.jpg" mode="aspectFill" />
+      <view class="mask-left"></view>
+      <view class="tool-copy">
+        <text class="tool-title">朋友圈图文</text>
+        <text class="tool-sub">文案 + 配图，一键成组</text>
+      </view>
+    </view>
+    <view class="tool-card" bindtap="goArticle" hover-class="press">
+      <image class="fill-img" src="/assets/design/home-article.jpg" mode="aspectFill" />
+      <view class="mask-left"></view>
+      <view class="tool-copy">
+        <text class="tool-title">公众号文案</text>
+        <text class="tool-sub">长文写作，直接发布</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="home-bottom"></view>
 </view>

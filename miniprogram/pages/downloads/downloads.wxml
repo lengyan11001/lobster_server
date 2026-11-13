@@ -1,14 +1,19 @@
 <view class="works">
+  <view class="top-bg">
+    <image class="top-bg-img" src="/assets/design/works-top.jpg" mode="aspectFill" />
+    <view class="top-bg-mask"></view>
+  </view>
+
+  <view class="top-actions">
+    <view class="refresh" bindtap="refresh" hover-class="press">
+      <text class="refresh-ic">↻</text>
+      <text>刷新</text>
+    </view>
+  </view>
 
   <view class="head">
-    <view class="head-copy">
-      <text class="title">作品</text>
-      <text class="sub">内容记录 · 全部生成结果</text>
-    </view>
-    <view class="refresh" hover-class="tap" bindtap="refresh">
-      <text class="refresh-ic">↻</text>
-      <text class="refresh-tx">刷新</text>
-    </view>
+    <text class="title">作 品</text>
+    <text class="sub">内容记录 · 全部生成结果</text>
   </view>
 
   <scroll-view class="tabs" scroll-x enhanced show-scrollbar="{{false}}">
@@ -41,19 +46,23 @@
     </view>
 
     <view wx:else class="list">
-      <view wx:for="{{items}}" wx:key="key" class="item" data-index="{{index}}" bindtap="openDetail" hover-class="tap">
-        <view class="thumb">
-          <image wx:if="{{item.thumb}}" class="thumb-img" src="{{item.thumb}}" mode="aspectFill" />
-          <view wx:else class="thumb-empty kind-{{item.kind}}">{{item.kindLabel}}</view>
-          <view wx:if="{{item.isVideo}}" class="play"><text>▶</text></view>
-        </view>
-        <view class="body">
-          <view class="line">
-            <text class="chip kind-{{item.kind}}">{{item.kindLabel}}</text>
-            <text class="time">{{item.time}}</text>
+      <view wx:for="{{items}}" wx:key="key" class="work-card" data-index="{{index}}" bindtap="openDetail" hover-class="press">
+        <image class="card-bg" src="/assets/design/works-card-bg.jpg" mode="aspectFill" />
+        <view class="card-shade"></view>
+        <view class="card-body">
+          <view class="thumb">
+            <image wx:if="{{item.thumb}}" class="thumb-img" src="{{item.thumb}}" mode="aspectFill" />
+            <view wx:else class="thumb-empty kind-{{item.kind}}">{{item.kindLabel}}</view>
+            <view wx:if="{{item.isVideo}}" class="play"><text>▶</text></view>
           </view>
-          <text class="item-title">{{item.title}}</text>
-          <text class="item-summary">{{item.summary || item.kindLabel + '内容'}}</text>
+          <view class="card-main">
+            <view class="card-top">
+              <text class="chip kind-{{item.kind}}">{{item.kindLabel}}</text>
+              <text class="time">{{item.time}}</text>
+            </view>
+            <text class="card-title">{{item.title}}</text>
+            <text class="card-summary">{{item.summary || item.kindLabel + '内容'}}</text>
+          </view>
         </view>
       </view>
     </view>
@@ -90,5 +99,4 @@
       </view>
     </view>
   </view>
-
 </view>

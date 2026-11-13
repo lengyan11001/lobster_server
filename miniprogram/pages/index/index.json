@@ -1,6 +1,7 @@
 {
   "navigationBarTitleText": "AI员工",
-  "navigationBarBackgroundColor": "#07101f",
+  "navigationBarBackgroundColor": "#000000",
   "navigationBarTextStyle": "white",
-  "backgroundColor": "#020403"
+  "backgroundColor": "#000000",
+  "backgroundTextStyle": "light"
 }
