@@ -76,7 +76,7 @@ page { background: #000000; }
   border: 1rpx solid rgba(255,255,255,0.06); background: #0a0a0a;
   box-shadow: 0 10rpx 30rpx rgba(0,0,0,0.8);
 }
-.mix-card .fill-img { opacity: 0.16; }
+.mix-card .fill-img { opacity: 0.20; }
 .mask-cover {
   position: absolute; left: 0; top: 28%; right: 0; bottom: 0;
   background: linear-gradient(180deg, transparent, rgba(0,0,0,0.82) 68%, #000);
@@ -91,7 +91,7 @@ page { background: #000000; }
   border: 1rpx solid rgba(255,255,255,0.06); background: #0a0a0a;
   box-shadow: 0 8rpx 24rpx rgba(0,0,0,0.75);
 }
-.mini-card .fill-img { opacity: 0.14; }
+.mini-card .fill-img { opacity: 0.16; }
 .mini-title { position: absolute; left: 0; right: 0; bottom: 18rpx; text-align: center; color: #fff; font-size: 26rpx; font-weight: 700; }
 
 .duo-row { display: flex; gap: 18rpx; margin-top: 18rpx; }
@@ -100,7 +100,7 @@ page { background: #000000; }
   border: 1rpx solid rgba(255,255,255,0.06); background: #0a0a0a;
   box-shadow: 0 8rpx 24rpx rgba(0,0,0,0.75);
 }
-.duo-card .fill-img { opacity: 0.14; }
+.duo-card .fill-img { opacity: 0.16; }
 .mask-left {
   position: absolute; left: 0; top: 0; bottom: 0; width: 80%;
   background: linear-gradient(90deg, rgba(0,0,0,0.86), rgba(0,0,0,0.30) 70%, transparent);
@@ -115,7 +115,7 @@ page { background: #000000; }
   border: 1rpx solid rgba(255,255,255,0.05); background: #0a0a0a;
   box-shadow: 0 8rpx 26rpx rgba(0,0,0,0.8);
 }
-.tool-card .fill-img { opacity: 0.10; }
+.tool-card .fill-img { opacity: 0.14; }
 .tool-copy { position: absolute; left: 26rpx; top: 50%; transform: translateY(-50%); }
 .tool-title { color: #fff; font-size: 32rpx; font-weight: 700; letter-spacing: 1rpx; }
 .tool-sub { margin-top: 8rpx; color: rgba(255,255,255,0.42); font-size: 20rpx; }
