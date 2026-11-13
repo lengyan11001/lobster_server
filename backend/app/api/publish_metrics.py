@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -19,8 +20,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user
+from ..core.config import settings
 from ..db import get_db
-from ..models import PublishMetricEvent, PublishMetricSample, User
+from ..models import PublishLoginStatus, PublishMetricEvent, PublishMetricSample, User
+from ..services.sms_aliyun import send_template_sms
+from ..services.sms_channel import resolve_aliyun_sms_channel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -62,6 +68,26 @@ class PublishMetricBatchBody(BaseModel):
     installation_id: str = ""
     user_id: int = 0
     samples: list[PublishMetricSampleItem] = Field(default_factory=list)
+
+
+LOGIN_ALERT_DEDUP_HOURS = 24
+LOGIN_ALERT_DAILY_CAP = 200
+
+
+class PublishLoginStatusItem(BaseModel):
+    """单账号登录态；checked_at 为客户端 UTC ISO 时间。"""
+
+    platform: str
+    account_id: int = 0
+    nickname: str = ""
+    status: str = ""
+    checked_at: Optional[str] = None
+    reason: str = ""
+
+
+class PublishLoginStatusBatchBody(BaseModel):
+    installation_id: str = ""
+    items: list[PublishLoginStatusItem] = Field(default_factory=list)
 
 
 def _clean_text(value: Any, limit: int) -> str:
@@ -683,6 +709,164 @@ def get_publish_metric_items(
     }
 
 
+def _notify_login_offline(db: Session, row: PublishLoginStatus, user: User) -> None:
+    """掉线通知：24h 去重 + 单日上限；短信模板没配就只落库。"""
+    now = datetime.utcnow()
+    if not bool(getattr(settings, "publish_login_alert_enabled", True)):
+        return
+    if row.notified_at and (now - row.notified_at) < timedelta(hours=LOGIN_ALERT_DEDUP_HOURS):
+        return
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    sent_today = (
+        db.query(PublishLoginStatus)
+        .filter(
+            PublishLoginStatus.notify_channel == "sms",
+            PublishLoginStatus.notified_at >= day_start,
+        )
+        .count()
+    )
+    if sent_today >= LOGIN_ALERT_DAILY_CAP:
+        row.notify_channel = "capped"
+        return
+    phone = _clean_text(getattr(user, "phone", ""), 32)
+    if not phone:
+        row.notify_channel = "no_phone"
+        row.notified_at = now
+        return
+    template_code = _clean_text(getattr(settings, "aliyun_sms_template_code_login_alert", ""), 64)
+    if not template_code:
+        row.notify_channel = "pending_template"
+        return
+    channel = resolve_aliyun_sms_channel(getattr(user, "brand_mark", ""), settings)
+    if not (channel.access_key_id and channel.access_key_secret and channel.sign_name):
+        row.notify_channel = "sms_not_configured"
+        return
+    try:
+        send_template_sms(
+            access_key_id=channel.access_key_id,
+            access_key_secret=channel.access_key_secret,
+            sign_name=channel.sign_name,
+            template_code=template_code,
+            mobile=phone,
+            template_param={
+                "platform": PLATFORM_LABELS.get(row.platform, row.platform),
+                "nickname": row.nickname or "-",
+                "time": (row.checked_at + timedelta(hours=8)).strftime("%m-%d %H:%M"),
+            },
+        )
+    except Exception as exc:
+        row.notify_channel = "sms_failed"
+        row.notify_error = str(exc)[:200]
+        logger.warning("[PUBLISH-LOGIN] 短信通知失败 user=%s: %s", user.id, exc)
+        return
+    row.notified_at = now
+    row.notify_channel = "sms"
+    row.notify_error = ""
+
+
+def receive_publish_login_status(
+    body: PublishLoginStatusBatchBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """客户端上报登录态（每天 08:00 巡检 / 发布时 need_login）。"""
+    if not body.items:
+        return {"ok": True, "received": 0, "created": 0, "updated": 0, "notify": 0}
+    if len(body.items) > 100:
+        raise HTTPException(status_code=400, detail="单次最多上报 100 条")
+    installation_id = _clean_text(body.installation_id, 128)
+    now = datetime.utcnow()
+    created = 0
+    updated = 0
+    notified = 0
+    notify_rows: list[PublishLoginStatus] = []
+    for item in body.items:
+        platform = _clean_text(item.platform, 32)
+        if platform not in METRIC_PLATFORMS:
+            continue
+        status = _clean_text(item.status, 16).lower()
+        if status not in ("online", "offline"):
+            continue
+        row = (
+            db.query(PublishLoginStatus)
+            .filter(
+                PublishLoginStatus.user_id == current_user.id,
+                PublishLoginStatus.installation_id == installation_id,
+                PublishLoginStatus.platform == platform,
+                PublishLoginStatus.account_id == int(item.account_id or 0),
+            )
+            .first()
+        )
+        if row is None:
+            row = PublishLoginStatus(
+                user_id=current_user.id,
+                installation_id=installation_id,
+                platform=platform,
+                account_id=int(item.account_id or 0),
+            )
+            db.add(row)
+            created += 1
+        else:
+            updated += 1
+        row.nickname = _clean_text(item.nickname, 128)
+        row.status = status
+        row.reason = _clean_text(item.reason, 255)
+        row.checked_at = _parse_dt(item.checked_at) or now
+        if status == "offline":
+            notify_rows.append(row)
+    db.commit()
+    # 通知放在落库之后：短信发出去就一定有一条记录，回滚不会造成"发了但查不到"
+    for row in notify_rows:
+        try:
+            _notify_login_offline(db, row, current_user)
+            if row.notify_channel == "sms":
+                notified += 1
+        except Exception as exc:
+            logger.warning("[PUBLISH-LOGIN] 通知失败 user=%s: %s", current_user.id, exc)
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("[PUBLISH-LOGIN] 通知状态落库失败 user=%s: %s", current_user.id, exc)
+    return {
+        "ok": True,
+        "received": len(body.items),
+        "created": created,
+        "updated": updated,
+        "notified": notified,
+    }
+
+
+def get_publish_login_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    rows = (
+        db.query(PublishLoginStatus)
+        .filter(PublishLoginStatus.user_id == current_user.id)
+        .order_by(PublishLoginStatus.updated_at.desc())
+        .limit(100)
+        .all()
+    )
+    return {
+        "ok": True,
+        "items": [
+            {
+                "platform": r.platform,
+                "platform_label": PLATFORM_LABELS.get(r.platform, r.platform),
+                "account_id": r.account_id,
+                "nickname": r.nickname,
+                "status": r.status,
+                "reason": r.reason,
+                "checked_at": r.checked_at.isoformat() if r.checked_at else None,
+                "notified_at": r.notified_at.isoformat() if r.notified_at else None,
+                "notify_channel": r.notify_channel,
+            }
+            for r in rows
+        ],
+    }
+
+
 router.add_api_route(
     "/api/publish/metrics:batch",
     receive_publish_metrics,
@@ -706,4 +890,17 @@ router.add_api_route(
     get_publish_metric_items,
     methods=["GET"],
     summary="发布数据曲线：单作品按日播放量轨迹",
+)
+
+router.add_api_route(
+    "/api/publish/login-status:batch",
+    receive_publish_login_status,
+    methods=["POST"],
+    summary="客户端上报抖音/视频号登录态（08:00 巡检 + 发布 need_login）",
+)
+router.add_api_route(
+    "/api/publish/login-status",
+    get_publish_login_status,
+    methods=["GET"],
+    summary="抖音/视频号登录态看板",
 )

@@ -2375,3 +2375,40 @@ class UserDeviceSelection(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
+
+
+class PublishLoginStatus(Base):
+    """抖音 / 视频号登录态：客户端每天 08:00 巡检 + 发布时 need_login 即时上报。
+
+    云端按 (user_id, installation_id, platform, account_id) UPSERT；
+    同一账号 24 小时内最多通知一次（短信模板待申请，未配置时只落库）。
+    """
+
+    __tablename__ = "publish_login_status"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "installation_id",
+            "platform",
+            "account_id",
+            name="uq_publish_login_status_account",
+        ),
+        Index("ix_publish_login_status_user_platform", "user_id", "platform"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    nickname: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    reason: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    notify_channel: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    notify_error: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )

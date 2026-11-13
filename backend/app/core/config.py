@@ -216,6 +216,9 @@ class Settings(BaseSettings):
     aliyun_sms_sign_name: str = "深圳市必火智能信息技术"
     """阿里云短信模板Code"""
     aliyun_sms_template_code: str = "SMS_333406023"
+    # 账号掉线提醒模板（发布中心抖音/视频号登录失效）；模板未批下来前留空 = 只落库不发短信
+    aliyun_sms_template_code_login_alert: Optional[str] = None
+    publish_login_alert_enabled: bool = True
     # Optional JSON map of OEM marks to Aliyun SMS channel settings. Credentials
     # stay in environment configuration; missing per-brand fields fall back to
     # the global channel above.

@@ -8,14 +8,14 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 
-def send_verify_code_sms(
+def send_template_sms(
     *,
     access_key_id: str,
     access_key_secret: str,
     sign_name: str,
     template_code: str,
     mobile: str,
-    code: str,
+    template_param: Dict[str, Any],
 ) -> Dict[str, Any]:
     from alibabacloud_dysmsapi20170525.client import Client as Dysmsapi20170525Client
     from alibabacloud_tea_openapi import models as open_api_models
@@ -33,7 +33,7 @@ def send_verify_code_sms(
         sign_name=sign_name,
         template_code=template_code,
         phone_numbers=mobile,
-        template_param=json.dumps({"code": code}),
+        template_param=json.dumps(template_param, ensure_ascii=False),
     )
     runtime = util_models.RuntimeOptions()
     try:
@@ -50,3 +50,23 @@ def send_verify_code_sms(
     except Exception as e:
         logger.exception("aliyun sms request failed: %s", e)
         raise RuntimeError("短信通道请求失败，请稍后重试") from e
+
+
+def send_verify_code_sms(
+    *,
+    access_key_id: str,
+    access_key_secret: str,
+    sign_name: str,
+    template_code: str,
+    mobile: str,
+    code: str,
+) -> Dict[str, Any]:
+    """验证码短信（模板参数固定为 {"code": "..."}）。"""
+    return send_template_sms(
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
+        sign_name=sign_name,
+        template_code=template_code,
+        mobile=mobile,
+        template_param={"code": code},
+    )
