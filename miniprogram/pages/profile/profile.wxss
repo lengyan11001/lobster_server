@@ -6,14 +6,15 @@ page { background: #000000; color: #fff; }
 .top-bg-img { width: 100%; height: 100%; opacity: 0.32; }
 .top-bg-mask { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.55) 55%, #000 100%); }
 
-.top-actions { position: relative; z-index: 2; display: flex; justify-content: flex-end; gap: 16rpx; padding-top: 16rpx; }
+.top-actions { position: relative; z-index: 2; display: flex; justify-content: flex-end; gap: 24rpx; padding-top: 16rpx; }
 .icon-btn {
-  width: 58rpx; height: 58rpx; line-height: 58rpx; text-align: center; border-radius: 50%;
+  width: 64rpx; height: 64rpx; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.05); border: 1rpx solid rgba(255,255,255,0.10);
-  color: rgba(255,255,255,0.80); font-size: 22rpx;
 }
+.icon-ic { width: 36rpx; height: 36rpx; }
 
-.identity { position: relative; z-index: 2; display: flex; align-items: center; gap: 24rpx; padding: 36rpx 4rpx 30rpx; }
+.identity { position: relative; z-index: 2; display: flex; align-items: center; gap: 32rpx; padding: 32rpx 10rpx 48rpx; }
 .avatar-ring {
   position: relative; width: 132rpx; height: 132rpx; border-radius: 50%; padding: 3rpx;
   background: linear-gradient(135deg, #1957E8, #00D6B9);
@@ -32,7 +33,7 @@ page { background: #000000; color: #fff; }
 }
 .id-main { flex: 1; min-width: 0; }
 .name-row { display: flex; align-items: center; }
-.name { color: #fff; font-size: 36rpx; font-weight: 700; }
+.name { color: #fff; font-size: 40rpx; font-weight: 700; }
 .status-chip {
   margin-left: 14rpx; padding: 4rpx 14rpx; border-radius: 999rpx;
   background: rgba(255,255,255,0.10); border: 1rpx solid rgba(255,255,255,0.12);
@@ -43,36 +44,42 @@ page { background: #000000; color: #fff; }
 .online-dot.on { background: #00D6B9; box-shadow: 0 0 10rpx rgba(0,214,185,0.9); }
 
 .balance-card {
-  position: relative; z-index: 2; padding: 30rpx; border-radius: 26rpx;
+  position: relative; z-index: 2; padding: 40rpx; border-radius: 26rpx;
   background: #0a0a0a;
   border: 1rpx solid rgba(0,214,185,0.18);
   box-shadow: 0 0 24rpx rgba(25,87,232,0.10), 0 10rpx 30rpx rgba(0,0,0,0.8);
 }
 .balance-row { display: flex; align-items: flex-end; justify-content: space-between; }
 .balance-label { display: flex; align-items: center; color: rgba(255,255,255,0.50); font-size: 21rpx; }
-.info { margin-left: 8rpx; color: rgba(255,255,255,0.25); font-size: 20rpx; }
+.info-ic { width: 24rpx; height: 24rpx; margin-left: 8rpx; }
 .balance-num {
   display: block; margin-top: 10rpx; color: #fff; font-size: 62rpx; font-weight: 800;
   font-family: "SF Mono", Menlo, Consolas, monospace; letter-spacing: -1rpx;
   text-shadow: 0 0 18rpx rgba(255,255,255,0.18);
 }
 .recharge-btn {
-  height: 72rpx; line-height: 72rpx; padding: 0 34rpx; border-radius: 999rpx;
-  background: #F38512; color: #fff; font-size: 24rpx; font-weight: 700;
+  height: 64rpx; padding: 0 40rpx; border-radius: 999rpx;
+  display: flex; align-items: center; justify-content: center;
+  background: #F38512; color: #fff; font-size: 26rpx; font-weight: 700;
   box-shadow: 0 0 20rpx rgba(243,133,18,0.35);
 }
+.plus-ic { width: 26rpx; height: 26rpx; margin-right: 6rpx; }
 
-.stats { display: flex; margin-top: 28rpx; padding-top: 24rpx; border-top: 1rpx solid rgba(255,255,255,0.06); }
+.stats { display: flex; margin-top: 32rpx; padding-top: 32rpx; border-top: 1rpx solid rgba(255,255,255,0.06); }
 .stat { flex: 1; display: flex; flex-direction: column; align-items: center; border-right: 1rpx solid rgba(255,255,255,0.06); }
 .stat:last-child { border-right: none; }
-.stat-num { color: #fff; font-size: 26rpx; font-weight: 700; }
-.stat-label { margin-top: 6rpx; color: rgba(255,255,255,0.38); font-size: 19rpx; }
+.stat-num { color: #fff; font-size: 28rpx; font-weight: 700; }
+.stat-label { margin-top: 6rpx; color: rgba(255,255,255,0.38); font-size: 20rpx; }
 
 .login-card, .assets-card, .account-card, .device-card {
-  position: relative; z-index: 2; margin-top: 26rpx; padding: 30rpx;
+  position: relative; z-index: 2; margin-top: 26rpx;
   background: #0a0a0a; border: 1rpx solid rgba(0,214,185,0.14); border-radius: 26rpx;
   box-shadow: 0 0 22rpx rgba(25,87,232,0.08), 0 10rpx 30rpx rgba(0,0,0,0.8);
 }
+.login-card, .assets-card { padding: 32rpx; }
+.account-card, .device-card { padding: 16rpx 16rpx 8rpx; }
+.account-card .card-title { padding: 8rpx 12rpx 0; }
+.device-card .card-head { padding: 8rpx 12rpx 0; }
 .card-title { display: block; color: #fff; font-size: 28rpx; font-weight: 700; }
 .card-head { display: flex; align-items: center; justify-content: space-between; }
 
@@ -130,25 +137,27 @@ page { background: #000000; color: #fff; }
 .asset:nth-child(odd) { margin-right: 3%; }
 .asset-top { display: flex; align-items: center; justify-content: space-between; }
 .asset-title { color: rgba(255,255,255,0.92); font-size: 26rpx; font-weight: 600; }
-.asset-arrow { color: rgba(255,255,255,0.25); font-size: 28rpx; }
+.caret-ic { width: 24rpx; height: 24rpx; }
 .asset-sub { display: block; margin-top: 8rpx; color: rgba(255,255,255,0.35); font-size: 19rpx; }
 
-.row { display: flex; align-items: center; padding: 22rpx 0; border-bottom: 1rpx solid rgba(255,255,255,0.05); }
+.row { display: flex; align-items: center; padding: 24rpx 12rpx; border-bottom: 1rpx solid rgba(255,255,255,0.05); }
 .row:last-child { border-bottom: none; padding-bottom: 2rpx; }
 .row-ic {
-  width: 60rpx; height: 60rpx; margin-right: 18rpx;
+  width: 48rpx; height: 48rpx; margin-right: 18rpx;
   display: flex; align-items: center; justify-content: center;
-  border-radius: 14rpx; font-size: 22rpx; font-weight: 600;
+  border-radius: 8rpx;
 }
+.row-ic-img { width: 28rpx; height: 28rpx; }
 .ic-wechat { background: rgba(7,193,96,0.10); color: #07C160; }
 .ic-phone { background: rgba(25,87,232,0.14); color: #6f9bff; }
 .ic-diag { background: rgba(168,85,247,0.12); color: #c4b5fd; }
 .row-label { flex: 1; color: rgba(255,255,255,0.88); font-size: 27rpx; }
 .row-right { display: flex; align-items: center; }
 .row-value { color: rgba(255,255,255,0.38); font-size: 22rpx; }
+.copy-ic { width: 24rpx; height: 24rpx; margin-right: 6rpx; }
 .row-value.ok { color: #00D6B9; }
 .row-value.mono { font-family: Menlo, Consolas, monospace; }
-.chevron { margin-left: 8rpx; color: rgba(255,255,255,0.20); font-size: 30rpx; }
+.chevron-ic { width: 24rpx; height: 24rpx; margin-left: 8rpx; }
 .mini-btn {
   margin-left: 14rpx; padding: 0 22rpx; height: 54rpx; line-height: 54rpx;
   border-radius: 999rpx; background: rgba(25,87,232,0.18); color: #8fb4ff; font-size: 21rpx;
@@ -159,22 +168,24 @@ page { background: #000000; color: #fff; }
   border-radius: 12rpx; background: rgba(255,255,255,0.05); border: 1rpx solid rgba(255,255,255,0.08);
   color: rgba(255,255,255,0.80); font-size: 20rpx;
 }
-.device-state { display: flex; align-items: center; margin-top: 16rpx; color: rgba(255,255,255,0.40); font-size: 21rpx; }
+.mini-refresh-ic { width: 22rpx; height: 22rpx; margin-right: 6rpx; }
+.device-state { display: flex; align-items: center; margin-top: 16rpx; padding: 0 12rpx; color: rgba(255,255,255,0.40); font-size: 21rpx; }
 .device-row {
-  display: flex; align-items: center; margin-top: 18rpx; padding: 18rpx;
+  display: flex; align-items: center; margin: 0 8rpx 8rpx; padding: 24rpx;
   background: rgba(0,0,0,0.40); border: 1rpx solid rgba(255,255,255,0.05); border-radius: 16rpx;
 }
 .device-ic {
-  width: 60rpx; height: 60rpx; margin-right: 16rpx; border-radius: 50%;
+  width: 64rpx; height: 64rpx; margin-right: 16rpx; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.05); border: 1rpx solid rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.70); font-size: 18rpx; text-align: center; line-height: 60rpx;
 }
+.device-ic-img { width: 28rpx; height: 28rpx; }
 .device-main { flex: 1; min-width: 0; }
 .device-name { display: block; color: #fff; font-size: 25rpx; font-weight: 500; }
 .device-time { display: block; margin-top: 6rpx; color: rgba(255,255,255,0.28); font-size: 19rpx; font-family: Menlo, Consolas, monospace; }
 .device-pill { padding: 5rpx 14rpx; border-radius: 8rpx; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.45); font-size: 19rpx; }
 .device-pill.on { background: rgba(0,214,185,0.10); color: #00D6B9; border: 1rpx solid rgba(0,214,185,0.20); }
-.device-empty { margin-top: 18rpx; color: rgba(255,255,255,0.28); font-size: 21rpx; text-align: center; padding: 14rpx 0 6rpx; }
+.device-empty { color: rgba(255,255,255,0.28); font-size: 21rpx; text-align: center; padding: 0 12rpx 12rpx; }
 
 .footer { position: relative; z-index: 2; margin-top: 34rpx; display: flex; flex-direction: column; align-items: center; }
 .dev-id { color: rgba(255,255,255,0.18); font-size: 18rpx; font-family: Menlo, Consolas, monospace; letter-spacing: 1rpx; word-break: break-all; text-align: center; }
