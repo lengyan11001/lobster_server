@@ -25,28 +25,19 @@
 
   <view class="quick-row">
     <view class="quick-card" bindtap="goAssets" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-assets.jpg" mode="aspectFill" />
-      <view class="mask-bottom"></view>
-      <view class="quick-copy">
-        <text class="quick-title">素材库</text>
-        <text class="quick-sub">素材 · 形象</text>
-      </view>
+      <image class="quick-icon" src="/assets/tab/quick-assets.png" mode="aspectFill" />
+      <text class="quick-title">素材库</text>
+      <text class="quick-sub">素材 · 形象</text>
     </view>
     <view class="quick-card" bindtap="goIpProfile" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-ip.jpg" mode="aspectFill" />
-      <view class="mask-bottom"></view>
-      <view class="quick-copy">
-        <text class="quick-title">个人IP</text>
-        <text class="quick-sub">资料 · 记忆</text>
-      </view>
+      <image class="quick-icon" src="/assets/tab/quick-ip.png" mode="aspectFill" />
+      <text class="quick-title">个人IP</text>
+      <text class="quick-sub">资料 · 记忆</text>
     </view>
     <view class="quick-card" bindtap="goAirec" hover-class="press">
-      <image class="fill-img" src="/assets/design/home-secretary.jpg" mode="aspectFill" />
-      <view class="mask-bottom"></view>
-      <view class="quick-copy">
-        <text class="quick-title">AI秘书</text>
-        <text class="quick-sub">录音笔</text>
-      </view>
+      <image class="quick-icon" src="/assets/tab/quick-secretary.png" mode="aspectFill" />
+      <text class="quick-title">AI秘书</text>
+      <text class="quick-sub">录音笔</text>
     </view>
   </view>
 
@@ -54,6 +45,7 @@
     <view class="mix-card" bindtap="goVideoHub" hover-class="press">
       <image class="fill-img" src="/assets/design/home-mix.jpg" mode="aspectFill" />
       <view class="mask-cover"></view>
+      <view class="mix-badge">▶</view>
       <view class="mix-copy">
         <text class="mix-title">超级AI混剪</text>
         <text class="mix-sub">一键爆款成片 · 全网矩阵获客</text>
