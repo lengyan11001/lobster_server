@@ -2248,8 +2248,8 @@ def _preferred_content_language(db: Session, current_user: User) -> str:
                 .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
                 .first()
             )
-        if row is not None and isinstance(row.requirements, dict):
-            return content_lang.from_requirements(row.requirements)
+        if row is not None:
+            return content_lang.from_template(row.requirements, row.meta)
     except Exception:  # noqa: BLE001
         pass
     return content_lang.DEFAULT_LANGUAGE
