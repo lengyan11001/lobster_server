@@ -55,7 +55,9 @@ function normalizeProfiles(items) {
       id,
       title: String(row.title || `数字人 ${id}`),
       initial: String(row.title || "人").trim().slice(0, 1) || "人",
+      status,
       status_text: String(row.status_text || status || "未知"),
+      error_message: String(row.error_message || ""),
       taskId: String(row.task_id || row.taskId || ""),
       ready: READY_STATUS.indexOf(status) >= 0,
       is_default: Boolean(row.is_default),
@@ -435,16 +437,23 @@ Page({
         if (index < 0) index = profiles.findIndex((row) => row.ready);
         if (index < 0 && profiles.length) index = 0;
         this.setData({ profiles, profileIndex: index });
-        const pending = profiles.filter((p) => !p.ready && p.taskId);
-        if (pending.length) {
+        // 只轮询还在训练中的任务；failed / succeed 的任务再轮询会返回非 processing，
+        // 触发 loadProfiles 重新加载，形成无限刷新。
+        const pendingStatuses = ["processing", "pending", "submitting", "queued", "running"];
+        const pending = profiles.filter((p) => !p.ready && p.taskId && pendingStatuses.indexOf(p.status) >= 0);
+        if (pending.length && !this._profilesPolling) {
+          this._profilesPolling = true;
           Promise.all(pending.map((p) => app.request({
             method: "POST",
             url: "/api/shanjian-digital-human/profile/task",
             data: { task_id: p.taskId },
             timeout: 60000
           }).catch(() => null))).then((rows) => {
+            this._profilesPolling = false;
             const changed = rows.some((r) => r && String((r.profile && r.profile.status) || r.status || "").toLowerCase() !== "processing");
             if (changed) this.loadProfiles();
+          }).catch(() => {
+            this._profilesPolling = false;
           });
         }
       })
