@@ -106,6 +106,8 @@ Page({
             const thumbSource = image || video;
             return {
               id: String(row.id || row.avatar || i),
+              recordId: Number(row.source_record_id || 0) || 0,
+              source: String(row.source || ""),
               profileId: Number(row.source_record_id || 0) || 0,
               title: String(row.title || row.avatar || "形象分身"),
               thumb: thumbSource ? mediaUrl(thumbSource, "thumb") : "",
@@ -124,6 +126,7 @@ Page({
             const status = String(row.status || "").toLowerCase();
             return {
               id: String(row.id || row.voice || i),
+              recordId: Number(row.id || 0) || 0,
               title: String(row.title || row.voice || "声音分身"),
               demo: mediaUrl(row.demo_url || "", "proxy"),
               provider: String(row.provider || "hifly"),
@@ -198,6 +201,63 @@ Page({
         if (changed) this.loadDigital();
       })
       .catch(() => { this._avatarPolling = false; });
+  },
+
+  removeAvatar(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.avatars[index];
+    if (!row) return;
+    const recordId = Number(row.recordId || row.profileId || 0);
+    if (!recordId) {
+      wx.showToast({ title: "这条记录没有可删除的 ID", icon: "none" });
+      return;
+    }
+    wx.showModal({
+      title: "删除形象分身",
+      content: "确认删除「" + row.title + "」？删除后模板里将不能再选它。",
+      confirmColor: "#dc2626",
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "删除中", mask: true });
+        const url = row.source === "hifly"
+          ? "/api/hifly/my/avatar/" + recordId
+          : "/api/shanjian-digital-human/profiles/" + recordId;
+        app.request({ method: "DELETE", url, timeout: 30000 })
+          .then(() => {
+            wx.showToast({ title: "已删除", icon: "success" });
+            this.loadDigital();
+          })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+          .then(() => wx.hideLoading());
+      }
+    });
+  },
+
+  removeVoice(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.voices[index];
+    if (!row) return;
+    const recordId = Number(row.recordId || 0);
+    if (!recordId) {
+      wx.showToast({ title: "这条记录没有可删除的 ID", icon: "none" });
+      return;
+    }
+    wx.showModal({
+      title: "删除声音分身",
+      content: "确认删除「" + row.title + "」？删除后模板里将不能再选它。",
+      confirmColor: "#dc2626",
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "删除中", mask: true });
+        app.request({ method: "DELETE", url: "/api/hifly/my/voice/" + recordId, timeout: 30000 })
+          .then(() => {
+            wx.showToast({ title: "已删除", icon: "success" });
+            this.loadDigital();
+          })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+          .then(() => wx.hideLoading());
+      }
+    });
   },
 
   previewAvatar(e) {

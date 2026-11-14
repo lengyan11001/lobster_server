@@ -33,6 +33,7 @@
       <image wx:if="{{item.thumb}}" class="thumb" src="{{item.thumb}}" mode="aspectFill" />
       <view wx:else class="thumb thumb-empty">形象</view>
       <view wx:if="{{item.isVideo}}" class="badge">▶</view>
+      <view class="del" data-index="{{index}}" catchtap="removeAvatar">×</view>
       <text class="name">{{item.title}}</text>
       <text class="status {{item.ok ? 'ok' : ''}}">{{item.statusText}}</text>
     </view>
@@ -44,7 +45,10 @@
         <text class="voice-title">{{item.title}}</text>
         <text class="voice-meta">{{item.provider}} · {{item.statusText}}</text>
       </view>
-      <button class="ghost tiny" data-index="{{index}}" catchtap="playVoice">试听</button>
+      <view class="voice-actions">
+        <button class="ghost tiny" data-index="{{index}}" catchtap="playVoice">试听</button>
+        <button class="ghost tiny danger" data-index="{{index}}" catchtap="removeVoice">删除</button>
+      </view>
     </view>
   </view>
 </view>

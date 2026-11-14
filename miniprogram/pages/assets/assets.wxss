@@ -27,3 +27,6 @@
 .group { display: block; font-size: 20rpx; color: #2563eb; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .tags { display: block; font-size: 20rpx; color: #94a3b8; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.voice-actions { display: flex; gap: 12rpx; margin-left: 12rpx; }
+.ghost.tiny.danger { color: #dc2626; background: #fef2f2; }
