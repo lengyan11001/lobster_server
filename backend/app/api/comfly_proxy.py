@@ -2049,6 +2049,10 @@ async def _submit_image_edit_attempt(
 ) -> Dict[str, Any]:
     token_group = str(entry.get("token_group") or "").strip().lower()
     if token_group == "openai_official":
+        # OpenAI 官方 /images/edits：多张参考图必须用 image[]，同一个 image 传多次会 400
+        # （客户 2026-11-16 现场：Duplicate parameter: 'image'）
+        if len(files) > 1:
+            files = [("image[]", payload) for _field, payload in files]
         return await _openai_official_multipart_request(
             _openai_official_image_url("/images/edits"),
             data,
