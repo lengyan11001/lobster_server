@@ -9308,6 +9308,10 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
         if not text:
             _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "没有可提炼的录音或文本"})
             return
+        # 分段理解 + 3 次汇总要跑好几分钟，不能一直占着事务连接（PG 会 idle-in-transaction 超时杀掉）
+        record_name = str(getattr(record, "display_name", "") or "") if record is not None else ""
+        db.close()
+        db = None
         supplement_parts = []
         if str(body.website or "").strip():
             site_text = _ip_fetch_website_text(body.website)
@@ -9379,7 +9383,7 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
         )
         dim_prompt = "【分段提取结果】\n" + merged_text + ("\n" + supplement if supplement else "") + "\n请输出 JSON。"
         dim_parsed = await _ip_llm_json(dim_system, dim_prompt, user, timeout=180.0)
-        partial = _ip_normalize_analysis(dim_parsed, keyword=(record.display_name if record else ""))
+        partial = _ip_normalize_analysis(dim_parsed, keyword=record_name)
         _ip_call_update(calls, "dimensions", "done", "%d 个维度 · %d 个待补充" % (len(partial.get("dimensions") or []), len(partial.get("missing") or [])))
         _ip_job_set(job_id, {
             "status": "running", "user_id": int(owner_id), "progress": 78,
@@ -9402,7 +9406,7 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
         qa_prompt = "【分段提取结果】\n" + merged_text + "\n【12 维档案】\n" + dim_summary + ("\n" + supplement if supplement else "") + "\n请输出 JSON。"
         qa_parsed = await _ip_llm_json(qa_system, qa_prompt, user, timeout=150.0)
         merged_parsed = {**dim_parsed, "qa": qa_parsed.get("qa")}
-        partial = _ip_normalize_analysis(merged_parsed, keyword=(record.display_name if record else ""))
+        partial = _ip_normalize_analysis(merged_parsed, keyword=record_name)
         _ip_call_update(calls, "qa", "done", "%d 条问答" % len(partial.get("qa") or []))
         _ip_job_set(job_id, {
             "status": "running", "user_id": int(owner_id), "progress": 90,
@@ -9427,7 +9431,7 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
             "personal_doc": docs_parsed.get("personal_doc"),
             "company_doc": docs_parsed.get("company_doc"),
         }
-        analysis = _ip_normalize_analysis(full_parsed, keyword=(record.display_name if record else ""))
+        analysis = _ip_normalize_analysis(full_parsed, keyword=record_name)
         if supplement:
             analysis["supplement"] = supplement
         if body.record_id:
@@ -9458,7 +9462,8 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
         logger.warning("[ip-profile] job failed id=%s err=%s", job_id, str(exc)[:300])
         _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": str(exc)[:500]})
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 @router.post("/api/ip-profile/jobs", summary="启动 IP 档案分析任务")
@@ -9719,6 +9724,10 @@ async def _ip_run_topic_job(job_id: str, body: IPTopicJobBody, user_id: int, own
         if not digest.strip():
             _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "还没有个人IP档案，先做一次录音分析"})
             return
+        archive_updated_at = row.updated_at.isoformat() if (row is not None and row.updated_at) else ""
+        # 后面 6~7 次 LLM 调用要几分钟，先把连接还回池子，避免 PG idle-in-transaction 超时
+        db.close()
+        db = None
 
         count = int(body.count or 50)
         batch_size = 10
@@ -9825,18 +9834,22 @@ async def _ip_run_topic_job(job_id: str, body: IPTopicJobBody, user_id: int, own
             "topics": topics[:count],
             "meta": {
                 "generated_at": datetime.utcnow().isoformat(),
-                "archive_updated_at": (row.updated_at.isoformat() if row and row.updated_at else ""),
+                "archive_updated_at": archive_updated_at,
                 "count": len(topics[:count]),
             },
         }
-        target = db.query(IPTopicPlan).filter(IPTopicPlan.user_id == int(user.id)).first()
-        if target is None:
-            target = IPTopicPlan(user_id=int(user.id), plan=plan)
-            db.add(target)
-        else:
-            target.plan = plan
-            target.updated_at = datetime.utcnow()
-        db.commit()
+        save_db = SessionLocal()
+        try:
+            target = save_db.query(IPTopicPlan).filter(IPTopicPlan.user_id == int(user.id)).first()
+            if target is None:
+                target = IPTopicPlan(user_id=int(user.id), plan=plan)
+                save_db.add(target)
+            else:
+                target.plan = plan
+                target.updated_at = datetime.utcnow()
+            save_db.commit()
+        finally:
+            save_db.close()
         _ip_topic_job_set(job_id, {
             "status": "done", "user_id": int(owner_id), "progress": 100,
             "stage": "完成", "calls": calls, "current_call": "",
@@ -9845,7 +9858,8 @@ async def _ip_run_topic_job(job_id: str, body: IPTopicJobBody, user_id: int, own
     except Exception as exc:  # noqa: BLE001
         _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": str(exc)[:300]})
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 @router.post("/api/ip-profile/topics/jobs", summary="推荐选题：关键词 + 宫格 + 50 条选题文案")
