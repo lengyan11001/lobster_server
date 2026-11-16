@@ -29,7 +29,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, IPProfileV2Archive, OpenClawMemoryDocument, RecorderAudioRecord, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
 from ..services.runtime_cache import cache_get, cache_set
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
@@ -9165,19 +9165,18 @@ def _ip_personal_default_row(db: Session, user_id: int) -> Optional[IPContentSch
     )
 
 
-@router.get("/api/ip-profile/saved", summary="读取已保存的 IP 档案")
+@router.get("/api/ip-profile/saved", summary="读取已保存的 IP 档案（小程序试用版，独立存储）")
 def get_saved_ip_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     current_user = online_user_for_mobile_user(db, current_user)
-    row = _ip_personal_default_row(db, int(current_user.id))
-    req = dict(row.requirements or {}) if row and isinstance(row.requirements, dict) else {}
-    analysis = req.get("ip_profile_v2") if isinstance(req.get("ip_profile_v2"), dict) else {}
+    row = db.query(IPProfileV2Archive).filter(IPProfileV2Archive.user_id == int(current_user.id)).first()
+    analysis = row.analysis if row and isinstance(row.analysis, dict) else {}
     return {"ok": True, "analysis": analysis, "updated_at": (row.updated_at.isoformat() if row and row.updated_at else "")}
 
 
-@router.post("/api/ip-profile/saved", summary="保存 IP 档案")
+@router.post("/api/ip-profile/saved", summary="保存 IP 档案（小程序试用版，独立存储）")
 def save_ip_profile(
     body: IPProfileSavedBody,
     current_user: User = Depends(get_current_user),
@@ -9187,39 +9186,13 @@ def save_ip_profile(
     analysis = body.analysis if isinstance(body.analysis, dict) else {}
     if not analysis:
         raise HTTPException(status_code=400, detail="没有可保存的 IP 档案")
-    row = _ip_personal_default_row(db, int(current_user.id))
+    row = db.query(IPProfileV2Archive).filter(IPProfileV2Archive.user_id == int(current_user.id)).first()
     if row is None:
-        row = IPContentScheduleTemplate(
-            user_id=int(current_user.id),
-            name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
-            status="active",
-            requirements={},
-        )
+        row = IPProfileV2Archive(user_id=int(current_user.id), analysis=analysis)
         db.add(row)
-    req = dict(row.requirements or {})
-    req["ip_profile_v2"] = analysis
-    meta = analysis.get("meta") if isinstance(analysis.get("meta"), dict) else {}
-    dims = analysis.get("dimensions") if isinstance(analysis.get("dimensions"), list) else []
-    dim_map = {str(d.get("key") or ""): d for d in dims if isinstance(d, dict)}
-    basic = dict(req.get("basic_profile") or {})
-    if str(meta.get("name") or "").strip():
-        basic["name"] = _clean_text(meta.get("name"), 100)
-        req["profile_name"] = basic["name"]
-    if str(meta.get("city") or "").strip():
-        basic["current_city"] = _clean_text(meta.get("city"), 100)
-    if str(meta.get("industry") or "").strip():
-        basic["role"] = _clean_text(meta.get("industry"), 100)
-    req["basic_profile"] = basic
-    for key, target in (("business", "product"), ("customers", "target_customer"), ("expertise", "advantages")):
-        dim = dim_map.get(key) if isinstance(dim_map.get(key), dict) else {}
-        summary = str(dim.get("summary") or "").strip()
-        if summary:
-            req[target] = summary
-    row.requirements = req
-    row.meta = {**(row.meta or {}), "source": "ip_profile_v2", "is_personal_default": True, "ip_profile_v2_updated_at": datetime.utcnow().isoformat()}
-    row.status = "active"
-    row.updated_at = datetime.utcnow()
-    db.add(row)
+    else:
+        row.analysis = analysis
+        row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
     return {"ok": True, "saved_at": row.updated_at.isoformat() if row.updated_at else ""}

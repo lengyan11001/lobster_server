@@ -485,6 +485,7 @@ def _migrate_ip_content_profile_surveys():
 
     try:
         Base.metadata.create_all(bind=engine, tables=[models.IPContentProfileSurvey.__table__])
+        Base.metadata.create_all(bind=engine, tables=[models.IPProfileV2Archive.__table__])
         insp = inspect(engine)
         if insp.has_table("ip_content_schedule_templates"):
             cols = [c["name"] for c in insp.get_columns("ip_content_schedule_templates")]

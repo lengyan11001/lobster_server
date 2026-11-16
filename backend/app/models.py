@@ -492,6 +492,18 @@ class IPContentProfileSurvey(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class IPProfileV2Archive(Base):
+    """Miniprogram-only IP 2.0 archive. Kept separate from the Online/H5 personal default row."""
+
+    __tablename__ = "ip_profile_v2_archives"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    analysis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class MomentsCoachMaterial(Base):
     """Verified real-life material used by the WeChat Moments sales coach."""
 
