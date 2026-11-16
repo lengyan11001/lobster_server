@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
@@ -28,9 +28,10 @@ from .auth import access_token_claims, create_access_token, get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
-from ..db import get_db
-from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
+from ..db import SessionLocal, get_db
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, OpenClawMemoryDocument, RecorderAudioRecord, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
+from ..services.runtime_cache import cache_get, cache_set
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.brand_context import user_brand_mark
 from ..services.tikhub_pricing import price_breakdown as tikhub_price_breakdown, query_price as tikhub_query_price
@@ -8774,3 +8775,642 @@ async def generate_grid_topics(
                 topics.append({"text": text, "inner": "", "outer": ""})
     center = str(parsed.get("center") or keyword).strip()[:20]
     return {"ok": True, "center": center, "inner": inner, "outer": outer, "topics": topics, "keyword": keyword}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IP 定位 2.0：录音 → 分段理解 → 12 维档案 + 百问百答 + 个人/企业资料
+# ─────────────────────────────────────────────────────────────────────────────
+
+_IP_DIMENSIONS: list[tuple[str, str, str]] = [
+    ("background", "个人基本情况与职业经历", "姓名、城市、当前身份、从业年限、关键阶段、重要转折"),
+    ("industry", "行业情况与个人角色", "行业业务、本人职责、日常工作、行业变化、外行常见误解"),
+    ("expertise", "专业能力与差异化优势", "核心能力、独特方法、客户评价、专业判断、可验证的优势"),
+    ("story", "个人故事与代表性案例", "事件背景、关键困难、采取的行动、最终结果、时间/数字/证据"),
+    ("business", "现有业务与账号商业目标", "产品服务、价格客单、成交方式、收入来源、账号目标、未来产品"),
+    ("customers", "目标客户与核心用户画像", "客户类型、年龄职业阶段、消费能力、成交难易、希望吸引的人群"),
+    ("pain", "客户痛点、需求与真实表达", "高频痛点、试过的办法、失败原因、决策顾虑、期望结果、客户原话"),
+    ("audience", "账号要吸引谁、提供什么价值", "优先受众、核心问题、内容价值、关注理由、观看→咨询/购买"),
+    ("persona", "IP 形象与表达风格", "希望被记住的特点、说话习惯、镜头状态、价值观、表达风格偏好"),
+    ("material", "内容经历、素材与公开边界", "可讲故事、可公开案例、照片/视频/笔记、可展示场景、隐私禁区"),
+    ("benchmark", "对标账号与市场内容机会", "账号名称、喜欢/不喜欢原因、高互动内容、评论区需求、可切入空白"),
+    ("topics", "选题来源与可持续内容储备", "高频咨询、搜索关键词、常见误区、行业争议、能持续讲的主题、现有素材"),
+]
+_IP_DIMENSION_KEYS = [row[0] for row in _IP_DIMENSIONS]
+_IP_DIMENSION_TITLES = {row[0]: row[1] for row in _IP_DIMENSIONS}
+
+
+class IPProfileAnalyzeBody(BaseModel):
+    record_id: Optional[int] = None
+    text: str = Field("", max_length=300000)
+    website: str = Field("", max_length=1000)
+    extra: str = Field("", max_length=30000)
+
+
+class IPProfileSavedBody(BaseModel):
+    analysis: dict[str, Any] = Field(default_factory=dict)
+
+
+class IPProfileRefineBody(BaseModel):
+    target_type: str = Field("dimension", max_length=32)
+    target_key: str = Field("", max_length=64)
+    title: str = Field("", max_length=160)
+    current: str = Field("", max_length=30000)
+    supplement: str = Field("", max_length=30000)
+    website: str = Field("", max_length=1000)
+
+
+def _ip_fetch_website_text(url: str, limit: int = 6000) -> str:
+    raw = str(url or "").strip()
+    if not raw.lower().startswith(("http://", "https://")):
+        return ""
+    try:
+        with httpx.Client(timeout=20.0, follow_redirects=True, trust_env=False) as client:
+            resp = client.get(raw, headers={"User-Agent": "Mozilla/5.0 (compatible; LobsterIPProfile/1.0)"})
+        if resp.status_code >= 400:
+            return ""
+        text = re.sub(r"(?is)<(script|style).*?</\1>", " ", resp.text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = html.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:limit]
+    except Exception:
+        return ""
+
+
+def _ip_split_chunks(text: str, size: int = 6000, overlap: int = 300, max_chunks: int = 8) -> tuple[list[str], bool]:
+    raw = str(text or "").strip()
+    if not raw:
+        return [], False
+    if len(raw) <= size:
+        return [raw], False
+    chunks: list[str] = []
+    start = 0
+    while start < len(raw) and len(chunks) < max_chunks:
+        end = min(len(raw), start + size)
+        chunks.append(raw[start:end])
+        if end >= len(raw):
+            break
+        start = max(end - overlap, start + 1)
+    truncated = len(chunks) >= max_chunks and start < len(raw)
+    return chunks, truncated
+
+
+def _ip_dedupe(values: Any, limit: int = 30) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(values, list):
+        return out
+    for raw in values:
+        text = _clean_long_text(raw, 800) if not isinstance(raw, dict) else ""
+        if not text:
+            continue
+        key = re.sub(r"\s+", "", text)[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def _ip_llm_json(system_prompt: str, user_prompt: str, user: User, *, timeout: float = 150.0) -> dict[str, Any]:
+    payload = {
+        "model": (os.environ.get("IP_PROFILE_MODEL") or "openai/gpt-4.1-mini").strip() or "openai/gpt-4.1-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.25,
+        "stream": False,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": _server_bearer_for_user(user),
+    }
+    data = await _post_llm_with_retry(payload=payload, headers=headers, attempts=1, timeout_seconds=timeout)
+    try:
+        raw = str(data["choices"][0]["message"]["content"] or "")
+    except Exception:
+        raw = json.dumps(data, ensure_ascii=False)
+    return _extract_json_object(raw)
+
+
+async def _ip_extract_chunk(chunk: str, index: int, total: int, user: User) -> dict[str, Any]:
+    dimension_lines = "\n".join(f"- {key}: {title}（{hint}）" for key, title, hint in _IP_DIMENSIONS)
+    system_prompt = (
+        "你是资深 IP 访谈资料整理员。下面是一段约 2 小时采访录音转写中的第 "
+        f"{index}/{total} 段。请只根据这一段原文提取事实，不要跨段猜测，不要编造。"
+        "只输出严格 JSON，字段固定为："
+        '{"meta":{"name":"","industry":"","city":"","interview_date":""},'
+        '"facts":{"background":["..."],"industry":["..."],"expertise":["..."],"story":["..."],'
+        '"business":["..."],"customers":["..."],"pain":["..."],"audience":["..."],'
+        '"persona":["..."],"material":["..."],"benchmark":["..."],"topics":["..."]},'
+        '"quotes":{"background":["..."],"industry":["..."],"expertise":["..."],"story":["..."],'
+        '"business":["..."],"customers":["..."],"pain":["..."],"audience":["..."],'
+        '"persona":["..."],"material":["..."],"benchmark":["..."],"topics":["..."]},'
+        '"qa":[{"category":"","question":"","answer":""}],'
+        '"missing":{"background":["..."],"industry":["..."],"expertise":["..."],"story":["..."],'
+        '"business":["..."],"customers":["..."],"pain":["..."],"audience":["..."],'
+        '"persona":["..."],"material":["..."],"benchmark":["..."],"topics":["..."]}}。'
+        "12 个维度定义：\n" + dimension_lines + "\n"
+        "facts 写原文明确出现的事实；quotes 写受访者或客户的原话；"
+        "qa 写这一段里出现的高频问题与回答；missing 写这一段没有回答清楚、需要补问的问题。"
+        "没有内容的维度用空数组。不要输出 Markdown 或解释。"
+    )
+    return await _ip_llm_json(system_prompt, "【本段转写】\n" + chunk, user)
+
+
+def _ip_merge_chunks(parts: list[dict[str, Any]]) -> dict[str, Any]:
+    meta: dict[str, str] = {"name": "", "industry": "", "city": "", "interview_date": ""}
+    facts: dict[str, list[str]] = {key: [] for key in _IP_DIMENSION_KEYS}
+    quotes: dict[str, list[str]] = {key: [] for key in _IP_DIMENSION_KEYS}
+    missing: dict[str, list[str]] = {key: [] for key in _IP_DIMENSION_KEYS}
+    qa: list[dict[str, str]] = []
+    qa_seen: set[str] = set()
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        m = part.get("meta") if isinstance(part.get("meta"), dict) else {}
+        for key in meta:
+            if not meta[key] and str(m.get(key) or "").strip():
+                meta[key] = _clean_text(m.get(key), 200)
+        for bucket, target in (("facts", facts), ("quotes", quotes), ("missing", missing)):
+            data = part.get(bucket) if isinstance(part.get(bucket), dict) else {}
+            for key in _IP_DIMENSION_KEYS:
+                target[key].extend(_ip_dedupe(data.get(key), 30))
+        rows = part.get("qa") if isinstance(part.get("qa"), list) else []
+        for row in rows[:30]:
+            if not isinstance(row, dict):
+                continue
+            question = _clean_text(row.get("question"), 300)
+            answer = _clean_long_text(row.get("answer"), 2000)
+            if not question:
+                continue
+            key = re.sub(r"\s+", "", question)[:100]
+            if key in qa_seen:
+                continue
+            qa_seen.add(key)
+            qa.append({
+                "category": _clean_text(row.get("category"), 40),
+                "question": question,
+                "answer": answer,
+            })
+    for key in _IP_DIMENSION_KEYS:
+        facts[key] = _ip_dedupe(facts[key], 12)
+        quotes[key] = _ip_dedupe(quotes[key], 8)
+        missing[key] = _ip_dedupe(missing[key], 8)
+    return {"meta": meta, "facts": facts, "quotes": quotes, "missing": missing, "qa": qa[:60]}
+
+
+def _ip_trim_merged(merged: dict[str, Any], limit: int = 16000) -> str:
+    data = dict(merged or {})
+    facts = data.get("facts") if isinstance(data.get("facts"), dict) else {}
+    quotes = data.get("quotes") if isinstance(data.get("quotes"), dict) else {}
+    missing = data.get("missing") if isinstance(data.get("missing"), dict) else {}
+    for key in _IP_DIMENSION_KEYS:
+        facts[key] = list(facts.get(key) or [])[:4]
+        quotes[key] = list(quotes.get(key) or [])[:2]
+        missing[key] = list(missing.get(key) or [])[:3]
+    data["facts"] = facts
+    data["quotes"] = quotes
+    data["missing"] = missing
+    data["qa"] = list(data.get("qa") or [])[:30]
+    raw = json.dumps(data, ensure_ascii=False)
+    if len(raw) <= limit:
+        return raw
+    for key in _IP_DIMENSION_KEYS:
+        facts[key] = list(facts.get(key) or [])[:2]
+        quotes[key] = list(quotes.get(key) or [])[:1]
+        missing[key] = list(missing.get(key) or [])[:1]
+    data["facts"] = facts
+    data["quotes"] = quotes
+    data["missing"] = missing
+    data["qa"] = list(data.get("qa") or [])[:16]
+    return json.dumps(data, ensure_ascii=False)[:limit]
+
+
+def _ip_normalize_analysis(parsed: dict[str, Any], keyword: str = "") -> dict[str, Any]:
+    parsed = parsed if isinstance(parsed, dict) else {}
+    meta = parsed.get("meta") if isinstance(parsed.get("meta"), dict) else {}
+    meta_out = {
+        "name": _clean_text(meta.get("name"), 100),
+        "industry": _clean_text(meta.get("industry"), 100),
+        "city": _clean_text(meta.get("city"), 100),
+        "interview_date": _clean_text(meta.get("interview_date"), 40),
+    }
+    rows = parsed.get("dimensions") if isinstance(parsed.get("dimensions"), list) else []
+    by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            key = _clean_text(row.get("key"), 40)
+            if key:
+                by_key[key] = row
+    dimensions: list[dict[str, Any]] = []
+    for key, title, hint in _IP_DIMENSIONS:
+        row = by_key.get(key) if isinstance(by_key.get(key), dict) else {}
+        summary = _clean_long_text(row.get("summary"), 4000)
+        evidence = _ip_dedupe(row.get("evidence"), 10)
+        quotes = _ip_dedupe(row.get("quotes"), 6)
+        gaps = _ip_dedupe(row.get("gaps"), 8)
+        try:
+            score = int(float(row.get("score") or 0))
+        except Exception:
+            score = 0
+        if not score:
+            score = min(95, max(10, int(len(summary) / 4) + len(evidence) * 4 + len(quotes) * 3))
+        dimensions.append({
+            "key": key,
+            "title": title,
+            "hint": hint,
+            "summary": summary,
+            "score": max(0, min(100, score)),
+            "evidence": evidence,
+            "quotes": quotes,
+            "gaps": gaps,
+        })
+    qa: list[dict[str, str]] = []
+    for row in (parsed.get("qa") or [])[:40]:
+        if not isinstance(row, dict):
+            continue
+        question = _clean_text(row.get("question"), 300)
+        answer = _clean_long_text(row.get("answer"), 4000)
+        if question:
+            qa.append({
+                "category": _clean_text(row.get("category"), 40),
+                "question": question,
+                "answer": answer,
+            })
+    def _doc(raw: Any, fallback_title: str) -> dict[str, Any]:
+        data = raw if isinstance(raw, dict) else {}
+        sections = []
+        for section in (data.get("sections") or [])[:20]:
+            if isinstance(section, dict):
+                heading = _clean_text(section.get("heading"), 100)
+                content = _clean_long_text(section.get("content"), 6000)
+                if heading or content:
+                    sections.append({"heading": heading or "内容", "content": content})
+        return {"title": _clean_text(data.get("title"), 100) or fallback_title, "sections": sections}
+    topics = []
+    for row in (parsed.get("topics") or [])[:20]:
+        if isinstance(row, dict):
+            title = _clean_text(row.get("title"), 200)
+            if title:
+                topics.append({
+                    "title": title,
+                    "reason": _clean_text(row.get("reason"), 300),
+                    "keywords": _ip_dedupe(row.get("keywords"), 8),
+                })
+        else:
+            title = _clean_text(row, 200)
+            if title:
+                topics.append({"title": title, "reason": "", "keywords": []})
+    missing = []
+    for row in (parsed.get("missing") or [])[:20]:
+        if isinstance(row, dict):
+            section = _clean_text(row.get("section"), 100)
+            question = _clean_text(row.get("question"), 300)
+            if question:
+                missing.append({"section": section, "question": question})
+    return {
+        "meta": meta_out,
+        "dimensions": dimensions,
+        "qa": qa,
+        "personal_doc": _doc(parsed.get("personal_doc"), "个人资料"),
+        "company_doc": _doc(parsed.get("company_doc"), "企业资料"),
+        "topics": topics,
+        "missing": missing,
+        "keyword": _clean_text(keyword, 80),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
+@router.post("/api/ip-profile/analyze", summary="IP 定位：录音分段理解并生成 12 维档案/百问百答/个人企业资料")
+async def analyze_ip_profile(
+    body: IPProfileAnalyzeBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    text = str(body.text or "").strip()
+    record = None
+    if body.record_id:
+        record = db.query(RecorderAudioRecord).filter(
+            RecorderAudioRecord.id == int(body.record_id),
+            RecorderAudioRecord.user_id == int(current_user.id),
+        ).first()
+        if not record:
+            raise HTTPException(status_code=404, detail="录音不存在")
+        if record.status != "completed" or not str(record.transcript_text or "").strip():
+            raise HTTPException(status_code=409, detail="录音转写完成后才能提炼")
+        text = str(record.transcript_text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="没有可提炼的录音或文本")
+    supplement_parts = []
+    if str(body.website or "").strip():
+        site_text = _ip_fetch_website_text(body.website)
+        supplement_parts.append("【补充官网正文】" + site_text if site_text else "【补充官网】" + _clean_text(body.website, 1000))
+    if str(body.extra or "").strip():
+        supplement_parts.append("【补充资料】" + _clean_long_text(body.extra, 20000))
+    supplement = "\n".join(supplement_parts)
+    chunks, truncated = _ip_split_chunks(text, size=6000, overlap=300, max_chunks=8)
+    parts = []
+    for i, chunk in enumerate(chunks):
+        parts.append(await _ip_extract_chunk(chunk, i + 1, len(chunks), current_user))
+    merged = _ip_merge_chunks(parts)
+    merged_text = _ip_trim_merged(merged)
+    dimension_lines = "\n".join(f"- {key}: {title}（{hint}）" for key, title, hint in _IP_DIMENSIONS)
+    system_prompt = (
+        "你是资深 IP 定位策划。请根据下面已经分段提取的事实、原话、问答和缺失项，"
+        "生成一份可以直接给短视频团队使用的 IP 档案。只输出严格 JSON："
+        '{"meta":{"name":"","industry":"","city":"","interview_date":""},'
+        '"dimensions":[{"key":"","title":"","summary":"","score":0,"evidence":[""],"quotes":[""],"gaps":[""]}],'
+        '"qa":[{"category":"","question":"","answer":""}],'
+        '"personal_doc":{"title":"个人资料","sections":[{"heading":"","content":""}]},'
+        '"company_doc":{"title":"企业资料","sections":[{"heading":"","content":""}]},'
+        '"topics":[{"title":"","reason":"","keywords":[""]}],'
+        '"missing":[{"section":"","question":""}]}。'
+        "要求：dimensions 必须按给定顺序输出全部 12 个维度，不要增删；"
+        "每个 summary 150-350 字，必须基于事实，不要编造；score 是资料完整度 0-100；"
+        "qa 输出 12-20 条，问题来自访谈高频问题/客户原话，答案用受访者口吻；"
+        "personal_doc 包含个人简介、职业经历、专业能力、个人故事、表达风格；"
+        "company_doc 包含业务介绍、产品服务、目标客户、成交案例、常见问题；"
+        "topics 输出 10 条具体选题；missing 列出仍需补充的问题。"
+        "12 个维度：\n" + dimension_lines
+    )
+    user_prompt = "【分段提取结果】\n" + merged_text + ("\n" + supplement if supplement else "") + "\n请输出最终 JSON。"
+    final = await _ip_llm_json(system_prompt, user_prompt, current_user, timeout=180.0)
+    analysis = _ip_normalize_analysis(final, keyword=(record.display_name if record else ""))
+    if supplement:
+        analysis["supplement"] = supplement
+    return {
+        "ok": True,
+        "analysis": analysis,
+        "record_id": int(body.record_id or 0) or None,
+        "chunks": len(chunks),
+        "truncated": bool(truncated),
+    }
+
+
+def _ip_personal_default_row(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
+    return (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+
+
+@router.get("/api/ip-profile/saved", summary="读取已保存的 IP 档案")
+def get_saved_ip_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    row = _ip_personal_default_row(db, int(current_user.id))
+    req = dict(row.requirements or {}) if row and isinstance(row.requirements, dict) else {}
+    analysis = req.get("ip_profile_v2") if isinstance(req.get("ip_profile_v2"), dict) else {}
+    return {"ok": True, "analysis": analysis, "updated_at": (row.updated_at.isoformat() if row and row.updated_at else "")}
+
+
+@router.post("/api/ip-profile/saved", summary="保存 IP 档案")
+def save_ip_profile(
+    body: IPProfileSavedBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    analysis = body.analysis if isinstance(body.analysis, dict) else {}
+    if not analysis:
+        raise HTTPException(status_code=400, detail="没有可保存的 IP 档案")
+    row = _ip_personal_default_row(db, int(current_user.id))
+    if row is None:
+        row = IPContentScheduleTemplate(
+            user_id=int(current_user.id),
+            name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
+            status="active",
+            requirements={},
+        )
+        db.add(row)
+    req = dict(row.requirements or {})
+    req["ip_profile_v2"] = analysis
+    meta = analysis.get("meta") if isinstance(analysis.get("meta"), dict) else {}
+    dims = analysis.get("dimensions") if isinstance(analysis.get("dimensions"), list) else []
+    dim_map = {str(d.get("key") or ""): d for d in dims if isinstance(d, dict)}
+    basic = dict(req.get("basic_profile") or {})
+    if str(meta.get("name") or "").strip():
+        basic["name"] = _clean_text(meta.get("name"), 100)
+        req["profile_name"] = basic["name"]
+    if str(meta.get("city") or "").strip():
+        basic["current_city"] = _clean_text(meta.get("city"), 100)
+    if str(meta.get("industry") or "").strip():
+        basic["role"] = _clean_text(meta.get("industry"), 100)
+    req["basic_profile"] = basic
+    for key, target in (("business", "product"), ("customers", "target_customer"), ("expertise", "advantages")):
+        dim = dim_map.get(key) if isinstance(dim_map.get(key), dict) else {}
+        summary = str(dim.get("summary") or "").strip()
+        if summary:
+            req[target] = summary
+    row.requirements = req
+    row.meta = {**(row.meta or {}), "source": "ip_profile_v2", "is_personal_default": True, "ip_profile_v2_updated_at": datetime.utcnow().isoformat()}
+    row.status = "active"
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "saved_at": row.updated_at.isoformat() if row.updated_at else ""}
+
+
+@router.post("/api/ip-profile/refine", summary="针对 IP 档案某一项补充资料并重新分析")
+async def refine_ip_profile(
+    body: IPProfileRefineBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    site_text = _ip_fetch_website_text(body.website) if str(body.website or "").strip() else ""
+    supplement = "\n".join(
+        part for part in [
+            _clean_long_text(body.supplement, 20000),
+            ("【补充官网正文】" + site_text) if site_text else (("【补充官网】" + _clean_text(body.website, 1000)) if str(body.website or "").strip() else ""),
+        ] if part
+    )
+    if not supplement:
+        raise HTTPException(status_code=400, detail="请填写补充资料")
+    target_type = _clean_text(body.target_type, 32).lower() or "dimension"
+    if target_type == "dimension":
+        system_prompt = (
+            "你是资深 IP 定位策划。根据用户补充的资料，更新这一维度的档案。只输出严格 JSON："
+            '{"summary":"","score":0,"evidence":[""],"quotes":[""],"gaps":[""]}。'
+            "summary 150-350 字，必须基于原有内容和补充资料，不要编造；score 0-100。"
+        )
+        user_prompt = "【维度】" + _clean_text(body.title, 160) + "\n【原有内容】\n" + _clean_long_text(body.current, 20000) + "\n【补充资料】\n" + supplement
+        parsed = await _ip_llm_json(system_prompt, user_prompt, current_user, timeout=120.0)
+        try:
+            score = int(float(parsed.get("score") or 0))
+        except Exception:
+            score = 0
+        result = {
+            "summary": _clean_long_text(parsed.get("summary"), 4000),
+            "score": max(0, min(100, score)),
+            "evidence": _ip_dedupe(parsed.get("evidence"), 10),
+            "quotes": _ip_dedupe(parsed.get("quotes"), 6),
+            "gaps": _ip_dedupe(parsed.get("gaps"), 8),
+        }
+    else:
+        system_prompt = (
+            "你是资深 IP 定位策划。根据用户补充的资料，更新这一段内容。只输出严格 JSON："
+            '{"text":""}。text 用中文，保留原有事实，只补充/修正，不要编造。'
+        )
+        user_prompt = "【段落】" + _clean_text(body.title, 160) + "\n【原有内容】\n" + _clean_long_text(body.current, 20000) + "\n【补充资料】\n" + supplement
+        parsed = await _ip_llm_json(system_prompt, user_prompt, current_user, timeout=120.0)
+        result = {"text": _clean_long_text(parsed.get("text"), 12000)}
+    return {"ok": True, "result": result}
+
+
+def _ip_job_key(job_id: str) -> str:
+    return "ip_profile_job:" + str(job_id or "")
+
+
+def _ip_job_get(job_id: str) -> dict[str, Any]:
+    raw = cache_get(_ip_job_key(job_id))
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _ip_job_set(job_id: str, data: dict[str, Any]) -> None:
+    payload = dict(data or {})
+    payload["updated_at"] = datetime.utcnow().isoformat()
+    cache_set(_ip_job_key(job_id), json.dumps(payload, ensure_ascii=False), 7200)
+
+
+async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, owner_id: int) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "用户不存在"})
+            return
+        user = online_user_for_mobile_user(db, user)
+        text = str(body.text or "").strip()
+        record = None
+        if body.record_id:
+            record = db.query(RecorderAudioRecord).filter(
+                RecorderAudioRecord.id == int(body.record_id),
+                RecorderAudioRecord.user_id == int(user.id),
+            ).first()
+            if record is None:
+                _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "录音不存在"})
+                return
+            if record.status != "completed" or not str(record.transcript_text or "").strip():
+                _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "录音转写完成后才能提炼"})
+                return
+            text = str(record.transcript_text or "").strip()
+        if not text:
+            _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "没有可提炼的录音或文本"})
+            return
+        supplement_parts = []
+        if str(body.website or "").strip():
+            site_text = _ip_fetch_website_text(body.website)
+            supplement_parts.append("【补充官网正文】" + site_text if site_text else "【补充官网】" + _clean_text(body.website, 1000))
+        if str(body.extra or "").strip():
+            supplement_parts.append("【补充资料】" + _clean_long_text(body.extra, 20000))
+        supplement = "\n".join(supplement_parts)
+        chunks, truncated = _ip_split_chunks(text, size=6000, overlap=300, max_chunks=8)
+        _ip_job_set(job_id, {"status": "running", "user_id": int(owner_id), "progress": 8, "stage": "读取录音转写", "chunks": len(chunks)})
+        parts = []
+        for i, chunk in enumerate(chunks):
+            _ip_job_set(job_id, {
+                "status": "running",
+                "user_id": int(owner_id),
+                "progress": 10 + int(55 * i / max(1, len(chunks))),
+                "stage": "分段理解 " + str(i + 1) + "/" + str(len(chunks)),
+                "chunks": len(chunks),
+            })
+            parts.append(await _ip_extract_chunk(chunk, i + 1, len(chunks), user))
+        merged = _ip_merge_chunks(parts)
+        merged_text = _ip_trim_merged(merged)
+        _ip_job_set(job_id, {"status": "running", "user_id": int(owner_id), "progress": 72, "stage": "归纳 12 个维度", "chunks": len(chunks)})
+        dimension_lines = "\n".join(f"- {key}: {title}（{hint}）" for key, title, hint in _IP_DIMENSIONS)
+        system_prompt = (
+            "你是资深 IP 定位策划。请根据下面已经分段提取的事实、原话、问答和缺失项，"
+            "生成一份可以直接给短视频团队使用的 IP 档案。只输出严格 JSON："
+            '{"meta":{"name":"","industry":"","city":"","interview_date":""},'
+            '"dimensions":[{"key":"","title":"","summary":"","score":0,"evidence":[""],"quotes":[""],"gaps":[""]}],'
+            '"qa":[{"category":"","question":"","answer":""}],'
+            '"personal_doc":{"title":"个人资料","sections":[{"heading":"","content":""}]},'
+            '"company_doc":{"title":"企业资料","sections":[{"heading":"","content":""}]},'
+            '"topics":[{"title":"","reason":"","keywords":[""]}],'
+            '"missing":[{"section":"","question":""}]}。'
+            "要求：dimensions 必须按给定顺序输出全部 12 个维度，不要增删；"
+            "每个 summary 150-350 字，必须基于事实，不要编造；score 是资料完整度 0-100；"
+            "qa 输出 12-20 条，问题来自访谈高频问题/客户原话，答案用受访者口吻；"
+            "personal_doc 包含个人简介、职业经历、专业能力、个人故事、表达风格；"
+            "company_doc 包含业务介绍、产品服务、目标客户、成交案例、常见问题；"
+            "topics 输出 10 条具体选题；missing 列出仍需补充的问题。"
+            "12 个维度：\n" + dimension_lines
+        )
+        user_prompt = "【分段提取结果】\n" + merged_text + ("\n" + supplement if supplement else "") + "\n请输出最终 JSON。"
+        _ip_job_set(job_id, {"status": "running", "user_id": int(owner_id), "progress": 82, "stage": "生成百问百答", "chunks": len(chunks)})
+        final = await _ip_llm_json(system_prompt, user_prompt, user, timeout=180.0)
+        analysis = _ip_normalize_analysis(final, keyword=(record.display_name if record else ""))
+        if supplement:
+            analysis["supplement"] = supplement
+        if body.record_id:
+            analysis["record_id"] = int(body.record_id)
+        _ip_job_set(job_id, {
+            "status": "done",
+            "user_id": int(owner_id),
+            "progress": 100,
+            "stage": "完成",
+            "chunks": len(chunks),
+            "result": {
+                "analysis": analysis,
+                "record_id": int(body.record_id or 0) or None,
+                "chunks": len(chunks),
+                "truncated": bool(truncated),
+            },
+        })
+    except HTTPException as exc:
+        _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": str(exc.detail or "")[:500]})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[ip-profile] job failed id=%s err=%s", job_id, str(exc)[:300])
+        _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": str(exc)[:500]})
+    finally:
+        db.close()
+
+
+@router.post("/api/ip-profile/jobs", summary="启动 IP 档案分析任务")
+async def start_ip_profile_job(
+    body: IPProfileAnalyzeBody,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    job_id = uuid.uuid4().hex
+    _ip_job_set(job_id, {"status": "queued", "user_id": int(current_user.id), "progress": 1, "stage": "排队中"})
+    background_tasks.add_task(_ip_run_job, job_id, body, int(current_user.id), int(current_user.id))
+    return {"ok": True, "job_id": job_id}
+
+
+@router.get("/api/ip-profile/jobs/{job_id}", summary="查询 IP 档案分析任务")
+def get_ip_profile_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    data = _ip_job_get(job_id)
+    if not data or int(data.get("user_id") or 0) != int(current_user.id):
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    return {"ok": True, **data}

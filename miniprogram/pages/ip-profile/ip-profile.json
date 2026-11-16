@@ -1,5 +1,9 @@
 {
-  "navigationBarTitleText": "个人IP设置",
+  "navigationBarTitleText": "个人 IP",
+  "navigationBarBackgroundColor": "#05070d",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#05070d",
+  "backgroundTextStyle": "light",
   "enablePullDownRefresh": true,
   "usingComponents": {}
 }
