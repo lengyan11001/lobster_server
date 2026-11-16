@@ -9266,6 +9266,22 @@ def _ip_job_set(job_id: str, data: dict[str, Any]) -> None:
     cache_set(_ip_job_key(job_id), json.dumps(payload, ensure_ascii=False), 7200)
 
 
+def _ip_call_update(calls: list[dict[str, Any]], call_id: str, status: str, summary: str = "") -> None:
+    now = time.time()
+    for call in calls:
+        if call.get("id") != call_id:
+            continue
+        call["status"] = status
+        if status == "running":
+            call["started_at"] = now
+        if status in ("done", "failed"):
+            call["finished_at"] = now
+            started = float(call.get("started_at") or now)
+            call["elapsed_ms"] = max(0, int((now - started) * 1000))
+            call["summary"] = summary
+        return
+
+
 async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, owner_id: int) -> None:
     db = SessionLocal()
     try:
@@ -9299,58 +9315,140 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
             supplement_parts.append("【补充资料】" + _clean_long_text(body.extra, 20000))
         supplement = "\n".join(supplement_parts)
         chunks, truncated = _ip_split_chunks(text, size=6000, overlap=300, max_chunks=8)
-        _ip_job_set(job_id, {"status": "running", "user_id": int(owner_id), "progress": 8, "stage": "读取录音转写", "chunks": len(chunks)})
+        calls: list[dict[str, Any]] = [
+            {"id": "read", "label": "读取录音转写", "status": "running", "started_at": time.time()},
+        ]
+        for i in range(len(chunks)):
+            calls.append({"id": "chunk-%d" % (i + 1), "label": "分段理解 %d/%d" % (i + 1, len(chunks)), "status": "pending"})
+        calls.extend([
+            {"id": "dimensions", "label": "归纳 12 维档案", "status": "pending"},
+            {"id": "qa", "label": "生成百问百答", "status": "pending"},
+            {"id": "docs", "label": "生成个人/企业资料", "status": "pending"},
+        ])
+        _ip_call_update(calls, "read", "done", "转写 %d 字 · %d 段" % (len(text), len(chunks)))
+        _ip_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 8,
+            "stage": "读取录音转写", "chunks": len(chunks),
+            "calls": calls, "current_call": "read", "partial": {},
+        })
         parts = []
         for i, chunk in enumerate(chunks):
+            cid = "chunk-%d" % (i + 1)
+            _ip_call_update(calls, cid, "running")
             _ip_job_set(job_id, {
                 "status": "running",
                 "user_id": int(owner_id),
                 "progress": 10 + int(55 * i / max(1, len(chunks))),
                 "stage": "分段理解 " + str(i + 1) + "/" + str(len(chunks)),
                 "chunks": len(chunks),
+                "calls": calls,
+                "current_call": cid,
+                "partial": {},
             })
-            parts.append(await _ip_extract_chunk(chunk, i + 1, len(chunks), user))
+            part = await _ip_extract_chunk(chunk, i + 1, len(chunks), user)
+            facts = part.get("facts") if isinstance(part.get("facts"), dict) else {}
+            quotes = part.get("quotes") if isinstance(part.get("quotes"), dict) else {}
+            fact_count = sum(len(v) for v in facts.values() if isinstance(v, list))
+            quote_count = sum(len(v) for v in quotes.values() if isinstance(v, list))
+            qa_count = len(part.get("qa") or [])
+            _ip_call_update(calls, cid, "done", "%d 条事实 · %d 句原话 · %d 条问答" % (fact_count, quote_count, qa_count))
+            parts.append(part)
         merged = _ip_merge_chunks(parts)
         merged_text = _ip_trim_merged(merged)
-        _ip_job_set(job_id, {"status": "running", "user_id": int(owner_id), "progress": 72, "stage": "归纳 12 个维度", "chunks": len(chunks)})
         dimension_lines = "\n".join(f"- {key}: {title}（{hint}）" for key, title, hint in _IP_DIMENSIONS)
-        system_prompt = (
-            "你是资深 IP 定位策划。请根据下面已经分段提取的事实、原话、问答和缺失项，"
-            "生成一份可以直接给短视频团队使用的 IP 档案。只输出严格 JSON："
+
+        # 第 1 次汇总调用：12 维档案 + 待补充 + 选题
+        _ip_call_update(calls, "dimensions", "running")
+        _ip_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 68,
+            "stage": "归纳 12 维档案", "chunks": len(chunks),
+            "calls": calls, "current_call": "dimensions", "partial": {},
+        })
+        dim_system = (
+            "你是资深 IP 定位策划。根据下面分段提取的事实、原话、问答和缺失项，"
+            "输出这一阶段的严格 JSON："
             '{"meta":{"name":"","industry":"","city":"","interview_date":""},'
             '"dimensions":[{"key":"","title":"","summary":"","score":0,"evidence":[""],"quotes":[""],"gaps":[""]}],'
-            '"qa":[{"category":"","question":"","answer":""}],'
-            '"personal_doc":{"title":"个人资料","sections":[{"heading":"","content":""}]},'
-            '"company_doc":{"title":"企业资料","sections":[{"heading":"","content":""}]},'
             '"topics":[{"title":"","reason":"","keywords":[""]}],'
             '"missing":[{"section":"","question":""}]}。'
             "要求：dimensions 必须按给定顺序输出全部 12 个维度，不要增删；"
             "每个 summary 150-350 字，必须基于事实，不要编造；score 是资料完整度 0-100；"
-            "qa 输出 12-20 条，问题来自访谈高频问题/客户原话，答案用受访者口吻；"
-            "personal_doc 包含个人简介、职业经历、专业能力、个人故事、表达风格；"
-            "company_doc 包含业务介绍、产品服务、目标客户、成交案例、常见问题；"
             "topics 输出 10 条具体选题；missing 列出仍需补充的问题。"
             "12 个维度：\n" + dimension_lines
         )
-        user_prompt = "【分段提取结果】\n" + merged_text + ("\n" + supplement if supplement else "") + "\n请输出最终 JSON。"
-        _ip_job_set(job_id, {"status": "running", "user_id": int(owner_id), "progress": 82, "stage": "生成百问百答", "chunks": len(chunks)})
-        final = await _ip_llm_json(system_prompt, user_prompt, user, timeout=180.0)
-        analysis = _ip_normalize_analysis(final, keyword=(record.display_name if record else ""))
+        dim_prompt = "【分段提取结果】\n" + merged_text + ("\n" + supplement if supplement else "") + "\n请输出 JSON。"
+        dim_parsed = await _ip_llm_json(dim_system, dim_prompt, user, timeout=180.0)
+        partial = _ip_normalize_analysis(dim_parsed, keyword=(record.display_name if record else ""))
+        _ip_call_update(calls, "dimensions", "done", "%d 个维度 · %d 个待补充" % (len(partial.get("dimensions") or []), len(partial.get("missing") or [])))
+        _ip_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 78,
+            "stage": "生成百问百答", "chunks": len(chunks),
+            "calls": calls, "current_call": "qa", "partial": partial,
+        })
+
+        # 第 2 次汇总调用：百问百答
+        _ip_call_update(calls, "qa", "running")
+        dim_summary = json.dumps([
+            {"title": row.get("title"), "summary": row.get("summary")}
+            for row in (partial.get("dimensions") or [])
+        ], ensure_ascii=False)
+        qa_system = (
+            "你是资深 IP 访谈整理员。根据事实和已经生成的 12 维档案，输出严格 JSON："
+            '{"qa":[{"category":"","question":"","answer":""}]}。'
+            "qa 输出 12-20 条，问题来自访谈高频问题、客户原话或行业常见疑问，"
+            "答案用受访者本人的口吻，具体、口语化，不要编造事实。"
+        )
+        qa_prompt = "【分段提取结果】\n" + merged_text + "\n【12 维档案】\n" + dim_summary + ("\n" + supplement if supplement else "") + "\n请输出 JSON。"
+        qa_parsed = await _ip_llm_json(qa_system, qa_prompt, user, timeout=150.0)
+        merged_parsed = {**dim_parsed, "qa": qa_parsed.get("qa")}
+        partial = _ip_normalize_analysis(merged_parsed, keyword=(record.display_name if record else ""))
+        _ip_call_update(calls, "qa", "done", "%d 条问答" % len(partial.get("qa") or []))
+        _ip_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 90,
+            "stage": "生成个人/企业资料", "chunks": len(chunks),
+            "calls": calls, "current_call": "docs", "partial": partial,
+        })
+
+        # 第 3 次汇总调用：个人资料 + 企业资料
+        _ip_call_update(calls, "docs", "running")
+        docs_system = (
+            "你是资深 IP 内容策划。根据事实和 12 维档案，输出严格 JSON："
+            '{"personal_doc":{"title":"个人资料","sections":[{"heading":"","content":""}]},'
+            '"company_doc":{"title":"企业资料","sections":[{"heading":"","content":""}]}}。'
+            "个人资料包含：个人简介、职业经历、专业能力、个人故事、表达风格；"
+            "企业资料包含：业务介绍、产品服务、目标客户、成交案例、常见问题。"
+            "每个 section 内容 150-500 字，必须基于事实，不要编造。"
+        )
+        docs_prompt = "【分段提取结果】\n" + merged_text + "\n【12 维档案】\n" + dim_summary + ("\n" + supplement if supplement else "") + "\n请输出 JSON。"
+        docs_parsed = await _ip_llm_json(docs_system, docs_prompt, user, timeout=180.0)
+        full_parsed = {
+            **merged_parsed,
+            "personal_doc": docs_parsed.get("personal_doc"),
+            "company_doc": docs_parsed.get("company_doc"),
+        }
+        analysis = _ip_normalize_analysis(full_parsed, keyword=(record.display_name if record else ""))
         if supplement:
             analysis["supplement"] = supplement
         if body.record_id:
             analysis["record_id"] = int(body.record_id)
+        personal_sections = len((analysis.get("personal_doc") or {}).get("sections") or [])
+        company_sections = len((analysis.get("company_doc") or {}).get("sections") or [])
+        _ip_call_update(calls, "docs", "done", "个人 %d 节 · 企业 %d 节" % (personal_sections, company_sections))
         _ip_job_set(job_id, {
             "status": "done",
             "user_id": int(owner_id),
             "progress": 100,
             "stage": "完成",
             "chunks": len(chunks),
+            "calls": calls,
+            "current_call": "",
+            "partial": analysis,
             "result": {
                 "analysis": analysis,
                 "record_id": int(body.record_id or 0) or None,
                 "chunks": len(chunks),
                 "truncated": bool(truncated),
+                "calls": calls,
             },
         })
     except HTTPException as exc:

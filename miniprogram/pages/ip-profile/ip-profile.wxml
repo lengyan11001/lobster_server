@@ -18,6 +18,7 @@
       <view class="summary-main">
         <text class="summary-name">{{meta.name || '未命名 IP'}}</text>
         <text class="summary-meta">{{meta.industry || '待补充行业'}}{{meta.city ? ' · ' + meta.city : ''}}</text>
+        <text wx:if="{{jobCalls.length && !analyzing}}" class="summary-calls">本次分析 {{jobCalls.length}} 次 AI 调用</text>
       </view>
       <view class="summary-score">
         <text class="score-num">{{completeness}}</text>
@@ -37,19 +38,31 @@
     <view class="scan-copy">
       <text class="scan-title">AI 正在理解这次采访</text>
       <text class="scan-desc">录音只转写一次，内容会分段理解，避免一次输入太多导致遗漏。</text>
-      <view class="steps">
-        <view wx:for="{{analyzeSteps}}" wx:key="*this" class="step {{analyzeStep > index ? 'done' : (analyzeStep === index ? 'active' : '')}}">
-          <view class="step-dot">{{analyzeStep > index ? '✓' : index + 1}}</view>
-          <text class="step-label">{{item}}</text>
+      <view wx:if="{{jobCalls.length}}" class="call-meta">第 {{jobCallIndex + 1}}/{{jobCalls.length}} 次 AI 调用 · {{analyzeProgress}}%</view>
+      <text wx:else class="call-meta">正在连接分析服务…</text>
+      <scroll-view wx:if="{{jobCalls.length}}" class="calls" scroll-y scroll-into-view="{{jobScrollInto}}" scroll-with-animation>
+        <view wx:for="{{jobCalls}}" wx:key="id" id="call-{{index}}" class="call {{item.status}}">
+          <view class="call-dot">
+            <view wx:if="{{item.status === 'running'}}" class="call-spin"></view>
+            <text wx:elif="{{item.status === 'done'}}">✓</text>
+            <text wx:else>·</text>
+          </view>
+          <view class="call-main">
+            <view class="call-line">
+              <text class="call-label">{{item.label}}</text>
+              <text class="call-time">{{item.elapsedText}}</text>
+            </view>
+            <text wx:if="{{item.summary}}" class="call-summary">{{item.summary}}</text>
+          </view>
         </view>
-      </view>
+      </scroll-view>
       <view class="progress"><view class="progress-bar" style="width: {{analyzeProgress}}%"></view></view>
     </view>
   </view>
 
-  <view wx:elif="{{loading}}" class="empty"><text>正在读取 IP 档案…</text></view>
+  <view wx:if="{{loading && !analysis}}" class="empty"><text>正在读取 IP 档案…</text></view>
 
-  <view wx:elif="{{!analysis}}" class="empty">
+  <view wx:if="{{!analysis && !analyzing && !loading}}" class="empty">
     <view class="empty-orb"><view class="empty-ring"></view><text>IP</text></view>
     <text class="empty-title">还没有 IP 档案</text>
     <text class="empty-desc">选一段采访录音，AI 会分段理解，生成 12 维档案、百问百答、个人/企业资料。</text>
@@ -59,7 +72,8 @@
     </view>
   </view>
 
-  <block wx:else>
+  <block wx:if="{{analysis}}">
+    <view class="result tick-{{resultTick % 2}}">
     <scroll-view class="tabs" scroll-x enhanced show-scrollbar="{{false}}">
       <view wx:for="{{tabs}}" wx:key="key" class="tab {{activeTab === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="switchTab">{{item.label}}</view>
     </scroll-view>
@@ -150,6 +164,7 @@
         </view>
       </view>
     </block>
+    </view>
   </block>
 
   <view wx:if="{{recordingOpen}}" class="overlay" catchtap="closeRecording">

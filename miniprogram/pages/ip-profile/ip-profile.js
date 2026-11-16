@@ -21,6 +21,14 @@ function fmtTime(value) {
   return String(value || "").replace("T", " ").slice(0, 16);
 }
 
+function withElapsed(calls) {
+  return (calls || []).map((call) => Object.assign({}, call, {
+    elapsedText: call && call.elapsed_ms
+      ? (Number(call.elapsed_ms) / 1000).toFixed(1) + "s"
+      : (call && call.status === "running" ? "进行中" : "")
+  }));
+}
+
 Page({
   data: {
     tabs: TABS,
@@ -39,6 +47,11 @@ Page({
     analyzeStep: 0,
     analyzeSteps: ANALYZE_STEPS,
     analyzeProgress: 0,
+    jobCalls: [],
+    jobCallIndex: 0,
+    jobScrollInto: "",
+    resultTick: 0,
+    resultFresh: false,
     recordingOpen: false,
     recordings: [],
     recordingsLoading: false,
@@ -118,7 +131,7 @@ Page({
       this._analyzeStartedAt = startedAt;
       this._analyzeErrors = 0;
       this._jobId = String(saved.id);
-      this.setData({ analyzing: true, analyzeProgress: 2, analyzeStep: 0, activeTab: "profile" });
+      this.setData({ analyzing: true, analyzeProgress: 2, analyzeStep: 0, activeTab: "profile", jobCalls: [], jobCallIndex: 0, jobScrollInto: "" });
       this.pollAnalyzeJob(this._jobId);
     } catch (err) {}
   },
@@ -174,7 +187,7 @@ Page({
 
   startAnalyze(payload) {
     if (this.data.analyzing) return;
-    this.setData({ analyzing: true, analyzeStep: 0, analyzeProgress: 2, activeTab: "profile" });
+    this.setData({ analyzing: true, analyzeStep: 0, analyzeProgress: 2, activeTab: "profile", jobCalls: [], jobCallIndex: 0, jobScrollInto: "" });
     clearTimeout(this._analyzePollTimer);
     this._analyzePollTimer = null;
     this._analyzeErrors = 0;
@@ -205,10 +218,25 @@ Page({
         .then((data) => {
           this._analyzeErrors = 0;
           const progress = Math.max(2, Math.min(100, Number((data && data.progress) || 0)));
-          this.setData({
+          const calls = withElapsed((data && data.calls) || []);
+          const currentId = String((data && data.current_call) || "");
+          let callIndex = calls.findIndex((row) => row.id === currentId);
+          if (callIndex < 0) callIndex = calls.findIndex((row) => row.status === "running");
+          const patch = {
             analyzeProgress: progress,
             analyzeStep: Math.min(4, Math.floor(progress / 20))
-          });
+          };
+          if (calls.length) {
+            patch.jobCalls = calls;
+            patch.jobCallIndex = Math.max(0, callIndex);
+            patch.jobScrollInto = callIndex >= 0 ? "call-" + callIndex : "";
+          }
+          this.setData(patch);
+          const partial = data && data.partial;
+          if (partial && Array.isArray(partial.dimensions) && partial.dimensions.length) {
+            this.applyAnalysis(partial);
+            this.setData({ resultTick: (this.data.resultTick || 0) + 1 });
+          }
           const status = String((data && data.status) || "");
           if (status === "done") {
             const result = (data && data.result) || {};
@@ -219,6 +247,13 @@ Page({
             this._lastRecordId = Number(result.record_id || analysis.record_id || this._lastRecordId || 0) || this._lastRecordId;
             if (result.record_id) analysis.record_id = result.record_id;
             this.applyAnalysis(analysis);
+            this.setData({
+              jobCalls: withElapsed(result.calls || calls),
+              jobScrollInto: "",
+              resultTick: (this.data.resultTick || 0) + 1,
+              resultFresh: true
+            });
+            setTimeout(() => this.setData({ resultFresh: false }), 1600);
             this.saveAnalysis();
             wx.showToast({ title: "IP 档案已生成", icon: "success" });
             return;
