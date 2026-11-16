@@ -77,16 +77,30 @@ Page({
       const competition = Number(row.competition || 0);
       const pros = Array.isArray(row.pros) ? row.pros : [];
       const cons = Array.isArray(row.cons) ? row.cons : [];
-      const liveText = row.source === "douyin"
-        ? ("抖音实测" + (row.hotRank ? " · 热搜第 " + row.hotRank : "") + (row.topLikes ? " · 头部赞 " + row.topLikes : ""))
+      const fmtNum = (n) => {
+        const v = Number(n || 0);
+        if (v >= 100000000) return (v / 100000000).toFixed(1).replace(/\.0$/, "") + "亿";
+        if (v >= 10000) return (v / 10000).toFixed(1).replace(/\.0$/, "") + "万";
+        return String(v);
+      };
+      const liveText = row.source === "douyin_search"
+        ? ("抖音实测 · 抓真实搜索结果 " + (row.samples || 0) + " 条")
         : "";
+      const verdictClass = row.verdict === "值得做" ? "good" : (row.verdict === "竞争过重" ? "bad" : (row.verdict === "能打，靠差异化" ? "mid" : "none"));
+      const top = Array.isArray(row.topTitles) && row.topTitles.length ? row.topTitles[0] : null;
       return Object.assign({}, row, {
         heat,
         competition,
         room: Math.max(0, 100 - competition),
         prosText: pros.join(" · "),
         consText: cons.join(" · "),
-        liveText
+        liveText,
+        midLikesText: fmtNum(row.midLikes),
+        topLikesText: fmtNum(row.topLikes),
+        marginText: row.verdict ? ("（需求 " + Number(row.heat || 0) + " - 竞争 " + Number(row.competition || 0) + "）") : "",
+        verdictClass,
+        sampleTitle: top ? String(top.desc || "").slice(0, 28) : "",
+        related: Array.isArray(row.related) ? row.related : []
       });
     }).sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
   },
@@ -210,9 +224,17 @@ Page({
           return Object.assign({}, row, {
             heat: hit.heat || row.heat,
             competition: hit.competition || row.competition,
-            source: "douyin",
-            hotRank: hit.hot_rank || 0,
-            topLikes: hit.top_likes || 0
+            source: "douyin_search",
+            samples: hit.samples || 0,
+            midLikes: hit.mid_likes || 0,
+            topLikes: hit.top_likes || 0,
+            bigRatio: hit.big_ratio || 0,
+            freshRatio: hit.fresh_ratio || 0,
+            interRatio: hit.inter_ratio || 0,
+            margin: hit.margin || 0,
+            verdict: hit.verdict || "",
+            related: Array.isArray(hit.related) ? hit.related : [],
+            topTitles: Array.isArray(hit.top_titles) ? hit.top_titles : []
           });
         });
         const keywords = this.normalizeKeywords(merged);

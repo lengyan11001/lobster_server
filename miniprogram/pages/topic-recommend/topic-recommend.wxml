@@ -10,7 +10,7 @@
   <view class="panel">
     <view class="panel-acts">
       <view class="btn primary {{running ? 'busy' : ''}}" bindtap="start">{{running ? '生成中…' : (hasPlan ? '重新生成 50 条' : 'AI 生成 50 条选题')}}</view>
-      <view class="btn ghost {{metricsLoading ? 'busy' : ''}}" bindtap="checkDouyin">{{metricsLoading ? '校验中…' : '抖音数据校验'}}</view>
+      <view class="btn ghost {{metricsLoading ? 'busy' : ''}}" bindtap="checkDouyin">{{metricsLoading ? '校验中…' : '抖音竞品体检'}}</view>
     </view>
 
     <view wx:if="{{errorText}}" class="err">{{errorText}}</view>
@@ -48,6 +48,15 @@
           <view class="bar"><text class="bar-k">变现</text><view class="bar-t"><view class="bar-f money" style="width:{{item.monetize}}%"></view></view></view>
         </view>
         <view wx:if="{{item.source === 'douyin'}}" class="kw-live">{{item.liveText}}</view>
+        <view wx:if="{{item.source === 'douyin_search'}}" class="serp">
+          <view class="serp-row"><text class="serp-k">样本</text><text class="serp-v">{{item.samples}} 条 · 中位赞 {{item.midLikesText}} · 头部赞 {{item.topLikesText}}</text></view>
+          <view class="serp-row"><text class="serp-k">结构</text><text class="serp-v">大号占 {{item.bigRatio}}% · 近30天新发 {{item.freshRatio}}% · 评论赞比 {{item.interRatio}}%</text></view>
+          <view wx:if="{{item.sampleTitle}}" class="serp-row"><text class="serp-k">例</text><text class="serp-v">「{{item.sampleTitle}}」</text></view>
+          <view class="serp-verdict {{item.verdictClass}}">{{item.verdict}}<text wx:if="{{item.marginText}}" class="serp-margin">{{item.marginText}}</text></view>
+          <view wx:if="{{item.related.length}}" class="chips">
+            <text wx:for="{{item.related}}" wx:for-item="w" wx:key="*this" class="chip inner">{{w}}</text>
+          </view>
+        </view>
         <view wx:if="{{item.prosText}}" class="kw-line"><text class="mini good">优</text><text class="kw-line-text">{{item.prosText}}</text></view>
         <view wx:if="{{item.consText}}" class="kw-line"><text class="mini bad">劣</text><text class="kw-line-text">{{item.consText}}</text></view>
         <view wx:if="{{item.note}}" class="kw-note">{{item.note}}</view>

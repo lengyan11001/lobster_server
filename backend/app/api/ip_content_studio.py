@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -9891,43 +9892,96 @@ def get_latest_ip_topic_plan(
     return {"ok": True, "plan": plan, "updated_at": (row.updated_at.isoformat() if row and row.updated_at else "")}
 
 
-def _ip_collect_numbers(node: Any, key_names: tuple[str, ...], out: list[int], depth: int = 0) -> None:
-    if depth > 9 or len(out) > 400:
+def _ip_collect_awemes(node: Any, out: list[dict[str, Any]], depth: int = 0) -> None:
+    """从 TikHub 搜索响应里捞出视频条目（字段名各接口不一样，按 statistics 兜）。"""
+    if depth > 10 or len(out) > 600:
         return
     if isinstance(node, dict):
-        for key, value in node.items():
-            lowered = str(key).lower()
-            if lowered in key_names and isinstance(value, (int, float)):
-                out.append(int(value))
-            else:
-                _ip_collect_numbers(value, key_names, out, depth + 1)
+        stats = node.get("statistics") if isinstance(node.get("statistics"), dict) else None
+        desc = node.get("desc")
+        if stats is not None and desc is not None:
+            author = node.get("author") if isinstance(node.get("author"), dict) else {}
+            try:
+                digg = int(stats.get("digg_count") or 0)
+            except Exception:
+                digg = 0
+            try:
+                comment = int(stats.get("comment_count") or 0)
+            except Exception:
+                comment = 0
+            try:
+                share = int(stats.get("share_count") or 0)
+            except Exception:
+                share = 0
+            try:
+                create_time = int(node.get("create_time") or 0)
+            except Exception:
+                create_time = 0
+            try:
+                fans = int(author.get("follower_count") or 0)
+            except Exception:
+                fans = 0
+            out.append({
+                "desc": _clean_text(desc, 200),
+                "digg": digg,
+                "comment": comment,
+                "share": share,
+                "create_time": create_time,
+                "fans": fans,
+                "nickname": _clean_text(author.get("nickname"), 60),
+            })
+            return
+        for value in node.values():
+            _ip_collect_awemes(value, out, depth + 1)
     elif isinstance(node, list):
         for item in node:
-            _ip_collect_numbers(item, key_names, out, depth + 1)
+            _ip_collect_awemes(item, out, depth + 1)
 
 
-def _ip_collect_words(node: Any, out: list[str], depth: int = 0) -> None:
-    if depth > 9 or len(out) > 800:
-        return
-    if isinstance(node, dict):
-        for key, value in node.items():
-            lowered = str(key).lower()
-            if lowered in ("word", "sentence", "title", "keyword", "hot_word", "name") and isinstance(value, str):
-                text = _clean_text(value, 60)
-                if text:
-                    out.append(text)
-            else:
-                _ip_collect_words(value, out, depth + 1)
-    elif isinstance(node, list):
-        for item in node:
-            _ip_collect_words(item, out, depth + 1)
+def _ip_median(values: list[int]) -> int:
+    rows = sorted(int(v) for v in values if v is not None)
+    if not rows:
+        return 0
+    mid = len(rows) // 2
+    if len(rows) % 2:
+        return rows[mid]
+    return int((rows[mid - 1] + rows[mid]) / 2)
+
+
+def _ip_clamp(value: float) -> int:
+    return max(0, min(100, int(round(value))))
+
+
+async def _ip_topic_related_words(titles_by_keyword: dict[str, list[str]], user: User) -> dict[str, list[str]]:
+    if not titles_by_keyword:
+        return {}
+    parts: list[str] = []
+    for word, titles in titles_by_keyword.items():
+        parts.append("【关键词：" + word + "】\n" + "\n".join(titles[:20]))
+    system_prompt = (
+        "你是抖音搜索词分析。下面每个关键词后面是这个关键词在抖音的真实搜索结果标题。"
+        "请提炼用户实际在用这个关键词搜什么长尾需求。只输出严格 JSON："
+        '{"related":{"关键词":["长尾词1","长尾词2"]}}。'
+        "每个关键词 6-8 个，每个长尾词不超过 12 字，必须能从这些标题里看出来，不要编造行业黑话。"
+    )
+    user_prompt = "\n\n".join(parts)[:12000] + "\n\n请输出 JSON。"
+    parsed = await _ip_llm_json(system_prompt, user_prompt, user, timeout=120.0)
+    raw = parsed.get("related") if isinstance(parsed.get("related"), dict) else {}
+    out: dict[str, list[str]] = {}
+    for word in titles_by_keyword:
+        rows = raw.get(word) or []
+        cleaned = [_clean_text(x, 30) for x in rows if _clean_text(x, 30)]
+        if cleaned:
+            out[word] = cleaned[:8]
+    return out
 
 
 class IPTopicMetricsBody(BaseModel):
     keywords: list[str] = Field(default_factory=list)
+    with_related: bool = True
 
 
-@router.post("/api/ip-profile/topics/keyword-metrics", summary="用抖音数据校验关键词热度与竞争度")
+@router.post("/api/ip-profile/topics/keyword-metrics", summary="抖音站内竞品体检：按关键词抓真实搜索结果算需求与竞争")
 async def ip_topic_keyword_metrics(
     body: IPTopicMetricsBody,
     current_user: User = Depends(get_current_user),
@@ -9937,36 +9991,20 @@ async def ip_topic_keyword_metrics(
     words = [_clean_text(w, 40) for w in (body.keywords or [])]
     words = [w for w in words if w][:6]
     if not words:
-        raise HTTPException(status_code=400, detail="请提供要校验的关键词")
+        raise HTTPException(status_code=400, detail="请提供要体检的关键词")
     try:
         has_tikhub_key = bool(_tikhub_api_key())
-    except HTTPException:
-        has_tikhub_key = False
     except Exception:
         has_tikhub_key = False
     if not has_tikhub_key:
         return {"ok": True, "enabled": False, "note": "服务器未配置 TIKHUB_API_KEY，暂用模型预估评分", "metrics": []}
 
-    hot_words: list[str] = []
-    hot_error = ""
-    try:
-        status, payload, _headers, _latency = await _call_tikhub("douyin_hot_search", {}, {})
-        if status < 400:
-            _ip_collect_words(payload, hot_words)
-        else:
-            hot_error = "抖音热搜榜返回 " + str(status)
-    except Exception as exc:  # noqa: BLE001
-        hot_error = str(exc)[:120]
-
+    now_ts = int(time.time())
     metrics: list[dict[str, Any]] = []
+    titles_by_keyword: dict[str, list[str]] = {}
     for word in words:
-        hot_rank = 0
-        for idx, hot in enumerate(hot_words[:200]):
-            if word and (word in hot or hot in word):
-                hot_rank = idx + 1
-                break
-        likes: list[int] = []
-        search_error = ""
+        rows: list[dict[str, Any]] = []
+        error = ""
         try:
             status, payload, _headers, _latency = await _call_tikhub(
                 "douyin_search_video_v2",
@@ -9974,38 +10012,80 @@ async def ip_topic_keyword_metrics(
                 {"keyword": word, "cursor": 0, "sort_type": 0, "publish_time": 0, "filter_duration": "", "content_type": ""},
             )
             if status < 400:
-                _ip_collect_numbers(payload, ("digg_count", "like_count", "digg"), likes)
+                _ip_collect_awemes(payload, rows)
             else:
-                search_error = "搜索返回 " + str(status)
+                error = "搜索接口返回 " + str(status)
         except Exception as exc:  # noqa: BLE001
-            search_error = str(exc)[:120]
-        likes.sort(reverse=True)
-        top_likes = likes[0] if likes else 0
-        avg_likes = int(sum(likes[:10]) / len(likes[:10])) if likes else 0
-        heat = 0
-        if hot_rank:
-            heat = max(60, 100 - hot_rank)
-        elif avg_likes:
-            heat = min(95, max(20, int(avg_likes ** 0.34)))
-        competition = 0
-        if top_likes:
-            competition = min(100, max(10, int((top_likes ** 0.30) * 3)))
+            error = str(exc)[:140]
+
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            key = (row.get("desc") or "") + "|" + str(row.get("digg") or 0)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+
+        sample = deduped[:20]
+        diggs = [int(r.get("digg") or 0) for r in sample]
+        comments = [int(r.get("comment") or 0) for r in sample]
+        top_likes = max(diggs) if diggs else 0
+        mid_likes = _ip_median(diggs)
+        mid_comment = _ip_median(comments)
+        big = sum(1 for r in sample if int(r.get("fans") or 0) >= 500000)
+        fresh = sum(1 for r in sample if int(r.get("create_time") or 0) >= now_ts - 30 * 86400)
+        n = len(sample) or 1
+        big_ratio = round(big * 100.0 / n)
+        fresh_ratio = round(fresh * 100.0 / n)
+        inter_ratio = round(min(100.0, (mid_comment * 100.0 / mid_likes) if mid_likes else 0.0), 1)
+
+        demand = _ip_clamp(20 * math.log10(mid_likes + 1) + 18 * (fresh_ratio / 100.0) + 10 * min(1.0, inter_ratio / 8.0))
+        competition = _ip_clamp(10 * math.log10(top_likes + 1) + 30 * (big_ratio / 100.0) + 12 * (1 - fresh_ratio / 100.0))
+        if not sample:
+            demand = 0
+            competition = 0
+        margin = demand - competition
+        if not sample:
+            verdict = "无数据"
+        elif margin >= 15:
+            verdict = "值得做"
+        elif margin >= -5:
+            verdict = "能打，靠差异化"
+        else:
+            verdict = "竞争过重"
+
         metrics.append({
             "word": word,
-            "hot_rank": hot_rank,
-            "hot_hit": bool(hot_rank),
-            "samples": len(likes),
+            "samples": len(sample),
+            "mid_likes": mid_likes,
             "top_likes": top_likes,
-            "avg_likes": avg_likes,
-            "heat": heat,
+            "mid_comment": mid_comment,
+            "inter_ratio": inter_ratio,
+            "big_ratio": big_ratio,
+            "fresh_ratio": fresh_ratio,
+            "heat": demand,
             "competition": competition,
-            "source": "tikhub",
-            "error": search_error,
+            "margin": margin,
+            "verdict": verdict,
+            "source": "douyin_search",
+            "error": error,
+            "top_titles": [{"desc": r.get("desc") or "", "digg": int(r.get("digg") or 0), "nickname": r.get("nickname") or ""} for r in sample[:3]],
         })
+        titles_by_keyword[word] = [str(r.get("desc") or "") for r in sample if r.get("desc")]
+
+    related: dict[str, list[str]] = {}
+    if body.with_related:
+        try:
+            related = await _ip_topic_related_words(titles_by_keyword, current_user)
+        except Exception:
+            related = {}
+    for row in metrics:
+        row["related"] = related.get(row["word"], [])
+
     return {
         "ok": True,
         "enabled": True,
-        "note": "抖音没有公开的关键词难度接口；这里用热搜榜命中 + 搜索样本点赞估算热度与竞争度",
-        "hot_error": hot_error,
+        "note": "抖音没有公开的关键词难度接口；这里抓的是每个关键词的真实搜索结果（前 20 条），据此算需求和竞争",
         "metrics": metrics,
     }
