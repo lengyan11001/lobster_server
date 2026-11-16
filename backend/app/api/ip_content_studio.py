@@ -10023,7 +10023,7 @@ async def ip_topic_keyword_metrics(
             status, payload, _headers, _latency = await _call_tikhub(
                 "douyin_search_video_v2",
                 {},
-                {"keyword": word, "cursor": 0, "sort_type": 0, "publish_time": 0, "filter_duration": "", "content_type": ""},
+                {"keyword": word},
             )
             if status < 400:
                 _ip_collect_awemes(payload, rows)
@@ -10089,7 +10089,7 @@ async def ip_topic_keyword_metrics(
         titles_by_keyword[word] = [str(r.get("desc") or "") for r in sample if r.get("desc")]
 
     related: dict[str, list[str]] = {}
-    if body.with_related:
+    if body.with_related and any(titles_by_keyword.values()):
         try:
             related = await _ip_topic_related_words(titles_by_keyword, current_user)
         except Exception:
@@ -10100,6 +10100,6 @@ async def ip_topic_keyword_metrics(
     return {
         "ok": True,
         "enabled": True,
-        "note": "抖音没有公开的关键词难度接口；这里抓的是每个关键词的真实搜索结果（前 20 条），据此算需求和竞争",
+        "note": "抖音没有公开的关键词难度接口；这里抓的是每个关键词的真实搜索结果首页（约 7-20 条），据此算需求和竞争",
         "metrics": metrics,
     }
