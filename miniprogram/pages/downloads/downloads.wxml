@@ -47,8 +47,6 @@
 
     <view wx:else class="list">
       <view wx:for="{{items}}" wx:key="key" class="work-card" data-index="{{index}}" bindtap="openDetail" hover-class="press">
-        <image class="card-bg" src="/assets/design/works-card-bg.jpg" mode="aspectFill" />
-        <view class="card-shade"></view>
         <view class="card-body">
           <view class="thumb">
             <image wx:if="{{item.thumb}}" class="thumb-img" src="{{item.thumb}}" mode="aspectFill" />
