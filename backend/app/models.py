@@ -504,6 +504,18 @@ class IPProfileV2Archive(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class IPTopicPlan(Base):
+    """Miniprogram-only 推荐选题 plan (keywords + 宫格 + 50 选题文案). Latest per user."""
+
+    __tablename__ = "ip_topic_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    plan: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class MomentsCoachMaterial(Base):
     """Verified real-life material used by the WeChat Moments sales coach."""
 

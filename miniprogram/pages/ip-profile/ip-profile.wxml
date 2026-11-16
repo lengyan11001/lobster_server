@@ -10,6 +10,7 @@
         <text class="sub">录音提炼 · 12 维档案 · 百问百答</text>
       </view>
       <view class="hero-actions">
+        <view class="act accent" bindtap="openTopicRecommend" hover-class="press">推荐选题</view>
         <view class="act primary" bindtap="startPickRecording" hover-class="press">选择录音</view>
         <view class="act ghost" bindtap="openGlobalSupplement" hover-class="press">补充资料</view>
       </view>

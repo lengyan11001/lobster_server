@@ -31,6 +31,7 @@
     "pages/secretary/secretary",
     "pages/secretary-detail/secretary-detail",
     "pages/ip-profile/ip-profile",
+    "pages/topic-recommend/topic-recommend",
     "pages/template-edit/template-edit"
   ],
   "window": {

@@ -29,7 +29,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .installation_slots import optional_installation_id_from_request
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, IPProfileV2Archive, OpenClawMemoryDocument, RecorderAudioRecord, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
+from ..models import Asset, ContentCompetitorAccount, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentDraftRecord, IPContentKeyword, IPContentProfileSurvey, IPContentScheduleTemplate, IPProfileV2Archive, IPTopicPlan, OpenClawMemoryDocument, RecorderAudioRecord, ScheduledTask, ScheduledTaskRun, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger, apply_credit_delta
 from ..services.runtime_cache import cache_get, cache_set
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
@@ -9485,3 +9485,527 @@ def get_ip_profile_job(
     if not data or int(data.get("user_id") or 0) != int(current_user.id):
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
     return {"ok": True, **data}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 推荐选题：IP 档案 → 账号关键词（含抖音数据校验）→ 5x5 宫格 → 50 条选题 + 口播文案
+# ─────────────────────────────────────────────────────────────────────────────
+
+_IP_TOPIC_KEYWORD_WEIGHTS = {"heat": 0.20, "competition": 0.25, "fit": 0.30, "monetize": 0.15, "extend": 0.10}
+
+
+def _ip_archive_digest(analysis: Any, limit: int = 9000) -> str:
+    """把 12 维档案压成一段给 LLM 的摘要（避免一次塞太多）。"""
+    data = analysis if isinstance(analysis, dict) else {}
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    lines: list[str] = []
+    basics = [x for x in [
+        _clean_text(meta.get("name"), 60),
+        _clean_text(meta.get("industry"), 60),
+        _clean_text(meta.get("city"), 40),
+    ] if x]
+    if basics:
+        lines.append("【基础】" + " · ".join(basics))
+    for row in (data.get("dimensions") or []):
+        if not isinstance(row, dict):
+            continue
+        summary = _clean_long_text(row.get("summary"), 700)
+        if not summary:
+            continue
+        title = _clean_text(row.get("title") or row.get("key"), 40)
+        lines.append("【" + (title or "档案") + "】" + summary)
+    qa_lines: list[str] = []
+    for row in (data.get("qa") or [])[:12]:
+        if isinstance(row, dict) and str(row.get("question") or "").strip():
+            qa_lines.append("Q:" + _clean_text(row.get("question"), 80) + " A:" + _clean_long_text(row.get("answer"), 180))
+    if qa_lines:
+        lines.append("【百问百答节选】\n" + "\n".join(qa_lines))
+    for key, label in (("personal", "个人资料"), ("company", "企业资料")):
+        doc = data.get(key) if isinstance(data.get(key), dict) else {}
+        parts = []
+        for section in (doc.get("sections") or [])[:8]:
+            if isinstance(section, dict):
+                body = _clean_long_text(section.get("content"), 400)
+                if body:
+                    parts.append(_clean_text(section.get("heading"), 40) + "：" + body)
+        if parts:
+            lines.append("【" + label + "】\n" + "\n".join(parts))
+    return "\n".join(lines)[:limit]
+
+
+def _ip_topic_numbers(row: dict[str, Any]) -> tuple[int, dict[str, int]]:
+    def _num(key: str) -> int:
+        try:
+            return max(0, min(100, int(float(row.get(key) or 0))))
+        except Exception:
+            return 0
+    dims = {key: _num(key) for key in _IP_TOPIC_KEYWORD_WEIGHTS}
+    if not any(dims.values()):
+        base = 55 + min(15, len(row.get("pros") or []) * 5) - min(20, len(row.get("cons") or []) * 6)
+        dims = {"heat": base, "competition": 50, "fit": base, "monetize": 50, "extend": base}
+    score = (
+        dims["heat"] * 0.20
+        + (100 - dims["competition"]) * 0.25
+        + dims["fit"] * 0.30
+        + dims["monetize"] * 0.15
+        + dims["extend"] * 0.10
+    )
+    return max(0, min(100, int(round(score)))), dims
+
+
+async def _ip_topic_extract_keywords(digest: str, user: User, count: int = 10) -> list[dict[str, Any]]:
+    system_prompt = (
+        "你是抖音账号内容策划。根据 IP 档案提炼这个账号必须占住的关键词（用户真实会搜索的词/话题词，不要宽泛行业大词）。"
+        "只输出严格 JSON："
+        '{"keywords":[{"word":"4-8字中文关键词","heat":0,"competition":0,"fit":0,"monetize":0,"extend":0,'
+        '"pros":["优势"],"cons":["劣势"],"note":"一句话判断"}]}。'
+        "heat=抖音搜索热度预估；competition=同类内容竞争激烈程度（越高越卷）；fit=与本人业务和客户的匹配度；"
+        "monetize=能否直接承接咨询/成交；extend=能延展出多少选题。全部 0-100 整数。"
+        "pros/cons 各 1-2 条，必须结合档案里真实的产品、客户、案例、原话，档案里没有的不要编。"
+    )
+    user_prompt = "【IP 档案】\n" + digest + "\n\n请输出 " + str(count) + " 个关键词的 JSON。"
+    parsed = await _ip_llm_json(system_prompt, user_prompt, user, timeout=150.0)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in (parsed.get("keywords") or [])[: max(count * 2, count)]:
+        if not isinstance(row, dict):
+            continue
+        word = _clean_text(row.get("word"), 40)
+        if not word or word in seen:
+            continue
+        seen.add(word)
+        score, dims = _ip_topic_numbers(row)
+        out.append({
+            "word": word,
+            "score": score,
+            **dims,
+            "pros": _ip_dedupe(row.get("pros"), 3),
+            "cons": _ip_dedupe(row.get("cons"), 3),
+            "note": _clean_text(row.get("note"), 120),
+            "source": "model",
+        })
+        if len(out) >= count:
+            break
+    out.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+    return out
+
+
+async def _ip_topic_build_grids(digest: str, keywords: list[str], user: User) -> list[dict[str, Any]]:
+    if not keywords:
+        return []
+    system_prompt = (
+        "你是短视频选题策划。按 5x5 宫格法给每个关键词搭一张宫格：中心词=关键词本身；"
+        "内圈 8 个=行业细分话题/方法/痛点；外圈 16 个=人群+场景组合词（每个不超过 8 字）。"
+        "只输出严格 JSON："
+        '{"grids":[{"keyword":"","center":"","inner":["8个"],"outer":["16个"]}]}。'
+        "必须使用档案里真实的产品、客户、场景，不要写泛泛而谈的行业词。"
+    )
+    user_prompt = (
+        "【IP 档案】\n" + digest + "\n\n【要为这些关键词各搭一张宫格】" + "、".join(keywords) + "\n请输出 JSON。"
+    )
+    parsed = await _ip_llm_json(system_prompt, user_prompt, user, timeout=180.0)
+    grids: list[dict[str, Any]] = []
+    for row in (parsed.get("grids") or [])[:4]:
+        if not isinstance(row, dict):
+            continue
+        keyword = _clean_text(row.get("keyword"), 40) or keywords[0]
+        inner = [_clean_text(x, 40) for x in (row.get("inner") or []) if _clean_text(x, 40)][:8]
+        outer = [_clean_text(x, 40) for x in (row.get("outer") or []) if _clean_text(x, 40)][:16]
+        if not inner and not outer:
+            continue
+        grids.append({
+            "keyword": keyword,
+            "center": _clean_text(row.get("center"), 40) or keyword,
+            "inner": inner,
+            "outer": outer,
+        })
+    return grids
+
+
+async def _ip_topic_write_batch(
+    digest: str,
+    keyword: str,
+    grid: dict[str, Any],
+    index: int,
+    total: int,
+    size: int,
+    user: User,
+) -> list[dict[str, Any]]:
+    grid_text = ""
+    if grid:
+        grid_text = (
+            "\n【宫格·" + str(grid.get("center") or keyword) + "】\n内圈：" + "、".join(grid.get("inner") or [])
+            + "\n外圈：" + "、".join(grid.get("outer") or [])
+        )
+    system_prompt = (
+        "你是短视频编导，为这个 IP 写可以直接开拍的选题和口播文案。只输出严格 JSON："
+        '{"topics":[{"title":"选题，不超过24字","keyword":"所属关键词","inner":"用到的内圈词",'
+        '"outer":"用到的外圈词","hook":"前3秒钩子，不超过20字",'
+        '"script":"口播文案 120-220 字，第一人称，可直接照着念",'
+        '"format":"口播|剧情|清单|图文","score":0}]}。'
+        "要求：每条选题都要能看出是哪条内圈词 × 哪条外圈词；必须使用档案里真实的身份、产品、客户、案例和原话，"
+        "档案里没有的绝不编造；不要写空话和套话；script 里要有具体数字、具体场景或反常识观点；score 0-100 是预估爆款潜力。"
+    )
+    user_prompt = (
+        "【IP 档案】\n" + digest + "\n\n【本批关键词】" + keyword + grid_text
+        + "\n\n这是第 " + str(index) + "/" + str(total) + " 批，请输出 " + str(size) + " 条选题的 JSON。"
+    )
+    parsed = await _ip_llm_json(system_prompt, user_prompt, user, timeout=240.0)
+    topics: list[dict[str, Any]] = []
+    for row in (parsed.get("topics") or []):
+        if isinstance(row, dict):
+            title = _clean_text(row.get("title"), 60)
+            if not title:
+                continue
+            try:
+                score = max(0, min(100, int(float(row.get("score") or 0))))
+            except Exception:
+                score = 0
+            topics.append({
+                "title": title,
+                "keyword": _clean_text(row.get("keyword"), 40) or keyword,
+                "inner": _clean_text(row.get("inner"), 40),
+                "outer": _clean_text(row.get("outer"), 40),
+                "hook": _clean_text(row.get("hook"), 60),
+                "script": _clean_long_text(row.get("script"), 1200),
+                "format": _clean_text(row.get("format"), 20) or "口播",
+                "score": score,
+            })
+        else:
+            title = _clean_text(row, 60)
+            if title:
+                topics.append({"title": title, "keyword": keyword, "inner": "", "outer": "", "hook": "", "script": "", "format": "口播", "score": 0})
+    return topics[:size]
+
+
+def _ip_topic_job_key(job_id: str) -> str:
+    return "ip_topic_job:" + str(job_id or "")
+
+
+def _ip_topic_job_set(job_id: str, data: dict[str, Any]) -> None:
+    payload = dict(data or {})
+    payload["updated_at"] = datetime.utcnow().isoformat()
+    cache_set(_ip_topic_job_key(job_id), json.dumps(payload, ensure_ascii=False), 7200)
+
+
+def _ip_topic_job_get(job_id: str) -> dict[str, Any]:
+    raw = cache_get(_ip_topic_job_key(job_id))
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+class IPTopicJobBody(BaseModel):
+    count: int = Field(50, ge=10, le=50)
+    keywords: list[str] = Field(default_factory=list)
+
+
+async def _ip_run_topic_job(job_id: str, body: IPTopicJobBody, user_id: int, owner_id: int) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "用户不存在"})
+            return
+        user = online_user_for_mobile_user(db, user)
+        row = db.query(IPProfileV2Archive).filter(IPProfileV2Archive.user_id == int(user.id)).first()
+        analysis = row.analysis if row and isinstance(row.analysis, dict) else {}
+        digest = _ip_archive_digest(analysis)
+        if not digest.strip():
+            _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "还没有个人IP档案，先做一次录音分析"})
+            return
+
+        count = int(body.count or 50)
+        batch_size = 10
+        total_batches = max(1, -(-count // batch_size))
+        calls: list[dict[str, Any]] = [
+            {"id": "keywords", "label": "提炼账号关键词", "status": "pending"},
+            {"id": "grid", "label": "搭建 5x5 宫格", "status": "pending"},
+        ]
+        for i in range(total_batches):
+            calls.append({"id": "topics-%d" % (i + 1), "label": "选题文案 %d/%d" % (i + 1, total_batches), "status": "pending"})
+        _ip_topic_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 5,
+            "stage": "提炼账号关键词", "calls": calls, "current_call": "keywords",
+            "partial": {"keywords": [], "grids": [], "topics": []},
+        })
+
+        # 1) 关键词
+        _ip_call_update(calls, "keywords", "running")
+        try:
+            keywords = await _ip_topic_extract_keywords(digest, user, count=10)
+        except Exception as exc:
+            _ip_call_update(calls, "keywords", "failed", str(exc)[:120])
+            _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "关键词提炼失败：" + str(exc)[:200], "calls": calls})
+            return
+        _ip_call_update(calls, "keywords", "done", "共 %d 个关键词，最高分 %s" % (len(keywords), keywords[0]["score"] if keywords else 0))
+        if not keywords:
+            _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "没有提炼出关键词", "calls": calls})
+            return
+
+        picked = [w for w in [_clean_text(x, 40) for x in (body.keywords or [])] if w]
+        if picked:
+            ordered = [k for k in keywords if k["word"] in picked] + [k for k in keywords if k["word"] not in picked]
+            keywords = ordered
+        plan_keywords = keywords[:8]
+
+        _ip_topic_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 22,
+            "stage": "搭建 5x5 宫格", "calls": calls, "current_call": "grid",
+            "partial": {"keywords": plan_keywords, "grids": [], "topics": []},
+        })
+
+        # 2) 宫格（前两个关键词）
+        _ip_call_update(calls, "grid", "running")
+        grid_targets = [k["word"] for k in plan_keywords[:2]]
+        try:
+            grids = await _ip_topic_build_grids(digest, grid_targets, user)
+        except Exception as exc:
+            grids = []
+            _ip_call_update(calls, "grid", "failed", str(exc)[:120])
+        if grids:
+            _ip_call_update(calls, "grid", "done", "%d 张宫格" % len(grids))
+        elif calls[1].get("status") != "failed":
+            _ip_call_update(calls, "grid", "done", "未生成宫格，按关键词直接出题")
+
+        grid_by_keyword = {str(g.get("keyword") or ""): g for g in grids}
+        topics: list[dict[str, Any]] = []
+        _ip_topic_job_set(job_id, {
+            "status": "running", "user_id": int(owner_id), "progress": 35,
+            "stage": "生成选题与文案", "calls": calls, "current_call": "topics-1",
+            "partial": {"keywords": plan_keywords, "grids": grids, "topics": []},
+        })
+
+        # 3) 分批出选题
+        for i in range(total_batches):
+            cid = "topics-%d" % (i + 1)
+            size = min(batch_size, count - len(topics))
+            if size <= 0:
+                _ip_call_update(calls, cid, "done", "已满 %d 条" % count)
+                break
+            keyword_row = plan_keywords[i % len(plan_keywords)] if plan_keywords else {"word": ""}
+            keyword = str(keyword_row.get("word") or "")
+            _ip_call_update(calls, cid, "running")
+            _ip_topic_job_set(job_id, {
+                "status": "running", "user_id": int(owner_id),
+                "progress": 35 + int(58 * i / max(1, total_batches)),
+                "stage": "生成选题与文案 %d/%d" % (i + 1, total_batches),
+                "calls": calls, "current_call": cid,
+                "partial": {"keywords": plan_keywords, "grids": grids, "topics": topics},
+            })
+            try:
+                batch = await _ip_topic_write_batch(digest, keyword, grid_by_keyword.get(keyword, {}), i + 1, total_batches, size, user)
+            except Exception as exc:
+                _ip_call_update(calls, cid, "failed", str(exc)[:120])
+                continue
+            for item in batch:
+                item["id"] = len(topics) + 1
+                topics.append(item)
+            _ip_call_update(calls, cid, "done", "%d 条" % len(batch))
+            _ip_topic_job_set(job_id, {
+                "status": "running", "user_id": int(owner_id),
+                "progress": 35 + int(58 * (i + 1) / max(1, total_batches)),
+                "stage": "生成选题与文案 %d/%d" % (i + 1, total_batches),
+                "calls": calls, "current_call": cid,
+                "partial": {"keywords": plan_keywords, "grids": grids, "topics": topics},
+            })
+
+        if not topics:
+            _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "选题生成失败，请重试", "calls": calls})
+            return
+
+        plan = {
+            "keywords": plan_keywords,
+            "grids": grids,
+            "topics": topics[:count],
+            "meta": {
+                "generated_at": datetime.utcnow().isoformat(),
+                "archive_updated_at": (row.updated_at.isoformat() if row and row.updated_at else ""),
+                "count": len(topics[:count]),
+            },
+        }
+        target = db.query(IPTopicPlan).filter(IPTopicPlan.user_id == int(user.id)).first()
+        if target is None:
+            target = IPTopicPlan(user_id=int(user.id), plan=plan)
+            db.add(target)
+        else:
+            target.plan = plan
+            target.updated_at = datetime.utcnow()
+        db.commit()
+        _ip_topic_job_set(job_id, {
+            "status": "done", "user_id": int(owner_id), "progress": 100,
+            "stage": "完成", "calls": calls, "current_call": "",
+            "partial": plan, "result": plan,
+        })
+    except Exception as exc:  # noqa: BLE001
+        _ip_topic_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": str(exc)[:300]})
+    finally:
+        db.close()
+
+
+@router.post("/api/ip-profile/topics/jobs", summary="推荐选题：关键词 + 宫格 + 50 条选题文案")
+async def start_ip_topic_job(
+    body: IPTopicJobBody,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(IPProfileV2Archive).filter(IPProfileV2Archive.user_id == int(current_user.id)).first()
+    if row is None or not isinstance(row.analysis, dict) or not row.analysis:
+        raise HTTPException(status_code=400, detail="还没有个人IP档案，先做一次录音分析")
+    job_id = uuid.uuid4().hex
+    _ip_topic_job_set(job_id, {
+        "status": "pending", "user_id": int(current_user.id), "progress": 0,
+        "stage": "排队中", "calls": [], "partial": {}, "created_at": datetime.utcnow().isoformat(),
+    })
+    background_tasks.add_task(_ip_run_topic_job, job_id, body, int(current_user.id), int(current_user.id))
+    return {"ok": True, "job_id": job_id}
+
+
+@router.get("/api/ip-profile/topics/jobs/{job_id}", summary="查询推荐选题任务")
+def get_ip_topic_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    data = _ip_topic_job_get(job_id)
+    if not data or int(data.get("user_id") or 0) != int(current_user.id):
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    return {"ok": True, **data}
+
+
+@router.get("/api/ip-profile/topics/latest", summary="读取最近一次推荐选题结果")
+def get_latest_ip_topic_plan(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(IPTopicPlan).filter(IPTopicPlan.user_id == int(current_user.id)).first()
+    plan = row.plan if row and isinstance(row.plan, dict) else {}
+    return {"ok": True, "plan": plan, "updated_at": (row.updated_at.isoformat() if row and row.updated_at else "")}
+
+
+def _ip_collect_numbers(node: Any, key_names: tuple[str, ...], out: list[int], depth: int = 0) -> None:
+    if depth > 9 or len(out) > 400:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            lowered = str(key).lower()
+            if lowered in key_names and isinstance(value, (int, float)):
+                out.append(int(value))
+            else:
+                _ip_collect_numbers(value, key_names, out, depth + 1)
+    elif isinstance(node, list):
+        for item in node:
+            _ip_collect_numbers(item, key_names, out, depth + 1)
+
+
+def _ip_collect_words(node: Any, out: list[str], depth: int = 0) -> None:
+    if depth > 9 or len(out) > 800:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            lowered = str(key).lower()
+            if lowered in ("word", "sentence", "title", "keyword", "hot_word", "name") and isinstance(value, str):
+                text = _clean_text(value, 60)
+                if text:
+                    out.append(text)
+            else:
+                _ip_collect_words(value, out, depth + 1)
+    elif isinstance(node, list):
+        for item in node:
+            _ip_collect_words(item, out, depth + 1)
+
+
+class IPTopicMetricsBody(BaseModel):
+    keywords: list[str] = Field(default_factory=list)
+
+
+@router.post("/api/ip-profile/topics/keyword-metrics", summary="用抖音数据校验关键词热度与竞争度")
+async def ip_topic_keyword_metrics(
+    body: IPTopicMetricsBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    current_user = online_user_for_mobile_user(db, current_user)
+    words = [_clean_text(w, 40) for w in (body.keywords or [])]
+    words = [w for w in words if w][:6]
+    if not words:
+        raise HTTPException(status_code=400, detail="请提供要校验的关键词")
+    try:
+        has_tikhub_key = bool(_tikhub_api_key())
+    except HTTPException:
+        has_tikhub_key = False
+    except Exception:
+        has_tikhub_key = False
+    if not has_tikhub_key:
+        return {"ok": True, "enabled": False, "note": "服务器未配置 TIKHUB_API_KEY，暂用模型预估评分", "metrics": []}
+
+    hot_words: list[str] = []
+    hot_error = ""
+    try:
+        status, payload, _headers, _latency = await _call_tikhub("douyin_hot_search", {}, {})
+        if status < 400:
+            _ip_collect_words(payload, hot_words)
+        else:
+            hot_error = "抖音热搜榜返回 " + str(status)
+    except Exception as exc:  # noqa: BLE001
+        hot_error = str(exc)[:120]
+
+    metrics: list[dict[str, Any]] = []
+    for word in words:
+        hot_rank = 0
+        for idx, hot in enumerate(hot_words[:200]):
+            if word and (word in hot or hot in word):
+                hot_rank = idx + 1
+                break
+        likes: list[int] = []
+        search_error = ""
+        try:
+            status, payload, _headers, _latency = await _call_tikhub(
+                "douyin_search_video_v2",
+                {},
+                {"keyword": word, "cursor": 0, "sort_type": 0, "publish_time": 0, "filter_duration": "", "content_type": ""},
+            )
+            if status < 400:
+                _ip_collect_numbers(payload, ("digg_count", "like_count", "digg"), likes)
+            else:
+                search_error = "搜索返回 " + str(status)
+        except Exception as exc:  # noqa: BLE001
+            search_error = str(exc)[:120]
+        likes.sort(reverse=True)
+        top_likes = likes[0] if likes else 0
+        avg_likes = int(sum(likes[:10]) / len(likes[:10])) if likes else 0
+        heat = 0
+        if hot_rank:
+            heat = max(60, 100 - hot_rank)
+        elif avg_likes:
+            heat = min(95, max(20, int(avg_likes ** 0.34)))
+        competition = 0
+        if top_likes:
+            competition = min(100, max(10, int((top_likes ** 0.30) * 3)))
+        metrics.append({
+            "word": word,
+            "hot_rank": hot_rank,
+            "hot_hit": bool(hot_rank),
+            "samples": len(likes),
+            "top_likes": top_likes,
+            "avg_likes": avg_likes,
+            "heat": heat,
+            "competition": competition,
+            "source": "tikhub",
+            "error": search_error,
+        })
+    return {
+        "ok": True,
+        "enabled": True,
+        "note": "抖音没有公开的关键词难度接口；这里用热搜榜命中 + 搜索样本点赞估算热度与竞争度",
+        "hot_error": hot_error,
+        "metrics": metrics,
+    }
