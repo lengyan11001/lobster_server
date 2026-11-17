@@ -2804,13 +2804,52 @@ def _dispatch_agg(db: Session, company_id: int, ai_id: int, since) -> Dict[str, 
             "last_error": ((latest.error or "")[:160] if latest else "")}
 
 
+_RELAY_ONLINE_CACHE = {"at": 0.0, "map": {}}
+_RELAY_ONLINE_CACHE_SECONDS = 15.0
+
+
+def _relay_online_map() -> Dict[str, bool]:
+    """中继设备号 → 是否在线（和「远程」用的是同一个设备号）。
+
+    槽位里的 installation_id 会随换账号 / 重装 / OTA 重签变化，导致虚拟员工
+    永远显示离线；远程能连说明设备在线。这里按中继设备号兜底判定在线，
+    结果缓存 15 秒，避免每次列表都打中继。
+    """
+    now = time.time()
+    cache = _RELAY_ONLINE_CACHE
+    if cache["map"] and (now - float(cache["at"] or 0.0)) < _RELAY_ONLINE_CACHE_SECONDS:
+        return cache["map"]
+    try:
+        payload = _remote_support_call("GET", "/api/remote-admin/devices")
+    except Exception as exc:  # noqa: BLE001 中继不可用时不影响心跳判定
+        logger.warning("[manage] relay online map failed: %s", exc)
+        return cache["map"] or {}
+    mapping: Dict[str, bool] = {}
+    for item in (payload.get("devices") or []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        did = str(item.get("deviceId") or item.get("id") or "").strip().upper()
+        if not did:
+            continue
+        mapping[did] = bool(_relay_device_online(item))
+    cache["at"] = now
+    cache["map"] = mapping
+    return mapping
+
+
 def _ai_row_json(db: Session, company: MCompany, row: MAiEmployee, since,
-                 member_by_uid: Dict[int, Any]) -> Dict[str, Any]:
+                 member_by_uid: Dict[int, Any],
+                 relay_map: Optional[Dict[str, bool]] = None) -> Dict[str, Any]:
     presence, remote, online, last_seen = _slot_presence(db, row.installation_id)
+    presence_online = bool(online)
     member = None
     if presence is not None and presence.user_id:
         member = member_by_uid.get(int(presence.user_id))
     device_id = (row.device_id or "").strip().upper() or str(remote.get("device_id") or "").strip().upper()
+    relay_online = bool(device_id and (relay_map or {}).get(device_id))
+    if relay_online and not presence_online:
+        # 心跳槽位号过期但中继设备在线：以中继为准（与「远程」口径一致）
+        online = True
     agg = _dispatch_agg(db, company.id, row.id, since)
     # 设备备注（H5 上给设备起的名字）：按机器身份保存，槽位 ID 变了也还在；
     # 这台机器没备注时给一条「沿用建议」（同账号下最近改过、且那条槽位已离线）。
@@ -2831,6 +2870,7 @@ def _ai_row_json(db: Session, company: MCompany, row: MAiEmployee, since,
     return {"id": row.id, "name": row.name, "installation_id": row.installation_id,
             "device_id": device_id, "source": (row.source or "slot"), "note": (row.note or ""),
             "online": online, "last_seen": last_seen, "status": row.status,
+            "online_source": ("presence" if presence_online else ("relay" if relay_online else "")),
             "device_label": device_label,
             "device_label_source": device_label_source,
             "suggested_label": suggested_label,
@@ -2866,7 +2906,8 @@ def list_ai_employees(company_id: int, online_only: bool = Query(False), window:
             member_by_uid[int(m.user_id)] = m
     rows = (db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id)
             .order_by(MAiEmployee.id).all())
-    out = [_ai_row_json(db, company, r, since, member_by_uid) for r in rows]
+    relay_map = _relay_online_map()
+    out = [_ai_row_json(db, company, r, since, member_by_uid, relay_map) for r in rows]
     online_count = sum(1 for x in out if x["online"])
     totals = {"dispatched": 0, "succeeded": 0, "failed": 0, "running": 0}
     for x in out:
