@@ -236,8 +236,30 @@ async def _store_task_video(db: Session, user: User, row: DouyinImitationTask) -
                 file_size=int(stored.get("file_size") or 0),
                 source_url=public_url,
                 tags="douyin,imitation,generated",
+                meta={
+                    "asset_origin": "generated",
+                    "source": "douyin_imitation",
+                    "task_id": str(row.task_id or ""),
+                },
             ))
     db.commit()
+    if asset_id:
+        # 以前只写 assets，不写内容记录：客户端「内容记录」里永远看不到跟创成片。
+        try:
+            from . import canvas_hub
+
+            canvas_hub.register_content_record(
+                db,
+                int(user.id),
+                public_url,
+                media_type="video",
+                title=str(row.title or "") or "热门视频跟创",
+                task_id=str(row.task_id or ""),
+                model=str(row.model or ""),
+                prompt=str(row.prompt or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 内容记录失败不能影响入库结果
+            logger.warning("[douyin-imitation] 写内容记录失败 task=%s: %s", row.task_id, exc)
     return {"ok": True, "url": public_url, "asset_id": asset_id}
 
 
