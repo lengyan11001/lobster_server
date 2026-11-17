@@ -2904,7 +2904,9 @@ def list_ai_employees(company_id: int, online_only: bool = Query(False), window:
     for m in db.query(MMembership).filter(MMembership.company_id == company.id).all():
         if m.user_id:
             member_by_uid[int(m.user_id)] = m
-    rows = (db.query(MAiEmployee).filter(MAiEmployee.company_id == company.id)
+    rows = (db.query(MAiEmployee)
+            .filter(MAiEmployee.company_id == company.id)
+            .filter(func.coalesce(MAiEmployee.status, "") != "archived")
             .order_by(MAiEmployee.id).all())
     relay_map = _relay_online_map()
     out = [_ai_row_json(db, company, r, since, member_by_uid, relay_map) for r in rows]
