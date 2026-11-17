@@ -2598,7 +2598,36 @@ def pick_item_video_url(public_url: Any, raw_data: Any) -> str:
 def _item_video_url(row: TikHubSourceItem) -> str:
     return pick_item_video_url(getattr(row, "public_url", ""), _source_raw(row))
 
+_DECODE_KEY_PATHS = [
+    "decode_key",
+    "decodeKey",
+    "object_desc.media.0.decode_key",
+    "objectDesc.media.0.decode_key",
+    "objectDesc.mediaList.0.decode_key",
+    "media.0.decode_key",
+    "mediaList.0.decode_key",
+]
+
+
+def extract_source_decode_key(raw: Any) -> str:
+    """从同步回来的原始数据里抠 decode_key（视频号加密视频的解密参数）。
+
+    同步时就要落到 meta 里，否则每次下载都要再查一次 TikHub（按次计费）。
+    """
+    data = raw if isinstance(raw, dict) else {}
+    meta = data.get(_SOURCE_META_KEY)
+    if isinstance(meta, dict):
+        cached = str(meta.get("decode_key") or "").strip()
+        if cached:
+            return cached
+    return str(_first(data, _DECODE_KEY_PATHS) or "").strip()
+
+
 def _item_decode_key(row: TikHubSourceItem) -> str:
+    meta = _source_meta(row)
+    cached = str(meta.get("decode_key") or "").strip()
+    if cached:
+        return cached
     return str(
         _first(
             _source_raw(row),
@@ -3029,8 +3058,13 @@ def _persist_items(
 
     for idx, raw in enumerate(raw_items):
         data = _normalize_item(raw, user_id=user_id, query_id=query_id, platform=platform, source_type=source_type, idx=idx)
-        if item_meta:
-            data["raw"] = _merge_source_raw(data["raw"], meta=merge_item_meta({}, item_meta))
+        decode_key_value = extract_source_decode_key(data.get("raw"))
+        save_meta = dict(item_meta or {})
+        if decode_key_value:
+            # 同步时就固化，后续下载不再回头查接口（TikHub 按次收费）
+            save_meta["decode_key"] = decode_key_value
+        if save_meta:
+            data["raw"] = _merge_source_raw(data["raw"], meta=merge_item_meta({}, save_meta))
         row = (
             db.query(TikHubSourceItem)
             .filter(

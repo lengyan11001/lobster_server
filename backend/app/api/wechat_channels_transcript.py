@@ -27,6 +27,8 @@ from .cutcli_templates import (
     _upload_job_file_to_tos,
 )
 from .ip_content_studio import (
+    _SOURCE_META_KEY,
+    extract_source_decode_key,
     _clean_long_text,
     _clean_text,
     _collect_items,
@@ -854,6 +856,30 @@ async def fetch_video_decode(
     object_id = str(body.object_id or "").strip()
     if not object_id:
         raise HTTPException(status_code=400, detail="object_id is required")
+
+    # 1) 先查本地：同步时已经把 decode_key 固化了就直接用，不再花钱查 TikHub
+    from ..models import TikHubSourceItem
+
+    cached_row = (
+        db.query(TikHubSourceItem)
+        .filter(TikHubSourceItem.item_key == object_id)
+        .order_by(TikHubSourceItem.id.desc())
+        .first()
+    )
+    if cached_row is not None:
+        raw_cached = cached_row.raw if isinstance(cached_row.raw, dict) else {}
+        cached_key = extract_source_decode_key(raw_cached)
+        if cached_key:
+            return {
+                "ok": True,
+                "object_id": object_id,
+                "decode_key": cached_key,
+                "video_url": str(cached_row.public_url or "").strip(),
+                "item_key": str(cached_row.item_key or object_id),
+                "title": str(cached_row.title or "").strip(),
+                "cached": True,
+            }
+
     result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
@@ -870,6 +896,20 @@ async def fetch_video_decode(
     decode_key = str(video.get("decode_key") or "").strip()
     if not decode_key:
         raise HTTPException(status_code=502, detail="没有取到这条视频的解密参数（可能已删除或受保护）")
+    # 2) 补查到的 key 回写本地，下次直接用（只补一次）
+    if cached_row is not None:
+        try:
+            raw_patch = dict(cached_row.raw or {}) if isinstance(cached_row.raw, dict) else {}
+            meta_patch = raw_patch.get(_SOURCE_META_KEY)
+            meta_patch = dict(meta_patch) if isinstance(meta_patch, dict) else {}
+            meta_patch["decode_key"] = decode_key
+            raw_patch[_SOURCE_META_KEY] = meta_patch
+            cached_row.raw = raw_patch
+            flag_modified(cached_row, "raw")
+            db.add(cached_row)
+            db.commit()
+        except Exception:
+            db.rollback()
     return {
         "ok": True,
         "object_id": object_id,
@@ -877,6 +917,7 @@ async def fetch_video_decode(
         "video_url": str(video.get("video_url") or "").strip(),
         "item_key": str(video.get("item_key") or object_id),
         "title": str(video.get("title") or "").strip(),
+        "cached": False,
     }
 
 
