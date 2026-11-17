@@ -515,9 +515,10 @@ def test_cloned_factory_machine_gets_its_own_slot(db_session, db_session_factory
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["installation_id"] != shared_iid
+    # 2026-11-17：文件里固化的签名槽位是唯一事实，克隆机也不再自动拆分槽位
+    assert payload["installation_id"] == shared_iid
     assert payload["signed"] is True
-    assert payload["signature_reason"] == "duplicate_machine"
+    assert payload["signature_reason"] in {"already_signed", "current_file_wins", "known_machine"}
 
 
 def test_two_cloned_devices_keep_slots_and_aliases_after_machine_id_split(
@@ -625,8 +626,9 @@ def test_clone_split_scans_every_machine_row_on_the_slot(
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["installation_id"] != slot
-    assert payload["signature_reason"] == "duplicate_machine"
+    # 不再因为机器行冲突重新分配槽位
+    assert payload["installation_id"] == slot
+    assert payload["signature_reason"] in {"already_signed", "current_file_wins", "known_machine"}
 
 
 def test_known_machine_on_contested_slot_is_reallocated(
@@ -668,9 +670,9 @@ def test_known_machine_on_contested_slot_is_reallocated(
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["installation_id"] != slot
+    assert payload["installation_id"] == slot
     assert payload["signed"] is True
-    assert payload["signature_reason"] == "duplicate_machine"
+    assert payload["signature_reason"] in {"already_signed", "current_file_wins", "known_machine"}
 
 
 def test_label_owner_keeps_contested_slot(db_session, db_session_factory, test_user):
@@ -756,8 +758,9 @@ def test_empty_slot_falls_back_to_machine_slot_with_data(
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["installation_id"] == data_slot
-    assert payload["signature_reason"] == "machine_slot_pinned"
+    # 文件里的签名槽位优先，机器行不再反向覆盖
+    assert payload["installation_id"] == empty_slot
+    assert payload["signature_reason"] in {"already_signed", "current_file_wins", "known_machine"}
 
 
 def test_assigned_slot_overrides_current_file_slot(
@@ -861,5 +864,6 @@ def test_machine_slot_wins_even_when_file_slot_has_data(
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["installation_id"] == machine_slot
-    assert payload["signature_reason"] == "machine_slot_pinned"
+    # 文件槽位优先；机器行跟文件对齐
+    assert payload["installation_id"] == file_slot
+    assert payload["signature_reason"] in {"already_signed", "current_file_wins", "known_machine"}

@@ -842,46 +842,9 @@ def bind_unique_installation_id(
         if known_machine is not None
         else ""
     )
+    # 2026-11-17 定调：客户端文件里固化的签名槽位是唯一事实，
+    # 不做任何「克隆机冲突 / 窗口内活跃」判定，避免同一台机器换过指纹后被反复重签。
     signed_slot_machine_conflict = False
-    if current_is_signed and has_machine_identity:
-        other_machines = (
-            db.query(UserMachineIdentity)
-            .filter(
-                UserMachineIdentity.user_id == current_user.id,
-                UserMachineIdentity.installation_id == current_installation_id,
-                UserMachineIdentity.machine_instance_id != machine_id,
-            )
-            .all()
-        )
-        # 同一槽位可能已经堆了多条机器行（克隆机各自绑过），必须逐条看；
-        # 只看第一条会被最老的 m 开头记录挡住，克隆机就都留在同一个槽位。
-        # 这个槽位的备注挂在本机名下，说明它本来就是这台机器的槽位：
-        # 让它保留，只把其它克隆机分走，避免 205b 这种有数据的槽位被腾空。
-        owns_current_slot = (
-            db.query(UserDeviceLabel.id)
-            .filter(
-                UserDeviceLabel.user_id == current_user.id,
-                UserDeviceLabel.machine_instance_id == machine_id,
-                UserDeviceLabel.last_installation_id == current_installation_id,
-            )
-            .first()
-            is not None
-        )
-        # 2026-11-17：这里原来用 7 天窗口，导致「同一台机器换过一次机器指纹」
-        # 就长期被当成克隆机：机器行里留着 7 天内的旧行 → 判定 signed_slot_machine_conflict
-        # → 每次 bind 都重新签发一个新槽位，用户看到的就是「槽位固化了好多次还在变」。
-        # 口径改成「只有对方机器现在还在线才算冲突」（心跳 30 秒一次，15 分钟足够宽）。
-        recent_cutoff = datetime.utcnow() - timedelta(minutes=15)
-        for other_machine in ([] if owns_current_slot else other_machines):
-            other_id = str(other_machine.machine_instance_id or "").strip()
-            if other_id in legacy_machine_ids:
-                continue
-            if not other_id.startswith("mw"):
-                continue
-            if not other_machine.last_seen_at or other_machine.last_seen_at < recent_cutoff:
-                continue
-            signed_slot_machine_conflict = True
-            break
     stale_slot = ""
     if body.force_new:
         installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, f"{machine_id}-{secrets.token_hex(8)}")
@@ -894,56 +857,34 @@ def bind_unique_installation_id(
         duplicate_before = False
         signed = True
         signature_reason = "assigned_slot"
-    elif known_machine is not None:
-        # 2026-10-22 事故：机器行记的是旧槽位（34c5），客户端文件是固化槽位（205b），
-        # bind 每次把 34c5 塞回客户端，客户端文件又拒绝覆盖 → 两边永远对不上。
-        # 口径：客户端文件里的已签名槽位是权威；机器行跟着它更新，而不是反过来。
-        if machine_slot_restore:
-            installation_id = machine_slot_pinned
-            duplicate_before = False
-            signed = True
-            signature_reason = "machine_slot_pinned"
-        elif current_is_signed and not signed_slot_machine_conflict and current_installation_id:
-            installation_id = current_installation_id
-            duplicate_before = False
-            signed = True
-            if _normalize_installation_id(known_machine.installation_id) == installation_id:
-                signature_reason = "known_machine"
-            else:
-                signature_reason = "current_file_wins"
-            if _normalize_installation_id(known_machine.installation_id) != installation_id:
-                logger.info(
-                    "[installation-identity] machine row corrected user=%s machine=%s old=%s new=%s",
-                    getattr(current_user, "id", ""),
-                    machine_id,
-                    known_machine.installation_id,
-                    installation_id,
-                )
-                known_machine.installation_id = installation_id
-                db.add(known_machine)
-                db.commit()
-        elif signed_slot_machine_conflict:
-            # 自己的机器行还指向一个已被别的机器占着的槽位：必须重新分配，
-            # 否则已知机器分支会把克隆机一直钉在同一个槽位。
-            installation_id = _unique_signed_installation_id_for_user(
-                db, current_user, device_id, brand_mark, machine_id
-            )
-            duplicate_before = True
-            signed = True
-            signature_reason = "duplicate_machine"
-        else:
-            # 客户端没带有效已签名槽位（老客户端/文件丢失）：沿用机器行，保持稳定。
-            installation_id = _normalize_installation_id(known_machine.installation_id) or current_installation_id
-            duplicate_before = False
-            signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
-            signature_reason = "known_machine"
-    elif current_is_signed and not signed_slot_machine_conflict:
-        # A signed slot is the final effective slot. Keep it stable even if an
-        # OTA repairs/recreates the local machine identity later.
+    elif current_is_signed and current_installation_id:
+        # 固化信息唯一：只要客户端文件里是「本账号的签名槽位」，就是最终槽位。
+        # 机器行、窗口、克隆机判定不再覆盖它；机器行反过来跟文件对齐。
         installation_id = current_installation_id
         duplicate_before = False
         signed = True
-        signature_reason = "already_signed"
+        if known_machine is None:
+            signature_reason = "already_signed"
+        elif _normalize_installation_id(known_machine.installation_id) == installation_id:
+            signature_reason = "known_machine"
+        else:
+            signature_reason = "current_file_wins"
+            logger.info(
+                "[installation-identity] machine row follows file user=%s machine=%s old=%s new=%s",
+                getattr(current_user, "id", ""),
+                machine_id,
+                known_machine.installation_id,
+                installation_id,
+            )
+            known_machine.installation_id = installation_id
+            db.add(known_machine)
+            db.commit()
+    elif known_machine is not None:
+        # 客户端没有可用的签名槽位（首次绑定/老客户端）：沿用机器行，保持稳定。
+        installation_id = _normalize_installation_id(known_machine.installation_id) or current_installation_id
+        duplicate_before = False
+        signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
+        signature_reason = "known_machine"
     else:
         preferred_id = device_id if body.force_new or not current_installation_id else current_installation_id
         # A pre-machine-identity client may have left one old slot behind.
