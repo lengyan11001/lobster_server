@@ -867,7 +867,11 @@ def bind_unique_installation_id(
             .first()
             is not None
         )
-        recent_cutoff = datetime.utcnow() - timedelta(days=7)
+        # 2026-11-17：这里原来用 7 天窗口，导致「同一台机器换过一次机器指纹」
+        # 就长期被当成克隆机：机器行里留着 7 天内的旧行 → 判定 signed_slot_machine_conflict
+        # → 每次 bind 都重新签发一个新槽位，用户看到的就是「槽位固化了好多次还在变」。
+        # 口径改成「只有对方机器现在还在线才算冲突」（心跳 30 秒一次，15 分钟足够宽）。
+        recent_cutoff = datetime.utcnow() - timedelta(minutes=15)
         for other_machine in ([] if owns_current_slot else other_machines):
             other_id = str(other_machine.machine_instance_id or "").strip()
             if other_id in legacy_machine_ids:
