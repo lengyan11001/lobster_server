@@ -2609,6 +2609,27 @@ _DECODE_KEY_PATHS = [
 ]
 
 
+def _find_decode_key_deep(node: Any, depth: int = 0) -> str:
+    """在任意层级找 decodeKey / decode_key（视频号详情接口用的是驼峰）。"""
+    if depth > 8:
+        return ""
+    if isinstance(node, dict):
+        for key in ("decodeKey", "decode_key"):
+            value = node.get(key)
+            if isinstance(value, (str, int)) and str(value).strip():
+                return str(value).strip()
+        for value in node.values():
+            found = _find_decode_key_deep(value, depth + 1)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _find_decode_key_deep(value, depth + 1)
+            if found:
+                return found
+    return ""
+
+
 def extract_source_decode_key(raw: Any) -> str:
     """从同步回来的原始数据里抠 decode_key（视频号加密视频的解密参数）。
 
@@ -2620,7 +2641,10 @@ def extract_source_decode_key(raw: Any) -> str:
         cached = str(meta.get("decode_key") or "").strip()
         if cached:
             return cached
-    return str(_first(data, _DECODE_KEY_PATHS) or "").strip()
+    direct = str(_first(data, _DECODE_KEY_PATHS) or "").strip()
+    if direct:
+        return direct
+    return _find_decode_key_deep(data)
 
 
 def _item_decode_key(row: TikHubSourceItem) -> str:
@@ -2628,6 +2652,9 @@ def _item_decode_key(row: TikHubSourceItem) -> str:
     cached = str(meta.get("decode_key") or "").strip()
     if cached:
         return cached
+    deep = _find_decode_key_deep(_source_raw(row))
+    if deep:
+        return deep
     return str(
         _first(
             _source_raw(row),

@@ -880,103 +880,81 @@ async def fetch_video_decode(
                 "cached": True,
             }
 
-    # 2) 本地没有 → 按「作者」补查一次（详情接口不返回 decode_key）：
-    #      channel_id → username → 该账号作品列表（items 里带 decode_key）
-    #    一个作者最多两次查询，把他所有作品的 key 一起写回本地，之后全部命中缓存。
-    channel_id = str(getattr(cached_row, "author_key", "") or "").strip() if cached_row is not None else ""
-    decode_key = ""
-    matched_video: dict[str, Any] = {}
-    author_items: list[dict[str, Any]] = []
+    # 2) 本地没有 → 查一次作品详情（详情里带 decodeKey，中间是驼峰命名），
+    #    拿到后写回本地，之后同一条/同作者都走缓存，不再花钱。
+    detail = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_video_detail_v2",
+        params={},
+        body={"object_id": object_id},
+        save_items=False,
+        meta={"source": "wechat_channels_transcript_video_decode", "object_id": object_id},
+        attempts=1,
+        include_raw_response=True,
+    )
+    detail_raw = detail.get("raw_response") if isinstance(detail.get("raw_response"), dict) else {}
+    decode_key = extract_source_decode_key(detail_raw)
+    matched_video: dict[str, Any] = _normalize_video(detail_raw, 0) or {}
 
-    username = ""
-    if channel_id:
-        try:
-            resolved = await _execute_query_with_retry(
-                db=db,
-                current_user=current_user,
-                query_type="wechat_channels_channel_id_to_username_v2",
-                params={},
-                body={"channel_id": channel_id, "raw": False},
-                save_items=False,
-                meta={"source": "video_decode_username", "channel_id": channel_id},
-                attempts=1,
-                include_raw_response=True,
-            )
-            users, _user_count = _normalize_wechat_channels_users_from_payload(resolved.get("raw_response") or {})
-            if users:
-                username = str((users[0] or {}).get("username") or "").strip()
-        except Exception:
-            username = ""
-
-    if username:
-        last_buffer = ""
-        for _page in range(3):
-            req_body: dict[str, Any] = {"username": username}
-            if last_buffer:
-                req_body["last_buffer"] = last_buffer
-            try:
-                page_res = await _execute_query_with_retry(
-                    db=db,
-                    current_user=current_user,
-                    query_type="wechat_channels_user_videos_v2",
-                    params={},
-                    body=req_body,
-                    save_items=False,
-                    meta={"source": "video_decode_videos", "username": username},
-                    attempts=1,
-                    include_raw_response=True,
-                )
-            except Exception:
-                break
-            page_raw = page_res.get("raw_response") or {}
-            for candidate in _normalize_videos_from_payload(page_raw):
-                author_items.append(candidate)
-                if not decode_key and str(candidate.get("item_key")) == object_id:
-                    decode_key = str(candidate.get("decode_key") or "").strip()
-                    matched_video = candidate
-            if decode_key:
-                break
-            next_buffer = _extract_last_buffer(page_raw)
-            if not next_buffer or next_buffer == last_buffer:
-                break
-            last_buffer = next_buffer
+    # 详情没给 key 时，退一步用详情里的 username 拉该作者作品列表再匹配一次
+    if not decode_key:
+        username = _find_finder_username(detail_raw)
+        if username:
+            last_buffer = ""
+            for _page in range(2):
+                req_body: dict[str, Any] = {"username": username}
+                if last_buffer:
+                    req_body["last_buffer"] = last_buffer
+                try:
+                    page_res = await _execute_query_with_retry(
+                        db=db,
+                        current_user=current_user,
+                        query_type="wechat_channels_user_videos_v2",
+                        params={},
+                        body=req_body,
+                        save_items=False,
+                        meta={"source": "video_decode_videos", "username": username},
+                        attempts=1,
+                        include_raw_response=True,
+                    )
+                except Exception:
+                    break
+                page_raw = page_res.get("raw_response") or {}
+                for candidate in _normalize_videos_from_payload(page_raw):
+                    if str(candidate.get("item_key")) == object_id:
+                        decode_key = str(candidate.get("decode_key") or "").strip()
+                        if decode_key:
+                            matched_video = candidate
+                            break
+                if decode_key:
+                    break
+                next_buffer = _extract_last_buffer(page_raw)
+                if not next_buffer or next_buffer == last_buffer:
+                    break
+                last_buffer = next_buffer
 
     if not decode_key:
         raise HTTPException(
             status_code=502,
-            detail="没有取到这条视频的解密参数（按作者补查也没命中，可能已删除或受保护）",
+            detail="没有取到这条视频的解密参数（详情没返回 decodeKey，作者作品列表也没命中）",
         )
 
-    # 3) 写回本地：本条 + 同一作者所有作品一起缓存，后续下载 0 成本
-    try:
-        key_by_item: dict[str, str] = {object_id: decode_key}
-        for candidate in author_items:
-            key = str(candidate.get("decode_key") or "").strip()
-            item_key_value = str(candidate.get("item_key") or "").strip()
-            if key and item_key_value:
-                key_by_item[item_key_value] = key
-        rows_to_patch = (
-            db.query(TikHubSourceItem)
-            .filter(TikHubSourceItem.item_key.in_(list(key_by_item.keys())))
-            .all()
-        )
-        for row_patch in rows_to_patch:
-            key = key_by_item.get(str(row_patch.item_key or ""))
-            if not key:
-                continue
-            raw_patch = dict(row_patch.raw or {}) if isinstance(row_patch.raw, dict) else {}
+    # 3) 写回本地（本条），下次直接命中缓存
+    if cached_row is not None:
+        try:
+            raw_patch = dict(cached_row.raw or {}) if isinstance(cached_row.raw, dict) else {}
             meta_patch = raw_patch.get(_SOURCE_META_KEY)
             meta_patch = dict(meta_patch) if isinstance(meta_patch, dict) else {}
-            if str(meta_patch.get("decode_key") or "") == key:
-                continue
-            meta_patch["decode_key"] = key
-            raw_patch[_SOURCE_META_KEY] = meta_patch
-            row_patch.raw = raw_patch
-            flag_modified(row_patch, "raw")
-            db.add(row_patch)
-        db.commit()
-    except Exception:
-        db.rollback()
+            if str(meta_patch.get("decode_key") or "") != decode_key:
+                meta_patch["decode_key"] = decode_key
+                raw_patch[_SOURCE_META_KEY] = meta_patch
+                cached_row.raw = raw_patch
+                flag_modified(cached_row, "raw")
+                db.add(cached_row)
+                db.commit()
+        except Exception:
+            db.rollback()
 
     return {
         "ok": True,
