@@ -840,6 +840,46 @@ async def fetch_videos(
     return {"ok": True, "items": videos, "count": len(videos), "queries": queries, "last_buffer": last_buffer}
 
 
+class VideoDecodeBody(BaseModel):
+    object_id: str = Field(default="", max_length=128)
+
+
+@router.post("/api/wechat-channels-transcript/video-decode", summary="按作品 id 取视频号解密参数")
+async def fetch_video_decode(
+    body: VideoDecodeBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """已同步数据里的视频号作品没有 decode_key，下载前按 object_id 现取一次。"""
+    object_id = str(body.object_id or "").strip()
+    if not object_id:
+        raise HTTPException(status_code=400, detail="object_id is required")
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_video_detail_v2",
+        params={},
+        body={"object_id": object_id, "raw": True},
+        save_items=False,
+        meta={"source": "wechat_channels_transcript_video_decode", "object_id": object_id},
+        attempts=2,
+        include_raw_response=True,
+    )
+    raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+    video = _normalize_video(raw, 0) or {}
+    decode_key = str(video.get("decode_key") or "").strip()
+    if not decode_key:
+        raise HTTPException(status_code=502, detail="没有取到这条视频的解密参数（可能已删除或受保护）")
+    return {
+        "ok": True,
+        "object_id": object_id,
+        "decode_key": decode_key,
+        "video_url": str(video.get("video_url") or "").strip(),
+        "item_key": str(video.get("item_key") or object_id),
+        "title": str(video.get("title") or "").strip(),
+    }
+
+
 @router.post("/api/wechat-channels-transcript/jobs", summary="创建视频号作品批量转写任务")
 async def create_transcript_job(
     body: TranscriptJobBody,
