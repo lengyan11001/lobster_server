@@ -297,6 +297,34 @@ async def _resolve_account_from_video_detail(
     return item
 
 
+def _decode_key_next_to_url(node: Any, url: str, depth: int = 0) -> str:
+    """在详情原始数据里，找和这个播放地址同一个对象里的 decodeKey。
+
+    详情里 media 可能是数组（封面/多码率），全局取第一个 decodeKey 可能配对到
+    别的媒体上，解出来就是乱码；必须按 url 配对。
+    """
+    target = str(url or "").strip()
+    if not target or depth > 8:
+        return ""
+    if isinstance(node, dict):
+        urls = [str(v) for v in node.values() if isinstance(v, str) and v.startswith("http")]
+        if any(target[:80] in u or u[:80] in target for u in urls):
+            for key in ("decodeKey", "decode_key"):
+                value = node.get(key)
+                if isinstance(value, (str, int)) and str(value).strip():
+                    return str(value).strip()
+        for value in node.values():
+            found = _decode_key_next_to_url(value, target, depth + 1)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _decode_key_next_to_url(value, target, depth + 1)
+            if found:
+                return found
+    return ""
+
+
 def _append_url_token(url: str, token: Any) -> str:
     cleaned = _clean_url(url)
     token_text = str(token or "").strip()
@@ -894,8 +922,10 @@ async def fetch_video_decode(
         include_raw_response=True,
     )
     detail_raw = detail.get("raw_response") if isinstance(detail.get("raw_response"), dict) else {}
-    decode_key = extract_source_decode_key(detail_raw)
     matched_video: dict[str, Any] = _normalize_video(detail_raw, 0) or {}
+    decode_key = _decode_key_next_to_url(detail_raw, str(matched_video.get("video_url") or ""))
+    if not decode_key:
+        decode_key = extract_source_decode_key(detail_raw)
 
     # 详情没给 key 时，退一步用详情里的 username 拉该作者作品列表再匹配一次
     if not decode_key:
