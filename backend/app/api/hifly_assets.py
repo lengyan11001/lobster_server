@@ -218,8 +218,51 @@ def _billing_headers(request: Request) -> Dict[str, str]:
 
 
 def _estimate_tts_seconds(text: str) -> int:
-    clean = "".join(str(text or "").split())
-    return max(1, int(math.ceil(len(clean) / _HIFLY_TTS_CHARS_PER_SECOND)))
+    clean = " ".join(str(text or "").split()).strip()
+    if not clean:
+        return 1
+    cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", clean))
+    words = re.findall(r"[A-Za-z0-9]+(?:['’\-][A-Za-z0-9]+)*", clean)
+    latin_chars = sum(len(word) for word in words)
+    other_chars = max(0, len(re.sub(r"\s+", "", clean)) - cjk - latin_chars)
+    punctuation = len(re.findall(r"[，。！？,.!?;；:：]", clean))
+    # Chinese ~4.5 chars/s; English ~2.6 words/s (about 156 wpm); short pauses for punctuation.
+    seconds = cjk / 4.5 + len(words) / 2.6 + other_chars / 6.0 + punctuation * 0.12
+    return max(1, int(math.ceil(seconds)))
+
+
+def _find_ffprobe_exe() -> str:
+    exe = shutil.which("ffprobe") or shutil.which("ffprobe.exe") or ""
+    if exe:
+        return exe
+    ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe") or ""
+    if ffmpeg:
+        sibling = Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+        if sibling.is_file():
+            return str(sibling)
+    return ""
+
+
+def _probe_audio_duration_seconds(raw: bytes, fallback: float = 0.0) -> float:
+    if not raw:
+        return float(fallback or 0.0)
+    exe = _find_ffprobe_exe()
+    if not exe:
+        return float(fallback or 0.0)
+    try:
+        with tempfile.TemporaryDirectory(prefix="tts-probe-") as tmp:
+            path = Path(tmp) / "audio.mp3"
+            path.write_bytes(raw)
+            proc = subprocess.run(
+                [exe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            value = float((proc.stdout or "").strip().splitlines()[0])
+            return value if value > 0 else float(fallback or 0.0)
+    except Exception:
+        return float(fallback or 0.0)
 
 
 def _split_text_by_delimiters(text: str, delimiters: set[str]) -> List[str]:
@@ -686,7 +729,7 @@ async def _qwen_tts_audio(
         raise HTTPException(status_code=502, detail=f"千问语音合成未返回音频: {str(payload)[:500]}")
     audio_bytes, content_type = await _download_bytes(audio_url)
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-    duration_seconds = _estimate_tts_seconds(clean_text)
+    duration_seconds = max(1, int(math.ceil(_probe_audio_duration_seconds(audio_bytes, _estimate_tts_seconds(clean_text)))))
     return {
         "audio_bytes": audio_bytes,
         "duration_seconds": duration_seconds,
@@ -801,7 +844,7 @@ async def _minimax_tts_audio(
         raise HTTPException(status_code=502, detail="MiniMax 语音音频格式异常") from exc
     extra = payload.get("extra_info") if isinstance(payload.get("extra_info"), dict) else {}
     duration_ms = float(extra.get("audio_length") or 0)
-    duration_seconds = max(1, int(math.ceil(duration_ms / 1000.0))) if duration_ms > 0 else _estimate_tts_seconds(text)
+    duration_seconds = max(1, int(math.ceil(duration_ms / 1000.0))) if duration_ms > 0 else max(1, int(math.ceil(_probe_audio_duration_seconds(audio_bytes, _estimate_tts_seconds(text)))))
     return {
         "audio_bytes": audio_bytes,
         "duration_seconds": duration_seconds,
@@ -870,7 +913,7 @@ def _tts_speed_value(rate: Any) -> float:
 
 
 def _probe_audio_sample_rate(path: str, fallback: int = 24000) -> int:
-    exe = shutil.which("ffprobe") or shutil.which("ffprobe.exe") or ""
+    exe = _find_ffprobe_exe()
     if not exe:
         return fallback
     try:
@@ -1018,6 +1061,9 @@ async def _preview_tts_audio(
         )
         if abs(speed - 1.0) >= 0.01:
             duration_seconds = max(1, int(round(duration_seconds / speed)))
+    probed_duration = _probe_audio_duration_seconds(audio_bytes)
+    if probed_duration > 0:
+        duration_seconds = max(1, int(math.ceil(probed_duration)))
     return {
         "audio_bytes": audio_bytes,
         "duration_seconds": max(1, duration_seconds),
