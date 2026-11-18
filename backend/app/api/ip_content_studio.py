@@ -6321,14 +6321,24 @@ async def run_ip_content_daily_scheduled(
     if opts.sync_before:
         sync_keyword_rows = keywords if need_keywords else []
         sync_competitor_rows = competitors if need_competitors else []
+        sync_now = _utcnow()
         _emit_schedule_progress(
             progress,
             "sync_start",
-            "开始同步最新关键词和同行数据",
+            "开始检查关键词和同行数据（24 小时内已同步的跳过）",
             {"keyword_count": len(sync_keyword_rows), "competitor_count": len(sync_competitor_rows)},
         )
         for idx, row in enumerate(sync_keyword_rows, start=1):
             keyword_name = _clean_text(getattr(row, "keyword", "") or getattr(row, "display_name", "") or row.id, 120)
+            if _synced_within_24h(getattr(row, "last_fetch_at", None), sync_now):
+                sync_results.append({"ok": True, "skipped": True, "reason": "synced_within_24h", "keyword_id": row.id})
+                _emit_schedule_progress(
+                    progress,
+                    "sync_keyword_skipped",
+                    f"关键词 24 小时内已同步，跳过：{keyword_name}",
+                    {"index": idx, "total": len(sync_keyword_rows), "keyword_id": row.id},
+                )
+                continue
             _emit_schedule_progress(
                 progress,
                 "sync_keyword",
@@ -6361,6 +6371,15 @@ async def run_ip_content_daily_scheduled(
                 or row.id,
                 120,
             )
+            if _synced_within_24h(getattr(row, "last_fetch_at", None), sync_now):
+                sync_results.append({"ok": True, "skipped": True, "reason": "synced_within_24h", "competitor_id": row.id})
+                _emit_schedule_progress(
+                    progress,
+                    "sync_competitor_skipped",
+                    f"同行账号 24 小时内已同步，跳过：{competitor_name}",
+                    {"index": idx, "total": len(sync_competitor_rows), "competitor_id": row.id},
+                )
+                continue
             _emit_schedule_progress(
                 progress,
                 "sync_competitor",
