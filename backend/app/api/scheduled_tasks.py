@@ -5673,7 +5673,11 @@ def _demo_child_tasks(db: Session, parent: ScheduledTask) -> List[ScheduledTask]
     """同一个演示批次里，父节点对应的发布等子节点（按 parent_node_id 对齐）。"""
     ctx = _demo_h5_context(parent.payload)
     node_id = str(ctx.get("workflow_node_id") or "").strip()
-    template_id = str(ctx.get("workflow_template_id") or "").strip()
+    # workflow_template_id=0 是 system_catalog 模板的合法 id；用 `or ""`
+    # 会把 0 当成空值，导致演示父节点完成后永远找不到发布子节点。
+    template_id = str(
+        ctx.get("workflow_template_id") if ctx.get("workflow_template_id") is not None else ""
+    ).strip()
     if not node_id or not template_id:
         return []
     rows = (
@@ -5691,7 +5695,12 @@ def _demo_child_tasks(db: Session, parent: ScheduledTask) -> List[ScheduledTask]
         child_ctx = _demo_h5_context(row.payload)
         if str(child_ctx.get("workflow_parent_node_id") or "").strip() != node_id:
             continue
-        if str(child_ctx.get("workflow_template_id") or "").strip() != template_id:
+        child_template_id = str(
+            child_ctx.get("workflow_template_id")
+            if child_ctx.get("workflow_template_id") is not None
+            else ""
+        ).strip()
+        if child_template_id != template_id:
             continue
         children.append(row)
     return children
