@@ -782,6 +782,130 @@ def _supersede_previous_video_charge(*, user_id: int, segment_key: str, reason: 
         db.close()
 
 
+def _mark_video_charge_refunded(
+    db: Session, *, user_id: int, hold_key: str, segment_key: str, reason: str = ""
+) -> bool:
+    """Mark a video pre-deduct as refunded; return False if already settled."""
+    key = str(hold_key or "").strip()
+    seg = str(segment_key or "").strip()
+    target = None
+    if key:
+        target = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(user_id),
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.ref_id == key,
+                CreditLedger.entry_type == "pre_deduct",
+            )
+            .order_by(CreditLedger.id.desc())
+            .first()
+        )
+    if target is None and seg:
+        rows = (
+            db.query(CreditLedger)
+            .filter(
+                CreditLedger.user_id == int(user_id),
+                CreditLedger.ref_type == _VIDEO_CHARGE_REF_TYPE,
+                CreditLedger.entry_type == "pre_deduct",
+            )
+            .order_by(CreditLedger.id.desc())
+            .limit(40)
+            .all()
+        )
+        for row in rows:
+            meta = dict(row.meta or {})
+            if str(meta.get("video_segment_key") or "") == seg:
+                target = row
+                break
+    if target is None:
+        return False
+    meta = dict(target.meta or {})
+    if meta.get("video_settled_at"):
+        return False
+    now = datetime.utcnow().isoformat()
+    meta["video_settled_at"] = now
+    meta["video_settle_action"] = "refunded"
+    meta["video_refund_reason"] = (reason or "video submit failed")[:200]
+    target.meta = meta
+    db.add(target)
+    return True
+
+
+def _refund_video_charge_once(
+    *,
+    user_id: int,
+    pre: Decimal,
+    hold_key: str,
+    segment_key: str,
+    model: str,
+    endpoint: str,
+    error: str,
+) -> bool:
+    """Refund a video pre-deduct at most once and mark the charge row."""
+    if pre <= 0:
+        return False
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            return False
+        ref = str(hold_key or segment_key or "").strip()
+        if ref:
+            existing = (
+                db.query(CreditLedger)
+                .filter(
+                    CreditLedger.user_id == int(user_id),
+                    CreditLedger.entry_type == "refund",
+                    CreditLedger.ref_type == _VIDEO_SETTLE_REF_TYPE,
+                    CreditLedger.ref_id == ref,
+                )
+                .first()
+            )
+            if existing is not None:
+                return False
+        if not _mark_video_charge_refunded(
+            db,
+            user_id=user_id,
+            hold_key=hold_key,
+            segment_key=segment_key,
+            reason=error,
+        ):
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.warning(
+                "[comfly_proxy] video refund skipped: charge not found or already settled hold=%s segment=%s endpoint=%s",
+                hold_key,
+                segment_key,
+                endpoint,
+            )
+            return False
+        _do_full_refund(
+            db,
+            user,
+            pre=pre,
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=model,
+            endpoint=endpoint,
+            error=error,
+            ref_type=_VIDEO_SETTLE_REF_TYPE,
+            ref_id=ref or None,
+            description=f"视频提交失败全额退款 ({endpoint})",
+        )
+        # _do_full_refund commits the refund and the charge meta atomically.
+        return True
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
 def _settle_video_charge_by_task(
     *, user_id: int, task_id: str, payload: Any, model_hint: str = "",
 ) -> Optional[Dict[str, Any]]:
@@ -4811,10 +4935,11 @@ async def proxy_videos_generations_submit(
             resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
                                          upstream_body, _comfly_headers(model), _TIMEOUT_VIDEO_SUBMIT)
     except Exception as e:
-        _do_full_refund_by_user_id(
-            billing_user_id,
+        _refund_video_charge_once(
+            user_id=billing_user_id,
             pre=pre,
-            capability_id=_CAPABILITY_FOR_BILLING,
+            hold_key=hold_key,
+            segment_key=segment_key,
             model=model,
             endpoint="video_submit",
             error=str(e),
@@ -5140,10 +5265,11 @@ async def proxy_openmind_video_submit(
     try:
         resp = await _openmind_video_submit(body, model, entry)
     except Exception as e:
-        _do_full_refund_by_user_id(
-            billing_user_id,
+        _refund_video_charge_once(
+            user_id=billing_user_id,
             pre=pre,
-            capability_id=_CAPABILITY_FOR_BILLING,
+            hold_key=hold_key,
+            segment_key=segment_key,
             model=model,
             endpoint="openmind_video_submit",
             error=str(e),
@@ -5389,10 +5515,11 @@ async def proxy_xai_video_submit(request: Request):
     try:
         response = await _xai_video_submit(body, model)
     except Exception as exc:
-        _do_full_refund_by_user_id(
-            billing_user_id,
+        _refund_video_charge_once(
+            user_id=billing_user_id,
             pre=pre,
-            capability_id=_CAPABILITY_FOR_BILLING,
+            hold_key=hold_key,
+            segment_key=segment_key,
             model=model,
             endpoint="xai_video_submit",
             error=str(exc),
@@ -5619,8 +5746,10 @@ async def proxy_seedance_tasks_submit(
                 _TIMEOUT_VIDEO_SUBMIT,
             )
     except Exception as e:
-        _do_full_refund_by_user_id(billing_user_id, pre=pre,
-                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit", error=str(e))
+        _refund_video_charge_once(
+            user_id=billing_user_id, pre=pre, hold_key=hold_key, segment_key=segment_key,
+            model=model, endpoint="seedance_submit", error=str(e),
+        )
         _audit("seedance_submit_failed", user_id=billing_user_id, request_user_id=request_user_id, model=model, error=str(e)[:300])
         raise HTTPException(502, f"Comfly Seedance submit 调用失败：{e}")
 
