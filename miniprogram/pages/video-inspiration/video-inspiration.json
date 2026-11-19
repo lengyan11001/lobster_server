@@ -1,7 +1,4 @@
 {
   "navigationStyle": "custom",
-  "enablePullDownRefresh": false,
-  "usingComponents": {
-    "topic-prefill": "/components/topic-prefill/topic-prefill"
-  }
+  "enablePullDownRefresh": false
 }
