@@ -154,10 +154,6 @@ Page({
     if (key === "templates" && !this.data.templates.length) this.loadTemplates();
   },
 
-  openTopicRecommend() {
-    wx.navigateTo({ url: "/pages/topic-recommend/topic-recommend" });
-  },
-
   startPickRecording() {
     this.setData({ recordingOpen: true, recordingsLoading: true, recordings: [] });
     app.request({ url: "/api/h5/recorder/files?page=1&page_size=50", timeout: 30000 })
