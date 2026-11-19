@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "素材混剪",
-  "usingComponents": {}
+  "usingComponents": {
+    "topic-prefill": "/components/topic-prefill/topic-prefill"
+  }
 }

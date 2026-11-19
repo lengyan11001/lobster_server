@@ -1,7 +1,15 @@
 <view class="page">
   <view class="head">
-    <text class="title">素材混剪</text>
-    <text class="sub">上传素材 + 文案，选模板和声音，自动混剪成片</text>
+    <view class="head-top">
+      <view>
+        <text class="title">素材混剪</text>
+        <text class="sub">上传素材 + 文案，选模板和声音，自动混剪成片</text>
+      </view>
+      <view class="head-acts">
+        <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
+        <button class="act-btn primary" bindtap="openRecordingPrefill">录音生成</button>
+      </view>
+    </view>
   </view>
 
   <view class="panel">
@@ -67,3 +75,5 @@
     <button class="primary" catchtap="confirmAssets">加入素材</button>
   </view>
 </view>
+
+<topic-prefill id="topicPrefill" target="montage" bind:pick="onPrefillPick" />

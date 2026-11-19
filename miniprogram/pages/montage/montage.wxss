@@ -39,3 +39,9 @@
 .am-thumb { width:90rpx; height:70rpx; border-radius:10rpx; background:#f1f5f9; margin-right:14rpx; text-align:center; line-height:70rpx; font-size:20rpx; color:#64748b; }
 .am-name { flex:1; font-size:24rpx; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .am-empty { padding:60rpx 0; text-align:center; color:#94a3b8; }
+
+.head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12rpx; }
+.head-acts { display: flex; flex-direction: column; gap: 10rpx; align-items: flex-end; }
+.act-btn { margin: 0; height: 56rpx; line-height: 56rpx; padding: 0 20rpx; font-size: 22rpx; border-radius: 999rpx; }
+.act-btn.primary { color: #fff; background: #2563eb; }
+.act-btn.ghost { color: #2563eb; background: #eff6ff; }

@@ -45,6 +45,42 @@ Page({
     this.stopPolling();
   },
 
+  openRecordingPrefill() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.open("recording");
+  },
+
+  openMemoryPrefill() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.open("memory");
+  },
+
+  onPrefillPick(evt) {
+    const item = (evt && evt.detail && evt.detail.item) || {};
+    const params = item.params || {};
+    const materials = (params.materials || [])
+      .map((row) => ({
+        type: String(row.type || "image"),
+        fileUrl: String(row.fileUrl || row.file_url || ""),
+        name: String(row.name || "")
+      }))
+      .filter((row) => row.fileUrl);
+    const patch = {
+      content: String(item.script || ""),
+      duration: Math.max(10, Math.min(180, Number(params.duration || 30)))
+    };
+    if (materials.length) patch.materials = materials;
+    const name = String(params.template_name || "");
+    if (name) {
+      const index = (this.data.templates || []).findIndex((row) => String(row.name || "") === name);
+      if (index >= 0) patch.templateIndex = index;
+    }
+    this.setData(patch);
+    const bits = ["文案"];
+    if (materials.length) bits.push("素材 " + materials.length + " 个");
+    wx.showToast({ title: "已填好：" + bits.join(" + "), icon: "none" });
+  },
+
   ensureAuth() {
     if (!(app.globalData.token && app.globalData.phone)) {
       wx.showToast({ title: "请先在「我的」授权手机号", icon: "none" });

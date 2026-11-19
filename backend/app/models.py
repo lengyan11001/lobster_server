@@ -504,6 +504,20 @@ class IPProfileV2Archive(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class IPPrefillRecord(Base):
+    """选题生成历史（数字人/素材混剪/创意分镜共用）。一条记录 = 一次生成的全部选题与参数。"""
+
+    __tablename__ = "ip_prefill_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    target: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    record_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    items: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class IPTopicPlan(Base):
     """Miniprogram-only 推荐选题 plan (keywords + 宫格 + 50 选题文案). Latest per user."""
 

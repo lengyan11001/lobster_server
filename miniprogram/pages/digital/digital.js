@@ -214,6 +214,77 @@ Page({
     wx.switchTab({ url: "/pages/profile/profile" });
   },
 
+  openRecordingPrefill() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.open("recording");
+  },
+
+  openMemoryPrefill() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.open("memory");
+  },
+
+  onPrefillPick(evt) {
+    const item = (evt && evt.detail && evt.detail.item) || {};
+    const params = item.params || {};
+    const materials = ((params.materials || []).map((row) => ({
+      asset_id: String(row.asset_id || ""),
+      type: String(row.type || "image"),
+      fileUrl: String(row.fileUrl || row.file_url || ""),
+      thumb: thumbUrl(String(row.fileUrl || row.file_url || "")),
+      name: String(row.name || "")
+    }))).filter((row) => row.fileUrl);
+    const useMaterials = params.use_materials !== false;
+    const duration = Number(params.duration_seconds || 30);
+    const patch = {
+      text: String(item.script || ""),
+      videoTitle: String(item.title || ""),
+      taskName: String(item.title || this.data.taskName),
+      durationMode: duration > 30 ? "long" : "short",
+      targetDuration: Math.max(10, Math.min(300, duration || 30)),
+      templateMode: useMaterials ? "template" : "none",
+      materials: useMaterials ? materials : [],
+      advancedOpen: useMaterials
+    };
+    const emotionIndex = EMOTION_VALUES.indexOf(String(params.emotion || ""));
+    if (emotionIndex >= 0) patch.emotionIndex = emotionIndex;
+    const speed = Number(params.speed);
+    if (speed) { patch.speed = speed; patch.speedText = speed.toFixed(2); }
+    const matchWayIndex = MATCH_WAY_VALUES.indexOf(String(params.match_way || ""));
+    if (matchWayIndex >= 0) patch.matchWayIndex = matchWayIndex;
+    const compositionIndex = (this.data.compositionValues || []).indexOf(String(params.composition || ""));
+    if (compositionIndex >= 0) patch.compositionIndex = compositionIndex;
+    const preprocessIndex = (this.data.preprocessValues || []).indexOf(String(params.preprocess || ""));
+    if (preprocessIndex >= 0) patch.preprocessIndex = preprocessIndex;
+    const switchMap = {
+      header_switch: "headerSwitch",
+      subtitle_switch: "subtitleSwitch",
+      keyword_switch: "keywordSwitch",
+      material_sound_switch: "materialSoundSwitch",
+      watermark_switch: "watermarkSwitch"
+    };
+    Object.keys(switchMap).forEach((key) => {
+      if (typeof params[key] === "boolean") patch[switchMap[key]] = params[key];
+    });
+    this.setData(patch);
+    if (this.data.assetsAll.length) {
+      const picked = (useMaterials ? materials : []).map((row) => row.asset_id);
+      this.setData({
+        assetsAll: this.data.assetsAll.map((row) => Object.assign({}, row, {
+          selected: picked.indexOf(row.asset_id) >= 0
+        }))
+      });
+    }
+    if (useMaterials) {
+      this.applyTemplateById(String(params.template_style_id || ""), String(params.template_name || ""));
+      if (!this.data.assetsAll.length) this.loadAssets();
+    }
+    const bits = ["文案"];
+    if (item.title) bits.push("标题");
+    if (useMaterials) bits.push(materials.length ? "混剪 " + materials.length + " 个素材" : "混剪模板");
+    wx.showToast({ title: "已填好：" + bits.join(" + "), icon: "none" });
+  },
+
   openAudioPicker() {
     if (!(app.globalData.token && app.globalData.phone)) {
       wx.showToast({ title: "请先到「我的」登录授权", icon: "none" });

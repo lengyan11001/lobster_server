@@ -1,0 +1,76 @@
+<view wx:if="{{open}}" class="pf-mask" catchtap="close" catchtouchmove="noop">
+  <view class="pf-sheet" catchtap="noop">
+    <view class="pf-head">
+      <view class="pf-head-main">
+        <text class="pf-title">{{mode === 'recording' ? '录音生成选题' : 'IP记忆生成选题'}}</text>
+        <text class="pf-sub">九宫格选题法 · 5 条 · 参数一次填好</text>
+      </view>
+      <text class="pf-link" bindtap="openHistory">历史</text>
+      <text class="pf-close" catchtap="close">✕</text>
+    </view>
+
+    <scroll-view scroll-y class="pf-body">
+      <view wx:if="{{errorText}}" class="pf-err">{{errorText}}</view>
+
+      <block wx:if="{{phase === 'record'}}">
+        <view wx:if="{{recordLoading}}" class="pf-tip">正在读取录音…</view>
+        <view wx:elif="{{!recordList.length}}" class="pf-tip">没有已转写的录音，先去「AI秘书」录一段。</view>
+        <view wx:for="{{recordList}}" wx:key="id" class="pf-row" data-id="{{item.id}}" bindtap="pickRecord">
+          <view class="pf-row-main">
+            <text class="pf-row-title">{{item.name}}</text>
+            <text class="pf-row-sub">{{item.time}}</text>
+          </view>
+          <text class="pf-row-go">生成 ›</text>
+        </view>
+      </block>
+
+      <block wx:elif="{{phase === 'history'}}">
+        <view wx:if="{{historyLoading}}" class="pf-tip">正在读取历史…</view>
+        <view wx:elif="{{!history.length}}" class="pf-tip">还没有生成记录。</view>
+        <view wx:for="{{history}}" wx:key="id" class="pf-row">
+          <view class="pf-row-main" data-id="{{item.id}}" bindtap="pickHistory">
+            <text class="pf-row-title">{{item.first_title || '未命名'}}</text>
+            <text class="pf-row-sub">{{item.mode === 'recording' ? '录音' : 'IP记忆'}} · {{item.count}} 条 · {{item.created_at}}</text>
+          </view>
+          <text class="pf-row-del" data-id="{{item.id}}" catchtap="deleteHistory">删除</text>
+        </view>
+      </block>
+
+      <block wx:elif="{{phase === 'loading'}}">
+        <view class="pf-loading">
+          <view class="pf-spin"></view>
+          <text class="pf-loading-text">{{stageText}}</text>
+          <text class="pf-loading-tip">大概 40-90 秒，页面别关</text>
+        </view>
+      </block>
+
+      <block wx:elif="{{phase === 'result'}}">
+        <view wx:if="{{keywords.length}}" class="pf-kw">
+          <text class="pf-kw-label">关键词</text>
+          <view class="pf-chips">
+            <text wx:for="{{keywords}}" wx:key="*this" class="pf-chip">{{item}}</text>
+          </view>
+        </view>
+
+        <view wx:for="{{items}}" wx:key="id" class="pf-card">
+          <view class="pf-card-top">
+            <text class="pf-card-idx">{{index + 1}}</text>
+            <view class="pf-card-main">
+              <text class="pf-card-title">{{item.title}}</text>
+              <view wx:if="{{item.inner || item.outer}}" class="pf-card-kw">
+                <text class="pf-chip small">{{item.inner}}</text>
+                <text wx:if="{{item.outer}}" class="pf-chip small">× {{item.outer}}</text>
+              </view>
+            </view>
+          </view>
+          <text wx:if="{{item.hook}}" class="pf-card-hook">钩子：{{item.hook}}</text>
+          <text class="pf-card-script">{{item.script}}</text>
+          <text class="pf-card-summary">{{item.summary}}</text>
+          <view class="pf-card-acts">
+            <view class="pf-btn primary" data-id="{{item.id}}" catchtap="applyItem">用这个，填好参数</view>
+          </view>
+        </view>
+      </block>
+    </scroll-view>
+  </view>
+</view>

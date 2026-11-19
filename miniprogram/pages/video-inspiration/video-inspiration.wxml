@@ -59,6 +59,10 @@
       </scroll-view>
     </view>
 
+    <view class="prefill-acts">
+      <button class="prefill-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="prefill-btn primary" bindtap="openRecordingPrefill">录音生成</button>
+    </view>
     <view class="dream-panel">
       <textarea class="prompt-input" value="{{prompt}}" maxlength="2000" bindinput="onPromptInput" placeholder="输入或修改视频创意..." placeholder-class="prompt-placeholder" />
       <view class="prompt-footer">
@@ -168,3 +172,5 @@
     </view>
   </view>
 </view>
+
+<topic-prefill id="topicPrefill" target="storyboard" bind:pick="onPrefillPick" />

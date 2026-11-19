@@ -439,6 +439,32 @@ Page({
     });
   },
 
+  openRecordingPrefill() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.open("recording");
+  },
+
+  openMemoryPrefill() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.open("memory");
+  },
+
+  onPrefillPick(evt) {
+    const item = (evt && evt.detail && evt.detail.item) || {};
+    const params = item.params || {};
+    const shots = Array.isArray(item.shots) ? item.shots : [];
+    const visual = shots.map((shot) => String(shot.visual || "").trim()).filter(Boolean).join("；");
+    const hook = String(item.hook || "").trim();
+    const prompt = [hook, visual || String(item.script || "")].filter(Boolean).join("\n");
+    const patch = { prompt: prompt.slice(0, 2000) };
+    const aspect = String(params.aspect || "9:16");
+    if (aspect === "9:16" || aspect === "16:9") patch.ratio = aspect;
+    const duration = Number(params.duration || 0);
+    if (duration === 6 || duration === 10) patch.duration = duration;
+    this.setData(patch);
+    wx.showToast({ title: shots.length ? "已带入 " + shots.length + " 个分镜" : "已带入创意", icon: "none" });
+  },
+
   onPromptInput(evt) {
     this.setData({ prompt: evt.detail.value || "" });
   },

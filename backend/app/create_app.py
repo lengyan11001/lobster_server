@@ -77,6 +77,7 @@ from .api.content_records import router as content_records_router
 from .api.publish_metrics import router as publish_metrics_router
 from .api.customer_management import router as customer_management_router
 from .api.ip_content_studio import router as ip_content_studio_router
+from .api.ip_prefill import router as ip_prefill_router
 from .api.moments_coach import router as moments_coach_router
 from .api.linkedin_mining import router as linkedin_mining_router
 from .api.social_leads import router as social_leads_router
@@ -1853,6 +1854,7 @@ def create_app() -> FastAPI:
             pass
         return response
 
+    app.include_router(ip_prefill_router, prefix="")
     app.include_router(health_router, prefix="")
     app.include_router(privacy_policy_router, prefix="")
     app.include_router(oauth_public_pages_router, prefix="")
