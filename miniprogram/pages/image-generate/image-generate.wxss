@@ -161,9 +161,9 @@
   align-items: center;
   justify-content: center;
   gap: 8rpx;
-  color: rgba(255,255,255,0.86);
+  color: #64748b;
   background: #f8f9fa;
-  border: 2rpx dashed rgba(16,245,221,0.62);
+  border: 2rpx dashed rgba(25,87,232,0.35);
 }
 
 .asset-card {

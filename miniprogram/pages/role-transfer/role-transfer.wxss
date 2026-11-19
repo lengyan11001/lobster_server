@@ -158,7 +158,7 @@
   padding: 118rpx 20rpx 22rpx;
   border: 1rpx solid #eef1f6;
   border-radius: 24rpx;
-  background: #101923;
+  background: #ffffff;
   box-sizing: border-box;
 }
 
@@ -559,7 +559,7 @@
   overflow: hidden;
   border: 1rpx solid #eef1f6;
   border-radius: 28rpx;
-  background: #090d14;
+  background: #ffffff;
   box-shadow: 0 30rpx 90rpx rgba(15,23,42,0.08);
 }
 

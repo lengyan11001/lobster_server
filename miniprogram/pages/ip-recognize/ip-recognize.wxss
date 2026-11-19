@@ -160,7 +160,7 @@ page { background: #f8f9fa; color: #0f172a; }
 .template-row-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8rpx; margin-left: 12rpx; }
 
 .overlay { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 99; display: flex; align-items: flex-end; background: rgba(15,23,42,0.08); }
-.sheet { width: 100%; max-height: 88vh; padding: 28rpx; background: #0a101c; border-top: 1rpx solid rgba(0, 214, 185, 0.18); border-radius: 30rpx 30rpx 0 0; display: flex; flex-direction: column; }
+.sheet { width: 100%; max-height: 88vh; padding: 28rpx; background: #ffffff; border-top: 1rpx solid rgba(0, 214, 185, 0.18); border-radius: 30rpx 30rpx 0 0; display: flex; flex-direction: column; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; }
 .sheet-title { color: #0f172a; font-size: 30rpx; font-weight: 700; }
 .sheet-close { width: 56rpx; height: 56rpx; line-height: 56rpx; text-align: center; border-radius: 50%; background: #ffffff; color: #64748b; font-size: 24rpx; }

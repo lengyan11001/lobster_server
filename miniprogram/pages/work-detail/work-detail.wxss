@@ -76,7 +76,7 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .player-panel {
   overflow: hidden;
-  background: #050505;
+  background: #ffffff;
   border: 1rpx solid #eef1f6;
   border-radius: 28rpx;
 }
@@ -85,7 +85,7 @@ page { background: #f8f9fa; color: #0f172a; }
 .video-waiting {
   width: 100%;
   height: 390rpx;
-  background: #050505;
+  background: #ffffff;
 }
 
 .video-waiting {
