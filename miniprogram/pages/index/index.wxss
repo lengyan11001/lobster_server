@@ -29,6 +29,18 @@ page { background: #f8f9fa; }
   width: 100%;
 }
 
+.hero-slogan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 84rpx;
+  text-align: center;
+  font-size: 26rpx;
+  font-weight: 700;
+  letter-spacing: 4rpx;
+  color: #475569;
+}
+
 .secretary-hit {
   position: absolute;
   right: 4%;

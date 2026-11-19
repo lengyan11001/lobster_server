@@ -1,6 +1,7 @@
 <view class="home">
   <view class="top-visual">
     <image class="top-visual-img" src="/assets/home2/hero.jpg" mode="widthFix" />
+    <text class="hero-slogan">必火智能 · 让企业AI落地更简单</text>
     <view class="secretary-hit" bindtap="goSecretary" hover-class="none"></view>
   </view>
 
