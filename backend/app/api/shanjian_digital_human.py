@@ -26,7 +26,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, H5AgentTemplateGrant, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
+from ..models import Asset, H5AgentTemplateGrant, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User, UserContentRecord
 from ..services.brand_context import brand_short_name, normalize_brand_mark, user_brand_mark
 from .assets import (
     _asset_hidden_from_library,
@@ -948,7 +948,80 @@ def _register_final_video_asset(
         )
     )
     db.commit()
+    _upsert_digital_human_content_record(
+        db=db,
+        user_id=int(current_user.id),
+        row=row,
+        video_url=video_url,
+        duration=duration,
+        asset_id=asset_id,
+    )
     return asset_id
+
+
+
+def _upsert_digital_human_content_record(
+    *,
+    db: Session,
+    user_id: int,
+    row: ShanjianDigitalHumanVideoTask,
+    video_url: str,
+    duration: Optional[float],
+    asset_id: str,
+) -> None:
+    """数字人成片同时写一条「内容记录」，作品页才看得到（否则只落在素材库）。"""
+    source = "shanjian_digital_human"
+    source_id = _clean_text(row.task_id) or str(row.id)
+    if not source_id or not _clean_text(video_url):
+        return
+    submit = row.submit_payload if isinstance(row.submit_payload, dict) else {}
+    template_meta = _template_meta_from_submit_payload(submit)
+    meta = {
+        "action": "shanjian_digital_human_video",
+        "source": "miniprogram",
+        "task_id": _clean_text(row.task_id),
+        "asset_id": asset_id,
+        "profile_id": row.profile_id,
+        "virtualman_id": _clean_text(row.virtualman_id),
+        "speaker_id": _clean_text(row.speaker_id),
+        "duration": duration if duration is not None else row.duration,
+        "template_style_id": _clean_text((template_meta or {}).get("style_id")),
+        "template_name": _clean_text((template_meta or {}).get("name")),
+        "audio_url": _clean_text(row.audio_url),
+    }
+    try:
+        rec = (
+            db.query(UserContentRecord)
+            .filter(
+                UserContentRecord.user_id == int(user_id),
+                UserContentRecord.source == source,
+                UserContentRecord.source_id == source_id,
+            )
+            .first()
+        )
+        now = datetime.utcnow()
+        if rec is None:
+            rec = UserContentRecord(
+                user_id=int(user_id),
+                source=source,
+                source_id=source_id,
+                kind="video",
+                created_at=now,
+                updated_at=now,
+                source_created_at=row.created_at or now,
+            )
+            db.add(rec)
+        rec.title = _clean_text(row.title)[:200] or "数字人口播"
+        rec.content = _clean_text(row.text)[:5000]
+        rec.file_url = video_url
+        rec.cover_url = _clean_text(row.cover_url)
+        rec.status = "completed"
+        rec.meta = meta
+        rec.updated_at = now
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.warning("[shanjian] write content record failed: %s", str(exc)[:200])
 
 
 async def _apply_video_duration_limit(
