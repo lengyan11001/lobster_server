@@ -1,4 +1,4 @@
-.page { min-height: 100vh; padding: 28rpx; background: #f3f6fb; }
+.page { min-height: 100vh; padding: 28rpx 28rpx 220rpx; background: #f8f9fa; }
 .head { padding: 12rpx 4rpx 8rpx; }
 .head-row { display: flex; align-items: center; justify-content: space-between; }
 .title { display: block; font-size: 42rpx; font-weight: 700; }
