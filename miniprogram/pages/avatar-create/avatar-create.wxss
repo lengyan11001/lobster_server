@@ -51,7 +51,7 @@
 .cap-status { min-height: 40rpx; margin: 0; padding: 16rpx 28rpx 0; font-size: 24rpx; color: #64748b; line-height: 1.5; }
 .cap-actions { min-height: 150rpx; display: flex; align-items: center; justify-content: center; padding: 16rpx 28rpx 40rpx; }
 .cap-ghost { min-width: 180rpx; height: 82rpx; line-height: 82rpx; margin: 0 20rpx; font-size: 26rpx; color: #596579; background: #fff; border: 1rpx solid #dfe5ed; border-radius: 18rpx; }
-.cap-use { min-width: 200rpx; height: 82rpx; line-height: 82rpx; margin: 0 20rpx; font-size: 26rpx; color: #fff; background: #1957E8; border-radius: 18rpx; }
+.cap-use { min-width: 200rpx; height: 82rpx; line-height: 82rpx; margin: 0 20rpx; font-size: 26rpx; color: #fff; background: linear-gradient(135deg, #1957E8, #00D6B9); border-radius: 18rpx; }
 .cap-shutter { width: 116rpx; height: 116rpx; border-radius: 50%; background: #fff; border: 6rpx solid #1957E8; display: flex; align-items: center; justify-content: center; box-shadow: 0 14rpx 36rpx rgba(37,99,235,.2); }
 .cap-shutter-inner { width: 84rpx; height: 84rpx; border-radius: 50%; background: #1957E8; }
 .cap-shutter.recording .cap-shutter-inner { width: 48rpx; height: 48rpx; border-radius: 10rpx; background: #ef4444; }
