@@ -582,6 +582,26 @@ Page({
     wx.navigateTo({ url: "/pages/moments/moments" });
   },
 
+  goDrama() {
+    wx.showToast({ title: "AI短剧广场 敬请期待", icon: "none" });
+  },
+
+  goMix() {
+    wx.navigateTo({ url: "/pages/montage/montage" });
+  },
+
+  goPoster() {
+    wx.navigateTo({ url: "/pages/image-generate/image-generate" });
+  },
+
+  goTrending() {
+    wx.navigateTo({ url: "/pages/video-inspiration/video-inspiration" });
+  },
+
+  goSecretary() {
+    wx.navigateTo({ url: "/pages/secretary/secretary" });
+  },
+
   goVideoHub() {
     wx.navigateTo({ url: "/pages/video-hub/video-hub" });
   },
@@ -623,7 +643,7 @@ Page({
   },
 
   goDigital() {
-    wx.navigateTo({ url: "/pages/digital/history" });
+    wx.navigateTo({ url: "/pages/digital/digital" });
   },
 
   goRoleTransfer() {
