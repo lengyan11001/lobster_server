@@ -395,12 +395,19 @@ async def generate_prefill(
     if template_catalog:
         extra_hint += "\n【可用模板】" + template_catalog
 
+    # 两次 LLM 要跑 40-90 秒，先把读事务提交掉，否则 PG 会在 idle-in-transaction 里掐断连接
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
     keyword_parsed = await _llm_json(
         _KEYWORD_SYSTEM,
         context_text + extra_hint + "\n\n请输出关键词与宫格 JSON。",
         owner_token,
         "",
         temperature=0.4,
+        timeout=90.0,
     )
     keywords = [_clean(x, 30) for x in (keyword_parsed.get("keywords") or []) if _clean(x, 30)][:6]
     grid_raw = keyword_parsed.get("grid") if isinstance(keyword_parsed.get("grid"), dict) else {}
@@ -413,7 +420,7 @@ async def generate_prefill(
         raise HTTPException(status_code=502, detail="AI 没能拆出关键词，请换一条录音或补充 IP 资料")
 
     system_prompt, user_prompt = _build_topic_prompt(target, context_text + extra_hint, keywords, grid, int(body.count))
-    topic_parsed = await _llm_json(system_prompt, user_prompt, owner_token, "", temperature=0.65)
+    topic_parsed = await _llm_json(system_prompt, user_prompt, owner_token, "", temperature=0.65, timeout=150.0)
     items: list[dict[str, Any]] = []
     for raw in (topic_parsed.get("topics") or []):
         item = _normalize_item(target, raw, groups, style_templates, template_groups, resolver)
