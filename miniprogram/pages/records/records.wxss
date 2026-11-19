@@ -1,10 +1,10 @@
-.page { background: #f8f9fa; color: #0f172a; }
+.page { min-height: 100vh; padding: 28rpx; background: #f8f9fa; }
 .head { padding: 12rpx 4rpx 20rpx; }
 .title { display: block; font-size: 42rpx; font-weight: 700; }
 .sub { display: block; margin-top: 8rpx; font-size: 24rpx; color: #64748b; }
 .tabs { display: flex; gap: 12rpx; padding-bottom: 20rpx; }
 .tab { padding: 12rpx 24rpx; font-size: 26rpx; color: #475569; background: #fff; border-radius: 999rpx; }
-.tab.active { color: #fff; background: #1957E8; }
+.tab.active { color: #ffffff; background: linear-gradient(135deg, #1957E8, #00D6B9); }
 .card { display: flex; gap: 20rpx; padding: 20rpx; margin-bottom: 20rpx; background: #fff; border-radius: 20rpx; }
 .cover { width: 180rpx; height: 180rpx; border-radius: 14rpx; background: #e2e8f0; }
 .cover-empty { display: flex; align-items: center; justify-content: center; font-size: 24rpx; color: #64748b; }

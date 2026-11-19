@@ -1,4 +1,4 @@
-.page { background: #f8f9fa; color: #0f172a; }
+.page { min-height: 100vh; padding: 28rpx; background: #f8f9fa; }
 .head { padding: 12rpx 4rpx 28rpx; }
 .title { display: block; font-size: 42rpx; font-weight: 700; color: #0f172a; }
 .sub { display: block; margin-top: 10rpx; font-size: 24rpx; color: #64748b; }

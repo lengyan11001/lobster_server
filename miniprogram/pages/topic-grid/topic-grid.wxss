@@ -26,7 +26,7 @@ page { background: #f8f9fa; color: #0f172a; }
 .cell.center { background: #f8f9fa; border-color: transparent; }
 .cell.center .cell-text { color: #0f172a; font-size: 24rpx; font-weight: 700; }
 
-.cell.center.on { background: #f8f9fa; }
+.cell.center.on { background: linear-gradient(135deg, #1957E8, #00D6B9); color: #ffffff;}
 .ph { width: 12rpx; height: 12rpx; border-radius: 50%; background: #e2e8f0; }
 
 .status-pill { display: inline-block; margin-top: 16rpx; font-size: 21rpx; color: #0891b2; background: #e0f7fa; border-radius: 99rpx; padding: 8rpx 20rpx; }

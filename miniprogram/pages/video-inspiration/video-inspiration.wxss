@@ -106,10 +106,9 @@ page { background: #f8f9fa; color: #0f172a; }
   width: 52rpx;
   height: 8rpx;
   margin: 6rpx auto 0;
-  background: #10f5dd;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
   border-radius: 999rpx;
-  box-shadow: 0 0 24rpx rgba(16, 245, 221, 0.8);
-}
+  box-shadow: 0 0 24rpx rgba(16, 245, 221, 0.8); color: #ffffff;}
 
 .search-box {
   display: flex;
@@ -226,8 +225,8 @@ page { background: #f8f9fa; color: #0f172a; }
   height: 64rpx;
   line-height: 64rpx;
   padding: 0 30rpx;
-  color: #071014;
-  background: #10f5dd;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
   border-radius: 999rpx;
   font-size: 24rpx;
   font-weight: 900;
@@ -283,7 +282,7 @@ page { background: #f8f9fa; color: #0f172a; }
 }
 
 .upload-plus {
-  color: #10f5dd;
+  color: #1957E8;
   font-size: 54rpx;
   font-weight: 900;
   line-height: 50rpx;
@@ -443,7 +442,7 @@ page { background: #f8f9fa; color: #0f172a; }
 }
 
 .seg-row button.active {
-  color: #10f5dd;
+  color: #1957E8;
   background: rgba(16,245,221,0.14);
   border-color: rgba(16,245,221,0.72);
   box-shadow: inset 0 1rpx rgba(255,255,255,0.12), 0 0 28rpx rgba(16,245,221,0.16);
@@ -467,8 +466,8 @@ page { background: #f8f9fa; color: #0f172a; }
   height: 72rpx;
   line-height: 72rpx;
   margin: 22rpx;
-  color: #071014;
-  background: #10f5dd;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
   border-radius: 999rpx;
   font-size: 26rpx;
   font-weight: 950;
@@ -620,7 +619,7 @@ page { background: #f8f9fa; color: #0f172a; }
 }
 
 .asset-option.selected {
-  border-color: #10f5dd;
+  border-color: #1957E8;
   box-shadow: 0 0 24rpx rgba(16,245,221,0.28);
 }
 
@@ -643,8 +642,8 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .asset-option.selected .asset-check {
   color: #031313;
-  background: #10f5dd;
-  border-color: #10f5dd;
+  background: #1957E8;
+  border-color: #1957E8;
 }
 
 .asset-actions {
@@ -665,14 +664,14 @@ page { background: #f8f9fa; color: #0f172a; }
 }
 
 .asset-secondary {
-  color: #10f5dd;
+  color: #1957E8;
   background: rgba(16,245,221,0.1);
   border: 1rpx solid rgba(16,245,221,0.24);
 }
 
 .asset-primary {
-  color: #051313;
-  background: #10f5dd;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
 }
 
 .preview-panel {

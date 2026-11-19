@@ -1,6 +1,6 @@
 page { background: #f8f9fa; color: #0f172a; }
 
-.page { min-height: 100vh; padding: 24rpx 24rpx 60rpx; background: #f6f8fc; box-sizing: border-box; }
+.page { min-height: 100vh; padding: 24rpx 24rpx 60rpx; background: #f8f9fa; box-sizing: border-box; }
 
 .head { padding: 8rpx 4rpx 22rpx; }
 .title { display: block; color: #0f172a; font-size: 42rpx; font-weight: 800; letter-spacing: 1rpx; }
@@ -30,7 +30,7 @@ page { background: #f8f9fa; color: #0f172a; }
   box-shadow: 0 4rpx 14rpx rgba(15, 23, 42, 0.03);
 }
 .pkg:nth-child(odd) { margin-right: 3%; }
-.pkg.active { border-color: #00D6B9; background: #f8f9fa; box-shadow: 0 8rpx 20rpx rgba(6, 182, 212, 0.14); }
+.pkg.active { border-color: #ffffff; background: linear-gradient(135deg, #1957E8, #00D6B9); box-shadow: 0 8rpx 20rpx rgba(6, 182, 212, 0.14); }
 .pkg-price { display: block; color: #0f172a; font-size: 40rpx; font-weight: 800; }
 .pkg-credits { display: block; margin-top: 8rpx; color: #1957E8; font-size: 25rpx; font-weight: 600; }
 .pkg-label { display: block; margin-top: 6rpx; color: #64748b; font-size: 20rpx; }

@@ -1,4 +1,12 @@
-.role-page { background: #f8f9fa; color: #0f172a; }
+.role-page {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: #f8f9fa;
+  color: #0f172a;
+  padding: 72rpx 34rpx 0;
+  box-sizing: border-box;
+}
 
 .page-bg,
 .bg-mask {
@@ -109,8 +117,8 @@
 
 .auth-actions button,
 .submit-btn {
-  color: #041018;
-  background: #f8f9fa;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
   border-radius: 999rpx;
   font-size: 28rpx;
   font-weight: 900;

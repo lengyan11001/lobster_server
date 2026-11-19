@@ -1,4 +1,7 @@
-.chat-page { background: #f8f9fa; color: #0f172a; }
+.chat-page {
+  min-height: 100vh;
+  padding-bottom: 360rpx;
+}
 
 .chat-header {
   display: flex;
@@ -222,8 +225,8 @@
   min-height: 48rpx;
   margin: 0;
   padding: 0 14rpx;
-  color: #fff;
-  background: #1957E8;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
   border-radius: 999rpx;
   font-size: 21rpx;
   line-height: 48rpx;

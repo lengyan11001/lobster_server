@@ -1,4 +1,4 @@
-.page { background: #f8f9fa; color: #0f172a; }
+.page { padding: 24rpx; }
 .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20rpx; }
 .title { display: block; font-size: 38rpx; font-weight: 600; color: #0f172a; }
 .sub { display: block; margin-top: 6rpx; font-size: 22rpx; color: #64748b; }

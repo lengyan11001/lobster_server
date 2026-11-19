@@ -117,7 +117,7 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .waiting-mask text:last-child {
   margin-top: 12rpx;
-  color: #10f5dd;
+  color: #1957E8;
   font-size: 24rpx;
   font-weight: 900;
 }
@@ -288,7 +288,7 @@ page { background: #f8f9fa; color: #0f172a; }
   height: 92rpx;
   margin: 0;
   padding: 0 12rpx;
-  color: #10f5dd;
+  color: #1957E8;
   background: rgba(5, 8, 12, 0.9);
   border: 1rpx solid #eef1f6;
   border-radius: 22rpx;

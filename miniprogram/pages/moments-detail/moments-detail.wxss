@@ -1,4 +1,4 @@
-.page { background: #f8f9fa; color: #0f172a; }
+.page { padding: 24rpx; }
 .empty { padding: 120rpx 0; text-align: center; color: #64748b; }
 .copy-card { background: #fff; border-radius: 18rpx; padding: 24rpx; margin-bottom: 18rpx; box-shadow: 0 2rpx 10rpx rgba(15,23,42,.05); }
 .copy-text { font-size: 26rpx; line-height: 1.7; color: #0f172a; white-space: pre-wrap; }

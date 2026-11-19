@@ -127,8 +127,8 @@ page { background: #f8f9fa; color: #0f172a; }
   height: 62rpx;
   margin: 0;
   padding: 0 24rpx;
-  color: #061312;
-  background: #f8f9fa;
+  color: #ffffff;
+  background: linear-gradient(135deg, #1957E8, #00D6B9);
   border-radius: 999rpx;
   font-size: 24rpx;
   font-weight: 900;
@@ -284,8 +284,7 @@ page { background: #f8f9fa; color: #0f172a; }
   flex-direction: column;
   justify-content: flex-end;
   padding: 20rpx;
-  background: #f8f9fa;
-}
+  background: linear-gradient(135deg, #1957E8, #00D6B9); color: #ffffff;}
 
 .skeleton-card view {
   width: 104rpx;
