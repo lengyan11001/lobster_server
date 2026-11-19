@@ -1,4 +1,4 @@
-.page { min-height: 100vh; padding: 28rpx 28rpx 60rpx; background: #f3f6fb; box-sizing: border-box; }
+.page { background: #f8f9fa; color: #0f172a; }
 .head { padding: 12rpx 4rpx 20rpx; }
 .title { display: block; font-size: 40rpx; font-weight: 700; }
 .sub { display: block; margin-top: 8rpx; font-size: 24rpx; color: #64748b; }
@@ -8,13 +8,13 @@
 .textarea { width: 100%; min-height: 140rpx; padding: 20rpx; font-size: 26rpx; line-height: 1.7; background: #f8fafc; border-radius: 14rpx; }
 .seg { display: flex; gap: 12rpx; }
 .seg-item { flex: 1; padding: 16rpx 0; text-align: center; font-size: 26rpx; color: #475569; background: #f1f5f9; border-radius: 12rpx; }
-.seg-item.active { color: #fff; background: #2563eb; }
+.seg-item.active { color: #fff; background: #1957E8; }
 .picker-box { position: relative; padding: 24rpx; font-size: 26rpx; color: #334155; background: #f8fafc; border-radius: 14rpx; }
 .clear { position: absolute; right: 18rpx; top: 14rpx; font-size: 32rpx; color: #ef4444; }
 .picker { padding: 22rpx; font-size: 28rpx; background: #f8fafc; border-radius: 14rpx; }
 .agree { display: flex; align-items: flex-start; margin: 20rpx 0; font-size: 24rpx; color: #475569; }
 .agree-text { flex: 1; margin-left: 10rpx; line-height: 1.6; word-break: break-all; }
-.primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #2563eb; border-radius: 16rpx; }
+.primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #1957E8; border-radius: 16rpx; }
 .primary[disabled] { opacity: 0.5; }
 .status { margin-top: 16rpx; font-size: 24rpx; color: #64748b; text-align: center; }
 
@@ -23,7 +23,7 @@
 .capture-row .picker-box { flex: 1; min-width: 0; padding-right: 60rpx; }
 .capture-btn { flex: none; width: 132rpx; height: auto; margin: 0 0 0 12rpx; padding: 0; font-size: 24rpx; line-height: 88rpx; color: #1d4ed8; background: #eff6ff; border: 1rpx solid #bfdbfe; border-radius: 14rpx; }
 .picker-text { display: block; line-height: 1.5; word-break: break-all; }
-.field-hint { display: block; margin-top: 10rpx; font-size: 22rpx; line-height: 1.5; color: #94a3b8; }
+.field-hint { display: block; margin-top: 10rpx; font-size: 22rpx; line-height: 1.5; color: #64748b; }
 
 .cap-btns { display:flex; margin-top:12rpx; }
 .cap-btns button { flex:1; margin-right:12rpx; }
@@ -41,22 +41,22 @@
 .cap-mode { padding: 0 30rpx; height: 62rpx; line-height: 62rpx; font-size: 26rpx; color: #64748b; border-radius: 14rpx; }
 .cap-mode.active { background: #fff; color: #1d4ed8; box-shadow: 0 4rpx 12rpx rgba(15,23,42,.08); }
 .cap-switch { padding: 0 22rpx; height: 62rpx; line-height: 62rpx; font-size: 24rpx; color: #334155; border: 1rpx solid #e2e8f0; border-radius: 16rpx; }
-.cap-stage { position: relative; flex: 1; min-height: 520rpx; background: #111827; overflow: hidden; }
+.cap-stage { position: relative; flex: 1; min-height: 520rpx; background: #ffffff; overflow: hidden; }
 .cap-live { width: 100%; height: 100%; }
 .cap-preview { width: 100%; height: 100%; }
-.cap-teleprompter { position: absolute; left: 24rpx; right: 24rpx; bottom: 24rpx; max-height: 45%; padding: 20rpx 24rpx; color: #fff; font-size: 26rpx; line-height: 1.7; white-space: normal; word-break: break-all; background: rgba(15,23,42,.78); border: 1rpx solid rgba(255,255,255,.2); border-radius: 16rpx; }
+.cap-teleprompter { position: absolute; left: 24rpx; right: 24rpx; bottom: 24rpx; max-height: 45%; padding: 20rpx 24rpx; color: #0f172a; font-size: 26rpx; line-height: 1.7; white-space: normal; word-break: break-all; background: rgba(15,23,42,.78); border: 1rpx solid rgba(255,255,255,.2); border-radius: 16rpx; }
 .cap-badge { position: absolute; left: 24rpx; top: 24rpx; display: flex; align-items: center; padding: 8rpx 18rpx; background: rgba(15,23,42,.72); border-radius: 14rpx; }
 .cap-dot { width: 16rpx; height: 16rpx; border-radius: 50%; background: #ef4444; margin-right: 12rpx; }
-.cap-time { color: #fff; font-size: 24rpx; }
+.cap-time { color: #0f172a; font-size: 24rpx; }
 .cap-status { min-height: 40rpx; margin: 0; padding: 16rpx 28rpx 0; font-size: 24rpx; color: #64748b; line-height: 1.5; }
 .cap-actions { min-height: 150rpx; display: flex; align-items: center; justify-content: center; padding: 16rpx 28rpx 40rpx; }
 .cap-ghost { min-width: 180rpx; height: 82rpx; line-height: 82rpx; margin: 0 20rpx; font-size: 26rpx; color: #596579; background: #fff; border: 1rpx solid #dfe5ed; border-radius: 18rpx; }
-.cap-use { min-width: 200rpx; height: 82rpx; line-height: 82rpx; margin: 0 20rpx; font-size: 26rpx; color: #fff; background: #2563eb; border-radius: 18rpx; }
-.cap-shutter { width: 116rpx; height: 116rpx; border-radius: 50%; background: #fff; border: 6rpx solid #2563eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 14rpx 36rpx rgba(37,99,235,.2); }
-.cap-shutter-inner { width: 84rpx; height: 84rpx; border-radius: 50%; background: #2563eb; }
+.cap-use { min-width: 200rpx; height: 82rpx; line-height: 82rpx; margin: 0 20rpx; font-size: 26rpx; color: #fff; background: #1957E8; border-radius: 18rpx; }
+.cap-shutter { width: 116rpx; height: 116rpx; border-radius: 50%; background: #fff; border: 6rpx solid #1957E8; display: flex; align-items: center; justify-content: center; box-shadow: 0 14rpx 36rpx rgba(37,99,235,.2); }
+.cap-shutter-inner { width: 84rpx; height: 84rpx; border-radius: 50%; background: #1957E8; }
 .cap-shutter.recording .cap-shutter-inner { width: 48rpx; height: 48rpx; border-radius: 10rpx; background: #ef4444; }
 
-.fill-link { display:inline-block; margin-top:10rpx; font-size:22rpx; color:#2563eb; }
+.fill-link { display:inline-block; margin-top:10rpx; font-size:22rpx; color:#1957E8; }
 
 .auth-fixed { padding: 20rpx; background: #f8fafc; border: 1rpx solid #e8eef6; border-radius: 14rpx; }
 .auth-fixed-text { display: block; font-size: 26rpx; line-height: 1.75; color: #334155; }

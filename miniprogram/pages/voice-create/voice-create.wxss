@@ -1,4 +1,4 @@
-.page { min-height: 100vh; padding: 28rpx; background: #f3f6fb; }
+.page { background: #f8f9fa; color: #0f172a; }
 .head { padding: 12rpx 4rpx 20rpx; }
 .title { display: block; font-size: 40rpx; font-weight: 700; }
 .sub { display: block; margin-top: 8rpx; font-size: 24rpx; color: #64748b; }
@@ -9,6 +9,6 @@
 .picker-box { position: relative; padding: 24rpx; font-size: 26rpx; color: #334155; background: #f8fafc; border-radius: 14rpx; }
 .clear { position: absolute; right: 18rpx; top: 14rpx; font-size: 32rpx; color: #ef4444; }
 .agree { display: flex; align-items: center; gap: 10rpx; margin: 20rpx 0; font-size: 24rpx; color: #475569; }
-.primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #2563eb; border-radius: 16rpx; }
+.primary { margin-top: 24rpx; height: 88rpx; line-height: 88rpx; font-size: 30rpx; color: #fff; background: #1957E8; border-radius: 16rpx; }
 .primary[disabled] { opacity: 0.5; }
 .status { margin-top: 16rpx; font-size: 24rpx; color: #64748b; text-align: center; }

@@ -1,6 +1,4 @@
-page {
-  background: #030407;
-}
+page { background: #f8f9fa; color: #0f172a; }
 
 .page-shell {
   position: relative;
@@ -8,10 +6,7 @@ page {
   padding: 48rpx 24rpx 180rpx;
   color: #f8fafc;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 18% 20%, rgba(15, 118, 110, 0.28) 0, transparent 34%),
-    radial-gradient(circle at 82% 12%, rgba(59, 130, 246, 0.18) 0, transparent 30%),
-    linear-gradient(180deg, #05070d 0%, #020305 100%);
+  background: #f8f9fa;
 }
 
 .space-bg {
@@ -54,9 +49,9 @@ page {
   justify-content: center;
   height: 58rpx;
   padding: 0;
-  color: #fff;
+  color: #0f172a;
   background: rgba(24, 30, 38, 0.82);
-  border: 1rpx solid rgba(255,255,255,0.1);
+  border: 1rpx solid #eef1f6;
   border-radius: 999rpx;
 }
 
@@ -73,7 +68,7 @@ page {
 }
 
 .page-title {
-  color: #fff;
+  color: #0f172a;
   font-size: 36rpx;
   font-weight: 950;
   text-shadow: 0 4rpx 18rpx rgba(255,255,255,0.22);
@@ -93,7 +88,7 @@ page {
 .category-btn {
   flex: 0 0 auto;
   padding: 0;
-  color: rgba(255,255,255,0.42);
+  color: #64748b;
   background: transparent;
   border: 0;
   font-size: 30rpx;
@@ -101,7 +96,7 @@ page {
 }
 
 .category-btn.active {
-  color: #fff;
+  color: #0f172a;
   text-shadow: 0 0 22rpx rgba(16, 245, 221, 0.5);
 }
 
@@ -123,8 +118,8 @@ page {
   height: 78rpx;
   margin-top: 22rpx;
   padding: 0 30rpx;
-  background: rgba(255,255,255,0.08);
-  border: 1rpx solid rgba(255,255,255,0.13);
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
   border-radius: 999rpx;
   box-shadow: inset 0 1rpx rgba(255,255,255,0.08);
 }
@@ -136,12 +131,12 @@ page {
 
 .search-box input {
   flex: 1;
-  color: #fff;
+  color: #0f172a;
   font-size: 26rpx;
 }
 
 .search-placeholder {
-  color: rgba(255,255,255,0.34);
+  color: #64748b;
 }
 
 .idea-grid {
@@ -156,9 +151,9 @@ page {
   height: 470rpx;
   overflow: hidden;
   background: #121417;
-  border: 1rpx solid rgba(255,255,255,0.1);
+  border: 1rpx solid #eef1f6;
   border-radius: 30rpx;
-  box-shadow: 0 22rpx 50rpx rgba(0,0,0,0.38);
+  box-shadow: 0 22rpx 50rpx rgba(15,23,42,0.08);
 }
 
 .idea-cover {
@@ -169,9 +164,7 @@ page {
 .idea-mask {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.14) 52%, rgba(0,0,0,0.78) 100%),
-    radial-gradient(circle at 50% 82%, rgba(0,0,0,0.24), transparent 46%);
+  background: #f8f9fa;
 }
 
 .idea-copy {
@@ -183,7 +176,7 @@ page {
 
 .idea-title {
   display: block;
-  color: #fff;
+  color: #0f172a;
   font-size: 30rpx;
   font-weight: 950;
 }
@@ -192,7 +185,7 @@ page {
 .idea-plays {
   display: block;
   margin-top: 8rpx;
-  color: rgba(255,255,255,0.55);
+  color: #64748b;
   font-size: 21rpx;
   font-weight: 800;
 }
@@ -210,9 +203,9 @@ page {
   height: 58rpx;
   line-height: 58rpx;
   padding: 0 24rpx;
-  color: #fff;
-  background: rgba(255,255,255,0.22);
-  border: 1rpx solid rgba(255,255,255,0.18);
+  color: #0f172a;
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
   border-radius: 999rpx;
   font-size: 23rpx;
   font-weight: 950;
@@ -225,7 +218,7 @@ page {
   align-items: center;
   gap: 20rpx;
   margin-top: 160rpx;
-  color: rgba(255,255,255,0.58);
+  color: #64748b;
   font-size: 26rpx;
 }
 
@@ -244,7 +237,7 @@ page {
   margin-top: 18rpx;
   padding: 22rpx;
   background: rgba(11, 17, 22, 0.82);
-  border: 1rpx solid rgba(255,255,255,0.12);
+  border: 1rpx solid #eef1f6;
   border-radius: 28rpx;
 }
 
@@ -280,13 +273,13 @@ page {
   justify-content: center;
   gap: 8rpx;
   color: rgba(255,255,255,0.86);
-  background: linear-gradient(145deg, rgba(18, 24, 36, 0.92), rgba(13, 35, 39, 0.86));
+  background: #f8f9fa;
   border: 2rpx dashed rgba(16,245,221,0.58);
 }
 
 .asset-card {
   border-style: solid;
-  background: linear-gradient(145deg, rgba(31,27,58,0.88), rgba(18,45,49,0.78));
+  background: #f8f9fa;
 }
 
 .upload-plus {
@@ -313,8 +306,8 @@ page {
   width: 42rpx;
   height: 42rpx;
   padding: 0;
-  color: #fff;
-  background: rgba(0,0,0,0.52);
+  color: #0f172a;
+  background: rgba(15,23,42,0.08);
   border-radius: 999rpx;
   font-size: 30rpx;
   font-weight: 900;
@@ -331,7 +324,7 @@ page {
 }
 
 .prompt-placeholder {
-  color: rgba(255,255,255,0.36);
+  color: #64748b;
 }
 
 .prompt-footer {
@@ -340,7 +333,7 @@ page {
   justify-content: space-between;
   gap: 20rpx;
   margin-top: 18rpx;
-  color: rgba(255,255,255,0.48);
+  color: #64748b;
   font-size: 22rpx;
 }
 
@@ -354,9 +347,9 @@ page {
   height: 52rpx;
   line-height: 52rpx;
   padding: 0 22rpx;
-  color: rgba(255,255,255,0.74);
-  background: rgba(255,255,255,0.08);
-  border: 1rpx solid rgba(255,255,255,0.1);
+  color: #64748b;
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
   border-radius: 999rpx;
   font-size: 22rpx;
   font-weight: 800;
@@ -377,7 +370,7 @@ page {
 
 .section-head text,
 .setting-title {
-  color: #fff;
+  color: #0f172a;
   font-size: 30rpx;
   font-weight: 950;
 }
@@ -400,7 +393,7 @@ page {
   height: 150rpx;
   overflow: hidden;
   border-radius: 18rpx;
-  background: #111827;
+  background: #ffffff;
 }
 
 .sample-card image {
@@ -416,8 +409,8 @@ page {
   height: 42rpx;
   line-height: 42rpx;
   padding: 0 8rpx;
-  color: #fff;
-  background: linear-gradient(180deg, transparent, rgba(0,0,0,0.76));
+  color: #0f172a;
+  background: #f8f9fa;
   font-size: 20rpx;
   font-weight: 900;
   text-align: center;
@@ -441,9 +434,9 @@ page {
   height: 78rpx;
   line-height: 78rpx;
   padding: 0;
-  color: rgba(255,255,255,0.46);
-  background: rgba(255,255,255,0.08);
-  border: 1rpx solid rgba(255,255,255,0.13);
+  color: #64748b;
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
   border-radius: 20rpx;
   font-size: 28rpx;
   font-weight: 950;
@@ -458,15 +451,15 @@ page {
 
 .result-card {
   overflow: hidden;
-  background: rgba(255,255,255,0.08);
-  border: 1rpx solid rgba(255,255,255,0.12);
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
   border-radius: 28rpx;
 }
 
 .result-video {
   width: 100%;
   height: 760rpx;
-  background: #000;
+  background: #ffffff;
 }
 
 .result-card button {
@@ -504,18 +497,18 @@ page {
 .vip-btn {
   height: 92rpx;
   padding: 10rpx 0;
-  color: #fff;
+  color: #0f172a;
   border: 0;
   border-radius: 24rpx;
-  box-shadow: 0 18rpx 44rpx rgba(0,0,0,0.36);
+  box-shadow: 0 18rpx 44rpx rgba(15,23,42,0.08);
 }
 
 .generate-btn {
-  background: linear-gradient(135deg, #28f4e6, #1677ff);
+  background: #f8f9fa;
 }
 
 .vip-btn {
-  background: linear-gradient(135deg, #ffed4a, #ff9900);
+  background: #f8f9fa;
 }
 
 .generate-btn text,
@@ -546,7 +539,7 @@ page {
   align-items: center;
   justify-content: center;
   padding: 56rpx 38rpx;
-  background: rgba(0,0,0,0.72);
+  background: rgba(15,23,42,0.08);
   backdrop-filter: blur(18rpx);
 }
 
@@ -556,7 +549,7 @@ page {
   z-index: 40;
   display: flex;
   align-items: flex-end;
-  background: rgba(0,0,0,0.72);
+  background: rgba(15,23,42,0.08);
   backdrop-filter: blur(16rpx);
 }
 
@@ -566,7 +559,7 @@ page {
   padding: 26rpx 24rpx 34rpx;
   background: #101318;
   border-radius: 34rpx 34rpx 0 0;
-  box-shadow: 0 -26rpx 70rpx rgba(0,0,0,0.42);
+  box-shadow: 0 -26rpx 70rpx rgba(15,23,42,0.08);
 }
 
 .asset-picker-head {
@@ -577,7 +570,7 @@ page {
 }
 
 .asset-picker-head text {
-  color: #fff;
+  color: #0f172a;
   font-size: 30rpx;
   font-weight: 950;
 }
@@ -586,8 +579,8 @@ page {
   width: 58rpx;
   height: 58rpx;
   padding: 0;
-  color: #fff;
-  background: rgba(255,255,255,0.1);
+  color: #0f172a;
+  background: #ffffff;
   border-radius: 999rpx;
   font-size: 36rpx;
   line-height: 54rpx;
@@ -598,7 +591,7 @@ page {
   align-items: center;
   justify-content: center;
   height: 360rpx;
-  color: rgba(255,255,255,0.56);
+  color: #64748b;
   font-size: 25rpx;
 }
 
@@ -641,7 +634,7 @@ page {
   width: 40rpx;
   height: 40rpx;
   color: transparent;
-  background: rgba(0,0,0,0.46);
+  background: rgba(15,23,42,0.08);
   border: 1rpx solid rgba(255,255,255,0.42);
   border-radius: 999rpx;
   font-size: 24rpx;
@@ -689,7 +682,7 @@ page {
   overflow: hidden;
   background: #141414;
   border-radius: 28rpx;
-  box-shadow: 0 32rpx 90rpx rgba(0,0,0,0.52);
+  box-shadow: 0 32rpx 90rpx rgba(15,23,42,0.08);
 }
 
 .preview-close {
@@ -701,8 +694,8 @@ page {
   height: 52rpx;
   line-height: 48rpx;
   padding: 0;
-  color: #fff;
-  background: rgba(0,0,0,0.48);
+  color: #0f172a;
+  background: rgba(15,23,42,0.08);
   border-radius: 999rpx;
   font-size: 36rpx;
   font-weight: 900;
@@ -711,7 +704,7 @@ page {
 .preview-cover {
   width: 100%;
   height: 610rpx;
-  background: #000;
+  background: #ffffff;
 }
 
 .preview-content {
@@ -720,7 +713,7 @@ page {
 
 .preview-title {
   display: block;
-  color: #fff;
+  color: #0f172a;
   font-size: 32rpx;
   font-weight: 950;
 }
@@ -728,8 +721,8 @@ page {
 .preview-desc {
   margin-top: 18rpx;
   padding: 22rpx;
-  color: rgba(255,255,255,0.68);
-  background: rgba(255,255,255,0.08);
+  color: #64748b;
+  background: #ffffff;
   border-radius: 22rpx;
   font-size: 25rpx;
   line-height: 1.55;
@@ -739,8 +732,8 @@ page {
   height: 80rpx;
   line-height: 80rpx;
   margin-top: 24rpx;
-  color: #fff;
-  background: linear-gradient(135deg, #ec4899, #a855f7);
+  color: #0f172a;
+  background: #f8f9fa;
   border: 0;
   border-radius: 999rpx;
   font-size: 28rpx;

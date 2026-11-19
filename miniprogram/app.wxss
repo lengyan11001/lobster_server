@@ -1,7 +1,7 @@
 page {
   min-height: 100vh;
   color: #0f172a;
-  background: #f3f6fb;
+  background: #f8f9fa;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -71,8 +71,9 @@ button::after {
   margin-top: 26rpx;
   padding: 28rpx;
   background: #fff;
-  border: 1rpx solid #e5eaf3;
-  border-radius: 24rpx;
+  border: 1rpx solid #eef1f6;
+  border-radius: 32rpx;
+  box-shadow: 0 16rpx 56rpx rgba(15, 23, 42, 0.06);
 }
 
 .section-title {

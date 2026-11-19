@@ -1,1 +1,7 @@
-{ "navigationBarTitleText": "推荐选题", "navigationBarBackgroundColor": "#05070d", "navigationBarTextStyle": "white", "backgroundColor": "#05070d", "backgroundTextStyle": "dark" }
+{
+  "navigationBarTitleText": "推荐选题",
+  "navigationBarBackgroundColor": "#f8f9fa",
+  "navigationBarTextStyle": "black",
+  "backgroundColor": "#f8f9fa",
+  "backgroundTextStyle": "dark"
+}
