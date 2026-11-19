@@ -119,6 +119,10 @@ Page({
     this.setData({ diagLines: lines.slice(-60) });
   },
 
+  goTopicRecommend() {
+    wx.navigateTo({ url: "/pages/topic-recommend/topic-recommend" });
+  },
+
   goIpRecognize() {
     wx.navigateTo({ url: "/pages/ip-recognize/ip-recognize" });
   },

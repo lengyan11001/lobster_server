@@ -32,6 +32,7 @@
     "pages/secretary-detail/secretary-detail",
     "pages/ip-profile/ip-profile",
     "pages/ip-recognize/ip-recognize",
+    "pages/topic-recommend/topic-recommend",
     "pages/template-edit/template-edit"
   ],
   "window": {
