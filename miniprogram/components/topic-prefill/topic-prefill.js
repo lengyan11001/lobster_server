@@ -175,7 +175,31 @@ Component({
     },
 
     openHistory() {
-      this.setData({ phase: "history", historyLoading: true, history: [], errorText: "" });
+      if (!(app.globalData.token && app.globalData.phone)) {
+        wx.showToast({ title: "请先到「我的」登录授权", icon: "none" });
+        return;
+      }
+      let win = {};
+      try {
+        win = (wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync()) || {};
+      } catch (err) {
+        win = {};
+      }
+      const sheetPx = Math.round((Number(win.windowHeight) || 640) * 0.86);
+      this.setData({
+        open: true,
+        sheetPx,
+        bodyPx: Math.max(240, sheetPx - 56),
+        mode: "",
+        generating: false,
+        items: [],
+        keywords: [],
+        errorText: "",
+        phase: "history",
+        historyLoading: true,
+        history: []
+      });
+      setTimeout(() => this.measureBody(), 60);
       app.request({
         url: "/api/ip-prefill/records?target=" + encodeURIComponent(this.data.target) + "&limit=20",
         timeout: 30000

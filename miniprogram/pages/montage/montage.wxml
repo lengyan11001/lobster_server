@@ -7,6 +7,7 @@
       </view>
       <view class="head-acts">
         <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
+        <button class="act-btn ghost" bindtap="openPrefillHistory">历史</button>
         <button class="act-btn primary" bindtap="openRecordingPrefill">录音生成</button>
       </view>
     </view>

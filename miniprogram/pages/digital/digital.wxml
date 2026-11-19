@@ -1,12 +1,13 @@
 <view class="page">
   <view class="head">
     <view class="head-row">
-      <view>
+      <view class="head-copy">
         <text class="title">数字人口播</text>
         <text class="sub">对齐 H5「AI营销 · 数字人口播视频」</text>
       </view>
       <view class="head-btns">
         <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
+        <button class="ghost small" bindtap="openPrefillHistory">历史</button>
         <button class="primary small" bindtap="openRecordingPrefill">录音生成</button>
       </view>
     </view>

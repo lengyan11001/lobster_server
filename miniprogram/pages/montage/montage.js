@@ -50,6 +50,11 @@ Page({
     if (drawer) drawer.open("recording");
   },
 
+  openPrefillHistory() {
+    const drawer = this.selectComponent("#topicPrefill");
+    if (drawer) drawer.openHistory();
+  },
+
   openMemoryPrefill() {
     const drawer = this.selectComponent("#topicPrefill");
     if (drawer) drawer.open("memory");

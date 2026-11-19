@@ -110,6 +110,8 @@
 
 .avatar-fallback { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#e0f2fe; color:#0369a1; font-size:32rpx; font-weight:600; }
 
-.head-btns { display: flex; gap: 12rpx; align-items: center; }
+.head-copy { flex: 1; min-width: 0; }
+.head-btns { display: flex; gap: 10rpx; align-items: center; flex: 0 0 auto; }
+.head-btns .primary.small, .head-btns .ghost.small { white-space: nowrap; padding: 0 18rpx; font-size: 22rpx; }
 .primary.small, .ghost.small { margin: 0; height: 64rpx; line-height: 64rpx; padding: 0 22rpx; font-size: 23rpx; border-radius: 999rpx; }
 .ghost.small { color: #2563eb; background: #eff6ff; }
