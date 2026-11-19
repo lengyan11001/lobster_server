@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import Response
 from fastapi.responses import FileResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,25 @@ def media_thumb(url: str = Query(...)):
             return _thumb_from_video(src, jpg, 0 if is_image else 0.5)
         except HTTPException:
             return _thumb_from_image(src)
+
+
+@router.head("/api/media/proxy", summary="媒体流代理 HEAD（播放器探测用）")
+def media_proxy_head(url: str = Query(...)):
+    src = _check_url(url)
+    headers = {"Referer": "https://bhzn.top/", "User-Agent": _UA}
+    try:
+        with httpx.Client(timeout=20.0, follow_redirects=True, headers=headers) as client:
+            resp = client.head(src)
+    except Exception as exc:
+        raise HTTPException(502, f"探测媒体失败：{exc}") from exc
+    if resp.status_code >= 400:
+        raise HTTPException(502, "上游媒体不可用")
+    out_headers = {"Accept-Ranges": "bytes"}
+    for key, source in (("content-length", "Content-Length"), ("content-type", "Content-Type")):
+        value = resp.headers.get(key)
+        if value:
+            out_headers[source] = value
+    return Response(status_code=200, headers=out_headers)
 
 
 @router.get("/api/media/proxy", summary="媒体流代理（支持 Range，供小程序预览视频）")
