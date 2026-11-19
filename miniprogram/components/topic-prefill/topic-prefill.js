@@ -59,11 +59,13 @@ Component({
       app.request({ url: "/api/h5/recorder/files?page=1&page_size=30", timeout: 30000 })
         .then((data) => {
           const rows = ((data && data.items) || [])
-            .filter((row) => row.status === "completed")
+            .filter((row) => row.status !== "deleted")
             .map((row) => ({
               id: row.id,
               name: String(row.display_name || row.file_name || "录音"),
-              time: String(row.created_at || "").replace("T", " ").slice(0, 16)
+              time: String(row.created_at || "").replace("T", " ").slice(0, 16),
+              hasTranscript: row.has_transcript === true || row.status === "completed",
+              stateText: (row.has_transcript === true || row.status === "completed") ? "已转写 · 直接用文案" : "未转写"
             }));
           this.setData({ recordList: rows });
         })
@@ -74,6 +76,11 @@ Component({
     pickRecord(e) {
       const id = Number(e.currentTarget.dataset.id || 0);
       if (!id || this.data.generating) return;
+      const row = (this.data.recordList || []).find((item) => item.id === id);
+      if (row && !row.hasTranscript) {
+        wx.showToast({ title: "这条还没转写，先去 AI 秘书转写一次", icon: "none" });
+        return;
+      }
       this.generate({ mode: "recording", record_id: id });
     },
 

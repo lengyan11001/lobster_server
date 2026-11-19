@@ -18,9 +18,9 @@
         <view wx:for="{{recordList}}" wx:key="id" class="pf-row" data-id="{{item.id}}" bindtap="pickRecord">
           <view class="pf-row-main">
             <text class="pf-row-title">{{item.name}}</text>
-            <text class="pf-row-sub">{{item.time}}</text>
+            <text class="pf-row-sub">{{item.time}} · {{item.stateText}}</text>
           </view>
-          <text class="pf-row-go">生成 ›</text>
+          <text class="pf-row-go {{item.hasTranscript ? '' : 'off'}}">{{item.hasTranscript ? '生成 ›' : '未转写'}}</text>
         </view>
       </block>
 

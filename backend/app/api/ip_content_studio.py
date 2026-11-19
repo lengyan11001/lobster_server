@@ -9381,8 +9381,8 @@ async def _ip_run_job(job_id: str, body: IPProfileAnalyzeBody, user_id: int, own
             if record is None:
                 _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "录音不存在"})
                 return
-            if record.status != "completed" or not str(record.transcript_text or "").strip():
-                _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "录音转写完成后才能提炼"})
+            if not str(record.transcript_text or "").strip():
+                _ip_job_set(job_id, {"status": "failed", "user_id": int(owner_id), "error": "这条录音还没转写，先去 AI 秘书转写一次"})
                 return
             text = str(record.transcript_text or "").strip()
         if not text:

@@ -343,9 +343,10 @@ async def generate_prefill(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="录音不存在")
-        if row.status != "completed" or not str(row.transcript_text or "").strip():
-            raise HTTPException(status_code=409, detail="这条录音还没转写完")
+        # 转写只做一次：只要库里已经有逐字稿就直接用，不再触发任何 STT
         transcript = str(row.transcript_text or "").strip()
+        if not transcript:
+            raise HTTPException(status_code=409, detail="这条录音还没转写，先去 AI 秘书转写一次（转写结果会保留，后面直接复用）")
         record_name = str(row.display_name or row.file_name or "")
         context_text = "【录音内容】\n" + transcript[:12000]
     else:

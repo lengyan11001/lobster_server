@@ -159,6 +159,7 @@ def _serialize(row: RecorderAudioRecord, detail: bool = False) -> dict[str, Any]
         "source_doc_id": row.source_doc_id or "",
         "file_size": row.file_size,
         "status": row.status,
+        "has_transcript": bool(str(row.transcript_text or "").strip()),
         "process_stage": row.process_stage,
         "error_message": row.error_message,
         "summary_text": row.summary_text,

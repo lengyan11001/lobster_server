@@ -47,6 +47,7 @@
 .pf-row-title { display: block; font-size: 26rpx; color: #eaf8ff; }
 .pf-row-sub { display: block; margin-top: 6rpx; font-size: 20rpx; color: #6f849c; }
 .pf-row-go { font-size: 24rpx; color: #10f5dd; }
+.pf-row-go.off { color: #6f849c; }
 .pf-row-del { font-size: 22rpx; color: #ff8a8a; padding-left: 20rpx; }
 .pf-loading { padding: 60rpx 0; display: flex; flex-direction: column; align-items: center; }
 .pf-spin {
