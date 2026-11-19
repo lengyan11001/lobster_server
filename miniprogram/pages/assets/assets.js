@@ -46,13 +46,27 @@ Page({
   },
 
   onLoad(options) {
+    this.applyWantedTab((options && options.tab) || "");
+  },
+
+  applyWantedTab(raw) {
     const map = { image: 0, video: 1, audio: 2, avatar: 3, voice: 4 };
-    const wanted = String((options && options.tab) || "").toLowerCase();
+    const wanted = String(raw || "").toLowerCase();
     const index = map[wanted];
-    if (index != null) this.setData({ tabIndex: index, isDigital: index >= 3 });
+    if (index == null) return false;
+    this.setData({ tabIndex: index, isDigital: index >= 3 });
+    return true;
   },
 
   onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 1 });
+    }
+    const wanted = wx.getStorageSync("lobster_assets_tab");
+    if (wanted) {
+      wx.removeStorageSync("lobster_assets_tab");
+      this.applyWantedTab(wanted);
+    }
     this.loadUploads();
     if (this.data.isDigital) this.loadDigital();
   },

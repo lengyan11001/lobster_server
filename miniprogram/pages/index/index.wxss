@@ -3,21 +3,33 @@ page { background: #f8f9fa; }
 .home {
   min-height: 100vh;
   background: #f8f9fa;
-  padding-bottom: 40rpx;
+  padding-bottom: 240rpx;
 }
 
-.hero-wrap {
+.top-visual {
   position: relative;
   width: 100%;
   overflow: hidden;
+  background: #f8f9fa;
 }
 
-.hero {
+.top-visual::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 80rpx;
+  background: linear-gradient(180deg, rgba(248, 249, 250, 0) 0%, #f8f9fa 92%);
+  pointer-events: none;
+}
+
+.top-visual-img {
   display: block;
   width: 100%;
 }
 
-.hero-secretary-hit {
+.secretary-hit {
   position: absolute;
   right: 4%;
   top: 44%;

@@ -3,7 +3,7 @@ Component({
     selected: 0,
     list: [
       { pagePath: "/pages/index/index", text: "首页", icon: "/assets/tab2/home_off.png", activeIcon: "/assets/tab2/home_on.png" },
-      { pagePath: "/pages/assets/assets", text: "素材库", icon: "/assets/tab2/assets_off.png", activeIcon: "/assets/tab2/assets_on.png", navigate: true },
+      { pagePath: "/pages/assets/assets", text: "素材库", icon: "/assets/tab2/assets_off.png", activeIcon: "/assets/tab2/assets_on.png" },
       { pagePath: "/pages/downloads/downloads", text: "作品", icon: "/assets/tab2/works_off.png", activeIcon: "/assets/tab2/works_on.png" },
       { pagePath: "/pages/profile/profile", text: "我的", icon: "/assets/tab2/profile_off.png", activeIcon: "/assets/tab2/profile_on.png" }
     ]

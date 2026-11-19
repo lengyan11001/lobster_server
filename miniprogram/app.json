@@ -55,6 +55,12 @@
         "selectedIconPath": "assets/tab/home_on.png"
       },
       {
+        "pagePath": "pages/assets/assets",
+        "text": "素材库",
+        "iconPath": "assets/tab2/assets_off.png",
+        "selectedIconPath": "assets/tab2/assets_on.png"
+      },
+      {
         "pagePath": "pages/downloads/downloads",
         "text": "作品",
         "iconPath": "assets/tab/works.png",

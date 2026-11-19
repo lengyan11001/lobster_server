@@ -362,15 +362,15 @@ Page({
   },
 
   goAvatarAssets() {
-    wx.navigateTo({ url: "/pages/assets/assets?tab=avatar" });
+    wx.setStorageSync("lobster_assets_tab", "avatar"); wx.switchTab({ url: "/pages/assets/assets" });
   },
 
   goVoiceAssets() {
-    wx.navigateTo({ url: "/pages/assets/assets?tab=voice" });
+    wx.setStorageSync("lobster_assets_tab", "voice"); wx.switchTab({ url: "/pages/assets/assets" });
   },
 
   goMediaAssets() {
-    wx.navigateTo({ url: "/pages/assets/assets?tab=image" });
+    wx.setStorageSync("lobster_assets_tab", "image"); wx.switchTab({ url: "/pages/assets/assets" });
   },
 
   goIpProfile() {

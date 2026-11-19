@@ -615,7 +615,7 @@ Page({
   },
 
   goAssets() {
-    wx.navigateTo({ url: "/pages/assets/assets" });
+    wx.switchTab({ url: "/pages/assets/assets" });
   },
 
   goAirec() {

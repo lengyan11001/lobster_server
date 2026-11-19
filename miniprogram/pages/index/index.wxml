@@ -1,7 +1,7 @@
 <view class="home">
-  <view class="hero-wrap">
-    <image class="hero" src="/assets/home2/hero.jpg" mode="widthFix" />
-    <view class="hero-secretary-hit" bindtap="goSecretary" hover-class="none"></view>
+  <view class="top-visual">
+    <image class="top-visual-img" src="/assets/home2/hero.jpg" mode="widthFix" />
+    <view class="secretary-hit" bindtap="goSecretary" hover-class="none"></view>
   </view>
 
   <view class="body">
