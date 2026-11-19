@@ -1,0 +1,9 @@
+{
+  "navigationBarTitleText": "IP 认知",
+  "navigationBarBackgroundColor": "#05070d",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#05070d",
+  "backgroundTextStyle": "light",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

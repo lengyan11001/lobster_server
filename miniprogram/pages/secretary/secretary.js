@@ -119,6 +119,10 @@ Page({
     this.setData({ diagLines: lines.slice(-60) });
   },
 
+  goIpRecognize() {
+    wx.navigateTo({ url: "/pages/ip-recognize/ip-recognize" });
+  },
+
   toggleDiag() {
     this.setData({ diagOpen: !this.data.diagOpen });
   },
