@@ -194,6 +194,10 @@ def _billing_headers(
         raise HTTPException(status_code=401, detail="Please sign in before generating a digital human video")
     headers: Dict[str, str] = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     installation_id = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
+    if not installation_id and acting_user is not None:
+        # 小程序用户没有绑定桌面设备时拿不到 installation_id，计费中心会直接 400。
+        # 这里给一个稳定的账号级虚拟设备号，保证「只在小程序里用」的用户也能正常计费。
+        installation_id = "mp-u%08d" % int(acting_user.id)
     if installation_id:
         headers["X-Installation-Id"] = installation_id
     billing_key = (
@@ -289,6 +293,7 @@ async def _shanjian_pre_deduct(
     if resp.status_code == 401:
         raise HTTPException(status_code=401, detail="登录已过期，请重新登录后再生成")
     if resp.status_code >= 400:
+        logger.warning("[shanjian] pre-deduct HTTP %s: %s", resp.status_code, (resp.text or "")[:300])
         raise HTTPException(status_code=502, detail=f"Shanjian billing pre-deduct failed HTTP {resp.status_code}: {(resp.text or '')[:300]}")
     data = resp.json() if resp.content else {}
     try:
