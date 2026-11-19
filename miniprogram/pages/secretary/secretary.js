@@ -119,10 +119,6 @@ Page({
     this.setData({ diagLines: lines.slice(-60) });
   },
 
-  goTopicRecommend() {
-    wx.navigateTo({ url: "/pages/topic-recommend/topic-recommend" });
-  },
-
   toggleDiag() {
     this.setData({ diagOpen: !this.data.diagOpen });
   },

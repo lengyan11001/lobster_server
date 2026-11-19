@@ -1,209 +1,125 @@
 <view class="page">
-  <view class="hero">
-    <view class="hero-grid"></view>
-    <view class="hero-glow g1"></view>
-    <view class="hero-glow g2"></view>
-    <view class="hero-top">
-      <view class="hero-copy">
-        <text class="kicker">IP PROFILE</text>
-        <text class="title">个人 IP</text>
-        <text class="sub">录音提炼 · 12 维档案 · 百问百答</text>
-      </view>
-      <view class="hero-actions">
-        <view class="act primary" bindtap="startPickRecording" hover-class="press">选择录音</view>
-        <view class="act ghost" bindtap="openGlobalSupplement" hover-class="press">补充资料</view>
-      </view>
-    </view>
-    <view wx:if="{{analysis}}" class="summary">
-      <view class="summary-main">
-        <text class="summary-name">{{meta.name || '未命名 IP'}}</text>
-        <text class="summary-meta">{{meta.industry || '待补充行业'}}{{meta.city ? ' · ' + meta.city : ''}}</text>
-        <text wx:if="{{jobCalls.length && !analyzing}}" class="summary-calls">本次分析 {{jobCalls.length}} 次 AI 调用</text>
-      </view>
-      <view class="summary-score">
-        <text class="score-num">{{completeness}}</text>
-        <text class="score-label">完整度</text>
-      </view>
-    </view>
+  <view class="tabs">
+    <view wx:for="{{tabs}}" wx:key="key" class="tab {{tabIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="switchTab">{{item.label}}</view>
   </view>
 
-  <view wx:if="{{analyzing}}" class="scan-card">
-    <view class="scan-orb">
-      <view class="ring r1"></view>
-      <view class="ring r2"></view>
-      <view class="ring r3"></view>
-      <view class="scan-line"></view>
-      <text class="scan-center">{{analyzeProgress}}%</text>
+  <block wx:if="{{tabIndex === 0}}">
+    <view class="survey-head">
+      <view class="survey-head-copy">
+        <text class="survey-title">资料调查</text>
+        <text class="survey-sub">每条调查记录可以关联到不同的个人 IP 模板</text>
+      </view>
+      <button class="primary small survey-add" bindtap="newSurvey">新增资料</button>
     </view>
-    <view class="scan-copy">
-      <text class="scan-title">AI 正在理解这次采访</text>
-      <text class="scan-desc">录音只转写一次，内容会分段理解，避免一次输入太多导致遗漏。</text>
-      <view wx:if="{{jobCalls.length}}" class="call-meta">第 {{jobCallIndex + 1}}/{{jobCalls.length}} 次 AI 调用 · {{analyzeProgress}}%</view>
-      <text wx:else class="call-meta">正在连接分析服务…</text>
-      <scroll-view wx:if="{{jobCalls.length}}" class="calls" scroll-y scroll-into-view="{{jobScrollInto}}" scroll-with-animation>
-        <view wx:for="{{jobCalls}}" wx:key="id" id="call-{{index}}" class="call {{item.status}}">
-          <view class="call-dot">
-            <view wx:if="{{item.status === 'running'}}" class="call-spin"></view>
-            <text wx:elif="{{item.status === 'done'}}">✓</text>
-            <text wx:else>·</text>
-          </view>
-          <view class="call-main">
-            <view class="call-line">
-              <text class="call-label">{{item.label}}</text>
-              <text class="call-time">{{item.elapsedText}}</text>
-            </view>
-            <text wx:if="{{item.summary}}" class="call-summary">{{item.summary}}</text>
-          </view>
+
+    <view wx:if="{{loading && !surveys.length}}" class="empty">加载中…</view>
+    <view wx:elif="{{!surveys.length}}" class="empty">暂无资料调查记录</view>
+
+    <view wx:for="{{surveys}}" wx:key="id" class="survey-row {{item.id === currentSurveyId ? 'active' : ''}}">
+      <view class="survey-row-main">
+        <view class="survey-row-title">
+          <text class="survey-row-name">{{item.name}}</text>
+          <text wx:if="{{item.id === currentSurveyId}}" class="tag-current">当前</text>
         </view>
-      </scroll-view>
-      <view class="progress"><view class="progress-bar" style="width: {{analyzeProgress}}%"></view></view>
+        <text class="survey-row-meta">更新于 {{item.time}}</text>
+      </view>
+      <view class="survey-row-actions">
+        <text class="link" data-index="{{index}}" bindtap="editSurvey">编辑</text>
+        <text class="link danger-text" data-index="{{index}}" bindtap="deleteSurvey">删除</text>
+      </view>
     </view>
-  </view>
 
-  <view wx:if="{{loading && !analysis}}" class="empty"><text>正在读取 IP 档案…</text></view>
-
-  <view wx:if="{{!analysis && !analyzing && !loading}}" class="empty">
-    <view class="empty-orb"><view class="empty-ring"></view><text>IP</text></view>
-    <text class="empty-title">还没有 IP 档案</text>
-    <text class="empty-desc">选一段采访录音，AI 会分段理解，生成 12 维档案、百问百答、个人/企业资料。</text>
-    <view class="empty-actions">
-      <view class="act primary" bindtap="startPickRecording">选择录音</view>
-      <view class="act ghost" bindtap="openGlobalSupplement">先补充资料</view>
-    </view>
-  </view>
-
-  <block wx:if="{{analysis}}">
-    <view class="result tick-{{resultTick % 2}}">
-    <scroll-view class="tabs" scroll-x enhanced show-scrollbar="{{false}}">
-      <view wx:for="{{tabs}}" wx:key="key" class="tab {{activeTab === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="switchTab">{{item.label}}</view>
-    </scroll-view>
-
-    <block wx:if="{{activeTab === 'profile'}}">
-      <view class="dim {{item.score >= 75 ? 'high' : (item.score >= 50 ? 'mid' : 'low')}}" wx:for="{{dimensions}}" wx:key="key">
-        <view class="dim-head">
-          <text class="dim-title">{{item.title}}</text>
-          <text class="dim-score">{{item.score}}</text>
+    <view wx:if="{{editorVisible}}" class="overlay" catchtap="closeEditor">
+      <view class="sheet editor-sheet" catchtap="noop">
+        <view class="sheet-head">
+          <text class="sheet-title">{{editorId ? '编辑资料调查' : '新增资料调查'}}</text>
+          <text class="sheet-close" catchtap="closeEditor">×</text>
         </view>
-        <view class="dim-bar"><view class="dim-bar-fill" style="width: {{item.score}}%"></view></view>
-        <text class="dim-summary">{{item.summary || '这一段还没有提炼出内容，点「补充资料」告诉 AI 更多信息。'}}</text>
-        <view wx:if="{{item.evidence.length}}" class="chips">
-          <text class="chip" wx:for="{{item.evidence}}" wx:for-item="ev" wx:key="*this">{{ev}}</text>
-        </view>
-        <view wx:if="{{item.quotes.length}}" class="quotes">
-          <text class="quote" wx:for="{{item.quotes}}" wx:for-item="q" wx:key="*this">“{{q}}”</text>
-        </view>
-        <view wx:if="{{item.gaps.length}}" class="gap">待补充：{{item.gaps[0]}}</view>
-        <view class="dim-actions">
-          <text class="mini-act" data-type="dimension" data-index="{{index}}" bindtap="openEdit">编辑</text>
-          <text class="mini-act primary-text" data-type="dimension" data-key="{{item.key}}" data-index="{{index}}" bindtap="openSupplement">补充资料</text>
-        </view>
-      </view>
-    </block>
-
-    <block wx:elif="{{activeTab === 'qa'}}">
-      <view wx:if="{{!qaItems.length}}" class="empty small"><text>还没有百问百答，先补充录音或资料。</text></view>
-      <view class="qa-card" wx:for="{{qaItems}}" wx:key="question">
-        <view class="qa-head">
-          <text class="qa-cat">{{item.category || '问答'}}</text>
-          <view class="qa-actions">
-            <text class="mini-act" data-type="qa" data-index="{{index}}" bindtap="openEdit">编辑</text>
-            <text class="mini-act primary-text" data-type="qa" data-index="{{index}}" bindtap="openSupplement">补充</text>
+        <scroll-view class="sheet-body" scroll-y>
+          <text class="label">资料名称</text>
+          <input class="input" value="{{editorName}}" bindinput="onEditorName" placeholder="例如：默认资料、餐饮项目资料" maxlength="160" />
+          <text class="field-hint">仅用于区分不同资料，不会作为人设姓名写入生成内容。</text>
+          <view wx:for="{{editorFields}}" wx:key="key" class="field">
+            <text class="label">{{item.label}}</text>
+            <textarea wx:if="{{item.multiline}}" class="textarea" value="{{item.value}}" data-key="{{item.key}}" bindinput="onEditorField" auto-height maxlength="2000" />
+            <input wx:else class="input" value="{{item.value}}" data-key="{{item.key}}" bindinput="onEditorField" />
           </view>
-        </view>
-        <text class="qa-q">Q：{{item.question}}</text>
-        <text class="qa-a">{{item.answer || '待补充'}}</text>
-      </view>
-    </block>
-
-    <block wx:elif="{{activeTab === 'personal'}}">
-      <view wx:if="{{!personalDoc.sections.length}}" class="empty small"><text>还没有个人资料。</text></view>
-      <view class="doc-card" wx:for="{{personalDoc.sections}}" wx:key="heading">
-        <view class="doc-head">
-          <text class="doc-heading">{{item.heading}}</text>
-          <text class="mini-act" data-type="personal" data-index="{{index}}" bindtap="openEdit">编辑</text>
-        </view>
-        <text class="doc-content" user-select="{{true}}">{{item.content}}</text>
-        <text class="mini-act primary-text" data-type="personal" data-index="{{index}}" bindtap="openSupplement">补充资料</text>
-      </view>
-    </block>
-
-    <block wx:elif="{{activeTab === 'company'}}">
-      <view wx:if="{{!companyDoc.sections.length}}" class="empty small"><text>还没有企业资料。</text></view>
-      <view class="doc-card" wx:for="{{companyDoc.sections}}" wx:key="heading">
-        <view class="doc-head">
-          <text class="doc-heading">{{item.heading}}</text>
-          <text class="mini-act" data-type="company" data-index="{{index}}" bindtap="openEdit">编辑</text>
-        </view>
-        <text class="doc-content" user-select="{{true}}">{{item.content}}</text>
-        <text class="mini-act primary-text" data-type="company" data-index="{{index}}" bindtap="openSupplement">补充资料</text>
-      </view>
-    </block>
-
-    <block wx:else>
-      <view class="template-head">
-        <text class="template-title">个人 IP 模板</text>
-        <view class="template-actions">
-          <text class="mini-act" bindtap="importTemplate">导入</text>
-          <text class="mini-act primary-text" bindtap="addTemplate">新增模板</text>
+        </scroll-view>
+        <view class="sheet-actions">
+          <button class="ghost half" bindtap="closeEditor">取消</button>
+          <button class="primary half" loading="{{editorSaving}}" disabled="{{editorSaving}}" bindtap="saveSurvey">保存</button>
         </view>
       </view>
-      <view wx:if="{{templateLoading}}" class="empty small"><text>加载中…</text></view>
-      <view wx:elif="{{!templates.length}}" class="empty small"><text>还没有模板</text></view>
-      <view class="template-row" wx:for="{{templates}}" wx:key="id">
-        <view class="template-main">
-          <view class="template-line">
-            <text class="template-name">{{item.name}}</text>
-            <text wx:if="{{item.id === currentTemplateId}}" class="current-tag">当前</text>
-          </view>
-          <text class="template-meta">设备：{{item.device_name}}{{item.device_online ? ' · 在线' : ''}} · {{item.time}}</text>
-        </view>
-        <view class="template-row-actions">
-          <text wx:if="{{item.id !== currentTemplateId}}" class="mini-act" data-index="{{index}}" bindtap="setCurrentTemplate">设为当前</text>
-          <text class="mini-act" data-index="{{index}}" bindtap="editTemplate">编辑</text>
-          <text wx:if="{{!item.is_personal_default}}" class="mini-act" data-index="{{index}}" bindtap="copyTemplate">复制</text>
-        </view>
-      </view>
-    </block>
     </view>
   </block>
 
-  <view wx:if="{{recordingOpen}}" class="overlay" catchtap="closeRecording">
-    <view class="sheet" catchtap="noop">
-      <view class="sheet-head"><text class="sheet-title">选择一段采访录音</text><text class="sheet-close" catchtap="closeRecording">✕</text></view>
-      <text class="sheet-desc">只展示已经转写完成的录音；长录音会在服务端分段理解。</text>
-      <scroll-view class="sheet-body" scroll-y>
-        <view wx:if="{{recordingsLoading}}" class="empty small"><text>加载中…</text></view>
-        <view wx:elif="{{!recordings.length}}" class="empty small"><text>没有已完成转写的录音</text></view>
-        <view class="rec-row" wx:for="{{recordings}}" wx:key="id" data-index="{{index}}" bindtap="pickRecording">
-          <view class="rec-ic">REC</view>
-          <view class="rec-main"><text class="rec-name">{{item.name}}</text><text class="rec-time">{{item.time}}</text></view>
-          <text class="rec-arrow">›</text>
-        </view>
-      </scroll-view>
+  <block wx:elif="{{tabIndex === 1}}">
+    <view class="btn-row">
+      <button class="primary small" bindtap="addMemoryText">新增文本</button>
+      <button class="ghost small" bindtap="uploadMemory">上传文件</button>
     </view>
-  </view>
-
-  <view wx:if="{{supplementOpen}}" class="overlay" catchtap="closeSupplement">
-    <view class="sheet" catchtap="noop">
-      <view class="sheet-head"><text class="sheet-title">补充资料</text><text class="sheet-close" catchtap="closeSupplement">✕</text></view>
-      <text class="sheet-desc">{{supplementTitle}}</text>
-      <textarea class="modal-textarea" value="{{supplementText}}" bindinput="onSupplementInput" auto-height maxlength="20000" placeholder="录音没讲清楚的内容、客户原话、案例数据、业务信息…"></textarea>
-      <input class="modal-input" value="{{supplementUrl}}" bindinput="onSupplementUrl" placeholder="可选：官网 / 主页 / 参考链接" />
-      <view class="sheet-actions">
-        <button class="btn ghost" bindtap="closeSupplement">取消</button>
-        <button class="btn primary" loading="{{supplementBusy}}" bindtap="submitSupplement">提交给 AI 重新分析</button>
+    <view wx:if="{{memoryLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!memoryDocs.length}}" class="empty">还没有个人记忆文件</view>
+    <view wx:for="{{memoryDocs}}" wx:key="doc_id" class="row" data-index="{{index}}" bindtap="openDoc">
+      <view class="row-main">
+        <text class="row-title">{{item.title}}</text>
+        <text class="row-meta">{{item.notes || '记忆文件'}}</text>
       </view>
     </view>
-  </view>
+  </block>
 
-  <view wx:if="{{editOpen}}" class="overlay" catchtap="closeEdit">
-    <view class="sheet" catchtap="noop">
-      <view class="sheet-head"><text class="sheet-title">编辑：{{editTitle}}</text><text class="sheet-close" catchtap="closeEdit">✕</text></view>
-      <textarea class="modal-textarea tall" value="{{editValue}}" bindinput="onEditInput" auto-height maxlength="20000"></textarea>
-      <view class="sheet-actions">
-        <button class="btn ghost" bindtap="closeEdit">取消</button>
-        <button class="btn primary" bindtap="submitEdit">保存</button>
+  <block wx:elif="{{tabIndex === 2}}">
+    <button class="primary small" bindtap="addKeyword">新增关键词</button>
+    <view wx:if="{{keywordLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!keywords.length}}" class="empty">还没有关键词</view>
+    <view wx:for="{{keywords}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="keywordMenu">
+      <view class="row-main">
+        <text class="row-title">{{item.display_name || item.keyword}}</text>
+        <text class="row-meta">{{item.status || ''}} · 长按操作</text>
       </view>
+    </view>
+  </block>
+
+  <block wx:elif="{{tabIndex === 3}}">
+    <button class="primary small" bindtap="addCompetitor">新增同行</button>
+    <view wx:if="{{competitorLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!competitors.length}}" class="empty">还没有同行账号</view>
+    <view wx:for="{{competitors}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="competitorMenu">
+      <view class="row-main">
+        <text class="row-title">{{item.display_name || item.account_key}}</text>
+        <text class="row-meta">{{item.platform}} · {{item.status || ''}} · 长按操作</text>
+      </view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="btn-row">
+      <button class="primary small" bindtap="addTemplate">新增模板</button>
+      <button class="ghost small" bindtap="importTemplate">导入模板</button>
+    </view>
+    <view wx:if="{{templateLoading}}" class="empty">加载中…</view>
+    <view wx:elif="{{!templates.length}}" class="empty">还没有模板</view>
+    <view wx:for="{{templates}}" wx:key="id" class="row">
+      <view class="row-main">
+        <text class="row-title">{{item.name}}</text>
+        <text class="row-meta">设备：{{item.device_name}}{{item.device_online ? ' · 在线' : ''}} · {{item.time}}</text>
+      </view>
+      <view class="row-actions">
+        <text wx:if="{{item.id === currentTemplateId}}" class="tag-current">当前</text>
+        <text wx:else class="link" data-index="{{index}}" catchtap="setCurrentTemplate">设为当前</text>
+        <text class="link" data-index="{{index}}" catchtap="editTemplate">编辑</text>
+        <text wx:if="{{!item.is_personal_default}}" class="link" data-index="{{index}}" catchtap="copyTemplate">复制</text>
+      </view>
+    </view>
+  </block>
+
+  <view wx:if="{{doc}}" class="overlay" catchtap="closeDoc">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">{{doc.title}}</text>
+        <text class="sheet-close" catchtap="closeDoc">×</text>
+      </view>
+      <text class="doc-content" user-select="{{true}}">{{doc.content}}</text>
     </view>
   </view>
 </view>
