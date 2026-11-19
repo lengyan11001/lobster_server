@@ -42,7 +42,24 @@ class User(Base):
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     # Short operator-facing label shown in the admin user list.
     admin_remark: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    """用户分组 code（basic/intermediate/advanced）；空 = 老用户，沿用自己身上的技能权限。"""
+    group_code: Mapped[str] = mapped_column(String(32), default="basic", server_default="", nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class UserGroup(Base):
+    """后台用户分组：基础/中级/高级；技能权限按组下发。"""
+
+    __tablename__ = "user_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    description: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    """技能可见性包 ID 列表；NULL = 尚未配置（该组用户暂时回落到个人权限）。"""
+    permissions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class BrandConfig(Base):

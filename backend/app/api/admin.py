@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import H5WorkflowTemplate, AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import H5WorkflowTemplate, AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserGroup, UserSkillVisibility
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
@@ -252,6 +252,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
         "parent_user_id": u.parent_user_id,
         "admin_remark": (getattr(u, "admin_remark", "") or "").strip(),
+        "group_code": (getattr(u, "group_code", "") or "").strip(),
         "brand_mark": user_brand_mark(u),
         "is_overseas_user": bool(getattr(u, "is_overseas_user", False)),
         "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
@@ -2016,7 +2017,145 @@ def admin_save_ip_template_grants(
     return {"ok": True, "template_id": template_id, "target_user_ids": requested}
 
 
+# ── 用户分组 ──
+
+
+class UserGroupUpdateBody(BaseModel):
+    permissions: Optional[list[str]] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    reset: bool = False
+
+
+class UserGroupAssignBody(BaseModel):
+    group_code: str = ""
+
+
+@router.get("/admin/api/user-groups")
+def admin_list_user_groups(
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from .skills import _expand_group_visibility
+    from ..services import user_groups as group_service
+
+    group_service.ensure_user_groups(db)
+    rows = db.query(UserGroup).order_by(UserGroup.id).all()
+    counts = dict(
+        db.query(User.group_code, func.count(User.id)).group_by(User.group_code).all()
+    )
+    default_perms = group_service.default_permissions()
+    groups = []
+    for row in rows:
+        perms = None if row.permissions is None else [str(x) for x in (row.permissions or []) if str(x).strip()]
+        effective = sorted(_expand_group_visibility(set(perms))) if perms is not None else default_perms
+        groups.append(
+            {
+                "code": row.code,
+                "name": row.name,
+                "description": row.description,
+                "configured": perms is not None,
+                "permissions": perms,
+                "effective_permissions": effective,
+                "member_count": int(counts.get(row.code, 0) or 0),
+            }
+        )
+    return {
+        "groups": groups,
+        "all_packages": _manageable_packages(),
+        "default_permissions": default_perms,
+    }
+
+
+@router.put("/admin/api/user-groups/{code}")
+def admin_update_user_group(
+    code: str,
+    body: UserGroupUpdateBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    from ..services import user_groups as group_service
+
+    clean = group_service.normalize_group_code(code)
+    if not clean:
+        raise HTTPException(status_code=400, detail="分组不存在")
+    group_service.ensure_user_groups(db)
+    row = db.query(UserGroup).filter(UserGroup.code == clean).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="分组不存在")
+    if body.reset:
+        row.permissions = None
+    else:
+        perms: list[str] = []
+        for pkg_id in body.permissions or []:
+            pkg_id = str(pkg_id or "").strip()
+            if pkg_id and pkg_id not in RETIRED_PACKAGE_IDS:
+                perms.append(pkg_id)
+        row.permissions = sorted(set(perms))
+    if body.name is not None:
+        row.name = str(body.name).strip()[:64] or row.name
+    if body.description is not None:
+        row.description = str(body.description).strip()[:255]
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "code": row.code,
+        "name": row.name,
+        "configured": row.permissions is not None,
+        "permissions": row.permissions,
+    }
+
+
+@router.post("/admin/api/user/{user_id}/group")
+def admin_set_user_group(
+    user_id: int,
+    body: UserGroupAssignBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    _assert_can_manage_user(db, ctx, user_id)
+    from ..services import user_groups as group_service
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    raw = str(body.group_code or "").strip()
+    code = group_service.normalize_group_code(raw) if raw else ""
+    if raw and not code:
+        raise HTTPException(status_code=400, detail="分组不存在")
+    user.group_code = code
+    db.commit()
+    return {"ok": True, "user_id": user_id, "group_code": code}
+
+
 # ── 技能可见性管理 ──
+
+
+def _manageable_packages() -> list[dict]:
+    """管理后台可配置的技能包列表（用户权限 / 分组权限共用）。"""
+    from .skills import _load_registry, _pkg_store_visibility
+
+    registry = _load_registry()
+    packages = registry.get("packages", {})
+    all_pkgs = [
+        {
+            "id": k,
+            "name": v.get("name", k),
+            "store_visibility": _pkg_store_visibility(v),
+            "unlock_price_yuan": v.get("unlock_price_yuan"),
+            "unlock_price_credits": v.get("unlock_price_credits"),
+            "capabilities_count": len((v.get("capabilities") or {})),
+        }
+        for k, v in packages.items()
+    ]
+    feature_pkg_by_id = {str(pkg.get("id") or ""): dict(pkg) for pkg in FEATURE_FLAG_PACKAGES}
+    return [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES if str(pkg.get("id") or "") not in RETIRED_PACKAGE_IDS] + [
+        pkg
+        for pkg in all_pkgs
+        if pkg["id"] not in feature_pkg_by_id and pkg["id"] not in RETIRED_PACKAGE_IDS
+    ]
 
 
 @router.get("/admin/api/user-skill-visibility/{user_id}")
@@ -2045,29 +2184,13 @@ def admin_get_user_skill_visibility(
         row[0]
         for row in db.query(SkillUnlock.package_id).filter(SkillUnlock.user_id == user_id).all()
     }
-    registry = _load_registry()
-    packages = registry.get("packages", {})
-    all_pkgs = [
-        {
-            "id": k,
-            "name": v.get("name", k),
-            "store_visibility": _pkg_store_visibility(v),
-            "unlock_price_yuan": v.get("unlock_price_yuan"),
-            "unlock_price_credits": v.get("unlock_price_credits"),
-            "capabilities_count": len((v.get("capabilities") or {})),
-        }
-        for k, v in packages.items()
-    ]
-    feature_pkg_by_id = {str(pkg.get("id") or ""): dict(pkg) for pkg in FEATURE_FLAG_PACKAGES}
-    all_pkgs = [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES if str(pkg.get("id") or "") not in RETIRED_PACKAGE_IDS] + [
-        pkg for pkg in all_pkgs if pkg["id"] not in feature_pkg_by_id
-        and pkg["id"] not in RETIRED_PACKAGE_IDS
-    ]
+    all_pkgs = _manageable_packages()
     return {
         "user_id": user_id,
         "is_admin": _skill_store_admin(user),
         "registration_is_overseas_user": bool(getattr(user, "is_overseas_user", False)),
         "has_custom_visibility": _user_has_custom_visibility(db, user_id),
+        "group_code": (getattr(user, "group_code", "") or "").strip(),
         "visible_ids": sorted(visible),
         "unlocked_ids": sorted(unlocked),
         "all_packages": all_pkgs,

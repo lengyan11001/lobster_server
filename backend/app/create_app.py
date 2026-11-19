@@ -232,6 +232,31 @@ def _migrate_user_password_version():
         logger.warning("Migration users.password_version skipped: %s", e)
 
 
+def _migrate_user_groups():
+    """用户分组：users.group_code 列 + user_groups 表 + 三条默认分组。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if insp.has_table("users"):
+            cols = [c["name"] for c in insp.get_columns("users")]
+            if "group_code" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN group_code VARCHAR(32) NOT NULL DEFAULT ''"))
+                logger.info("Migration users.group_code ok")
+        Base.metadata.create_all(bind=engine, tables=[models.UserGroup.__table__])
+        from .services.user_groups import ensure_user_groups
+
+        db = SessionLocal()
+        try:
+            ensure_user_groups(db)
+        finally:
+            db.close()
+        logger.info("Migration user_groups ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration user_groups skipped: %s", e)
+
+
 def _migrate_douyin_imitation_task_columns():
     """给 douyin_imitation_task 补计费列（表是 2026-09-27 新建的，create_all 不会改老表）。"""
     from sqlalchemy import inspect, text
@@ -1717,6 +1742,7 @@ def create_app() -> FastAPI:
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_user_password_version()
+        _migrate_user_groups()
         _migrate_canvas_project_category()
         _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()

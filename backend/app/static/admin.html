@@ -590,6 +590,7 @@ body{background:#edf2f7}
     <div class="nav-tabs" id="navTabs">
       <div class="nav-tab active" data-icon="首" data-nav="stats" onclick="switchNav('stats')">首页数据大盘</div>
       <div class="nav-tab" data-icon="用" data-nav="users" onclick="switchNav('users')">用户列表</div>
+      <div class="nav-tab" data-icon="组" data-nav="userGroups" id="userGroupsNavTab" onclick="switchNav('userGroups')" style="display:none">用户分组</div>
       <div class="nav-tab" data-icon="客" data-nav="customers" onclick="switchNav('customers')">客户管理</div>
       <div class="nav-tab" data-icon="代" data-nav="agents" id="agentsNavTab" onclick="switchNav('agents')">代理商管理</div>
       <div class="nav-tab" data-icon="模" data-nav="templates" onclick="switchNav('templates')">模板配置</div>
@@ -636,6 +637,26 @@ body{background:#edf2f7}
   </div>
 
   <!-- Page: Users -->
+  <div class="container" id="pageUserGroups" style="display:none">
+    <div class="card">
+      <h3>用户分组与技能权限</h3>
+      <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin:0 0 12px">
+        新注册用户默认进入「基础」分组。已设置分组的用户，技能权限完全按分组权限走；未分组的老用户继续沿用自己身上的权限。
+      </p>
+      <div id="groupTabs" class="skill-visibility-tabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+      <div id="groupMeta" style="margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <input id="groupPermSearch" type="search" placeholder="搜索技能名称或 ID" oninput="filterGroupPerms()" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--border);border-radius:7px">
+        <button class="btn btn-outline btn-sm" onclick="setAllGroupPerms(true)">全选</button>
+        <button class="btn btn-outline btn-sm" onclick="setAllGroupPerms(false)">清空</button>
+        <button class="btn btn-primary btn-sm" onclick="saveGroupPerms()">保存该分组权限</button>
+        <button class="btn btn-outline btn-sm" onclick="resetGroupPerms()">恢复为未配置</button>
+      </div>
+      <div id="groupPermMsg" style="font-size:12px;color:var(--text-secondary);margin-bottom:8px"></div>
+      <div id="groupPermTable"><div class="empty">加载中…</div></div>
+    </div>
+  </div>
+
   <div class="container" id="pageUsers" style="display:none">
     <!-- Agent: 认领下级 -->
     <div class="claim-bar" id="claimBar" style="display:none">
@@ -2588,6 +2609,8 @@ function showDashboard() {
   if (brandsTab) brandsTab.style.display = isAdmin() ? '' : 'none';
   const remoteTab = document.getElementById('remoteSupportNavTab');
   if (remoteTab) remoteTab.style.display = isAdmin() ? '' : 'none';
+  const userGroupsTab = document.getElementById('userGroupsNavTab');
+  if (userGroupsTab) userGroupsTab.style.display = isAdmin() ? '' : 'none';
   const merchantTab = document.getElementById('merchantsNavTab');
   const dispatchDevicesTab = document.getElementById('dispatchDevicesNavTab');
   if (dispatchDevicesTab) dispatchDevicesTab.style.display = isAdmin() ? '' : 'none';
@@ -2858,6 +2881,7 @@ function navTitle(nav) {
   return {
     stats: '首页数据大盘',
     users: '用户列表',
+    userGroups: '用户分组',
     customers: '客户管理',
     agents: '代理商管理',
     templates: '模板配置',
@@ -2881,6 +2905,7 @@ function switchNav(nav) {
   if (nav === 'merchants' && !isAdmin()) nav = 'stats';
   if (nav === 'dispatchDevices' && !isAdmin()) nav = 'stats';
   if (nav === 'wechatContacts' && !isAdmin()) nav = 'stats';
+  if (nav === 'userGroups' && !isAdmin()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
@@ -2911,6 +2936,8 @@ function switchNav(nav) {
   if (pageDispatchDevices) pageDispatchDevices.style.display = nav === 'dispatchDevices' ? '' : 'none';
   const pageWechatContacts = document.getElementById('pageWechatContacts');
   if (pageWechatContacts) pageWechatContacts.style.display = nav === 'wechatContacts' ? '' : 'none';
+  const pageUserGroups = document.getElementById('pageUserGroups');
+  if (pageUserGroups) pageUserGroups.style.display = nav === 'userGroups' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'customers') loadCustomers(customerPage || 1);
@@ -2921,6 +2948,7 @@ function switchNav(nav) {
   if (nav === 'wechatContacts') loadWechatContacts(wechatContactPage || 1);
   if (nav === 'commissions') loadCommissions(0);
   if (nav === 'brands') loadBrands();
+  if (nav === 'userGroups') loadUserGroups();
   if (nav === 'remoteSupport') loadRemoteSupportDevices();
   if (nav === 'merchants') loadMerchants(merchantPage || 1);
   if (nav === 'dispatchDevices') loadDispatchDevices(dispatchDevicePage || 1);
@@ -3431,7 +3459,7 @@ function renderUserTable(users, containerId, title) {
   }
   let html = title ? `<h3>${title}（${users.length} 条）</h3>` : '';
   html += `<div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>品牌</th><th>积分</th><th>角色</th>`;
-  if (isAdmin()) html += `<th>代理</th>`;
+  if (isAdmin()) html += `<th>分组</th><th>代理</th>`;
   html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
@@ -3448,6 +3476,8 @@ function renderUserTable(users, containerId, title) {
       <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
     if (isAdmin()) {
+      const gLabel = u.group_code ? (userGroupLabel(u.group_code) || u.group_code) : '';
+      html += `<td>${gLabel ? '<span class="badge badge-green">' + escapeHtml(gLabel) + '</span>' : '<span style="font-size:11px;color:var(--text-secondary)">未分组</span>'}</td>`;
       html += `<td>${u.is_agent ? '<span class="badge badge-yellow">' + agentLabel + '</span>' : '-'}</td>`;
     }
     html += `<td style="font-size:11px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '-'}</td>
@@ -4820,6 +4850,7 @@ async function showUserDetail(userId) {
         <div class="stat-item"><div class="label">资料下发</div><div class="value" style="font-size:14px">${u.agent_openclaw_memory_enabled?'已开通':'未开通'}</div></div>
         <div class="stat-item"><div class="label">品牌</div><div class="value" style="font-size:14px">${u.brand_mark||'-'}</div></div>
         <div class="stat-item"><div class="label">上级ID</div><div class="value" style="font-size:14px">${u.parent_user_id||'无'}</div></div>
+        <div class="stat-item"><div class="label">分组</div><div class="value" style="font-size:14px">${u.group_code ? (userGroupLabel(u.group_code) || u.group_code) : '未分组'}</div></div>
         <div class="stat-item"><div class="label">注册时间</div><div class="value" style="font-size:13px">${u.created_at?new Date(u.created_at).toLocaleString('zh-CN'):'-'}</div></div>
       </div>
     `;
@@ -4840,6 +4871,29 @@ async function showUserDetail(userId) {
             </select>
             <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveUserLlmModelOverride(${u.id})">保存模型</button>
             <button class="btn btn-outline btn-sm" onclick="clearUserLlmModelOverride(${u.id})">清空</button>
+          </div>
+        </div>
+      `;
+    }
+    if (isAdmin()) {
+      const groupOptions = USER_GROUP_DEFS.map(g =>
+        '<option value="' + g.code + '" ' + ((u.group_code || '') === g.code ? 'selected' : '') + '>' + g.name + '</option>'
+      ).join('');
+      detailHtml += `
+        <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+            <div>
+              <div style="font-weight:700;font-size:14px">所属分组</div>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">选了分组后技能权限按分组走；未分组沿用该用户自己的权限。</div>
+            </div>
+            <span class="badge ${u.group_code ? 'badge-green' : 'badge-yellow'}">${u.group_code ? userGroupLabel(u.group_code) : '未分组'}</span>
+          </div>
+          <div class="recharge-row" style="margin-top:0">
+            <select id="userGroupSelect" style="width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
+              <option value="" ${!u.group_code ? 'selected' : ''}>未分组（用个人权限）</option>
+              ${groupOptions}
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="saveUserGroup(${u.id})">保存分组</button>
           </div>
         </div>
       `;
@@ -4944,6 +4998,19 @@ function renderImageChannelSection(u, featureFlags) {
       <span style="font-size:12px;color:var(--text-secondary)">当前：${enabled ? '已开启' : '未开启'}</span>
     </div>
   `;
+}
+
+async function saveUserGroup(userId) {
+  const sel = document.getElementById('userGroupSelect');
+  const code = sel ? String(sel.value || '') : '';
+  try {
+    await api('/admin/api/user/' + userId + '/group', {
+      method: 'POST',
+      body: JSON.stringify({ group_code: code })
+    });
+    toast(code ? ('已加入「' + (userGroupLabel(code) || code) + '」分组') : '已设为未分组');
+    showUserDetail(userId);
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function toggleAgent(userId, makeAgent) {
@@ -5295,6 +5362,132 @@ function skillVisibilityGroup(pkg) {
   if (/leads|inquiry|wechat|wecom|messenger|linkedin|reddit|tiktok|x_/.test(text.toLowerCase())) return 'leads';
   if (/video|human|digital|image|content|article|ppt|ecommerce|seedance|tvc|bestseller/.test(text.toLowerCase())) return 'marketing';
   return 'system';
+}
+
+const USER_GROUP_DEFS = [
+  {code: 'basic', name: '基础'},
+  {code: 'intermediate', name: '中级'},
+  {code: 'advanced', name: '高级'}
+];
+let userGroupData = null;
+let currentGroupCode = 'basic';
+let groupPermDraft = new Set();
+
+function userGroupLabel(code) {
+  const hit = USER_GROUP_DEFS.find(g => g.code === String(code || ''));
+  return hit ? hit.name : '';
+}
+
+async function loadUserGroups() {
+  const box = document.getElementById('groupPermTable');
+  if (box) box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/admin/api/user-groups');
+    userGroupData = data;
+    if (!(data.groups || []).some(g => g.code === currentGroupCode)) {
+      currentGroupCode = (data.groups && data.groups[0] && data.groups[0].code) || 'basic';
+    }
+    renderGroupTabs();
+    selectUserGroup(currentGroupCode);
+  } catch (e) {
+    if (box) box.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderGroupTabs() {
+  const el = document.getElementById('groupTabs');
+  if (!el || !userGroupData) return;
+  el.innerHTML = (userGroupData.groups || []).map(g =>
+    '<button type="button" class="' + (g.code === currentGroupCode ? 'active' : '') + '" onclick="selectUserGroup(\'' + g.code + '\')">'
+    + escapeHtml(g.name) + ' <span style="opacity:.65">(' + (g.member_count || 0) + '人)</span></button>'
+  ).join('');
+}
+
+function selectUserGroup(code) {
+  currentGroupCode = code;
+  const g = ((userGroupData && userGroupData.groups) || []).find(x => x.code === code);
+  if (!g) return;
+  groupPermDraft = new Set(g.effective_permissions || []);
+  renderGroupTabs();
+  const meta = document.getElementById('groupMeta');
+  if (meta) {
+    meta.innerHTML = '<span class="badge badge-blue">' + escapeHtml(g.name) + '</span> <span style="font-size:12px;color:var(--text-secondary);margin-left:6px">' + escapeHtml(g.description || '') + '</span> '
+      + (g.configured
+        ? '<span class="badge badge-green" style="margin-left:8px">已配置</span>'
+        : '<span class="badge badge-yellow" style="margin-left:8px">未配置（暂按默认权限）</span>');
+  }
+  const msg = document.getElementById('groupPermMsg');
+  if (msg) msg.textContent = g.configured ? ('当前已保存 ' + ((g.permissions || []).length) + ' 项权限') : '该分组还没保存过配置：先勾选再点「保存该分组权限」。';
+  renderGroupPermTable();
+  filterGroupPerms();
+}
+
+function renderGroupPermTable() {
+  const box = document.getElementById('groupPermTable');
+  if (!box || !userGroupData) return;
+  const pkgs = userGroupData.all_packages || [];
+  if (!pkgs.length) { box.innerHTML = '<div class="empty">暂无可配置技能</div>'; return; }
+  let html = '<div class="table-wrap"><table><thead><tr><th>技能 / 权限</th><th>类型</th><th>能力数</th><th>开放</th></tr></thead><tbody>';
+  for (const pkg of pkgs) {
+    const checked = groupPermDraft.has(pkg.id);
+    html += '<tr data-gperm-search="' + escapeHtml((String(pkg.name || '') + ' ' + pkg.id).toLowerCase()) + '">'
+      + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(pkg.id) + '</div></td>'
+      + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span></td>'
+      + '<td>' + (pkg.capabilities_count || 0) + '</td>'
+      + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" data-gperm="' + escapeHtml(pkg.id) + '" ' + (checked ? 'checked' : '') + ' onchange="toggleGroupPerm(this)"> <span>' + (checked ? '已开放' : '关闭') + '</span></label></td>'
+      + '</tr>';
+  }
+  html += '</tbody></table></div>';
+  box.innerHTML = html;
+}
+
+function toggleGroupPerm(el) {
+  const id = el.getAttribute('data-gperm');
+  if (!id) return;
+  if (el.checked) groupPermDraft.add(id); else groupPermDraft.delete(id);
+  const span = el.parentNode ? el.parentNode.querySelector('span') : null;
+  if (span) span.textContent = el.checked ? '已开放' : '关闭';
+}
+
+function setAllGroupPerms(on) {
+  document.querySelectorAll('#groupPermTable input[data-gperm]').forEach(b => {
+    b.checked = !!on;
+    toggleGroupPerm(b);
+  });
+}
+
+function filterGroupPerms() {
+  const q = String((document.getElementById('groupPermSearch') || {}).value || '').trim().toLowerCase();
+  document.querySelectorAll('#groupPermTable tbody tr').forEach(tr => {
+    tr.style.display = (!q || String(tr.getAttribute('data-gperm-search') || '').indexOf(q) >= 0) ? '' : 'none';
+  });
+}
+
+async function saveGroupPerms() {
+  const msg = document.getElementById('groupPermMsg');
+  const groupLabel = userGroupLabel(currentGroupCode) || currentGroupCode;
+  if (!confirm('保存「' + groupLabel + '」分组权限？该组所有用户的技能权限会立即按这份配置生效。')) return;
+  try {
+    const data = await api('/admin/api/user-groups/' + currentGroupCode, {
+      method: 'PUT',
+      body: JSON.stringify({permissions: Array.from(groupPermDraft)})
+    });
+    if (msg) msg.textContent = '已保存：' + ((data.permissions || []).length) + ' 项权限';
+    toast('「' + groupLabel + '」分组权限已保存');
+    await loadUserGroups();
+  } catch (e) {
+    if (msg) msg.textContent = '保存失败：' + e.message;
+    toast(e.message, 'error');
+  }
+}
+
+async function resetGroupPerms() {
+  if (!confirm('恢复成「未配置」？该组用户会暂时回落到自己的个人权限。')) return;
+  try {
+    await api('/admin/api/user-groups/' + currentGroupCode, { method: 'PUT', body: JSON.stringify({ reset: true }) });
+    toast('已恢复为未配置');
+    await loadUserGroups();
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function loadSkillVisibility(userId) {

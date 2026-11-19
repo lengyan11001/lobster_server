@@ -16,6 +16,7 @@ from .auth import get_current_user
 from ..models import CapabilityConfig, SkillUnlock, SkillUnlockOrder, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, user_balance_decimal
+from ..services import user_groups as user_group_service
 from .installation_slots import ensure_installation_slot, installation_slots_enabled, parse_installation_id_strict
 
 router = APIRouter()
@@ -200,6 +201,11 @@ def _user_visible_package_ids(
     *,
     is_overseas_client: bool,
 ) -> set:
+    # 分组用户：权限完全按分组走（2026-11-19）。
+    # 分组为空 / 该组还没配置权限 -> 回落到下面原有的个人权限逻辑。
+    group_perms = user_group_service.group_permissions(db, user)
+    if group_perms is not None:
+        return _expand_group_visibility(set(group_perms))
     if not _user_has_custom_visibility(db, user.id):
         return _expand_group_visibility(set(_default_visible_packages_for_request(is_overseas_client)))
     rows = {
