@@ -19,7 +19,7 @@ page { background: #f8f9fa; }
   left: 0;
   right: 0;
   bottom: 0;
-  height: 80rpx;
+  height: 56rpx;
   background: linear-gradient(180deg, rgba(248, 249, 250, 0) 0%, #f8f9fa 92%);
   pointer-events: none;
 }
@@ -33,7 +33,8 @@ page { background: #f8f9fa; }
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 84rpx;
+  bottom: 42rpx;
+  z-index: 2;
   text-align: center;
   font-size: 26rpx;
   font-weight: 700;
