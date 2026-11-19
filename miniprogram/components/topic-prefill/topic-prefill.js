@@ -20,7 +20,9 @@ Component({
     stageText: "",
     errorText: "",
     generating: false,
-    fromHistory: false
+    fromHistory: false,
+    sheetPx: 0,
+    bodyPx: 0
   },
 
   methods: {
@@ -31,9 +33,18 @@ Component({
         wx.showToast({ title: "请先到「我的」登录授权", icon: "none" });
         return;
       }
-      this.setData({
+      let win = {};
+      try {
+        win = (wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync()) || {};
+      } catch (err) {
+        win = {};
+      }
+      const sheetPx = Math.round((Number(win.windowHeight) || 640) * 0.86);
+      const patch = {
         open: true,
         mode,
+        sheetPx,
+        bodyPx: Math.max(240, sheetPx - 56),
         phase: mode === "recording" ? "record" : "loading",
         items: [],
         keywords: [],
@@ -41,9 +52,21 @@ Component({
         errorText: "",
         fromHistory: false,
         stageText: mode === "memory" ? "正在读 IP 记忆…" : ""
-      });
+      };
+      this.setData(patch);
+      setTimeout(() => this.measureBody(), 60);
       if (mode === "recording") this.loadRecords();
       else this.generate({ mode: "memory" });
+    },
+
+    measureBody() {
+      wx.createSelectorQuery().in(this).select(".pf-sheet").boundingClientRect((sheet) => {
+        wx.createSelectorQuery().in(this).select(".pf-head").boundingClientRect((head) => {
+          if (!sheet || !sheet.height) return;
+          const headH = head && head.height ? head.height : 56;
+          this.setData({ bodyPx: Math.max(240, Math.round(sheet.height - headH - 8)) });
+        }).exec();
+      }).exec();
     },
 
     close() {

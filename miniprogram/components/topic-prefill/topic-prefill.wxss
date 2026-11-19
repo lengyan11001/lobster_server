@@ -9,6 +9,7 @@
 .pf-sheet {
   width: 100%;
   max-height: 86vh;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   background: #0b121c;
@@ -27,7 +28,7 @@
 .pf-sub { display: block; margin-top: 6rpx; font-size: 21rpx; color: #6f849c; }
 .pf-link { padding: 0 16rpx; font-size: 24rpx; color: #10f5dd; }
 .pf-close { padding: 0 4rpx 0 12rpx; font-size: 30rpx; color: #6f849c; }
-.pf-body { flex: 1; padding: 18rpx 26rpx 40rpx; box-sizing: border-box; }
+.pf-body { flex: none; padding: 18rpx 26rpx 40rpx; box-sizing: border-box; }
 .pf-err {
   margin-bottom: 16rpx;
   padding: 14rpx 16rpx;

@@ -1,5 +1,5 @@
-<view wx:if="{{open}}" class="pf-mask" catchtap="close" catchtouchmove="noop">
-  <view class="pf-sheet" catchtap="noop">
+<view wx:if="{{open}}" class="pf-mask" catchtap="close">
+  <view class="pf-sheet" style="height:{{sheetPx}}px" catchtap="noop">
     <view class="pf-head">
       <view class="pf-head-main">
         <text class="pf-title">{{mode === 'recording' ? '录音生成选题' : 'IP记忆生成选题'}}</text>
@@ -9,7 +9,7 @@
       <text class="pf-close" catchtap="close">✕</text>
     </view>
 
-    <scroll-view scroll-y class="pf-body">
+    <scroll-view scroll-y class="pf-body" style="height:{{bodyPx}}px" enhanced show-scrollbar="{{true}}">
       <view wx:if="{{errorText}}" class="pf-err">{{errorText}}</view>
 
       <block wx:if="{{phase === 'record'}}">
