@@ -188,10 +188,10 @@
     <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="generate">生成口播视频</button>
   </view>
 
-  <view wx:if="{{statusText}}" class="panel">
+  <view wx:if="{{statusText}}" class="panel video-panel">
     <text class="label">任务状态</text>
     <view class="status">{{statusText}}</view>
-    <video wx:if="{{videoUrl}}" class="video" src="{{videoUrl}}" controls poster="{{coverUrl}}" />
+    <video wx:if="{{videoUrl}}" class="video" src="{{videoUrl}}" controls poster="{{coverUrl}}" binderror="onVideoError" />
     <view class="btn-row">
       <button wx:if="{{videoUrl}}" class="ghost half" bindtap="downloadVideo">保存到相册</button>
       <button wx:if="{{videoUrl}}" class="ghost half" bindtap="copyVideoUrl">复制链接</button>

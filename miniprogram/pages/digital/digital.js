@@ -156,7 +156,7 @@ Page({
     matchWayNames: MATCH_WAY_NAMES, matchWayIndex: 0,
     materials: [], assetTab: "image", assets: [], assetsAll: [], assetsLoading: false,
     assetKeyword: "",
-    submitting: false, statusText: "", videoUrl: "", coverUrl: "", history: [],
+    submitting: false, statusText: "", videoUrl: "", rawVideoUrl: "", videoProxied: false, coverUrl: "", history: [],
     pickerOpen: false, pickerItems: [], pickerLoading: false, extracting: false, extractStep: 0,
     dhTemplateName: "", dhTemplateDevice: "", dhTemplateStyleId: ""
   },
@@ -1244,7 +1244,13 @@ Page({
         const statusText = String((data && data.status_text) || "处理中");
         const videoUrl = assetUrl((data && data.video_url) || "");
         const coverUrl = assetUrl((data && data.cover_url) || "");
-        this.setData({ statusText, videoUrl, coverUrl });
+        this.setData({
+          statusText,
+          videoUrl: playUrl(videoUrl),
+          rawVideoUrl: videoUrl,
+          videoProxied: true,
+          coverUrl
+        });
         if (status === "succeed" || status === "failed") {
           this.stopPolling();
           if (status === "succeed") {
@@ -1283,7 +1289,8 @@ Page({
           title: String(row.title || "数字人口播"),
           status_text: String(row.status_text || row.status || ""),
           created_at: String(row.created_at || "").replace("T", " ").slice(0, 16),
-          video_url: assetUrl(row.video_url || ""),
+          video_url: playUrl(assetUrl(row.video_url || "")),
+          raw_video_url: assetUrl(row.video_url || ""),
           cover_url: assetUrl(row.cover_url || "")
         }));
         this.setData({ history: rows });
@@ -1314,7 +1321,24 @@ Page({
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.history[index];
     if (!row) return;
-    this.setData({ videoUrl: row.video_url, coverUrl: row.cover_url, statusText: row.status_text });
+    this.setData({
+      videoUrl: row.video_url,
+      rawVideoUrl: row.raw_video_url || row.video_url,
+      videoProxied: true,
+      coverUrl: row.cover_url,
+      statusText: row.status_text || "历史记录"
+    });
+    setTimeout(() => wx.pageScrollTo({ selector: ".video-panel", duration: 250, offsetTop: -20 }), 60);
+  },
+
+  onVideoError() {
+    const raw = String(this.data.rawVideoUrl || "").trim();
+    if (!raw || !this.data.videoProxied) {
+      wx.showToast({ title: "视频加载失败，请稍后重试", icon: "none" });
+      return;
+    }
+    this.setData({ videoUrl: raw, videoProxied: false });
+    wx.showToast({ title: "已切换直连重试", icon: "none" });
   },
 
   copyVideoUrl() {
