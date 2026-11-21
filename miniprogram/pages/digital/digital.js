@@ -906,9 +906,11 @@ Page({
       voice: voice.voice,
       text: "你好，这是当前声音的试听效果。",
       rate: String(this.data.speed || 1),
-      // 只保留语速，音量/音调/情绪用服务端默认值
+      volume: String(this.data.volume || 1),
+      pitch: String(this.data.pitch),
+      emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
     };
-    if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
+    if (String(this.data.instructions || "").trim()) payload.instructions = String(this.data.instructions).trim();
     if (voice.provider === "minimax" || voice.provider === "qwen") payload.voice_provider = voice.provider;
     wx.showLoading({ title: "试听生成" });
     app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: payload, header: this.iidHeader(), timeout: 120000 })
@@ -1279,7 +1281,9 @@ Page({
       voice: voice.voice,
       text: String(this.data.text || "").trim(),
       rate: String(this.data.speed || 1),
-      // 只保留语速，音量/音调/情绪用服务端默认值
+      volume: String(this.data.volume || 1),
+      pitch: String(this.data.pitch),
+      emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
     };
     if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
     if (voice.provider === "minimax" || voice.provider === "qwen") ttsPayload.voice_provider = voice.provider;

@@ -87,6 +87,16 @@
         <text class="rate-label">语速 {{speedText}}</text>
         <slider class="rate-slider" min="50" max="200" step="5" value="{{speed * 100}}" bindchange="onSpeedChange" bindchanging="onSpeedChange" />
       </view>
+      <view class="param-grid">
+        <view class="param"><text class="param-label">音量 {{volumeText}}</text>
+          <slider min="10" max="200" step="5" value="{{volume * 100}}" block-size="20" activeColor="#2563eb" bindchange="onVolumeChange" bindchanging="onVolumeChange" /></view>
+        <view class="param"><text class="param-label">音调 {{pitchText}}</text>
+          <slider min="-12" max="12" step="1" value="{{pitch}}" block-size="20" activeColor="#2563eb" bindchange="onPitchChange" bindchanging="onPitchChange" /></view>
+        <view class="param"><text class="param-label">情绪</text>
+          <picker mode="selector" range="{{emotions}}" value="{{emotionIndex}}" bindchange="pickEmotion">
+            <view class="picker small">{{emotions[emotionIndex]}}</view>
+          </picker></view>
+      </view>
     </block>
 
     <text class="label">任务名称</text>
