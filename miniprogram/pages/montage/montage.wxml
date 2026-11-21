@@ -14,44 +14,23 @@
   </view>
 
   <view class="panel">
-    <text class="label">音色（素材库 · 我的声音分身）</text>
+    <text class="label">音色（素材库 · 我的声音）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
-      <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '默认音色'}}</view>
+      <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '还没有音色，先去素材库创建'}}</view>
     </picker>
-    <text class="label">口播文案（TTS 驱动）</text>
+
+    <text class="label">口播文案</text>
     <textarea class="textarea" value="{{speechText}}" bindinput="onSpeechInput" placeholder="输入口播文案，生成语音后按语音时长切分素材" maxlength="1200" auto-height />
     <view class="btn-row">
       <button class="ghost half" loading="{{ttsLoading}}" bindtap="previewSpeech">试听</button>
       <button class="primary half" loading="{{ttsLoading}}" bindtap="generateSpeech">生成音轨</button>
     </view>
     <text class="hint">{{speechStatus}}</text>
-    <button class="primary" loading="{{rendering}}" disabled="{{rendering}}" bindtap="startLocalMontage">{{rendering ? '渲染中…' : '开始混剪'}}</button>
-    <video wx:if="{{localVideoUrl}}" class="video" src="{{localVideoUrl}}" controls />
-    <button wx:if="{{localVideoUrl}}" class="ghost" bindtap="saveLocalVideo">保存到相册</button>
-    <text wx:if="{{localStatus}}" class="hint">{{localStatus}}</text>
-  </view>
 
-  <view class="panel">
-    <text class="label">模板</text>
-    <scroll-view scroll-x class="tpl-scroll">
-      <view class="tpl-row">
-        <view wx:if="{{templatesLoading}}" class="tpl-empty">模板加载中…</view>
-        <view wx:if="{{!templatesLoading && !templates.length}}" class="tpl-empty">没有可用模板</view>
-        <view wx:for="{{templates}}" wx:key="styleId" class="tpl {{templateIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectTemplate">
-          <image wx:if="{{item.cover}}" class="tpl-cover" src="{{item.cover}}" mode="aspectFill" />
-          <view wx:else class="tpl-cover tpl-cover-empty">模</view>
-          <text class="tpl-name">{{item.name}}</text>
-        </view>
-      </view>
-    </scroll-view>
+    <text class="label">成片时长：{{duration}} 秒（默认跟口播）</text>
+    <slider min="10" max="180" step="5" value="{{duration}}" show-value activeColor="#1957E8" bindchange="onDurationChange" />
 
-    <text class="label">口播文案</text>
-    <textarea class="textarea" value="{{content}}" bindinput="onContentInput" placeholder="输入这条视频要念的文案" auto-height maxlength="1200" />
-
-    <text class="label">成片时长：{{duration}} 秒</text>
-    <slider min="10" max="180" step="5" value="{{duration}}" show-value activeColor="#2563eb" bindchange="onDurationChange" />
-
-    <text class="label">素材（{{materials.length}} 个）</text>
+    <text class="label">素材（{{materials.length}} 个视频）</text>
     <view class="mat-row">
       <view wx:for="{{materials}}" wx:key="fileUrl" class="mat">
         <image wx:if="{{item.type === 'image'}}" class="mat-thumb" src="{{item.fileUrl}}" mode="aspectFill" />
@@ -61,18 +40,14 @@
       <view class="mat-add" bindtap="addMaterial">+</view>
     </view>
 
-    <button class="primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submit">开始混剪</button>
+    <button class="primary" loading="{{rendering}}" disabled="{{rendering}}" bindtap="startLocalMontage">{{rendering ? '渲染中…' : '开始混剪'}}</button>
+    <video wx:if="{{localVideoUrl}}" class="video" src="{{localVideoUrl}}" controls />
+    <button wx:if="{{localVideoUrl}}" class="ghost" bindtap="saveLocalVideo">保存到相册</button>
+    <text wx:if="{{localStatus}}" class="hint">{{localStatus}}</text>
   </view>
 
-  <view wx:if="{{taskId}}" class="panel">
-    <text class="label">任务状态</text>
-    <view class="status">{{statusText}}</view>
-    <video wx:if="{{videoUrl}}" class="video" src="{{videoUrl}}" controls />
-    <button wx:if="{{videoUrl}}" class="ghost" bindtap="copyUrl">复制视频链接</button>
-  </view>
-
-  <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
 </view>
+
 <view wx:if="{{assetOpen}}" class="am-mask" catchtap="closeAssetPicker">
   <view class="am-sheet" catchtap="assetNoop">
     <view class="am-head"><text class="am-title">选择素材</text><text class="am-close" catchtap="closeAssetPicker">×</text></view>
