@@ -1,11 +1,20 @@
 const app = getApp();
 const api = require("../../utils/api");
+const hist = require("../../utils/gen-history");
+const { createPoller } = require("../../utils/task-poll");
 
-const POLL_MS = 3000;
-const MAX_POLL_FAIL = 8;
+function fmtTime(v) {
+  const d = new Date(Number(v || 0));
+  if (!Number.isFinite(d.getTime())) return "";
+  const p = (n) => (n < 10 ? "0" + n : "" + n);
+  return (d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
 
 Page({
   data: {
+    viewMode: "list",
+    jobList: [],
+    currentJobTitle: "",
     running: false,
     progress: 0,
     stage: "",
@@ -25,20 +34,101 @@ Page({
 
   onLoad() {
     app.restoreSession();
-    this.pollTimer = null;
-    this.pollFail = 0;
+    this.topicPoller = null;
+    this.topicActive = null;
+    this.latestPlan = null;
+    this.loadJobs();
     this.loadLatest();
   },
 
+  onShow() {
+    if (this.topicPoller) this.topicPoller.resume();
+    if (this.data.viewMode === "list") this.loadJobs();
+    this.resumeTopicJob();
+  },
+
+  onHide() {
+    if (this.topicPoller) this.topicPoller.pause();
+  },
+
   onUnload() {
-    this.stopPoll();
+    if (this.topicPoller) this.topicPoller.stop();
+  },
+
+  loadJobs() {
+    const rows = (hist.list("topics") || []).map((row) => Object.assign({}, row, {
+      timeText: fmtTime(row.started_at || row.at),
+      statusText: row.status_text || (row.status === "processing" ? "生成中" : (row.status === "failed" ? "失败" : "已完成"))
+    }));
+    if (!rows.length && this.latestPlan && Array.isArray(this.latestPlan.topics) && this.latestPlan.topics.length) {
+      const meta = this.latestPlan.meta || {};
+      rows.push({
+        id: "latest",
+        title: "最近一次推荐选题",
+        status: "completed",
+        statusText: "已完成",
+        timeText: String(meta.generated_at || "").replace("T", " ").slice(0, 16),
+        count: this.latestPlan.topics.length,
+        plan: this.latestPlan
+      });
+    }
+    this.setData({ jobList: rows });
+  },
+
+  openCreate() {
+    this.setData({ viewMode: "create", errorText: "", progress: 0, stage: "", calls: [], metricsNote: "" });
+  },
+
+  backToList() {
+    this.setData({ viewMode: "list" });
+    this.loadJobs();
+  },
+
+  openJob(evt) {
+    const row = this.data.jobList[Number(evt.currentTarget.dataset.index || 0)];
+    if (!row) return;
+    if (row.status === "processing") {
+      wx.showToast({ title: row.statusText || "生成中", icon: "none" });
+      return;
+    }
+    const apply = (plan) => {
+      if (!plan || !Array.isArray(plan.topics) || !plan.topics.length) {
+        wx.showToast({ title: "这次结果已过期，请重新生成", icon: "none" });
+        return;
+      }
+      this.latestPlan = plan;
+      this.applyPlan(plan);
+      this.setData({ viewMode: "result", currentJobTitle: row.title || "推荐选题" });
+    };
+    if (row.plan && row.plan.topics) {
+      apply(row.plan);
+      return;
+    }
+    app.request({ url: "/api/ip-profile/topics/latest", timeout: 30000 })
+      .then((data) => apply((data && data.plan) || {}))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+  },
+
+  resumeTopicJob() {
+    if (this.topicPoller || this.topicActive) return;
+    const pending = (hist.list("topics") || []).find((row) => row.status === "processing" && row.job_id);
+    if (!pending) return;
+    if (Date.now() - Number(pending.started_at || pending.at || 0) > 2 * 60 * 60 * 1000) {
+      hist.update(pending.id, { status: "failed", status_text: "已中断", error: "任务已过期" });
+      this.loadJobs();
+      return;
+    }
+    this.startTopicPolling(pending.id, pending.job_id);
   },
 
   loadLatest() {
     app.request({ url: "/api/ip-profile/topics/latest", timeout: 30000 })
       .then((data) => {
         const plan = (data && data.plan) || {};
-        if (plan && Array.isArray(plan.topics) && plan.topics.length) this.applyPlan(plan);
+        if (plan && Array.isArray(plan.topics) && plan.topics.length) {
+          this.latestPlan = plan;
+          this.loadJobs();
+        }
       })
       .catch(() => {});
   },
@@ -122,7 +212,19 @@ Page({
 
   start() {
     if (this.data.running) return;
-    this.setData({ running: true, errorText: "", progress: 0, stage: "提交任务…", calls: [], topics: [], viewTopics: [], openId: 0, metricsNote: "" });
+    if ((hist.list("topics") || []).some((row) => row.status === "processing")) {
+      wx.showToast({ title: "已有选题任务正在生成", icon: "none" });
+      return;
+    }
+    const histId = hist.save("topics", {
+      title: "推荐选题 50 条",
+      status: "processing",
+      status_text: "提交中",
+      started_at: Date.now(),
+      count: 50
+    });
+    this.setData({ running: true, viewMode: "list", errorText: "", progress: 0, stage: "提交任务…", calls: [], topics: [], viewTopics: [], openId: 0, metricsNote: "" });
+    this.loadJobs();
     app.request({
       method: "POST",
       url: "/api/ip-profile/topics/jobs",
@@ -131,72 +233,78 @@ Page({
     })
       .then((data) => {
         if (!data || !data.job_id) throw new Error("没有拿到任务号");
-        this.jobId = data.job_id;
-        this.pollFail = 0;
-        this.schedulePoll(600);
+        hist.update(histId, { job_id: data.job_id, status_text: "排队中" });
+        this.loadJobs();
+        this.startTopicPolling(histId, data.job_id);
       })
       .catch((err) => {
-        this.setData({ running: false, stage: "", errorText: api.errorMessage(err) || "启动失败" });
-        wx.showToast({ title: api.errorMessage(err) || "启动失败", icon: "none" });
+        const message = api.errorMessage(err) || "启动失败";
+        hist.update(histId, { status: "failed", status_text: "失败", error: message });
+        this.setData({ running: false, stage: "", errorText: message });
+        this.loadJobs();
+        wx.showToast({ title: message.slice(0, 24), icon: "none" });
       });
   },
 
-  schedulePoll(delay) {
-    this.stopPoll();
-    this.pollTimer = setTimeout(() => this.poll(), delay || POLL_MS);
-  },
-
-  stopPoll() {
-    if (this.pollTimer) {
-      clearTimeout(this.pollTimer);
-      this.pollTimer = null;
-    }
-  },
-
-  poll() {
-    if (!this.jobId) return;
-    app.request({ url: "/api/ip-profile/topics/jobs/" + encodeURIComponent(this.jobId), timeout: 30000 })
-      .then((data) => {
-        this.pollFail = 0;
-        const partial = (data && data.partial) || {};
+  startTopicPolling(histId, jobId) {
+    if (this.topicPoller) this.topicPoller.stop();
+    this.topicActive = { histId, jobId };
+    let failures = 0;
+    this.topicPoller = createPoller(
+      () => app.request({ url: "/api/ip-profile/topics/jobs/" + encodeURIComponent(jobId), timeout: 30000 }),
+      (data) => {
+        const status = String((data && data.status) || "");
         const patch = {
           progress: Number((data && data.progress) || 0),
           stage: String((data && data.stage) || ""),
           calls: Array.isArray(data && data.calls) ? data.calls : this.data.calls
         };
-        if (Array.isArray(partial.keywords) && partial.keywords.length) patch.keywords = this.normalizeKeywords(partial.keywords);
-        if (Array.isArray(partial.grids) && partial.grids.length) patch.grids = partial.grids;
-        if (Array.isArray(partial.topics) && partial.topics.length) {
-          patch.topics = partial.topics.map((row, i) => Object.assign({ id: row.id || i + 1, hook: String(row.hook || ""), script: String(row.script || ""), format: String(row.format || "口播"), score: Number(row.score || 0) }, row, { id: row.id || i + 1 }));
-        }
-        this.setData(patch);
-        if (patch.topics) this.applyFilter();
-
-        const status = String((data && data.status) || "");
         if (status === "done") {
-          this.stopPoll();
-          this.setData({ running: false, progress: 100, stage: "已生成 " + ((data.result && data.result.topics) || []).length + " 条选题" });
-          if (data && data.result) this.applyPlan(data.result);
+          const plan = (data && (data.result || data.partial)) || {};
+          hist.update(histId, {
+            status: "completed",
+            status_text: "已完成",
+            progress: 100,
+            count: (plan.topics || []).length,
+            generated_at: (plan.meta && plan.meta.generated_at) || "",
+            plan
+          });
+          this.latestPlan = plan;
+          this.setData({ running: false, progress: 100, stage: "已生成 " + ((plan.topics || []).length) + " 条选题" });
+          this.topicActive = null;
+          this.loadJobs();
           wx.showToast({ title: "选题已生成", icon: "success" });
-          return;
+          return true;
         }
         if (status === "failed") {
-          this.stopPoll();
-          this.setData({ running: false, errorText: String((data && data.error) || "生成失败") });
-          wx.showToast({ title: String((data && data.error) || "生成失败").slice(0, 24), icon: "none" });
+          const message = String((data && data.error) || "生成失败");
+          hist.update(histId, { status: "failed", status_text: "失败", error: message });
+          this.setData({ running: false, errorText: message });
+          this.topicActive = null;
+          this.loadJobs();
+          wx.showToast({ title: message.slice(0, 24), icon: "none" });
+          return true;
+        }
+        hist.update(histId, { status_text: patch.stage || "生成中", progress: patch.progress });
+        this.setData(patch);
+        this.loadJobs();
+        return false;
+      },
+      () => {
+        failures += 1;
+        if (failures >= 8) {
+          hist.update(histId, { status: "failed", status_text: "失败", error: "任务查询多次失败，请重新生成" });
+          if (this.topicPoller) this.topicPoller.stop();
+          this.topicActive = null;
+          this.setData({ running: false, errorText: "任务查询多次失败，请重新生成" });
+          this.loadJobs();
           return;
         }
-        this.schedulePoll(POLL_MS);
-      })
-      .catch((err) => {
-        this.pollFail += 1;
-        if (this.pollFail >= MAX_POLL_FAIL) {
-          this.stopPoll();
-          this.setData({ running: false, errorText: api.errorMessage(err) || "任务查询失败" });
-          return;
-        }
-        this.schedulePoll(POLL_MS);
-      });
+        hist.update(histId, { status_text: "查询失败，稍后重试" });
+        this.loadJobs();
+      }
+    );
+    this.topicPoller.start(true);
   },
 
   checkDouyin() {

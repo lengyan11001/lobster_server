@@ -3,8 +3,29 @@
   <view class="topbar">
     <button class="back-btn" bindtap="goBack">‹</button>
     <text class="page-title">AI图片生成</text>
-    <button class="top-audio-btn" bindtap="openAudioPicker">录音生成</button>
+    <button wx:if="{{viewMode === 'list'}}" class="top-audio-btn" bindtap="openCreate">＋ 新建</button>
+    <button wx:else class="top-audio-btn" bindtap="backToList">返回列表</button>
   </view>
+
+  <view wx:if="{{viewMode === 'list'}}" class="task-panel">
+    <view class="task-head">
+      <text class="task-title">图片任务</text>
+      <text class="task-count">{{jobList.length}} 条</text>
+    </view>
+    <view wx:if="{{!jobList.length}}" class="task-empty">还没有任务，点右上角「新建」开始生成</view>
+    <view wx:for="{{jobList}}" wx:key="id" class="task-row" data-index="{{index}}" bindtap="openJob">
+      <image wx:if="{{item.cover}}" class="task-thumb" src="{{item.cover}}" mode="aspectFill" />
+      <view wx:else class="task-thumb task-thumb-empty">图</view>
+      <view class="task-main">
+        <text class="task-name">{{item.title}}</text>
+        <text class="task-meta">{{item.timeText}} · {{item.statusText}}</text>
+      </view>
+      <text class="task-go">{{item.images.length ? '查看' : '状态'}}</text>
+    </view>
+  </view>
+
+  <block wx:if="{{viewMode === 'create'}}">
+  <button class="audio-entry" bindtap="openAudioPicker">录音生成</button>
 
   <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
     <text class="auth-title">登录后开始生成</text>
@@ -164,4 +185,5 @@
       </view>
     </view>
   </view>
+  </block>
 </view>

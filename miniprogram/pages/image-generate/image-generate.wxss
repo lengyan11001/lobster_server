@@ -585,3 +585,40 @@
 .audio-pick { padding: 22rpx 0; border-top: 2rpx solid #f1f5f9; }
 .audio-pick-name { display: block; font-size: 28rpx; color: #0f172a; }
 .audio-pick-meta { display: block; margin-top: 6rpx; font-size: 22rpx; color: #64748b; }
+
+
+.audio-entry {
+  position: relative;
+  z-index: 1;
+  margin-top: 18rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
+  color: #0f172a;
+  font-size: 24rpx;
+}
+
+.task-panel {
+  position: relative;
+  z-index: 1;
+  margin-top: 20rpx;
+  padding: 26rpx;
+  border-radius: 28rpx;
+  background: #ffffff;
+  border: 1rpx solid #eef1f6;
+}
+
+.task-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8rpx; }
+.task-title { font-size: 30rpx; font-weight: 900; color: #0f172a; }
+.task-count { font-size: 22rpx; color: #94a3b8; }
+.task-empty { padding: 80rpx 0; text-align: center; color: #94a3b8; font-size: 25rpx; }
+.task-row { display: flex; align-items: center; padding: 22rpx 0; border-bottom: 1rpx solid #f1f5f9; }
+.task-row:last-child { border-bottom: 0; }
+.task-thumb { width: 96rpx; height: 96rpx; border-radius: 16rpx; flex: 0 0 96rpx; background: #f8fafc; }
+.task-thumb-empty { display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 26rpx; }
+.task-main { flex: 1; min-width: 0; margin-left: 18rpx; }
+.task-name { display: block; font-size: 27rpx; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-meta { display: block; margin-top: 8rpx; font-size: 21rpx; color: #94a3b8; }
+.task-go { margin-left: 12rpx; font-size: 24rpx; color: #1957E8; }

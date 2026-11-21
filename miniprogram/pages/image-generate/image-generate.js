@@ -2,6 +2,8 @@ const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
+const hist = require("../../utils/gen-history");
+const { createPoller } = require("../../utils/task-poll");
 
 const MODEL_ID = "gpt-image-2";
 const MAX_REFERENCES = 4;
@@ -53,6 +55,13 @@ const EXAMPLES = [
     prompt: "电影感人物肖像，侧逆光，暖色调，高级广告摄影，细腻皮肤质感，浅景深。"
   }
 ];
+
+function fmtTime(v) {
+  const d = new Date(Number(v || 0));
+  if (!Number.isFinite(d.getTime())) return "";
+  const p = (n) => (n < 10 ? "0" + n : "" + n);
+  return (d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
 
 function uniqueRows(rows) {
   const seen = {};
@@ -344,7 +353,9 @@ Page({
     pickerOpen: false,
     pickerItems: [],
     pickerLoading: false,
-    extracting: false
+    extracting: false,
+    viewMode: "list",
+    jobList: []
   },
 
   imageSubmitLock: false,
@@ -353,9 +364,61 @@ Page({
     share.showShareMenu();
     app.restoreSession();
     this.refreshAuthState();
+    this.loadJobs();
+    this.resumeImageJobs();
+  },
+
+  onShow() {
+    app.restoreSession();
+    if (this.imagePoller) this.imagePoller.resume();
+    if (this.data.viewMode === "list") {
+      this.loadJobs();
+      this.resumeImageJobs();
+    }
+  },
+
+  onHide() {
+    if (this.imagePoller) this.imagePoller.pause();
   },
 
   onUnload() {
+    if (this.imagePoller) this.imagePoller.stop();
+  },
+
+  loadJobs() {
+    const rows = (hist.list("image") || []).map((row) => Object.assign({}, row, {
+      timeText: fmtTime(row.created_at || row.at),
+      statusText: row.status_text || ({ processing: "生成中", completed: "已完成", failed: "失败" }[row.status] || row.status || "处理中"),
+      images: Array.isArray(row.images) ? row.images : [],
+      cover: (Array.isArray(row.images) && row.images[0]) || ""
+    }));
+    this.setData({ jobList: rows });
+    return rows;
+  },
+
+  openCreate() {
+    this.setData({ viewMode: "create", resultImages: [], progressText: "" });
+  },
+
+  backToList() {
+    this.setData({ viewMode: "list" });
+    this.loadJobs();
+  },
+
+  openJob(evt) {
+    const row = this.data.jobList[Number(evt.currentTarget.dataset.index || 0)];
+    if (!row) return;
+    if (row.images && row.images.length) {
+      wx.previewImage({ current: row.images[0], urls: row.images });
+      return;
+    }
+    wx.showToast({ title: row.statusText || "任务处理中", icon: "none" });
+  },
+
+  resumeImageJobs() {
+    if (this.imagePoller && this.imageActive) return;
+    const pending = (hist.list("image") || []).find((row) => row.status === "processing" && row.job_id);
+    if (pending) this.startImagePolling(pending.id, pending.job_id);
   },
 
   openAudioPicker() {
@@ -663,7 +726,10 @@ Page({
       wx.showToast({ title: "请输入图片描述", icon: "none" });
       return;
     }
-    this.imageSubmitLock = true;
+    if ((hist.list("image") || []).some((row) => row.status === "processing")) {
+      wx.showToast({ title: "已有图片任务在生成", icon: "none" });
+      return;
+    }
     const refs = uniqueRows((this.data.referenceImages || [])
       .map((item) => ({ url: item.source_url || item.url }))
       .filter((item) => item.url))
@@ -683,78 +749,109 @@ Page({
       payload.image_url = refs[0];
       payload.image_urls = refs;
     }
-    const duplicateTask = recentPendingImageTask(payload);
-    const task = duplicateTask || createPendingImageTask(payload, prompt, imageSize, this.data.count, this.data.referenceImages || []);
-    replacePendingImageTask(task.task_id, task);
+    const histId = hist.save("image", {
+      title: prompt.slice(0, 24) || "AI图片生成",
+      prompt,
+      payload,
+      count: this.data.count,
+      status: "processing",
+      status_text: "提交中",
+      images: [],
+      created_at: Date.now()
+    });
+    this.imageSubmitLock = true;
+    this.setData({ submitting: true, progressText: "任务已提交", resultImages: [], viewMode: "list" });
+    this.loadJobs();
     wx.setStorageSync("lobster_refresh_works", "1");
     wx.setStorageSync("lobster_open_media_tab", "image");
-    this.setData({ submitting: true, progressText: "任务已提交", resultImages: [] });
-    this.showSubmittedModal(task);
-  },
-
-  showSubmittedModal(task) {
-    wx.showModal({
-      title: "任务已提交",
-      content: "图片生成已开始，可在我的作品的图片分类查看结果。",
-      confirmText: "查看图片",
-      cancelText: "继续创作",
-      success: (res) => {
-        if (!res.confirm) {
-          const claimed = Object.assign({}, task, {
-            claim_owner: "image-generate",
-            claim_until_ms: Date.now() + IMAGE_CLAIM_MS
-          });
-          replacePendingImageTask(task.task_id, claimed);
-          this.runImageGenerationTask(claimed);
-          return;
-        }
-        wx.setStorageSync("lobster_refresh_works", "1");
-        wx.setStorageSync("lobster_open_media_tab", "image");
-        wx.switchTab({ url: "/pages/downloads/downloads" });
-      },
-      fail: () => {
-        this.imageSubmitLock = false;
-        this.setData({ submitting: false });
-      }
-    });
-  },
-
-  runImageGenerationTask(task) {
-    if (!task || !task.payload) return;
-    this.setData({ progressText: "生成中" });
     app.request({
       method: "POST",
-      url: "/api/comfly-proxy/v1/images/generations",
-      data: task.payload,
-      timeout: 240000
+      url: "/api/comfly-proxy/v1/images/generations/start",
+      data: payload,
+      timeout: 60000
     })
       .then((data) => {
-        const assets = extractSavedAssets(data);
-        if (assets.length) {
-          this.setData({ resultImages: assets, progressText: "正在保存" });
-          return saveGeneratedAssets(assets, task.prompt);
-        }
-        throw new Error(extractErrorMessage(data) || "图片生成失败，服务器未返回图片结果");
-      })
-      .then((assets) => {
-        cacheRecentGeneratedImages(assets);
-        replacePendingImageTask(task.task_id, null);
-        this.imageSubmitLock = false;
-        this.setData({ resultImages: assets, submitting: false, progressText: "生成完成" });
-        wx.setStorageSync("lobster_refresh_works", "1");
-        wx.setStorageSync("lobster_open_media_tab", "image");
+        const jobId = String((data && data.job_id) || "").trim();
+        if (!jobId) throw new Error("没有拿到任务号");
+        hist.update(histId, { job_id: jobId, status_text: "排队中" });
+        this.loadJobs();
+        this.startImagePolling(histId, jobId);
       })
       .catch((err) => {
-        replacePendingImageTask(task.task_id, Object.assign({}, task, {
+        hist.update(histId, {
           status: "failed",
-          status_label: "失败",
-          error_message: api.errorMessage(err) || "生成失败，请重新提交",
-          claim_until_ms: 0
-        }));
+          status_text: "失败",
+          error: api.errorMessage(err) || "提交失败"
+        });
         this.imageSubmitLock = false;
-        this.setData({ submitting: false, progressText: "生成失败" });
-        wx.setStorageSync("lobster_refresh_works", "1");
+        this.setData({ submitting: false, progressText: "" });
+        this.loadJobs();
+        wx.showToast({ title: api.errorMessage(err) || "提交失败", icon: "none" });
       });
+  },
+
+  startImagePolling(histId, jobId) {
+    if (this.imagePoller) this.imagePoller.stop();
+    this.imageActive = { histId, jobId };
+    let failures = 0;
+    this.imagePoller = createPoller(
+      () => app.request({ url: "/api/comfly-proxy/v1/images/jobs/" + encodeURIComponent(jobId), timeout: 30000 }),
+      (data) => {
+        const status = String((data && data.status) || "");
+        if (status === "completed") {
+          const assets = extractSavedAssets(data);
+          const urls = uniqueRows(assets.map((item) => ({ url: item.url }))).map((item) => item.url);
+          if (!urls.length) {
+            hist.update(histId, { status: "failed", status_text: "失败", error: "任务完成但没有返回图片" });
+            this.finishImageTask();
+            return true;
+          }
+          cacheRecentGeneratedImages(urls.map((url) => ({ url })));
+          hist.update(histId, {
+            status: "completed",
+            status_text: "已完成",
+            images: urls,
+            job_id: jobId
+          });
+          wx.setStorageSync("lobster_refresh_works", "1");
+          wx.setStorageSync("lobster_open_media_tab", "image");
+          this.finishImageTask();
+          return true;
+        }
+        if (status === "failed") {
+          hist.update(histId, {
+            status: "failed",
+            status_text: "失败",
+            error: String((data && data.error) || "生成失败")
+          });
+          this.finishImageTask();
+          return true;
+        }
+        hist.update(histId, { status_text: String((data && (data.stage || data.status_text)) || "生成中") });
+        this.loadJobs();
+        return false;
+      },
+      () => {
+        failures += 1;
+        if (failures >= 8) {
+          hist.update(histId, { status: "failed", status_text: "失败", error: "任务查询多次失败，请重新提交" });
+          if (this.imagePoller) this.imagePoller.stop();
+          this.finishImageTask();
+          return;
+        }
+        hist.update(histId, { status_text: "查询失败，稍后重试" });
+        this.loadJobs();
+      }
+    );
+    this.imagePoller.start(true);
+  },
+
+  finishImageTask() {
+    this.imageSubmitLock = false;
+    this.imageActive = null;
+    this.setData({ submitting: false, progressText: "" });
+    this.loadJobs();
+    this.resumeImageJobs();
   },
 
   previewResult(evt) {

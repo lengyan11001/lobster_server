@@ -1,22 +1,53 @@
 const app = getApp();
 const api = require("../../utils/api");
+const hist = require("../../utils/gen-history");
+const { createPoller } = require("../../utils/task-poll");
+
+const FEATURE = "moments";
+const STALE_MS = 15 * 60 * 1000;
 
 function fmtTime(v) { return String(v || "").replace("T", " ").slice(0, 16); }
 
 Page({
-  data: { groups: [], loading: false, modalOpen: false, topic: "", copyCount: 10, copyRequirement: "", generating: false },
+  data: {
+    groups: [],
+    loading: false,
+    viewMode: "list",
+    topic: "",
+    copyCount: 10,
+    copyRequirement: "",
+    generating: false,
+    taskRows: []
+  },
+
+  onLoad() {
+    this.momentPoller = null;
+    this.momentActive = "";
+    this.recordCount = 0;
+  },
 
   onShow() {
     app.restoreSession();
-    this.load();
+    if (this.momentPoller) this.momentPoller.resume();
+    if (this.data.viewMode === "list") this.load();
+    this.resumeMomentJobs();
+  },
+
+  onHide() {
+    if (this.momentPoller) this.momentPoller.pause();
+  },
+
+  onUnload() {
+    if (this.momentPoller) this.momentPoller.stop();
   },
 
   load() {
-    if (!app.globalData.token) return;
+    if (!app.globalData.token) return Promise.resolve();
     this.setData({ loading: true });
-    app.request({ url: "/api/ip-content/draft-records?task=moments_candidate&limit=200", timeout: 30000 })
+    return app.request({ url: "/api/ip-content/draft-records?task=moments_candidate&limit=200", timeout: 30000 })
       .then((data) => {
         const rows = (data && data.items) || [];
+        this.recordCount = rows.length;
         const map = {};
         rows.forEach((row) => {
           const gid = String(row.group_id || (row.meta && row.meta.group_id) || ("single-" + row.id));
@@ -32,17 +63,38 @@ Page({
         });
         const groups = Object.keys(map).map((k) => map[k]).sort((a, b) => String(b.time).localeCompare(String(a.time)));
         this.setData({ groups });
+        this.refreshTaskRows();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ loading: false }));
   },
 
-  goCreate() {
-    this.setData({ modalOpen: true, topic: "", copyRequirement: "", copyCount: 10 });
+  refreshTaskRows() {
+    const now = Date.now();
+    const rows = [];
+    (hist.list(FEATURE) || []).forEach((row) => {
+      if (!row || row.status === "completed") return;
+      if (row.status === "processing" && now - Number(row.at || 0) > STALE_MS) {
+        hist.update(row.id, { status: "failed", status_text: "已中断", error: "页面已关闭，任务没有继续执行" });
+        row.status = "failed";
+        row.status_text = "已中断";
+      }
+      rows.push(Object.assign({}, row, {
+        timeText: fmtTime(row.started_at || row.at),
+        statusText: row.status_text || (row.status === "failed" ? "失败" : "生成中")
+      }));
+    });
+    this.setData({ taskRows: rows });
   },
 
-  closeModal() { this.setData({ modalOpen: false }); },
-  noop() {},
+  openCreate() {
+    this.setData({ viewMode: "create", topic: "", copyRequirement: "", copyCount: 10, generating: false });
+  },
+
+  backToList() {
+    this.setData({ viewMode: "list" });
+    this.load();
+  },
 
   onTopic(e) { this.setData({ topic: e.detail.value }); },
   onReq(e) { this.setData({ copyRequirement: e.detail.value }); },
@@ -52,23 +104,85 @@ Page({
     const topic = String(this.data.topic || "").trim();
     if (!topic) return wx.showToast({ title: "先填主题或卖点", icon: "none" });
     if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
-    this.setData({ generating: true });
+    if ((hist.list(FEATURE) || []).some((row) => row.status === "processing")) {
+      return wx.showToast({ title: "已有朋友圈任务在生成", icon: "none" });
+    }
+    const requirement = [topic, String(this.data.copyRequirement || "").trim()].filter(Boolean).join("\n");
+    const count = Math.max(1, Math.min(20, Number(this.data.copyCount || 10)));
+    const histId = hist.save(FEATURE, {
+      title: topic.slice(0, 24),
+      topic,
+      count,
+      baseline: this.recordCount,
+      started_at: Date.now(),
+      status: "processing",
+      status_text: "生成中"
+    });
+    this.setData({ viewMode: "list", generating: true });
+    this.refreshTaskRows();
+    this.startMomentPolling(histId);
     app.request({
       method: "POST",
       url: "/api/ip-content/generate/moments-candidates",
-      data: {
-        extra_requirements: [topic, String(this.data.copyRequirement || "").trim()].filter(Boolean).join("\n"),
-        count: Math.max(1, Math.min(20, Number(this.data.copyCount || 10)))
-      },
+      data: { extra_requirements: requirement, count },
       timeout: 300000
     })
-      .then(() => {
-        this.setData({ modalOpen: false });
-        wx.showToast({ title: "已提交，记录已生成", icon: "success" });
-        this.load();
+      .then((data) => {
+        const gid = String((data && data.group_id) || "");
+        this.finishMomentTask(histId, true, gid ? ("已生成 · " + gid.slice(0, 6)) : "已生成");
       })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .then(() => this.setData({ generating: false }));
+      .catch((err) => {
+        this.finishMomentTask(histId, false, api.errorMessage(err) || "生成失败");
+      });
+  },
+
+  startMomentPolling(histId) {
+    if (this.momentPoller) this.momentPoller.stop();
+    this.momentActive = histId;
+    this.momentPoller = createPoller(
+      () => app.request({ url: "/api/ip-content/draft-records?task=moments_candidate&limit=200", timeout: 30000 }),
+      (data) => {
+        const total = ((data && data.items) || []).length;
+        const entry = hist.get(histId);
+        if (!entry) return true;
+        const baseline = Number(entry.baseline || 0);
+        const age = Date.now() - Number(entry.started_at || entry.at || 0);
+        if (total > baseline && age > 8000) {
+          this.finishMomentTask(histId, true, "已生成");
+          return true;
+        }
+        return false;
+      },
+      () => {}
+    );
+    this.momentPoller.start(true);
+  },
+
+  finishMomentTask(histId, ok, message) {
+    if (this.momentPoller) this.momentPoller.stop();
+    this.momentPoller = null;
+    this.momentActive = "";
+    if (ok) {
+      hist.remove(histId);
+      setTimeout(() => this.load(), 600);
+    } else {
+      hist.update(histId, { status: "failed", status_text: "失败", error: String(message || "生成失败") });
+      this.load();
+    }
+    this.setData({ generating: false });
+    wx.showToast({ title: String(message || (ok ? "已生成" : "生成失败")).slice(0, 24), icon: ok ? "success" : "none" });
+  },
+
+  resumeMomentJobs() {
+    if (this.momentPoller || this.momentActive) return;
+    const pending = (hist.list(FEATURE) || []).find((row) => row.status === "processing");
+    if (!pending) return;
+    if (Date.now() - Number(pending.at || 0) > STALE_MS) {
+      hist.update(pending.id, { status: "failed", status_text: "已中断", error: "页面已关闭，任务没有继续执行" });
+      this.refreshTaskRows();
+      return;
+    }
+    this.startMomentPolling(pending.id);
   },
 
   openGroup(e) {

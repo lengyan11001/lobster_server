@@ -3,6 +3,7 @@ const api = require("../../utils/api");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
 const config = require("../../config");
+const { createPoller } = require("../../utils/task-poll");
 
 const POLL_MS = 6000;
 const MAX_POLLS = 80;
@@ -157,11 +158,13 @@ Page({
     materials: [], assetTab: "image", assets: [], assetsAll: [], assetsLoading: false,
     assetKeyword: "",
     submitting: false, statusText: "", videoUrl: "", coverUrl: "", history: [],
+    viewMode: "list", jobList: [],
     pickerOpen: false, pickerItems: [], pickerLoading: false, extracting: false, extractStep: 0,
     dhTemplateName: "", dhTemplateDevice: "", dhTemplateStyleId: ""
   },
 
   onLoad() {
+    this.digitalPoller = null;
     this.pollTimer = null;
     this.pollCount = 0;
     this.trainTimer = null;
@@ -174,12 +177,13 @@ Page({
     }
     this.loadProfiles();
     this.loadVoices();
-    this.loadHistory();
+    this.loadJobs();
   },
 
   onShow() {
     share.showShareMenu();
     app.restoreSession();
+    if (this.digitalPoller) this.digitalPoller.resume();
     this.loadDhTemplate();
     this.refreshAuth();
     if (this.data.phoneBound) {
@@ -187,6 +191,65 @@ Page({
       this.loadProfiles();
       this.loadVoices();
     }
+    if (this.data.viewMode === "list") this.loadJobs();
+    this.resumeDigitalJob();
+  },
+
+  onHide() {
+    if (this.digitalPoller) this.digitalPoller.pause();
+  },
+
+  loadJobs() {
+    return this.loadHistory();
+  },
+
+  openCreate() {
+    this.setData({ viewMode: "create", statusText: "", videoUrl: "", coverUrl: "" });
+  },
+
+  backToList() {
+    this.setData({ viewMode: "list" });
+    this.loadJobs();
+  },
+
+  openJob(evt) {
+    const row = this.data.jobList[Number(evt.currentTarget.dataset.index || 0)];
+    if (!row) return;
+    if (row.video_url) {
+      wx.previewMedia({ sources: [{ url: row.video_url, type: "video" }] });
+      return;
+    }
+    wx.showToast({ title: row.status_text || "生成中", icon: "none" });
+  },
+
+  rememberDigitalJob(taskId, title) {
+    wx.setStorageSync("lobster_digital_job", { taskId, title, created_at: Date.now() });
+    const row = {
+      id: "local-" + taskId,
+      task_id: taskId,
+      title: title || "数字人口播",
+      status: "processing",
+      status_text: "排队中",
+      created_at: new Date().toISOString().replace("T", " ").slice(0, 16),
+      video_url: "",
+      cover_url: ""
+    };
+    const rows = [row].concat((this.data.jobList || []).filter((item) => item.task_id !== taskId));
+    this.setData({ jobList: rows, history: rows });
+  },
+
+  resumeDigitalJob() {
+    if (this.digitalPoller) return;
+    const saved = wx.getStorageSync("lobster_digital_job");
+    if (!saved || !saved.taskId) return;
+    this.startPolling(String(saved.taskId));
+  },
+
+  updateJobRow(taskId, patch) {
+    const rows = (this.data.jobList || []).map((row) => (
+      String(row.task_id || "") === String(taskId) ? Object.assign({}, row, patch) : row
+    ));
+    this.setData({ jobList: rows, history: rows });
   },
 
   loadDhTemplate() {
@@ -439,7 +502,7 @@ Page({
   },
 
   onUnload() {
-    this.stopPolling();
+    if (this.digitalPoller) this.digitalPoller.stop();
     if (this.extractTimer) { clearInterval(this.extractTimer); this.extractTimer = null; }
     if (this.trainTimer) clearInterval(this.trainTimer);
     if (this.cloneTimer) clearInterval(this.cloneTimer);
@@ -1127,6 +1190,10 @@ Page({
 
   generate() {
     if (!this.ensureAuth()) return;
+    if ((this.data.jobList || []).some((row) => row.status === "processing") || wx.getStorageSync("lobster_digital_job")) {
+      wx.showToast({ title: "已有数字人任务在生成", icon: "none" });
+      return;
+    }
     if (!this.installationId) {
       this.setData({ statusText: "读取设备信息…" });
       this.loadInstallationId().then(() => this.doGenerate()).catch(() => this.doGenerate());
@@ -1210,8 +1277,9 @@ Page({
       .then((data) => {
         const taskId = String((data && (data.task_id || (data.record && data.record.task_id))) || "").trim();
         if (!taskId) throw new Error("没有拿到任务号");
-        this.setData({ statusText: "已提交，排队生成中…", submitting: false });
-        setTimeout(() => { wx.navigateBack({ fail: () => {} }); }, 800);
+        this.rememberDigitalJob(taskId, this.lastTitle || "数字人口播");
+        this.setData({ statusText: "已提交，排队生成中…", submitting: false, viewMode: "list" });
+        this.loadJobs();
         this.startPolling(taskId);
       })
       .catch((err) => {
@@ -1221,49 +1289,43 @@ Page({
   },
 
   startPolling(taskId) {
-    this.stopPolling();
-    this.pollCount = 0;
-    const tick = () => this.poll(taskId);
-    tick();
-    this.pollTimer = setInterval(tick, POLL_MS);
-  },
-
-  stopPolling() {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
-  },
-
-  poll(taskId) {
-    this.pollCount += 1;
-    if (this.pollCount > MAX_POLLS) {
-      this.stopPolling();
-      this.setData({ statusText: "生成超时，请稍后到作品里查看" });
-      return;
-    }
-    app.request({ method: "POST", url: "/api/shanjian-digital-human/video/task", data: { task_id: taskId }, header: this.iidHeader(), timeout: 60000 })
-      .then((data) => {
+    if (this.digitalPoller) this.digitalPoller.stop();
+    let failures = 0;
+    this.digitalPoller = createPoller(
+      () => app.request({ method: "POST", url: "/api/shanjian-digital-human/video/task", data: { task_id: taskId }, header: this.iidHeader(), timeout: 60000 }),
+      (data) => {
         const status = String((data && data.status) || "processing");
         const statusText = String((data && data.status_text) || "处理中");
         const videoUrl = assetUrl((data && data.video_url) || "");
         const coverUrl = assetUrl((data && data.cover_url) || "");
         this.setData({ statusText, videoUrl, coverUrl });
-        if (status === "succeed" || status === "failed") {
-          this.stopPolling();
-          if (status === "succeed") {
+        this.updateJobRow(taskId, { status, status_text: statusText, video_url: videoUrl, cover_url: coverUrl });
+        if (["succeed", "success", "completed", "failed"].indexOf(status) >= 0) {
+          wx.removeStorageSync("lobster_digital_job");
+          if (status === "failed") {
+            wx.showToast({ title: (data && data.message) || "生成失败", icon: "none" });
+          } else {
             wx.showToast({ title: "生成完成", icon: "success" });
             this.saveToWorks(videoUrl);
-            this.loadHistory();
-          } else {
-            wx.showToast({ title: (data && data.message) || "生成失败", icon: "none" });
           }
+          setTimeout(() => this.loadJobs(), 800);
+          return true;
         }
-      })
-      .catch((err) => {
-        this.stopPolling();
+        return false;
+      },
+      (err) => {
+        failures += 1;
+        if (failures >= 8) {
+          wx.removeStorageSync("lobster_digital_job");
+          this.updateJobRow(taskId, { status: "failed", status_text: "查询失败，请重新提交" });
+          if (this.digitalPoller) this.digitalPoller.stop();
+          return;
+        }
         this.setData({ statusText: api.errorMessage(err) });
-      });
+        this.updateJobRow(taskId, { status_text: "查询失败，稍后重试" });
+      }
+    );
+    this.digitalPoller.start(true);
   },
 
   saveToWorks(url) {
@@ -1282,15 +1344,34 @@ Page({
     if (!app.globalData.token) return Promise.resolve();
     return app.request({ url: "/api/shanjian-digital-human/videos", timeout: 30000 })
       .then((data) => {
-        const rows = ((data && data.items) || []).slice(0, 8).map((row) => ({
-          id: String(row.id || row.task_id || ""),
-          title: String(row.title || "数字人口播"),
-          status_text: String(row.status_text || row.status || ""),
-          created_at: String(row.created_at || "").replace("T", " ").slice(0, 16),
-          video_url: assetUrl(row.video_url || ""),
-          cover_url: assetUrl(row.cover_url || "")
-        }));
-        this.setData({ history: rows });
+        const statusMap = { pending: "排队中", processing: "生成中", running: "生成中", queued: "排队中", succeed: "已完成", success: "已完成", completed: "已完成", failed: "失败" };
+        const rows = ((data && data.items) || []).slice(0, 30).map((row) => {
+          const status = String(row.status || "");
+          return {
+            id: String(row.id || row.task_id || ""),
+            task_id: String(row.task_id || ""),
+            title: String(row.title || "数字人口播"),
+            status,
+            status_text: String(row.status_text || statusMap[status] || status || ""),
+            created_at: String(row.created_at || "").replace("T", " ").slice(0, 16),
+            video_url: assetUrl(row.video_url || ""),
+            cover_url: assetUrl(row.cover_url || "")
+          };
+        });
+        const saved = wx.getStorageSync("lobster_digital_job");
+        if (saved && saved.taskId && !rows.some((row) => row.task_id === String(saved.taskId))) {
+          rows.unshift({
+            id: "local-" + saved.taskId,
+            task_id: String(saved.taskId),
+            title: String(saved.title || "数字人口播"),
+            status: "processing",
+            status_text: "排队中",
+            created_at: new Date(Number(saved.created_at || Date.now())).toISOString().replace("T", " ").slice(0, 16),
+            video_url: "",
+            cover_url: ""
+          });
+        }
+        this.setData({ history: rows, jobList: rows });
       })
       .catch(() => {});
   },

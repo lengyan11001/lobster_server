@@ -4,32 +4,48 @@
       <text class="title">朋友圈文案</text>
       <text class="sub">按批次查看生成记录，点进去看文案和配图</text>
     </view>
-    <view class="add-fab" bindtap="goCreate">＋</view>
+    <view wx:if="{{viewMode === 'list'}}" class="add-fab" bindtap="openCreate">＋</view>
+    <view wx:else class="back-pill" bindtap="backToList">返回列表</view>
   </view>
 
-  <view wx:if="{{loading && !groups.length}}" class="empty">加载中…</view>
-  <view wx:elif="{{!groups.length}}" class="empty">还没有生成记录，点右上角「新增」</view>
-
-  <view wx:for="{{groups}}" wx:key="gid" class="card" data-gid="{{item.gid}}" bindtap="openGroup">
-    <view class="card-top">
-      <text class="card-title">{{item.title || '朋友圈文案批次'}}</text>
-      <text class="chip completed">{{item.count}} 条</text>
+  <block wx:if="{{viewMode === 'list'}}">
+    <view wx:if="{{taskRows.length}}" class="panel task-panel">
+      <view class="task-head">
+        <text class="task-title">进行中任务</text>
+        <text class="task-count">{{taskRows.length}} 条</text>
+      </view>
+      <view wx:for="{{taskRows}}" wx:key="id" class="task-row">
+        <view class="task-main">
+          <text class="task-name">{{item.title || '朋友圈文案'}}</text>
+          <text class="task-meta">{{item.timeText}} · {{item.statusText}}</text>
+        </view>
+        <text class="chip {{item.status === 'failed' ? 'failed' : 'processing'}}">{{item.statusText}}</text>
+      </view>
     </view>
-    <text class="card-meta">{{item.time}} · 配图 {{item.imageCount}} 张</text>
-  </view>
-</view>
 
-<view wx:if="{{modalOpen}}" class="overlay" catchtap="closeModal">
-  <view class="sheet" catchtap="noop">
-    <view class="sheet-head"><text class="sheet-title">新建朋友圈文案</text><text class="sheet-close" catchtap="closeModal">×</text></view>
-    <text class="label">主题 / 卖点</text>
-    <textarea class="input" value="{{topic}}" bindinput="onTopic" placeholder="例如：小户型收纳神器，99 元三件套" auto-height maxlength="200" />
-    <text class="label">文案条数</text>
-    <view class="chips">
-      <view wx:for="{{[5,10,20]}}" wx:key="*this" class="chip {{copyCount === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setCopyCount">{{item}} 条</view>
+    <view wx:if="{{loading && !groups.length}}" class="empty">加载中…</view>
+    <view wx:elif="{{!groups.length && !taskRows.length}}" class="empty">还没有生成记录，点右上角「新增」</view>
+
+    <view wx:for="{{groups}}" wx:key="gid" class="card" data-gid="{{item.gid}}" bindtap="openGroup">
+      <view class="card-top">
+        <text class="card-title">{{item.title || '朋友圈文案批次'}}</text>
+        <text class="chip completed">{{item.count}} 条</text>
+      </view>
+      <text class="card-meta">{{item.time}} · 配图 {{item.imageCount}} 张</text>
     </view>
-    <text class="label">文案要求（可选）</text>
-    <textarea class="input small" value="{{copyRequirement}}" bindinput="onReq" placeholder="例如：短句、多换行、不要硬性导流" auto-height maxlength="200" />
-    <button class="primary" loading="{{generating}}" bindtap="submitCreate">创建</button>
-  </view>
+  </block>
+
+  <block wx:if="{{viewMode === 'create'}}">
+    <view class="panel create-panel">
+      <text class="label">主题 / 卖点</text>
+      <textarea class="input" value="{{topic}}" bindinput="onTopic" placeholder="例如：小户型收纳神器，99 元三件套" auto-height maxlength="200" />
+      <text class="label">文案条数</text>
+      <view class="chips">
+        <view wx:for="{{[5,10,20]}}" wx:key="*this" class="chip {{copyCount === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setCopyCount">{{item}} 条</view>
+      </view>
+      <text class="label">文案要求（可选）</text>
+      <textarea class="input small" value="{{copyRequirement}}" bindinput="onReq" placeholder="例如：短句、多换行、不要硬性导流" auto-height maxlength="200" />
+      <button class="primary" loading="{{generating}}" disabled="{{generating}}" bindtap="submitCreate">创建并返回列表</button>
+    </view>
+  </block>
 </view>

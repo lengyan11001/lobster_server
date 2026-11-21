@@ -9,6 +9,7 @@
 .card-meta { display: block; margin-top: 8rpx; font-size: 22rpx; color: #64748b; }
 .chip { font-size: 20rpx; padding: 4rpx 12rpx; border-radius: 999rpx; background: #ecfdf5; color: #059669; }
 .chip.failed { background: #fef2f2; color: #dc2626; }
+.chip.processing { background: #eff6ff; color: #2563eb; }
 .summary { display: block; margin-top: 16rpx; font-size: 24rpx; color: #475569; }
 .content { display: block; margin-top: 12rpx; font-size: 26rpx; line-height: 1.7; color: #0f172a; white-space: pre-wrap; }
 .img-grid { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 16rpx; }

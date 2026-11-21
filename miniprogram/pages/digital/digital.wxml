@@ -6,13 +6,32 @@
         <text class="sub">对齐 H5「AI营销 · 数字人口播视频」</text>
       </view>
       <view class="head-btns">
-        <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
-        <button class="ghost small" bindtap="openPrefillHistory">历史</button>
-        <button class="primary small" bindtap="openRecordingPrefill">录音生成</button>
+        <button wx:if="{{viewMode === 'list'}}" class="primary small" bindtap="openCreate">＋ 新建</button>
+        <block wx:else>
+          <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
+          <button class="ghost small" bindtap="openRecordingPrefill">录音生成</button>
+          <button class="ghost small" bindtap="backToList">返回列表</button>
+        </block>
       </view>
     </view>
   </view>
 
+  <view wx:if="{{viewMode === 'list'}}" class="panel">
+    <view class="list-head">
+      <text class="label">数字人任务</text>
+      <text class="list-add" bindtap="openCreate">＋ 新建</text>
+    </view>
+    <view wx:if="{{!jobList.length}}" class="empty">还没有任务，点右上角「新建」开始生成</view>
+    <view wx:for="{{jobList}}" wx:key="id" class="job-row" data-index="{{index}}" bindtap="openJob">
+      <view class="job-main">
+        <text class="job-title">{{item.title}}</text>
+        <text class="job-meta">{{item.created_at}} · {{item.status_text}}</text>
+      </view>
+      <text class="job-go">{{item.video_url ? '播放' : '查看'}}</text>
+    </view>
+  </view>
+
+  <block wx:if="{{viewMode === 'create'}}">
   <view wx:if="{{!phoneBound}}" class="panel">
     <text class="label">尚未登录</text>
     <text class="empty">数字人和声音都按账号读取，请先登录授权后再进来。</text>
@@ -198,18 +217,6 @@
     </view>
   </view>
 
-  <view wx:if="{{history.length}}" class="panel">
-    <text class="label">最近生成</text>
-    <view wx:for="{{history}}" wx:key="id" class="hist" data-index="{{index}}" bindtap="openHistory">
-      <image wx:if="{{item.cover_url}}" class="hist-cover" src="{{item.cover_url}}" mode="aspectFill" />
-      <view wx:else class="hist-cover hist-empty">视</view>
-      <view class="hist-copy">
-        <text class="hist-title">{{item.title}}</text>
-        <text class="hist-meta">{{item.status_text}} · {{item.created_at}}</text>
-      </view>
-    </view>
-  </view>
-
   <view wx:if="{{pickerOpen}}" class="overlay" catchtap="closePicker">
     <view class="sheet" catchtap="noop">
       <view class="sheet-head">
@@ -237,6 +244,7 @@
       <text class="extract-tip">生成完自动填进下面的表单，约 10-40 秒</text>
     </view>
   </view>
+  </block>
 </view>
 
 <topic-prefill id="topicPrefill" target="digital" bind:pick="onPrefillPick" />

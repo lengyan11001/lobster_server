@@ -1,5 +1,7 @@
 const app = getApp();
+const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
+const { createPoller } = require("../../utils/task-poll");
 
 const CONFIG = {
   article: { title: "公众号文章", create: "/pages/article/article" },
@@ -21,12 +23,49 @@ Page({
 
   onShow() {
     app.restoreSession();
+    if (this.articlePoller) this.articlePoller.resume();
     this.refresh();
+    this.resumeArticleTasks();
+  },
+
+  onHide() {
+    if (this.articlePoller) this.articlePoller.pause();
+  },
+
+  onUnload() {
+    if (this.articlePoller) this.articlePoller.stop();
   },
 
   refresh() {
-    const items = hist.list(this.data.feature).map((x) => Object.assign({}, x, { timeText: fmt(x.at) }));
+    const now = Date.now();
+    const items = hist.list(this.data.feature).map((x) => {
+      let row = x;
+      if (row.status === "processing" && now - Number(row.started_at || row.at || 0) > 15 * 60 * 1000) {
+        hist.update(row.id, { status: "failed", status_text: "已中断", error: "页面已关闭，任务没有继续执行" });
+        row = Object.assign({}, row, { status: "failed", status_text: "已中断" });
+      }
+      return Object.assign({}, row, {
+        timeText: fmt(row.at),
+        statusText: row.status_text || (row.status === "processing" ? "生成中" : (row.status === "failed" ? "失败" : "已完成"))
+      });
+    });
     this.setData({ items });
+  },
+
+  resumeArticleTasks() {
+    if (this.data.feature !== "article") return;
+    if (this.articlePoller) return;
+    const processing = (hist.list("article") || []).some((row) => row.status === "processing");
+    if (!processing) return;
+    this.articlePoller = createPoller(
+      () => Promise.resolve(hist.list("article")),
+      (rows) => {
+        this.refresh();
+        return !(rows || []).some((row) => row.status === "processing");
+      },
+      () => {}
+    );
+    this.articlePoller.start(true);
   },
 
   goCreate() {
@@ -54,7 +93,17 @@ Page({
       "正文用中文分段，段落之间空行，不要 Markdown 符号，不要解释。"
     ].join("");
     const user = [`主题：${topic}`, points ? `要点与素材：${points}` : "", audience ? `目标读者：${audience}` : "", "请直接输出 JSON。"].filter(Boolean).join("\n");
-    this.setData({ generating: true });
+    const histId = hist.save("article", {
+      title: topic,
+      summary: "",
+      content: "",
+      status: "processing",
+      status_text: "生成中",
+      started_at: Date.now()
+    });
+    this.setData({ generating: true, modalOpen: false });
+    this.refresh();
+    this.resumeArticleTasks();
     app.request({
       method: "POST",
       url: "/api/comfly-proxy/v1/chat/completions",
@@ -67,12 +116,29 @@ Page({
         const jsonText = raw.replace(/^```json\s*/i, "").replace(/^```/, "").replace(/```$/, "").trim();
         let article = {};
         try { article = JSON.parse(jsonText); } catch (e) { article = { title: topic, summary: "", body: raw }; }
-        hist.save("article", { title: article.title || topic, summary: article.summary || "", content: article.body || raw, status: "completed" });
-        this.setData({ modalOpen: false });
+        hist.update(histId, {
+          title: article.title || topic,
+          summary: article.summary || "",
+          content: article.body || raw,
+          status: "completed",
+          status_text: "已完成"
+        });
+        if (this.articlePoller) this.articlePoller.stop();
+        this.articlePoller = null;
         wx.showToast({ title: "已生成并加入记录", icon: "success" });
         this.refresh();
       })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .catch((err) => {
+        hist.update(histId, {
+          status: "failed",
+          status_text: "失败",
+          error: api.errorMessage(err) || "生成失败"
+        });
+        if (this.articlePoller) this.articlePoller.stop();
+        this.articlePoller = null;
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+        this.refresh();
+      })
       .then(() => this.setData({ generating: false }));
   },
 

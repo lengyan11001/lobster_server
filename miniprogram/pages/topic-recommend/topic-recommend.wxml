@@ -5,11 +5,38 @@
   <view class="head">
     <view class="head-title">推荐选题</view>
     <view class="head-sub">IP 档案 → 账号关键词 → 5×5 宫格 → 50 条选题与口播文案</view>
+    <view class="head-actions">
+      <view wx:if="{{viewMode === 'list'}}" class="head-link" bindtap="openCreate">＋ 新建</view>
+      <view wx:else class="head-link" bindtap="backToList">返回列表</view>
+    </view>
   </view>
 
+  <block wx:if="{{viewMode === 'list'}}">
+    <view class="panel task-panel">
+      <view class="task-head"><text class="task-title">推荐选题任务</text><text class="task-count">{{jobList.length}} 条</text></view>
+      <view wx:if="{{!jobList.length}}" class="empty">还没有任务，点「新建」生成 50 条选题</view>
+      <view wx:for="{{jobList}}" wx:key="id" class="task-row" data-index="{{index}}" bindtap="openJob">
+        <view class="task-main">
+          <text class="task-name">{{item.title}}</text>
+          <text class="task-meta">{{item.timeText}} · {{item.statusText}}{{item.count ? ' · ' + item.count + ' 条' : ''}}</text>
+        </view>
+        <text class="task-go">{{item.status === 'processing' ? '状态' : '查看'}}</text>
+      </view>
+    </view>
+  </block>
+
+  <block wx:if="{{viewMode === 'create'}}">
+    <view class="panel task-panel">
+      <text class="label">一次生成 50 条选题</text>
+      <view class="note">基于 IP 档案生成关键词、5×5 宫格和 50 条选题口播。提交后回列表，完成会自动更新状态。</view>
+      <view class="btn primary {{running ? 'busy' : ''}}" bindtap="start">{{running ? '提交中…' : '开始生成'}}</view>
+      <view wx:if="{{errorText}}" class="err">{{errorText}}</view>
+    </view>
+  </block>
+
+  <block wx:if="{{viewMode === 'result'}}">
   <view class="panel">
     <view class="panel-acts">
-      <view class="btn primary {{running ? 'busy' : ''}}" bindtap="start">{{running ? '生成中…' : (hasPlan ? '重新生成 50 条' : 'AI 生成 50 条选题')}}</view>
       <view class="btn ghost {{metricsLoading ? 'busy' : ''}}" bindtap="checkDouyin">{{metricsLoading ? '校验中…' : '抖音竞品体检'}}</view>
     </view>
 
@@ -113,4 +140,5 @@
   </view>
 
   <view wx:if="{{generatedAt}}" class="foot">生成于 {{generatedAt}}</view>
+  </block>
 </view>

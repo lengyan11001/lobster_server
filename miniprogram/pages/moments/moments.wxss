@@ -23,3 +23,20 @@
 .chip.active { background: #ffffff; color: #0f172a; }
 .primary { margin-top: 24rpx; }
 .add-fab { width: 64rpx; height: 64rpx; border-radius: 50%; background: #ffffff; border: 1rpx solid #e2e8f0; color: #00D6B9; font-size: 40rpx; line-height: 62rpx; text-align: center; box-shadow: 0 4rpx 14rpx rgba(15,23,42,.08); }
+
+
+.back-pill { font-size: 24rpx; color: #1957E8; padding: 12rpx 18rpx; }
+.panel { background: #fff; border-radius: 18rpx; padding: 24rpx; margin-bottom: 16rpx; box-shadow: 0 2rpx 10rpx rgba(15,23,42,.05); }
+.create-panel { margin-top: 8rpx; }
+.task-panel { margin-bottom: 16rpx; }
+.task-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6rpx; }
+.task-title { font-size: 28rpx; font-weight: 600; color: #0f172a; }
+.task-count { font-size: 21rpx; color: #94a3b8; }
+.task-row { display: flex; align-items: center; padding: 20rpx 0; border-bottom: 1rpx solid #eef1f6; }
+.task-row:last-child { border-bottom: 0; }
+.task-main { flex: 1; min-width: 0; }
+.task-name { display: block; font-size: 27rpx; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-meta { display: block; margin-top: 6rpx; font-size: 21rpx; color: #94a3b8; }
+.chip.completed { background: #ecfdf5; color: #059669; }
+.chip.processing { background: #eff6ff; color: #2563eb; }
+.chip.failed { background: #fef2f2; color: #dc2626; }

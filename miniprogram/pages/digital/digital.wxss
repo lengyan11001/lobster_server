@@ -115,3 +115,14 @@
 .head-btns .primary.small, .head-btns .ghost.small { white-space: nowrap; padding: 0 18rpx; font-size: 22rpx; }
 .primary.small, .ghost.small { margin: 0; height: 64rpx; line-height: 64rpx; padding: 0 22rpx; font-size: 23rpx; border-radius: 999rpx; }
 .ghost.small { color: #1957E8; background: #eff6ff; }
+
+
+.list-head { display: flex; align-items: center; justify-content: space-between; }
+.list-head .label { margin: 0; }
+.list-add { font-size: 25rpx; color: #1957E8; font-weight: 600; }
+.job-row { display: flex; align-items: center; padding: 22rpx 0; border-bottom: 1rpx solid #eef1f6; }
+.job-row:last-child { border-bottom: 0; }
+.job-main { flex: 1; min-width: 0; }
+.job-title { display: block; font-size: 28rpx; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-meta { display: block; margin-top: 7rpx; font-size: 21rpx; color: #94a3b8; }
+.job-go { margin-left: 12rpx; font-size: 24rpx; color: #1957E8; }
