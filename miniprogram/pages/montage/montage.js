@@ -61,6 +61,9 @@ Page({
     if (this.montagePoller) this.montagePoller.resume();
     if (this.data.viewMode === "list") this.loadJobs();
     this.resumeMontageJob();
+    if (this.data.groups.length && (this.data.groupIndex < 0 || !this.data.groups[this.data.groupIndex])) {
+      this.setData({ groupIndex: 0 });
+    }
   },
 
   loadJobs() {
@@ -238,7 +241,8 @@ Page({
   startLocalMontage() {
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
-    const group = (this.data.groups[this.data.groupIndex] || "");
+    let group = (this.data.groups[this.data.groupIndex] || "");
+    if (!group && this.data.groups.length) group = this.data.groups[0];
     if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
     const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();
