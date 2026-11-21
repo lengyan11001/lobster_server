@@ -183,7 +183,7 @@ Page({
       app.request({
         method: "POST",
         url: "/api/montage/jobs",
-        data: { voice_url: voiceUrl, group: group, asset_urls: urls.slice(0, 12), ratio: "9:16", target_seconds: Number(this.data.duration) || undefined, title: "混剪成片" },
+        data: { voice_url: voiceUrl, group: group, asset_urls: urls.slice(0, 12), ratio: "9:16", title: "混剪成片" },
         timeout: 300000
       })
         .then((data) => this.setData({
