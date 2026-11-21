@@ -31,9 +31,19 @@
       <text class="label tpl-label">套用闪剪模板</text>
       <switch checked="{{useTemplate}}" bindchange="toggleUseTemplate" color="#1957E8" />
     </view>
-    <picker wx:if="{{useTemplate}}" mode="selector" range="{{templates}}" range-key="name" value="{{templateIndex}}" bindchange="selectTemplate">
-      <view class="picker">{{templateIndex >= 0 && templates[templateIndex] ? templates[templateIndex].name : '选择模板'}}</view>
-    </picker>
+    <block wx:if="{{useTemplate}}">
+      <view wx:if="{{templatesLoading}}" class="hint">模板加载中…</view>
+      <view wx:elif="{{!templates.length}}" class="hint">没有可用模板</view>
+      <scroll-view wx:else scroll-x class="tpl-scroll">
+        <view class="tpl-row">
+          <view wx:for="{{templates}}" wx:key="styleId" class="tpl {{templateIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectTemplate">
+            <image wx:if="{{item.cover}}" class="tpl-cover" src="{{item.cover}}" mode="aspectFill" />
+            <view wx:else class="tpl-cover tpl-cover-empty">模</view>
+            <text class="tpl-name">{{item.name}}</text>
+          </view>
+        </view>
+      </scroll-view>
+    </block>
 
     <text class="label">素材分组（切片好的素材，随机取）</text>
     <picker mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
