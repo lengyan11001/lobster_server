@@ -49,7 +49,7 @@ Page({
     speechAudioUrl: "",
     speechRate: 1,
     speechVolume: 1, speechVolumeText: "1.00",
-    speechPitch: 0, speechPitchText: "0",
+    speechPitch: 1, speechPitchText: "1.0", speechPitchMin: 0.1, speechPitchMax: 2, speechPitchStep: 0.1,
     speechEmotionIndex: 0, speechEmotions: EMOTION_LABELS,
     speechStatus: "",
     speechDuration: 0,
@@ -220,15 +220,34 @@ Page({
     app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
       .then((data) => {
         const items = ((data && data.items) || [])
-          .map((row) => ({ id: String(row.voice || row.voice_id || ""), name: String(row.title || row.name || "音色") }))
+          .map((row) => ({
+            id: String(row.voice || row.voice_id || ""),
+            name: String(row.title || row.name || "音色"),
+            provider: String(row.provider || row.voice_provider || "")
+          }))
           .filter((row) => !!row.id);
         this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: items.length ? 0 : -1 });
+        if (items.length) this.applySpeechVoiceParams(items[0]);
       })
       .catch(() => {});
   },
 
   selectVoice(e) {
-    this.setData({ voiceIndex: Number(e.detail.value), speechAudioUrl: "", speechStatus: "" });
+    const index = Number(e.detail.value);
+    this.setData({ voiceIndex: index, speechAudioUrl: "", speechStatus: "" });
+    this.applySpeechVoiceParams((this.data.voices || [])[index]);
+  },
+
+  applySpeechVoiceParams(voice) {
+    const provider = String((voice && voice.provider) || "").toLowerCase();
+    const minimax = provider.indexOf("minimax") >= 0;
+    this.setData({
+      speechPitch: minimax ? 0 : 1,
+      speechPitchText: minimax ? "0" : "1.0",
+      speechPitchMin: minimax ? -12 : 0.1,
+      speechPitchMax: minimax ? 12 : 2,
+      speechPitchStep: minimax ? 1 : 0.1
+    });
   },
 
   onSpeechInput(e) {
@@ -236,7 +255,8 @@ Page({
   },
 
   onSpeechRate(e) {
-    this.setData({ speechRate: Number(e.detail.value || 1), speechAudioUrl: "", speechStatus: "语速已改，请重新生成音轨" });
+    const v = Number(e.detail.value || 100) / 100;
+    this.setData({ speechRate: v, speechAudioUrl: "", speechStatus: "语速已改，请重新生成音轨" });
   },
 
   onSpeechVolume(e) {
@@ -246,7 +266,7 @@ Page({
 
   onSpeechPitch(e) {
     const v = Number(e.detail.value || 0);
-    this.setData({ speechPitch: v, speechPitchText: String(v), speechAudioUrl: "", speechStatus: "音调已改，请重新生成音轨" });
+    this.setData({ speechPitch: v, speechPitchText: Number.isInteger(v) ? String(v) : v.toFixed(1), speechAudioUrl: "", speechStatus: "音调已改，请重新生成音轨" });
   },
 
   pickSpeechEmotion(e) {

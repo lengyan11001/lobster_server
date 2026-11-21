@@ -50,7 +50,7 @@
       <view class="param"><text class="param-label">音量 {{speechVolumeText}}</text>
         <slider min="10" max="200" step="5" value="{{speechVolume * 100}}" block-size="20" activeColor="#2563eb" bindchange="onSpeechVolume" bindchanging="onSpeechVolume" /></view>
       <view class="param"><text class="param-label">音调 {{speechPitchText}}</text>
-        <slider min="-12" max="12" step="1" value="{{speechPitch}}" block-size="20" activeColor="#2563eb" bindchange="onSpeechPitch" bindchanging="onSpeechPitch" /></view>
+        <slider min="{{speechPitchMin}}" max="{{speechPitchMax}}" step="{{speechPitchStep}}" value="{{speechPitch}}" block-size="20" activeColor="#2563eb" bindchange="onSpeechPitch" bindchanging="onSpeechPitch" /></view>
       <view class="param"><text class="param-label">情绪</text>
         <picker mode="selector" range="{{speechEmotions}}" value="{{speechEmotionIndex}}" bindchange="pickSpeechEmotion">
           <view class="picker small">{{speechEmotions[speechEmotionIndex]}}</view>
