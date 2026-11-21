@@ -14,6 +14,18 @@
   </view>
 
   <view class="panel">
+    <text class="label">口播混剪（服务端渲染，不用模板）</text>
+    <picker mode="selector" range="{{recordNames}}" value="{{recordIndex}}" bindchange="selectRecord">
+      <view class="picker">{{recordIndex >= 0 ? recordNames[recordIndex] : '选择一条已转写的录音'}}</view>
+    </picker>
+    <text class="hint">素材用上面「素材」里加的视频，按顺序切分；成片时长默认 {{duration}} 秒</text>
+    <button class="primary" loading="{{rendering}}" disabled="{{rendering}}" bindtap="startLocalMontage">{{rendering ? '渲染中…' : '开始混剪'}}</button>
+    <video wx:if="{{localVideoUrl}}" class="video" src="{{localVideoUrl}}" controls />
+    <button wx:if="{{localVideoUrl}}" class="ghost" bindtap="saveLocalVideo">保存到相册</button>
+    <text wx:if="{{localStatus}}" class="hint">{{localStatus}}</text>
+  </view>
+
+  <view class="panel">
     <text class="label">模板</text>
     <scroll-view scroll-x class="tpl-scroll">
       <view class="tpl-row">

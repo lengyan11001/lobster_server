@@ -31,12 +31,19 @@ Page({
     taskId: "",
     statusText: "",
     videoUrl: "",
-    progressText: ""
+    progressText: "",
+    records: [],
+    recordNames: [],
+    recordIndex: -1,
+    rendering: false,
+    localVideoUrl: "",
+    localStatus: ""
   },
 
   onLoad() {
     this.polls = 0;
     this.timer = null;
+    this.loadRecords();
     this.loadTemplates("oralMixCutting");
     this.loadVoices();
   },
@@ -84,6 +91,73 @@ Page({
     const bits = ["文案"];
     if (materials.length) bits.push("素材 " + materials.length + " 个");
     wx.showToast({ title: "已填好：" + bits.join(" + "), icon: "none" });
+  },
+
+  loadRecords() {
+    if (!(app.globalData.token && app.globalData.phone)) return;
+    app.request({ url: "/api/h5/recorder/files?page=1&page_size=30", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && data.items) || [])
+          .filter((row) => row.status === "completed" || row.has_transcript === true)
+          .map((row) => ({ id: row.id, name: String(row.display_name || row.file_name || "录音") }));
+        this.setData({ records: rows, recordNames: rows.map((r) => r.name) });
+      })
+      .catch(() => {});
+  },
+
+  selectRecord(e) {
+    this.setData({ recordIndex: Number(e.detail.value) });
+  },
+
+  startLocalMontage() {
+    if (!this.ensureAuth()) return;
+    const rec = this.data.records[this.data.recordIndex];
+    if (!rec) return wx.showToast({ title: "先选一条口播录音", icon: "none" });
+    const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
+    if (!urls.length) return wx.showToast({ title: "先在素材里加视频", icon: "none" });
+    this.setData({ rendering: true, localVideoUrl: "", localStatus: "正在渲染（裁切+拼接+音轨）…" });
+    const started = Date.now();
+    app.request({
+      method: "POST",
+      url: "/api/montage/jobs",
+      data: {
+        record_id: rec.id,
+        asset_urls: urls.slice(0, 12),
+        ratio: "9:16",
+        target_seconds: Number(this.data.duration) || undefined,
+        title: rec.name
+      },
+      timeout: 300000
+    })
+      .then((data) => {
+        this.setData({
+          localVideoUrl: String((data && data.video_url) || ""),
+          localStatus: "完成 " + ((data && data.duration) || 0) + "s · " + Math.round((Date.now() - started) / 1000) + "秒"
+        });
+      })
+      .catch((err) => {
+        const msg = api.errorMessage(err) || "混剪失败";
+        this.setData({ localStatus: msg });
+        wx.showToast({ title: msg.slice(0, 24), icon: "none" });
+      })
+      .then(() => this.setData({ rendering: false }));
+  },
+
+  saveLocalVideo() {
+    const url = this.data.localVideoUrl;
+    if (!url) return;
+    wx.downloadFile({
+      url,
+      success: (res) => {
+        if (res.statusCode !== 200) return wx.showToast({ title: "下载失败", icon: "none" });
+        wx.saveVideoToPhotosAlbum({
+          filePath: res.tempFilePath,
+          success: () => wx.showToast({ title: "已保存", icon: "success" }),
+          fail: () => wx.showToast({ title: "请检查相册权限", icon: "none" })
+        });
+      },
+      fail: () => wx.showToast({ title: "下载失败", icon: "none" })
+    });
   },
 
   ensureAuth() {

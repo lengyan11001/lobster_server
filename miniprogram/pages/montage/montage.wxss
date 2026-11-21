@@ -45,3 +45,5 @@
 .act-btn { margin: 0; height: 56rpx; line-height: 56rpx; padding: 0 20rpx; font-size: 22rpx; border-radius: 999rpx; }
 .act-btn.primary { color: #ffffff; background: linear-gradient(135deg, #1957E8, #00D6B9); }
 .act-btn.ghost { color: #1957E8; background: #eff6ff; }
+
+.hint { display: block; margin-top: 10rpx; font-size: 22rpx; color: #64748b; line-height: 1.5; }
