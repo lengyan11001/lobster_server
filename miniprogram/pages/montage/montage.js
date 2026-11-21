@@ -6,6 +6,8 @@ const media = require("../../utils/media");
 const { formatDateTime } = require("../../utils/datetime");
 
 const POLL_MS = 6000;
+const EMOTION_VALUES = ["happy", "neutral", "sad", "angry"];
+const EMOTION_LABELS = ["自然积极", "平静", "悲伤低落", "愤怒强烈"];
 const MAX_POLLS = 60;
 
 function pickTemplateId(item) {
@@ -46,6 +48,9 @@ Page({
     speechText: "",
     speechAudioUrl: "",
     speechRate: 1,
+    speechVolume: 1, speechVolumeText: "1.00",
+    speechPitch: 0, speechPitchText: "0",
+    speechEmotionIndex: 0, speechEmotions: EMOTION_LABELS,
     speechStatus: "",
     speechDuration: 0,
     useTemplate: false,
@@ -234,6 +239,20 @@ Page({
     this.setData({ speechRate: Number(e.detail.value || 1), speechAudioUrl: "", speechStatus: "语速已改，请重新生成音轨" });
   },
 
+  onSpeechVolume(e) {
+    const v = Number(e.detail.value || 100) / 100;
+    this.setData({ speechVolume: v, speechVolumeText: v.toFixed(2), speechAudioUrl: "", speechStatus: "音量已改，请重新生成音轨" });
+  },
+
+  onSpeechPitch(e) {
+    const v = Number(e.detail.value || 0);
+    this.setData({ speechPitch: v, speechPitchText: String(v), speechAudioUrl: "", speechStatus: "音调已改，请重新生成音轨" });
+  },
+
+  pickSpeechEmotion(e) {
+    this.setData({ speechEmotionIndex: Number(e.detail.value || 0), speechAudioUrl: "", speechStatus: "情绪已改，请重新生成音轨" });
+  },
+
   onTemplateTitle(e) {
     this.setData({ templateTitle: e.detail.value || "" });
   },
@@ -255,7 +274,14 @@ Page({
     return app.request({
       method: "POST",
       url: "/api/hifly/my/voice/preview-tts",
-      data: { text, voice, rate: String(this.data.speechRate || 1), volume: "1", pitch: "0" },
+      data: {
+        text,
+        voice,
+        rate: String(this.data.speechRate || 1),
+        volume: String(this.data.speechVolume || 1),
+        pitch: String(this.data.speechPitch || 0),
+        emotion: EMOTION_VALUES[this.data.speechEmotionIndex] || "happy"
+      },
       timeout: 120000
     })
       .then((data) => {

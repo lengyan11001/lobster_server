@@ -83,11 +83,9 @@
       </view>
       <text class="label">口播文案</text>
       <textarea class="textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" auto-height maxlength="2000" />
-      <view class="rate-row">
-        <text class="rate-label">语速 {{speedText}}</text>
-        <slider class="rate-slider" min="50" max="200" step="5" value="{{speed * 100}}" bindchange="onSpeedChange" bindchanging="onSpeedChange" />
-      </view>
       <view class="param-grid">
+        <view class="param"><text class="param-label">语速 {{speedText}}</text>
+          <slider min="50" max="200" step="5" value="{{speed * 100}}" block-size="20" activeColor="#2563eb" bindchange="onSpeedChange" bindchanging="onSpeedChange" /></view>
         <view class="param"><text class="param-label">音量 {{volumeText}}</text>
           <slider min="10" max="200" step="5" value="{{volume * 100}}" block-size="20" activeColor="#2563eb" bindchange="onVolumeChange" bindchanging="onVolumeChange" /></view>
         <view class="param"><text class="param-label">音调 {{pitchText}}</text>

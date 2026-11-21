@@ -44,9 +44,17 @@
 
     <text class="label">口播文案</text>
     <textarea class="textarea" value="{{speechText}}" bindinput="onSpeechInput" placeholder="输入口播文案，生成语音后按语音时长切分素材" maxlength="1200" auto-height />
-    <view class="rate-row">
-      <text class="rate-label">语速 {{speechRate}}x</text>
-      <slider class="rate-slider" min="0.5" max="2" step="0.1" value="{{speechRate}}" bindchange="onSpeechRate" />
+    <view class="param-grid">
+      <view class="param"><text class="param-label">语速 {{speechRate}}x</text>
+        <slider min="50" max="200" step="5" value="{{speechRate * 100}}" block-size="20" activeColor="#2563eb" bindchange="onSpeechRate" bindchanging="onSpeechRate" /></view>
+      <view class="param"><text class="param-label">音量 {{speechVolumeText}}</text>
+        <slider min="10" max="200" step="5" value="{{speechVolume * 100}}" block-size="20" activeColor="#2563eb" bindchange="onSpeechVolume" bindchanging="onSpeechVolume" /></view>
+      <view class="param"><text class="param-label">音调 {{speechPitchText}}</text>
+        <slider min="-12" max="12" step="1" value="{{speechPitch}}" block-size="20" activeColor="#2563eb" bindchange="onSpeechPitch" bindchanging="onSpeechPitch" /></view>
+      <view class="param"><text class="param-label">情绪</text>
+        <picker mode="selector" range="{{speechEmotions}}" value="{{speechEmotionIndex}}" bindchange="pickSpeechEmotion">
+          <view class="picker small">{{speechEmotions[speechEmotionIndex]}}</view>
+        </picker></view>
     </view>
     <view class="btn-row">
       <button class="ghost half" loading="{{ttsLoading}}" bindtap="previewSpeech">试听</button>

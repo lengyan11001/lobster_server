@@ -78,3 +78,8 @@
 .rate-row { display: flex; align-items: center; gap: 16rpx; margin-top: 10rpx; }
 .rate-label { font-size: 24rpx; color: #475569; white-space: nowrap; }
 .rate-slider { flex: 1; }
+
+.param-grid { display: flex; flex-direction: column; gap: 8rpx; margin-top: 10rpx; }
+.param { display: flex; flex-direction: column; gap: 4rpx; }
+.param-label { font-size: 24rpx; color: #475569; }
+.picker.small { padding: 14rpx 18rpx; font-size: 24rpx; }
