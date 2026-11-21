@@ -81,6 +81,8 @@
         </picker>
         <button class="ghost mini" bindtap="audition">试听</button>
       </view>
+      <text class="label">口播文案</text>
+      <textarea class="textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" auto-height maxlength="2000" />
     </block>
 
     <text class="label">任务名称</text>
@@ -123,11 +125,7 @@
       </scroll-view>
     </block>
 
-    <block wx:if="{{mode === 'tts'}}">
-      <text class="label">口播文案</text>
-      <textarea class="textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" auto-height maxlength="2000" />
-    </block>
-    <block wx:else>
+    <block wx:if="{{mode !== 'tts'}}">
       <text class="label">音频素材</text>
       <view class="audio-box" bindtap="chooseAudio">
         <text class="audio-name">{{audioName || '点选上传音频（mp3 / wav / m4a）'}}</text>

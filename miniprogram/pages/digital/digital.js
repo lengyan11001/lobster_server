@@ -152,6 +152,7 @@ Page({
     preprocessNames: ["粗剪", "切片拼接"], preprocessValues: ["roughCut", "sliceMerge"], preprocessIndex: 0,
     compositionNames: ["随机", "顺序"], compositionValues: ["random", "sequential"], compositionIndex: 0,
     useTemplate: false, templates: [], templateIndex: -1, templatesLoading: false,
+    selectedProfileId: "", selectedVoiceId: "", selectedTemplateStyleId: "",
     templateKeyword: "", templatePageSize: 20,
     headerSwitch: true, subtitleSwitch: true, keywordSwitch: true,
     materialSwitch: true, materialSoundSwitch: false, watermarkSwitch: false,
@@ -503,7 +504,7 @@ Page({
       let index = -1;
       if (styleId) index = rows.findIndex((row) => String(row.styleId || "") === styleId);
       if (index < 0 && name) index = rows.findIndex((row) => String(row.name || "") === name);
-      if (index >= 0) this.setData({ templateIndex: index });
+      if (index >= 0) this.setData({ templateIndex: index, selectedTemplateStyleId: String(rows[index].styleId || "") });
     };
     if (!this.data.templates.length) {
       this.loadTemplates("", 60).then(apply);
@@ -599,10 +600,12 @@ Page({
     return app.request({ url: "/api/shanjian-digital-human/profiles", timeout: 30000 })
       .then((data) => {
         const profiles = normalizeProfiles((data && data.items) || []);
-        let index = profiles.findIndex((row) => row.is_default && row.ready);
+        let index = profiles.findIndex((row) => String(row.id || "") === String(this.data.selectedProfileId || ""));
+        if (index < 0) index = profiles.findIndex((row) => row.is_default && row.ready);
         if (index < 0) index = profiles.findIndex((row) => row.ready);
         if (index < 0 && profiles.length) index = 0;
-        this.setData({ profiles, profileIndex: index });
+        const selected = profiles[index];
+        this.setData({ profiles, profileIndex: index, selectedProfileId: selected ? String(selected.id || "") : "" });
         // 只轮询还在训练中的任务；failed / succeed 的任务再轮询会返回非 processing，
         // 触发 loadProfiles 重新加载，形成无限刷新。
         const pendingStatuses = ["processing", "pending", "submitting", "queued", "running"];
@@ -662,8 +665,16 @@ Page({
     return app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
       .then((data) => {
         const rows = normalizeVoices((data && (data.items || data.results)) || []);
-        this.setData({ voices: rows, voiceNames: rows.map((r) => r.title), voiceIndex: rows.length ? 0 : -1 });
-        if (rows.length) this.applyVoiceDefaults(rows[0]);
+        let index = rows.findIndex((row) => String(row.id || "") === String(this.data.selectedVoiceId || ""));
+        if (index < 0) index = rows.length ? 0 : -1;
+        const selected = index >= 0 ? rows[index] : null;
+        this.setData({
+          voices: rows,
+          voiceNames: rows.map((r) => r.title),
+          voiceIndex: index,
+          selectedVoiceId: selected ? String(selected.id || "") : ""
+        });
+        if (selected) this.applyVoiceDefaults(selected);
       })
       .catch((err) => {
         const msg = api.errorMessage(err);
@@ -925,7 +936,14 @@ Page({
           name: String(row.name || row.title || `模板 ${i + 1}`).slice(0, 20),
           cover: assetUrl(row.cover || row.coverUrl || row.cover_url || "")
         })).filter((row) => row.styleId);
-        this.setData({ templates: rows, templateIndex: rows.length ? 0 : -1 });
+        let index = rows.findIndex((row) => String(row.styleId || "") === String(this.data.selectedTemplateStyleId || ""));
+        if (index < 0) index = rows.length ? 0 : -1;
+        const selected = index >= 0 ? rows[index] : null;
+        this.setData({
+          templates: rows,
+          templateIndex: index,
+          selectedTemplateStyleId: selected ? String(selected.styleId || "") : ""
+        });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ templatesLoading: false }));
@@ -1031,15 +1049,24 @@ Page({
     this.setData({ profiles });
   },
 
-  selectProfile(e) { this.setData({ profileIndex: Number(e.currentTarget.dataset.index || 0) }); },
+  selectProfile(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = (this.data.profiles || [])[index];
+    this.setData({ profileIndex: index, selectedProfileId: row ? String(row.id || "") : "" });
+  },
 
   selectVoice(e) {
     const index = Number(e.detail.value || 0);
-    this.setData({ voiceIndex: index });
-    this.applyVoiceDefaults(this.data.voices[index]);
+    const row = (this.data.voices || [])[index];
+    this.setData({ voiceIndex: index, selectedVoiceId: row ? String(row.id || "") : "" });
+    this.applyVoiceDefaults(row);
   },
 
-  selectTemplate(e) { this.setData({ templateIndex: Number(e.currentTarget.dataset.index || 0) }); },
+  selectTemplate(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = (this.data.templates || [])[index];
+    this.setData({ templateIndex: index, selectedTemplateStyleId: row ? String(row.styleId || "") : "" });
+  },
 
   toggleTemplate(e) {
     this.setTemplateMode({ currentTarget: { dataset: { mode: Boolean(e.detail.value) ? "template" : "none" } } });
