@@ -574,3 +574,27 @@ def active_tasks(
         "digital": digital,
         "poll_hint_seconds": 10,
     }
+
+@router.get("/api/montage/jobs", summary="混剪任务列表（任务列表页用）")
+def list_montage_jobs(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    rows = (
+        db.query(MontageJob)
+        .filter(MontageJob.user_id == int(user.id))
+        .order_by(MontageJob.id.desc())
+        .limit(max(1, min(50, int(limit or 20))))
+        .all()
+    )
+    return {"ok": True, "items": [{
+        "job_id": r.id,
+        "status": r.status,
+        "title": str((r.params or {}).get("title") or "混剪成片"),
+        "video_url": r.video_url or "",
+        "duration": float(r.duration or 0),
+        "error": r.error or "",
+        "created_at": r.created_at.isoformat() if r.created_at else "",
+    } for r in rows]}

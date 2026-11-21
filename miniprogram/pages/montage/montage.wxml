@@ -13,7 +13,22 @@
     </view>
   </view>
 
-  <view class="panel">
+  <view wx:if="{{viewMode === 'list'}}" class="panel">
+    <view class="list-head">
+      <text class="label">混剪任务</text>
+      <text class="list-add" bindtap="openCreate">＋ 新建</text>
+    </view>
+    <view wx:if="{{!jobList.length}}" class="hint">还没有任务，点右上角「新建」</view>
+    <view wx:for="{{jobList}}" wx:key="job_id" class="job-row" data-id="{{item.job_id}}" bindtap="openJob">
+      <view class="job-main">
+        <text class="job-title">{{item.title}}</text>
+        <text class="job-meta">{{item.timeText}} · {{item.statusText}}{{item.duration ? ' · ' + item.duration + 's' : ''}}</text>
+      </view>
+      <text class="job-go">{{item.video_url ? '播放' : '查看'}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{viewMode === 'create'}}" class="panel">
     <text class="label">音色（素材库 · 我的声音）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
       <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '还没有音色，先去素材库创建'}}</view>

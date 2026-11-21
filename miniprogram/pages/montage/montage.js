@@ -45,6 +45,8 @@ Page({
     speechDuration: 0,
     useTemplate: false,
     ttsLoading: false,
+    viewMode: "list",
+    jobList: [],
     rendering: false,
     localVideoUrl: "",
     localStatus: ""
@@ -52,7 +54,32 @@ Page({
 
   onShow() {
     if (this.montagePoller) this.montagePoller.resume();
+    if (this.data.viewMode === "list") this.loadJobs();
     this.resumeMontageJob();
+  },
+
+  loadJobs() {
+    if (!app.globalData.token) return;
+    app.request({ url: "/api/montage/jobs?limit=20", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && data.items) || []).map((row) => Object.assign({}, row, {
+          timeText: String(row.created_at || "").replace("T", " ").slice(5, 16),
+          statusText: { pending: "排队中", running: "渲染中", succeed: "已完成", failed: "失败" }[row.status] || row.status
+        }));
+        this.setData({ jobList: rows });
+      })
+      .catch(() => {});
+  },
+
+  openCreate() { this.setData({ viewMode: "create", localVideoUrl: "", localStatus: "" }); },
+  backToList() { this.setData({ viewMode: "list" }); this.loadJobs(); },
+
+  openJob(e) {
+    const id = Number(e.currentTarget.dataset.id || 0);
+    const row = (this.data.jobList || []).find((item) => item.job_id === id);
+    if (!row) return;
+    if (row.video_url) wx.previewMedia({ sources: [{ url: row.video_url, type: "video" }] });
+    else wx.showToast({ title: row.statusText, icon: "none" });
   },
 
   onLoad() {
@@ -240,8 +267,10 @@ Page({
           this.setData({
             rendering: false,
             localVideoUrl: String(data.video_url || ""),
-            localStatus: "完成 " + Number(data.duration || 0).toFixed(1) + "s · " + Math.round((Date.now() - started) / 1000) + "秒"
+            localStatus: "完成 " + Number(data.duration || 0).toFixed(1) + "s · " + Math.round((Date.now() - started) / 1000) + "秒",
+            viewMode: "list"
           });
+          setTimeout(() => this.loadJobs(), 300);
           return true;
         }
         if (status === "failed") {

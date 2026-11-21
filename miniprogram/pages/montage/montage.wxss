@@ -50,3 +50,10 @@
 
 .tpl-row2 { display: flex; align-items: center; justify-content: space-between; margin-top: 24rpx; }
 .tpl-label { margin: 0; }
+.list-head { display: flex; align-items: center; justify-content: space-between; }
+.list-add { font-size: 26rpx; color: #1957E8; font-weight: 600; }
+.job-row { display: flex; align-items: center; padding: 24rpx 0; border-bottom: 1rpx solid #eef1f6; }
+.job-main { flex: 1; min-width: 0; }
+.job-title { display: block; font-size: 28rpx; color: #0f172a; }
+.job-meta { display: block; margin-top: 6rpx; font-size: 21rpx; color: #94a3b8; }
+.job-go { font-size: 24rpx; color: #1957E8; }
