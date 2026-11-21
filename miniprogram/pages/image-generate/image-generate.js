@@ -426,7 +426,7 @@ Page({
       wx.showToast({ title: "请先在「我的」授权手机号", icon: "none" });
       return;
     }
-    this.setData({ pickerOpen: true, pickerLoading: true, pickerItems: [] });
+    this.setData({ viewMode: "create", pickerOpen: true, pickerLoading: true, pickerItems: [] });
     app.request({ url: "/api/h5/recorder/files?page=1&page_size=30", timeout: 30000 })
       .then((data) => {
         const rows = ((data && data.items) || [])
@@ -462,7 +462,7 @@ Page({
       .then((data) => {
         const prompt = String((data && data.prompt) || "").trim();
         if (!prompt) throw new Error("没有生成出画面描述");
-        const patch = { prompt, promptLength: prompt.length, progressText: "正在生成" };
+        const patch = { viewMode: "create", prompt, promptLength: prompt.length, progressText: "正在生成" };
         const ratio = String((data && data.ratio) || "");
         const resolution = String((data && data.resolution) || "").toLowerCase();
         const count = Number((data && data.count) || 1);
@@ -526,6 +526,10 @@ Page({
   },
 
   goBack() {
+    if (this.data.viewMode === "create") {
+      this.backToList();
+      return;
+    }
     if (getCurrentPages().length > 1) {
       wx.navigateBack();
       return;

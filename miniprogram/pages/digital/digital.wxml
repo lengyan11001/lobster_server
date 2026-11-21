@@ -7,19 +7,19 @@
       </view>
       <view class="head-btns">
         <button wx:if="{{viewMode === 'list'}}" class="primary small" bindtap="openCreate">＋ 新建</button>
-        <block wx:else>
-          <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
-          <button class="ghost small" bindtap="openRecordingPrefill">录音生成</button>
-          <button class="ghost small" bindtap="backToList">返回列表</button>
-        </block>
+        <button wx:else class="ghost small" bindtap="backToList">返回列表</button>
       </view>
+    </view>
+    <view wx:if="{{viewMode === 'list'}}" class="head-actions">
+      <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="ghost small" bindtap="openRecordingPrefill">录音生成</button>
     </view>
   </view>
 
   <view wx:if="{{viewMode === 'list'}}" class="panel">
     <view class="list-head">
       <text class="label">数字人任务</text>
-      <text class="list-add" bindtap="openCreate">＋ 新建</text>
+      <text class="list-count">{{jobList.length}} 条</text>
     </view>
     <view wx:if="{{!jobList.length}}" class="empty">还没有任务，点右上角「新建」开始生成</view>
     <view wx:for="{{jobList}}" wx:key="id" class="job-row" data-index="{{index}}" bindtap="openJob">

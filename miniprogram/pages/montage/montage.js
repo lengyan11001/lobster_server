@@ -120,6 +120,7 @@ Page({
       }))
       .filter((row) => row.fileUrl);
     const patch = {
+      viewMode: "create",
       content: String(item.script || ""),
       duration: Math.max(10, Math.min(180, Number(params.duration || 30)))
     };

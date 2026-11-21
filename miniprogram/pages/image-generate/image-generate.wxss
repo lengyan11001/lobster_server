@@ -622,3 +622,7 @@
 .task-name { display: block; font-size: 27rpx; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-meta { display: block; margin-top: 8rpx; font-size: 21rpx; color: #94a3b8; }
 .task-go { margin-left: 12rpx; font-size: 24rpx; color: #1957E8; }
+
+
+.task-head-actions { display: flex; align-items: center; gap: 16rpx; }
+.list-add { font-size: 25rpx; color: #1957E8; font-weight: 600; }

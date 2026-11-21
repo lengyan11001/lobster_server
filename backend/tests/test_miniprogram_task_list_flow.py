@@ -33,3 +33,18 @@ def test_article_list_turns_new_generation_into_a_processing_row():
     assert 'status: "completed"' in js
     assert "createPoller(" in js
     assert "modalOpen: false" in js
+
+
+def test_task_pages_do_not_render_duplicate_new_or_back_actions():
+    files = [
+        PAGES / "digital" / "digital.wxml",
+        PAGES / "image-generate" / "image-generate.wxml",
+        PAGES / "moments" / "moments.wxml",
+        PAGES / "topic-recommend" / "topic-recommend.wxml",
+        PAGES / "montage" / "montage.wxml",
+        PAGES / "article" / "history.wxml",
+    ]
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert text.count("＋ 新建") <= 1, path
+        assert text.count(">返回列表<") <= 1, path

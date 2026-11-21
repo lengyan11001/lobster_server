@@ -305,6 +305,7 @@ Page({
     const useMaterials = params.use_materials !== false;
     const duration = Number(params.duration_seconds || 30);
     const patch = {
+      viewMode: "create",
       text: String(item.script || ""),
       videoTitle: String(item.title || ""),
       taskName: String(item.title || this.data.taskName),
