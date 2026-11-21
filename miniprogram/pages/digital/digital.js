@@ -222,6 +222,14 @@ Page({
     wx.showToast({ title: row.status_text || "生成中", icon: "none" });
   },
 
+  downloadJob(evt) {
+    const row = this.data.jobList[Number(evt.currentTarget.dataset.index || 0)];
+    if (!row || !row.video_url) return;
+    media.saveToAlbum({ url: row.video_url, media_type: "video", title: row.title || "数字人口播" })
+      .then(() => wx.showToast({ title: "已保存到相册", icon: "success" }))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+  },
+
   rememberDigitalJob(taskId, title) {
     wx.setStorageSync("lobster_digital_job", { taskId, title, created_at: Date.now() });
     const row = {
@@ -1291,7 +1299,6 @@ Page({
 
   startPolling(taskId) {
     if (this.digitalPoller) this.digitalPoller.stop();
-    let failures = 0;
     this.digitalPoller = createPoller(
       () => app.request({ method: "POST", url: "/api/shanjian-digital-human/video/task", data: { task_id: taskId }, header: this.iidHeader(), timeout: 60000 }),
       (data) => {
@@ -1315,15 +1322,8 @@ Page({
         return false;
       },
       (err) => {
-        failures += 1;
-        if (failures >= 8) {
-          wx.removeStorageSync("lobster_digital_job");
-          this.updateJobRow(taskId, { status: "failed", status_text: "查询失败，请重新提交" });
-          if (this.digitalPoller) this.digitalPoller.stop();
-          return;
-        }
         this.setData({ statusText: api.errorMessage(err) });
-        this.updateJobRow(taskId, { status_text: "查询失败，稍后重试" });
+        this.updateJobRow(taskId, { status_text: "网络重试中" });
       }
     );
     this.digitalPoller.start(true);

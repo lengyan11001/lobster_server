@@ -249,7 +249,6 @@ Page({
   startTopicPolling(histId, jobId) {
     if (this.topicPoller) this.topicPoller.stop();
     this.topicActive = { histId, jobId };
-    let failures = 0;
     this.topicPoller = createPoller(
       () => app.request({ url: "/api/ip-profile/topics/jobs/" + encodeURIComponent(jobId), timeout: 30000 }),
       (data) => {
@@ -291,16 +290,7 @@ Page({
         return false;
       },
       () => {
-        failures += 1;
-        if (failures >= 8) {
-          hist.update(histId, { status: "failed", status_text: "失败", error: "任务查询多次失败，请重新生成" });
-          if (this.topicPoller) this.topicPoller.stop();
-          this.topicActive = null;
-          this.setData({ running: false, errorText: "任务查询多次失败，请重新生成" });
-          this.loadJobs();
-          return;
-        }
-        hist.update(histId, { status_text: "查询失败，稍后重试" });
+        hist.update(histId, { status_text: "网络重试中" });
         this.loadJobs();
       }
     );

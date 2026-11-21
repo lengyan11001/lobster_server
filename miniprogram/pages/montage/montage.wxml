@@ -24,7 +24,10 @@
         <text class="job-title">{{item.title}}</text>
         <text class="job-meta">{{item.timeText}} · {{item.statusText}}{{item.duration ? ' · ' + item.duration + 's' : ''}}</text>
       </view>
-      <text class="job-go">{{item.video_url ? '播放' : '查看'}}</text>
+      <view class="job-actions">
+        <text class="job-go">{{item.video_url ? '播放' : '状态'}}</text>
+        <text wx:if="{{item.video_url}}" class="job-dl" catchtap="downloadJob" data-id="{{item.job_id}}">下载</text>
+      </view>
     </view>
   </view>
 

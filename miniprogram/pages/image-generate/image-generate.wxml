@@ -16,7 +16,10 @@
         <text class="job-title">{{item.title}}</text>
         <text class="job-meta">{{item.timeText}} · {{item.statusText}}</text>
       </view>
-      <text class="job-go">{{item.images.length ? '查看' : '状态'}}</text>
+      <view class="job-actions">
+        <text class="job-go">{{item.images.length ? '预览' : '状态'}}</text>
+        <text wx:if="{{item.images.length}}" class="job-dl" catchtap="downloadJob" data-index="{{index}}">下载</text>
+      </view>
     </view>
   </view>
 

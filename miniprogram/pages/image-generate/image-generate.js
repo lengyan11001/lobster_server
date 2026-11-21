@@ -415,6 +415,17 @@ Page({
     wx.showToast({ title: row.statusText || "任务处理中", icon: "none" });
   },
 
+  downloadJob(evt) {
+    const row = this.data.jobList[Number(evt.currentTarget.dataset.index || 0)];
+    if (!row || !row.images || !row.images.length) return;
+    Promise.all(row.images.map((url, index) => media.saveToAlbum({
+      url,
+      media_type: "image",
+      title: (row.title || "图片") + "-" + (index + 1)
+    }))).then(() => wx.showToast({ title: "已保存到相册", icon: "success" }))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+  },
+
   resumeImageJobs() {
     if (this.imagePoller && this.imageActive) return;
     const pending = (hist.list("image") || []).find((row) => row.status === "processing" && row.job_id);
@@ -797,7 +808,6 @@ Page({
   startImagePolling(histId, jobId) {
     if (this.imagePoller) this.imagePoller.stop();
     this.imageActive = { histId, jobId };
-    let failures = 0;
     this.imagePoller = createPoller(
       () => app.request({ url: "/api/comfly-proxy/v1/images/jobs/" + encodeURIComponent(jobId), timeout: 30000 }),
       (data) => {
@@ -836,14 +846,7 @@ Page({
         return false;
       },
       () => {
-        failures += 1;
-        if (failures >= 8) {
-          hist.update(histId, { status: "failed", status_text: "失败", error: "任务查询多次失败，请重新提交" });
-          if (this.imagePoller) this.imagePoller.stop();
-          this.finishImageTask();
-          return;
-        }
-        hist.update(histId, { status_text: "查询失败，稍后重试" });
+        hist.update(histId, { status_text: "网络重试中" });
         this.loadJobs();
       }
     );

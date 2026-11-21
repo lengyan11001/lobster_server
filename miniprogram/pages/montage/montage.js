@@ -2,6 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const { createPoller } = require("../../utils/task-poll");
 const hist = require("../../utils/gen-history");
+const media = require("../../utils/media");
 
 const POLL_MS = 6000;
 const MAX_POLLS = 60;
@@ -73,6 +74,15 @@ Page({
 
   openCreate() { this.setData({ viewMode: "create", localVideoUrl: "", localStatus: "" }); },
   backToList() { this.setData({ viewMode: "list" }); this.loadJobs(); },
+
+  downloadJob(e) {
+    const id = Number(e.currentTarget.dataset.id || 0);
+    const row = (this.data.jobList || []).find((item) => Number(item.job_id) === id);
+    if (!row || !row.video_url) return;
+    media.saveToAlbum({ url: row.video_url, media_type: "video", title: row.title || "混剪成片" })
+      .then(() => wx.showToast({ title: "已保存到相册", icon: "success" }))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+  },
 
   openJob(e) {
     const id = Number(e.currentTarget.dataset.id || 0);
@@ -243,6 +253,8 @@ Page({
           const jobId = Number((data && data.job_id) || 0);
           if (!jobId) throw new Error("没有拿到任务号");
           wx.setStorageSync("lobster_montage_job", jobId);
+          this.addPendingMontageJob(jobId);
+          this.setData({ viewMode: "list", localStatus: "渲染中…" });
           this.pollMontageJob(jobId, started);
         })
         .catch((err) => {
@@ -254,6 +266,19 @@ Page({
     if (this.data.speechAudioUrl) return run(this.data.speechAudioUrl);
     this.setData({ speechStatus: "还没生成音轨，先按文案自动生成…" });
     this.callTTS(false).then(run);
+  },
+
+  addPendingMontageJob(jobId) {
+    const row = {
+      job_id: Number(jobId),
+      title: "混剪成片",
+      timeText: "刚刚",
+      statusText: "渲染中",
+      video_url: "",
+      duration: 0
+    };
+    const rows = [row].concat((this.data.jobList || []).filter((item) => Number(item.job_id) !== Number(jobId)));
+    this.setData({ jobList: rows });
   },
 
   pollMontageJob(jobId, startedAt) {
@@ -276,7 +301,8 @@ Page({
         }
         if (status === "failed") {
           wx.removeStorageSync("lobster_montage_job");
-          this.setData({ rendering: false, localStatus: String(data.error || "生成失败") });
+          this.setData({ rendering: false, viewMode: "list", localStatus: String(data.error || "生成失败") });
+          setTimeout(() => this.loadJobs(), 300);
           return true;
         }
         this.setData({ rendering: true, localStatus: "渲染中…（可退出，回来接着看）" });

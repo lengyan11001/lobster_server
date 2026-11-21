@@ -128,3 +128,6 @@
 .job-title { display: block; font-size: 28rpx; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-meta { display: block; margin-top: 7rpx; font-size: 21rpx; color: #94a3b8; }
 .job-go { margin-left: 12rpx; font-size: 24rpx; color: #1957E8; }
+
+.job-actions { display: flex; align-items: center; gap: 18rpx; margin-left: 12rpx; }
+.job-dl { font-size: 24rpx; color: #0f766e; }
