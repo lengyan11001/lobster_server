@@ -578,8 +578,16 @@ async def submit_clip(
     )
     upstream = await _post(endpoint, body.token, payload)
     data = _data(upstream)
-    task_id = str(data.get("taskId") or "").strip()
+    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+    task_id = str(
+        data.get("taskId") or data.get("task_id") or result.get("taskId") or result.get("task_id") or ""
+    ).strip()
     if not task_id:
+        import json as _json
+        logger.warning(
+            "[shanjian-smart-clip] no taskId scene=%s style_id=%s raw=%s",
+            scene, body.style_id.strip(), _json.dumps(upstream, ensure_ascii=False)[:900],
+        )
         raise HTTPException(status_code=502, detail="数字人2.0未返回 taskId")
     logger.info(
         "[shanjian-smart-clip] accepted user_id=%s scene=%s style_id=%s task_id=%s request_id=%s",
