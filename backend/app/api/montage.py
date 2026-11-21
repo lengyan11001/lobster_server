@@ -31,14 +31,14 @@ FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 
 class MontageBody(BaseModel):
     record_id: Optional[int] = None
-    voice_url: str = Field("", max_length=12_000_000)
+    voice_url: str = ""
     asset_urls: List[str] = Field(default_factory=list)
-    group: str = Field("", max_length=80)
+    group: str = ""
     target_seconds: Optional[int] = None
-    ratio: str = Field("9:16", max_length=12)
-    title: str = Field("", max_length=120)
-    template_style_id: str = Field("", max_length=64)
-    template_name: str = Field("", max_length=64)
+    ratio: str = "9:16"
+    title: str = ""
+    template_style_id: str = ""
+    template_name: str = ""
 
 
 def _run(args: List[str], timeout: int = 300) -> None:
