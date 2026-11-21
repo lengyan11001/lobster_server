@@ -38,6 +38,7 @@
         <text class="mat-del" data-index="{{index}}" bindtap="removeMaterial">×</text>
       </view>
       <view class="mat-add" bindtap="addMaterial">+</view>
+      <view class="mat-add" bindtap="openAssetPicker">库</view>
     </view>
 
     <button class="primary" loading="{{rendering}}" disabled="{{rendering}}" bindtap="startLocalMontage">{{rendering ? '渲染中…' : '开始混剪'}}</button>
