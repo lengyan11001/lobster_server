@@ -41,6 +41,7 @@ Page({
     speechText: "",
     speechAudioUrl: "",
     speechStatus: "",
+    speechDuration: 0,
     ttsLoading: false,
     rendering: false,
     localVideoUrl: "",
@@ -149,7 +150,12 @@ Page({
       .then((data) => {
         const url = String((data && data.audio_url) || "");
         if (!url) throw new Error("没有拿到音频");
-        this.setData({ speechAudioUrl: url, speechStatus: "音轨就绪（" + Math.round(Number(data.duration_seconds || 0)) + "s）" });
+        const dur = Number((data && data.duration_seconds) || 0);
+        this.setData({
+          speechAudioUrl: url,
+          speechDuration: dur,
+          speechStatus: dur ? ("音轨就绪 · 实际时长 " + dur.toFixed(1) + " 秒（素材按此时长挑）") : "音轨就绪"
+        });
         if (preview) {
           if (this.audioCtx) { try { this.audioCtx.stop(); this.audioCtx.destroy(); } catch (e) {} }
           this.audioCtx = wx.createInnerAudioContext();
@@ -198,6 +204,7 @@ Page({
         .then(() => this.setData({ rendering: false }));
     };
     if (this.data.speechAudioUrl) return run(this.data.speechAudioUrl);
+    this.setData({ speechStatus: "还没生成音轨，先按文案自动生成…" });
     this.callTTS(false).then(run);
   },
 
