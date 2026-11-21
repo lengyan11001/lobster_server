@@ -52,7 +52,7 @@ Page({
   onLoad() {
     this.polls = 0;
     this.timer = null;
-    this.loadTemplates("oralMixCutting");
+    this.loadTemplates("realMan");
     this.loadMontageVoices();
     this.loadGroups();
   },
