@@ -2,11 +2,12 @@ const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const { createPoller } = require("../../utils/task-poll");
+const { formatDateTime } = require("../../utils/datetime");
 
 const FEATURE = "moments";
 const STALE_MS = 15 * 60 * 1000;
 
-function fmtTime(v) { return String(v || "").replace("T", " ").slice(0, 16); }
+function fmtTime(v) { return formatDateTime(v, true); }
 
 Page({
   data: {

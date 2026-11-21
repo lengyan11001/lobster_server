@@ -3,6 +3,7 @@ const api = require("../../utils/api");
 const { createPoller } = require("../../utils/task-poll");
 const hist = require("../../utils/gen-history");
 const media = require("../../utils/media");
+const { formatDateTime } = require("../../utils/datetime");
 
 const POLL_MS = 6000;
 const MAX_POLLS = 60;
@@ -64,8 +65,9 @@ Page({
     app.request({ url: "/api/montage/jobs?limit=20", timeout: 30000 })
       .then((data) => {
         const rows = ((data && data.items) || []).map((row) => Object.assign({}, row, {
-          timeText: String(row.created_at || "").replace("T", " ").slice(5, 16),
-          statusText: { pending: "排队中", running: "渲染中", succeed: "已完成", failed: "失败" }[row.status] || row.status
+          timeText: formatDateTime(row.created_at),
+          statusText: { pending: "排队中", running: "渲染中", succeed: "已完成", failed: "失败" }[row.status] || row.status,
+          errorText: String(row.error || "")
         }));
         this.setData({ jobList: rows });
       })

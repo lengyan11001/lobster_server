@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const { formatDateTime } = require("../../utils/datetime");
 
 function asset(u) {
   const url = String(u || "");
@@ -24,7 +25,7 @@ Page({
           id: String(row.id || row.task_id || row.video_url || ""),
           title: String(row.title || row.task_name || "数字人视频"),
           statusText: String(row.status_text || row.status || ""),
-          time: String(row.created_at || row.updated_at || "").replace("T", " ").slice(0, 16),
+          time: formatDateTime(row.created_at || row.updated_at, true),
           videoUrl: asset(row.video_url),
           coverUrl: asset(row.cover_url || row.cover)
         })).filter((x) => x.id);

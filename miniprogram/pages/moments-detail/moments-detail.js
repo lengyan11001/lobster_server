@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const { formatDateTime } = require("../../utils/datetime");
 const IMAGE_MODEL = "gpt-image-2";
 
 function extractUrls(data) {
@@ -31,7 +32,7 @@ Page({
           recordId: String(row.record_id || ""),
           content: String(row.content || row.body || ""),
           images: ((row.images || []).map((x) => x.image_url || x.url).filter(Boolean)).concat(row.image_url && !(row.images || []).length ? [row.image_url] : []),
-          time: String(row.created_at || "").replace("T", " ").slice(0, 16)
+          time: formatDateTime(row.created_at, true)
         }));
         this.setData({ items });
       })

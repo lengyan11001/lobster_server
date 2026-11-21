@@ -62,3 +62,5 @@
 
 .job-actions { display: flex; align-items: center; gap: 18rpx; margin-left: 12rpx; }
 .job-dl { font-size: 24rpx; color: #0f766e; }
+
+.job-error { display: block; margin-top: 6rpx; font-size: 20rpx; color: #dc2626; line-height: 1.4; }

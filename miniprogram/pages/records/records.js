@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const config = require("../../config");
+const { formatDateTime } = require("../../utils/datetime");
 
 const KINDS = [
   { key: "video", label: "视频" },
@@ -23,7 +24,7 @@ function mediaUrl(url, mode) {
 }
 
 function fmtTime(value) {
-  return String(value || "").replace("T", " ").slice(0, 16);
+  return formatDateTime(value, true);
 }
 
 Page({

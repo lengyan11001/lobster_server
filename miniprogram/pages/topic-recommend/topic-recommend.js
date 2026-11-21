@@ -2,6 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const { createPoller } = require("../../utils/task-poll");
+const { formatDateTime } = require("../../utils/datetime");
 
 function fmtTime(v) {
   const d = new Date(Number(v || 0));
@@ -67,7 +68,7 @@ Page({
         title: "最近一次推荐选题",
         status: "completed",
         statusText: "已完成",
-        timeText: String(meta.generated_at || "").replace("T", " ").slice(0, 16),
+        timeText: formatDateTime(meta.generated_at, true),
         count: this.latestPlan.topics.length,
         plan: this.latestPlan
       });
@@ -153,7 +154,7 @@ Page({
       grids,
       topics,
       hasPlan: topics.length > 0,
-      generatedAt: String(meta.generated_at || "").replace("T", " ").slice(0, 16),
+      generatedAt: formatDateTime(meta.generated_at, true),
       progress: 100,
       stage: topics.length ? "已生成 " + topics.length + " 条选题" : "",
       errorText: ""

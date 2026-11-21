@@ -4,6 +4,7 @@ const media = require("../../utils/media");
 const share = require("../../utils/share");
 const config = require("../../config");
 const { createPoller } = require("../../utils/task-poll");
+const { formatDateTime } = require("../../utils/datetime");
 
 const POLL_MS = 6000;
 const MAX_POLLS = 80;
@@ -1354,7 +1355,7 @@ Page({
             title: String(row.title || "数字人口播"),
             status,
             status_text: String(row.status_text || statusMap[status] || status || ""),
-            created_at: String(row.created_at || "").replace("T", " ").slice(0, 16),
+            created_at: formatDateTime(row.created_at, true),
             video_url: assetUrl(row.video_url || ""),
             cover_url: assetUrl(row.cover_url || "")
           };
@@ -1367,7 +1368,7 @@ Page({
             title: String(saved.title || "数字人口播"),
             status: "processing",
             status_text: "排队中",
-            created_at: new Date(Number(saved.created_at || Date.now())).toISOString().replace("T", " ").slice(0, 16),
+            created_at: formatDateTime(Number(saved.created_at || Date.now()), true),
             video_url: "",
             cover_url: ""
           });

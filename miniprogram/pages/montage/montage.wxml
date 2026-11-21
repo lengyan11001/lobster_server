@@ -23,6 +23,7 @@
       <view class="job-main">
         <text class="job-title">{{item.title}}</text>
         <text class="job-meta">{{item.timeText}} · {{item.statusText}}{{item.duration ? ' · ' + item.duration + 's' : ''}}</text>
+        <text wx:if="{{item.errorText}}" class="job-error">{{item.errorText}}</text>
       </view>
       <view class="job-actions">
         <text class="job-go">{{item.video_url ? '播放' : '状态'}}</text>
