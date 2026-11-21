@@ -191,6 +191,10 @@ Page({
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
     const group = (this.data.groups[this.data.groupIndex] || "");
     if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
+    const text = String(this.data.speechText || "").trim();
+    if (!this.data.speechAudioUrl && !text) {
+      return wx.showToast({ title: "先写口播文案（或先点生成音轨）", icon: "none" });
+    }
     const run = (voiceUrl) => {
       if (!voiceUrl) return;
       this.setData({ rendering: true, localVideoUrl: "", localStatus: "正在渲染（裁切+拼接+音轨）…" });
