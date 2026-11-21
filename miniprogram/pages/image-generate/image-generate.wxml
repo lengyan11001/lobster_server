@@ -3,23 +3,20 @@
   <view class="topbar">
     <button class="back-btn" bindtap="goBack">‹</button>
     <text class="page-title">AI图片生成</text>
-    <button wx:if="{{viewMode === 'list'}}" class="top-audio-btn" bindtap="openCreate">＋ 新建</button>
   </view>
 
-  <view wx:if="{{viewMode === 'list'}}" class="task-panel">
-    <view class="task-head">
-      <text class="task-title">图片任务</text>
-      <text class="task-count">{{jobList.length}} 条</text>
+  <view wx:if="{{viewMode === 'list'}}" class="panel">
+    <view class="list-head">
+      <text class="label">图片任务</text>
+      <text class="list-add" bindtap="openCreate">＋ 新建</text>
     </view>
-    <view wx:if="{{!jobList.length}}" class="task-empty">还没有任务，点右上角「新建」开始生成</view>
-    <view wx:for="{{jobList}}" wx:key="id" class="task-row" data-index="{{index}}" bindtap="openJob">
-      <image wx:if="{{item.cover}}" class="task-thumb" src="{{item.cover}}" mode="aspectFill" />
-      <view wx:else class="task-thumb task-thumb-empty">图</view>
-      <view class="task-main">
-        <text class="task-name">{{item.title}}</text>
-        <text class="task-meta">{{item.timeText}} · {{item.statusText}}</text>
+    <view wx:if="{{!jobList.length}}" class="hint">还没有任务，点右上角「新建」开始生成</view>
+    <view wx:for="{{jobList}}" wx:key="id" class="job-row" data-index="{{index}}" bindtap="openJob">
+      <view class="job-main">
+        <text class="job-title">{{item.title}}</text>
+        <text class="job-meta">{{item.timeText}} · {{item.statusText}}</text>
       </view>
-      <text class="task-go">{{item.images.length ? '查看' : '状态'}}</text>
+      <text class="job-go">{{item.images.length ? '查看' : '状态'}}</text>
     </view>
   </view>
 
