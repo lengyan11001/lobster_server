@@ -98,11 +98,10 @@ Page({
 
   loadMontageVoices() {
     if (!(app.globalData.token && app.globalData.phone)) return;
-    app.request({ method: "POST", url: "/api/shanjian-smart-clip/voices", data: {}, timeout: 30000 })
+    app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
       .then((data) => {
-        const rows = (data && (data.results || data.items)) || [];
-        const items = rows
-          .map((row) => ({ id: String(row.voiceId || row.voice_id || row.speakerId || row.id || ""), name: String(row.name || row.title || "音色") }))
+        const items = ((data && data.items) || [])
+          .map((row) => ({ id: String(row.voice || row.voice_id || ""), name: String(row.title || row.name || "音色") }))
           .filter((row) => !!row.id);
         this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: items.length ? 0 : -1 });
       })
@@ -122,11 +121,16 @@ Page({
     if (!text) return wx.showToast({ title: "先写口播文案", icon: "none" });
     if (this.data.ttsLoading) return Promise.resolve("");
     this.setData({ ttsLoading: true, speechStatus: "正在合成语音…" });
-    return app.request({ method: "POST", url: "/api/montage/tts", data: { text, voice_id: (this.data.voices[this.data.voiceIndex] || {}).id || "" }, timeout: 90000 })
+    const voice = (this.data.voices[this.data.voiceIndex] || {}).id || "";
+    if (!voice) {
+      this.setData({ ttsLoading: false, speechStatus: "还没有自己的音色，先去素材库创建声音" });
+      return Promise.resolve("");
+    }
+    return app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: { text, voice }, timeout: 120000 })
       .then((data) => {
         const url = String((data && data.audio_url) || "");
         if (!url) throw new Error("没有拿到音频");
-        this.setData({ speechAudioUrl: url, speechStatus: "音轨就绪（" + (data.chars || text.length) + " 字）" });
+        this.setData({ speechAudioUrl: url, speechStatus: "音轨就绪（" + Math.round(Number(data.duration_seconds || 0)) + "s）" });
         if (preview) {
           if (this.audioCtx) { try { this.audioCtx.stop(); this.audioCtx.destroy(); } catch (e) {} }
           this.audioCtx = wx.createInnerAudioContext();
