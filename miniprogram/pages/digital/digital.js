@@ -143,7 +143,7 @@ Page({
     cloneOpen: false, cloneFileName: "", cloneFile: "", cloneTitle: "",
     cloneLanguages: CLONE_LANGS, cloneLangIndex: 0, cloneAgree: false,
     cloneSubmitting: false, cloneStatus: "",
-    mode: "tts", title: "", taskName: "数字人口播", videoTitle: "", text: "", audioUrl: "", audioName: "",
+    mode: "tts", title: "", taskName: "数字人口播", videoTitle: "", introduceDescription: "", text: "", audioUrl: "", audioName: "",
     durationMode: "short", targetDuration: 60, templateMode: "none", advancedOpen: false,
     speed: 1, speedText: "1.00", speedTouched: false, volume: 1, volumeText: "1.00",
     pitch: 0, pitchText: "0", pitchMin: -12, pitchMax: 12, pitchStep: 1,
@@ -1219,6 +1219,8 @@ Page({
       const tpl = this.data.templates[this.data.templateIndex];
       if (tpl) {
         body.style_id = tpl.styleId;
+        body.introduce_name = title;
+        body.introduce_description = String(this.data.introduceDescription || "").trim();
         body.header_switch = Boolean(this.data.headerSwitch);
         body.subtitle_switch = Boolean(this.data.subtitleSwitch);
         body.keyword_switch = Boolean(this.data.keywordSwitch);

@@ -105,6 +105,9 @@
     <text class="label">文案标题</text>
     <input class="input" value="{{videoTitle}}" bindinput="onVideoTitle" placeholder="显示在视频片头，不填取文案首句" />
 
+    <text class="label">介绍文案（可选）</text>
+    <textarea class="textarea small" value="{{introduceDescription}}" bindinput="onIntroduceDescription" placeholder="模板身份栏/介绍卡显示的文案，留空不传" auto-height maxlength="240" />
+
     <text class="label">视频时长</text>
     <view class="mode-row">
       <view class="mode {{durationMode === 'short' ? 'active' : ''}}" data-mode="short" bindtap="setDurationMode">30 秒以内</view>
