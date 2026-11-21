@@ -22,6 +22,7 @@ from ..models import Asset, RecorderAudioRecord, User, UserContentRecord
 from .assets import _gen_asset_id, _upload_to_tos
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
+from ..services import device_tts
 
 router = APIRouter()
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
@@ -258,3 +259,27 @@ async def create_montage(
             return await asyncio.to_thread(_render_montage, owner_id, body)
     finally:
         _montage_waiting -= 1
+
+
+class TTSBody(BaseModel):
+    text: str = Field("", max_length=2000)
+    voice_id: str = Field("", max_length=120)
+
+
+@router.post("/api/montage/tts", summary="口播文案转语音（试听/生成音轨）")
+def montage_tts(
+    body: TTSBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    text = str(body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="口播文案为空")
+    from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
+
+    token, _source = _load_sutui_token_for_stt(db, int(user.id))
+    if not token:
+        raise HTTPException(status_code=503, detail="TTS 未配置，请联系管理员")
+    audio_url = device_tts.synthesize(text, token=token, voice_id=str(body.voice_id or "").strip())
+    return {"ok": True, "audio_url": audio_url, "chars": len(text)}
