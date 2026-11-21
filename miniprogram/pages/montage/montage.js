@@ -18,6 +18,9 @@ Page({
     templates: [],
     templatesLoading: false,
     templateIndex: -1,
+    groups: [],
+    groupNames: [],
+    groupIndex: -1,
     voices: [],
     voiceNames: [],
     voiceIndex: -1,
@@ -49,6 +52,7 @@ Page({
     this.timer = null;
     this.loadTemplates("oralMixCutting");
     this.loadMontageVoices();
+    this.loadGroups();
   },
 
   onUnload() {
@@ -94,6 +98,21 @@ Page({
     const bits = ["文案"];
     if (materials.length) bits.push("素材 " + materials.length + " 个");
     wx.showToast({ title: "已填好：" + bits.join(" + "), icon: "none" });
+  },
+
+  loadGroups() {
+    if (!(app.globalData.token && app.globalData.phone)) return;
+    app.request({ url: "/api/assets/creative-candidate-groups", timeout: 30000 })
+      .then((data) => {
+        const rows = (data && (data.items || data.groups || data.results)) || [];
+        const names = rows.map((row) => String(row.name || row.group || row.title || "")).filter(Boolean);
+        this.setData({ groups: names, groupNames: names, groupIndex: names.length ? 0 : -1 });
+      })
+      .catch(() => {});
+  },
+
+  selectGroup(e) {
+    this.setData({ groupIndex: Number(e.detail.value) });
   },
 
   loadMontageVoices() {
@@ -155,7 +174,8 @@ Page({
   startLocalMontage() {
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
-    if (!urls.length) return wx.showToast({ title: "先在素材里加视频", icon: "none" });
+    const group = (this.data.groups[this.data.groupIndex] || "");
+    if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
     const run = (voiceUrl) => {
       if (!voiceUrl) return;
       this.setData({ rendering: true, localVideoUrl: "", localStatus: "正在渲染（裁切+拼接+音轨）…" });
@@ -163,7 +183,7 @@ Page({
       app.request({
         method: "POST",
         url: "/api/montage/jobs",
-        data: { voice_url: voiceUrl, asset_urls: urls.slice(0, 12), ratio: "9:16", target_seconds: Number(this.data.duration) || undefined, title: "混剪成片" },
+        data: { voice_url: voiceUrl, group: group, asset_urls: urls.slice(0, 12), ratio: "9:16", target_seconds: Number(this.data.duration) || undefined, title: "混剪成片" },
         timeout: 300000
       })
         .then((data) => this.setData({

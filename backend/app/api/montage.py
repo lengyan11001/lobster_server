@@ -33,6 +33,7 @@ class MontageBody(BaseModel):
     record_id: Optional[int] = None
     voice_url: str = Field("", max_length=1000)
     asset_urls: List[str] = Field(default_factory=list)
+    group: str = Field("", max_length=80)
     target_seconds: Optional[int] = None
     ratio: str = Field("9:16", max_length=12)
     title: str = Field("", max_length=120)
@@ -144,9 +145,27 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         if voice_path is None:
             raise HTTPException(status_code=400, detail="请提供口播音频或录音")
 
+        group_name = str(body.group or "").strip()
         urls = [u for u in (body.asset_urls or []) if isinstance(u, str) and u.startswith("http")][:12]
+        if not urls and group_name:
+            rows = (
+                db.query(Asset)
+                .filter(Asset.user_id == int(user.id), Asset.media_type == "video")
+                .order_by(Asset.id.desc())
+                .limit(300)
+                .all()
+            )
+            picked = []
+            for row in rows:
+                meta = row.meta if isinstance(row.meta, dict) else {}
+                tags = str(getattr(row, "tags", "") or "")
+                if group_name == str(meta.get("creative_candidate_group") or "") or group_name in tags:
+                    url = str(row.source_url or "")
+                    if url.startswith("http"):
+                        picked.append(url)
+            urls = picked[:60]
         if not urls:
-            raise HTTPException(status_code=400, detail="请至少选择一个视频素材")
+            raise HTTPException(status_code=400, detail="请选择素材分组，或至少选一个视频素材")
 
         voice_info = _probe(str(voice_path))
         voice_duration = float(voice_info.get("duration") or 0)
@@ -155,19 +174,30 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
 
         total = float(body.target_seconds or 0) or voice_duration
         total = max(3.0, min(total, voice_duration if voice_duration > 0 else 60.0))
-        per = total / len(urls)
 
+        import random
+        pool = list(urls)
+        random.shuffle(pool)
         segments: List[Path] = []
         reference: Optional[dict[str, Any]] = None
-        for idx, url in enumerate(urls):
+        acc = 0.0
+        idx = 0
+        size = _size_for_ratio(body.ratio)
+        while acc < total - 0.15 and idx < 40:
+            url = pool[idx % len(pool)]
             src = _download(url, work / ("src_%02d.mp4" % idx))
+            idx += 1
             info = _probe(str(src))
-            if not info["has_video"]:
+            if not info["has_video"] or info["duration"] <= 0.2:
                 continue
             if reference is None:
                 reference = info
-            seg = _prepare_segment(src, work / ("seg_%02d.mp4" % idx), per, _size_for_ratio(body.ratio), reference)
+            take = min(info["duration"], total - acc)
+            if take < 0.5:
+                break
+            seg = _prepare_segment(src, work / ("seg_%02d.mp4" % (idx - 1)), take, size, reference)
             segments.append(seg)
+            acc += take
         if not segments:
             raise HTTPException(status_code=400, detail="素材里没有可用视频")
 

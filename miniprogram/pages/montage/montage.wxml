@@ -30,6 +30,11 @@
     <text class="label">成片时长：{{duration}} 秒（默认跟口播）</text>
     <slider min="10" max="180" step="5" value="{{duration}}" show-value activeColor="#1957E8" bindchange="onDurationChange" />
 
+    <text class="label">素材分组（切片好的素材，随机取）</text>
+    <picker mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
+      <view class="picker">{{groupIndex >= 0 ? groupNames[groupIndex] : '不选分组（用下面手动素材）'}}</view>
+    </picker>
+
     <text class="label">素材（{{materials.length}} 个视频）</text>
     <view class="mat-row">
       <view wx:for="{{materials}}" wx:key="fileUrl" class="mat">
