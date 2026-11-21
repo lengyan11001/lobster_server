@@ -3,12 +3,12 @@
   <view class="bg-glow"></view>
 
   <view class="head">
-    <view class="head-title">推荐选题</view>
-    <view class="head-sub">IP 档案 → 账号关键词 → 5×5 宫格 → 50 条选题与口播文案</view>
-    <view class="head-actions">
-      <view wx:if="{{viewMode === 'list'}}" class="head-link" bindtap="openCreate">＋ 新建</view>
-      <view wx:else class="head-link" bindtap="backToList">返回列表</view>
+    <view class="head-copy">
+      <view class="head-title">推荐选题</view>
+      <view class="head-sub">IP 档案 → 账号关键词 → 5×5 宫格 → 50 条选题与口播文案</view>
     </view>
+    <view wx:if="{{viewMode === 'list'}}" class="head-action" bindtap="openCreate">＋ 新建</view>
+    <view wx:else class="head-action" bindtap="backToList">返回列表</view>
   </view>
 
   <block wx:if="{{viewMode === 'list'}}">

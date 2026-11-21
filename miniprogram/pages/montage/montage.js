@@ -22,6 +22,7 @@ Page({
     templatesLoading: false,
     templateIndex: -1,
     groups: [],
+    groupsLoading: false,
     groupNames: [],
     groupIndex: -1,
     voices: [],
@@ -61,9 +62,6 @@ Page({
     if (this.montagePoller) this.montagePoller.resume();
     if (this.data.viewMode === "list") this.loadJobs();
     this.resumeMontageJob();
-    if (this.data.groups.length && (this.data.groupIndex < 0 || !this.data.groups[this.data.groupIndex])) {
-      this.setData({ groupIndex: 0 });
-    }
   },
 
   loadJobs() {
@@ -80,7 +78,11 @@ Page({
       .catch(() => {});
   },
 
-  openCreate() { this.setData({ viewMode: "create", localVideoUrl: "", localStatus: "" }); },
+  openCreate() {
+    this.setData({ viewMode: "create", localVideoUrl: "", localStatus: "" });
+    if (!this.data.groups.length) this.loadGroups();
+    if (!this.data.voices.length) this.loadMontageVoices();
+  },
   backToList() { this.setData({ viewMode: "list" }); this.loadJobs(); },
 
   downloadJob(e) {
@@ -164,13 +166,14 @@ Page({
 
   loadGroups() {
     if (!(app.globalData.token && app.globalData.phone)) return;
+    this.setData({ groupsLoading: true });
     app.request({ url: "/api/assets/creative-candidate-groups", timeout: 30000 })
       .then((data) => {
         const rows = (data && (data.items || data.groups || data.results)) || [];
         const names = rows.map((row) => String(row.name || row.group || row.title || "")).filter(Boolean);
-        this.setData({ groups: names, groupNames: names, groupIndex: names.length ? 0 : -1 });
+        this.setData({ groups: names, groupNames: names, groupIndex: names.length ? 0 : -1, groupsLoading: false });
       })
-      .catch(() => {});
+      .catch(() => this.setData({ groupsLoading: false }));
   },
 
   selectGroup(e) {
@@ -241,8 +244,7 @@ Page({
   startLocalMontage() {
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
-    let group = (this.data.groups[this.data.groupIndex] || "");
-    if (!group && this.data.groups.length) group = this.data.groups[0];
+    const group = (this.data.groups[this.data.groupIndex] || "");
     if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
     const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();

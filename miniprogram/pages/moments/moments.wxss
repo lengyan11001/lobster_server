@@ -40,3 +40,5 @@
 .chip.completed { background: #ecfdf5; color: #059669; }
 .chip.processing { background: #eff6ff; color: #2563eb; }
 .chip.failed { background: #fef2f2; color: #dc2626; }
+
+.head-action { font-size: 26rpx; color: #1957E8; padding: 10rpx 0 10rpx 20rpx; white-space: nowrap; }

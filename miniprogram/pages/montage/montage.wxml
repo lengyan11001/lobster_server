@@ -5,18 +5,22 @@
         <text class="title">素材混剪</text>
         <text class="sub">上传素材 + 文案，选模板和声音，自动混剪成片</text>
       </view>
-      <view wx:if="{{viewMode === 'create'}}" class="head-acts">
-        <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
-        <button class="act-btn ghost" bindtap="openPrefillHistory">历史</button>
-        <button class="act-btn primary" bindtap="openRecordingPrefill">录音生成</button>
+      <view class="head-acts">
+        <button wx:if="{{viewMode === 'list'}}" class="act-btn primary" bindtap="openCreate">＋ 新建</button>
+        <button wx:else class="act-btn ghost" bindtap="backToList">返回列表</button>
       </view>
+    </view>
+    <view wx:if="{{viewMode === 'create'}}" class="head-actions">
+      <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="act-btn ghost" bindtap="openPrefillHistory">历史</button>
+      <button class="act-btn primary" bindtap="openRecordingPrefill">录音生成</button>
     </view>
   </view>
 
   <view wx:if="{{viewMode === 'list'}}" class="panel">
     <view class="list-head">
       <text class="label">混剪任务</text>
-      <text class="list-add" bindtap="openCreate">＋ 新建</text>
+      <text class="list-count">{{jobList.length}} 条</text>
     </view>
     <view wx:if="{{!jobList.length}}" class="hint">还没有任务，点右上角「新建」</view>
     <view wx:for="{{jobList}}" wx:key="job_id" class="job-row" data-id="{{item.job_id}}" bindtap="openJob">
@@ -33,7 +37,6 @@
   </view>
 
   <view wx:if="{{viewMode === 'create'}}" class="panel">
-    <view class="create-back" bindtap="backToList">‹ 返回列表</view>
     <text class="label">音色（素材库 · 我的声音）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
       <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '还没有音色，先去素材库创建'}}</view>
@@ -66,7 +69,8 @@
     </block>
 
     <text class="label">素材分组（切片好的素材，随机取）</text>
-    <picker mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
+    <view wx:if="{{groupsLoading}}" class="hint">分组加载中…</view>
+    <picker wx:else mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
       <view class="picker">{{groupIndex >= 0 ? groupNames[groupIndex] : '不选分组（用下面手动素材）'}}</view>
     </picker>
 

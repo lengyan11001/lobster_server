@@ -3,12 +3,14 @@
   <view class="topbar">
     <button class="back-btn" bindtap="goBack">‹</button>
     <text class="page-title">AI图片生成</text>
+    <button wx:if="{{viewMode === 'list'}}" class="top-action" bindtap="openCreate">＋ 新建</button>
+    <button wx:else class="top-action" bindtap="openAudioPicker">录音生成</button>
   </view>
 
   <view wx:if="{{viewMode === 'list'}}" class="panel">
     <view class="list-head">
       <text class="label">图片任务</text>
-      <text class="list-add" bindtap="openCreate">＋ 新建</text>
+      <text class="task-count">{{jobList.length}} 条</text>
     </view>
     <view wx:if="{{!jobList.length}}" class="hint">还没有任务，点右上角「新建」开始生成</view>
     <view wx:for="{{jobList}}" wx:key="id" class="job-row" data-index="{{index}}" bindtap="openJob">
@@ -24,8 +26,6 @@
   </view>
 
   <block wx:if="{{viewMode === 'create'}}">
-  <button class="audio-entry" bindtap="openAudioPicker">录音生成</button>
-
   <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
     <text class="auth-title">登录后开始生成</text>
     <text class="auth-text">{{authHint}}</text>

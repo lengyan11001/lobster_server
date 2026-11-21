@@ -642,3 +642,5 @@
 
 .job-actions { display: flex; align-items: center; gap: 18rpx; margin-left: 12rpx; }
 .job-dl { font-size: 24rpx; color: #0f766e; }
+
+.top-action { position: relative; z-index: 1; font-size: 26rpx; color: #1957E8; background: transparent; border: 0; padding: 0 8rpx; line-height: 1.2; }

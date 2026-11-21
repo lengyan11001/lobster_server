@@ -4,8 +4,8 @@
       <text class="title">朋友圈文案</text>
       <text class="sub">按批次查看生成记录，点进去看文案和配图</text>
     </view>
-    <view wx:if="{{viewMode === 'list'}}" class="add-fab" bindtap="openCreate">＋</view>
-    <view wx:else class="back-pill" bindtap="backToList">返回列表</view>
+    <view wx:if="{{viewMode === 'list'}}" class="head-action" bindtap="openCreate">＋ 新建</view>
+    <view wx:else class="head-action" bindtap="backToList">返回列表</view>
   </view>
 
   <block wx:if="{{viewMode === 'list'}}">

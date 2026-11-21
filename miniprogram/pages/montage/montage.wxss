@@ -71,3 +71,6 @@
 .video-preview-title { flex: 1; text-align: center; font-size: 28rpx; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-preview-download { font-size: 26rpx; color: #7dd3fc; }
 .video-preview-body { flex: 1; width: 100%; background: #000; }
+
+.head-actions { display: flex; gap: 10rpx; margin-top: 14rpx; flex-wrap: wrap; }
+.list-count { font-size: 21rpx; color: #94a3b8; }
