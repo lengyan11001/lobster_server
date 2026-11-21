@@ -144,16 +144,6 @@
       <text class="link">{{advancedOpen ? '收起' : '展开'}}</text>
     </view>
     <block wx:if="{{advancedOpen}}">
-      <view class="param-grid">
-        <view class="param"><text class="param-label">音量 {{volumeText}}</text>
-          <slider min="10" max="200" step="5" value="{{volume * 100}}" block-size="20" activeColor="#2563eb" bindchange="onVolumeChange" bindchanging="onVolumeChange" /></view>
-        <view class="param"><text class="param-label">音调 {{pitchText}}</text>
-          <slider min="-12" max="12" step="1" value="{{pitch}}" block-size="20" activeColor="#2563eb" bindchange="onPitchChange" bindchanging="onPitchChange" /></view>
-        <view class="param"><text class="param-label">情绪</text>
-          <picker mode="selector" range="{{emotions}}" value="{{emotionIndex}}" bindchange="pickEmotion">
-            <view class="picker small">{{emotions[emotionIndex]}}</view>
-          </picker></view>
-      </view>
       <text class="label">音色指令</text>
       <textarea class="textarea small" value="{{instructions}}" bindinput="onInstructions" placeholder="例如：自然、有亲和力，重点句稍作停顿" auto-height maxlength="300" />
 

@@ -906,9 +906,7 @@ Page({
       voice: voice.voice,
       text: "你好，这是当前声音的试听效果。",
       rate: String(this.data.speed || 1),
-      volume: String(this.data.volume || 1),
-      pitch: String(this.data.pitch),
-      emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
+      // 只保留语速，音量/音调/情绪用服务端默认值
     };
     if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
     if (voice.provider === "minimax" || voice.provider === "qwen") payload.voice_provider = voice.provider;
@@ -1281,9 +1279,7 @@ Page({
       voice: voice.voice,
       text: String(this.data.text || "").trim(),
       rate: String(this.data.speed || 1),
-      volume: String(this.data.volume || 1),
-      pitch: String(this.data.pitch),
-      emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
+      // 只保留语速，音量/音调/情绪用服务端默认值
     };
     if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
     if (voice.provider === "minimax" || voice.provider === "qwen") ttsPayload.voice_provider = voice.provider;
