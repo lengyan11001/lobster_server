@@ -66,9 +66,12 @@
     </block>
 
     <text class="label">素材分组（切片好的素材，随机取）</text>
-    <picker mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
-      <view class="picker">{{groupChosen && groupIndex >= 0 ? groupNames[groupIndex] : '不选分组（用下面手动素材）'}}</view>
-    </picker>
+    <scroll-view scroll-x class="group-scroll">
+      <view class="group-row">
+        <view class="group-chip {{!groupChosen ? 'active' : ''}}" data-index="-1" bindtap="pickGroup">不选分组</view>
+        <view wx:for="{{groups}}" wx:key="*this" class="group-chip {{groupChosen && groupIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="pickGroup">{{item}}（{{groupCounts[index]}}）</view>
+      </view>
+    </scroll-view>
 
     <text class="label">素材（{{materials.length}} 个视频）</text>
     <view class="mat-row">

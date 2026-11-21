@@ -177,6 +177,15 @@ Page({
     this.setData({ groupIndex: Number(e.detail.value), groupChosen: true });
   },
 
+  pickGroup(e) {
+    const index = Number(e.currentTarget.dataset.index);
+    if (!Number.isFinite(index) || index < 0) {
+      this.setData({ groupChosen: false, groupIndex: this.data.groups.length ? 0 : -1 });
+      return;
+    }
+    this.setData({ groupChosen: true, groupIndex: index });
+  },
+
   loadMontageVoices() {
     if (!(app.globalData.token && app.globalData.phone)) return;
     app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })

@@ -64,3 +64,8 @@
 .job-dl { font-size: 24rpx; color: #0f766e; }
 
 .job-error { display: block; margin-top: 6rpx; font-size: 20rpx; color: #dc2626; line-height: 1.4; }
+
+.group-scroll { width: 100%; margin: 4rpx 0 12rpx; white-space: nowrap; }
+.group-row { display: inline-flex; gap: 12rpx; padding: 4rpx 0; }
+.group-chip { padding: 14rpx 22rpx; border-radius: 999rpx; background: #f1f5f9; color: #475569; font-size: 24rpx; }
+.group-chip.active { background: #1957E8; color: #fff; }
