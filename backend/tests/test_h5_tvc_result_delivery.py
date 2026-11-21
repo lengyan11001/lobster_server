@@ -63,6 +63,6 @@ def test_h5_never_displays_raw_tvc_result_json():
     source = APP_JS.read_text(encoding="utf-8")
 
     assert "function runDisplayResult(row)" in source
-    assert "爆款TVC已生成，点击查看成片。" in source
+    assert "创意分镜头视频已生成，点击查看成片。" in source
     assert "const result = runDisplayResult(row);" in source
     assert "const text = runDisplayResult(run);" in source

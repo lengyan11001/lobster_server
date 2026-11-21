@@ -540,7 +540,7 @@ def _tool_definitions(
         f"【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"{_DEFAULT_IMAGE_MODEL}\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
         f"video.generate 用户未指定模型时 payload.model 填 \"{_DEFAULT_VIDEO_MODEL}\"；用户未指定时长时不要强行填 duration，由后端按模型默认值处理。"
         "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
-        "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.daihuo.pipeline\"，不要仅因模型名含 veo 就选 comfly.daihuo。"
+        "【创意分镜头视频】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.daihuo.pipeline\"，不要仅因模型名含 veo 就选 comfly.daihuo。"
     )
     if openclaw_mode:
         invoke_description += (

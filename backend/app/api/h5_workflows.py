@@ -333,7 +333,7 @@ _WORKFLOW_TASK_CAPABILITY_IDS = {
 _WORKFLOW_PACKAGE_LABELS = {
     "hifly_digital_human_skill": "数字人口播视频",
     "comfly_seedance_tvc_skill": "创意分镜头视频",
-    "comfly_veo_skill": "爆款TVC",
+    "comfly_veo_skill": "创意分镜头视频·经典",
     "goal_video_pipeline_skill": "AI设计图",
     "ip_content_daily_skill": "IP日更文案",
     "ip_content_oral_skill": "IP口播文案",

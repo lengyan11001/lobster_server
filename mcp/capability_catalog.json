@@ -740,7 +740,7 @@
     "side_effect": "write"
   },
   "comfly.daihuo": {
-    "description": "（技能「爆款TVC」内的单段/分步能力）Comfly + Veo 图生视频。upload|generate_prompts|submit_video|poll_video。",
+    "description": "（技能「创意分镜头视频」内的单段/分步能力）Comfly + Veo 图生视频。upload|generate_prompts|submit_video|poll_video。",
     "upstream": "local",
     "upstream_tool": "invoke",
     "enabled": true,
@@ -802,7 +802,7 @@
     "side_effect": "write"
   },
   "comfly.daihuo.pipeline": {
-    "description": "技能「爆款TVC」整包成片：一次跑完分镜→多段 Veo→可选 FFmpeg 拼接。action：start_pipeline/run_pipeline/poll_pipeline。",
+    "description": "技能「创意分镜头视频」整包成片：一次跑完分镜→多段视频→可选 FFmpeg 拼接。action：start_pipeline/run_pipeline/poll_pipeline。",
     "upstream": "local",
     "upstream_tool": "invoke",
     "enabled": true,

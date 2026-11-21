@@ -10,7 +10,7 @@ def test_capability_origin_uses_business_name():
         entry_type="pre_deduct",
         ref_type="comfly_proxy",
         meta={"capability_id": "comfly.daihuo.pipeline", "endpoint": "chat"},
-    ).startswith("爆款TVC 整包成片")
+    ).startswith("创意分镜头视频 整包成片")
 
     video = billing._public_credit_history_origin(
         entry_type="direct_charge",
