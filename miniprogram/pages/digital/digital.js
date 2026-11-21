@@ -661,6 +661,7 @@ Page({
 
   loadVoices() {
     if (!app.globalData.token) return Promise.resolve();
+    const hadVoices = (this.data.voices || []).length > 0;
     this.setData({ voicesLoading: true });
     return app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
       .then((data) => {
@@ -674,7 +675,7 @@ Page({
           voiceIndex: index,
           selectedVoiceId: selected ? String(selected.id || "") : ""
         });
-        if (selected) this.applyVoiceDefaults(selected);
+        if (selected && !hadVoices) this.applyVoiceDefaults(selected);
       })
       .catch((err) => {
         const msg = api.errorMessage(err);
