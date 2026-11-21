@@ -98,10 +98,11 @@ Page({
 
   loadMontageVoices() {
     if (!(app.globalData.token && app.globalData.phone)) return;
-    app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
+    app.request({ method: "POST", url: "/api/shanjian-smart-clip/voices", data: {}, timeout: 30000 })
       .then((data) => {
-        const items = ((data && data.items) || [])
-          .map((row) => ({ id: String(row.voice || row.voice_id || ""), name: String(row.title || row.name || "音色") }))
+        const rows = (data && (data.results || data.items)) || [];
+        const items = rows
+          .map((row) => ({ id: String(row.voiceId || row.voice_id || row.speakerId || row.id || ""), name: String(row.name || row.title || "音色") }))
           .filter((row) => !!row.id);
         this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: items.length ? 0 : -1 });
       })
