@@ -22,6 +22,8 @@ Page({
     templatesLoading: false,
     templateIndex: -1,
     groups: [],
+    groupCounts: [],
+    groupChosen: false,
     groupNames: [],
     groupIndex: -1,
     voices: [],
@@ -166,13 +168,13 @@ Page({
           .filter((row) => String(row.name || row.group || row.title || ""))
           .map((row) => Number(row.count || 0));
         const groupNames = names.map((name, index) => `${name}（${counts[index] || 0} 个视频）`);
-        this.setData({ groups: names, groupCounts: counts, groupNames, groupIndex: -1 });
+        this.setData({ groups: names, groupCounts: counts, groupNames, groupIndex: names.length ? 0 : -1, groupChosen: false });
       })
       .catch(() => {});
   },
 
   selectGroup(e) {
-    this.setData({ groupIndex: Number(e.detail.value) });
+    this.setData({ groupIndex: Number(e.detail.value), groupChosen: true });
   },
 
   loadMontageVoices() {
@@ -240,8 +242,9 @@ Page({
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
     const groupIndex = Number(this.data.groupIndex);
-    const group = groupIndex >= 0 ? String((this.data.groups || [])[groupIndex] || "") : "";
-    const groupCount = groupIndex >= 0 ? Number((this.data.groupCounts || [])[groupIndex] || 0) : 0;
+    const groupChosen = !!this.data.groupChosen && groupIndex >= 0;
+    const group = groupChosen ? String((this.data.groups || [])[groupIndex] || "") : "";
+    const groupCount = groupChosen ? Number((this.data.groupCounts || [])[groupIndex] || 0) : 0;
     if (!urls.length) {
       if (!group) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
       if (groupCount <= 0) return wx.showToast({ title: "这个分组没有视频素材，请换一个", icon: "none" });

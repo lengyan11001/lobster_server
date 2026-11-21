@@ -67,7 +67,7 @@
 
     <text class="label">素材分组（切片好的素材，随机取）</text>
     <picker mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
-      <view class="picker">{{groupIndex >= 0 ? groupNames[groupIndex] : '不选分组（用下面手动素材）'}}</view>
+      <view class="picker">{{groupChosen && groupIndex >= 0 ? groupNames[groupIndex] : '不选分组（用下面手动素材）'}}</view>
     </picker>
 
     <text class="label">素材（{{materials.length}} 个视频）</text>
