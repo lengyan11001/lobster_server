@@ -31,7 +31,7 @@ FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 
 class MontageBody(BaseModel):
     record_id: Optional[int] = None
-    voice_url: str = Field("", max_length=1000)
+    voice_url: str = Field("", max_length=12_000_000)
     asset_urls: List[str] = Field(default_factory=list)
     group: str = Field("", max_length=80)
     target_seconds: Optional[int] = None
@@ -142,6 +142,16 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
                 raise HTTPException(status_code=400, detail="这条录音没有可用的音频文件")
         elif body.voice_url.startswith("http"):
             voice_path = _download(body.voice_url, work / "voice.mp3")
+        elif body.voice_url.startswith("data:"):
+            # preview-tts 返回的是 data URL（base64 音频），直接落盘
+            import base64 as _b64
+            raw = body.voice_url.split(",", 1)[-1]
+            try:
+                blob = _b64.b64decode(raw)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=400, detail="语音数据解析失败") from exc
+            voice_path = work / "voice.mp3"
+            voice_path.write_bytes(blob)
         if voice_path is None:
             raise HTTPException(status_code=400, detail="请提供口播音频或录音")
 
