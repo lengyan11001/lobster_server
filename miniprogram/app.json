@@ -33,7 +33,8 @@
     "pages/ip-profile/ip-profile",
     "pages/ip-recognize/ip-recognize",
     "pages/topic-recommend/topic-recommend",
-    "pages/template-edit/template-edit"
+    "pages/template-edit/template-edit",
+    "pages/mc-spike/mc-spike"
   ],
   "window": {
     "navigationBarTitleText": "龙虾AI员工",

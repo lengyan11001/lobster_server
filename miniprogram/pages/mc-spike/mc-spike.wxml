@@ -1,0 +1,20 @@
+<view class="page">
+  <view class="card">
+    <text class="title">媒体容器 P0 探针</text>
+    <text class="hint">验证「不依赖 ffmpeg」能否在端上裁切+拼接+挂口播</text>
+    <text class="env">{{env}}</text>
+  </view>
+
+  <view class="card">
+    <button class="btn ghost" bindtap="pickVideos">选 3 段视频</button>
+    <text class="line">已选 {{videos.length}} 段</text>
+    <button class="btn ghost" bindtap="pickAudio">选口播音频</button>
+    <text class="line">{{audio ? '已选音频' : '未选音频'}}</text>
+    <button class="btn primary" loading="{{busy}}" bindtap="compose">开始拼接并导出</button>
+  </view>
+
+  <view class="card">
+    <text class="title small">日志</text>
+    <text class="log" wx:for="{{logs}}" wx:key="*this">{{item}}</text>
+  </view>
+</view>
