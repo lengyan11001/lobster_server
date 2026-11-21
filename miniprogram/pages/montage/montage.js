@@ -100,6 +100,14 @@ Page({
     const bits = ["文案"];
     if (materials.length) bits.push("素材 " + materials.length + " 个");
     wx.showToast({ title: "已填好：" + bits.join(" + "), icon: "none" });
+    const tplId = String((item.params || {}).template_style_id || "").trim();
+    if (tplId) {
+      const list = this.data.templates || [];
+      let idx = list.findIndex((row) => String(row.styleId || "") === tplId);
+      if (idx < 0 && params.template_name) idx = list.findIndex((row) => String(row.name || "") === String(params.template_name));
+      this.setData({ useTemplate: true, templateIndex: idx >= 0 ? idx : this.data.templateIndex });
+    }
+
   },
 
   loadGroups() {

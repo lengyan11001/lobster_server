@@ -280,8 +280,12 @@ Page({
         }))
       });
     }
-    if (useMaterials) {
-      this.applyTemplateById(String(params.template_style_id || ""), String(params.template_name || ""));
+    const tplId = String(params.template_style_id || "").trim() || String(this.data.dhTemplateStyleId || "").trim();
+    if (tplId) {
+      this.setData({ templateMode: "template" });
+      this.applyTemplateById(tplId, String(params.template_name || this.data.dhTemplateName || ""));
+    } else if (useMaterials) {
+      this.applyTemplateById("", "");
       if (!this.data.assetsAll.length) this.loadAssets();
     }
     const bits = ["文案"];
