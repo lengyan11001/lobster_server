@@ -14,7 +14,7 @@
   </view>
 
   <view class="panel">
-    <text class="label">音色</text>
+    <text class="label">音色（素材库 · 我的声音分身）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
       <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '默认音色'}}</view>
     </picker>
@@ -44,11 +44,6 @@
         </view>
       </view>
     </scroll-view>
-
-    <text class="label">模板声音（闪剪模板用）</text>
-    <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
-      <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '请选择声音'}}</view>
-    </picker>
 
     <text class="label">口播文案</text>
     <textarea class="textarea" value="{{content}}" bindinput="onContentInput" placeholder="输入这条视频要念的文案" auto-height maxlength="1200" />

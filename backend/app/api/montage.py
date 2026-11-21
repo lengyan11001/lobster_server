@@ -274,16 +274,49 @@ def montage_voices(
     user = online_user_for_mobile_user(db, current_user)
     from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
 
-    token, _source = _load_sutui_token_for_stt(db, int(user.id))
-    if not token:
-        return {"ok": True, "items": []}
-    items = device_tts.list_voices(token)
+    from ..models import UserHiflyVoiceAsset  # noqa: PLC0415
+    from .hifly_assets import _minimax_voice_id_from_row  # noqa: PLC0415
+
+    mine: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    try:
+        rows = (
+            db.query(UserHiflyVoiceAsset)
+            .filter(UserHiflyVoiceAsset.user_id == int(user.id))
+            .order_by(UserHiflyVoiceAsset.updated_at.desc())
+            .limit(50)
+            .all()
+        )
+    except Exception:
+        rows = []
+    for row in rows:
+        try:
+            vid = _minimax_voice_id_from_row(row)
+        except Exception:
+            vid = ""
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        name = str(getattr(row, "title", "") or getattr(row, "name", "") or "我的音色")[:40]
+        mine.append({"id": vid, "name": name, "source": "mine"})
+
+    official: list[dict[str, Any]] = []
     default_id = ""
     try:
-        default_id = device_tts.pick_voice_id(token)
+        from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
+        token, _src = _load_sutui_token_for_stt(db, int(user.id))
+        if token:
+            for item in device_tts.list_voices(token):
+                if item.get("id") in seen:
+                    continue
+                official.append({"id": item.get("id"), "name": item.get("name"), "source": "official"})
+            default_id = device_tts.pick_voice_id(token)
     except Exception:
-        default_id = ""
-    return {"ok": True, "items": items, "default_id": default_id}
+        official = []
+    items = mine + official[:40]
+    if not default_id and mine:
+        default_id = mine[0]["id"]
+    return {"ok": True, "items": items, "default_id": default_id, "mine_count": len(mine)}
 
 
 @router.post("/api/montage/tts", summary="口播文案转语音（试听/生成音轨）")
