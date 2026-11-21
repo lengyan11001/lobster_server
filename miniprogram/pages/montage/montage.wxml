@@ -45,7 +45,7 @@
       </view>
     </scroll-view>
 
-    <text class="label">声音</text>
+    <text class="label">模板声音（闪剪模板用）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
       <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '请选择声音'}}</view>
     </picker>
