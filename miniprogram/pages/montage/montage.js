@@ -24,6 +24,7 @@ Page({
     groups: [],
     groupsLoading: false,
     groupNames: [],
+    selectedGroup: "",
     groupIndex: -1,
     voices: [],
     voiceNames: [],
@@ -171,13 +172,24 @@ Page({
       .then((data) => {
         const rows = (data && (data.items || data.groups || data.results)) || [];
         const names = rows.map((row) => String(row.name || row.group || row.title || "")).filter(Boolean);
-        this.setData({ groups: names, groupNames: names, groupIndex: names.length ? 0 : -1, groupsLoading: false });
+        const remembered = String(this.data.selectedGroup || wx.getStorageSync("lobster_montage_group") || "");
+        const selected = names.indexOf(remembered) >= 0 ? remembered : (names[0] || "");
+        this.setData({
+          groups: names,
+          groupNames: names,
+          selectedGroup: selected,
+          groupIndex: selected ? names.indexOf(selected) : -1,
+          groupsLoading: false
+        });
       })
       .catch(() => this.setData({ groupsLoading: false }));
   },
 
   selectGroup(e) {
-    this.setData({ groupIndex: Number(e.detail.value) });
+    const index = Number(e.detail.value);
+    const name = String((this.data.groups || [])[index] || "");
+    this.setData({ groupIndex: index, selectedGroup: name });
+    if (name) wx.setStorageSync("lobster_montage_group", name);
   },
 
   loadMontageVoices() {
@@ -244,7 +256,7 @@ Page({
   startLocalMontage() {
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
-    const group = (this.data.groups[this.data.groupIndex] || "");
+    const group = String(this.data.selectedGroup || this.data.groups[this.data.groupIndex] || "");
     if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
     const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();
@@ -255,18 +267,20 @@ Page({
       if (!voiceUrl) return;
       this.setData({ rendering: true, localVideoUrl: "", localStatus: "正在渲染（裁切+拼接+音轨）…" });
       const started = Date.now();
+      const payload = {
+        voice_url: voiceUrl,
+        group: group,
+        asset_urls: urls.slice(0, 12),
+        ratio: "9:16",
+        title: "混剪成片",
+        template_style_id: String(tpl.styleId || ""),
+        template_name: String(tpl.name || "")
+      };
+      wx.setStorageSync("lobster_montage_last_payload", payload);
       app.request({
         method: "POST",
         url: "/api/montage/jobs",
-        data: {
-          voice_url: voiceUrl,
-          group: group,
-          asset_urls: urls.slice(0, 12),
-          ratio: "9:16",
-          title: "混剪成片",
-          template_style_id: String(tpl.styleId || ""),
-          template_name: String(tpl.name || "")
-        },
+        data: payload,
         timeout: 60000
       })
         .then((data) => {
