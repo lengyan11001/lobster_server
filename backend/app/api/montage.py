@@ -13,12 +13,12 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
-from ..models import Asset, RecorderAudioRecord, User, UserContentRecord
+from ..models import Asset, MontageJob, RecorderAudioRecord, User, UserContentRecord
 from .assets import _gen_asset_id, _upload_to_tos
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
@@ -360,24 +360,94 @@ _montage_sem = asyncio.Semaphore(_MONTAGE_MAX_CONCURRENCY)
 _montage_waiting = 0
 
 
-@router.post("/api/montage/jobs", summary="口播驱动混剪：裁切+拼接+换音轨")
-async def create_montage(
-    body: MontageBody,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """并发保护：同时最多 MONTAGE_MAX_CONCURRENCY 个 ffmpeg 任务，排队超过上限直接 429。"""
+def _execute_job(job_id: int) -> None:
+    db = SessionLocal()
+    try:
+        row = db.query(MontageJob).filter(MontageJob.id == int(job_id)).first()
+        if row is None:
+            return
+        owner_id = int(row.user_id)
+        params = dict(row.params or {})
+        row.status = "running"
+        row.updated_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
+    try:
+        body = MontageBody(**params)
+        result = _render_montage(owner_id, body)
+        db = SessionLocal()
+        try:
+            row = db.query(MontageJob).filter(MontageJob.id == int(job_id)).first()
+            if row is not None:
+                row.status = "succeed"
+                row.video_url = result.get("video_url")
+                row.asset_id = result.get("asset_id")
+                row.duration = result.get("duration")
+                row.updated_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+    except HTTPException as exc:
+        _fail_job(job_id, str(exc.detail or "生成失败"))
+    except Exception as exc:  # noqa: BLE001
+        _fail_job(job_id, str(exc)[:300])
+
+
+def _fail_job(job_id: int, message: str) -> None:
+    db = SessionLocal()
+    try:
+        row = db.query(MontageJob).filter(MontageJob.id == int(job_id)).first()
+        if row is not None:
+            row.status = "failed"
+            row.error = message[:500]
+            row.updated_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+
+async def _run_montage_job(job_id: int) -> None:
     global _montage_waiting
-    user = online_user_for_mobile_user(db, current_user)
-    owner_id = int(user.id)
-    if _montage_waiting >= _MONTAGE_MAX_QUEUE:
-        raise HTTPException(status_code=429, detail="当前混剪任务较多，请稍后重试")
     _montage_waiting += 1
     try:
         async with _montage_sem:
-            return await asyncio.to_thread(_render_montage, owner_id, body)
+            await asyncio.to_thread(_execute_job, job_id)
     finally:
         _montage_waiting -= 1
+
+
+@router.post("/api/montage/jobs", summary="创建混剪任务（服务端持久化，前端只查）")
+async def create_montage(
+    body: MontageBody,
+    background: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    if _montage_waiting >= _MONTAGE_MAX_QUEUE:
+        raise HTTPException(status_code=429, detail="当前混剪任务较多，请稍后重试")
+    job = MontageJob(user_id=int(user.id), status="pending", params=body.model_dump())
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    background.add_task(_run_montage_job, int(job.id))
+    return {"ok": True, "job_id": int(job.id), "status": "pending"}
+
+
+@router.get("/api/montage/jobs/latest", summary="最近一条混剪任务（刷新后恢复）")
+def latest_montage_job(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    row = db.query(MontageJob).filter(MontageJob.user_id == int(user.id)).order_by(MontageJob.id.desc()).first()
+    if row is None:
+        return {"ok": True, "job": None}
+    return {"ok": True, "job": {
+        "job_id": row.id, "status": row.status, "video_url": row.video_url or "",
+        "duration": float(row.duration or 0), "error": row.error or "",
+    }}
 
 
 class TTSBody(BaseModel):
@@ -455,3 +525,21 @@ def montage_tts(
         raise HTTPException(status_code=503, detail="TTS 未配置，请联系管理员")
     audio_url = device_tts.synthesize(text, token=token, voice_id=str(body.voice_id or "").strip())
     return {"ok": True, "audio_url": audio_url, "chars": len(text)}
+
+
+@router.get("/api/montage/jobs/{job_id}", summary="查询混剪任务")
+def get_montage_job(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    row = db.query(MontageJob).filter(MontageJob.id == int(job_id), MontageJob.user_id == int(user.id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {
+        "ok": True, "job_id": row.id, "status": row.status,
+        "video_url": row.video_url or "", "asset_id": row.asset_id or "",
+        "duration": float(row.duration or 0), "error": row.error or "",
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+    }

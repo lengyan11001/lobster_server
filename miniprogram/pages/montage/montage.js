@@ -49,6 +49,10 @@ Page({
     localStatus: ""
   },
 
+  onShow() {
+    this.resumeMontageJob();
+  },
+
   onLoad() {
     this.polls = 0;
     this.timer = null;
@@ -202,27 +206,62 @@ Page({
       app.request({
         method: "POST",
         url: "/api/montage/jobs",
-        data: {
-          voice_url: voiceUrl,
-          group: group,
-          asset_urls: urls.slice(0, 12),
-          template_style_id: (this.data.useTemplate && (this.data.templates[this.data.templateIndex] || {}).styleId) || "", ratio: "9:16", title: "混剪成片" },
-        timeout: 300000
+        data: { voice_url: voiceUrl, group: group, asset_urls: urls.slice(0, 12), ratio: "9:16", title: "混剪成片" },
+        timeout: 60000
       })
-        .then((data) => this.setData({
-          localVideoUrl: String((data && data.video_url) || ""),
-          localStatus: "完成 " + ((data && data.duration) || 0) + "s · " + Math.round((Date.now() - started) / 1000) + "秒"
-        }))
-        .catch((err) => {
-          const msg = api.errorMessage(err) || "混剪失败";
-          this.setData({ localStatus: msg });
-          wx.showToast({ title: msg.slice(0, 24), icon: "none" });
+        .then((data) => {
+          const jobId = Number((data && data.job_id) || 0);
+          if (!jobId) throw new Error("没有拿到任务号");
+          wx.setStorageSync("lobster_montage_job", jobId);
+          this.pollMontageJob(jobId, started);
         })
-        .then(() => this.setData({ rendering: false }));
+        .catch((err) => {
+          const msg = api.errorMessage(err) || "混剪提交失败";
+          this.setData({ rendering: false, localStatus: msg });
+          wx.showToast({ title: msg.slice(0, 24), icon: "none" });
+        });
     };
     if (this.data.speechAudioUrl) return run(this.data.speechAudioUrl);
     this.setData({ speechStatus: "还没生成音轨，先按文案自动生成…" });
     this.callTTS(false).then(run);
+  },
+
+  pollMontageJob(jobId, startedAt) {
+    if (this.montageTimer) clearInterval(this.montageTimer);
+    const started = startedAt || Date.now();
+    const poll = () => {
+      app.request({ url: "/api/montage/jobs/" + jobId, timeout: 30000 })
+        .then((data) => {
+          const status = String((data && data.status) || "");
+          if (status === "succeed") {
+            clearInterval(this.montageTimer);
+            this.montageTimer = null;
+            wx.removeStorageSync("lobster_montage_job");
+            this.setData({
+              rendering: false,
+              localVideoUrl: String(data.video_url || ""),
+              localStatus: "完成 " + Number(data.duration || 0).toFixed(1) + "s · " + Math.round((Date.now() - started) / 1000) + "秒"
+            });
+          } else if (status === "failed") {
+            clearInterval(this.montageTimer);
+            this.montageTimer = null;
+            wx.removeStorageSync("lobster_montage_job");
+            this.setData({ rendering: false, localStatus: String(data.error || "生成失败") });
+          } else {
+            this.setData({ rendering: true, localStatus: "渲染中…" });
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    this.montageTimer = setInterval(poll, 3000);
+  },
+
+  resumeMontageJob() {
+    const saved = Number(wx.getStorageSync("lobster_montage_job") || 0);
+    if (!saved) return;
+    this.setData({ rendering: true, localStatus: "上次的混剪还在跑，继续查…" });
+    this.pollMontageJob(saved);
   },
 
   saveLocalVideo() {

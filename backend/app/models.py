@@ -521,6 +521,23 @@ class IPProfileV2Archive(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class MontageJob(Base):
+    """混剪任务（服务端持久化，前端只查不轮询状态机）。"""
+
+    __tablename__ = "montage_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    asset_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    duration: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class IPPrefillRecord(Base):
     """选题生成历史（数字人/素材混剪/创意分镜共用）。一条记录 = 一次生成的全部选题与参数。"""
 
