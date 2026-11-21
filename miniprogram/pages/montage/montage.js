@@ -22,8 +22,6 @@ Page({
     templatesLoading: false,
     templateIndex: -1,
     groups: [],
-    groupCounts: [],
-    groupChosen: false,
     groupNames: [],
     groupIndex: -1,
     voices: [],
@@ -164,26 +162,13 @@ Page({
       .then((data) => {
         const rows = (data && (data.items || data.groups || data.results)) || [];
         const names = rows.map((row) => String(row.name || row.group || row.title || "")).filter(Boolean);
-        const counts = rows
-          .filter((row) => String(row.name || row.group || row.title || ""))
-          .map((row) => Number(row.count || 0));
-        const groupNames = names.map((name, index) => `${name}（${counts[index] || 0} 个视频）`);
-        this.setData({ groups: names, groupCounts: counts, groupNames, groupIndex: names.length ? 0 : -1, groupChosen: false });
+        this.setData({ groups: names, groupNames: names, groupIndex: names.length ? 0 : -1 });
       })
       .catch(() => {});
   },
 
   selectGroup(e) {
-    this.setData({ groupIndex: Number(e.detail.value), groupChosen: true });
-  },
-
-  pickGroup(e) {
-    const index = Number(e.currentTarget.dataset.index);
-    if (!Number.isFinite(index) || index < 0) {
-      this.setData({ groupChosen: false, groupIndex: this.data.groups.length ? 0 : -1 });
-      return;
-    }
-    this.setData({ groupChosen: true, groupIndex: index });
+    this.setData({ groupIndex: Number(e.detail.value) });
   },
 
   loadMontageVoices() {
@@ -250,14 +235,8 @@ Page({
   startLocalMontage() {
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
-    const groupIndex = Number(this.data.groupIndex);
-    const groupChosen = !!this.data.groupChosen && groupIndex >= 0;
-    const group = groupChosen ? String((this.data.groups || [])[groupIndex] || "") : "";
-    const groupCount = groupChosen ? Number((this.data.groupCounts || [])[groupIndex] || 0) : 0;
-    if (!urls.length) {
-      if (!group) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
-      if (groupCount <= 0) return wx.showToast({ title: "这个分组没有视频素材，请换一个", icon: "none" });
-    }
+    const group = (this.data.groups[this.data.groupIndex] || "");
+    if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
     const text = String(this.data.speechText || "").trim();
     if (!this.data.speechAudioUrl && !text) {
       return wx.showToast({ title: "先写口播文案（或先点生成音轨）", icon: "none" });
