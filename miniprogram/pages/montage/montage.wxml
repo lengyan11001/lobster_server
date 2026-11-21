@@ -55,6 +55,10 @@
       <switch checked="{{useTemplate}}" bindchange="toggleUseTemplate" color="#1957E8" />
     </view>
     <block wx:if="{{useTemplate}}">
+      <text class="label">标题（模板主标题）</text>
+      <textarea class="textarea" value="{{templateTitle}}" bindinput="onTemplateTitle" maxlength="80" placeholder="输入成片标题，可分多行" auto-height />
+      <text class="label">介绍文案（可空）</text>
+      <textarea class="textarea" value="{{templateContent}}" bindinput="onTemplateContent" maxlength="240" placeholder="填写模板身份栏要显示的介绍文案" auto-height />
       <view wx:if="{{templatesLoading}}" class="hint">模板加载中…</view>
       <view wx:elif="{{!templates.length}}" class="hint">没有可用模板</view>
       <scroll-view wx:else scroll-x class="tpl-scroll">

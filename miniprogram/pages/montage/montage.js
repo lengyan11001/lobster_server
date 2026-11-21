@@ -48,6 +48,8 @@ Page({
     speechStatus: "",
     speechDuration: 0,
     useTemplate: false,
+    templateTitle: "",
+    templateContent: "",
     ttsLoading: false,
     viewMode: "list",
     jobList: [],
@@ -99,8 +101,23 @@ Page({
     const id = Number(e.currentTarget.dataset.id || 0);
     const row = (this.data.jobList || []).find((item) => item.job_id === id);
     if (!row) return;
-    if (row.video_url) wx.previewMedia({ sources: [{ url: row.video_url, type: "video" }] });
-    else wx.showToast({ title: row.statusText, icon: "none" });
+    if (row.video_url) {
+      this.setData({ previewOpen: true, previewUrl: row.video_url, previewTitle: row.title || "混剪成片" });
+    } else {
+      wx.showToast({ title: row.statusText, icon: "none" });
+    }
+  },
+
+  closePreview() {
+    this.setData({ previewOpen: false, previewUrl: "", previewTitle: "" });
+  },
+
+  downloadPreview() {
+    const url = String(this.data.previewUrl || "");
+    if (!url) return;
+    media.saveToAlbum({ url, media_type: "video", title: this.data.previewTitle || "混剪成片" })
+      .then(() => wx.showToast({ title: "已保存到相册", icon: "success" }))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
   },
 
   onLoad() {
@@ -212,6 +229,14 @@ Page({
     this.setData({ speechText: e.detail.value || "" });
   },
 
+  onTemplateTitle(e) {
+    this.setData({ templateTitle: e.detail.value || "" });
+  },
+
+  onTemplateContent(e) {
+    this.setData({ templateContent: e.detail.value || "" });
+  },
+
   callTTS(preview) {
     const text = String(this.data.speechText || "").trim();
     if (!text) return wx.showToast({ title: "先写口播文案", icon: "none" });
@@ -272,7 +297,8 @@ Page({
         group: group,
         asset_urls: urls.slice(0, 12),
         ratio: "9:16",
-        title: "混剪成片",
+        title: String(this.data.templateTitle || "").trim() || "混剪成片",
+        content: String(this.data.templateContent || ""),
         template_style_id: String(tpl.styleId || ""),
         template_name: String(tpl.name || "")
       };
