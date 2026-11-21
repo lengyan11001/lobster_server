@@ -48,7 +48,7 @@ Page({
     this.polls = 0;
     this.timer = null;
     this.loadTemplates("oralMixCutting");
-    this.loadVoices();
+    this.loadMontageVoices();
   },
 
   onUnload() {
