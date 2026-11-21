@@ -1704,6 +1704,27 @@ def _backfill_installation_signup_bonus_claims():
         logger.warning("Backfill installation_signup_bonus_claims skipped: %s", e)
 
 
+def _install_validation_logger(app):
+    """把 422 的字段明细打进日志，便于定位前端传参问题。"""
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_handler(request, exc):  # noqa: ANN001
+        try:
+            body = await request.body()
+            snippet = body[:600].decode("utf-8", "ignore")
+        except Exception:
+            snippet = ""
+        logger.warning(
+            "[422] path=%s errors=%s body=%s",
+            request.url.path,
+            str(exc.errors())[:800],
+            snippet,
+        )
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
 def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     with _startup_db_lock():
@@ -1775,6 +1796,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="龙虾 - 你的私人 AI 助手",
     )
+    _install_validation_logger(app)
 
     # 规范禁止 ACAO=* 与 Access-Control-Allow-Credentials:true 同时出现；浏览器会拒收响应。
     # 本服务鉴权为 Bearer JWT（非跨站 Cookie），无需 credentials=True；否则与 allow_origins=["*"] 组合会踩坑。
