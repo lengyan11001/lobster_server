@@ -145,7 +145,7 @@ Page({
     cloneSubmitting: false, cloneStatus: "",
     mode: "tts", title: "", taskName: "数字人口播", videoTitle: "", text: "", audioUrl: "", audioName: "",
     durationMode: "short", targetDuration: 60, templateMode: "none", advancedOpen: false,
-    speed: 1, speedText: "1.00", volume: 1, volumeText: "1.00",
+    speed: 1, speedText: "1.00", speedTouched: false, volume: 1, volumeText: "1.00",
     pitch: 0, pitchText: "0", pitchMin: -12, pitchMax: 12, pitchStep: 1,
     emotions: EMOTION_LABELS, emotionIndex: 0,
     instructions: "",
@@ -690,15 +690,18 @@ Page({
     const volume = Math.min(2, Math.max(0.1, Number(voice.volume || 1)));
     const speed = Math.min(2, Math.max(0.5, Number(voice.rate || 1)));
     const emotionIdx = Math.max(0, EMOTION_VALUES.indexOf(String(voice.emotion || "happy")));
-    this.setData({
+    const patch = {
       pitch,
       pitchText: String(pitch),
       volume,
       volumeText: volume.toFixed(2),
-      speed,
-      speedText: speed.toFixed(2),
       emotionIndex: emotionIdx
-    });
+    };
+    if (!this.data.speedTouched) {
+      patch.speed = speed;
+      patch.speedText = speed.toFixed(2);
+    }
+    this.setData(patch);
   },
 
   chooseTrainFile() {
@@ -1058,7 +1061,7 @@ Page({
   selectVoice(e) {
     const index = Number(e.detail.value || 0);
     const row = (this.data.voices || [])[index];
-    this.setData({ voiceIndex: index, selectedVoiceId: row ? String(row.id || "") : "" });
+    this.setData({ voiceIndex: index, selectedVoiceId: row ? String(row.id || "") : "", speedTouched: false });
     this.applyVoiceDefaults(row);
   },
 
@@ -1098,7 +1101,7 @@ Page({
   toggleAdvanced() { this.setData({ advancedOpen: !this.data.advancedOpen }); },
   onTitleInput(e) { this.setData({ title: e.detail.value }); },
   onTextInput(e) { this.setData({ text: e.detail.value }); },
-  onSpeedChange(e) { const v = Number(e.detail.value || 100) / 100; this.setData({ speed: v, speedText: v.toFixed(2) }); },
+  onSpeedChange(e) { const v = Number(e.detail.value || 100) / 100; this.setData({ speed: v, speedText: v.toFixed(2), speedTouched: true }); },
   onVolumeChange(e) { const v = Number(e.detail.value || 100) / 100; this.setData({ volume: v, volumeText: v.toFixed(2) }); },
   onPitchChange(e) { const v = Number(e.detail.value); this.setData({ pitch: v, pitchText: String(v) }); },
 
