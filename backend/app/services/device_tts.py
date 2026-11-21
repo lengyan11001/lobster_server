@@ -289,3 +289,36 @@ def split_sentences(text: str, *, min_chars: int = 0) -> list:
     if tail:
         out.append(tail)
     return [item for item in out if item]
+
+
+def list_voices(token: str) -> list[dict]:
+    """拉上游音色列表（含克隆音色）。返回 [{id, name}]。"""
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(
+                _base() + "/api/v3/minimax/voices",
+                params={"status": "active"},
+                json={},
+                headers={**_headers(token), "Content-Type": "application/json"},
+            )
+        payload = resp.json() if resp.status_code < 400 else {}
+    except Exception:  # noqa: BLE001
+        payload = {}
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            vid = node.get("voice_id") or node.get("voiceId") or node.get("id")
+            name = node.get("name") or node.get("voice_name") or node.get("title")
+            if isinstance(vid, str) and vid and isinstance(name, str) and name and vid not in seen:
+                seen.add(vid)
+                out.append({"id": vid, "name": name[:40]})
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return out[:200]

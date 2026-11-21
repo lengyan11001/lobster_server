@@ -266,6 +266,26 @@ class TTSBody(BaseModel):
     voice_id: str = Field("", max_length=120)
 
 
+@router.get("/api/montage/voices", summary="可用音色（含克隆音色）")
+def montage_voices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
+
+    token, _source = _load_sutui_token_for_stt(db, int(user.id))
+    if not token:
+        return {"ok": True, "items": []}
+    items = device_tts.list_voices(token)
+    default_id = ""
+    try:
+        default_id = device_tts.pick_voice_id(token)
+    except Exception:
+        default_id = ""
+    return {"ok": True, "items": items, "default_id": default_id}
+
+
 @router.post("/api/montage/tts", summary="口播文案转语音（试听/生成音轨）")
 def montage_tts(
     body: TTSBody,

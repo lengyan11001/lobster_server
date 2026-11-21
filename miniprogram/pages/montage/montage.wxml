@@ -14,6 +14,10 @@
   </view>
 
   <view class="panel">
+    <text class="label">音色</text>
+    <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
+      <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '默认音色'}}</view>
+    </picker>
     <text class="label">口播文案（TTS 驱动）</text>
     <textarea class="textarea" value="{{speechText}}" bindinput="onSpeechInput" placeholder="输入口播文案，生成语音后按语音时长切分素材" maxlength="1200" auto-height />
     <view class="btn-row">

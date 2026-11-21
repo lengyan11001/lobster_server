@@ -32,6 +32,9 @@ Page({
     statusText: "",
     videoUrl: "",
     progressText: "",
+    voices: [],
+    voiceNames: [],
+    voiceIndex: -1,
     speechText: "",
     speechAudioUrl: "",
     speechStatus: "",
@@ -93,6 +96,23 @@ Page({
     wx.showToast({ title: "已填好：" + bits.join(" + "), icon: "none" });
   },
 
+  loadMontageVoices() {
+    if (!(app.globalData.token && app.globalData.phone)) return;
+    app.request({ url: "/api/montage/voices", timeout: 30000 })
+      .then((data) => {
+        const items = ((data && data.items) || []).map((row) => ({ id: String(row.id || ""), name: String(row.name || "音色") }));
+        const defaultId = String((data && data.default_id) || "");
+        let index = items.findIndex((row) => row.id === defaultId);
+        if (index < 0 && items.length) index = 0;
+        this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: index });
+      })
+      .catch(() => {});
+  },
+
+  selectVoice(e) {
+    this.setData({ voiceIndex: Number(e.detail.value), speechAudioUrl: "", speechStatus: "" });
+  },
+
   onSpeechInput(e) {
     this.setData({ speechText: e.detail.value || "" });
   },
@@ -102,7 +122,7 @@ Page({
     if (!text) return wx.showToast({ title: "先写口播文案", icon: "none" });
     if (this.data.ttsLoading) return Promise.resolve("");
     this.setData({ ttsLoading: true, speechStatus: "正在合成语音…" });
-    return app.request({ method: "POST", url: "/api/montage/tts", data: { text }, timeout: 90000 })
+    return app.request({ method: "POST", url: "/api/montage/tts", data: { text, voice_id: (this.data.voices[this.data.voiceIndex] || {}).id || "" }, timeout: 90000 })
       .then((data) => {
         const url = String((data && data.audio_url) || "");
         if (!url) throw new Error("没有拿到音频");
