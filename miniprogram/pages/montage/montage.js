@@ -51,7 +51,10 @@ Page({
     jobList: [],
     rendering: false,
     localVideoUrl: "",
-    localStatus: ""
+    localStatus: "",
+    previewOpen: false,
+    previewUrl: "",
+    previewTitle: ""
   },
 
   onShow() {

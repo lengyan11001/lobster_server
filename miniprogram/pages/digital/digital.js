@@ -160,6 +160,7 @@ Page({
     assetKeyword: "",
     submitting: false, statusText: "", videoUrl: "", coverUrl: "", history: [],
     viewMode: "list", jobList: [],
+    previewOpen: false, previewUrl: "", previewTitle: "",
     pickerOpen: false, pickerItems: [], pickerLoading: false, extracting: false, extractStep: 0,
     dhTemplateName: "", dhTemplateDevice: "", dhTemplateStyleId: ""
   },
@@ -217,10 +218,22 @@ Page({
     const row = this.data.jobList[Number(evt.currentTarget.dataset.index || 0)];
     if (!row) return;
     if (row.video_url) {
-      wx.previewMedia({ sources: [{ url: row.video_url, type: "video" }] });
+      this.setData({ previewOpen: true, previewUrl: row.video_url, previewTitle: row.title || "数字人口播" });
       return;
     }
     wx.showToast({ title: row.status_text || "生成中", icon: "none" });
+  },
+
+  closePreview() {
+    this.setData({ previewOpen: false, previewUrl: "", previewTitle: "" });
+  },
+
+  downloadPreview() {
+    const url = String(this.data.previewUrl || "");
+    if (!url) return;
+    media.saveToAlbum({ url, media_type: "video", title: this.data.previewTitle || "数字人口播" })
+      .then(() => wx.showToast({ title: "已保存到相册", icon: "success" }))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
   },
 
   downloadJob(evt) {

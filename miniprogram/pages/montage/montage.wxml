@@ -106,4 +106,13 @@
   </view>
 </view>
 
+  <view wx:if="{{previewOpen}}" class="video-preview">
+    <view class="video-preview-head">
+      <view class="video-preview-back" bindtap="closePreview">‹ 返回</view>
+      <text class="video-preview-title">{{previewTitle}}</text>
+      <text class="video-preview-download" bindtap="downloadPreview">下载</text>
+    </view>
+    <video class="video-preview-body" src="{{previewUrl}}" controls autoplay object-fit="contain"></video>
+  </view>
+
 <topic-prefill id="topicPrefill" target="montage" bind:pick="onPrefillPick" />

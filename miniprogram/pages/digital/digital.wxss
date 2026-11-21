@@ -131,3 +131,10 @@
 
 .job-actions { display: flex; align-items: center; gap: 18rpx; margin-left: 12rpx; }
 .job-dl { font-size: 24rpx; color: #0f766e; }
+
+.video-preview { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 9999; display: flex; flex-direction: column; background: #000; }
+.video-preview-head { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 28rpx; color: #fff; background: #000; }
+.video-preview-back { font-size: 28rpx; color: #fff; padding: 8rpx 12rpx; }
+.video-preview-title { flex: 1; text-align: center; font-size: 28rpx; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-preview-download { font-size: 26rpx; color: #7dd3fc; }
+.video-preview-body { flex: 1; width: 100%; background: #000; }
