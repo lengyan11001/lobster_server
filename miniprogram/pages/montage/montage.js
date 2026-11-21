@@ -163,9 +163,13 @@ Page({
         name: String(row.name || "")
       }))
       .filter((row) => row.fileUrl);
+    const script = String(item.script || item.content || item.body || "");
     const patch = {
       viewMode: "create",
-      content: String(item.script || ""),
+      content: script,
+      speechText: script,
+      templateTitle: String(item.title || ""),
+      templateContent: script,
       duration: Math.max(10, Math.min(180, Number(params.duration || 30)))
     };
     if (materials.length) patch.materials = materials;

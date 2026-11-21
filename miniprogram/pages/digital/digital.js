@@ -329,7 +329,7 @@ Page({
     const duration = Number(params.duration_seconds || 30);
     const patch = {
       viewMode: "create",
-      text: String(item.script || ""),
+      text: String(item.script || item.content || item.body || ""),
       videoTitle: String(item.title || ""),
       taskName: String(item.title || this.data.taskName),
       durationMode: duration > 30 ? "long" : "short",
