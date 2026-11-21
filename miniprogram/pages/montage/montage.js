@@ -237,6 +237,7 @@ Page({
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
     const group = (this.data.groups[this.data.groupIndex] || "");
     if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
+    const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();
     if (!this.data.speechAudioUrl && !text) {
       return wx.showToast({ title: "先写口播文案（或先点生成音轨）", icon: "none" });
@@ -248,7 +249,15 @@ Page({
       app.request({
         method: "POST",
         url: "/api/montage/jobs",
-        data: { voice_url: voiceUrl, group: group, asset_urls: urls.slice(0, 12), ratio: "9:16", title: "混剪成片" },
+        data: {
+          voice_url: voiceUrl,
+          group: group,
+          asset_urls: urls.slice(0, 12),
+          ratio: "9:16",
+          title: "混剪成片",
+          template_style_id: String(tpl.styleId || ""),
+          template_name: String(tpl.name || "")
+        },
         timeout: 60000
       })
         .then((data) => {
