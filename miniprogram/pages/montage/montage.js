@@ -42,6 +42,7 @@ Page({
     speechAudioUrl: "",
     speechStatus: "",
     speechDuration: 0,
+    useTemplate: false,
     ttsLoading: false,
     rendering: false,
     localVideoUrl: "",
@@ -189,7 +190,11 @@ Page({
       app.request({
         method: "POST",
         url: "/api/montage/jobs",
-        data: { voice_url: voiceUrl, group: group, asset_urls: urls.slice(0, 12), ratio: "9:16", title: "混剪成片" },
+        data: {
+          voice_url: voiceUrl,
+          group: group,
+          asset_urls: urls.slice(0, 12),
+          template_style_id: (this.data.useTemplate && (this.data.templates[this.data.templateIndex] || {}).styleId) || "", ratio: "9:16", title: "混剪成片" },
         timeout: 300000
       })
         .then((data) => this.setData({
@@ -272,6 +277,10 @@ Page({
         this.setData({ voices, voiceNames: voices.map((v) => v.name), voiceIndex: voices.length ? 0 : -1 });
       })
       .catch(() => {});
+  },
+
+  toggleUseTemplate(e) {
+    this.setData({ useTemplate: !!e.detail.value });
   },
 
   selectTemplate(e) {

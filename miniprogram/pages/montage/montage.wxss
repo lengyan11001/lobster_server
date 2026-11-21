@@ -47,3 +47,6 @@
 .act-btn.ghost { color: #1957E8; background: #eff6ff; }
 
 .hint { display: block; margin-top: 10rpx; font-size: 22rpx; color: #64748b; line-height: 1.5; }
+
+.tpl-row2 { display: flex; align-items: center; justify-content: space-between; margin-top: 24rpx; }
+.tpl-label { margin: 0; }

@@ -37,6 +37,8 @@ class MontageBody(BaseModel):
     target_seconds: Optional[int] = None
     ratio: str = Field("9:16", max_length=12)
     title: str = Field("", max_length=120)
+    template_style_id: str = Field("", max_length=64)
+    template_name: str = Field("", max_length=64)
 
 
 def _run(args: List[str], timeout: int = 300) -> None:
@@ -225,6 +227,31 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
             "-t", "%.3f" % total, "-movflags", "+faststart", str(final),
         ], timeout=300)
 
+        # ---- 套闪剪模板：底片交给闪剪渲染，再把音频换回我们的口播 ----
+        template_style_id = str(body.template_style_id or "").strip()
+        if template_style_id:
+            board_bytes = final.read_bytes()
+            board_id = _gen_asset_id()
+            board_key = "assets/%s.mp4" % board_id
+            board_url = _upload_to_tos(board_bytes, board_key, "video/mp4")
+            if not board_url:
+                raise HTTPException(status_code=503, detail="底片上传失败")
+            templated = _apply_shanjian_template(
+                db=db, user=user, style_id=template_style_id,
+                board_url=board_url, title=body.title or "混剪成片",
+            )
+            if templated:
+                src = _download(templated, work / "templated.mp4")
+                remixed = work / "templated_voice.mp4"
+                _run([
+                    FFMPEG, "-y", "-i", str(src), "-i", str(voice_path),
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+                    "-t", "%.3f" % total, "-movflags", "+faststart", str(remixed),
+                ], timeout=300)
+                final = remixed
+
         data = final.read_bytes()
         asset_id = _gen_asset_id()
         object_key = "assets/%s.mp4" % asset_id
@@ -273,6 +300,54 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
             work.rmdir()
         except Exception:
             pass
+
+
+
+def _apply_shanjian_template(*, db: Session, user: User, style_id: str, board_url: str, title: str) -> str:
+    """把底片交给闪剪套模板，返回模板成片地址（失败返回空串，走无模板兜底）。"""
+    import time as _time
+
+    from .auth import access_token_claims, create_access_token
+
+    try:
+        token = create_access_token(access_token_claims(user), )
+    except Exception:
+        return ""
+    base = (os.environ.get("LOBSTER_INTERNAL_API_BASE") or "").strip().rstrip("/") or "http://127.0.0.1:8000"
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+    try:
+        with httpx.Client(timeout=60.0, trust_env=False) as client:
+            resp = client.post(base + "/api/shanjian-smart-clip/submit", headers=headers, json={
+                "style_id": style_id,
+                "scene": "realMan",
+                "title": title[:40],
+                "video_url": board_url,
+                "materials": [],
+                "subtitle_switch": True,
+                "header_switch": True,
+                "keyword_switch": True,
+                "watermark_show": False,
+            })
+            if resp.status_code >= 400:
+                return ""
+            task_id = str((resp.json() or {}).get("task_id") or "")
+            if not task_id:
+                return ""
+            for _ in range(60):
+                _time.sleep(3)
+                poll = client.post(base + "/api/shanjian-smart-clip/task", headers=headers, json={"task_id": task_id})
+                if poll.status_code >= 400:
+                    return ""
+                data = poll.json() or {}
+                status = str(data.get("status") or "").lower()
+                url = str(data.get("video_url") or data.get("videoUrl") or "")
+                if status in ("succeed", "success", "completed") and url:
+                    return url
+                if status in ("failed", "error"):
+                    return ""
+    except Exception:
+        return ""
+    return ""
 
 
 _MONTAGE_MAX_CONCURRENCY = int(os.environ.get("MONTAGE_MAX_CONCURRENCY", "1"))

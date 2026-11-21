@@ -27,6 +27,14 @@
     </view>
     <text class="hint">{{speechStatus}}</text>
 
+    <view class="tpl-row2">
+      <text class="label tpl-label">套用闪剪模板</text>
+      <switch checked="{{useTemplate}}" bindchange="toggleUseTemplate" color="#1957E8" />
+    </view>
+    <picker wx:if="{{useTemplate}}" mode="selector" range="{{templates}}" range-key="name" value="{{templateIndex}}" bindchange="selectTemplate">
+      <view class="picker">{{templateIndex >= 0 && templates[templateIndex] ? templates[templateIndex].name : '选择模板'}}</view>
+    </picker>
+
     <text class="label">素材分组（切片好的素材，随机取）</text>
     <picker mode="selector" range="{{groupNames}}" value="{{groupIndex}}" bindchange="selectGroup">
       <view class="picker">{{groupIndex >= 0 ? groupNames[groupIndex] : '不选分组（用下面手动素材）'}}</view>
