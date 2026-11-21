@@ -45,6 +45,7 @@ Page({
     voiceIndex: -1,
     speechText: "",
     speechAudioUrl: "",
+    speechRate: 1,
     speechStatus: "",
     speechDuration: 0,
     useTemplate: false,
@@ -229,6 +230,10 @@ Page({
     this.setData({ speechText: e.detail.value || "" });
   },
 
+  onSpeechRate(e) {
+    this.setData({ speechRate: Number(e.detail.value || 1), speechAudioUrl: "", speechStatus: "语速已改，请重新生成音轨" });
+  },
+
   onTemplateTitle(e) {
     this.setData({ templateTitle: e.detail.value || "" });
   },
@@ -247,7 +252,12 @@ Page({
       this.setData({ ttsLoading: false, speechStatus: "还没有自己的音色，先去素材库创建声音" });
       return Promise.resolve("");
     }
-    return app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: { text, voice }, timeout: 120000 })
+    return app.request({
+      method: "POST",
+      url: "/api/hifly/my/voice/preview-tts",
+      data: { text, voice, rate: String(this.data.speechRate || 1), volume: "1", pitch: "0" },
+      timeout: 120000
+    })
       .then((data) => {
         const url = String((data && data.audio_url) || "");
         if (!url) throw new Error("没有拿到音频");

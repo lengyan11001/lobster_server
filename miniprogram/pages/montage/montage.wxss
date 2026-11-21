@@ -74,3 +74,7 @@
 
 .head-actions { display: flex; gap: 10rpx; margin-top: 14rpx; flex-wrap: wrap; }
 .list-count { font-size: 21rpx; color: #94a3b8; }
+
+.rate-row { display: flex; align-items: center; gap: 16rpx; margin-top: 10rpx; }
+.rate-label { font-size: 24rpx; color: #475569; white-space: nowrap; }
+.rate-slider { flex: 1; }

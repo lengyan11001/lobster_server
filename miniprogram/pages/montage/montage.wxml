@@ -44,6 +44,10 @@
 
     <text class="label">口播文案</text>
     <textarea class="textarea" value="{{speechText}}" bindinput="onSpeechInput" placeholder="输入口播文案，生成语音后按语音时长切分素材" maxlength="1200" auto-height />
+    <view class="rate-row">
+      <text class="rate-label">语速 {{speechRate}}x</text>
+      <slider class="rate-slider" min="0.5" max="2" step="0.1" value="{{speechRate}}" bindchange="onSpeechRate" />
+    </view>
     <view class="btn-row">
       <button class="ghost half" loading="{{ttsLoading}}" bindtap="previewSpeech">试听</button>
       <button class="primary half" loading="{{ttsLoading}}" bindtap="generateSpeech">生成音轨</button>
