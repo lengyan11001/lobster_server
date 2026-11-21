@@ -162,7 +162,11 @@ Page({
       .then((data) => {
         const rows = (data && (data.items || data.groups || data.results)) || [];
         const names = rows.map((row) => String(row.name || row.group || row.title || "")).filter(Boolean);
-        this.setData({ groups: names, groupNames: names, groupIndex: names.length ? 0 : -1 });
+        const counts = rows
+          .filter((row) => String(row.name || row.group || row.title || ""))
+          .map((row) => Number(row.count || 0));
+        const groupNames = names.map((name, index) => `${name}（${counts[index] || 0} 个视频）`);
+        this.setData({ groups: names, groupCounts: counts, groupNames, groupIndex: -1 });
       })
       .catch(() => {});
   },
@@ -235,8 +239,13 @@ Page({
   startLocalMontage() {
     if (!this.ensureAuth()) return;
     const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
-    const group = (this.data.groups[this.data.groupIndex] || "");
-    if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
+    const groupIndex = Number(this.data.groupIndex);
+    const group = groupIndex >= 0 ? String((this.data.groups || [])[groupIndex] || "") : "";
+    const groupCount = groupIndex >= 0 ? Number((this.data.groupCounts || [])[groupIndex] || 0) : 0;
+    if (!urls.length) {
+      if (!group) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
+      if (groupCount <= 0) return wx.showToast({ title: "这个分组没有视频素材，请换一个", icon: "none" });
+    }
     const text = String(this.data.speechText || "").trim();
     if (!this.data.speechAudioUrl && !text) {
       return wx.showToast({ title: "先写口播文案（或先点生成音轨）", icon: "none" });
