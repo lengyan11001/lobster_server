@@ -2319,8 +2319,25 @@ async def _mirror_media_to_tos(url: str, user_id: int, task_id: str, kind: str) 
     except Exception:
         return url
 
+_SHANJIAN_FRIENDLY_ERRORS = {
+    "Rights.NotEnough": "上游数字人账号权益不足（闪剪 Rights.NotEnough），本单算力已自动退回；请管理员补充权益后重试",
+}
+
+
+def _shanjian_error_code(row: ShanjianDigitalHumanVideoTask) -> str:
+    payload = row.result_payload if isinstance(row.result_payload, dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    return _clean_text(data.get("errorCode"))
+
+
 def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
     _submit = row.submit_payload if isinstance(row.submit_payload, dict) else {}
+    _code = _shanjian_error_code(row)
+    _err = row.error_message or ""
+    if _code in _SHANJIAN_FRIENDLY_ERRORS:
+        _err = _SHANJIAN_FRIENDLY_ERRORS[_code]
+    elif "权益不足" in _err:
+        _err = _SHANJIAN_FRIENDLY_ERRORS["Rights.NotEnough"]
     return {
         "id": row.id,
         "user_id": row.user_id,
@@ -2340,7 +2357,8 @@ def _video_task_to_dict(row: ShanjianDigitalHumanVideoTask) -> Dict[str, Any]:
         "video_url": row.video_url or "",
         "cover_url": row.cover_url or "",
         "duration": row.duration,
-        "error_message": row.error_message or "",
+        "error_message": _err,
+        "error_code": _code,
         "created_at": row.created_at.isoformat() if row.created_at else "",
         "updated_at": row.updated_at.isoformat() if row.updated_at else "",
     }
