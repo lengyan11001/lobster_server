@@ -543,3 +543,34 @@ def get_montage_job(
         "duration": float(row.duration or 0), "error": row.error or "",
         "created_at": row.created_at.isoformat() if row.created_at else "",
     }
+
+@router.get("/api/tasks/active", summary="当前用户进行中的任务（聚合，减少轮询次数）")
+def active_tasks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = online_user_for_mobile_user(db, current_user)
+    uid = int(user.id)
+    montage = (
+        db.query(MontageJob)
+        .filter(MontageJob.user_id == uid, MontageJob.status.in_(["pending", "running"]))
+        .order_by(MontageJob.id.desc()).limit(5).all()
+    )
+    digital = []
+    try:
+        from ..models import ShanjianDigitalHumanVideoTask  # noqa: PLC0415
+        rows = (
+            db.query(ShanjianDigitalHumanVideoTask)
+            .filter(ShanjianDigitalHumanVideoTask.user_id == uid,
+                    ShanjianDigitalHumanVideoTask.status.in_(["pending", "processing", "running"]))
+            .order_by(ShanjianDigitalHumanVideoTask.id.desc()).limit(5).all()
+        )
+        digital = [{"task_id": r.task_id, "status": r.status, "title": r.title} for r in rows]
+    except Exception:
+        digital = []
+    return {
+        "ok": True,
+        "montage": [{"job_id": r.id, "status": r.status, "video_url": r.video_url or ""} for r in montage],
+        "digital": digital,
+        "poll_hint_seconds": 10,
+    }

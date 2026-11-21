@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const { createPoller } = require("../../utils/task-poll");
 const hist = require("../../utils/gen-history");
 
 const POLL_MS = 6000;
@@ -50,6 +51,7 @@ Page({
   },
 
   onShow() {
+    if (this.montagePoller) this.montagePoller.resume();
     this.resumeMontageJob();
   },
 
@@ -227,34 +229,40 @@ Page({
   },
 
   pollMontageJob(jobId, startedAt) {
-    if (this.montageTimer) clearInterval(this.montageTimer);
+    if (this.montagePoller) this.montagePoller.stop();
     const started = startedAt || Date.now();
-    const poll = () => {
-      app.request({ url: "/api/montage/jobs/" + jobId, timeout: 30000 })
-        .then((data) => {
-          const status = String((data && data.status) || "");
-          if (status === "succeed") {
-            clearInterval(this.montageTimer);
-            this.montageTimer = null;
-            wx.removeStorageSync("lobster_montage_job");
-            this.setData({
-              rendering: false,
-              localVideoUrl: String(data.video_url || ""),
-              localStatus: "完成 " + Number(data.duration || 0).toFixed(1) + "s · " + Math.round((Date.now() - started) / 1000) + "秒"
-            });
-          } else if (status === "failed") {
-            clearInterval(this.montageTimer);
-            this.montageTimer = null;
-            wx.removeStorageSync("lobster_montage_job");
-            this.setData({ rendering: false, localStatus: String(data.error || "生成失败") });
-          } else {
-            this.setData({ rendering: true, localStatus: "渲染中…" });
-          }
-        })
-        .catch(() => {});
-    };
-    poll();
-    this.montageTimer = setInterval(poll, 3000);
+    this.montagePoller = createPoller(
+      () => app.request({ url: "/api/montage/jobs/" + jobId, timeout: 30000 }),
+      (data) => {
+        const status = String((data && data.status) || "");
+        if (status === "succeed") {
+          wx.removeStorageSync("lobster_montage_job");
+          this.setData({
+            rendering: false,
+            localVideoUrl: String(data.video_url || ""),
+            localStatus: "完成 " + Number(data.duration || 0).toFixed(1) + "s · " + Math.round((Date.now() - started) / 1000) + "秒"
+          });
+          return true;
+        }
+        if (status === "failed") {
+          wx.removeStorageSync("lobster_montage_job");
+          this.setData({ rendering: false, localStatus: String(data.error || "生成失败") });
+          return true;
+        }
+        this.setData({ rendering: true, localStatus: "渲染中…（可退出，回来接着看）" });
+        return false;
+      },
+      () => {}
+    );
+    this.montagePoller.start(true);
+  },
+
+  onHide() {
+    if (this.montagePoller) this.montagePoller.pause();
+  },
+
+  onUnload() {
+    if (this.montagePoller) this.montagePoller.stop();
   },
 
   resumeMontageJob() {
