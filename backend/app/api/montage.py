@@ -123,6 +123,9 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
     if user is None:
         db.close()
         raise HTTPException(status_code=404, detail="用户不存在")
+    # 后面要下载/跑 ffmpeg/轮询模板，可能几十秒；先把读事务提交掉，
+    # 否则 PG 会 idle-in-transaction 超时把连接掐掉（之前 500 就是这个）
+    db.commit()
 
     voice_path: Optional[Path] = None
     work = Path(tempfile.mkdtemp(prefix="montage_"))
@@ -176,6 +179,7 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
                     if url.startswith("http"):
                         picked.append(url)
             urls = picked[:60]
+            db.commit()
         if not urls:
             raise HTTPException(status_code=400, detail="请选择素材分组，或至少选一个视频素材")
 
