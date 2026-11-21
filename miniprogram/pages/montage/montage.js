@@ -98,13 +98,12 @@ Page({
 
   loadMontageVoices() {
     if (!(app.globalData.token && app.globalData.phone)) return;
-    app.request({ url: "/api/montage/voices", timeout: 30000 })
+    app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
       .then((data) => {
-        const items = ((data && data.items) || []).map((row) => ({ id: String(row.id || ""), name: String(row.name || "音色") }));
-        const defaultId = String((data && data.default_id) || "");
-        let index = items.findIndex((row) => row.id === defaultId);
-        if (index < 0 && items.length) index = 0;
-        this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: index });
+        const items = ((data && data.items) || [])
+          .map((row) => ({ id: String(row.voice || row.voice_id || ""), name: String(row.title || row.name || "音色") }))
+          .filter((row) => !!row.id);
+        this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: items.length ? 0 : -1 });
       })
       .catch(() => {});
   },
