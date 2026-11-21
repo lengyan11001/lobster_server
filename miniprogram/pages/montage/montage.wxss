@@ -57,3 +57,5 @@
 .job-title { display: block; font-size: 28rpx; color: #0f172a; }
 .job-meta { display: block; margin-top: 6rpx; font-size: 21rpx; color: #94a3b8; }
 .job-go { font-size: 24rpx; color: #1957E8; }
+
+.create-back { display: inline-block; margin-bottom: 12rpx; font-size: 24rpx; color: #1957E8; }

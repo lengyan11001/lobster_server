@@ -10,8 +10,9 @@
         <button wx:else class="ghost small" bindtap="backToList">返回列表</button>
       </view>
     </view>
-    <view wx:if="{{viewMode === 'list'}}" class="head-actions">
+    <view wx:if="{{viewMode === 'create'}}" class="head-actions">
       <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="ghost small" bindtap="openPrefillHistory">历史</button>
       <button class="ghost small" bindtap="openRecordingPrefill">录音生成</button>
     </view>
   </view>

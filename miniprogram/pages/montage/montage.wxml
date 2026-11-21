@@ -5,12 +5,10 @@
         <text class="title">素材混剪</text>
         <text class="sub">上传素材 + 文案，选模板和声音，自动混剪成片</text>
       </view>
-      <view class="head-acts">
-        <block wx:if="{{viewMode === 'list'}}">
-          <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
-          <button class="act-btn primary" bindtap="openRecordingPrefill">录音生成</button>
-        </block>
-        <button wx:else class="act-btn ghost" bindtap="backToList">返回列表</button>
+      <view wx:if="{{viewMode === 'create'}}" class="head-acts">
+        <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
+        <button class="act-btn ghost" bindtap="openPrefillHistory">历史</button>
+        <button class="act-btn primary" bindtap="openRecordingPrefill">录音生成</button>
       </view>
     </view>
   </view>
@@ -31,6 +29,7 @@
   </view>
 
   <view wx:if="{{viewMode === 'create'}}" class="panel">
+    <view class="create-back" bindtap="backToList">‹ 返回列表</view>
     <text class="label">音色（素材库 · 我的声音）</text>
     <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="selectVoice">
       <view class="picker">{{voiceIndex >= 0 ? voiceNames[voiceIndex] : '还没有音色，先去素材库创建'}}</view>
