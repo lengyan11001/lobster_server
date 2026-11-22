@@ -383,7 +383,7 @@ Page({
     const isVideo = row.media_type === "video";
     const isAudio = row.media_type === "audio";
     const list = isVideo
-      ? ["预览", "编辑分组/标签", "加入分组", "切片（2秒）", "AI 打标签", "删除素材"]
+      ? ["预览", "编辑分组/标签", "加入分组", "切片（3秒）", "AI 打标签", "删除素材"]
       : (isAudio
         ? ["播放", "编辑分组/标签", "加入分组", "删除素材"]
         : ["预览", "编辑分组/标签", "加入分组", "删除素材"]);
@@ -394,7 +394,7 @@ Page({
         if (action === "预览" || action === "播放") this.preview({ currentTarget: { dataset: { index } } });
         else if (action === "编辑分组/标签") this.editLabels(row);
         else if (action === "加入分组") this.addToGroup(row);
-        else if (action === "切片（2秒）") this.splitAsset(row);
+        else if (action === "切片（3秒）") this.splitAsset(row);
         else if (action === "AI 打标签") this.aiTags(row);
         else if (action === "删除素材") this.confirmRemove(row);
       }
@@ -431,15 +431,15 @@ Page({
       return;
     }
     wx.showModal({
-      title: "切片（2秒/段）",
-      content: `将把「${row.name}」按 2 秒一段切片，切片会留在分组「${row.group}」。继续？`,
+      title: "切片（3秒/段）",
+      content: `将把「${row.name}」按 3 秒一段切片，切片会留在分组「${row.group}」。继续？`,
       success: (res) => {
         if (!res.confirm) return;
         wx.showLoading({ title: "下发切片" });
         app.request({
           method: "POST",
           url: `/api/assets/${encodeURIComponent(row.asset_id)}/split`,
-          data: { segment_seconds: 2 },
+          data: { segment_seconds: 3 },
           timeout: 60000
         })
           .then(() => {

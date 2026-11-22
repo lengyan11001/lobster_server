@@ -95,7 +95,7 @@ def _size_for_ratio(ratio: str) -> tuple[int, int]:
     return 720, 1280
 
 
-def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int], reference: dict[str, Any]) -> Path:
+def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int], reference: dict[str, Any], start: float = 0.0) -> Path:
     info = _probe(str(src))
     same = (
         info["vcodec"] == reference["vcodec"]
@@ -103,12 +103,13 @@ def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int]
         and info["height"] == reference["height"]
         and info["fps"] == reference["fps"]
     )
-    if same:
-        args = [FFMPEG, "-y", "-ss", "0", "-t", "%.3f" % max(0.4, seconds), "-i", str(src), "-an", "-c", "copy", str(dst)]
+    take = "%.3f" % max(0.4, seconds)
+    if same and start <= 0.05:
+        args = [FFMPEG, "-y", "-ss", "0", "-t", take, "-i", str(src), "-an", "-c", "copy", str(dst)]
     else:
         w, h = size
         args = [
-            FFMPEG, "-y", "-t", "%.3f" % max(0.4, seconds), "-i", str(src), "-an",
+            FFMPEG, "-y", "-ss", "%.3f" % max(0.0, start), "-t", take, "-i", str(src), "-an",
             "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=30" % (w, h, w, h),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(dst),
         ]
@@ -211,6 +212,7 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         total = max(3.0, min(total, voice_duration if voice_duration > 0 else 60.0))
 
         import random
+        seg_seconds = 3.0
         pool = [("video", u) for u in urls] + [("image", u) for u in images]
         random.shuffle(pool)
         segments: List[Path] = []
@@ -218,38 +220,66 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         acc = 0.0
         idx = 0
         size = _size_for_ratio(body.ratio)
-        pool_len = max(1, len(pool))
-        while acc < total - 0.15 and idx < 40 and pool:
-            kind, url = pool[idx % pool_len]
+        src_cache: dict[str, tuple[Path, dict[str, Any]]] = {}
+        queue: List[tuple[str, str]] = []
+        fail_streak = 0
+        max_fail = max(4, len(pool) * 2)
+        while acc < total - 0.05 and idx < 240 and pool:
+            if not queue:
+                # 素材挑完还不够时长，就把整组重新洗牌继续用（可重复挑）
+                queue = pool[:]
+                random.shuffle(queue)
+            kind, url = queue.pop()
             remaining = total - acc
+            take = min(seg_seconds, remaining)
+            if take < 0.05:
+                break
+            cached = src_cache.get(url)
             if kind == "image":
-                suffix = Path(str(url).split("?")[0]).suffix.lower() or ".jpg"
-                src = _download(url, work / ("img_%02d%s" % (idx, suffix)))
-                take = min(3.0, remaining)
-                if take < 0.5:
-                    break
-                seg = _prepare_image_segment(src, work / ("seg_%02d.mp4" % idx), take, size)
+                if cached is None:
+                    suffix = Path(str(url).split("?")[0]).suffix.lower() or ".jpg"
+                    src = _download(url, work / ("img_%03d%s" % (len(src_cache), suffix)))
+                    cached = (src, {})
+                    src_cache[url] = cached
+                src, _ = cached
+                seg = _prepare_image_segment(src, work / ("seg_%03d.mp4" % idx), take, size)
                 segments.append(seg)
                 acc += take
                 idx += 1
+                fail_streak = 0
                 continue
-            src = _download(url, work / ("src_%02d.mp4" % idx))
-            info = _probe(str(src))
-            if not info["has_video"] or info["duration"] <= 0.2:
+            if cached is None:
+                src = _download(url, work / ("src_%03d.mp4" % len(src_cache)))
+                cached = (src, _probe(str(src)))
+                src_cache[url] = cached
+            src, info = cached
+            if not info.get("has_video") or float(info.get("duration") or 0) <= 0.2:
+                fail_streak += 1
+                if fail_streak >= max_fail:
+                    break
                 idx += 1
                 continue
             if reference is None:
                 reference = info
-            slots = max(1, pool_len - idx) if idx < pool_len else 1
-            share = remaining / slots
-            take = min(info["duration"], max(1.0, share), remaining)
-            if take < 0.5:
+            # 每段固定 3 秒（末段按剩余时长截断）；长视频随机取 3 秒窗口，
+            # 这样混剪上传的原片和素材库里的切片都按 3 秒粒度参与。
+            duration = float(info["duration"])
+            take = min(take, duration)
+            if take < 0.3:
+                fail_streak += 1
+                if fail_streak >= max_fail:
+                    break
                 idx += 1
                 continue
-            seg = _prepare_segment(src, work / ("seg_%02d.mp4" % idx), take, size, reference)
+            start = 0.0
+            if duration > take + 0.1:
+                start = random.uniform(0.0, duration - take - 0.05)
+            seg = _prepare_segment(src, work / ("seg_%03d.mp4" % idx), take, size, reference, start=start)
             segments.append(seg)
-            acc += take
+            # 按实际产出时长累计，切片略短于 3 秒时靠后续素材补齐
+            acc += float(_probe(str(seg)).get("duration") or take)
             idx += 1
+            fail_streak = 0
         if not segments:
             raise HTTPException(status_code=400, detail="素材里没有可用视频或图片")
 
