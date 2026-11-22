@@ -195,15 +195,32 @@ Page({
   loadGroups() {
     if (!(app.globalData.token && app.globalData.phone)) return;
     this.setData({ groupsLoading: true });
-    app.request({ url: "/api/assets/creative-candidate-groups", timeout: 30000 })
-      .then((data) => {
-        const rows = (data && (data.items || data.groups || data.results)) || [];
-        const names = rows.map((row) => String(row.name || row.group || row.title || "")).filter(Boolean);
+    Promise.all([
+      app.request({ url: "/api/assets/creative-candidate-groups", timeout: 30000 }),
+      app.request({ url: "/api/assets?origin=all&limit=200", timeout: 30000 })
+    ])
+      .then(([groupData, assetData]) => {
+        const assets = (assetData && (assetData.assets || assetData.items || assetData.data)) || [];
+        const videoGroups = {};
+        (Array.isArray(assets) ? assets : []).forEach((row) => {
+          if (String(row.media_type || "").toLowerCase() !== "video") return;
+          const url = String(row.source_url || row.url || row.preview_url || "").trim();
+          if (!url) return;
+          const names = Array.isArray(row.creative_candidate_groups) && row.creative_candidate_groups.length
+            ? row.creative_candidate_groups
+            : [row.creative_candidate_group];
+          names.map((name) => String(name || "").trim()).filter(Boolean).forEach((name) => {
+            if (!videoGroups[name]) videoGroups[name] = [];
+            if (videoGroups[name].indexOf(url) < 0) videoGroups[name].push(url);
+          });
+        });
+        const names = Object.keys(videoGroups);
         const remembered = String(this.data.selectedGroup || wx.getStorageSync("lobster_montage_group") || "");
         const selected = names.indexOf(remembered) >= 0 ? remembered : (names[0] || "");
         this.setData({
           groups: names,
           groupNames: names,
+          groupAssets: videoGroups,
           selectedGroup: selected,
           groupIndex: selected ? names.indexOf(selected) : -1,
           groupsLoading: false
@@ -340,9 +357,13 @@ Page({
 
   startLocalMontage() {
     if (!this.ensureAuth()) return;
-    const urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
+    let urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
     const group = String(this.data.selectedGroup || this.data.groups[this.data.groupIndex] || "");
+    if (!urls.length && group) {
+      urls = ((this.data.groupAssets || {})[group] || []).slice();
+    }
     if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
+    if (!urls.length) return wx.showToast({ title: "这个分组没有视频素材，请换一个或手动加视频", icon: "none" });
     const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();
     if (!this.data.speechAudioUrl && !text) {
