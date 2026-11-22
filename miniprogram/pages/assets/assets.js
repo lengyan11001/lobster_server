@@ -388,7 +388,7 @@ Page({
     const isVideo = row.media_type === "video";
     const isAudio = row.media_type === "audio";
     const list = isVideo
-      ? ["预览", "编辑分组/标签", "加入分组", "切片（3秒）", "AI 打标签", "删除素材"]
+      ? ["预览", "编辑分组/标签", "加入分组", "AI 打标签", "删除素材"]
       : (isAudio
         ? ["播放", "编辑分组/标签", "加入分组", "删除素材"]
         : ["预览", "编辑分组/标签", "加入分组", "删除素材"]);
@@ -399,7 +399,6 @@ Page({
         if (action === "预览" || action === "播放") this.preview({ currentTarget: { dataset: { index } } });
         else if (action === "编辑分组/标签") this.editLabels(row);
         else if (action === "加入分组") this.addToGroup(row);
-        else if (action === "切片（3秒）") this.splitAsset(row);
         else if (action === "AI 打标签") this.aiTags(row);
         else if (action === "删除素材") this.confirmRemove(row);
       }
@@ -428,83 +427,6 @@ Page({
           .then(() => wx.hideLoading());
       }
     });
-  },
-
-  splitAsset(row) {
-    if (!row.group) {
-      wx.showModal({ title: "先加入分组", content: "切片必须在一个分组里。先给这个视频设置分组再切片。", showCancel: false });
-      return;
-    }
-    wx.showModal({
-      title: "切片（3秒/段）",
-      content: `将把「${row.name}」按 3 秒一段切片，切片会留在分组「${row.group}」。继续？`,
-      success: (res) => {
-        if (!res.confirm) return;
-        wx.showLoading({ title: "下发切片" });
-        app.request({
-          method: "POST",
-          url: `/api/assets/${encodeURIComponent(row.asset_id)}/split`,
-          data: { segment_seconds: 3 },
-          timeout: 60000
-        })
-          .then(() => {
-            wx.hideLoading();
-            wx.showModal({ title: "已下发", content: "已交给 Online 设备按 2 秒切片，完成后刷新素材库即可看到同分组下的切片。", showCancel: false });
-          })
-          .catch((err) => {
-            wx.hideLoading();
-            wx.showModal({ title: "切片失败", content: api.errorMessage(err), showCancel: false });
-          });
-      }
-    });
-  },
-
-  editLabels(row) {
-    this.setData({
-      labelOpen: true,
-      labelAssetId: row.asset_id,
-      labelGroup: row.group || "",
-      labelTags: row.tags || ""
-    });
-  },
-
-  closeLabelEditor() {
-    if (this.data.labelSaving) return;
-    this.setData({ labelOpen: false });
-  },
-
-  labelNoop() {},
-
-  onLabelGroup(e) {
-    this.setData({ labelGroup: e.detail.value });
-  },
-
-  onLabelTags(e) {
-    this.setData({ labelTags: e.detail.value });
-  },
-
-  saveLabels() {
-    const assetId = String(this.data.labelAssetId || "");
-    if (!assetId) return;
-    this.setData({ labelSaving: true });
-    app.request({
-      method: "POST",
-      url: `/api/assets/${encodeURIComponent(assetId)}/labels`,
-      data: {
-        creative_candidate_group: String(this.data.labelGroup || "").trim(),
-        tags: String(this.data.labelTags || "").trim()
-      },
-      timeout: 30000
-    })
-      .then(() => {
-        wx.showToast({ title: "已保存", icon: "success" });
-        this.setData({ labelOpen: false, labelSaving: false });
-        this.loadUploads();
-      })
-      .catch((err) => {
-        this.setData({ labelSaving: false });
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
-      });
   },
 
   aiTags(row) {

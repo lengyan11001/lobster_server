@@ -307,7 +307,7 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         acc = 0.0
         idx = 0
         size = _size_for_ratio(body.ratio)
-        src_cache: dict[str, tuple[Path, dict[str, Any]]] = {}
+        src_cache: dict[str, Optional[tuple[Path, dict[str, Any]]]] = {}
         queue: List[tuple[str, str]] = []
         fail_streak = 0
         max_fail = max(4, len(pool) * 2)
@@ -322,22 +322,54 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
             if take < 0.05:
                 break
             cached = src_cache.get(url)
+            if url in src_cache and cached is None:
+                # 已知不可用的素材（已删除/损坏），直接跳过取剩下的
+                fail_streak += 1
+                if fail_streak >= max_fail:
+                    break
+                idx += 1
+                continue
             if kind == "image":
                 if cached is None:
-                    suffix = Path(str(url).split("?")[0]).suffix.lower() or ".jpg"
-                    src = _download(url, work / ("img_%03d%s" % (len(src_cache), suffix)))
+                    try:
+                        suffix = Path(str(url).split("?")[0]).suffix.lower() or ".jpg"
+                        src = _download(url, work / ("img_%03d%s" % (len(src_cache), suffix)))
+                    except Exception:  # noqa: BLE001 - 素材被删了就跳过
+                        src_cache[url] = None
+                        fail_streak += 1
+                        if fail_streak >= max_fail:
+                            break
+                        idx += 1
+                        continue
                     cached = (src, {})
                     src_cache[url] = cached
                 src, _ = cached
-                seg = _prepare_image_segment(src, work / ("seg_%03d.mp4" % idx), take, size)
+                try:
+                    seg = _prepare_image_segment(src, work / ("seg_%03d.mp4" % idx), take, size)
+                except Exception:  # noqa: BLE001
+                    src_cache[url] = None
+                    fail_streak += 1
+                    if fail_streak >= max_fail:
+                        break
+                    idx += 1
+                    continue
                 segments.append(seg)
                 acc += take
                 idx += 1
                 fail_streak = 0
                 continue
             if cached is None:
-                src = _download(url, work / ("src_%03d.mp4" % len(src_cache)))
-                cached = (src, _probe(str(src)))
+                try:
+                    src = _download(url, work / ("src_%03d.mp4" % len(src_cache)))
+                    info = _probe(str(src))
+                except Exception:  # noqa: BLE001 - 素材被删了就跳过
+                    src_cache[url] = None
+                    fail_streak += 1
+                    if fail_streak >= max_fail:
+                        break
+                    idx += 1
+                    continue
+                cached = (src, info)
                 src_cache[url] = cached
             src, info = cached
             if not info.get("has_video") or float(info.get("duration") or 0) <= 0.2:
@@ -361,7 +393,14 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
             start = 0.0
             if duration > take + 0.1:
                 start = random.uniform(0.0, duration - take - 0.05)
-            seg = _prepare_segment(src, work / ("seg_%03d.mp4" % idx), take, size, reference, start=start)
+            try:
+                seg = _prepare_segment(src, work / ("seg_%03d.mp4" % idx), take, size, reference, start=start)
+            except Exception:  # noqa: BLE001 - 单个素材失败不应影响整条任务
+                fail_streak += 1
+                if fail_streak >= max_fail:
+                    break
+                idx += 1
+                continue
             segments.append(seg)
             # 按实际产出时长累计，切片略短于 3 秒时靠后续素材补齐
             acc += float(_probe(str(seg)).get("duration") or take)
