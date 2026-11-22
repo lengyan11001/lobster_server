@@ -51,4 +51,13 @@
       </view>
     </view>
   </view>
+  <view wx:if="{{previewOpen}}" class="asset-preview">
+    <view class="asset-preview-head">
+      <view class="asset-preview-back" bindtap="closePreview">‹ 返回</view>
+      <text class="asset-preview-title">{{previewTitle}}</text>
+      <view class="asset-preview-spacer"></view>
+    </view>
+    <video wx:if="{{previewType === 'video'}}" class="asset-preview-body" src="{{previewUrl}}" controls autoplay object-fit="contain"></video>
+    <image wx:else class="asset-preview-body" src="{{previewUrl}}" mode="aspectFit" />
+  </view>
 </view>

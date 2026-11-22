@@ -42,7 +42,11 @@ Page({
     voices: [],
     loading: false,
     tabCount: 0,
-    currentCount: 0
+    currentCount: 0,
+    previewOpen: false,
+    previewType: "",
+    previewUrl: "",
+    previewTitle: ""
   },
 
   onLoad(options) {
@@ -182,17 +186,24 @@ Page({
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.items[index];
     if (!row) return;
-    if (row.media_type === "video") {
-      wx.previewMedia({ sources: [{ url: mediaUrl(row.url, "proxy"), type: "video" }] });
-      return;
-    }
     if (row.media_type === "audio") {
       if (!this.audio) this.audio = wx.createInnerAudioContext();
       this.audio.src = mediaUrl(row.url, "proxy");
       this.audio.play();
       return;
     }
-    wx.previewImage({ current: row.thumb, urls: [row.thumb] });
+    if (row.media_type === "video" || row.media_type === "image") {
+      this.setData({
+        previewOpen: true,
+        previewType: row.media_type,
+        previewUrl: mediaUrl(row.url, "proxy"),
+        previewTitle: row.name || "素材预览"
+      });
+    }
+  },
+
+  closePreview() {
+    this.setData({ previewOpen: false, previewType: "", previewUrl: "", previewTitle: "" });
   },
 
   refreshPendingAvatars(avatars) {
@@ -369,12 +380,76 @@ Page({
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.items[index];
     if (!row) return;
+    const isVideo = row.media_type === "video";
+    const isAudio = row.media_type === "audio";
+    const list = isVideo
+      ? ["预览", "编辑分组/标签", "加入分组", "切片（2秒）", "AI 打标签", "删除素材"]
+      : (isAudio
+        ? ["播放", "编辑分组/标签", "加入分组", "删除素材"]
+        : ["预览", "编辑分组/标签", "加入分组", "删除素材"]);
     wx.showActionSheet({
-      itemList: ["编辑分组/标签", "AI 打标签", "删除素材"],
+      itemList: list,
       success: (res) => {
-        if (res.tapIndex === 0) this.editLabels(row);
-        else if (res.tapIndex === 1) this.aiTags(row);
-        else if (res.tapIndex === 2) this.confirmRemove(row);
+        const action = list[res.tapIndex];
+        if (action === "预览" || action === "播放") this.preview({ currentTarget: { dataset: { index } } });
+        else if (action === "编辑分组/标签") this.editLabels(row);
+        else if (action === "加入分组") this.addToGroup(row);
+        else if (action === "切片（2秒）") this.splitAsset(row);
+        else if (action === "AI 打标签") this.aiTags(row);
+        else if (action === "删除素材") this.confirmRemove(row);
+      }
+    });
+  },
+
+  addToGroup(row) {
+    wx.showModal({
+      title: "加入分组",
+      editable: true,
+      placeholderText: "输入分组名，例如：产品A素材",
+      content: row.group || "",
+      success: (res) => {
+        if (!res.confirm) return;
+        const group = String(res.content || "").trim();
+        if (!group) return wx.showToast({ title: "分组名不能为空", icon: "none" });
+        wx.showLoading({ title: "保存中" });
+        app.request({
+          method: "POST",
+          url: `/api/assets/${encodeURIComponent(row.asset_id)}/labels`,
+          data: { creative_candidate_group: group, tags: row.tags || "" },
+          timeout: 30000
+        })
+          .then(() => { wx.showToast({ title: "已加入分组", icon: "success" }); this.loadUploads(); })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+          .then(() => wx.hideLoading());
+      }
+    });
+  },
+
+  splitAsset(row) {
+    if (!row.group) {
+      wx.showModal({ title: "先加入分组", content: "切片必须在一个分组里。先给这个视频设置分组再切片。", showCancel: false });
+      return;
+    }
+    wx.showModal({
+      title: "切片（2秒/段）",
+      content: `将把「${row.name}」按 2 秒一段切片，切片会留在分组「${row.group}」。继续？`,
+      success: (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "下发切片" });
+        app.request({
+          method: "POST",
+          url: `/api/assets/${encodeURIComponent(row.asset_id)}/split`,
+          data: { segment_seconds: 2 },
+          timeout: 60000
+        })
+          .then(() => {
+            wx.hideLoading();
+            wx.showModal({ title: "已下发", content: "已交给 Online 设备按 2 秒切片，完成后刷新素材库即可看到同分组下的切片。", showCancel: false });
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            wx.showModal({ title: "切片失败", content: api.errorMessage(err), showCancel: false });
+          });
       }
     });
   },
