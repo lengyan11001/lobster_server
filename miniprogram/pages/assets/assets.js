@@ -43,6 +43,11 @@ Page({
     loading: false,
     tabCount: 0,
     currentCount: 0,
+    labelOpen: false,
+    labelAssetId: "",
+    labelGroup: "",
+    labelTags: "",
+    labelSaving: false,
     previewOpen: false,
     previewType: "",
     previewUrl: "",
@@ -455,39 +460,51 @@ Page({
   },
 
   editLabels(row) {
-    wx.showModal({
-      title: "素材分组",
-      editable: true,
-      placeholderText: "可留空；例如：产品A素材",
-      content: row.group || "",
-      success: (res1) => {
-        if (!res1.confirm) return;
-        const group = String(res1.content || "").trim();
-        wx.showModal({
-          title: "素材标签",
-          editable: true,
-          placeholderText: "逗号分隔，可留空",
-          content: row.tags || "",
-          success: (res2) => {
-            if (!res2.confirm) return;
-            const tags = String(res2.content || "").trim();
-            wx.showLoading({ title: "保存中" });
-            app.request({
-              method: "POST",
-              url: `/api/assets/${encodeURIComponent(row.asset_id)}/labels`,
-              data: { creative_candidate_group: group, tags },
-              timeout: 30000
-            })
-              .then(() => {
-                wx.showToast({ title: "已保存", icon: "success" });
-                this.loadUploads();
-              })
-              .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-              .then(() => wx.hideLoading());
-          }
-        });
-      }
+    this.setData({
+      labelOpen: true,
+      labelAssetId: row.asset_id,
+      labelGroup: row.group || "",
+      labelTags: row.tags || ""
     });
+  },
+
+  closeLabelEditor() {
+    if (this.data.labelSaving) return;
+    this.setData({ labelOpen: false });
+  },
+
+  labelNoop() {},
+
+  onLabelGroup(e) {
+    this.setData({ labelGroup: e.detail.value });
+  },
+
+  onLabelTags(e) {
+    this.setData({ labelTags: e.detail.value });
+  },
+
+  saveLabels() {
+    const assetId = String(this.data.labelAssetId || "");
+    if (!assetId) return;
+    this.setData({ labelSaving: true });
+    app.request({
+      method: "POST",
+      url: `/api/assets/${encodeURIComponent(assetId)}/labels`,
+      data: {
+        creative_candidate_group: String(this.data.labelGroup || "").trim(),
+        tags: String(this.data.labelTags || "").trim()
+      },
+      timeout: 30000
+    })
+      .then(() => {
+        wx.showToast({ title: "已保存", icon: "success" });
+        this.setData({ labelOpen: false, labelSaving: false });
+        this.loadUploads();
+      })
+      .catch((err) => {
+        this.setData({ labelSaving: false });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   },
 
   aiTags(row) {

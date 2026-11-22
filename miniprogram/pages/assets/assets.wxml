@@ -53,6 +53,20 @@
       </view>
     </view>
   </view>
+  <view wx:if="{{labelOpen}}" class="label-mask" catchtap="closeLabelEditor">
+    <view class="label-sheet" catchtap="labelNoop">
+      <text class="label-title">编辑分组 / 标签</text>
+      <text class="label-sub">分组（可留空）</text>
+      <input class="label-input" value="{{labelGroup}}" bindinput="onLabelGroup" placeholder="例如：产品A素材" maxlength="60" />
+      <text class="label-sub">标签（逗号分隔，可留空）</text>
+      <input class="label-input" value="{{labelTags}}" bindinput="onLabelTags" placeholder="例如：口播,产品" maxlength="200" />
+      <view class="label-actions">
+        <button class="ghost half" bindtap="closeLabelEditor">取消</button>
+        <button class="primary half" loading="{{labelSaving}}" bindtap="saveLabels">保存</button>
+      </view>
+    </view>
+  </view>
+
   <view wx:if="{{previewOpen}}" class="asset-preview">
     <view class="asset-preview-head">
       <view class="asset-preview-back" bindtap="closePreview">‹ 返回</view>
