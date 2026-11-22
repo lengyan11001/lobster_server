@@ -56,6 +56,8 @@ Page({
     useTemplate: false,
     templateTitle: "",
     templateContent: "",
+    bgmItems: [],
+    bgmIndex: -1,
     ttsLoading: false,
     viewMode: "list",
     jobList: [],
@@ -132,10 +134,50 @@ Page({
     this.loadTemplates("realMan");
     this.loadMontageVoices();
     this.loadGroups();
+    this.loadBgm();
   },
 
   onUnload() {
     this.stopPolling();
+    if (this.bgmAudio) {
+      try { this.bgmAudio.stop(); this.bgmAudio.destroy(); } catch (e) {}
+      this.bgmAudio = null;
+    }
+  },
+
+  loadBgm() {
+    app.request({ url: "/api/montage/bgm", timeout: 20000 })
+      .then((data) => {
+        const items = ((data && data.items) || [])
+          .map((row) => ({
+            key: String(row.key || ""),
+            name: String(row.name || "\u80cc\u666f\u97f3\u4e50"),
+            url: String(row.url || ""),
+            volume: Number(row.volume || 0.24)
+          }))
+          .filter((row) => row.url);
+        this.setData({ bgmItems: items });
+      })
+      .catch(() => {});
+  },
+
+  selectBgm(e) {
+    const index = Number(e.currentTarget.dataset.index);
+    this.setData({ bgmIndex: index >= 0 && index === this.data.bgmIndex ? -1 : index });
+  },
+
+  clearBgm() {
+    this.setData({ bgmIndex: -1 });
+  },
+
+  previewBgm() {
+    const row = this.data.bgmItems[this.data.bgmIndex];
+    if (!row || !row.url) return;
+    if (!this.bgmAudio) this.bgmAudio = wx.createInnerAudioContext();
+    try { this.bgmAudio.stop(); } catch (e) {}
+    this.bgmAudio.src = row.url;
+    this.bgmAudio.play();
+    wx.showToast({ title: "\u8bd5\u542c\u4e2d", icon: "none" });
   },
 
   openRecordingPrefill() {
@@ -371,6 +413,7 @@ Page({
     if (!group && !videoUrls.length && !imageUrls.length) return wx.showToast({ title: "先选素材分组或加素材", icon: "none" });
     if (!videoUrls.length && !imageUrls.length) return wx.showToast({ title: "这个分组没有可用素材，请换一个或手动添加", icon: "none" });
     const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
+    const bgm = this.data.bgmIndex >= 0 ? (this.data.bgmItems[this.data.bgmIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();
     if (!this.data.speechAudioUrl && !text) {
       return wx.showToast({ title: "先写口播文案（或先点生成音轨）", icon: "none" });
@@ -388,7 +431,10 @@ Page({
         title: String(this.data.templateTitle || "").trim() || "混剪成片",
         content: String(this.data.templateContent || ""),
         template_style_id: String(tpl.styleId || ""),
-        template_name: String(tpl.name || "")
+        template_name: String(tpl.name || ""),
+        bgm_url: String(bgm.url || ""),
+        bgm_name: String(bgm.name || ""),
+        bgm_volume: Number(bgm.volume || 0.24)
       };
       wx.setStorageSync("lobster_montage_last_payload", payload);
       app.request({

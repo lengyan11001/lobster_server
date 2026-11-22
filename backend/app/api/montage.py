@@ -29,6 +29,31 @@ FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 
 
+# Online 同款背景音乐库（TOS 公共素材，直接下载后与口播双音轨混音）
+_BGM_BASE = "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/"
+_MONTAGE_BGM = [
+    ("\u7231\u4e0d\u91ca\u624b", "c8877058895c"),
+    ("\u4e4c\u5170\u5df4\u6258\u7684\u591c", "f69fd79514c8"),
+    ("\u6400\u6276", "6a4eb368e076"),
+    ("\u5149\u8f89\u5c81\u6708", "5268b93f9941"),
+    ("\u4f60\u662f\u98ce\u513f\u6211\u662f\u6c99", "23929b8355c4"),
+    ("\u9752\u82b1", "762080df1a7a"),
+    ("\u5077\u5fc3", "3d0d6b58112a"),
+    ("\u91cd\u5927\u7684\u65b0\u95fb\u901a\u77e5", "fe15595e0ce2"),
+    ("\u5171\u5b88\u6cb3\u5c71", "57e9eb26c2dd"),
+    ("\u8fd9\u4e2a\u5c31\u53eb\u4e13\u4e1a", "909a0e86c332"),
+    ("\u6c14\u8d28\u51fa\u573a", "a790fbef2b03"),
+    ("\u4eca\u751f\u554a \u591a\u76f8\u89c1", "0b0b968f7534"),
+    ("Victory", "2022144c0ba6"),
+    ("\u6708\u4eae\u7167\u5c71\u5ddd", "bada613dd8da"),
+    ("So let me know", "dd32d307c3f8"),
+    ("\u6625\u98ce\u4f55\u65f6\u6765", "f374c3c1769d"),
+    ("\u5343\u5343\u9619\u6b4c", "9e1960237a66"),
+    ("\u7231\u7b11\u7684\u5973\u5b69", "1581cdaec400"),
+    ("\u6f2b\u6b65\u4eba\u751f\u8def", "d4013e6c4919"),
+]
+
+
 class MontageBody(BaseModel):
     record_id: Optional[int] = None
     voice_url: str = ""
@@ -40,6 +65,9 @@ class MontageBody(BaseModel):
     title: str = ""
     template_style_id: str = ""
     template_name: str = ""
+    bgm_url: str = ""
+    bgm_name: str = ""
+    bgm_volume: float = 0.24
 
 
 def _run(args: List[str], timeout: int = 300) -> None:
@@ -95,6 +123,17 @@ def _size_for_ratio(ratio: str) -> tuple[int, int]:
     return 720, 1280
 
 
+@router.get("/api/montage/bgm", summary="\u6df7\u526a\u80cc\u666f\u97f3\u4e50\u5217\u8868")
+def montage_bgm_library() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "items": [
+            {"key": media_id, "name": name, "url": _BGM_BASE + media_id + ".m4a", "volume": 0.24}
+            for name, media_id in _MONTAGE_BGM
+        ],
+    }
+
+
 def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int], reference: dict[str, Any], start: float = 0.0) -> Path:
     info = _probe(str(src))
     same = (
@@ -126,6 +165,43 @@ def _prepare_image_segment(src: Path, dst: Path, seconds: float, size: tuple[int
         "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", str(dst),
     ], timeout=180)
     return dst
+
+
+def _mix_voice(
+    video: Path,
+    voice: Path,
+    dst: Path,
+    total: float,
+    bgm: Optional[Path] = None,
+    bgm_volume: float = 0.24,
+) -> None:
+    """把口播音轨混进成片。选了背景音乐就双音轨同时播放，BGM 循环铺满全片。"""
+    if bgm is None:
+        _run([
+            FFMPEG, "-y", "-i", str(video), "-i", str(voice),
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+            "-t", "%.3f" % total, "-movflags", "+faststart", str(dst),
+        ], timeout=300)
+        return
+    volume = min(1.0, max(0.0, float(bgm_volume if bgm_volume is not None else 0.24)))
+    graph = (
+        "[1:a:0]volume=1.0,aresample=48000,"
+        "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[voice];"
+        "[2:a:0]atrim=duration=%.3f,asetpts=PTS-STARTPTS,volume=%.3f,aresample=48000,"
+        "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[bgm];"
+        "[voice][bgm]amix=inputs=2:duration=first:dropout_transition=2,"
+        "loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
+    ) % (max(0.1, float(total)), volume)
+    _run([
+        FFMPEG, "-y", "-i", str(video), "-i", str(voice),
+        "-stream_loop", "-1", "-i", str(bgm),
+        "-filter_complex", graph,
+        "-map", "0:v:0", "-map", "[aout]",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-t", "%.3f" % total, "-movflags", "+faststart", str(dst),
+    ], timeout=300)
 
 
 def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
@@ -211,6 +287,17 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         total = float(body.target_seconds or 0) or voice_duration
         total = max(3.0, min(total, voice_duration if voice_duration > 0 else 60.0))
 
+        bgm_path: Optional[Path] = None
+        bgm_url = str(body.bgm_url or "").strip()
+        if bgm_url.startswith(("http://", "https://")):
+            suffix = Path(bgm_url.split("?")[0]).suffix.lower()
+            if suffix not in (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
+                suffix = ".m4a"
+            try:
+                bgm_path = _download(bgm_url, work / ("bgm" + suffix), timeout=180.0)
+            except Exception:  # noqa: BLE001 - 背景音乐拉取失败不应让整条混剪失败
+                bgm_path = None
+
         import random
         seg_seconds = 3.0
         pool = [("video", u) for u in urls] + [("image", u) for u in images]
@@ -289,13 +376,7 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(board)], timeout=300)
 
         final = work / "final.mp4"
-        _run([
-            FFMPEG, "-y", "-i", str(board), "-i", str(voice_path),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-            "-t", "%.3f" % total, "-movflags", "+faststart", str(final),
-        ], timeout=300)
+        _mix_voice(board, voice_path, final, total, bgm_path, body.bgm_volume)
 
         # ---- 套闪剪模板：底片交给闪剪渲染，再把音频换回我们的口播 ----
         template_style_id = str(body.template_style_id or "").strip()
@@ -313,13 +394,7 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
             if templated:
                 src = _download(templated, work / "templated.mp4")
                 remixed = work / "templated_voice.mp4"
-                _run([
-                    FFMPEG, "-y", "-i", str(src), "-i", str(voice_path),
-                    "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                    "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-                    "-t", "%.3f" % total, "-movflags", "+faststart", str(remixed),
-                ], timeout=300)
+                _mix_voice(src, voice_path, remixed, total, bgm_path, body.bgm_volume)
                 final = remixed
 
         data = final.read_bytes()

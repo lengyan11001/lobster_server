@@ -62,6 +62,25 @@
     </view>
     <text class="hint">{{speechStatus}}</text>
 
+    <text class="label">背景音乐（可选，与口播双音轨同时播放）</text>
+    <view wx:if="{{!bgmItems.length}}" class="hint">背景音乐加载中…</view>
+    <scroll-view wx:else scroll-x class="tpl-scroll">
+      <view class="tpl-row">
+        <view class="tpl {{bgmIndex === -1 ? 'active' : ''}}" data-index="-1" bindtap="selectBgm">
+          <view class="tpl-cover tpl-cover-empty">无</view>
+          <text class="tpl-name">无音乐</text>
+        </view>
+        <view wx:for="{{bgmItems}}" wx:key="key" class="tpl {{bgmIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectBgm">
+          <view class="tpl-cover tpl-cover-empty">♪</view>
+          <text class="tpl-name">{{item.name}}</text>
+        </view>
+      </view>
+    </scroll-view>
+    <view wx:if="{{bgmIndex >= 0}}" class="btn-row">
+      <button class="ghost half" bindtap="previewBgm">试听</button>
+      <button class="ghost half" bindtap="clearBgm">移除</button>
+    </view>
+
     <view class="tpl-row2">
       <text class="label tpl-label">套用闪剪模板</text>
       <switch checked="{{useTemplate}}" bindchange="toggleUseTemplate" color="#1957E8" />
