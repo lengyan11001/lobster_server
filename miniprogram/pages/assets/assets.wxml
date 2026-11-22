@@ -22,7 +22,6 @@
     <view wx:for="{{items}}" wx:key="asset_id" class="cell" data-index="{{index}}" bindtap="preview" bindlongpress="onAssetMenu">
       <image class="thumb" src="{{item.thumb}}" mode="aspectFill" />
       <view wx:if="{{item.media_type !== 'image'}}" class="badge">{{item.media_type === 'video' ? '▶' : '♪'}}</view>
-      <view class="del" data-index="{{index}}" catchtap="remove">×</view>
       <view class="more" data-index="{{index}}" catchtap="onAssetMenu">⋯</view>
       <text class="name">{{item.name}}</text>
       <text wx:if="{{item.group}}" class="group">{{item.group}}</text>
