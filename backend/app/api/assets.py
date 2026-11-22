@@ -1992,6 +1992,43 @@ def _creative_candidate_groups(meta: Optional[dict]) -> list[str]:
     return [group] if group else []
 
 
+def _apply_asset_library_filters(query, mode: str):
+    """素材库可见性：默认只列用户上传；
+    中间产物、切片得到的过程视频、成片记录一律不进素材库。"""
+    meta_origin = func.lower(
+        func.coalesce(
+            Asset.meta["asset_origin"].as_string(),
+            Asset.meta["origin"].as_string(),
+            "",
+        )
+    )
+    meta_visibility = func.lower(
+        func.coalesce(
+            Asset.meta["content_visibility"].as_string(),
+            Asset.meta["library_visibility"].as_string(),
+            "",
+        )
+    )
+    query = query.filter(
+        ~meta_visibility.in_(("hidden", "internal", "intermediate", "record_only")),
+        ~meta_origin.in_(("internal", "intermediate")),
+        func.coalesce(Asset.model, "") != "shanjian-digital-human-template-media",
+    )
+    if mode == "uploads":
+        # 素材库：只有用户上传，且不含切片产物
+        # 历史上传没有 asset_origin，空值按上传处理
+        query = query.filter(
+            (meta_origin == "user_upload") | (meta_origin == ""),
+            ~func.lower(func.coalesce(Asset.meta["video_segment"].as_string(), "")).in_(("true", "1")),
+            ~func.lower(func.coalesce(Asset.meta["online_split_source"].as_string(), "")).in_(("true", "1")),
+        )
+    elif mode == "generated":
+        query = query.filter(
+            ~meta_origin.in_(("user_upload", "")),
+        )
+    return query
+
+
 @router.get("/api/assets", summary="列出本地素材")
 def list_assets(
     media_type: Optional[str] = None,
@@ -2018,30 +2055,18 @@ def list_assets(
         )
     max_limit = max(1, min(int(limit or 50), 200))
     clean_offset = max(0, int(offset or 0))
-    meta_origin = func.lower(
-        func.coalesce(
-            Asset.meta["asset_origin"].as_string(),
-            Asset.meta["origin"].as_string(),
-            "",
-        )
-    )
-    meta_visibility = func.lower(
-        func.coalesce(
-            Asset.meta["content_visibility"].as_string(),
-            Asset.meta["library_visibility"].as_string(),
-            "",
-        )
-    )
-    query = query.filter(
-        ~meta_visibility.in_(("hidden", "internal", "intermediate")),
-        ~meta_origin.in_(("internal", "intermediate")),
-        func.coalesce(Asset.model, "") != "shanjian-digital-human-template-media",
-    )
-    origin_filter = _normalize_asset_origin_filter(origin or asset_origin or source)
+    raw_origin = str(origin or asset_origin or source or "").strip().lower()
+    origin_filter = _normalize_asset_origin_filter(raw_origin)
     if origin_filter == "user_upload":
-        query = query.filter(meta_origin == "user_upload")
+        mode = "uploads"
     elif origin_filter == "generated":
-        query = query.filter(meta_origin != "user_upload")
+        mode = "generated"
+    elif raw_origin in ("all", "*", "any"):
+        mode = "all"
+    else:
+        # 素材库默认只看上传素材
+        mode = "uploads"
+    query = _apply_asset_library_filters(query, mode)
     total = query.with_entities(func.count(Asset.id)).scalar() or 0
     rows = (
         query.order_by(Asset.created_at.desc(), Asset.id.desc())

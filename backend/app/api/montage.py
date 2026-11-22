@@ -415,7 +415,7 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
             prompt=title,
             model="montage_ffmpeg",
             tags="montage,ffmpeg",
-            meta={"source": "montage_ffmpeg", "asset_origin": "generated", "content_visibility": "visible",
+            meta={"source": "montage_ffmpeg", "asset_origin": "generated", "content_visibility": "record_only",
                   "duration": round(total, 2), "segments": len(segments), "ratio": body.ratio},
         ))
         db.add(UserContentRecord(
