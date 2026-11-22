@@ -1617,6 +1617,7 @@ async def upload_asset(
     split_job_id: str = Form(""),
     creative_candidate_group: str = Form(""),
     tags: str = Form(""),
+    upload_source: str = Form(""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1751,6 +1752,10 @@ async def upload_asset(
             ),
         )
     asset_meta = {"asset_origin": "user_upload"}
+    if str(upload_source or "").strip().lower() in ("montage", "miniprogram_montage"):
+        # 混剪任务里上传的素材只服务于这一次任务，不进素材库
+        asset_meta["upload_channel"] = "montage"
+        asset_meta["library_visibility"] = "hidden"
     if upload_group:
         asset_meta["creative_candidate_group"] = upload_group
         asset_meta["creative_candidate_groups"] = [upload_group]
@@ -2013,14 +2018,14 @@ def _apply_asset_library_filters(query, mode: str):
         ~meta_visibility.in_(("hidden", "internal", "intermediate", "record_only")),
         ~meta_origin.in_(("internal", "intermediate")),
         func.coalesce(Asset.model, "") != "shanjian-digital-human-template-media",
+        # 混剪任务里上传的素材（历史数据只有 tag 标记）不进素材库
+        ~func.coalesce(Asset.tags, "").ilike("%montage,miniprogram%"),
     )
     if mode == "uploads":
-        # 素材库：只有用户上传，且不含切片产物
+        # 素材库：只有用户上传（含用户在素材库里切的片段和原片）
         # 历史上传没有 asset_origin，空值按上传处理
         query = query.filter(
             (meta_origin == "user_upload") | (meta_origin == ""),
-            ~func.lower(func.coalesce(Asset.meta["video_segment"].as_string(), "")).in_(("true", "1")),
-            ~func.lower(func.coalesce(Asset.meta["online_split_source"].as_string(), "")).in_(("true", "1")),
         )
     elif mode == "generated":
         query = query.filter(

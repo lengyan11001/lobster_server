@@ -634,7 +634,7 @@ Page({
             url: "/api/assets/upload",
             filePath: file.tempFilePath,
             name: "file",
-            formData: { media_type: type, tags: "montage,miniprogram" },
+            formData: { media_type: type, tags: "montage,miniprogram", upload_source: "montage" },
             token: app.globalData.token || ""
           }).then((data) => {
             const url = String((data && (data.source_url || data.url)) || "").trim();
