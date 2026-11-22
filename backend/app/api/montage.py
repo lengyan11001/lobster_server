@@ -136,32 +136,34 @@ def montage_bgm_library() -> dict[str, Any]:
 
 def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int], reference: dict[str, Any], start: float = 0.0) -> Path:
     info = _probe(str(src))
+    w, h = size
+    # 只有本身就是目标分辨率/编码的片段才能直接 copy
     same = (
         info["vcodec"] == reference["vcodec"]
-        and info["width"] == reference["width"]
-        and info["height"] == reference["height"]
+        and info["width"] == w
+        and info["height"] == h
         and info["fps"] == reference["fps"]
     )
     take = "%.3f" % max(0.4, seconds)
     if same and start <= 0.05:
         args = [FFMPEG, "-y", "-ss", "0", "-t", take, "-i", str(src), "-an", "-c", "copy", str(dst)]
     else:
-        w, h = size
+        # 9:16 成片为准：其他尺寸按比例完整缩放到画面内，上下/左右用黑底补齐
         args = [
             FFMPEG, "-y", "-ss", "%.3f" % max(0.0, start), "-t", take, "-i", str(src), "-an",
-            "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=30" % (w, h, w, h),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(dst),
+            "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,fps=30" % (w, h, w, h),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", str(dst),
         ]
     _run(args, timeout=180)
     return dst
 
 
 def _prepare_image_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int]) -> Path:
-    """图片按固定 3 秒（或剩余时长）静帧成片。"""
+    """图片按固定 3 秒（或剩余时长）静帧成片；非 9:16 图片完整显示，上下补黑。"""
     w, h = size
     _run([
         FFMPEG, "-y", "-loop", "1", "-t", "%.3f" % max(0.5, seconds), "-i", str(src),
-        "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=30,format=yuv420p" % (w, h, w, h),
+        "-vf", "scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,fps=30,format=yuv420p" % (w, h, w, h),
         "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", str(dst),
     ], timeout=180)
     return dst
