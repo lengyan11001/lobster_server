@@ -3,6 +3,15 @@ const api = require("../../utils/api");
 const { createPoller } = require("../../utils/task-poll");
 const hist = require("../../utils/gen-history");
 const media = require("../../utils/media");
+const config = require("../../config");
+
+function thumbUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  const base = String(config.API_BASE || "").replace(/\/+$/, "");
+  const abs = /^https?:\/\//i.test(u) ? u : base + (u.charAt(0) === "/" ? u : "/" + u);
+  return `${base}/api/media/thumb?url=${encodeURIComponent(abs)}`;
+}
 const { formatDateTime } = require("../../utils/datetime");
 
 const POLL_MS = 6000;
@@ -629,7 +638,7 @@ Page({
             token: app.globalData.token || ""
           }).then((data) => {
             const url = String((data && (data.source_url || data.url)) || "").trim();
-            if (url) materials.push({ type, fileUrl: url });
+            if (url) materials.push({ type, fileUrl: url, cover: type === "video" ? thumbUrl(url) : url });
           }).catch((err) => {
             wx.showToast({ title: api.errorMessage(err), icon: "none" });
           }).then(() => {
@@ -647,13 +656,18 @@ Page({
     app.request({ url: "/api/assets?limit=100", timeout: 30000 })
       .then((data) => {
         const rows = (data && (data.assets || data.items || data.data)) || [];
-        const items = (Array.isArray(rows) ? rows : []).map((row) => ({
-          id: String(row.asset_id || row.id || row.source_url || ""),
-          url: String(row.source_url || row.url || ""),
-          type: String(row.media_type || (String(row.filename || "").match(/\.(mp4|mov|webm)$/i) ? "video" : "image")),
-          name: String(row.filename || row.name || "素材"),
-          cover: String(row.preview_url || row.cover_url || row.source_url || row.url || "")
-        })).filter((x) => x.url);
+        const items = (Array.isArray(rows) ? rows : []).map((row) => {
+          const url = String(row.source_url || row.url || "");
+          const type = String(row.media_type || (String(row.filename || "").match(/\.(mp4|mov|webm)$/i) ? "video" : "image"));
+          const imageCover = String(row.preview_url || row.cover_url || (type === "image" ? url : "") || "");
+          return {
+            id: String(row.asset_id || row.id || row.source_url || ""),
+            url,
+            type,
+            name: String(row.filename || row.name || "素材"),
+            cover: imageCover || (type === "video" ? thumbUrl(url) : "")
+          };
+        }).filter((x) => x.url);
         this.setData({ assetItems: items });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
@@ -675,7 +689,7 @@ Page({
     const picked = this.data.assetItems.filter((x) => x.checked);
     if (!picked.length) return wx.showToast({ title: "先选素材", icon: "none" });
     const materials = this.data.materials.slice();
-    picked.forEach((x) => materials.push({ type: x.type, fileUrl: x.url }));
+    picked.forEach((x) => materials.push({ type: x.type, fileUrl: x.url, cover: x.cover || (x.type === "video" ? thumbUrl(x.url) : x.url) }));
     this.setData({ materials, assetOpen: false });
   },
 

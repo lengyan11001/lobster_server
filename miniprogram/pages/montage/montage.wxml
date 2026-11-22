@@ -112,8 +112,9 @@
     <text class="label">素材（{{materials.length}} 个视频）</text>
     <view class="mat-row">
       <view wx:for="{{materials}}" wx:key="fileUrl" class="mat">
-        <image wx:if="{{item.type === 'image'}}" class="mat-thumb" src="{{item.fileUrl}}" mode="aspectFill" />
-        <view wx:else class="mat-thumb mat-video">视频</view>
+        <image wx:if="{{item.cover}}" class="mat-thumb" src="{{item.cover}}" mode="aspectFill" />
+        <view wx:else class="mat-thumb mat-video">{{item.type === 'video' ? '视频' : '图片'}}</view>
+        <view wx:if="{{item.type === 'video'}}" class="mat-play">▶</view>
         <text class="mat-del" data-index="{{index}}" bindtap="removeMaterial">×</text>
       </view>
       <view class="mat-add" bindtap="addMaterial">+</view>
@@ -136,8 +137,8 @@
     <scroll-view scroll-y class="am-body">
       <view wx:for="{{assetItems}}" wx:key="id" class="am-item" data-index="{{index}}" catchtap="toggleAsset">
         <view class="am-box {{item.checked ? 'on' : ''}}">{{item.checked ? '✓' : ''}}</view>
-        <image wx:if="{{item.type === 'image'}}" class="am-thumb" src="{{item.cover}}" mode="aspectFill" />
-        <view wx:else class="am-thumb video">视频</view>
+        <image wx:if="{{item.cover}}" class="am-thumb" src="{{item.cover}}" mode="aspectFill" />
+        <view wx:else class="am-thumb video">{{item.type === 'video' ? '视频' : '图片'}}</view>
         <text class="am-name">{{item.name}}</text>
       </view>
     </scroll-view>
