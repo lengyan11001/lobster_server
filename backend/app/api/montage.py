@@ -33,6 +33,7 @@ class MontageBody(BaseModel):
     record_id: Optional[int] = None
     voice_url: str = ""
     asset_urls: List[str] = Field(default_factory=list)
+    image_urls: List[str] = Field(default_factory=list)
     group: str = ""
     target_seconds: Optional[int] = None
     ratio: str = "9:16"
@@ -115,6 +116,17 @@ def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int]
     return dst
 
 
+def _prepare_image_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int]) -> Path:
+    """图片按固定 3 秒（或剩余时长）静帧成片。"""
+    w, h = size
+    _run([
+        FFMPEG, "-y", "-loop", "1", "-t", "%.3f" % max(0.5, seconds), "-i", str(src),
+        "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=30,format=yuv420p" % (w, h, w, h),
+        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", str(dst),
+    ], timeout=180)
+    return dst
+
+
 def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
     """同步渲染（在线程里跑）。自己开 session，避免长时间占用请求连接。"""
     started = time.time()
@@ -162,26 +174,33 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
 
         group_name = str(body.group or "").strip()
         urls = [u for u in (body.asset_urls or []) if isinstance(u, str) and u.startswith("http")][:12]
-        if not urls and group_name:
+        images = [u for u in (body.image_urls or []) if isinstance(u, str) and u.startswith("http")][:30]
+        if group_name and not urls and not images:
             rows = (
                 db.query(Asset)
-                .filter(Asset.user_id == int(user.id), Asset.media_type == "video")
+                .filter(Asset.user_id == int(user.id))
                 .order_by(Asset.id.desc())
                 .limit(300)
                 .all()
             )
-            picked = []
+            picked_videos = []
+            picked_images = []
             for row in rows:
                 meta = row.meta if isinstance(row.meta, dict) else {}
                 tags = str(getattr(row, "tags", "") or "")
                 if group_name == str(meta.get("creative_candidate_group") or "") or group_name in tags:
                     url = str(row.source_url or "")
-                    if url.startswith("http"):
-                        picked.append(url)
-            urls = picked[:60]
+                    if not url.startswith("http"):
+                        continue
+                    if str(row.media_type or "").strip().lower() == "image":
+                        picked_images.append(url)
+                    elif str(row.media_type or "").strip().lower() == "video":
+                        picked_videos.append(url)
+            urls = (urls + picked_videos)[:60]
+            images = (images + picked_images)[:60]
             db.commit()
-        if not urls:
-            raise HTTPException(status_code=400, detail="请选择素材分组，或至少选一个视频素材")
+        if not urls and not images:
+            raise HTTPException(status_code=400, detail="请选择素材分组，或至少选一个视频/图片素材")
 
         voice_info = _probe(str(voice_path))
         voice_duration = float(voice_info.get("duration") or 0)
@@ -192,30 +211,47 @@ def _render_montage(owner_id: int, body: MontageBody) -> dict[str, Any]:
         total = max(3.0, min(total, voice_duration if voice_duration > 0 else 60.0))
 
         import random
-        pool = list(urls)
+        pool = [("video", u) for u in urls] + [("image", u) for u in images]
         random.shuffle(pool)
         segments: List[Path] = []
         reference: Optional[dict[str, Any]] = None
         acc = 0.0
         idx = 0
         size = _size_for_ratio(body.ratio)
-        while acc < total - 0.15 and idx < 40:
-            url = pool[idx % len(pool)]
+        pool_len = max(1, len(pool))
+        while acc < total - 0.15 and idx < 40 and pool:
+            kind, url = pool[idx % pool_len]
+            remaining = total - acc
+            if kind == "image":
+                suffix = Path(str(url).split("?")[0]).suffix.lower() or ".jpg"
+                src = _download(url, work / ("img_%02d%s" % (idx, suffix)))
+                take = min(3.0, remaining)
+                if take < 0.5:
+                    break
+                seg = _prepare_image_segment(src, work / ("seg_%02d.mp4" % idx), take, size)
+                segments.append(seg)
+                acc += take
+                idx += 1
+                continue
             src = _download(url, work / ("src_%02d.mp4" % idx))
-            idx += 1
             info = _probe(str(src))
             if not info["has_video"] or info["duration"] <= 0.2:
+                idx += 1
                 continue
             if reference is None:
                 reference = info
-            take = min(info["duration"], total - acc)
+            slots = max(1, pool_len - idx) if idx < pool_len else 1
+            share = remaining / slots
+            take = min(info["duration"], max(1.0, share), remaining)
             if take < 0.5:
-                break
-            seg = _prepare_segment(src, work / ("seg_%02d.mp4" % (idx - 1)), take, size, reference)
+                idx += 1
+                continue
+            seg = _prepare_segment(src, work / ("seg_%02d.mp4" % idx), take, size, reference)
             segments.append(seg)
             acc += take
+            idx += 1
         if not segments:
-            raise HTTPException(status_code=400, detail="素材里没有可用视频")
+            raise HTTPException(status_code=400, detail="素材里没有可用视频或图片")
 
         listing = work / "list.txt"
         listing.write_text("".join("file '%s'\n" % p for p in segments), encoding="utf-8")

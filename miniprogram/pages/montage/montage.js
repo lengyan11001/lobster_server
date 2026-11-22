@@ -201,26 +201,27 @@ Page({
     ])
       .then(([groupData, assetData]) => {
         const assets = (assetData && (assetData.assets || assetData.items || assetData.data)) || [];
-        const videoGroups = {};
+        const groupAssets = {};
         (Array.isArray(assets) ? assets : []).forEach((row) => {
-          if (String(row.media_type || "").toLowerCase() !== "video") return;
+          const mediaType = String(row.media_type || "").toLowerCase();
+          if (mediaType !== "video" && mediaType !== "image") return;
           const url = String(row.source_url || row.url || row.preview_url || "").trim();
           if (!url) return;
           const names = Array.isArray(row.creative_candidate_groups) && row.creative_candidate_groups.length
             ? row.creative_candidate_groups
             : [row.creative_candidate_group];
           names.map((name) => String(name || "").trim()).filter(Boolean).forEach((name) => {
-            if (!videoGroups[name]) videoGroups[name] = [];
-            if (videoGroups[name].indexOf(url) < 0) videoGroups[name].push(url);
+            if (!groupAssets[name]) groupAssets[name] = [];
+            if (!groupAssets[name].some((item) => item.url === url)) groupAssets[name].push({ type: mediaType, url });
           });
         });
-        const names = Object.keys(videoGroups);
+        const names = Object.keys(groupAssets);
         const remembered = String(this.data.selectedGroup || wx.getStorageSync("lobster_montage_group") || "");
         const selected = names.indexOf(remembered) >= 0 ? remembered : (names[0] || "");
         this.setData({
           groups: names,
           groupNames: names,
-          groupAssets: videoGroups,
+          groupAssets,
           selectedGroup: selected,
           groupIndex: selected ? names.indexOf(selected) : -1,
           groupsLoading: false
@@ -357,13 +358,18 @@ Page({
 
   startLocalMontage() {
     if (!this.ensureAuth()) return;
-    let urls = (this.data.materials || []).filter((m) => m && m.type === "video" && m.fileUrl).map((m) => m.fileUrl);
+    const picked = (this.data.materials || []).filter((m) => m && m.fileUrl);
+    let videoUrls = picked.filter((m) => m.type === "video").map((m) => m.fileUrl);
+    let imageUrls = picked.filter((m) => m.type === "image").map((m) => m.fileUrl);
     const group = String(this.data.selectedGroup || this.data.groups[this.data.groupIndex] || "");
-    if (!urls.length && group) {
-      urls = ((this.data.groupAssets || {})[group] || []).slice();
+    if (!videoUrls.length && !imageUrls.length && group) {
+      ((this.data.groupAssets || {})[group] || []).forEach((item) => {
+        if (item.type === "image") imageUrls.push(item.url);
+        else videoUrls.push(item.url);
+      });
     }
-    if (!group && !urls.length) return wx.showToast({ title: "先选素材分组或加视频", icon: "none" });
-    if (!urls.length) return wx.showToast({ title: "这个分组没有视频素材，请换一个或手动加视频", icon: "none" });
+    if (!group && !videoUrls.length && !imageUrls.length) return wx.showToast({ title: "先选素材分组或加素材", icon: "none" });
+    if (!videoUrls.length && !imageUrls.length) return wx.showToast({ title: "这个分组没有可用素材，请换一个或手动添加", icon: "none" });
     const tpl = this.data.useTemplate ? (this.data.templates[this.data.templateIndex] || {}) : {};
     const text = String(this.data.speechText || "").trim();
     if (!this.data.speechAudioUrl && !text) {
@@ -376,7 +382,8 @@ Page({
       const payload = {
         voice_url: voiceUrl,
         group: group,
-        asset_urls: urls.slice(0, 12),
+        asset_urls: videoUrls.slice(0, 12),
+        image_urls: imageUrls.slice(0, 30),
         ratio: "9:16",
         title: String(this.data.templateTitle || "").trim() || "混剪成片",
         content: String(this.data.templateContent || ""),
