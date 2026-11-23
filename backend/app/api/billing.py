@@ -721,8 +721,13 @@ def get_credit_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """与 users.credits 变动一一对应；展示 credit_ledger 全量（含 sutui_chat、pre_deduct、settle 等）。"""
-    q = db.query(CreditLedger).filter(CreditLedger.user_id == current_user.id)
+    """与 users.credits 变动一一对应；系统冲正不进入用户侧“消耗记录”。"""
+    # settle_reversal 是内部账务冲正，不是用户消耗，用户侧流水不展示。
+    # 完整审计仍可通过 /api/billing/credit-ledger 查看。
+    q = db.query(CreditLedger).filter(
+        CreditLedger.user_id == current_user.id,
+        CreditLedger.entry_type != "settle_reversal",
+    )
     total = q.count()
     off = max(0, offset)
     n = min(max(limit, 1), 200)

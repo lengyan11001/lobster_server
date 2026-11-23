@@ -237,6 +237,4 @@ def test_settle_reversal_not_counted_as_daily_usage(db_session, db_session_facto
 
     hist = client.get("/api/billing/credit-history")
     assert hist.status_code == 200
-    rev = next(i for i in hist.json()["items"] if i["entry_type"] == "settle_reversal")
-    assert rev["type"] == "adjustment"
-    assert rev["counts_as_consumption"] is False
+    assert all(i["entry_type"] != "settle_reversal" for i in hist.json()["items"])
