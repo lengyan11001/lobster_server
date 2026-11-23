@@ -15926,10 +15926,10 @@ async function api(path, options = {}) {
         voice: {
           title: "语音指令",
           kicker: "VOICE ROUTE",
-          desc: "说出或输入要执行的现场任务，只识别秘书、获客、生成视频、个人微信这 4 个场景。",
+          desc: "说出或输入要执行的现场任务，支持抖音养号、抖音获客、朋友圈图文、抖音发布、视频号发布、微信接管六类动作。",
           submit: "识别并执行",
           hint: "如果语音要生成视频，请先上传或拍一张现场图片；复杂调度请去 AI 调度助手。",
-          placeholder: "例如：用这张图生成一个高级感介绍视频；或者说：开始抖音获客、接管微信。",
+          placeholder: "例如：抖音养号、抖音获客、发抖音、发视频号、生成朋友圈图文、接管微信。",
           needsImage: true,
         },
         leads: {
@@ -16250,7 +16250,7 @@ async function api(path, options = {}) {
     async function submitLiveExecutorPlan(plan, task) {
       const taskKind = String((plan && (plan.taskKind || plan.task_kind)) || "client_workflow").trim() || "client_workflow";
       const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);
-      const installationId = serverSide ? "" : await ensureLiveExecutorOnlineInstallationId({ refresh: true, preferred: (plan && plan.installationId) || "" });
+      const installationId = serverSide ? "" : await ensureLiveExecutorOnlineInstallationId({ refresh: false, preferred: (plan && plan.installationId) || "" });
       if (!serverSide && !installationId) throw new Error("请先选择在线 Online 设备");
       const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
       payload.live_executor = true;
@@ -16371,8 +16371,167 @@ async function api(path, options = {}) {
       return { title: "现场个人微信接管", taskKind: plan.task_kind, content: "H5 现场执行台：个人微信接管", liveExecutorPrompt: note, payload: plan.payload };
     }
 
+    function liveExecutorNurturePlan() {
+      const duration = 5;
+      return {
+        title: "抖音养号",
+        taskKind: "douyin_leads",
+        content: "H5 现场执行台：抖音养号",
+        liveExecutorPrompt: "执行一轮抖音自动养号",
+        payload: {
+          action: "account_nurture",
+          h5_task_source: "h5",
+          h5_one_shot: true,
+          douyin_execution_mode: "one_shot",
+          params: { duration_minutes: duration },
+        },
+      };
+    }
+
+    function liveExecutorPublishMeta(platform) {
+      const key = String(platform || "").trim().toLowerCase();
+      if (key === "douyin") return { key, label: "抖音", platformName: "抖音" };
+      if (key === "wechat_channels") return { key, label: "视频号", platformName: "视频号" };
+      throw new Error("不支持的发布平台");
+    }
+
+    async function liveExecutorLatestPublishVideo() {
+      const buildQuery = (extra = {}) => new URLSearchParams({
+        origin: "generated",
+        media_type: "video",
+        limit: "1",
+        offset: "0",
+        ...extra,
+      }).toString();
+      let asset = null;
+      let source = "content_record";
+      try {
+        const bestseller = await api(`/api/assets?${buildQuery({ q: "local_bestseller" })}`, { cache: "no-store" });
+        asset = Array.isArray(bestseller && bestseller.assets) ? bestseller.assets[0] : null;
+        if (asset) source = "local_bestseller";
+      } catch (err) {
+        asset = null;
+      }
+      if (!asset) {
+        const latest = await api(`/api/assets?${buildQuery()}`, { cache: "no-store" });
+        asset = Array.isArray(latest && latest.assets) ? latest.assets[0] : null;
+      }
+      if (!asset) throw new Error("内容记录里还没有视频，请先做一条视频再发布");
+      const publicUrl = String(asset.source_url || asset.open_url || asset.preview_url || "").trim();
+      const assetId = String(asset.asset_id || "").trim();
+      if (!assetId && !publicUrl) throw new Error("最新视频没有可发布的素材地址");
+      return { asset, assetId, publicUrl, source };
+    }
+
+    async function liveExecutorPublishAccount(platform) {
+      const installationId = String(liveExecutorSelectedInstallationId() || "").trim();
+      const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+      const data = await api(`/api/scheduled-tasks/publish/accounts${query}`, { cache: "no-store" });
+      const rows = (Array.isArray(data && data.accounts) ? data.accounts : []).filter((row) => {
+        if (!row || String(row.platform || "").trim().toLowerCase() !== platform) return false;
+        if (!String(row.nickname || "").trim()) return false;
+        if (row.account_id == null || String(row.account_id).trim() === "") return false;
+        if (row.device_online === false || row.online === false) return false;
+        if (installationId && row.installation_id && String(row.installation_id) !== installationId) return false;
+        return true;
+      });
+      if (!rows.length) {
+        const label = liveExecutorPublishMeta(platform).label;
+        throw new Error(`没有找到在线的${label}发布账号，请先在「我的-发布中心」绑定账号`);
+      }
+      return rows.find((row) => row.is_default) || rows[0];
+    }
+
+    async function liveExecutorPublishPlan(platform) {
+      const meta = liveExecutorPublishMeta(platform);
+      const [video, account] = await Promise.all([
+        liveExecutorLatestPublishVideo(),
+        liveExecutorPublishAccount(meta.key),
+      ]);
+      const asset = video.asset || {};
+      const title = String(asset.title || "").trim() || (video.source === "local_bestseller" ? "同城爆款视频" : "最新视频");
+      const description = String(asset.description || "").trim() || (video.source === "local_bestseller" ? "同城爆款上新，欢迎到店体验。" : "最新作品，欢迎观看。");
+      const installationId = String(account.installation_id || liveExecutorSelectedInstallationId() || "").trim();
+      return {
+        title: `${meta.label}发布 · ${title}`.slice(0, 60),
+        taskKind: "client_workflow",
+        content: `H5 现场执行台：${meta.label}发布`,
+        liveExecutorPrompt: `发布${meta.label}：${title}`,
+        materialLabel: video.source === "local_bestseller" ? "同城爆款最新成片" : "内容记录最新视频",
+        payload: {
+          action: "publish_content",
+          params: {
+            asset_id: video.assetId,
+            url: video.publicUrl,
+            source_url: video.publicUrl,
+            media_type: "video",
+            platform: meta.key,
+            platform_name: meta.platformName,
+            account_id: account.account_id,
+            account_nickname: String(account.nickname || "").trim(),
+            publish_installation_id: installationId,
+            installation_id: installationId,
+            title,
+            description,
+            tags: "",
+            ai_publish_copy: false,
+            options: { content_source: video.source },
+          },
+        },
+      };
+    }
+
+    async function liveExecutorMomentsPlan() {
+      const installationId = String(liveExecutorSelectedInstallationId() || "").trim();
+      const headers = installationId ? { "X-Installation-Id": installationId } : {};
+      const personal = await api("/api/ip-content/personal-default", { cache: "no-store", headers }).catch(() => ({}));
+      let template = personal && personal.item && personal.item.id ? personal.item : null;
+      const usingPersonalCurrent = !!template;
+      if (!template) {
+        const data = await api("/api/ip-content/schedule-templates", { cache: "no-store" });
+        template = (Array.isArray(data && data.items) ? data.items : []).find((row) => row && row.id) || null;
+      }
+      if (!template || !template.id) throw new Error("还没有 IP 模板，请先到「IP人设定位」配置模板");
+      const lang = ipTemplateLanguage(template);
+      const requirements = {
+        ...(template.requirements && typeof template.requirements === "object" ? template.requirements : {}),
+        ...(template.survey && template.survey.requirements && typeof template.survey.requirements === "object" ? template.survey.requirements : {}),
+        language: lang,
+        target_language: ipTemplateLanguageLabel(lang),
+        common: ipTemplateLanguageInstruction(lang),
+      };
+      const payload = {
+        template_id: Number(template.id),
+        tasks: ["moments_candidate"],
+        sync_before: false,
+        requirements,
+        industry_count: 1,
+        ip_count: 1,
+        moments_count: 1,
+      };
+      if (usingPersonalCurrent) {
+        payload.template_source = "personal_current";
+        payload.h5_context = {
+          template_source: "personal_current",
+          template_id: Number(template.id),
+          workflow_node_id: "live_executor_moments",
+          source: "h5_live_executor",
+          ...(installationId ? { installation_id: installationId } : {}),
+        };
+      }
+      return {
+        title: "朋友圈图文",
+        taskKind: "ip_content_daily",
+        content: "H5 现场执行台：朋友圈图文",
+        serverSide: true,
+        liveExecutorPrompt: "生成一条朋友圈图文并配 3 张图",
+        payload,
+      };
+    }
+
     async function handleLiveExecutorAction(action, options = {}) {
-      const key = String(action || "").trim();
+      const rawKey = String(action || "").trim();
+      const key = ({ leads: "douyin_leads", wechat: "wechat_takeover" })[rawKey] || rawKey;
       if (key === "secretary") {
         closeLiveExecutorConfigModal();
         await toggleLiveExecutorSecretary();
@@ -16382,7 +16541,15 @@ async function api(path, options = {}) {
         openLiveExecutorConfig(key);
         return;
       }
-      const titles = { leads: "市场部获客", video: "设计部生成视频", wechat: "客服部个微" };
+      const titles = {
+        douyin_nurture: "抖音养号",
+        douyin_leads: "抖音获客",
+        moments_content: "朋友圈图文",
+        douyin_publish: "抖音发布",
+        channels_publish: "视频号发布",
+        wechat_takeover: "微信接管",
+        video: "现场生成视频",
+      };
       const task = liveExecutorAddTask(key, titles[key] || "现场任务");
       liveExecutorQueueTask(task, async () => {
         if (key === "video") {
@@ -16394,11 +16561,28 @@ async function api(path, options = {}) {
           await submitLiveExecutorPlan(liveExecutorVideoPlan(), task);
           return;
         }
-        if (key === "leads") {
+        if (key === "douyin_nurture") {
+          await submitLiveExecutorPlan(liveExecutorNurturePlan(), task);
+          return;
+        }
+        if (key === "douyin_leads") {
           await submitLiveExecutorPlan(liveExecutorLeadsPlan(""), task);
           return;
         }
-        if (key === "wechat") {
+        if (key === "moments_content") {
+          liveExecutorUpdateTask(task, { detail: "正在读取 IP 模板，生成朋友圈图文..." });
+          await submitLiveExecutorPlan(await liveExecutorMomentsPlan(), task);
+          return;
+        }
+        if (key === "douyin_publish" || key === "channels_publish") {
+          const platform = key === "douyin_publish" ? "douyin" : "wechat_channels";
+          liveExecutorUpdateTask(task, { detail: "正在挑选同城爆款最新成片..." });
+          const plan = await liveExecutorPublishPlan(platform);
+          liveExecutorUpdateTask(task, { title: plan.title, detail: `使用${plan.materialLabel}，正在下发...` });
+          await submitLiveExecutorPlan(plan, task);
+          return;
+        }
+        if (key === "wechat_takeover") {
           await submitLiveExecutorPlan(liveExecutorWechatPlan(""), task);
           return;
         }
@@ -16535,10 +16719,14 @@ async function api(path, options = {}) {
     function liveExecutorInferVoiceAction(text) {
       const raw = String(text || "").trim();
       if (!raw) return "";
+      if (/朋友圈图文|发朋友圈|朋友圈/.test(raw)) return "moments_content";
+      if (/抖音发布|发抖音/.test(raw)) return "douyin_publish";
+      if (/视频号发布|发视频号/.test(raw)) return "channels_publish";
+      if (/抖音养号|养号/.test(raw)) return "douyin_nurture";
+      if (/抖音获客|获客|线索|采集|客户|搜索/.test(raw)) return "douyin_leads";
+      if (/微信接管|个微|个人微信|微信|接管|私信|回复/.test(raw)) return "wechat_takeover";
+      if (/生成视频|分镜|短片|生成片|成片/.test(raw)) return "video";
       if (/秘书|录音|会议|转写|整理|摘要/.test(raw)) return "secretary";
-      if (/获客|线索|采集|客户|抖音|搜索/.test(raw)) return "leads";
-      if (/视频|分镜|短片|生成片|成片/.test(raw)) return "video";
-      if (/个微|个人微信|微信|接管|私信|回复/.test(raw)) return "wechat";
       return "";
     }
 
@@ -16546,7 +16734,7 @@ async function api(path, options = {}) {
       const text = liveExecutorPromptText();
       const action = liveExecutorInferVoiceAction(text);
       if (!action) {
-        toast("这个现场入口只支持秘书、获客、生成视频、个人微信；复杂调度请去 AI 调度助手");
+        toast("这个现场入口只支持抖音养号、抖音获客、朋友圈图文、抖音发布、视频号发布、微信接管；复杂调度请去 AI 调度助手");
         return;
       }
       if (action === "video" && !liveExecutorVideoHasImageOrUpload()) {
@@ -17707,7 +17895,7 @@ async function api(path, options = {}) {
         messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
-        liveExecutor: ["现场执行台", "拍照、语音和四类现场任务"],
+        liveExecutor: ["现场执行台", "抖音养号、获客、朋友圈图文、抖音/视频号发布和微信接管"],
         recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"],
         recorderDetail: ["秘书记录", "摘要、待办和完整转写"],
         personalMemoryDetail: ["记忆文件", "查看完整内容"],

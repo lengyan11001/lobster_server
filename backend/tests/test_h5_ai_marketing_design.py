@@ -229,7 +229,7 @@ def test_live_executor_uses_compact_modal_configuration_flow():
 
     assert 'id="liveExecutorVoiceOpenBtn"' in view
     assert 'live-executor-action-grid' in view
-    for label in ("总经办", "市场部", "设计部", "客服部"):
+    for label in ("抖音养号", "抖音获客", "朋友圈图文", "抖音发布", "视频号发布", "微信接管"):
         assert label in view
     for old_label in ("<span>秘书</span>", "<span>获客</span>", "<span>个人微信</span>"):
         assert old_label not in view
@@ -246,7 +246,7 @@ def test_live_executor_uses_compact_modal_configuration_flow():
     assert "function openLiveExecutorConfig" in script
     assert "function submitLiveExecutorConfig" in script
     assert "async function ensureLiveExecutorOnlineInstallationId" in script
-    assert "ensureLiveExecutorOnlineInstallationId({ refresh: true" in script
+    assert "ensureLiveExecutorOnlineInstallationId({ refresh: false" in script
     assert 'currentView === "liveExecutor"' in script
     assert "const task = tasks[0]" in script
     assert "openLiveExecutorConfig(key)" in script

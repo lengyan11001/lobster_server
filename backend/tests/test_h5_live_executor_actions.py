@@ -1,0 +1,68 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+H5 = ROOT / "h5_static"
+
+
+def _live_executor_view() -> str:
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    return html.split('id="liveExecutorView"', 1)[1].split('id="recorderView"', 1)[0]
+
+
+def test_live_executor_console_has_six_business_actions():
+    view = _live_executor_view()
+    expected = {
+        "douyin_nurture": "抖音养号",
+        "douyin_leads": "抖音获客",
+        "moments_content": "朋友圈图文",
+        "douyin_publish": "抖音发布",
+        "channels_publish": "视频号发布",
+        "wechat_takeover": "微信接管",
+    }
+    for action, label in expected.items():
+        assert f'data-live-action="{action}"' in view
+        assert f"<span>{label}</span>" in view
+    for old in ("总经办", "市场部", "设计部", "客服部"):
+        assert f"<span>{old}</span>" not in view
+
+
+def test_live_executor_publish_uses_latest_bestseller_then_latest_video():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert "async function liveExecutorLatestPublishVideo()" in script
+    assert 'q: "local_bestseller"' in script
+    assert 'media_type: "video"' in script
+    assert "内容记录里还没有视频" in script
+    assert 'const latest = await api(`/api/assets?${buildQuery()}`' in script
+    assert 'if (asset) source = "local_bestseller";' in script
+
+
+def test_live_executor_publish_plan_targets_douyin_and_channels_accounts():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert "async function liveExecutorPublishPlan(platform)" in script
+    assert 'action: "publish_content"' in script
+    assert 'platform: meta.key' in script
+    assert 'account_nickname: String(account.nickname || "").trim()' in script
+    assert "没有找到在线的${label}发布账号" in script
+    assert 'ai_publish_copy: false' in script
+
+
+def test_live_executor_moments_uses_normal_ip_content_node():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert "async function liveExecutorMomentsPlan()" in script
+    assert 'taskKind: "ip_content_daily"' in script
+    assert 'tasks: ["moments_candidate"]' in script
+    assert "moments_count: 1" in script
+    assert 'workflow_node_id: "live_executor_moments"' in script
+
+
+def test_live_executor_actions_are_wired_and_grid_fits_six_buttons():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-app.css").read_text(encoding="utf-8")
+    for key in ("douyin_nurture", "douyin_leads", "moments_content", "douyin_publish", "channels_publish", "wechat_takeover"):
+        assert f'{key}:' in script
+    assert 'await submitLiveExecutorPlan(liveExecutorNurturePlan(), task);' in script
+    assert 'await submitLiveExecutorPlan(plan, task);' in script
+    assert 'const platform = key === "douyin_publish" ? "douyin" : "wechat_channels";' in script
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
+    assert ".live-executor-actions button:nth-child(6)" in css
