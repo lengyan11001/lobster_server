@@ -257,7 +257,7 @@ def _user_public_payload(u: User) -> dict:
         "brand_mark": user_brand_mark(u),
         "is_overseas_user": bool(getattr(u, "is_overseas_user", False)),
         "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
-        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "created_at": (u.created_at.isoformat() + "Z") if u.created_at else None,
     }
 
 
@@ -668,7 +668,7 @@ def admin_user_detail(
             "ref_type": entry.ref_type,
             "ref_id": entry.ref_id,
             "meta": entry.meta,
-            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+            "created_at": (entry.created_at.isoformat() + "Z") if entry.created_at else None,
         })
     return {
         "user": _user_public_payload(user),
@@ -804,7 +804,7 @@ def system_pool_ledger(
     items = [
         {
             "id": r.id,
-            "time": r.created_at.isoformat() if r.created_at else None,
+            "time": (r.created_at.isoformat() + "Z") if r.created_at else None,
             "entry_type": r.entry_type,
             "delta": float(quantize_credits_signed(r.delta)),
             "balance_after": float(quantize_credits(r.balance_after or 0)),
