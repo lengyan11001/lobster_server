@@ -16620,7 +16620,7 @@ async function api(path, options = {}) {
           const publishTask = liveExecutorAddTask("moments_publish", "朋友圈发布", "等待图文生成完成后自动发布");
           try {
             await submitLiveExecutorPlan(liveExecutorMomentsPublishPlan(plan, installationId), publishTask);
-            liveExecutorUpdateTask(publishTask, { detail: "已排队：图文生成完成后自动发朋友圈" });
+            liveExecutorUpdateTask(publishTask, { phase: "waiting_parent", status: "queued", detail: "已排队：图文生成完成后自动发朋友圈" });
           } catch (err) {
             liveExecutorUpdateTask(publishTask, { status: "failed", error: err.message || "朋友圈发布排队失败" });
             throw err;
@@ -17960,7 +17960,7 @@ async function api(path, options = {}) {
         messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
-        liveExecutor: ["现场执行台", "抖音养号、获客、朋友圈图文、抖音/视频号发布和微信接管"],
+        liveExecutor: ["工作执行台", "设备任务队列、执行结果与多设备切换"],
         recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"],
         recorderDetail: ["秘书记录", "摘要、待办和完整转写"],
         personalMemoryDetail: ["记忆文件", "查看完整内容"],
@@ -29929,15 +29929,676 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         openHomeTarget(target, activeViewKey() || "office");
       });
     });
+
+    // ── 工作执行台 V3：面板、队列、结果持久化 ─────────────────────────
+    function liveExecutorStorageKey() {
+      const uid = state.user && state.user.id ? String(state.user.id) : "guest";
+      return brandStorageKey("lobster_h5_live_executor_tasks_v2_" + uid);
+    }
+    const LIVE_EXECUTOR_STORAGE_LIMIT = 60;
+    const LIVE_EXECUTOR_ACTIVE_STATUSES = new Set(["queued", "dispatching", "pending", "processing", "recording", "uploading"]);
+
+    function liveExecutorState() {
+      if (!state.liveExecutor || typeof state.liveExecutor !== "object") state.liveExecutor = {};
+      const live = state.liveExecutor;
+      if (!Array.isArray(live.tasks)) live.tasks = [];
+      if (!("image" in live)) live.image = null;
+      if (!("imagePreviewUrl" in live)) live.imagePreviewUrl = "";
+      if (!("imageUploadPromise" in live)) live.imageUploadPromise = null;
+      if (!("imageUploading" in live)) live.imageUploading = false;
+      if (!("configAction" in live)) live.configAction = "";
+      if (!("poller" in live)) live.poller = null;
+      if (!live.queues || typeof live.queues !== "object") live.queues = {};
+      if (!live.seqByDevice || typeof live.seqByDevice !== "object") live.seqByDevice = {};
+      if (!live.recorder) live.recorder = { stream: null, recorder: null, chunks: [], startedAt: 0, timer: null, taskId: "" };
+      live.taskFilter = String(live.taskFilter || "all");
+      live.deviceSearch = String(live.deviceSearch || "");
+      if (!("restored" in live)) live.restored = false;
+      return live;
+    }
+
+    function liveExecutorV3DeviceName(installationId) {
+      const iid = String(installationId || "").trim();
+      if (!iid) return "未选择设备";
+      const device = (state.devices || []).find((row) => String(row && row.installation_id || "") === iid) || null;
+      return deviceDisplayName(device) || liveExecutorDeviceLabel(device) || ("设备 " + iid.slice(0, 8));
+    }
+
+    function liveExecutorV3TaskSnapshot(task) {
+      return {
+        id: String(task.id || ""),
+        type: String(task.type || ""),
+        title: String(task.title || "现场任务"),
+        status: String(task.status || "queued"),
+        detail: String(task.detail || ""),
+        runId: String(task.runId || ""),
+        scheduledTaskId: String(task.scheduledTaskId || ""),
+        recordId: String(task.recordId || ""),
+        error: String(task.error || ""),
+        installationId: String(task.installationId || ""),
+        deviceName: String(task.deviceName || ""),
+        queueSeq: Number(task.queueSeq || 0),
+        phase: String(task.phase || ""),
+        createdAt: String(task.createdAt || ""),
+        updatedAt: String(task.updatedAt || ""),
+      };
+    }
+
+    function liveExecutorV3Persist() {
+      try {
+        const live = liveExecutorState();
+        const rows = (live.tasks || []).slice(0, LIVE_EXECUTOR_STORAGE_LIMIT).map(liveExecutorV3TaskSnapshot);
+        localStorage.setItem(liveExecutorStorageKey(), JSON.stringify(rows));
+      } catch {}
+    }
+
+    function liveExecutorV3Restore() {
+      const live = liveExecutorState();
+      if (live.restored) return;
+      live.restored = true;
+      try {
+        const raw = localStorage.getItem(liveExecutorStorageKey());
+        const rows = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(rows)) return;
+        const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        live.tasks = rows
+          .filter((row) => row && row.id && row.type)
+          .filter((row) => {
+            const at = new Date(row.updatedAt || row.createdAt || 0).getTime();
+            return !at || at >= cutoff;
+          })
+          .slice(0, LIVE_EXECUTOR_STORAGE_LIMIT)
+          .map((row) => ({
+            id: String(row.id || ""),
+            type: String(row.type || ""),
+            title: String(row.title || "现场任务"),
+            status: String(row.status || "queued"),
+            detail: String(row.detail || ""),
+            runId: String(row.runId || ""),
+            scheduledTaskId: String(row.scheduledTaskId || ""),
+            recordId: String(row.recordId || ""),
+            error: String(row.error || ""),
+            installationId: String(row.installationId || ""),
+            deviceName: String(row.deviceName || ""),
+            queueSeq: Number(row.queueSeq || 0),
+            phase: String(row.phase || ""),
+            createdAt: String(row.createdAt || ""),
+            updatedAt: String(row.updatedAt || ""),
+            result: null,
+          }));
+        (live.tasks || []).forEach((task) => {
+          const key = String(task.installationId || "__none__");
+          live.seqByDevice[key] = Math.max(Number(live.seqByDevice[key] || 0), Number(task.queueSeq || 0));
+        });
+      } catch {}
+    }
+
+    function liveExecutorFindRun(task) {
+      if (!task) return null;
+      const runs = Array.isArray(state.runs) ? state.runs : [];
+      const runId = String(task.runId || "").trim();
+      if (runId) {
+        const hit = runs.find((row) => String(row && row.id || "") === runId);
+        if (hit) return hit;
+      }
+      const scheduledTaskId = String(task.scheduledTaskId || "").trim();
+      if (scheduledTaskId) {
+        return runs.find((row) => String(row && row.task_id || "") === scheduledTaskId) || null;
+      }
+      return null;
+    }
+
+    function liveExecutorTaskRun(task) {
+      return liveExecutorFindRun(task);
+    }
+
+    function liveExecutorV3Status(task, run) {
+      const raw = String(task && task.status || "").toLowerCase();
+      if (raw === "failed" || raw === "cancelled") return raw;
+      if (run) {
+        const status = String(run.status || "").toLowerCase();
+        if (status === "pending") return "pending";
+        if (isActiveRun(run)) return "processing";
+        if (status === "cancelled") return "cancelled";
+        return status || raw || "pending";
+      }
+      if (raw === "completed") return "completed";
+      if (task && task.phase === "waiting_parent") return "queued";
+      if (LIVE_EXECUTOR_ACTIVE_STATUSES.has(raw)) return raw;
+      return raw || "queued";
+    }
+
+    function liveExecutorStatusLabel(status) {
+      return {
+        queued: "排队中",
+        dispatching: "下发中",
+        pending: "待领取",
+        recording: "录音中",
+        uploading: "上传中",
+        processing: "执行中",
+        completed: "已完成",
+        failed: "失败",
+        cancelled: "已取消",
+      }[String(status || "").toLowerCase()] || "处理中";
+    }
+
+    function liveExecutorV3StatusClass(status) {
+      const key = String(status || "").toLowerCase();
+      if (key === "completed") return "completed";
+      if (key === "failed" || key === "cancelled") return "failed";
+      if (key === "queued" || key === "pending" || key === "dispatching") return "queued";
+      return "running";
+    }
+
+    function liveExecutorV3VisibleTasks() {
+      const live = liveExecutorState();
+      const iid = String(liveExecutorSelectedInstallationId() || "").trim();
+      return (live.tasks || []).filter((task) => !task.installationId || !iid || String(task.installationId) === iid);
+    }
+
+    function liveExecutorV3Entries() {
+      const active = [];
+      const done = [];
+      liveExecutorV3VisibleTasks().forEach((task) => {
+        const run = liveExecutorFindRun(task);
+        const status = liveExecutorV3Status(task, run);
+        const entry = { task, run, status };
+        if (LIVE_EXECUTOR_ACTIVE_STATUSES.has(status)) active.push(entry);
+        else done.push(entry);
+      });
+      active.sort((a, b) => (Number(a.task.queueSeq || 0) - Number(b.task.queueSeq || 0)) || (new Date(a.task.createdAt || 0).getTime() - new Date(b.task.createdAt || 0).getTime()));
+      active.forEach((entry, index) => { entry.position = index + 1; });
+      done.sort((a, b) => new Date(b.task.updatedAt || b.task.createdAt || 0).getTime() - new Date(a.task.updatedAt || a.task.createdAt || 0).getTime());
+      return { active, done, all: active.concat(done) };
+    }
+
+    function liveExecutorTaskHasResult(task) {
+      if (!task) return false;
+      if (task.type === "secretary") return !!task.recordId || !!task.result || task.status === "completed" || task.status === "failed";
+      const run = liveExecutorFindRun(task);
+      const status = liveExecutorV3Status(task, run);
+      if (run && !isActiveRun(run)) return true;
+      return status === "completed" || status === "failed" || status === "cancelled";
+    }
+
+    function liveExecutorV3TaskDetail(task, run, status) {
+      if (task && task.error) return task.error;
+      if (run) {
+        if (isActiveRun(run)) return runProgressText(run) || task.detail || "执行中";
+        return runDisplayResult(run) || task.detail || "执行完成";
+      }
+      return task.detail || (status === "queued" ? "等待下发..." : "等待执行结果...");
+    }
+
+    function liveExecutorV3TaskTime(task) {
+      const raw = task && (task.updatedAt || task.createdAt);
+      if (!raw) return "";
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return "";
+      const diff = Date.now() - date.getTime();
+      if (diff >= 0 && diff < 60 * 1000) return "刚刚";
+      if (diff >= 0 && diff < 60 * 60 * 1000) return Math.max(1, Math.floor(diff / 60000)) + " 分钟前";
+      const pad = (value) => String(value).padStart(2, "0");
+      const now = new Date();
+      if (date.toDateString() === now.toDateString()) return pad(date.getHours()) + ":" + pad(date.getMinutes());
+      return pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+    }
+
+    function liveExecutorV3DeviceTaskCounts(installationId) {
+      const iid = String(installationId || "").trim();
+      let active = 0;
+      let done = 0;
+      (liveExecutorState().tasks || []).forEach((task) => {
+        if (iid && task.installationId && String(task.installationId) !== iid) return;
+        const status = liveExecutorV3Status(task, liveExecutorFindRun(task));
+        if (LIVE_EXECUTOR_ACTIVE_STATUSES.has(status)) active += 1;
+        else if (status === "completed") done += 1;
+      });
+      return { active, done };
+    }
+
+    function liveExecutorV3RecentDeviceIds(limit = 4) {
+      const seen = new Set();
+      const out = [];
+      [...(liveExecutorState().tasks || [])]
+        .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
+        .forEach((task) => {
+          const iid = String(task.installationId || "").trim();
+          if (!iid || seen.has(iid)) return;
+          seen.add(iid);
+          if (out.length < limit) out.push(iid);
+        });
+      return out;
+    }
+
+    function liveExecutorV3RenderDeviceRail() {
+      const rail = $("liveExecutorDeviceRail");
+      if (!rail) return;
+      const current = String(liveExecutorSelectedInstallationId() || "").trim();
+      const ids = liveExecutorV3RecentDeviceIds(5).filter((iid) => iid !== current);
+      if (!ids.length) {
+        rail.innerHTML = '<span class="live-executor-device-quick-empty">最近使用的设备会显示在这里</span>';
+        return;
+      }
+      rail.innerHTML = ids.map((iid) => {
+        const device = (state.devices || []).find((row) => String(row.installation_id || "") === iid);
+        const online = !!(device && device.online);
+        const name = device ? (deviceDisplayName(device) || liveExecutorDeviceLabel(device)) : ("设备 " + iid.slice(0, 8));
+        const counts = liveExecutorV3DeviceTaskCounts(iid);
+        return '<button type="button" class="live-executor-device-quick-chip ' + (online ? "is-online" : "is-offline") + '" data-live-device="' + escapeHtml(iid) + '"' + (online ? "" : " disabled") + '>'
+          + '<span class="live-executor-device-dot"></span><span>' + escapeHtml(name) + '</span><b>' + (counts.active || "") + '</b></button>';
+      }).join("");
+    }
+
+    function renderLiveExecutorDeviceList() {
+      const list = $("liveExecutorDeviceList");
+      if (!list) return;
+      const search = String(liveExecutorState().deviceSearch || "").trim().toLowerCase();
+      const current = String(liveExecutorSelectedInstallationId() || "").trim();
+      const allDevices = (state.devices || []).filter((device) => device && device.installation_id);
+      const devices = allDevices.filter((device) => {
+        if (!search) return true;
+        const name = String(deviceDisplayName(device) || liveExecutorDeviceLabel(device) || "").toLowerCase();
+        return name.includes(search) || String(device.installation_id || "").toLowerCase().includes(search);
+      }).sort((a, b) => {
+        if (!!b.online !== !!a.online) return b.online ? 1 : -1;
+        return String(deviceDisplayName(a) || a.installation_id || "").localeCompare(String(deviceDisplayName(b) || b.installation_id || ""), "zh-CN");
+      });
+      const hint = $("liveExecutorDeviceModalHint");
+      if (hint) hint.textContent = "在线 " + allDevices.filter((device) => device.online).length + " 台 / 共 " + allDevices.length + " 台";
+      if (!devices.length) {
+        list.innerHTML = '<div class="live-executor-device-list-empty">没有匹配的设备</div>';
+        return;
+      }
+      list.innerHTML = devices.map((device) => {
+        const iid = String(device.installation_id || "").trim();
+        const online = !!device.online;
+        const counts = liveExecutorV3DeviceTaskCounts(iid);
+        const name = deviceDisplayName(device) || liveExecutorDeviceLabel(device);
+        return '<button type="button" class="live-executor-device-row ' + (iid === current ? "is-active " : "") + (online ? "is-online" : "is-offline") + '" data-live-device="' + escapeHtml(iid) + '"' + (online ? "" : " disabled") + '>'
+          + '<span class="live-executor-device-dot"></span>'
+          + '<span class="live-executor-device-row-main"><strong>' + escapeHtml(name) + '</strong><small>' + escapeHtml(iid.slice(0, 12)) + ' · ' + (online ? "在线" : "离线") + (counts.active ? (" · " + counts.active + " 个任务") : "") + '</small></span>'
+          + '<span class="live-executor-device-row-check">' + (iid === current ? "✓" : "") + '</span>'
+          + '</button>';
+      }).join("");
+    }
+
+    function renderLiveExecutorCurrentDevice() {
+      const iid = String(liveExecutorSelectedInstallationId() || "").trim();
+      const device = (state.devices || []).find((row) => String(row.installation_id || "") === iid);
+      const name = device ? (deviceDisplayName(device) || liveExecutorDeviceLabel(device)) : "未选择设备";
+      const counts = liveExecutorV3DeviceTaskCounts(iid);
+      const nameNode = $("liveExecutorCurrentDeviceName");
+      const meta = $("liveExecutorCurrentDeviceMeta");
+      const avatar = $("liveExecutorDeviceAvatar");
+      const activeNode = $("liveExecutorCurrentActive");
+      const doneNode = $("liveExecutorCurrentDone");
+      if (nameNode) nameNode.textContent = name;
+      if (meta) meta.textContent = device ? ((device.online ? "在线" : "离线") + " · " + iid.slice(0, 12)) : "请选择在线设备";
+      if (avatar) avatar.textContent = name.slice(0, 1) || "设";
+      if (activeNode) activeNode.textContent = String(counts.active);
+      if (doneNode) doneNode.textContent = String(counts.done);
+    }
+
+    function openLiveExecutorDeviceModal() {
+      const modal = $("liveExecutorDeviceModal");
+      if (!modal) return;
+      liveExecutorState().deviceSearch = "";
+      const search = $("liveExecutorDeviceSearch");
+      if (search) search.value = "";
+      renderLiveExecutorDeviceList();
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      setTimeout(() => { if (search) search.focus(); }, 30);
+    }
+
+    function closeLiveExecutorDeviceModal() {
+      const modal = $("liveExecutorDeviceModal");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+    }
+
+    function renderLiveExecutorDeviceSelect() {
+      const select = $("liveExecutorDeviceSelect");
+      if (!select) return;
+      const rows = liveExecutorOnlineRows();
+      const current = String(liveExecutorSelectedInstallationId() || state.selectedInstallationId || "").trim();
+      select.innerHTML = rows.length
+        ? rows.map((device) => optionHtml(device.installation_id || "", liveExecutorDeviceLabel(device))).join("")
+        : '<option value="">暂无在线设备</option>';
+      let selected = current && rows.some((device) => String(device.installation_id || "") === current) ? current : "";
+      if (!selected && rows[0]) selected = String(rows[0].installation_id || "").trim();
+      if (selected) select.value = selected;
+      const onlineCount = $("liveExecutorOnlineCount");
+      if (onlineCount) onlineCount.textContent = String(rows.length);
+      const hint = $("liveExecutorDeviceHint");
+      if (hint) hint.textContent = rows.length
+        ? ("在线 " + rows.length + " 台 · 当前：" + liveExecutorV3DeviceName(selected))
+        : "请先启动并登录 Online 客户端";
+      renderLiveExecutorCurrentDevice();
+      liveExecutorV3RenderDeviceRail();
+      renderLiveExecutorDeviceList();
+      renderLiveExecutorConfigModal();
+    }
+
+    function liveExecutorV3FocusHtml(entry) {
+      const task = entry.task;
+      const status = entry.status;
+      const hasResult = liveExecutorTaskHasResult(task);
+      const statusClass = liveExecutorV3StatusClass(status);
+      const detail = liveExecutorV3TaskDetail(task, entry.run, status);
+      const device = task.deviceName || liveExecutorV3DeviceName(task.installationId);
+      const position = entry.position ? ("队列 #" + entry.position) : "";
+      const kicker = status === "processing" ? "当前执行" : (LIVE_EXECUTOR_ACTIVE_STATUSES.has(status) ? "当前队列" : "最近结果");
+      return '<div class="live-executor-focus-top"><span class="live-executor-focus-kicker">' + kicker + '</span><span class="live-executor-status ' + statusClass + '">' + escapeHtml(liveExecutorStatusLabel(status)) + '</span></div>'
+        + '<strong>' + escapeHtml(task.title || "现场任务") + '</strong>'
+        + '<p>' + escapeHtml(detail) + '</p>'
+        + '<div class="live-executor-focus-meta"><span>' + escapeHtml(device) + '</span><span>' + escapeHtml(liveExecutorV3TaskTime(task)) + '</span>' + (position ? ('<span>' + position + '</span>') : "") + '</div>'
+        + (hasResult ? '<button class="ghost live-executor-open-result" type="button">查看结果</button>' : "");
+    }
+
+    function liveExecutorV3TaskCardHtml(entry) {
+      const task = entry.task;
+      const status = entry.status;
+      const hasResult = liveExecutorTaskHasResult(task);
+      const statusClass = liveExecutorV3StatusClass(status);
+      const detail = liveExecutorV3TaskDetail(task, entry.run, status);
+      const device = task.deviceName || liveExecutorV3DeviceName(task.installationId);
+      const position = entry.position ? ("#" + entry.position) : "·";
+      const active = LIVE_EXECUTOR_ACTIVE_STATUSES.has(status);
+      return '<article class="live-executor-task-card ' + statusClass + (hasResult ? " has-result" : "") + '" data-live-task-id="' + escapeHtml(task.id || "") + '">'
+        + '<div class="live-executor-task-head">'
+        + '<span class="live-executor-task-mark">' + escapeHtml(position) + '</span>'
+        + '<div class="live-executor-task-title"><strong>' + escapeHtml(task.title || "现场任务") + '</strong><small>' + escapeHtml(device) + ' · ' + escapeHtml(liveExecutorV3TaskTime(task)) + '</small></div>'
+        + '<span class="live-executor-status ' + statusClass + '">' + escapeHtml(liveExecutorStatusLabel(status)) + '</span>'
+        + '</div>'
+        + '<p>' + escapeHtml(detail) + '</p>'
+        + (active ? '<div class="live-executor-task-progress"><i></i></div>' : "")
+        + '<div class="live-executor-task-footer">'
+        + '<span>' + (task.runId ? ("Run " + escapeHtml(String(task.runId).slice(0, 8))) : (active ? "等待设备领取" : "本地留痕")) + '</span>'
+        + (hasResult ? '<button class="ghost live-executor-open-result" type="button">查看结果</button>' : '<span class="live-executor-task-wait">' + ((status === "queued" || status === "pending") ? "排队中" : (active ? "执行中" : "等待同步")) + '</span>')
+        + '</div>'
+        + '</article>';
+    }
+
+    function renderLiveExecutorTasks() {
+      const host = $("liveExecutorLatestCard");
+      const list = $("liveExecutorTaskList");
+      if (!host) return;
+      const live = liveExecutorState();
+      const entries = liveExecutorV3Entries();
+      const counts = { queued: 0, running: 0, done: 0, failed: 0 };
+      entries.all.forEach((entry) => {
+        if (entry.status === "completed") counts.done += 1;
+        else if (entry.status === "failed" || entry.status === "cancelled") counts.failed += 1;
+        else if (entry.status === "processing" || entry.status === "recording" || entry.status === "uploading") counts.running += 1;
+        else counts.queued += 1;
+      });
+      const setText = (id, value) => { const node = $(id); if (node) node.textContent = String(value); };
+      setText("liveExecutorSummaryQueued", counts.queued);
+      setText("liveExecutorSummaryRunning", counts.running);
+      setText("liveExecutorSummaryDone", counts.done);
+      setText("liveExecutorSummaryFailed", counts.failed);
+      const focus = entries.active[0] || entries.done[0] || null;
+      if (!focus) {
+        host.className = "live-executor-latest-card empty";
+        host.removeAttribute("data-live-task-id");
+        host.textContent = "暂无执行记录";
+      } else {
+        host.className = "live-executor-latest-card live-executor-focus-card " + liveExecutorV3StatusClass(focus.status) + (liveExecutorTaskHasResult(focus.task) ? " has-result" : "");
+        host.dataset.liveTaskId = String(focus.task.id || "");
+        host.innerHTML = liveExecutorV3FocusHtml(focus);
+      }
+      const filter = String(live.taskFilter || "all");
+      let filtered = entries.all;
+      if (filter === "active") filtered = entries.active;
+      else if (filter === "done") filtered = entries.done.filter((entry) => entry.status === "completed");
+      else if (filter === "failed") filtered = entries.done.filter((entry) => entry.status === "failed" || entry.status === "cancelled");
+      if (list) {
+        list.innerHTML = filtered.length
+          ? filtered.map(liveExecutorV3TaskCardHtml).join("")
+          : '<div class="live-executor-empty-state"><strong>' + (filter === "active" ? "当前没有进行中的任务" : filter === "failed" ? "没有失败任务" : filter === "done" ? "还没有已完成任务" : "还没有任务") + '</strong><small>选择上方任务后，执行状态会出现在这里。</small></div>';
+      }
+      document.querySelectorAll("[data-live-filter]").forEach((btn) => {
+        btn.classList.toggle("active", String(btn.dataset.liveFilter || "") === filter);
+      });
+      liveExecutorV3RenderDeviceRail();
+    }
+
+    function liveExecutorAddTask(type, title, detail = "", options = {}) {
+      const live = liveExecutorState();
+      const iid = String((options && options.installationId) || liveExecutorSelectedInstallationId() || "").trim();
+      const key = iid || "__none__";
+      const seq = Number(live.seqByDevice[key] || 0) + 1;
+      live.seqByDevice[key] = seq;
+      const now = new Date().toISOString();
+      const task = {
+        id: "live_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7),
+        type,
+        title,
+        status: "queued",
+        detail: detail || "已加入下发队列",
+        runId: "",
+        scheduledTaskId: "",
+        recordId: "",
+        error: "",
+        result: null,
+        installationId: iid,
+        deviceName: liveExecutorV3DeviceName(iid),
+        queueSeq: seq,
+        phase: String((options && options.phase) || ""),
+        createdAt: now,
+        updatedAt: now,
+      };
+      live.tasks.unshift(task);
+      liveExecutorV3Persist();
+      renderLiveExecutorTasks();
+      return task;
+    }
+
+    function liveExecutorUpdateTask(task, patch = {}, options = {}) {
+      if (!task) return;
+      Object.assign(task, patch, { updatedAt: new Date().toISOString() });
+      if (!options || !options.silent) {
+        liveExecutorV3Persist();
+        renderLiveExecutorTasks();
+      }
+    }
+
+    function liveExecutorQueueTask(task, runner) {
+      const live = liveExecutorState();
+      const key = String(task.installationId || "default");
+      const previous = live.queues[key] || Promise.resolve();
+      const next = previous
+        .catch(() => {})
+        .then(async () => {
+          liveExecutorUpdateTask(task, { status: "dispatching", detail: "正在下发到 Online..." });
+          await runner(task);
+        })
+        .catch((err) => {
+          const raw = String((err && err.message) || "");
+          const message = /requested device not found/i.test(raw)
+            ? "当前选择的 Online 设备已离线，请刷新设备后重试"
+            : (raw || "下发失败");
+          liveExecutorUpdateTask(task, { status: "failed", error: message });
+        });
+      live.queues[key] = next;
+      next.finally(() => {
+        if (live.queues[key] === next) delete live.queues[key];
+      });
+      renderLiveExecutorTasks();
+      return next;
+    }
+
+    async function refreshLiveExecutorTasks() {
+      const live = liveExecutorState();
+      const tasks = Array.isArray(live.tasks) ? live.tasks : [];
+      if (!tasks.length) {
+        renderLiveExecutorTasks();
+        return;
+      }
+      const hasRefs = tasks.some((task) => task.runId || task.scheduledTaskId || task.recordId);
+      if (hasRefs) {
+        await loadRuns({ reset: true, limit: 100, compact: false, preserveExisting: true, silent: true }).catch(() => {});
+        tasks.forEach((task) => {
+          const run = liveExecutorFindRun(task);
+          if (!run) {
+            if (task.phase === "waiting_parent") liveExecutorUpdateTask(task, { status: "queued", detail: task.detail || "等待图文生成完成后自动发布" }, { silent: true });
+            return;
+          }
+          const runId = String(run.id || "").trim();
+          const runStatus = String(run.status || "").toLowerCase();
+          const status = runStatus === "pending" ? "pending" : (isActiveRun(run) ? "processing" : (runStatus || task.status || "pending"));
+          const detail = runStatus === "pending" ? "已下发，等待设备领取" : (isActiveRun(run) ? (runProgressText(run) || "执行中") : (runDisplayResult(run) || task.detail || "执行完成"));
+          liveExecutorUpdateTask(task, { runId, status, detail, error: String(run.error || "") }, { silent: true });
+        });
+        liveExecutorV3Persist();
+        renderLiveExecutorTasks();
+      }
+      const secretaryTasks = tasks.filter((task) => task.type === "secretary" && task.recordId && !["completed", "failed"].includes(String(task.status || "")));
+      await Promise.all(secretaryTasks.map(async (task) => {
+        try {
+          const row = await api(`/api/h5/recorder/files/${encodeURIComponent(task.recordId)}`, { blocking: false });
+          const nextStatus = String(row.status || "").toLowerCase();
+          liveExecutorUpdateTask(task, {
+            status: nextStatus === "completed" ? "completed" : (nextStatus === "failed" ? "failed" : "processing"),
+            result: row,
+            detail: nextStatus === "completed" ? (row.summary_text || "秘书整理完成") : (row.error_message || "正在生成秘书摘要..."),
+            error: row.error_message || "",
+          }, { silent: true });
+        } catch (err) {
+          liveExecutorUpdateTask(task, { detail: err.message || "秘书记录刷新失败" }, { silent: true });
+        }
+      }));
+      liveExecutorV3Persist();
+      renderLiveExecutorTasks();
+    }
+
+    function loadLiveExecutorPage() {
+      liveExecutorV3Restore();
+      renderLiveExecutorDeviceSelect();
+      renderLiveExecutorImage();
+      renderLiveExecutorTasks();
+      decorateVoiceFillFields($("liveExecutorView") || document);
+      refreshDeviceStatus().then(() => {
+        renderLiveExecutorDeviceSelect();
+        refreshLiveExecutorTasks().catch(() => {});
+      }).catch(() => {
+        renderLiveExecutorDeviceSelect();
+        refreshLiveExecutorTasks().catch(() => {});
+      });
+      startLiveExecutorPolling();
+      refreshLiveExecutorTasks().catch(() => {});
+    }
+
+    async function openLiveExecutorTaskResult(taskId) {
+      const live = liveExecutorState();
+      const task = (live.tasks || []).find((row) => String(row.id) === String(taskId));
+      if (!task) return;
+      const modal = $("liveExecutorResultModal");
+      const title = $("liveExecutorResultTitle");
+      const type = $("liveExecutorResultType");
+      const body = $("liveExecutorResultBody");
+      if (!modal || !title || !type || !body) return;
+      const typeLabels = {
+        secretary: "AI秘书",
+        douyin_nurture: "抖音养号",
+        douyin_leads: "抖音获客",
+        moments_content: "朋友圈图文",
+        moments_publish: "朋友圈发布",
+        douyin_publish: "抖音发布",
+        channels_publish: "视频号发布",
+        wechat_takeover: "微信接管",
+        leads: "抖音获客",
+        video: "现场生成视频",
+        wechat: "微信接管",
+      };
+      title.textContent = task.title || "执行结果";
+      type.textContent = typeLabels[task.type] || "现场任务";
+      body.innerHTML = '<div class="hint">正在读取结果...</div>';
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      if (task.type === "secretary") {
+        const row = task.recordId
+          ? await api(`/api/h5/recorder/files/${encodeURIComponent(task.recordId)}`, { blocking: false }).catch(() => task.result || {})
+          : (task.result || {});
+        body.innerHTML = '<div class="live-executor-result-pre">' + escapeHtml(row.summary_text || row.error_message || task.detail || "秘书摘要生成中") + '</div>'
+          + (row.transcript_text ? '<h4>完整转写</h4><div class="live-executor-result-pre">' + escapeHtml(row.transcript_text) + '</div>' : "");
+        return;
+      }
+      const run = liveExecutorFindRun(task);
+      if (!run) {
+        body.innerHTML = '<div class="live-executor-result-pre">' + escapeHtml(task.detail || task.error || "暂未同步到执行结果") + '</div>';
+        return;
+      }
+      const articleHtml = liveExecutorArticleHtml(run);
+      if (articleHtml) {
+        body.innerHTML = articleHtml;
+        return;
+      }
+      const payload = run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const media = task.type === "video" ? liveExecutorMediaHtml(run) : "";
+      const list = payload.items || payload.customers || payload.results || payload.records || payload.data;
+      const table = Array.isArray(list) ? liveExecutorTableHtml(list) : "";
+      const friendly = liveExecutorFriendlyResultMessage(run, task);
+      const rawDetail = JSON.stringify(payload || {}, null, 2);
+      const hasRawDetail = rawDetail && rawDetail !== "{}";
+      body.innerHTML = [
+        media,
+        '<div class="live-executor-result-pre">' + escapeHtml(friendly) + '</div>',
+        table,
+        hasRawDetail ? '<details><summary>查看原始结果</summary><div class="live-executor-result-pre">' + escapeHtml(rawDetail) + '</div></details>' : "",
+      ].filter(Boolean).join("");
+    }
+
     $("liveExecutorRefreshBtn")?.addEventListener("click", () => {
       refreshDeviceStatus().then(() => {
         renderLiveExecutorDeviceSelect();
+        refreshLiveExecutorTasks().catch(() => {});
         toast("设备状态已刷新");
       }).catch((err) => toast(err.message || "设备刷新失败"));
     });
     $("liveExecutorDeviceSelect")?.addEventListener("change", (evt) => {
       setSelectedInstallationId(evt.currentTarget.value || "");
       renderLiveExecutorDeviceSelect();
+      renderLiveExecutorTasks();
+      refreshLiveExecutorTasks().catch(() => {});
+    });
+    $("liveExecutorSwitchDeviceBtn")?.addEventListener("click", openLiveExecutorDeviceModal);
+    $("liveExecutorDeviceClose")?.addEventListener("click", closeLiveExecutorDeviceModal);
+    $("liveExecutorDeviceBackdrop")?.addEventListener("click", closeLiveExecutorDeviceModal);
+    $("liveExecutorDeviceSearch")?.addEventListener("input", (evt) => {
+      liveExecutorState().deviceSearch = String(evt.currentTarget.value || "");
+      renderLiveExecutorDeviceList();
+    });
+    $("liveExecutorDeviceRefreshBtn")?.addEventListener("click", () => {
+      refreshDeviceStatus().then(() => {
+        renderLiveExecutorDeviceSelect();
+        renderLiveExecutorDeviceList();
+        toast("设备状态已刷新");
+      }).catch((err) => toast(err.message || "设备刷新失败"));
+    });
+    $("liveExecutorDeviceList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-live-device]");
+      if (!btn || btn.disabled) return;
+      setSelectedInstallationId(btn.dataset.liveDevice || "");
+      closeLiveExecutorDeviceModal();
+      renderLiveExecutorDeviceSelect();
+      renderLiveExecutorTasks();
+      refreshLiveExecutorTasks().catch(() => {});
+    });
+    $("liveExecutorClearDoneBtn")?.addEventListener("click", () => {
+      const live = liveExecutorState();
+      const iid = String(liveExecutorSelectedInstallationId() || "").trim();
+      live.tasks = (live.tasks || []).filter((task) => {
+        if (iid && task.installationId && String(task.installationId) !== iid) return true;
+        const status = liveExecutorV3Status(task, liveExecutorFindRun(task));
+        return !["completed", "failed", "cancelled"].includes(status);
+      });
+      liveExecutorV3Persist();
+      renderLiveExecutorTasks();
+      toast("已清理当前设备的已完成记录");
     });
     $("liveExecutorVoiceOpenBtn")?.addEventListener("click", () => openLiveExecutorConfig("voice"));
     $("liveExecutorImageFile")?.addEventListener("change", (evt) => {
@@ -29956,6 +30617,20 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       submitLiveExecutorConfig().catch((err) => toast(err.message || "执行失败"));
     });
     $("liveExecutorView")?.addEventListener("click", (evt) => {
+      const deviceBtn = evt.target.closest("[data-live-device]");
+      if (deviceBtn && !deviceBtn.disabled) {
+        setSelectedInstallationId(deviceBtn.dataset.liveDevice || "");
+        renderLiveExecutorDeviceSelect();
+        renderLiveExecutorTasks();
+        refreshLiveExecutorTasks().catch(() => {});
+        return;
+      }
+      const filterBtn = evt.target.closest("[data-live-filter]");
+      if (filterBtn) {
+        liveExecutorState().taskFilter = String(filterBtn.dataset.liveFilter || "all");
+        renderLiveExecutorTasks();
+        return;
+      }
       const actionBtn = evt.target.closest("[data-live-action]");
       if (actionBtn) {
         handleLiveExecutorAction(actionBtn.dataset.liveAction || "").catch((err) => toast(err.message || "执行失败"));

@@ -80,3 +80,36 @@ def test_live_executor_actions_are_wired_and_grid_fits_six_buttons():
     assert 'const platform = key === "douyin_publish" ? "douyin" : "wechat_channels";' in script
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
     assert ".live-executor-actions button:nth-child(6)" in css
+
+def test_live_executor_redesign_has_device_rail_queue_and_results():
+    view = _live_executor_view()
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-app.css").read_text(encoding="utf-8")
+
+    for node_id in (
+        "liveExecutorDeviceRail",
+        "liveExecutorTaskList",
+        "liveExecutorSummaryQueued",
+        "liveExecutorSummaryRunning",
+        "liveExecutorSummaryDone",
+        "liveExecutorSummaryFailed",
+        "liveExecutorClearDoneBtn",
+    ):
+        assert f'id="{node_id}"' in view
+
+    for action in ("all", "active", "done", "failed"):
+        assert f'data-live-filter="{action}"' in view
+    assert "只显示最近一条" not in view
+
+    assert "function liveExecutorStorageKey()" in script
+    assert "function liveExecutorV3Persist()" in script
+    assert "function liveExecutorV3Restore()" in script
+    assert "live.queues[key]" in script
+    assert "queueSeq" in script
+    assert "data-live-device" in script
+    assert "data-live-filter" in script
+    assert "live-executor-v3" in html
+    assert ".live-executor-v3 .live-executor-device-card" in css
+    assert ".live-executor-v3 .live-executor-task-card" in css
+    assert ".live-executor-v3 .live-executor-latest-card" in css
