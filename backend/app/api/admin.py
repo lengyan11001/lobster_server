@@ -706,26 +706,18 @@ def _fixed_pool_agent(db: Session, brand: str) -> Optional[User]:
 def _system_pool_agent(db: Session, ctx: AdminContext, agent_id: Optional[int] = None) -> Optional[User]:
     """一级代理的“系统池”：代理自己的主账号。
 
-    管理员可以按 agent_id 查看任一固定代理；不传时默认看 hikong/daka/jinghai
-    中第一个存在的固定代理。
+    非超级管理员登录账号（代理或 admin_user）只能看自己；
+    超级管理员只有显式传 agent_id 时才看对应固定代理，默认是必火平台（无穷大）。
     """
-    # 任何非超级管理员登录账号（代理或 admin_user）只能看自己的系统池。
     if ctx.user_id is not None:
         me = db.query(User).filter(User.id == int(ctx.user_id)).first()
         if me and me.is_agent and _agent_level(me) == 1:
             return me
         return None
-    # 只有超级管理员 token（user_id=None）可以按 agent_id 看固定代理。
-    if ctx.role == "admin":
-        if agent_id:
-            agent = db.query(User).filter(User.id == int(agent_id)).first()
-            if agent and agent.is_agent and _agent_level(agent) == 1:
-                return agent
-            return None
-        for brand in ("hikong", "daka", "jinghai"):
-            agent = _fixed_pool_agent(db, brand)
-            if agent is not None:
-                return agent
+    if ctx.role == "admin" and agent_id and int(agent_id) > 0:
+        agent = db.query(User).filter(User.id == int(agent_id)).first()
+        if agent and agent.is_agent and _agent_level(agent) == 1:
+            return agent
     return None
 
 
@@ -735,23 +727,87 @@ def _pool_entry(agent: User) -> dict:
         "email": unscoped_account_email(agent.email),
         "brand_mark": user_brand_mark(agent),
         "balance": float(quantize_credits(agent.credits)),
+        "is_platform": False,
         "agent_fund_downline": bool(getattr(agent, "agent_fund_downline", False)),
     }
 
 
+def _platform_pool_entry() -> dict:
+    return {
+        "agent_user_id": 0,
+        "email": "必火平台",
+        "brand_mark": "bihuo",
+        "balance": None,
+        "is_platform": True,
+        "agent_fund_downline": False,
+    }
+
+
 def _system_pool_payload(db: Session, ctx: AdminContext, agent_id: Optional[int] = None) -> dict:
-    agent = _system_pool_agent(db, ctx, agent_id)
     options: list[dict] = []
     if ctx.user_id is None and ctx.role == "admin":
+        options.append(_platform_pool_entry())
         for brand in ("hikong", "daka", "jinghai"):
             a = _fixed_pool_agent(db, brand)
             if a is not None:
                 options.append(_pool_entry(a))
-    elif agent is not None:
-        options.append(_pool_entry(agent))
+        if agent_id and int(agent_id) > 0:
+            agent = _system_pool_agent(db, ctx, agent_id)
+            if agent is not None:
+                return {"enabled": True, **_pool_entry(agent), "options": options}
+        return {"enabled": True, **_platform_pool_entry(), "options": options}
+    agent = _system_pool_agent(db, ctx, agent_id)
     if agent is None:
         return {"enabled": False, "options": options}
+    options.append(_pool_entry(agent))
     return {"enabled": True, **_pool_entry(agent), "options": options}
+
+
+def _platform_pool_ledger(db: Session, ctx: AdminContext, limit: int, offset: int, oem_only: int = 0) -> dict:
+    """必火平台：不限额，展示今天 bihuo 品牌的手动加积分/充值流水。"""
+    from ..services.daily_credit_limit import _today_bounds_utc_naive
+
+    start_utc, end_utc = _today_bounds_utc_naive()
+    base = (
+        db.query(CreditLedger, User.email)
+        .join(User, User.id == CreditLedger.user_id)
+        .filter(
+            User.brand_mark == "bihuo",
+            CreditLedger.entry_type == "recharge",
+            CreditLedger.created_at >= start_utc,
+            CreditLedger.created_at <= end_utc,
+        )
+    )
+    if int(oem_only or 0):
+        base = base.filter(CreditLedger.ref_type == "recharge_order")
+    total = base.with_entities(func.count(CreditLedger.id)).scalar() or 0
+    rows = (
+        base.order_by(CreditLedger.created_at.desc())
+        .offset(max(0, int(offset or 0)))
+        .limit(min(max(int(limit or 100), 1), 300))
+        .all()
+    )
+    items = [
+        {
+            "id": r.id,
+            "time": (r.created_at.isoformat() + "Z") if r.created_at else None,
+            "entry_type": r.entry_type,
+            "delta": float(quantize_credits_signed(r.delta)),
+            "balance_after": float(quantize_credits(r.balance_after or 0)),
+            "user_email": unscoped_account_email(email),
+            "description": r.description or "",
+            "ref_type": r.ref_type or "",
+            "ref_id": r.ref_id or "",
+            "meta": r.meta,
+        }
+        for r, email in rows
+    ]
+    return {
+        "items": items,
+        "total": int(total),
+        "agent": _system_pool_payload(db, ctx, 0),
+        "today_start_beijing": (start_utc.isoformat() + "Z") if start_utc else None,
+    }
 
 
 class AgentFundDownlineBody(BaseModel):
@@ -791,6 +847,8 @@ def system_pool_ledger(
 ):
     if ctx.user_id is not None and agent_id and int(agent_id) != int(ctx.user_id):
         raise HTTPException(status_code=403, detail="只能查看自己的系统池")
+    if ctx.user_id is None and ctx.role == "admin" and (not agent_id or int(agent_id) == 0):
+        return _platform_pool_ledger(db, ctx, limit, offset, oem_only)
     agent = _system_pool_agent(db, ctx, agent_id)
     if agent is None:
         return {"items": [], "total": 0, "agent": _system_pool_payload(db, ctx, agent_id)}

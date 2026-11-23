@@ -5870,8 +5870,8 @@ function renderStats(data) {
     ${o.system_pool && o.system_pool.enabled ? `
       <div class="stats-card" style="cursor:pointer" onclick="openSystemPool()">
         <div class="sc-label">系统池余额</div>
-        <div class="sc-value">${Number(o.system_pool.balance || 0).toLocaleString()}</div>
-        <div class="sc-sub">${escapeHtml(o.system_pool.email || '')} · 点击查看流水</div>
+        <div class="sc-value">${o.system_pool.is_platform ? '∞' : Number(o.system_pool.balance || 0).toLocaleString()}</div>
+        <div class="sc-sub">${o.system_pool.is_platform ? '必火平台 · 今日充值/加积分' : escapeHtml(o.system_pool.email || '') + ' · 点击查看流水'}</div>
       </div>` : ''}
   `;
   renderBarChart('chartDailyUsers', data.daily_users, 'count', 'primary');
@@ -6187,11 +6187,11 @@ function statCard(label, value, unit) {
   return `<div class="stats-card"><div class="sc-label">${label}</div><div class="sc-value">${value}</div>${unit ? '<div class="sc-sub">' + unit + '</div>' : ''}</div>`;
 }
 
+let _lastSystemPoolAgentId = 0;
+
 function _systemPool() {
   return (statsCache && statsCache.overview && statsCache.overview.system_pool) || null;
 }
-
-let _lastSystemPoolAgentId = 0;
 
 function _poolOption(agentId) {
   const sp = _systemPool();
@@ -6203,17 +6203,25 @@ function _poolOption(agentId) {
 
 function currentSystemPoolAgentId() {
   const sel = document.getElementById('systemPoolAgentSelect');
-  if (sel && sel.value) return Number(sel.value);
+  if (sel && sel.value !== '') return Number(sel.value);
   const sp = _systemPool();
-  return sp && sp.agent_user_id ? Number(sp.agent_user_id) : 0;
+  return sp && sp.agent_user_id != null ? Number(sp.agent_user_id) : 0;
 }
 
 function _updateSystemPoolHeader(entry) {
   if (!entry) return;
-  document.getElementById('systemPoolMeta').textContent =
-    (entry.email || '') + ' · 余额 ' + Number(entry.balance || 0).toLocaleString() + ' · 品牌 ' + (entry.brand_mark || '-');
+  const oemBtn = document.getElementById('systemPoolOemBtn');
   const wrap = document.getElementById('systemPoolFundWrap');
   const btn = document.getElementById('systemPoolFundBtn');
+  if (entry.is_platform) {
+    document.getElementById('systemPoolMeta').textContent = '必火平台 · 余额 ∞ · 今日手动加积分 / 充值流水';
+    if (wrap) wrap.style.display = 'none';
+    if (oemBtn) oemBtn.style.display = 'none';
+    return;
+  }
+  document.getElementById('systemPoolMeta').textContent =
+    (entry.email || '') + ' · 余额 ' + Number(entry.balance || 0).toLocaleString() + ' · 品牌 ' + (entry.brand_mark || '-');
+  if (oemBtn) oemBtn.style.display = '';
   if (wrap && btn) {
     wrap.style.display = '';
     btn.textContent = entry.agent_fund_downline ? '关闭：下级自行充值' : '开启：下级充值由本账号扣费';
@@ -6226,17 +6234,21 @@ async function openSystemPool() {
   document.getElementById('systemPoolModal').classList.add('show');
   const sel = document.getElementById('systemPoolAgentSelect');
   const opts = sp.options || [];
-  const preferred = Number(_lastSystemPoolAgentId || sp.agent_user_id || (opts[0] && opts[0].agent_user_id) || 0);
+  let preferred = Number(_lastSystemPoolAgentId);
+  if (!opts.some(o => Number(o.agent_user_id) === preferred)) {
+    preferred = Number(sp.agent_user_id != null ? sp.agent_user_id : ((opts[0] && opts[0].agent_user_id) || 0));
+  }
   if (sel) {
-    sel.innerHTML = opts.map(o =>
-      '<option value="' + o.agent_user_id + '">' + escapeHtml((o.brand_mark || '') + ' · ' + (o.email || '')) + '</option>'
-    ).join('');
+    sel.innerHTML = opts.map(o => {
+      const label = o.is_platform ? '必火平台（∞）' : ((o.brand_mark || '') + ' · ' + (o.email || ''));
+      return '<option value="' + o.agent_user_id + '">' + escapeHtml(label) + '</option>';
+    }).join('');
     sel.value = String(preferred);
     sel.style.display = opts.length > 1 ? '' : 'none';
     _lastSystemPoolAgentId = Number(sel.value || 0);
   }
-  _updateSystemPoolHeader(_poolOption(currentSystemPoolAgentId()));
-  await loadSystemPoolLedger(currentSystemPoolAgentId(), false);
+  _updateSystemPoolHeader(_poolOption(preferred));
+  await loadSystemPoolLedger(preferred, false);
 }
 
 function closeSystemPool() {
@@ -6258,7 +6270,7 @@ async function loadSystemPoolLedger(agentId, oemOnly) {
   el.innerHTML = '<div class="empty">加载中…</div>';
   const id = Number(agentId || 0);
   try {
-    const qs = '/admin/api/system-pool/ledger?limit=200&oem_only=' + (oemOnly ? 1 : 0) + (id ? '&agent_id=' + id : '');
+    const qs = '/admin/api/system-pool/ledger?limit=200&oem_only=' + (oemOnly ? 1 : 0) + (id > 0 ? '&agent_id=' + id : '');
     const data = await api(qs);
     if (data.agent && data.agent.enabled) _updateSystemPoolHeader(data.agent);
     const items = data.items || [];
@@ -6268,12 +6280,13 @@ async function loadSystemPoolLedger(agentId, oemOnly) {
       const t = it.time ? new Date(it.time).toLocaleString('zh-CN') : '-';
       const d = Number(it.delta || 0);
       const dstr = (d >= 0 ? '+' : '') + d.toLocaleString();
+      const descText = (it.user_email ? '[' + it.user_email + '] ' : '') + (it.description || '');
       html += '<tr style="border-bottom:1px solid rgba(0,0,0,.04)">'
         + '<td style="padding:6px">' + escapeHtml(t) + '</td>'
         + '<td style="padding:6px">' + escapeHtml(_ledgerTypeLabel(it.entry_type)) + '</td>'
         + '<td style="padding:6px;text-align:right" class="' + (d < 0 ? 'system-pool-amount-neg' : 'system-pool-amount-pos') + '">' + dstr + '</td>'
         + '<td style="padding:6px;text-align:right">' + Number(it.balance_after || 0).toLocaleString() + '</td>'
-        + '<td style="padding:6px">' + escapeHtml(it.description || '') + '</td></tr>';
+        + '<td style="padding:6px">' + escapeHtml(descText) + '</td></tr>';
     }
     html += '</tbody></table>';
     el.innerHTML = html;
@@ -6294,7 +6307,7 @@ function toggleSystemPoolFunding() {
   if (!sp || !sp.enabled) return;
   const id = currentSystemPoolAgentId();
   const entry = _poolOption(id);
-  if (!entry) return;
+  if (!entry || entry.is_platform) return;
   toggleAgentFundDownline(id, !entry.agent_fund_downline, true);
 }
 
@@ -6591,7 +6604,7 @@ function closeRemoteSupportDevice() {
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <select id="systemPoolAgentSelect" onchange="onSystemPoolAgentChange()" style="display:none;padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px"></select>
       <button class="btn btn-sm" onclick="loadSystemPoolLedger(currentSystemPoolAgentId(), false)">全部流水</button>
-      <button class="btn btn-sm" onclick="loadSystemPoolLedger(currentSystemPoolAgentId(), true)">只看 OEM</button>
+      <button class="btn btn-sm" id="systemPoolOemBtn" onclick="loadSystemPoolLedger(currentSystemPoolAgentId(), true)">只看 OEM</button>
       <span id="systemPoolFundWrap" style="margin-left:auto;display:none">
         <button class="btn btn-sm" id="systemPoolFundBtn" onclick="toggleSystemPoolFunding()">下级充值扣费</button>
       </span>

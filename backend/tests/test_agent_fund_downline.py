@@ -1,6 +1,7 @@
 """一级代理统一下级充值扣费：开关、层级解析、库存预扣。"""
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -101,7 +102,7 @@ def test_system_pool_payload_and_agent_toggle():
     db.close()
 
 
-def test_admin_system_pool_sees_hikong_fixed_agent():
+def test_admin_system_pool_defaults_to_platform_with_hikong_option():
     from backend.app.api import admin
 
     db = _db()
@@ -110,8 +111,9 @@ def test_admin_system_pool_sees_hikong_fixed_agent():
     db.commit()
     payload = admin._system_pool_payload(db, admin.AdminContext(role="admin", brand_mark="bihuo"))
     assert payload["enabled"] is True
-    assert payload["agent_user_id"] == hk.id
-    assert payload["brand_mark"] == "hikong"
+    assert payload["is_platform"] is True
+    assert payload["brand_mark"] == "bihuo"
+    assert payload["balance"] is None
     assert any(o["agent_user_id"] == hk.id for o in payload["options"])
     db.close()
 
@@ -184,4 +186,29 @@ def test_oem_agent_cannot_see_or_toggle_other_pool():
             db=db,
         )
     assert exc2.value.status_code == 403
+    db.close()
+
+
+def test_platform_pool_ledger_shows_today_bihuo_recharges():
+    from backend.app.api import admin
+
+    db = _db()
+    u = _user(db, email="bihuo-user@test.local", credits="100")
+    u.brand_mark = "bihuo"
+    db.add(
+        CreditLedger(
+            user_id=u.id,
+            delta=Decimal("100.0000"),
+            balance_after=Decimal("100.0000"),
+            entry_type="recharge",
+            description="管理员手动加积分",
+            created_at=datetime.utcnow(),
+        )
+    )
+    db.commit()
+    out = admin._platform_pool_ledger(db, admin.AdminContext(role="admin", brand_mark="bihuo"), 10, 0)
+    assert out["total"] == 1
+    assert out["items"][0]["user_email"] == "bihuo-user@test.local"
+    assert out["items"][0]["delta"] == 100.0
+    assert out["agent"]["is_platform"] is True
     db.close()
