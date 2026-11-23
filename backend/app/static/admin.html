@@ -527,6 +527,15 @@ body{background:#edf2f7}
   .template-tab{flex:1;text-align:center;padding:9px 10px}
 }
 .template-memory-download{margin-left:6px;color:#2563eb;text-decoration:underline;font-size:12px}
+
+/* 系统池流水弹窗：保证白底深色字、表头固定、金额红绿可读 */
+#systemPoolLedger table{width:100%;border-collapse:collapse;font-size:12px;color:var(--text);background:#fff}
+#systemPoolLedger th{background:#f8fafc;color:#475569;font-weight:600;text-align:left;padding:8px;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1}
+#systemPoolLedger td{padding:7px 8px;border-bottom:1px solid #eef2f7;vertical-align:top;background:#fff}
+#systemPoolLedger tr:hover td{background:#f8fafc}
+.system-pool-amount-neg{color:#dc2626;font-weight:600}
+.system-pool-amount-pos{color:#16a34a;font-weight:600}
+#systemPoolAgentSelect{color:var(--text);background:#fff}
 </style>
 </head>
 <body>
@@ -6262,7 +6271,7 @@ async function loadSystemPoolLedger(agentId, oemOnly) {
       html += '<tr style="border-bottom:1px solid rgba(0,0,0,.04)">'
         + '<td style="padding:6px">' + escapeHtml(t) + '</td>'
         + '<td style="padding:6px">' + escapeHtml(_ledgerTypeLabel(it.entry_type)) + '</td>'
-        + '<td style="padding:6px;text-align:right;color:' + (d < 0 ? 'var(--danger)' : 'var(--success)') + '">' + dstr + '</td>'
+        + '<td style="padding:6px;text-align:right" class="' + (d < 0 ? 'system-pool-amount-neg' : 'system-pool-amount-pos') + '">' + dstr + '</td>'
         + '<td style="padding:6px;text-align:right">' + Number(it.balance_after || 0).toLocaleString() + '</td>'
         + '<td style="padding:6px">' + escapeHtml(it.description || '') + '</td></tr>';
     }
@@ -6571,7 +6580,7 @@ function closeRemoteSupportDevice() {
 </script>
 
 <div class="modal-mask" id="systemPoolModal" onclick="if(event.target===this)closeSystemPool()">
-  <div class="modal" style="max-width:980px;width:94%;max-height:88vh;overflow:auto">
+  <div class="modal-card" style="max-width:980px;width:94%;max-height:88vh;overflow:auto;padding:20px">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px">
       <div>
         <h3 style="margin:0">系统池流水</h3>
