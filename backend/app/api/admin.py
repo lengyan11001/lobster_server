@@ -709,11 +709,13 @@ def _system_pool_agent(db: Session, ctx: AdminContext, agent_id: Optional[int] =
     管理员可以按 agent_id 查看任一固定代理；不传时默认看 hikong/daka/jinghai
     中第一个存在的固定代理。
     """
-    if ctx.role == "agent" and ctx.user_id:
-        agent = db.query(User).filter(User.id == int(ctx.user_id)).first()
-        if agent and agent.is_agent and _agent_level(agent) == 1:
-            return agent
+    # 任何非超级管理员登录账号（代理或 admin_user）只能看自己的系统池。
+    if ctx.user_id is not None:
+        me = db.query(User).filter(User.id == int(ctx.user_id)).first()
+        if me and me.is_agent and _agent_level(me) == 1:
+            return me
         return None
+    # 只有超级管理员 token（user_id=None）可以按 agent_id 看固定代理。
     if ctx.role == "admin":
         if agent_id:
             agent = db.query(User).filter(User.id == int(agent_id)).first()
@@ -740,7 +742,7 @@ def _pool_entry(agent: User) -> dict:
 def _system_pool_payload(db: Session, ctx: AdminContext, agent_id: Optional[int] = None) -> dict:
     agent = _system_pool_agent(db, ctx, agent_id)
     options: list[dict] = []
-    if ctx.role == "admin":
+    if ctx.user_id is None and ctx.role == "admin":
         for brand in ("hikong", "daka", "jinghai"):
             a = _fixed_pool_agent(db, brand)
             if a is not None:
@@ -768,10 +770,9 @@ def set_agent_fund_downline(
         raise HTTPException(status_code=404, detail="用户不存在")
     if not (target.is_agent and _agent_level(target) == 1):
         raise HTTPException(status_code=400, detail="只有一级代理可以设置此项")
-    if ctx.role == "agent":
-        if int(ctx.user_id or 0) != target.id:
-            raise HTTPException(status_code=403, detail="只能设置自己的账号")
-    elif ctx.role != "admin":
+    if ctx.user_id is not None and int(ctx.user_id) != target.id:
+        raise HTTPException(status_code=403, detail="只能设置自己的账号")
+    if ctx.role not in ("admin", "agent"):
         raise HTTPException(status_code=403, detail="无权操作")
     target.agent_fund_downline = bool(body.enabled)
     db.commit()
@@ -788,6 +789,8 @@ def system_pool_ledger(
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
+    if ctx.user_id is not None and agent_id and int(agent_id) != int(ctx.user_id):
+        raise HTTPException(status_code=403, detail="只能查看自己的系统池")
     agent = _system_pool_agent(db, ctx, agent_id)
     if agent is None:
         return {"items": [], "total": 0, "agent": _system_pool_payload(db, ctx, agent_id)}

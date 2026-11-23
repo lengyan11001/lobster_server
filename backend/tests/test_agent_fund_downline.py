@@ -154,3 +154,34 @@ def test_release_oem_inventory_timeout_writes_correct_description():
     assert "退回库存预扣" in row.description
     assert order.agent_reserved_credits == Decimal("0.0000")
     db.close()
+
+
+def test_oem_agent_cannot_see_or_toggle_other_pool():
+    from backend.app.api import admin
+    from fastapi import HTTPException
+
+    db = _db()
+    hk = _user(db, email="13510019898+brand-hikong@sms.lobster.local", credits="500", is_agent=True, level=1)
+    hk.brand_mark = "hikong"
+    dk = _user(db, email="13927485337+brand-daka@sms.lobster.local", credits="300", is_agent=True, level=1)
+    dk.brand_mark = "daka"
+    db.commit()
+
+    ctx = admin.AdminContext(role="admin", user_id=hk.id, brand_mark="hikong")
+    payload = admin._system_pool_payload(db, ctx)
+    assert payload["enabled"] is True
+    assert payload["agent_user_id"] == hk.id
+    assert [o["agent_user_id"] for o in payload["options"]] == [hk.id]
+
+    with pytest.raises(HTTPException) as exc:
+        admin.system_pool_ledger(limit=10, offset=0, oem_only=0, agent_id=dk.id, ctx=ctx, db=db)
+    assert exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as exc2:
+        admin.set_agent_fund_downline(
+            admin.AgentFundDownlineBody(user_id=dk.id, enabled=True),
+            ctx=ctx,
+            db=db,
+        )
+    assert exc2.value.status_code == 403
+    db.close()
