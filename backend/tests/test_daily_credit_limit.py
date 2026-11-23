@@ -165,3 +165,78 @@ def test_capability_pre_deduct_blocks_over_daily_limit(db_session, db_session_fa
     assert resp.status_code == 429
     assert "每日算力消耗上限" in resp.text
 
+
+
+def test_settle_reversal_not_counted_as_daily_usage(db_session, db_session_factory, monkeypatch):
+    """系统冲正/代理划转不能算进“今日已消耗”，否则用户会看到几十万的假消耗。"""
+    from backend.app.models import CreditLedger, User
+
+    user = User(
+        email="daily-limit-reversal@test.local",
+        hashed_password="x",
+        credits=Decimal("1000.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.flush()
+    db_session.add_all([
+        CreditLedger(
+            user_id=user.id,
+            delta=Decimal("-500.0000"),
+            balance_after=Decimal("500.0000"),
+            entry_type="settle_reversal",
+            created_at=datetime.utcnow(),
+        ),
+        CreditLedger(
+            user_id=user.id,
+            delta=Decimal("-100.0000"),
+            balance_after=Decimal("400.0000"),
+            entry_type="agent_transfer_out",
+            created_at=datetime.utcnow(),
+        ),
+        CreditLedger(
+            user_id=user.id,
+            delta=Decimal("-12.0000"),
+            balance_after=Decimal("388.0000"),
+            entry_type="pre_deduct",
+            created_at=datetime.utcnow(),
+        ),
+        CreditLedger(
+            user_id=user.id,
+            delta=Decimal("2.0000"),
+            balance_after=Decimal("390.0000"),
+            entry_type="refund",
+            created_at=datetime.utcnow(),
+        ),
+        CreditLedger(
+            user_id=user.id,
+            delta=Decimal("-10000.0000"),
+            balance_after=Decimal("0.0000"),
+            entry_type="pre_deduct",
+            meta={"inventory": True, "brand_mark": "hikong"},
+            created_at=datetime.utcnow(),
+        ),
+        CreditLedger(
+            user_id=user.id,
+            delta=Decimal("10000.0000"),
+            balance_after=Decimal("10000.0000"),
+            entry_type="refund",
+            meta={"inventory_release": True, "brand_mark": "hikong"},
+            created_at=datetime.utcnow(),
+        ),
+    ])
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _billing_client(db_session_factory, user.id, monkeypatch)
+    resp = client.get("/api/billing/daily-limit")
+    assert resp.status_code == 200
+    assert resp.json()["used_today"] == 10.0
+
+    hist = client.get("/api/billing/credit-history")
+    assert hist.status_code == 200
+    rev = next(i for i in hist.json()["items"] if i["entry_type"] == "settle_reversal")
+    assert rev["type"] == "adjustment"
+    assert rev["counts_as_consumption"] is False

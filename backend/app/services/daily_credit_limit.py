@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..models import CreditLedger, UserDailyCreditLimit
 from .credits_amount import credits_json_float, ledger_display_delta, quantize_credits, quantize_credits_signed
+from .credit_ledger import NON_CONSUMPTION_ENTRY_TYPES
 
 _BJ = ZoneInfo("Asia/Shanghai")
 
@@ -62,10 +63,17 @@ def today_credit_usage(db: Session, user_id: int) -> Decimal:
     )
     spent = Decimal("0")
     for row in rows:
+        et = (row.entry_type or "").strip().lower()
+        # 系统冲正、代理商划转、充值到账不是“用户消耗”，不能计入今日已用。
+        if et in NON_CONSUMPTION_ENTRY_TYPES:
+            continue
+        # 线下 OEM 充值卡预扣/退回是“买卡”，不是用户消耗。
+        if isinstance(row.meta, dict) and (row.meta.get("inventory") or row.meta.get("inventory_release")):
+            continue
         delta = quantize_credits_signed(ledger_display_delta(row))
         if delta < 0:
             spent += -delta
-        elif delta > 0 and (row.entry_type or "").strip().lower() in {"refund", "publish_refund", "settle"}:
+        elif delta > 0 and et in {"refund", "publish_refund", "settle"}:
             spent -= delta
     if spent < 0:
         spent = Decimal("0")

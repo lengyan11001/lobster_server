@@ -30,7 +30,7 @@ from ..core.config import settings
 from ..db import get_db
 from ..models import H5WorkflowTemplate, AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserGroup, UserSkillVisibility
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
-from ..services.credit_ledger import append_credit_ledger
+from ..services.credit_ledger import NON_CONSUMPTION_ENTRY_TYPES, append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES, RETIRED_PACKAGE_IDS
@@ -3024,7 +3024,11 @@ def admin_stats(
                 CreditLedger.user_id,
                 func.sum(CreditLedger.delta).label("total_consumed"),
             )
-            .filter(CreditLedger.delta < 0, CreditLedger.created_at >= range_start)
+            .filter(
+                CreditLedger.delta < 0,
+                CreditLedger.entry_type.notin_(NON_CONSUMPTION_ENTRY_TYPES),
+                CreditLedger.created_at >= range_start,
+            )
         )
         .group_by(CreditLedger.user_id)
         .order_by(func.sum(CreditLedger.delta))

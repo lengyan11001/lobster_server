@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 _LEDGER_RECON_KEY = "_recon"
 _PUBLIC_LEDGER_META_HIDDEN_KEYS = {_LEDGER_RECON_KEY, "upstream", "sutui_pool", "sutui_token_ref"}
 
+# 不是“用户消耗”的流水：系统冲正、代理商划转、充值到账。
+# 前端“今日已消耗”、消耗排行、日消耗曲线都必须排除，避免把冲正金额算成消费。
+NON_CONSUMPTION_ENTRY_TYPES = frozenset({
+    "settle_reversal",
+    "agent_transfer_in",
+    "agent_transfer_out",
+    "recharge",
+})
+
 
 def apply_credit_delta(db: Session, user_id: int, delta: Union[int, float, Decimal, str]) -> Decimal:
     """原子加减余额，返回变动后的余额。

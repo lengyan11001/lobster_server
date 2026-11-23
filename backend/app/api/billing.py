@@ -22,7 +22,7 @@ from ..core.config import settings, get_effective_public_base_url
 from ..db import get_db
 from .auth import get_current_user
 from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, RechargeOrder, User
-from ..services.credit_ledger import append_credit_ledger, public_ledger_meta
+from ..services.credit_ledger import NON_CONSUMPTION_ENTRY_TYPES, append_credit_ledger, public_ledger_meta
 from ..services.credits_amount import (
     credits_json_float,
     credits_json_float_signed,
@@ -736,8 +736,13 @@ def get_credit_history(
     for r in rows:
         et = (r.entry_type or "").strip().lower()
         delta = ledger_display_delta(r)
-        if delta > 0:
-            type_label = "recharge" if et == "recharge" else "increase"
+        counts_as_consumption = et not in NON_CONSUMPTION_ENTRY_TYPES
+        if et == "recharge":
+            type_label = "recharge"
+        elif not counts_as_consumption:
+            type_label = "adjustment"
+        elif delta > 0:
+            type_label = "increase"
         else:
             type_label = "deduct"
         desc = _public_credit_history_description(et, delta)
@@ -746,6 +751,7 @@ def get_credit_history(
             "time_beijing": _dt_utc_naive_to_beijing_str(r.created_at),
             "type": type_label,
             "entry_type": r.entry_type or "",
+            "counts_as_consumption": counts_as_consumption,
             "amount": credits_json_float_signed(delta),
             "description": desc,
             "origin": _public_credit_history_origin(
@@ -785,6 +791,7 @@ def get_credit_ledger(
                 "delta": credits_json_float_signed(ledger_display_delta(r)),
                 "balance_after": credits_json_float(r.balance_after or 0),
                 "entry_type": r.entry_type,
+                "counts_as_consumption": (r.entry_type or "").strip().lower() not in NON_CONSUMPTION_ENTRY_TYPES,
                 "description": _public_credit_history_description(r.entry_type or "", ledger_display_delta(r)),
                 "origin": _public_credit_history_origin(
                     entry_type=r.entry_type or "",
