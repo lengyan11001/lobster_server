@@ -390,7 +390,19 @@ def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[Us
     return agent
 
 
-def _release_oem_inventory(db: Session, order: RechargeOrder) -> None:
+def _release_inventory_description(order_brand: str, reason: str) -> str:
+    label = _INVENTORY_BRAND_LABELS.get(order_brand, order_brand or "OEM")
+    key = (reason or "").strip().lower()
+    if key in {"timeout", "expired", "overdue"}:
+        return f"{label}订单超时未支付，退回库存预扣"
+    if key in {"create_failed", "pay_failed"}:
+        return f"{label}充值下单失败，退回库存预扣"
+    if key == "cancelled":
+        return f"{label}订单已取消，退回库存预扣"
+    return f"{label}充值订单关闭，退回库存预扣"
+
+
+def _release_oem_inventory(db: Session, order: RechargeOrder, *, reason: str = "") -> None:
     reserved = quantize_credits(getattr(order, "agent_reserved_credits", None) or 0)
     agent_id = getattr(order, "agent_user_id", None)
     if not agent_id or reserved <= 0:
@@ -407,7 +419,7 @@ def _release_oem_inventory(db: Session, order: RechargeOrder) -> None:
         reserved,
         "refund",
         agent.credits,
-        description=f"{_INVENTORY_BRAND_LABELS.get(order_brand, order_brand or 'OEM')}充值下单失败，退回库存预扣",
+        description=_release_inventory_description(order_brand, reason),
         ref_type="recharge_order",
         ref_id=order.out_trade_no,
         meta={"brand_mark": getattr(order, "brand_mark", None), "inventory_release": True},
@@ -1121,14 +1133,14 @@ async def create_fuiou_recharge_order(
         )
     except Exception as e:
         if inventory_agent:
-            _release_oem_inventory(db, order)
+            _release_oem_inventory(db, order, reason="create_failed")
             order.status = "cancelled"
             db.commit()
         logger.exception("[fuiou] order pay failed: %s", e)
         raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
     if not result.get("ok"):
         if inventory_agent:
-            _release_oem_inventory(db, order)
+            _release_oem_inventory(db, order, reason="create_failed")
             order.status = "cancelled"
             db.commit()
         detail = result.get("result_msg") or "富友下单返回异常"
@@ -1359,14 +1371,14 @@ async def create_fuiou_jsapi_order(
         )
     except Exception as exc:
         if inventory_agent:
-            _release_oem_inventory(db, order)
+            _release_oem_inventory(db, order, reason="create_failed")
             order.status = "cancelled"
             db.commit()
         logger.exception("[fuiou] jsapi order failed: %s", exc)
         raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
     if not result.get("ok"):
         if inventory_agent:
-            _release_oem_inventory(db, order)
+            _release_oem_inventory(db, order, reason="create_failed")
             order.status = "cancelled"
             db.commit()
         raise HTTPException(status_code=502, detail=result.get("result_msg") or "富友下单返回异常")

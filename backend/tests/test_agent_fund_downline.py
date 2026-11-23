@@ -9,13 +9,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.api import billing
-from backend.app.models import CreditLedger, User
+from backend.app.models import CreditLedger, RechargeOrder, User
 
 
 def _db():
     engine = create_engine("sqlite://")
     User.__table__.create(engine)
     CreditLedger.__table__.create(engine)
+    RechargeOrder.__table__.create(engine)
     return sessionmaker(bind=engine)()
 
 
@@ -112,4 +113,44 @@ def test_admin_system_pool_sees_hikong_fixed_agent():
     assert payload["agent_user_id"] == hk.id
     assert payload["brand_mark"] == "hikong"
     assert any(o["agent_user_id"] == hk.id for o in payload["options"])
+    db.close()
+
+
+def test_release_inventory_description_labels():
+    assert "订单超时未支付" in billing._release_inventory_description("hikong", "timeout")
+    assert "充值下单失败" in billing._release_inventory_description("hikong", "create_failed")
+    assert "订单已取消" in billing._release_inventory_description("hikong", "cancelled")
+    assert "充值订单关闭" in billing._release_inventory_description("hikong", "")
+
+
+def test_release_oem_inventory_timeout_writes_correct_description():
+    db = _db()
+    agent = _user(db, email="agent4@test.local", credits="100", is_agent=True, level=1)
+    order = RechargeOrder(
+        user_id=agent.id,
+        amount_yuan=100,
+        amount_fen=0,
+        credits=100,
+        status="pending",
+        out_trade_no="test-order-timeout-1",
+        payment_method="fuiou_wechat",
+        brand_mark="hikong",
+        agent_user_id=agent.id,
+        agent_reserved_credits=Decimal("100.0000"),
+    )
+    db.add(order)
+    db.commit()
+    billing._release_oem_inventory(db, order, reason="timeout")
+    db.refresh(agent)
+    db.refresh(order)
+    assert agent.credits == Decimal("200.0000")
+    row = (
+        db.query(CreditLedger)
+        .filter(CreditLedger.user_id == agent.id, CreditLedger.entry_type == "refund")
+        .order_by(CreditLedger.id.desc())
+        .first()
+    )
+    assert "订单超时未支付" in row.description
+    assert "退回库存预扣" in row.description
+    assert order.agent_reserved_credits == Decimal("0.0000")
     db.close()
