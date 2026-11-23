@@ -7,7 +7,8 @@
   只拦「账号 + 钱 + Key 管理 + 后台」这几类（见 _BLOCKED_PREFIXES）：
   画布的登录/扫码/注册、余额/订单/充值/提现/优惠券/激活码、apiz Key 管理、admin 后台一律 403；
 - 浏览器里画布自带的 token 一律忽略，转发时统一换成服务器上的速推 key；
-- 不做上游兜底：apiz 返回什么就原样返回什么。
+- 图片生成类在 apiz 通道失败（额度用尽 / 5xx / 超时）时，兜底走图片共用台（comfly 多通道路由）；
+  其余接口仍然 apiz 返回什么就原样返回什么。
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from typing import Any, Dict, List, Tuple
 
 import httpx
@@ -800,6 +802,153 @@ def _prompt_from_body(body: Dict[str, Any]) -> str:
     return ""
 
 
+# 2026-11-23：APIZ 的图片模型通道会整条额度用尽（403 insufficient_user_quota /
+# upstream_unavailable），画布不能把「服务不可用」直接甩给用户。图片生成类改走图片共用台
+# （comfly_proxy 的多通道路由：gaisc → comfly → comfyui-official → sutui → openmind），
+# 和共用台自己出图共用同一套渠道、熔断与垫图逻辑；计费仍按画布自己的预扣，不重复扣钱。
+_LOCAL_TASK_PREFIX = "cf-"
+_TASK_QUERY_PATHS = ("api/v3/tasks/query", "api/v3/tasks/info", "api/v2/tasks/info", "api/fal/tasks/info")
+_IMAGE_HUB_FALLBACK_HINTS = (
+    "insufficient_user_quota", "insufficient_quota", "quota", "upstream_unavailable",
+    "rate limit", "no available channel", "余额不足", "额度", "暂不可用", "服务不可用",
+)
+
+
+def _canvas_image_hub_model(model: str) -> str:
+    """画布图片模型 -> 图片共用台里注册过的请求模型；非图片/未注册返回空（不硬兜底）。"""
+    mapped = map_model(str(model or "").strip())
+    lowered = mapped.lower()
+    if "gpt-image" in lowered:
+        return "gpt-image-2"
+    if "nano-banana-2" in lowered:
+        return "nano-banana-2"
+    return ""
+
+
+def _canvas_image_hub_failed(status_code: int, text: str) -> bool:
+    """上游这次失败是否值得换图片共用台再试一次（只对图片类调用）。"""
+    if status_code >= 500:
+        return True
+    lowered = str(text or "").lower()
+    if any(hint in lowered for hint in _IMAGE_HUB_FALLBACK_HINTS):
+        return True
+    return status_code in (403, 429)
+
+
+def _canvas_image_hub_body(body_json: Dict[str, Any], hub_model: str) -> Dict[str, Any]:
+    """把画布请求体（model + params）转成图片共用台认的 OpenAI 风格请求体。"""
+    params = body_json.get("params") if isinstance(body_json.get("params"), dict) else {}
+    prompt = _prompt_from_body(body_json)
+    body: Dict[str, Any] = {"model": hub_model, "prompt": prompt, "response_format": "url"}
+    for key in ("size", "image_size", "aspect_ratio", "quality"):
+        for source in (params, body_json):
+            value = source.get(key) if isinstance(source, dict) else None
+            if isinstance(value, str) and value.strip():
+                body[key] = value.strip()
+                break
+    for key in ("n", "num_images"):
+        try:
+            count = int(params.get(key) or body_json.get(key) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            body["n"] = min(count, 4)
+            break
+
+    refs: List[str] = []
+
+    def _add(value: Any) -> None:
+        if isinstance(value, dict):
+            value = value.get("url") or value.get("file_url") or value.get("src")
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("http") and text not in refs:
+                refs.append(text)
+
+    content = params.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and str(item.get("type") or "") in ("image_url", "image"):
+                _add(item.get("image_url") or item.get("image") or item.get("url"))
+    for key in ("image_url", "image", "image_urls", "images", "image_files", "reference_image_urls"):
+        value = params.get(key)
+        if value is None:
+            value = body_json.get(key)
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                _add(item)
+        else:
+            _add(value)
+    if refs:
+        body["image_urls"] = refs[:4]
+        body["image"] = refs[0]
+    return body
+
+
+async def _canvas_image_hub_fallback(
+    db: Session,
+    user: User,
+    uid: int,
+    body_json: Dict[str, Any],
+    model: str,
+    normalized: str,
+    pre_charged: Any,
+    *,
+    reason: str = "",
+) -> "Optional[Response]":
+    """图片生成改走图片共用台。成功返回画布能认识的 completed 任务，失败返回 None 走原失败路径。
+
+    internal_fallback=True：画布已经按自己的定价预扣过，共用台这一跳不再扣用户钱，
+    否则用户会被画布和共用台各扣一次。
+    """
+    hub_model = _canvas_image_hub_model(model)
+    if not hub_model:
+        return None
+    hub_body = _canvas_image_hub_body(body_json, hub_model)
+    if not str(hub_body.get("prompt") or "").strip() and not hub_body.get("image"):
+        return None
+
+    from . import comfly_proxy
+
+    try:
+        payload = await comfly_proxy._execute_image_generation_request(
+            request_user_id=int(uid),
+            billing_user_id=int(uid),
+            model=hub_model,
+            body=hub_body,
+            persist_assets=False,
+            internal_fallback=True,
+        )
+    except Exception as exc:  # noqa: BLE001 兜底失败 -> 原来的退款/报错路径
+        logger.warning("[canvas] 图片共用台兜底失败 model=%s reason=%s: %s", model, reason, str(exc)[:300])
+        return None
+
+    urls = comfly_proxy._extract_image_result_urls(payload) if isinstance(payload, dict) else []
+    if not urls:
+        logger.warning("[canvas] 图片共用台兜底没有产出图片 model=%s reason=%s", model, reason)
+        return None
+
+    task_id = _LOCAL_TASK_PREFIX + uuid.uuid4().hex[:20]
+    prompt = _prompt_from_body(body_json)
+    params = body_json.get("params") if isinstance(body_json.get("params"), dict) else {}
+    record = {"code": 200, "message": "ok", "msg": "ok",
+              "data": {"task_id": task_id, "status": "completed"}}
+    try:
+        canvas_hub.add_canvas_task(
+            db, uid, model, normalized, json.dumps(record, ensure_ascii=False).encode("utf-8"),
+            prompt=prompt, params=json.dumps(params, ensure_ascii=False), charged=pre_charged or 0,
+        )
+        canvas_hub.sync_canvas_task(db, uid, task_id=task_id, status="completed", result_url=urls[0], model=model)
+        canvas_hub.register_content_record(
+            db, uid, urls[0], media_type="image", task_id=task_id, model=model,
+            prompt=prompt, extra={"status": "completed", "provider": "image_hub"},
+        )
+    except Exception as exc:  # noqa: BLE001 记账失败不能把已经出来的图丢掉
+        logger.warning("[canvas] 图片共用台兜底记任务失败: %s", exc)
+    logger.info("[canvas] 图片共用台兜底成功 model=%s -> %s task=%s reason=%s", model, hub_model, task_id, reason)
+    return JSONResponse(record)
+
+
 _STALE_CANVAS_TASK_SECONDS = 120
 
 
@@ -1308,6 +1457,19 @@ async def _hub_route(normalized: str, request: Request, user: User, db: Session)
         project = hub.project_row_to_json(row, with_snapshot=True)
         return JSONResponse({"code": 200, **project, "project": project, "data": project})
 
+    # 图片共用台兜底出来的任务是本机的（task_id 带 cf- 前缀），前端轮询时直接回本地结果
+    if normalized in _TASK_QUERY_PATHS or any(normalized.startswith(p + "/") for p in _TASK_QUERY_PATHS):
+        task_id = str(body.get("task_id") or request.query_params.get("task_id") or "").strip()
+        if not task_id:
+            for prefix in _TASK_QUERY_PATHS:
+                if normalized.startswith(prefix + "/"):
+                    task_id = normalized[len(prefix) + 1:]
+                    break
+        if task_id.startswith(_LOCAL_TASK_PREFIX):
+            local_payload = canvas_hub.local_canvas_task_payload(db, uid, task_id)
+            if local_payload is not None:
+                return JSONResponse(local_payload)
+
     # 任务记录/最近任务：读我们自己的库（生成时记的）
     if normalized in ("api/fal/tasks/list", "api/task_list", "api/tasks/list"):
         # 2026-10-05 修复：canvas_hub.list_canvas_tasks 现在返回 {"list": [...], "total": n}，
@@ -1605,11 +1767,21 @@ async def canvas_proxy(
                 params=dict(request.query_params),
             )
     except httpx.TimeoutException as exc:
+        _hub_response = await _canvas_image_hub_fallback(
+            db, user, uid, body_json, model, normalized, pre_charged, reason="apiz timeout",
+        )
+        if _hub_response is not None:
+            return _hub_response
         if pre_charged:
             refund_canvas(db, user, pre_charged, model, normalized, "上游超时")
             pre_charged = None
         raise HTTPException(status_code=504, detail=f"apiz 请求超时：{exc}") from exc
     except httpx.TransportError as exc:
+        _hub_response = await _canvas_image_hub_fallback(
+            db, user, uid, body_json, model, normalized, pre_charged, reason="apiz transport",
+        )
+        if _hub_response is not None:
+            return _hub_response
         if pre_charged:
             refund_canvas(db, user, pre_charged, model, normalized, "上游连接失败")
             pre_charged = None
@@ -1623,6 +1795,28 @@ async def canvas_proxy(
             refund_canvas(db, user, pre_charged, model, normalized, "上游 404 未创建任务")
             pre_charged = None
         return JSONResponse({"code": 200, "message": "ok", "msg": "ok", "data": None}, status_code=200)
+
+    # 图片通道整条不可用（额度用尽 / 5xx / HTTP200+业务错误）时，改走图片共用台多通道路由
+    if model and _should_settle(normalized) and _canvas_image_hub_model(model):
+        _upstream_text = upstream.content[:4000].decode("utf-8", "replace")
+        _needs_hub = False
+        if upstream.status_code >= 400:
+            _needs_hub = _canvas_image_hub_failed(upstream.status_code, _upstream_text)
+        else:
+            try:
+                _ok_payload = json.loads(_upstream_text) if _upstream_text else {}
+            except Exception:
+                _ok_payload = {}
+            _ok_code = _ok_payload.get("code") if isinstance(_ok_payload, dict) else None
+            if _ok_code not in (None, 0, 200, "0", "200"):
+                _needs_hub = _canvas_image_hub_failed(200, _upstream_text)
+        if _needs_hub:
+            _hub_response = await _canvas_image_hub_fallback(
+                db, user, uid, body_json, model, normalized, pre_charged,
+                reason=f"apiz {upstream.status_code}",
+            )
+            if _hub_response is not None:
+                return _hub_response
 
     if upstream.status_code < 400 and model:
         # 成功：价格按我们自己的定价（前面已预扣），不再按 apiz 回报扣一次

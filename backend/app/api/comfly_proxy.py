@@ -3959,6 +3959,7 @@ async def _execute_image_generation_request(
     model: str,
     body: Dict[str, Any],
     persist_assets: bool = True,
+    internal_fallback: bool = False,
 ) -> Dict[str, Any]:
     openai_official_first = _openai_official_image_first_for_user(billing_user_id)
     attempt_models = _image_generation_model_attempts_for_user(
@@ -4009,6 +4010,7 @@ async def _execute_image_generation_request(
                 data=edit_data,
                 buffered_files=buffered_files,
                 client_request_id=str(client_request_id or "").strip()[:120],
+                internal_fallback=internal_fallback,
             )
 
     for index, attempt_model in enumerate(attempt_models, start=1):
@@ -4060,7 +4062,7 @@ async def _execute_image_generation_request(
         )
 
         estimated = estimate_comfly_credits(attempt_model, body, for_user=True) or 1
-        pre = _do_pre_deduct_by_user_id(
+        pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
             billing_user_id,
             estimated,
             capability_id=_CAPABILITY_FOR_BILLING,
@@ -4330,7 +4332,7 @@ async def _execute_image_generation_request(
                 error=fallback_skip_error,
             )
 
-        if not channel_succeeded:
+        if not channel_succeeded and not internal_fallback:
             _do_full_refund_by_user_id(
                 billing_user_id,
                 pre=pre,
@@ -4548,6 +4550,7 @@ async def _execute_image_edit_request(
     data: Dict[str, str],
     buffered_files: List[Tuple[str, str, bytes, str]],
     client_request_id: str = "",
+    internal_fallback: bool = False,
 ) -> Dict[str, Any]:
     entry = _require_model_entry(model)
     openai_official_first = _openai_official_image_first_for_user(billing_user_id)
@@ -4592,7 +4595,7 @@ async def _execute_image_edit_request(
             )
             raise HTTPException(status_code=409, detail="同一个图片任务仍在生成中，请稍后刷新结果，不会重复扣费")
     estimated = estimate_comfly_credits(model, data, for_user=True) or 1
-    pre = _do_pre_deduct_by_user_id(
+    pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
@@ -4710,8 +4713,9 @@ async def _execute_image_edit_request(
     if resp is None:
         if pending_key:
             cache_delete(pending_key)
-        _do_full_refund_by_user_id(billing_user_id, pre=pre,
-                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=last_error)
+        if not internal_fallback:
+            _do_full_refund_by_user_id(billing_user_id, pre=pre,
+                            capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=last_error)
         _audit(
             "image_edit_failed",
             user_id=billing_user_id,
@@ -4727,14 +4731,15 @@ async def _execute_image_edit_request(
         if pending_key:
             cache_delete(pending_key)
         error = "Comfly image edits returned no usable image URL"
-        _do_full_refund_by_user_id(
-            billing_user_id,
-            pre=pre,
-            capability_id=_CAPABILITY_FOR_BILLING,
-            model=model,
-            endpoint="image_edit",
-            error=error,
-        )
+        if not internal_fallback:
+            _do_full_refund_by_user_id(
+                billing_user_id,
+                pre=pre,
+                capability_id=_CAPABILITY_FOR_BILLING,
+                model=model,
+                endpoint="image_edit",
+                error=error,
+            )
         _audit(
             "image_edit_empty_result",
             user_id=billing_user_id,
@@ -4746,7 +4751,7 @@ async def _execute_image_edit_request(
         raise HTTPException(502, "图片生成成功但没有返回可用图片结果，已自动退款，请稍后重试或切换模型。")
 
     actual = estimate_comfly_credits(used_model, requested_data, for_user=True) or estimated
-    if quantize_credits(int(actual)) != pre:
+    if not internal_fallback and quantize_credits(int(actual)) != pre:
         _do_settle_by_user_id(
             billing_user_id,
             pre=pre,
@@ -4762,7 +4767,7 @@ async def _execute_image_edit_request(
         prompt=str(requested_data.get("prompt") or ""),
         model=used_model,
         limit=int(requested_data.get("n") or requested_data.get("num_images") or 1),
-    ) if isinstance(resp, dict) else False
+    ) if isinstance(resp, dict) and not internal_fallback else False
     if isinstance(resp, dict) and used_model != model:
         resp = dict(resp)
         fallback = resp.setdefault("_lobster_fallback", {})

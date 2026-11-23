@@ -1102,6 +1102,43 @@ def list_canvas_tasks(db: Session, user_id: int, limit: int = 30, *, page: int =
     return {"list": [canvas_task_item(row) for row in rows], "total": int(total)}
 
 
+def local_canvas_task_payload(db: Session, user_id: int, task_id: str) -> Optional[Dict[str, Any]]:
+    """本机生成的任务（例如图片共用台兜底出的图）：按画布 query 接口的形状回本地结果。
+
+    画布前端会拿 create 返回的 task_id 轮询 /v3/tasks/query（或 v2/fal tasks/info），
+    这类本地任务上游 apiz 一定查不到，不能让它一直停在「处理中」。
+    """
+    tid = str(task_id or "").strip()
+    if not tid:
+        return None
+    row = db.execute(
+        text("SELECT * FROM canvas_task WHERE user_id = :uid AND task_id = :tid ORDER BY id DESC LIMIT 1"),
+        {"uid": user_id, "tid": tid},
+    ).fetchone()
+    if row is None:
+        return None
+    status = canvas_task_ui_status(getattr(row, "status", ""))
+    output = _canvas_task_output(row)
+    url = str(getattr(row, "result_url", "") or "")
+    if url:
+        output.setdefault("output", url)
+        output.setdefault("images", [{"url": url}])
+        output.setdefault("image_url", url)
+        output.setdefault("url", url)
+    params = _canvas_task_params(row)
+    data: Dict[str, Any] = {
+        "task_id": tid,
+        "status": status,
+        "params": params,
+        "input_params": params,
+        "output": output,
+        "result": output,
+        "output_params": output,
+        "error": str(getattr(row, "error", "") or ""),
+    }
+    return {"code": 200, "message": "ok", "msg": "ok", "data": data}
+
+
 def sync_canvas_task(db: Session, user_id: int, *, task_id: str, status: str = "", result_url: str = "",
                      error: str = "", params: str = "", model: str = "") -> Dict[str, Any]:
     """把上游的任务状态写回 canvas_task；返回该行的预扣/退款状态供调用方决定要不要退钱。"""
