@@ -6211,21 +6211,15 @@ function currentSystemPoolAgentId() {
 function _updateSystemPoolHeader(entry) {
   if (!entry) return;
   const oemBtn = document.getElementById('systemPoolOemBtn');
-  const wrap = document.getElementById('systemPoolFundWrap');
-  const btn = document.getElementById('systemPoolFundBtn');
   if (entry.is_platform) {
     document.getElementById('systemPoolMeta').textContent = '必火平台 · 余额 ∞ · 今日手动加积分 / 充值流水';
-    if (wrap) wrap.style.display = 'none';
     if (oemBtn) oemBtn.style.display = 'none';
     return;
   }
   document.getElementById('systemPoolMeta').textContent =
     (entry.email || '') + ' · 余额 ' + Number(entry.balance || 0).toLocaleString() + ' · 品牌 ' + (entry.brand_mark || '-');
-  if (oemBtn) oemBtn.style.display = '';
-  if (wrap && btn) {
-    wrap.style.display = '';
-    btn.textContent = entry.agent_fund_downline ? '关闭：下级自行充值' : '开启：下级充值由本账号扣费';
-  }
+  const oemBrands = ['hikong', 'daka', 'jinghai'];
+  if (oemBtn) oemBtn.style.display = oemBrands.includes((entry.brand_mark || '').toLowerCase()) ? '' : 'none';
 }
 
 async function openSystemPool() {
@@ -6302,14 +6296,6 @@ function onSystemPoolAgentChange() {
   loadSystemPoolLedger(id, false);
 }
 
-function toggleSystemPoolFunding() {
-  const sp = _systemPool();
-  if (!sp || !sp.enabled) return;
-  const id = currentSystemPoolAgentId();
-  const entry = _poolOption(id);
-  if (!entry || entry.is_platform) return;
-  toggleAgentFundDownline(id, !entry.agent_fund_downline, true);
-}
 
 async function toggleAgentFundDownline(userId, enabled, fromPool) {
   try {
@@ -6605,9 +6591,6 @@ function closeRemoteSupportDevice() {
       <select id="systemPoolAgentSelect" onchange="onSystemPoolAgentChange()" style="display:none;padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px"></select>
       <button class="btn btn-sm" onclick="loadSystemPoolLedger(currentSystemPoolAgentId(), false)">全部流水</button>
       <button class="btn btn-sm" id="systemPoolOemBtn" onclick="loadSystemPoolLedger(currentSystemPoolAgentId(), true)">只看 OEM</button>
-      <span id="systemPoolFundWrap" style="margin-left:auto;display:none">
-        <button class="btn btn-sm" id="systemPoolFundBtn" onclick="toggleSystemPoolFunding()">下级充值扣费</button>
-      </span>
     </div>
     <div id="systemPoolLedger" style="max-height:62vh;overflow:auto"></div>
   </div>

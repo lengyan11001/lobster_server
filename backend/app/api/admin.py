@@ -747,10 +747,14 @@ def _system_pool_payload(db: Session, ctx: AdminContext, agent_id: Optional[int]
     options: list[dict] = []
     if ctx.user_id is None and ctx.role == "admin":
         options.append(_platform_pool_entry())
-        for brand in ("hikong", "daka", "jinghai"):
-            a = _fixed_pool_agent(db, brand)
-            if a is not None:
-                options.append(_pool_entry(a))
+        level1_agents = (
+            db.query(User)
+            .filter(User.is_agent == True, User.agent_level == 1)  # noqa: E712
+            .order_by(User.brand_mark.asc(), User.id.asc())
+            .all()
+        )
+        for a in level1_agents:
+            options.append(_pool_entry(a))
         if agent_id and int(agent_id) > 0:
             agent = _system_pool_agent(db, ctx, agent_id)
             if agent is not None:
