@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import H5WorkflowTemplate, AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, Customer, CustomerAuthorization, CustomerCommunication, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RecorderAudioRecord, RechargeOrder, RemoteSupportDeviceAuthorization, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserGroup, UserSkillVisibility
-from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
+from ..services.brand_context import BRAND_FIXED_AGENT_PHONES, BUILTIN_BRANDS, DEFAULT_BRAND_MARK, PHONE_EMAIL_SUFFIX, is_brand_fixed_agent, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import NON_CONSUMPTION_ENTRY_TYPES, append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
@@ -693,27 +693,63 @@ def admin_user_detail(
     }
 
 
-def _system_pool_agent(db: Session, ctx: AdminContext) -> Optional[User]:
-    """一级代理的“系统池”：代理自己的主账号。"""
+def _fixed_pool_agent(db: Session, brand: str) -> Optional[User]:
+    phone = BRAND_FIXED_AGENT_PHONES.get((brand or "").strip())
+    if not phone:
+        return None
+    agent = user_for_account(db, f"{phone}{PHONE_EMAIL_SUFFIX}", brand)
+    if agent and agent.is_agent and _agent_level(agent) == 1:
+        return agent
+    return None
+
+
+def _system_pool_agent(db: Session, ctx: AdminContext, agent_id: Optional[int] = None) -> Optional[User]:
+    """一级代理的“系统池”：代理自己的主账号。
+
+    管理员可以按 agent_id 查看任一固定代理；不传时默认看 hikong/daka/jinghai
+    中第一个存在的固定代理。
+    """
     if ctx.role == "agent" and ctx.user_id:
         agent = db.query(User).filter(User.id == int(ctx.user_id)).first()
         if agent and agent.is_agent and _agent_level(agent) == 1:
             return agent
+        return None
+    if ctx.role == "admin":
+        if agent_id:
+            agent = db.query(User).filter(User.id == int(agent_id)).first()
+            if agent and agent.is_agent and _agent_level(agent) == 1:
+                return agent
+            return None
+        for brand in ("hikong", "daka", "jinghai"):
+            agent = _fixed_pool_agent(db, brand)
+            if agent is not None:
+                return agent
     return None
 
 
-def _system_pool_payload(db: Session, ctx: AdminContext) -> dict:
-    agent = _system_pool_agent(db, ctx)
-    if agent is None:
-        return {"enabled": False}
+def _pool_entry(agent: User) -> dict:
     return {
-        "enabled": True,
         "agent_user_id": agent.id,
         "email": unscoped_account_email(agent.email),
         "brand_mark": user_brand_mark(agent),
         "balance": float(quantize_credits(agent.credits)),
         "agent_fund_downline": bool(getattr(agent, "agent_fund_downline", False)),
     }
+
+
+def _system_pool_payload(db: Session, ctx: AdminContext, agent_id: Optional[int] = None) -> dict:
+    agent = _system_pool_agent(db, ctx, agent_id)
+    options: list[dict] = []
+    if ctx.role == "admin":
+        for brand in ("hikong", "daka", "jinghai"):
+            a = _fixed_pool_agent(db, brand)
+            if a is not None:
+                options.append(_pool_entry(a))
+    elif agent is not None:
+        options.append(_pool_entry(agent))
+    if agent is None:
+        return {"enabled": False, "options": options}
+    return {"enabled": True, **_pool_entry(agent), "options": options}
 
 
 class AgentFundDownlineBody(BaseModel):
@@ -748,12 +784,13 @@ def system_pool_ledger(
     limit: int = 100,
     offset: int = 0,
     oem_only: int = 0,
+    agent_id: Optional[int] = None,
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    agent = _system_pool_agent(db, ctx)
+    agent = _system_pool_agent(db, ctx, agent_id)
     if agent is None:
-        return {"items": [], "total": 0, "agent": _system_pool_payload(db, ctx)}
+        return {"items": [], "total": 0, "agent": _system_pool_payload(db, ctx, agent_id)}
     q = db.query(CreditLedger).filter(CreditLedger.user_id == agent.id)
     if int(oem_only or 0):
         q = q.filter(CreditLedger.ref_type == "recharge_order")
@@ -778,7 +815,7 @@ def system_pool_ledger(
         }
         for r in rows
     ]
-    return {"items": items, "total": int(total), "agent": _system_pool_payload(db, ctx)}
+    return {"items": items, "total": int(total), "agent": _system_pool_payload(db, ctx, agent_id)}
 
 
 @router.get("/admin/api/remote-support/devices", summary="管理员查看已开启远程支持的 Online 设备")

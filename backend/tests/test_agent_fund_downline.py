@@ -98,3 +98,18 @@ def test_system_pool_payload_and_agent_toggle():
     db.refresh(agent)
     assert agent.agent_fund_downline is True
     db.close()
+
+
+def test_admin_system_pool_sees_hikong_fixed_agent():
+    from backend.app.api import admin
+
+    db = _db()
+    hk = _user(db, email="13510019898+brand-hikong@sms.lobster.local", credits="500", is_agent=True, level=1)
+    hk.brand_mark = "hikong"
+    db.commit()
+    payload = admin._system_pool_payload(db, admin.AdminContext(role="admin", brand_mark="bihuo"))
+    assert payload["enabled"] is True
+    assert payload["agent_user_id"] == hk.id
+    assert payload["brand_mark"] == "hikong"
+    assert any(o["agent_user_id"] == hk.id for o in payload["options"])
+    db.close()
