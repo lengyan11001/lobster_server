@@ -30552,6 +30552,34 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       ].filter(Boolean).join("");
     }
 
+    function renderLiveExecutorDeviceSelect() {
+      const select = $("liveExecutorDeviceSelect");
+      if (!select) return;
+      const rows = liveExecutorOnlineRows();
+      select.innerHTML = rows.length
+        ? rows.map((device) => optionHtml(device.installation_id || "", liveExecutorDeviceLabel(device))).join("")
+        : '<option value="">暂无在线设备</option>';
+      const current = String(liveExecutorSelectedInstallationId() || state.selectedInstallationId || "").trim();
+      const selected = current && rows.some((device) => String(device.installation_id || "") === current)
+        ? current
+        : (rows[0] ? String(rows[0].installation_id || "").trim() : "");
+      if (selected) select.value = selected;
+      const onlineCount = $("liveExecutorOnlineCount");
+      if (onlineCount) onlineCount.textContent = String(rows.length);
+      const hint = $("liveExecutorDeviceHint");
+      if (hint) hint.textContent = rows.length ? ("在线 " + rows.length + " 台") : "请先启动并登录 Online 客户端";
+      renderLiveExecutorConfigModal();
+    }
+
+    function renderLiveExecutorTasks() {
+      const list = $("liveExecutorTaskList");
+      if (!list) return;
+      const entries = liveExecutorV3Entries();
+      list.innerHTML = entries.all.length
+        ? entries.all.map(liveExecutorV3TaskCardHtml).join("")
+        : '<div class="live-executor-empty-state"><strong>暂无执行记录</strong><small>选择上方任务后，执行状态会出现在这里。</small></div>';
+    }
+
     $("liveExecutorRefreshBtn")?.addEventListener("click", () => {
       refreshDeviceStatus().then(() => {
         renderLiveExecutorDeviceSelect();

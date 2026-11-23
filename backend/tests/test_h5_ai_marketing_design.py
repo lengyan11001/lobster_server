@@ -227,7 +227,7 @@ def test_live_executor_uses_compact_modal_configuration_flow():
     view = html.split('id="liveExecutorView"', 1)[1].split('id="recorderView"', 1)[0]
     modal = html.split('id="liveExecutorConfigModal"', 1)[1].split('id="assetVoiceModal"', 1)[0]
 
-    assert 'id="liveExecutorVoiceOpenBtn"' in view
+    assert 'id="liveExecutorVoiceOpenBtn"' not in view
     assert 'live-executor-action-grid' in view
     for label in ("抖音养号", "抖音获客", "朋友圈图文", "抖音发布", "视频号发布", "微信接管"):
         assert label in view
@@ -235,7 +235,7 @@ def test_live_executor_uses_compact_modal_configuration_flow():
         assert old_label not in view
     assert '<h2>现场执行台</h2>' not in view
     assert '选择在线设备后，4 个现场动作直接在这里下发' not in view
-    assert 'id="liveExecutorLatestCard"' in view
+    assert 'id="liveExecutorTaskList"' in view
     assert 'id="liveExecutorTaskGrid"' not in view
     assert 'id="liveExecutorImageFile"' not in view
     assert 'id="liveExecutorPrompt"' not in view

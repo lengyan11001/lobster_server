@@ -81,35 +81,44 @@ def test_live_executor_actions_are_wired_and_grid_fits_six_buttons():
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
     assert ".live-executor-actions button:nth-child(6)" in css
 
-def test_live_executor_redesign_has_device_rail_queue_and_results():
+def test_live_executor_simple_layout_uses_online_devices_only():
     view = _live_executor_view()
     html = (H5 / "index.html").read_text(encoding="utf-8")
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
     css = (H5 / "h5-app.css").read_text(encoding="utf-8")
 
     for node_id in (
-        "liveExecutorDeviceRail",
+        "liveExecutorDeviceSelect",
+        "liveExecutorDeviceHint",
+        "liveExecutorOnlineCount",
+        "liveExecutorRefreshBtn",
         "liveExecutorTaskList",
-        "liveExecutorSummaryQueued",
-        "liveExecutorSummaryRunning",
-        "liveExecutorSummaryDone",
-        "liveExecutorSummaryFailed",
         "liveExecutorClearDoneBtn",
     ):
         assert f'id="{node_id}"' in view
 
-    for action in ("all", "active", "done", "failed"):
-        assert f'data-live-filter="{action}"' in view
-    assert "只显示最近一条" not in view
+    for action in ("douyin_nurture", "douyin_leads", "moments_content", "douyin_publish", "channels_publish", "wechat_takeover"):
+        assert f'data-live-action="{action}"' in view
 
+    for removed in (
+        "liveExecutorDeviceRail",
+        "liveExecutorDeviceModal",
+        "liveExecutorLatestCard",
+        "liveExecutorSummaryQueued",
+        "liveExecutorVoiceOpenBtn",
+    ):
+        assert f'id="{removed}"' not in view
+    assert "data-live-filter" not in view
+
+    assert "function renderLiveExecutorDeviceSelect()" in script
+    assert "const rows = liveExecutorOnlineRows();" in script
     assert "function liveExecutorStorageKey()" in script
     assert "function liveExecutorV3Persist()" in script
     assert "function liveExecutorV3Restore()" in script
     assert "live.queues[key]" in script
     assert "queueSeq" in script
-    assert "data-live-device" in script
-    assert "data-live-filter" in script
-    assert "live-executor-v3" in html
-    assert ".live-executor-v3 .live-executor-device-card" in css
+    assert "live-executor-simple" in html
+    assert ".live-executor-simple-head" in css
+    assert ".live-executor-simple-actions" in css
+    assert ".live-executor-simple-records" in css
     assert ".live-executor-v3 .live-executor-task-card" in css
-    assert ".live-executor-v3 .live-executor-latest-card" in css

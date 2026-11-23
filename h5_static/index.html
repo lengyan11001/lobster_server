@@ -26,12 +26,12 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20261123-live-executor-v3" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20261123-live-executor-simple" />
   <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260905-idea-samples-v1" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20261015-ratio-cards-v4" />
   <link rel="stylesheet" href="/h5-static/rich-content.css?v=20260910-rich-content-v1" />
   <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
-  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261123-live-executor-v3" />
+  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261123-live-executor-simple" />
 </head>
 <body>
   <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
@@ -1090,50 +1090,27 @@
       </section>
 
       <section class="view" id="liveExecutorView">
-        <div class="live-executor-page live-executor-v3">
-          <header class="live-executor-hero">
-            <div class="live-executor-hero-copy">
-              <span class="live-executor-kicker">OPERATIONS CONSOLE</span>
+        <div class="live-executor-page live-executor-v3 live-executor-simple">
+          <header class="live-executor-simple-head">
+            <div class="live-executor-simple-title">
               <h2>工作执行台</h2>
-              <p>选择设备，一键下发。任务自动排队，执行状态与结果会保留在本地，刷新或重新进入不会丢失。</p>
+              <p>选择在线设备，点击任务立即执行。</p>
             </div>
-            <div class="live-executor-hero-status">
-              <span class="live-executor-live-pill"><i></i><b id="liveExecutorOnlineCount">0</b> 台在线</span>
-              <span class="live-executor-sync-hint" id="liveExecutorSyncHint">任务自动同步</span>
-              <button class="ghost" type="button" id="liveExecutorRefreshBtn">刷新设备</button>
+            <div class="live-executor-device-compact">
+              <label for="liveExecutorDeviceSelect">执行设备</label>
+              <select id="liveExecutorDeviceSelect"></select>
+              <button class="ghost" type="button" id="liveExecutorRefreshBtn">刷新</button>
+              <span id="liveExecutorDeviceHint">正在读取设备状态...</span>
             </div>
           </header>
 
-          <section class="live-executor-device-panel panel">
-            <div class="live-executor-device-current">
-              <span class="live-executor-device-avatar" id="liveExecutorDeviceAvatar">设</span>
-              <div class="live-executor-device-current-main">
-                <span class="live-executor-section-eyebrow">CURRENT DEVICE</span>
-                <strong id="liveExecutorCurrentDeviceName">未选择设备</strong>
-                <small id="liveExecutorCurrentDeviceMeta">请选择在线设备</small>
-              </div>
-              <div class="live-executor-device-current-stats">
-                <span><b id="liveExecutorCurrentActive">0</b> 进行中</span>
-                <span><b id="liveExecutorCurrentDone">0</b> 已完成</span>
-              </div>
-              <button class="ghost" type="button" id="liveExecutorSwitchDeviceBtn">切换设备</button>
-            </div>
-            <div class="live-executor-device-quick" id="liveExecutorDeviceRail"></div>
-            <span class="live-executor-device-hint" id="liveExecutorDeviceHint">正在读取设备状态...</span>
-            <label class="live-executor-device-select-wrap">
-              <span>当前设备</span>
-              <select id="liveExecutorDeviceSelect"></select>
-            </label>
-          </section>
-
-          <section class="live-executor-console panel">
-            <div class="live-executor-command-strip">
+          <section class="panel live-executor-simple-actions">
+            <div class="live-executor-simple-section-head">
               <div>
-                <span class="live-executor-kicker">QUICK ACTIONS</span>
-                <strong>选择任务，立即执行</strong>
-                <span>同一设备按队列顺序执行；切换设备后只显示该设备的任务。</span>
+                <h3>快捷任务</h3>
+                <span>选择后立即下发到当前设备</span>
               </div>
-              <button class="ghost live-executor-voice-open" type="button" id="liveExecutorVoiceOpenBtn">语音指令</button>
+              <span class="live-executor-online-pill"><i></i><b id="liveExecutorOnlineCount">0</b> 台在线</span>
             </div>
             <div class="live-executor-actions live-executor-action-grid">
               <button type="button" data-live-action="douyin_nurture">
@@ -1169,28 +1146,14 @@
             </div>
           </section>
 
-          <section class="live-executor-board panel">
-            <div class="live-executor-board-head">
+          <section class="panel live-executor-simple-records">
+            <div class="live-executor-simple-section-head">
               <div>
-                <span class="live-executor-section-eyebrow">TASK FLOW</span>
-                <h3>任务队列与执行结果</h3>
-                <span class="hint" id="liveExecutorQueueHint">当前设备任务按顺序排队，结果会在刷新后保留。</span>
+                <h3>执行记录</h3>
+                <span id="liveExecutorQueueHint">当前设备的任务和结果，刷新后保留。</span>
               </div>
               <button class="ghost" type="button" id="liveExecutorClearDoneBtn">清理已完成</button>
             </div>
-            <div class="live-executor-metrics">
-              <div><span>排队中</span><strong id="liveExecutorSummaryQueued">0</strong></div>
-              <div><span>执行中</span><strong id="liveExecutorSummaryRunning">0</strong></div>
-              <div><span>已完成</span><strong id="liveExecutorSummaryDone">0</strong></div>
-              <div><span>失败</span><strong id="liveExecutorSummaryFailed">0</strong></div>
-            </div>
-            <div class="live-executor-filter-row" id="liveExecutorFilterRow">
-              <button type="button" class="active" data-live-filter="all">全部</button>
-              <button type="button" data-live-filter="active">进行中</button>
-              <button type="button" data-live-filter="done">已完成</button>
-              <button type="button" data-live-filter="failed">失败</button>
-            </div>
-            <div class="live-executor-latest-card empty" id="liveExecutorLatestCard">暂无执行记录</div>
             <div class="live-executor-task-list" id="liveExecutorTaskList" aria-live="polite"></div>
           </section>
         </div>
@@ -2242,25 +2205,6 @@
         <strong id="liveExecutorResultTitle">执行结果</strong>
       </div>
       <div class="live-executor-result-body" id="liveExecutorResultBody"></div>
-    </div>
-  </div>
-
-  <div class="employee-modal live-executor-device-modal hidden" id="liveExecutorDeviceModal" role="dialog" aria-modal="true" aria-labelledby="liveExecutorDeviceModalTitle" aria-hidden="true">
-    <button class="employee-modal-backdrop" type="button" id="liveExecutorDeviceBackdrop" aria-label="关闭"></button>
-    <div class="employee-popover live-executor-device-panel-modal">
-      <button class="employee-popover-close" type="button" id="liveExecutorDeviceClose" aria-label="关闭">×</button>
-      <div class="live-executor-device-modal-head">
-        <span>DEVICE SELECTOR</span>
-        <strong id="liveExecutorDeviceModalTitle">切换执行设备</strong>
-        <small id="liveExecutorDeviceModalHint">在线 0 台 / 共 0 台</small>
-      </div>
-      <div class="live-executor-device-search">
-        <input id="liveExecutorDeviceSearch" type="search" placeholder="搜索设备名称或编号" autocomplete="off">
-      </div>
-      <div class="live-executor-device-list" id="liveExecutorDeviceList"></div>
-      <div class="live-executor-device-modal-foot">
-        <button class="ghost" type="button" id="liveExecutorDeviceRefreshBtn">刷新设备</button>
-      </div>
     </div>
   </div>
 

@@ -11227,3 +11227,89 @@
       .live-executor-device-list { padding: 6px 16px 12px; }
       .live-executor-device-modal-foot { padding: 10px 16px 14px; }
     }
+    .live-executor-page.live-executor-v3.live-executor-simple {
+      gap: 14px !important;
+      padding: 14px !important;
+      min-height: auto !important;
+      align-content: start !important;
+      background: #f4f7fb !important;
+    }
+
+    .live-executor-v3 .live-executor-simple-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 2px 2px 0;
+    }
+
+    .live-executor-v3 .live-executor-simple-title { min-width: 0; }
+    .live-executor-v3 .live-executor-simple-title h2 { margin: 0; color: #0b1730; font-size: 24px; letter-spacing: -.04em; }
+    .live-executor-v3 .live-executor-simple-title p { margin: 5px 0 0; color: #7b8aa3; font-size: 12px; }
+
+    .live-executor-v3 .live-executor-device-compact {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px 7px 12px;
+      border: 1px solid #e3eaf4;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 6px 18px rgba(15, 35, 70, .04);
+    }
+
+    .live-executor-v3 .live-executor-device-compact label { color: #64748b; font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .live-executor-v3 .live-executor-device-compact select { width: 220px; min-height: 34px; border: 1px solid #dbe4f0; border-radius: 9px; background: #fbfdff; color: #0f172a; padding: 0 9px; font-size: 12px; font-weight: 700; }
+    .live-executor-v3 .live-executor-device-compact .ghost { min-height: 34px; padding: 0 11px; border: 1px solid #dbe4f0; border-radius: 9px; background: #fff; color: #334155; box-shadow: none; font-size: 12px; font-weight: 800; }
+    .live-executor-v3 .live-executor-device-compact span { max-width: 160px; overflow: hidden; color: #94a3b8; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+
+    .live-executor-v3 .live-executor-simple-actions,
+    .live-executor-v3 .live-executor-simple-records {
+      padding: 16px !important;
+      border: 1px solid #e3eaf4 !important;
+      border-radius: 18px !important;
+      background: #fff !important;
+      box-shadow: 0 8px 24px rgba(15, 35, 70, .05) !important;
+    }
+
+    .live-executor-v3 .live-executor-simple-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .live-executor-v3 .live-executor-simple-section-head h3 { margin: 0; color: #0b1730; font-size: 16px; letter-spacing: -.02em; }
+    .live-executor-v3 .live-executor-simple-section-head span { display: block; margin-top: 3px; color: #94a3b8; font-size: 11px; }
+    .live-executor-v3 .live-executor-simple-section-head .ghost { min-height: 32px; padding: 0 11px; border: 1px solid #dbe4f0; border-radius: 9px; background: #fff; color: #334155; box-shadow: none; font-size: 11px; font-weight: 800; }
+
+    .live-executor-v3 .live-executor-online-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid #d8f3e7;
+      border-radius: 999px;
+      background: #f0fdf8;
+      color: #0f766e;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .live-executor-v3 .live-executor-online-pill i { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
+    .live-executor-v3 .live-executor-online-pill b { color: #047857; font-size: 13px; }
+
+    @media (max-width: 760px) {
+      .live-executor-page.live-executor-v3.live-executor-simple { padding: 10px !important; }
+      .live-executor-v3 .live-executor-simple-head { flex-direction: column; align-items: stretch; gap: 10px; }
+      .live-executor-v3 .live-executor-device-compact { flex-wrap: wrap; }
+      .live-executor-v3 .live-executor-device-compact label { width: 100%; }
+      .live-executor-v3 .live-executor-device-compact select { flex: 1 1 100%; width: 100%; }
+      .live-executor-v3 .live-executor-device-compact span { max-width: none; flex: 1 1 auto; }
+      .live-executor-v3 .live-executor-simple-actions,
+      .live-executor-v3 .live-executor-simple-records { padding: 12px !important; border-radius: 16px !important; }
+      .live-executor-v3 .live-executor-simple-section-head { align-items: flex-start; }
+    }
