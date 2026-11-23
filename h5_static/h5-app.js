@@ -16287,6 +16287,7 @@ async function api(path, options = {}) {
       liveExecutorUpdateTask(task, {
         status: run ? (String(run.status || "pending").toLowerCase()) : "pending",
         runId: run && run.id ? String(run.id) : "",
+        scheduledTaskId: data.task && data.task.id ? String(data.task.id) : String(task.scheduledTaskId || ""),
         detail: run ? "任务已下发，等待 Online 领取执行" : "任务已创建，等待执行记录同步",
       });
       renderOfficeEmployees();
@@ -16481,17 +16482,13 @@ async function api(path, options = {}) {
       };
     }
 
-    async function liveExecutorMomentsPlan() {
+    async function liveExecutorMomentsPlan(batchId = "") {
       const installationId = String(liveExecutorSelectedInstallationId() || "").trim();
+      const workflowNodeId = String(batchId || "").trim() || "live_executor_moments";
       const headers = installationId ? { "X-Installation-Id": installationId } : {};
       const personal = await api("/api/ip-content/personal-default", { cache: "no-store", headers }).catch(() => ({}));
-      let template = personal && personal.item && personal.item.id ? personal.item : null;
-      const usingPersonalCurrent = !!template;
-      if (!template) {
-        const data = await api("/api/ip-content/schedule-templates", { cache: "no-store" });
-        template = (Array.isArray(data && data.items) ? data.items : []).find((row) => row && row.id) || null;
-      }
-      if (!template || !template.id) throw new Error("还没有 IP 模板，请先到「IP人设定位」配置模板");
+      const template = personal && personal.item && personal.item.id ? personal.item : null;
+      if (!template) throw new Error("还没有个人默认 IP 模板，请先到「IP人设定位」配置并设为当前");
       const lang = ipTemplateLanguage(template);
       const requirements = {
         ...(template.requirements && typeof template.requirements === "object" ? template.requirements : {}),
@@ -16509,23 +16506,65 @@ async function api(path, options = {}) {
         ip_count: 1,
         moments_count: 1,
       };
-      if (usingPersonalCurrent) {
-        payload.template_source = "personal_current";
-        payload.h5_context = {
-          template_source: "personal_current",
-          template_id: Number(template.id),
-          workflow_node_id: "live_executor_moments",
-          source: "h5_live_executor",
-          ...(installationId ? { installation_id: installationId } : {}),
-        };
-      }
+      payload.template_source = "personal_current";
+      payload.h5_context = {
+        template_source: "personal_current",
+        template_id: Number(template.id),
+        workflow_node_id: workflowNodeId,
+        workflow_template_id: workflowNodeId,
+        source: "h5_live_executor",
+        ...(installationId ? { installation_id: installationId } : {}),
+      };
       return {
         title: "朋友圈图文",
         taskKind: "ip_content_daily",
         content: "H5 现场执行台：朋友圈图文",
         serverSide: true,
-        liveExecutorPrompt: "生成一条朋友圈图文并配 3 张图",
+        liveExecutorPrompt: "生成一条朋友圈图文并配 3 张图，同时发布到朋友圈",
         payload,
+      };
+    }
+
+    function liveExecutorMomentsPublishPlan(parentPlan, installationId = "") {
+      const ctx = parentPlan && parentPlan.payload && parentPlan.payload.h5_context
+        ? parentPlan.payload.h5_context
+        : {};
+      const workflowNodeId = String(ctx.workflow_node_id || "").trim() || "live_executor_moments";
+      const workflowTemplateId = String(ctx.workflow_template_id || "").trim() || workflowNodeId;
+      const targetInstallationId = String(installationId || ctx.installation_id || "").trim();
+      return {
+        title: "朋友圈发布",
+        taskKind: "client_workflow",
+        content: "H5 现场执行台：朋友圈图文发布",
+        liveExecutorPrompt: "把刚生成的朋友圈图文发布到朋友圈",
+        installationId: targetInstallationId,
+        payload: {
+          action: "publish_content",
+          h5_context: {
+            template_source: "personal_current",
+            workflow_template_id: workflowTemplateId,
+            workflow_parent_node_id: workflowNodeId,
+            source: "h5_live_executor",
+            ...(targetInstallationId ? { installation_id: targetInstallationId } : {}),
+          },
+          params: {
+            source_mode: "parent_latest_run",
+            source_workflow_node_id: workflowNodeId,
+            h5_context: {
+              workflow_template_id: workflowTemplateId,
+              ...(targetInstallationId ? { installation_id: targetInstallationId } : {}),
+            },
+            platform: "wechat_moments",
+            platform_name: "微信朋友圈",
+            account_id: "pc-wechat-default",
+            account_nickname: "本机微信",
+            publish_installation_id: targetInstallationId,
+            installation_id: targetInstallationId,
+            ai_publish_copy: false,
+            title: "",
+            description: "",
+          },
+        },
       };
     }
 
@@ -16571,7 +16610,29 @@ async function api(path, options = {}) {
         }
         if (key === "moments_content") {
           liveExecutorUpdateTask(task, { detail: "正在读取 IP 模板，生成朋友圈图文..." });
-          await submitLiveExecutorPlan(await liveExecutorMomentsPlan(), task);
+          const batchId = `live_executor_moments_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+          const plan = await liveExecutorMomentsPlan(batchId);
+          const installationId = String(await ensureLiveExecutorOnlineInstallationId({
+            refresh: false,
+            preferred: plan.installationId || liveExecutorSelectedInstallationId(),
+          }) || "").trim();
+          // Create the publish child before the server-side generation task can finish.
+          const publishTask = liveExecutorAddTask("moments_publish", "朋友圈发布", "等待图文生成完成后自动发布");
+          try {
+            await submitLiveExecutorPlan(liveExecutorMomentsPublishPlan(plan, installationId), publishTask);
+            liveExecutorUpdateTask(publishTask, { detail: "已排队：图文生成完成后自动发朋友圈" });
+          } catch (err) {
+            liveExecutorUpdateTask(publishTask, { status: "failed", error: err.message || "朋友圈发布排队失败" });
+            throw err;
+          }
+          try {
+            await submitLiveExecutorPlan(plan, task);
+          } catch (err) {
+            if (publishTask.scheduledTaskId) {
+              await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(publishTask.scheduledTaskId)}`, { method: "DELETE" }).catch(() => {});
+            }
+            throw err;
+          }
           return;
         }
         if (key === "douyin_publish" || key === "channels_publish") {
@@ -16750,11 +16811,15 @@ async function api(path, options = {}) {
       const live = liveExecutorState();
       const tasks = Array.isArray(live.tasks) ? live.tasks : [];
       if (!tasks.length) return;
-      const hasRunTasks = tasks.some((task) => task.runId);
+      const hasRunTasks = tasks.some((task) => task.runId || task.scheduledTaskId);
       if (hasRunTasks) {
         await loadRuns({ reset: true, limit: 80, compact: false, preserveExisting: true, silent: true }).catch(() => {});
         tasks.forEach((task) => {
-          const run = liveExecutorTaskRun(task);
+          let run = liveExecutorTaskRun(task);
+          if (!run && task.scheduledTaskId) {
+            run = (state.runs || []).find((row) => String(row && row.task_id || "") === String(task.scheduledTaskId)) || null;
+            if (run) liveExecutorUpdateTask(task, { runId: String(run.id || "") });
+          }
           if (!run) return;
           const status = isActiveRun(run) ? "processing" : String(run.status || "").toLowerCase();
           liveExecutorUpdateTask(task, {

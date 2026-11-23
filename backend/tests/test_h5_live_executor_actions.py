@@ -49,11 +49,25 @@ def test_live_executor_publish_plan_targets_douyin_and_channels_accounts():
 
 def test_live_executor_moments_uses_normal_ip_content_node():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
-    assert "async function liveExecutorMomentsPlan()" in script
+    assert "async function liveExecutorMomentsPlan(batchId = \"\")" in script
     assert 'taskKind: "ip_content_daily"' in script
     assert 'tasks: ["moments_candidate"]' in script
     assert "moments_count: 1" in script
-    assert 'workflow_node_id: "live_executor_moments"' in script
+    assert "workflow_node_id: workflowNodeId" in script
+    assert "workflow_template_id: workflowNodeId" in script
+
+
+def test_live_executor_moments_creates_auto_publish_child():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert "function liveExecutorMomentsPublishPlan(parentPlan, installationId = \"\")" in script
+    assert 'title: "朋友圈发布"' in script
+    assert 'source_mode: "parent_latest_run"' in script
+    assert "source_workflow_node_id: workflowNodeId" in script
+    assert "workflow_parent_node_id: workflowNodeId" in script
+    assert 'platform: "wechat_moments"' in script
+    assert 'account_nickname: "本机微信"' in script
+    assert "scheduledTaskId: data.task && data.task.id" in script
+    assert "tasks.some((task) => task.runId || task.scheduledTaskId)" in script
 
 
 def test_live_executor_actions_are_wired_and_grid_fits_six_buttons():

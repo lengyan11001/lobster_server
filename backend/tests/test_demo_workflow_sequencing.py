@@ -145,3 +145,41 @@ def test_demo_run_gets_fresh_deadline(db_session, test_user, monkeypatch):
     raw = (run.payload or {}).get("h5_context", {}).get("workflow_node_deadline_at")
     assert raw, "演示 run 必须带 deadline"
     assert datetime.fromisoformat(raw) > datetime.utcnow() + timedelta(minutes=20)
+
+def test_demo_string_batch_id_enqueues_live_executor_child(db_session, test_user):
+    """H5 现场执行台用字符串批次号隔离每次朋友圈图文/发布父子任务。"""
+    batch_id = "live_executor_moments_test_batch"
+    parent = ScheduledTask(
+        user_id=test_user.id,
+        title="现场执行台-朋友圈图文",
+        task_kind="ip_content_daily",
+        content="生成朋友圈图文",
+        payload=_demo_payload(batch_id, template_id=batch_id),
+        schedule_type="once",
+        status="completed",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    child_payload = _demo_payload(batch_id + "_publish", parent_node_id=batch_id, template_id=batch_id)
+    child_payload["action"] = "publish_content"
+    child_payload["params"] = {"source_mode": "parent_latest_run", "platform": "wechat_moments"}
+    child = ScheduledTask(
+        user_id=test_user.id,
+        title="现场执行台-朋友圈发布",
+        task_kind="client_workflow",
+        content="发布朋友圈",
+        payload=child_payload,
+        schedule_type="once",
+        status="active",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add_all([parent, child])
+    db_session.commit()
+
+    count = scheduled_tasks._enqueue_demo_children(db_session, parent, datetime.utcnow())
+    db_session.commit()
+
+    assert count == 1
+    run = db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == child.id).first()
+    assert run is not None and run.status == "pending"
