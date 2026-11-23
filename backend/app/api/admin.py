@@ -772,7 +772,6 @@ def _platform_pool_ledger(db: Session, ctx: AdminContext, limit: int, offset: in
         db.query(CreditLedger, User.email)
         .join(User, User.id == CreditLedger.user_id)
         .filter(
-            User.brand_mark == "bihuo",
             CreditLedger.entry_type == "recharge",
             CreditLedger.created_at >= start_utc,
             CreditLedger.created_at <= end_utc,
