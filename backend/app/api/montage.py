@@ -123,15 +123,40 @@ def _size_for_ratio(ratio: str) -> tuple[int, int]:
     return 720, 1280
 
 
+_BGM_LIBRARY_FILE = Path(__file__).resolve().parent.parent / "data" / "montage_bgm.json"
+
+
+def _bgm_items() -> list[dict[str, Any]]:
+    """优先读 data/montage_bgm.json（可直接追加整首歌），没有时回退到内置 10 秒循环音乐。"""
+    try:
+        payload = json.loads(_BGM_LIBRARY_FILE.read_text(encoding="utf-8"))
+        rows = payload.get("items") if isinstance(payload, dict) else payload
+        items: list[dict[str, Any]] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            url = str(row.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")):
+                continue
+            items.append({
+                "key": str(row.get("key") or url.rsplit("/", 1)[-1]),
+                "name": str(row.get("name") or "背景音乐"),
+                "url": url,
+                "volume": float(row.get("volume") if row.get("volume") is not None else 0.24),
+            })
+        if items:
+            return items
+    except Exception:  # noqa: BLE001 - 音乐库文件缺失时不影响接口
+        pass
+    return [
+        {"key": media_id, "name": name, "url": _BGM_BASE + media_id + ".m4a", "volume": 0.24}
+        for name, media_id in _MONTAGE_BGM
+    ]
+
+
 @router.get("/api/montage/bgm", summary="\u6df7\u526a\u80cc\u666f\u97f3\u4e50\u5217\u8868")
 def montage_bgm_library() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "items": [
-            {"key": media_id, "name": name, "url": _BGM_BASE + media_id + ".m4a", "volume": 0.24}
-            for name, media_id in _MONTAGE_BGM
-        ],
-    }
+    return {"ok": True, "items": _bgm_items()}
 
 
 def _prepare_segment(src: Path, dst: Path, seconds: float, size: tuple[int, int], reference: dict[str, Any], start: float = 0.0) -> Path:
