@@ -798,7 +798,9 @@ def _platform_pool_ledger(db: Session, ctx: AdminContext, limit: int, offset: in
             "delta": float(quantize_credits_signed(r.delta)),
             "balance_after": float(quantize_credits(r.balance_after or 0)),
             "user_email": unscoped_account_email(email),
-            "description": r.description or "",
+            "biz_type": "manual_add" if ("管理员" in (r.description or "") or (r.meta or {}).get("source") == "admin_panel") else "user_recharge",
+            "biz_label": "手动加积分" if ("管理员" in (r.description or "") or (r.meta or {}).get("source") == "admin_panel") else "用户充值",
+            "description": f"[{unscoped_account_email(email)}] {r.description or ''}",
             "ref_type": r.ref_type or "",
             "ref_id": r.ref_id or "",
             "meta": r.meta,
@@ -839,11 +841,91 @@ def set_agent_fund_downline(
     return {"ok": True, "user_id": target.id, "agent_fund_downline": bool(target.agent_fund_downline)}
 
 
+
+def _agent_business_ledger(db: Session, ctx: AdminContext, agent: User, limit: int, offset: int) -> dict:
+    """代理系统池的业务视图：只展示成功划转、下级回款、平台加积分和已支付 OEM 充值。"""
+    items: list[dict] = []
+    rows = (
+        db.query(CreditLedger)
+        .filter(
+            CreditLedger.user_id == agent.id,
+            CreditLedger.entry_type.in_(("agent_transfer_in", "agent_transfer_out", "recharge")),
+        )
+        .all()
+    )
+    target_ids = set()
+    for r in rows:
+        tid = (r.meta or {}).get("target_user_id")
+        if tid:
+            target_ids.add(int(tid))
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(target_ids)).all()} if target_ids else {}
+    for r in rows:
+        meta = r.meta or {}
+        tid = meta.get("target_user_id")
+        target = users.get(int(tid)) if tid else None
+        target_email = unscoped_account_email(target.email) if target else ""
+        et = (r.entry_type or "").strip().lower()
+        if et == "agent_transfer_out":
+            biz, label = "manual_transfer_out", "手动划转"
+            desc = f"给下级 {target_email} 划转 {abs(float(r.delta)):g} 积分" if target_email else (r.description or "划转下级")
+        elif et == "agent_transfer_in":
+            biz, label = "manual_transfer_in", "下级回款"
+            desc = f"从下级 {target_email} 回收 {float(r.delta):g} 积分" if target_email else (r.description or "下级回款")
+        else:
+            biz, label = "agent_recharge", "平台充值/加积分"
+            desc = r.description or "充值/加积分"
+        items.append({
+            "id": r.id,
+            "time": (r.created_at.isoformat() + "Z") if r.created_at else None,
+            "entry_type": r.entry_type,
+            "biz_type": biz,
+            "biz_label": label,
+            "delta": float(quantize_credits_signed(r.delta)),
+            "balance_after": float(quantize_credits(r.balance_after or 0)),
+            "user_email": target_email,
+            "description": desc,
+            "ref_type": r.ref_type or "",
+            "ref_id": r.ref_id or "",
+            "meta": r.meta,
+        })
+    orders = (
+        db.query(RechargeOrder)
+        .filter(RechargeOrder.agent_user_id == agent.id, RechargeOrder.status == "paid")
+        .all()
+    )
+    order_user_ids = {o.user_id for o in orders}
+    order_users = {u.id: u for u in db.query(User).filter(User.id.in_(order_user_ids)).all()} if order_user_ids else {}
+    for o in orders:
+        u = order_users.get(o.user_id)
+        email = unscoped_account_email(u.email) if u else f"uid {o.user_id}"
+        t = o.paid_at or o.created_at
+        items.append({
+            "id": f"order-{o.id}",
+            "time": (t.isoformat() + "Z") if t else None,
+            "entry_type": "oem_recharge",
+            "biz_type": "oem_recharge",
+            "biz_label": "用户充值（OEM）",
+            "delta": -float(quantize_credits(o.credits)),
+            "balance_after": None,
+            "user_email": email,
+            "description": f"用户 {email} 充值 {o.credits} 积分（已支付，订单 {o.out_trade_no}）",
+            "ref_type": "recharge_order",
+            "ref_id": o.out_trade_no,
+            "meta": {"brand_mark": o.brand_mark, "credits": o.credits},
+        })
+    items.sort(key=lambda x: x.get("time") or "", reverse=True)
+    total = len(items)
+    start = max(0, int(offset or 0))
+    page = items[start:start + min(max(int(limit or 100), 1), 300)]
+    return {"items": page, "total": total, "agent": _system_pool_payload(db, ctx, agent.id)}
+
+
 @router.get("/admin/api/system-pool/ledger")
 def system_pool_ledger(
     limit: int = 100,
     offset: int = 0,
     oem_only: int = 0,
+    business: int = 1,
     agent_id: Optional[int] = None,
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
@@ -855,6 +937,8 @@ def system_pool_ledger(
     agent = _system_pool_agent(db, ctx, agent_id)
     if agent is None:
         return {"items": [], "total": 0, "agent": _system_pool_payload(db, ctx, agent_id)}
+    if int(business or 0):
+        return _agent_business_ledger(db, ctx, agent, limit, offset)
     q = db.query(CreditLedger).filter(CreditLedger.user_id == agent.id)
     if int(oem_only or 0):
         q = q.filter(CreditLedger.ref_type == "recharge_order")

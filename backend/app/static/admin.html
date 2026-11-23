@@ -6274,12 +6274,14 @@ async function loadSystemPoolLedger(agentId, oemOnly) {
       const t = it.time ? new Date(it.time).toLocaleString('zh-CN') : '-';
       const d = Number(it.delta || 0);
       const dstr = (d >= 0 ? '+' : '') + d.toLocaleString();
-      const descText = (it.user_email ? '[' + it.user_email + '] ' : '') + (it.description || '');
+      const typeText = it.biz_label || _ledgerTypeLabel(it.entry_type);
+      const balText = it.balance_after == null ? '—' : Number(it.balance_after).toLocaleString();
+      const descText = it.description || '';
       html += '<tr style="border-bottom:1px solid rgba(0,0,0,.04)">'
         + '<td style="padding:6px">' + escapeHtml(t) + '</td>'
-        + '<td style="padding:6px">' + escapeHtml(_ledgerTypeLabel(it.entry_type)) + '</td>'
+        + '<td style="padding:6px">' + escapeHtml(typeText) + '</td>'
         + '<td style="padding:6px;text-align:right" class="' + (d < 0 ? 'system-pool-amount-neg' : 'system-pool-amount-pos') + '">' + dstr + '</td>'
-        + '<td style="padding:6px;text-align:right">' + Number(it.balance_after || 0).toLocaleString() + '</td>'
+        + '<td style="padding:6px;text-align:right">' + escapeHtml(balText) + '</td>'
         + '<td style="padding:6px">' + escapeHtml(descText) + '</td></tr>';
     }
     html += '</tbody></table>';

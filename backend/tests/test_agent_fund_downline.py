@@ -212,3 +212,79 @@ def test_platform_pool_ledger_shows_today_bihuo_recharges():
     assert out["items"][0]["delta"] == 100.0
     assert out["agent"]["is_platform"] is True
     db.close()
+
+
+def test_agent_business_ledger_hides_prededuct_refund_and_shows_paid_order():
+    from backend.app.api import admin
+
+    db = _db()
+    agent = _user(db, email="agent5@test.local", credits="1000", is_agent=True, level=1)
+    buyer = _user(db, email="buyer@test.local", credits="0")
+    db.add(
+        CreditLedger(
+            user_id=agent.id,
+            delta=Decimal("-100.0000"),
+            balance_after=Decimal("900.0000"),
+            entry_type="agent_transfer_out",
+            description="向下级用户 buyer@test.local 划转积分",
+            meta={"target_user_id": buyer.id},
+            created_at=datetime.utcnow(),
+        )
+    )
+    cancelled = RechargeOrder(
+        user_id=buyer.id,
+        amount_yuan=100,
+        amount_fen=0,
+        credits=100,
+        status="cancelled",
+        out_trade_no="ord-cancel",
+        payment_method="fuiou_wechat",
+        brand_mark="hikong",
+        agent_user_id=agent.id,
+        agent_reserved_credits=Decimal("0.0000"),
+    )
+    paid = RechargeOrder(
+        user_id=buyer.id,
+        amount_yuan=200,
+        amount_fen=0,
+        credits=200,
+        status="paid",
+        out_trade_no="ord-paid",
+        payment_method="fuiou_wechat",
+        brand_mark="hikong",
+        agent_user_id=agent.id,
+        agent_reserved_credits=Decimal("200.0000"),
+        paid_at=datetime.utcnow(),
+    )
+    db.add_all([cancelled, paid])
+    db.add_all([
+        CreditLedger(
+            user_id=agent.id,
+            delta=Decimal("-100.0000"),
+            balance_after=Decimal("800.0000"),
+            entry_type="pre_deduct",
+            description="预扣",
+            created_at=datetime.utcnow(),
+        ),
+        CreditLedger(
+            user_id=agent.id,
+            delta=Decimal("100.0000"),
+            balance_after=Decimal("900.0000"),
+            entry_type="refund",
+            description="退款",
+            ref_id="ord-cancel",
+            created_at=datetime.utcnow(),
+        ),
+    ])
+    db.commit()
+    ctx = admin.AdminContext(role="agent", user_id=agent.id, brand_mark="bihuo")
+    out = admin._agent_business_ledger(db, ctx, agent, 10, 0)
+    types = {i["biz_type"] for i in out["items"]}
+    assert "manual_transfer_out" in types
+    assert "oem_recharge" in types
+    assert "pre_deduct" not in types and "refund" not in types
+    paid_item = [i for i in out["items"] if i["biz_type"] == "oem_recharge"][0]
+    assert paid_item["delta"] == -200.0
+    assert "buyer@test.local" in paid_item["description"]
+    assert paid_item["balance_after"] is None
+    db.close()
