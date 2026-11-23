@@ -183,3 +183,40 @@ def test_demo_string_batch_id_enqueues_live_executor_child(db_session, test_user
     assert count == 1
     run = db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == child.id).first()
     assert run is not None and run.status == "pending"
+
+def test_parent_failure_cancels_demo_child(db_session, test_user):
+    """父演示任务失败时，等待中的发布子任务不能永远挂在 active/排队中。"""
+    parent = ScheduledTask(
+        user_id=test_user.id,
+        title="演示-朋友圈图文",
+        task_kind="ip_content_daily",
+        content="演示",
+        payload=_demo_payload("wf_parent_fail"),
+        schedule_type="once",
+        status="completed",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    child = ScheduledTask(
+        user_id=test_user.id,
+        title="演示-发布到朋友圈",
+        task_kind="client_workflow",
+        content="演示发布",
+        payload={"action": "publish_content", "params": {}, "h5_context": {**_demo_payload("wf_parent_fail_child", parent_node_id="wf_parent_fail")["h5_context"]}},
+        schedule_type="once",
+        status="active",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add_all([parent, child])
+    db_session.commit()
+
+    count = scheduled_tasks._cancel_demo_children(db_session, parent, "余额不足，朋友圈配图失败")
+    db_session.commit()
+
+    assert count == 1
+    db_session.refresh(child)
+    assert child.status == "cancelled"
+    assert child.next_run_at is None
+    assert "余额不足" in (child.last_error or "")
+    assert db_session.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == child.id).count() == 0

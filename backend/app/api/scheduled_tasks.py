@@ -4773,6 +4773,12 @@ def _execute_server_side_run(
             except Exception:
                 db.rollback()
                 logger.exception("[scheduled-tasks] enqueue demo children failed parent=%s", task.id)
+        elif task is not None and str(run.status or "").strip().lower() in {"failed", "cancelled"} and _is_demo_once_task(task):
+            try:
+                _cancel_demo_children(db, task, run.error or "父任务失败，发布子任务已取消")
+            except Exception:
+                db.rollback()
+                logger.exception("[scheduled-tasks] cancel demo children failed parent=%s", task.id)
     except (asyncio.TimeoutError, TimeoutError):
         failed = datetime.utcnow()
         try:
@@ -4805,6 +4811,12 @@ def _execute_server_side_run(
             task.updated_at = failed
         _sync_h5_message_from_run(db, run, failed)
         db.commit()
+        if task is not None and _is_demo_once_task(task):
+            try:
+                _cancel_demo_children(db, task, run.error or "父任务失败，发布子任务已取消")
+            except Exception:
+                db.rollback()
+                logger.exception("[scheduled-tasks] cancel demo children failed parent=%s", task.id)
     except HTTPException as exc:
         failed = datetime.utcnow()
         try:
@@ -4852,6 +4864,12 @@ def _execute_server_side_run(
             task.updated_at = failed
         _sync_h5_message_from_run(db, run, failed)
         db.commit()
+        if task is not None and _is_demo_once_task(task):
+            try:
+                _cancel_demo_children(db, task, run.error or "父任务失败，发布子任务已取消")
+            except Exception:
+                db.rollback()
+                logger.exception("[scheduled-tasks] cancel demo children failed parent=%s", task.id)
     except Exception as exc:
         failed = datetime.utcnow()
         try:
@@ -4882,6 +4900,12 @@ def _execute_server_side_run(
             task.updated_at = failed
         _sync_h5_message_from_run(db, run, failed)
         db.commit()
+        if task is not None and _is_demo_once_task(task):
+            try:
+                _cancel_demo_children(db, task, run.error or "父任务失败，发布子任务已取消")
+            except Exception:
+                db.rollback()
+                logger.exception("[scheduled-tasks] cancel demo children failed parent=%s", task.id)
 
 
 def _recover_interrupted_server_side_runs(db: Session, now: Optional[datetime] = None) -> int:
@@ -5741,6 +5765,23 @@ def _enqueue_demo_children(db: Session, parent: ScheduledTask, now: datetime) ->
     db.commit()
     logger.info("[scheduled-tasks] demo parent done, enqueued children=%s parent=%s", count, parent.id)
     return count
+
+
+def _cancel_demo_children(db: Session, parent: ScheduledTask, reason: str) -> int:
+    """父节点失败时取消同一演示批次里尚未入队的发布子节点。"""
+    children = _demo_child_tasks(db, parent)
+    if not children:
+        return 0
+    now = datetime.utcnow()
+    message = str(reason or "父任务失败，子任务已取消").strip()[:500]
+    for child in children:
+        child.status = "cancelled"
+        child.next_run_at = None
+        child.last_error = message
+        child.updated_at = now
+    db.commit()
+    logger.info("[scheduled-tasks] demo parent failed, cancelled children=%s parent=%s", len(children), parent.id)
+    return len(children)
 
 
 def _create_task_row(

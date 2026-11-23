@@ -122,3 +122,11 @@ def test_live_executor_simple_layout_uses_online_devices_only():
     assert ".live-executor-simple-actions" in css
     assert ".live-executor-simple-records" in css
     assert ".live-executor-v3 .live-executor-task-card" in css
+
+def test_live_executor_clears_stuck_waiting_publish_task():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert "waitingParent" in script
+    assert 'const waitingParent = tasks.filter((task) => task.phase === "waiting_parent"' in script
+    assert "等待父任务超时，发布已取消" in script
+    assert "/api/scheduled-tasks/tasks?" in script
+    assert 'rowStatus === "cancelled"' in script

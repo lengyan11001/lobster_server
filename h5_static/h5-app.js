@@ -30453,6 +30453,28 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
           const detail = runStatus === "pending" ? "已下发，等待设备领取" : (isActiveRun(run) ? (runProgressText(run) || "执行中") : (runDisplayResult(run) || task.detail || "执行完成"));
           liveExecutorUpdateTask(task, { runId, status, detail, error: String(run.error || "") }, { silent: true });
         });
+        const waitingParent = tasks.filter((task) => task.phase === "waiting_parent" && task.scheduledTaskId && !task.runId);
+        if (waitingParent.length) {
+          const iid = String(liveExecutorSelectedInstallationId() || "").trim();
+          const params = new URLSearchParams({ limit: "80", offset: "0" });
+          if (iid) params.set("installation_id", iid);
+          const data = await api(`/api/scheduled-tasks/tasks?${params.toString()}`, { cache: "no-store" }).catch(() => null);
+          const rows = data && Array.isArray(data.tasks) ? data.tasks : [];
+          waitingParent.forEach((task) => {
+            const row = rows.find((item) => String(item && item.id || "") === String(task.scheduledTaskId));
+            if (!row) return;
+            const rowStatus = String(row.status || "").toLowerCase();
+            const lastError = String(row.last_error || "").trim();
+            if (rowStatus === "cancelled" || rowStatus === "paused" || (lastError && rowStatus !== "active")) {
+              liveExecutorUpdateTask(task, { status: "failed", phase: "", detail: lastError || "父任务失败，发布已取消", error: lastError || "父任务失败，发布已取消" }, { silent: true });
+              return;
+            }
+            const ageMs = Date.now() - new Date(task.createdAt || 0).getTime();
+            if (ageMs > 15 * 60 * 1000) {
+              liveExecutorUpdateTask(task, { status: "failed", phase: "", detail: "等待父任务超时，发布已取消", error: "等待父任务超时，发布已取消" }, { silent: true });
+            }
+          });
+        }
         liveExecutorV3Persist();
         renderLiveExecutorTasks();
       }
