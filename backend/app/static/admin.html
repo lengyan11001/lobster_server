@@ -4965,6 +4965,16 @@ function renderAgentToggle(u) {
   const section = document.getElementById('agentToggleSection');
   if (u.is_agent) {
     const memEnabled = !!u.agent_openclaw_memory_enabled;
+    const fundEnabled = !!u.agent_fund_downline;
+    const fundBlock = u.agent_level === 1 ? `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
+        <div style="font-weight:700;font-size:13px;margin-bottom:6px">下级充值扣费</div>
+        <p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">开启后，下级用户充值从本账号扣费；余额不足则无法充值。关闭后下级用户自行充值（类似 bihuo）。</p>
+        <button class="btn ${fundEnabled ? 'btn-outline' : 'btn-agent'} btn-sm" onclick="toggleAgentFundDownline(${u.id}, ${fundEnabled ? 'false' : 'true'})">
+          ${fundEnabled ? '关闭：下级自行充值' : '开启：下级充值由本账号扣费'}
+        </button>
+        <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">当前：${fundEnabled ? '本账号代付' : '下级自付'}</span>
+      </div>` : '';
     section.innerHTML = `
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">该用户当前 <strong style="color:var(--agent-color)">是代理商</strong>。取消后，其下级用户的上级关系不会自动清除。</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -4974,6 +4984,7 @@ function renderAgentToggle(u) {
         </button>
         <span style="font-size:12px;color:var(--text-secondary)">当前：${memEnabled ? '已开通 OpenClaw 资料下发' : '未开通 OpenClaw 资料下发'}</span>
       </div>
+      ${fundBlock}
     `;
   } else {
     section.innerHTML = `
@@ -5847,6 +5858,12 @@ function renderStats(data) {
     ${statCard('今日付费单', o.paid_orders_today, '笔')}
     ${statCard('累计收入', '¥' + o.total_revenue_yuan.toFixed(2), '')}
     ${statCard('积分池余额', o.total_credits_pool.toLocaleString(), '')}
+    ${o.system_pool && o.system_pool.enabled ? `
+      <div class="stats-card" style="cursor:pointer" onclick="openSystemPool()">
+        <div class="sc-label">系统池余额</div>
+        <div class="sc-value">${Number(o.system_pool.balance || 0).toLocaleString()}</div>
+        <div class="sc-sub">${escapeHtml(o.system_pool.email || '')} · 点击查看流水</div>
+      </div>` : ''}
   `;
   renderBarChart('chartDailyUsers', data.daily_users, 'count', 'primary');
   renderBarChart('chartDailyRecharge', data.daily_recharge, 'amount', 'green');
@@ -6161,6 +6178,88 @@ function statCard(label, value, unit) {
   return `<div class="stats-card"><div class="sc-label">${label}</div><div class="sc-value">${value}</div>${unit ? '<div class="sc-sub">' + unit + '</div>' : ''}</div>`;
 }
 
+function _systemPool() {
+  return (statsCache && statsCache.overview && statsCache.overview.system_pool) || null;
+}
+
+async function openSystemPool() {
+  const sp = _systemPool();
+  if (!sp || !sp.enabled) { toast('当前账号没有系统池', 'error'); return; }
+  document.getElementById('systemPoolModal').classList.add('show');
+  document.getElementById('systemPoolMeta').textContent =
+    sp.email + ' · 余额 ' + Number(sp.balance || 0).toLocaleString() + ' · 品牌 ' + (sp.brand_mark || '-');
+  const wrap = document.getElementById('systemPoolFundWrap');
+  const btn = document.getElementById('systemPoolFundBtn');
+  if (wrap && btn) {
+    wrap.style.display = '';
+    btn.textContent = sp.agent_fund_downline ? '关闭：下级自行充值' : '开启：下级充值由本账号扣费';
+  }
+  await loadSystemPoolLedger(false);
+}
+
+function closeSystemPool() {
+  document.getElementById('systemPoolModal').classList.remove('show');
+}
+
+function _ledgerTypeLabel(et) {
+  const m = {
+    pre_deduct: '预扣', refund: '退款', recharge: '充值', settle: '结算',
+    settle_reversal: '系统冲正', agent_transfer_out: '划转下级',
+    agent_transfer_in: '下级回款', sutui_chat: '对话扣费',
+    unit_deduct: '技能扣费', direct_charge: '扣费'
+  };
+  return m[(et || '').toLowerCase()] || (et || '-');
+}
+
+async function loadSystemPoolLedger(oemOnly) {
+  const el = document.getElementById('systemPoolLedger');
+  el.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/admin/api/system-pool/ledger?limit=200&oem_only=' + (oemOnly ? 1 : 0));
+    const items = data.items || [];
+    if (!items.length) { el.innerHTML = '<div class="empty">暂无流水</div>'; return; }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px">时间</th><th style="text-align:left;padding:6px">类型</th><th style="text-align:right;padding:6px">变动</th><th style="text-align:right;padding:6px">余额</th><th style="text-align:left;padding:6px">说明</th></tr></thead><tbody>';
+    for (const it of items) {
+      const t = it.time ? new Date(it.time).toLocaleString('zh-CN') : '-';
+      const d = Number(it.delta || 0);
+      const dstr = (d >= 0 ? '+' : '') + d.toLocaleString();
+      html += '<tr style="border-bottom:1px solid rgba(0,0,0,.04)">'
+        + '<td style="padding:6px">' + escapeHtml(t) + '</td>'
+        + '<td style="padding:6px">' + escapeHtml(_ledgerTypeLabel(it.entry_type)) + '</td>'
+        + '<td style="padding:6px;text-align:right;color:' + (d < 0 ? 'var(--danger)' : 'var(--success)') + '">' + dstr + '</td>'
+        + '<td style="padding:6px;text-align:right">' + Number(it.balance_after || 0).toLocaleString() + '</td>'
+        + '<td style="padding:6px">' + escapeHtml(it.description || '') + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function toggleSystemPoolFunding() {
+  const sp = _systemPool();
+  if (!sp || !sp.enabled) return;
+  toggleAgentFundDownline(sp.agent_user_id, !sp.agent_fund_downline, true);
+}
+
+async function toggleAgentFundDownline(userId, enabled, fromPool) {
+  try {
+    await api('/admin/api/set-agent-fund-downline', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, enabled: !!enabled })
+    });
+    toast(enabled ? '已开启：下级充值由该一级代理扣费' : '已关闭：下级用户自行充值（类似 bihuo）');
+    statsCache = null;
+    if (fromPool) {
+      await loadStats();
+      await openSystemPool();
+    } else {
+      showUserDetail(userId);
+    }
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 function renderBarChart(elId, items, valueKey, color) {
   const el = document.getElementById(elId);
   if (!items || !items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
@@ -6424,5 +6523,26 @@ function closeRemoteSupportDevice() {
   document.querySelectorAll('.remote-device-card.is-active').forEach(function(item) { item.classList.remove('is-active'); });
 }
 </script>
+
+<div class="modal-mask" id="systemPoolModal" onclick="if(event.target===this)closeSystemPool()">
+  <div class="modal" style="max-width:980px;width:94%;max-height:88vh;overflow:auto">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px">
+      <div>
+        <h3 style="margin:0">系统池流水</h3>
+        <div id="systemPoolMeta" style="font-size:12px;color:var(--text-secondary);margin-top:4px"></div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="closeSystemPool()">关闭</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <button class="btn btn-sm" onclick="loadSystemPoolLedger(false)">全部流水</button>
+      <button class="btn btn-sm" onclick="loadSystemPoolLedger(true)">只看 OEM</button>
+      <span id="systemPoolFundWrap" style="margin-left:auto;display:none">
+        <button class="btn btn-sm" id="systemPoolFundBtn" onclick="toggleSystemPoolFunding()">下级充值扣费</button>
+      </span>
+    </div>
+    <div id="systemPoolLedger" style="max-height:62vh;overflow:auto"></div>
+  </div>
+</div>
+
 </body>
 </html>

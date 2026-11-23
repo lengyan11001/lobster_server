@@ -233,6 +233,32 @@ def _migrate_user_password_version():
         logger.warning("Migration users.password_version skipped: %s", e)
 
 
+def _migrate_agent_fund_downline():
+    """users.agent_fund_downline：一级代理是否统一下级充值扣费。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        with engine.begin() as conn:
+            if "agent_fund_downline" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN agent_fund_downline BOOLEAN NOT NULL DEFAULT FALSE"))
+                # 仅在补列时回填一次：现有 hikong / daka 固定代理保持原有代付行为。
+                # 之后管理员/代理可以自行关闭，重启不会被重新打开。
+                conn.execute(
+                    text(
+                        "UPDATE users SET agent_fund_downline = TRUE "
+                        "WHERE is_agent = TRUE AND agent_level = 1 "
+                        "AND (email LIKE '%13510019898%' OR email LIKE '%13927485337%')"
+                    )
+                )
+                logger.info("Migration users.agent_fund_downline ok")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Migration users.agent_fund_downline skipped: %s", e)
+
+
 def _migrate_user_groups():
     """用户分组：users.group_code 列 + user_groups 表 + 三条默认分组。"""
     from sqlalchemy import inspect, text
@@ -1765,6 +1791,7 @@ def create_app() -> FastAPI:
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_user_password_version()
         _migrate_user_groups()
+        _migrate_agent_fund_downline()
         _migrate_canvas_project_category()
         _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()

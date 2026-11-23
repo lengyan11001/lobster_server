@@ -250,6 +250,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_level": _agent_level(u),
         "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
+        "agent_fund_downline": bool(getattr(u, "agent_fund_downline", False)),
         "parent_user_id": u.parent_user_id,
         "admin_remark": (getattr(u, "admin_remark", "") or "").strip(),
         "group_code": (getattr(u, "group_code", "") or "").strip(),
@@ -690,6 +691,94 @@ def admin_user_detail(
             "has_next": ledger_offset + ledger_limit < int(ledger_total),
         },
     }
+
+
+def _system_pool_agent(db: Session, ctx: AdminContext) -> Optional[User]:
+    """一级代理的“系统池”：代理自己的主账号。"""
+    if ctx.role == "agent" and ctx.user_id:
+        agent = db.query(User).filter(User.id == int(ctx.user_id)).first()
+        if agent and agent.is_agent and _agent_level(agent) == 1:
+            return agent
+    return None
+
+
+def _system_pool_payload(db: Session, ctx: AdminContext) -> dict:
+    agent = _system_pool_agent(db, ctx)
+    if agent is None:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "agent_user_id": agent.id,
+        "email": unscoped_account_email(agent.email),
+        "brand_mark": user_brand_mark(agent),
+        "balance": float(quantize_credits(agent.credits)),
+        "agent_fund_downline": bool(getattr(agent, "agent_fund_downline", False)),
+    }
+
+
+class AgentFundDownlineBody(BaseModel):
+    user_id: int
+    enabled: bool
+
+
+@router.post("/admin/api/set-agent-fund-downline")
+def set_agent_fund_downline(
+    body: AgentFundDownlineBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    target = db.query(User).filter(User.id == body.user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not (target.is_agent and _agent_level(target) == 1):
+        raise HTTPException(status_code=400, detail="只有一级代理可以设置此项")
+    if ctx.role == "agent":
+        if int(ctx.user_id or 0) != target.id:
+            raise HTTPException(status_code=403, detail="只能设置自己的账号")
+    elif ctx.role != "admin":
+        raise HTTPException(status_code=403, detail="无权操作")
+    target.agent_fund_downline = bool(body.enabled)
+    db.commit()
+    db.refresh(target)
+    return {"ok": True, "user_id": target.id, "agent_fund_downline": bool(target.agent_fund_downline)}
+
+
+@router.get("/admin/api/system-pool/ledger")
+def system_pool_ledger(
+    limit: int = 100,
+    offset: int = 0,
+    oem_only: int = 0,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    agent = _system_pool_agent(db, ctx)
+    if agent is None:
+        return {"items": [], "total": 0, "agent": _system_pool_payload(db, ctx)}
+    q = db.query(CreditLedger).filter(CreditLedger.user_id == agent.id)
+    if int(oem_only or 0):
+        q = q.filter(CreditLedger.ref_type == "recharge_order")
+    total = q.with_entities(func.count(CreditLedger.id)).scalar() or 0
+    rows = (
+        q.order_by(CreditLedger.created_at.desc())
+        .offset(max(0, int(offset or 0)))
+        .limit(min(max(int(limit or 100), 1), 300))
+        .all()
+    )
+    items = [
+        {
+            "id": r.id,
+            "time": r.created_at.isoformat() if r.created_at else None,
+            "entry_type": r.entry_type,
+            "delta": float(quantize_credits_signed(r.delta)),
+            "balance_after": float(quantize_credits(r.balance_after or 0)),
+            "description": r.description or "",
+            "ref_type": r.ref_type or "",
+            "ref_id": r.ref_id or "",
+            "meta": r.meta,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": int(total), "agent": _system_pool_payload(db, ctx)}
 
 
 @router.get("/admin/api/remote-support/devices", summary="管理员查看已开启远程支持的 Online 设备")
@@ -2767,6 +2856,7 @@ def admin_stats(
     total_credits = float(
         _user_filter(db.query(func.coalesce(func.sum(User.credits), 0))).scalar() or 0
     )
+    system_pool = _system_pool_payload(db, ctx)
 
     today_recharge_paid = float(
         _order_filter(
@@ -3054,6 +3144,7 @@ def admin_stats(
             "total_users": total_users,
             "today_new_users": today_new_users,
             "total_credits_pool": round(total_credits, 2),
+            "system_pool": system_pool,
             "today_recharge_paid": round(today_recharge_paid, 2),
             "today_recharge_admin": round(today_recharge_admin, 2),
             "today_consume": round(abs(today_consume), 2),

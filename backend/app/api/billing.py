@@ -305,6 +305,41 @@ def _oem_inventory_agent(db: Session, brand_mark: str) -> Optional[User]:
     return user_for_account(db, f"{phone}{PHONE_EMAIL_SUFFIX}", brand_mark)
 
 
+def _funding_agent_for_user(db: Session, user: User) -> Optional[User]:
+    """返回该用户充值时应扣费的一级代理账号。
+
+    规则：
+    - 从用户向上找最近的一级代理；该代理 agent_fund_downline=True 时由它扣费；
+    - 层级关系缺失时，按品牌找固定代理兜底，但仍受同一个开关控制；
+    - 代理自己的充值不由自己代付。
+    """
+    cur = user
+    seen: set[int] = set()
+    while cur is not None and cur.parent_user_id:
+        if cur.id in seen:
+            break
+        seen.add(cur.id)
+        parent = db.query(User).filter(User.id == cur.parent_user_id).first()
+        if parent is None:
+            break
+        if (
+            bool(parent.is_agent)
+            and int(parent.agent_level or 0) == 1
+            and bool(getattr(parent, "agent_fund_downline", False))
+        ):
+            return parent
+        cur = parent
+    brand = user_brand_mark(user)
+    fixed = _oem_inventory_agent(db, brand)
+    if (
+        fixed is not None
+        and int(fixed.id) != int(user.id)
+        and bool(getattr(fixed, "agent_fund_downline", False))
+    ):
+        return fixed
+    return None
+
+
 def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[User]:
     """Reserve credits from an OEM's fixed agent for a new recharge order.
 
@@ -312,11 +347,9 @@ def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[Us
     same inventory. Returns the agent row or None for non-funded brands.
     """
     brand_mark = user_brand_mark(user)
-    if brand_mark not in _INVENTORY_BRANDS:
-        return None
-    agent = _oem_inventory_agent(db, brand_mark)
+    agent = _funding_agent_for_user(db, user)
     if not agent:
-        raise HTTPException(status_code=409, detail=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)}充值库存不足")
+        return None
     # Lock where supported (PostgreSQL); SQLite still serializes the enclosing
     # write transaction for this short critical section.
     try:
@@ -328,7 +361,11 @@ def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[Us
     need = quantize_credits(credits)
     balance = user_balance_decimal(agent)
     if balance < need:
-        raise HTTPException(status_code=409, detail=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)}充值库存不足")
+        if brand_mark in _INVENTORY_BRAND_LABELS:
+            msg = f"{_INVENTORY_BRAND_LABELS[brand_mark]}充值库存不足"
+        else:
+            msg = "一级代理余额不足，无法完成充值"
+        raise HTTPException(status_code=409, detail=msg)
     agent.credits = quantize_credits(balance - need)
     append_credit_ledger(
         db,
@@ -336,9 +373,19 @@ def _reserve_oem_inventory(db: Session, user: User, credits: int) -> Optional[Us
         -need,
         "pre_deduct",
         agent.credits,
-        description=f"{_INVENTORY_BRAND_LABELS.get(brand_mark, brand_mark)} OEM 充值库存预扣",
+        description=(
+            f"{_INVENTORY_BRAND_LABELS[brand_mark]} OEM 充值库存预扣"
+            if brand_mark in _INVENTORY_BRAND_LABELS
+            else "一级代理充值预扣"
+        ),
         ref_type="recharge_order",
-        meta={"brand_mark": brand_mark, "inventory": True, "credits": float(need)},
+        meta={
+            "brand_mark": brand_mark,
+            "inventory": True,
+            "agent_funded": True,
+            "funding_agent_id": int(agent.id),
+            "credits": float(need),
+        },
     )
     return agent
 

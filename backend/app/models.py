@@ -39,6 +39,8 @@ class User(Base):
     agent_level: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     agent_openclaw_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_task_dispatch_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    agent_fund_downline: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    """一级代理开启后，下级用户充值由该代理账号扣费；关闭后下级用户自行充值（类似 bihuo）。"""
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     # Short operator-facing label shown in the admin user list.
     admin_remark: Mapped[str] = mapped_column(String(500), default="", nullable=False)
