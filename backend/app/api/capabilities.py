@@ -989,6 +989,13 @@ def record_call(
     db: Session = Depends(get_db),
     x_installation_id: Optional[str] = Header(None, alias="X-Installation-Id"),
 ):
+    # 结算幂等：同一 X-Billing-Idempotency-Key 重复提交（补偿重试/轮询重放）
+    # 必须直接返回首次结果，绝不能再动一次账。
+    idem_key = _billing_idempotency_key(request)
+    if idem_key:
+        cached = _record_call_idempotent_cached(db, current_user.id, idem_key)
+        if cached is not None:
+            return cached
     iid = _installation_id_for_capability_checks(x_installation_id)
     if not user_can_use_capability(db, current_user.id, body.capability_id, iid):
         raise HTTPException(
@@ -1179,7 +1186,14 @@ def record_call(
         "success": log.success,
         "credits_charged": credits_json_float(credits_charged),
     }
-    _record_call_idempotent_store(db, current_user.id, idem_key, response)
+    try:
+        _record_call_idempotent_store(db, current_user.id, idem_key, response)
+    except Exception:  # noqa: BLE001 - 幂等落库失败不能影响已提交的账务
+        logger.exception(
+            "[record-call] idempotency store failed user=%s key=%s",
+            current_user.id,
+            idem_key,
+        )
     return response
 
 

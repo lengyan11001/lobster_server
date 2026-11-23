@@ -72,6 +72,7 @@ def _public_credit_history_description(entry_type: str, delta: Any = None) -> st
         "skill_unlock": "技能解锁",
         "agent_transfer_in": "代理商划转到账",
         "agent_transfer_out": "下级积分划转",
+        "settle_reversal": "重复结算冲正",
     }
     if et in labels:
         return labels[et]

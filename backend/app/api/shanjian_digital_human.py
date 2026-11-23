@@ -21,7 +21,8 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy import text
+from sqlalchemy.orm import Session, object_session
 from sqlalchemy.orm.attributes import flag_modified
 
 from ..core.config import settings
@@ -244,6 +245,37 @@ def _billing_unit_credits(template_meta: Optional[Dict[str, Any]]) -> int:
     return _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND if template_meta and _clean_text(template_meta.get("style_id")) else _SHANJIAN_UNIT_CREDITS_PER_SECOND
 
 
+_MAX_SETTLE_ATTEMPTS = 8
+
+
+def _task_settle_exists(db: Session, user_id: int, task_id: str) -> bool:
+    """账本级兜底：同一 task_id 只要已有一条 settle，就不再重复退差。
+
+    2026-11-10 的结算幂等改动在 record-call 末尾引用了未定义的 idem_key，
+    导致"账已提交、接口 500"，终态补偿会无限重试并重复退款。这里按账本
+    再兜一层，避免幂等缓存过期/进程重启后继续多退。
+    """
+    if not task_id:
+        return False
+    try:
+        with db.begin_nested():
+            hit = db.execute(
+                text(
+                    "SELECT 1 FROM credit_ledger l "
+                    "JOIN capability_call_logs c ON l.ref_id = c.id::text "
+                    "WHERE l.user_id = :u AND l.entry_type = 'settle' "
+                    "AND c.request_payload->>'task_id' = :t LIMIT 1"
+                ),
+                {"u": int(user_id), "t": task_id},
+            ).first()
+        return hit is not None
+    except Exception:  # noqa: BLE001 - 兜底查询失败不阻断正常结算
+        logger.warning(
+            "[shanjian-billing] settle-exists check failed task_id=%s", task_id, exc_info=True
+        )
+        return False
+
+
 def _estimate_billing_seconds(body: "CreateVideoBody", template_meta: Optional[Dict[str, Any]], text: str) -> int:
     explicit_duration = getattr(body, "video_duration", None)
     if explicit_duration is not None:
@@ -367,6 +399,19 @@ async def _shanjian_settle_billing(
 ) -> Dict[str, Any]:
     if not isinstance(billing, dict) or billing.get("billing_status") in {"settled", "refunded"}:
         return billing if isinstance(billing, dict) else {}
+    _session = object_session(row)
+    if _session is not None and _task_settle_exists(_session, int(row.user_id), str(row.task_id or "")):
+        billing["billing_status"] = "settled"
+        billing["settled_stage"] = stage
+        billing["settled_at"] = billing.get("settled_at") or (datetime.utcnow().isoformat() + "Z")
+        billing["settle_skipped_reason"] = "already_settled_in_ledger"
+        logger.warning(
+            "[shanjian-billing] skip duplicate settle task_id=%s user_id=%s stage=%s",
+            row.task_id,
+            row.user_id,
+            stage,
+        )
+        return billing
     unit = int(billing.get("unit_credits") or _SHANJIAN_UNIT_CREDITS_PER_SECOND)
     actual_seconds = max(1, int(duration_seconds or billing.get("estimated_seconds") or 1))
     final_credits = actual_seconds * unit
@@ -423,7 +468,7 @@ async def _finalize_row_billing(
 ) -> None:
     submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
     billing = dict(submit_payload.get("billing") or {})
-    if not billing or billing.get("billing_status") in {"settled", "refunded"}:
+    if not billing or billing.get("billing_status") in {"settled", "refunded", "settle_failed_final"}:
         return
     if status == "succeed":
         fallback = int(billing.get("estimated_seconds") or row.duration or 1)
@@ -436,6 +481,17 @@ async def _finalize_row_billing(
             video_url=video_url,
             stage=stage,
         )
+        if str(billing.get("billing_status") or "") == "settle_failed":
+            attempts = int(billing.get("settle_attempts") or 0) + 1
+            billing["settle_attempts"] = attempts
+            if attempts >= _MAX_SETTLE_ATTEMPTS:
+                billing["billing_status"] = "settle_failed_final"
+                logger.error(
+                    "[shanjian-billing] settle gave up task_id=%s user_id=%s attempts=%s",
+                    row.task_id,
+                    row.user_id,
+                    attempts,
+                )
     elif status == "failed":
         seed = str(billing.get("idem_seed") or "").strip()
         if not seed:
@@ -2723,7 +2779,12 @@ async def refresh_stale_video_tasks(
         billing = submit_payload.get("billing") if isinstance(submit_payload.get("billing"), dict) else {}
         if not billing or not str(billing.get("idem_seed") or "").strip():
             continue
-        if str(billing.get("billing_status") or "") in ("settled", "refunded", "legacy_skip"):
+        if str(billing.get("billing_status") or "") in (
+            "settled",
+            "refunded",
+            "legacy_skip",
+            "settle_failed_final",
+        ):
             continue
         user = db.query(User).filter(User.id == row.user_id).first()
         if user is None:

@@ -164,3 +164,68 @@ def test_refund_key_is_stable_per_task(monkeypatch):
     )
     assert captured["headers"]["X-Billing-Idempotency-Key"] == "seed-9:refund"
     assert out["billing_status"] == "refunded"
+
+
+def test_settle_skips_when_task_already_in_ledger(monkeypatch):
+    db = _make_session()
+    row = _add_row(db)
+    monkeypatch.setattr(dh, "_task_settle_exists", lambda *args, **kwargs: True)
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("already settled task must not hit record-call again")
+
+    monkeypatch.setattr(dh.httpx.AsyncClient, "post", boom)
+    billing = {
+        "billing_status": "settle_failed",
+        "capability_id": "hifly.video.create_by_tts",
+        "unit_credits": 15,
+        "estimated_seconds": 30,
+        "credits_pre_deducted": 450.0,
+        "idem_seed": "seed-1",
+    }
+    out = asyncio.run(
+        dh._shanjian_settle_billing(
+            acting_user=_User(),
+            request=None,
+            row=row,
+            billing=billing,
+            duration_seconds=20,
+            video_url="",
+            stage="reconcile",
+        )
+    )
+    assert out["billing_status"] == "settled"
+    assert out["settle_skipped_reason"] == "already_settled_in_ledger"
+    db.close()
+
+
+def test_finalize_caps_repeated_settle_failures(monkeypatch):
+    db = _make_session()
+    row = _add_row(db, billing_status="settle_failed")
+    payload = dict(row.submit_payload or {})
+    payload["billing"] = dict(payload.get("billing") or {})
+    payload["billing"]["settle_attempts"] = dh._MAX_SETTLE_ATTEMPTS - 1
+    row.submit_payload = payload
+    db.commit()
+
+    async def fake_settle(**kwargs):
+        billing = dict(kwargs["billing"])
+        billing["billing_status"] = "settle_failed"
+        return billing
+
+    monkeypatch.setattr(dh, "_shanjian_settle_billing", fake_settle)
+    asyncio.run(
+        dh._finalize_row_billing(
+            acting_user=_User(),
+            request=None,
+            row=row,
+            status="succeed",
+            duration_value=20,
+            video_url=row.video_url or "",
+            stage="reconcile",
+        )
+    )
+    db.commit()
+    fresh = db.query(ShanjianDigitalHumanVideoTask).filter(ShanjianDigitalHumanVideoTask.id == row.id).one()
+    assert fresh.submit_payload["billing"]["billing_status"] == "settle_failed_final"
+    db.close()
