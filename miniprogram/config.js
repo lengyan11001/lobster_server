@@ -32,6 +32,8 @@ function storageKey(key) {
 
 module.exports = {
   API_BASE: "https://bhzn.top",
+  // 提审期间隐藏背景音乐（版权待补），补齐后改回 true
+  FEATURE_BGM: false,
   APP_NAME: BRAND.appName,
   BRAND_MARK,
   BRAND,

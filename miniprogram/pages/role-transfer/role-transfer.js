@@ -119,6 +119,7 @@ Page({
     uploadingImage: false,
     uploadingVideo: false,
     submitting: false,
+    agree: false,
     previewVisible: false,
     previewVideoUrl: "",
     previewVideoTitle: ""
@@ -338,8 +339,16 @@ Page({
       .finally(() => this.setData({ [key]: false }));
   },
 
+  toggleAgree() {
+    this.setData({ agree: !this.data.agree });
+  },
+
   submitTask() {
     if (this.showAuthPanel()) return;
+    if (!this.data.agree) {
+      wx.showToast({ title: "请先确认已获得人物授权", icon: "none" });
+      return;
+    }
     const image = this.data.imageAsset;
     const video = this.data.videoAsset;
     if (!image || !image.source_url) {
@@ -362,7 +371,7 @@ Page({
           video_url: video.source_url,
           video_duration: video.duration || this.data.billableSeconds || MAX_VIDEO_SECONDS,
           mode: "wan-std",
-          watermark: false,
+          watermark: true,
           title
         },
         timeout: 180000

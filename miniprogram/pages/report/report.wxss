@@ -1,0 +1,13 @@
+.page { padding: 32rpx 32rpx 80rpx; background: #f8fafc; min-height: 100vh; }
+.title { display: block; font-size: 40rpx; font-weight: 700; color: #0f172a; }
+.sub { display: block; margin-top: 12rpx; font-size: 26rpx; line-height: 1.7; color: #475569; }
+.card { margin-top: 28rpx; padding: 28rpx; background: #fff; border-radius: 20rpx; }
+.card-h { display: block; font-size: 28rpx; font-weight: 600; color: #0f172a; margin-bottom: 12rpx; }
+.card-p { display: block; font-size: 26rpx; line-height: 1.7; color: #475569; }
+.primary { margin-top: 8rpx; background: #1957E8; color: #fff; border-radius: 14rpx; font-size: 28rpx; }
+.mail-row { margin-top: 20rpx; display: flex; align-items: center; justify-content: space-between; }
+.mail { font-size: 26rpx; color: #1957E8; }
+.copy { font-size: 24rpx; color: #64748b; }
+.tip { display: block; margin-top: 16rpx; font-size: 22rpx; color: #94a3b8; }
+.textarea { width: 100%; min-height: 140rpx; font-size: 26rpx; color: #0f172a; }
+.foot { display: block; margin-top: 40rpx; text-align: center; font-size: 22rpx; color: #94a3b8; }

@@ -1,0 +1,26 @@
+<view class="page">
+  <text class="title">举报与投诉</text>
+  <text class="sub">如发现违法违规、侵权、仿冒他人或其他不当内容，请通过以下方式联系我们。</text>
+
+  <view class="card">
+    <text class="card-h">处理时限</text>
+    <text class="card-p">24 小时内响应，3 个工作日内完成核查与处理；情节严重的将立即下架相关内容并保存证据。</text>
+  </view>
+
+  <view class="card">
+    <text class="card-h">联系方式</text>
+    <button class="primary" open-type="contact">联系客服</button>
+    <view class="mail-row" bindtap="copyEmail">
+      <text class="mail">{{email}}</text>
+      <text class="copy">复制</text>
+    </view>
+    <text class="tip" bindtap="openContactTip">提交时请附上相关链接、截图与说明</text>
+  </view>
+
+  <view class="card">
+    <text class="card-h">补充说明（可选）</text>
+    <textarea class="textarea" value="{{text}}" bindinput="onInput" placeholder="简要描述问题内容" maxlength="500" auto-height />
+  </view>
+
+  <text class="foot">必火 AI 员工 · 内容安全与举报处理</text>
+</view>

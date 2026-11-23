@@ -5,6 +5,9 @@
     <text class="sub">微信支付 · 支付后自动到账</text>
   </view>
 
+  <view wx:if="{{iosBlocked}}" class="ios-notice">iOS 端暂不支持在线充值，请在安卓微信中操作。</view>
+
+  <block wx:if="{{!iosBlocked}}">
   <view class="balance">
     <view class="balance-copy">
       <text class="b-label">当前算力余额</text>
@@ -46,5 +49,6 @@
   </view>
 
   <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
+  </block>
 
 </view>

@@ -16,6 +16,7 @@ function fmtTime(value) {
 Page({
   data: {
     tabs: TABS,
+    devMode: false,
     tabIndex: 0,
     items: [],
     page: 1,
@@ -49,6 +50,11 @@ Page({
   },
 
   onLoad() {
+    try {
+      const acc = wx.getAccountInfoSync ? wx.getAccountInfoSync() : {};
+      const envVersion = String(((acc && acc.miniProgram) || {}).envVersion || "release");
+      this.setData({ devMode: envVersion !== "release" });
+    } catch (e) {}
     this._ble = AIRECBleManager.getInstance();
     let envInfo = "";
     try {

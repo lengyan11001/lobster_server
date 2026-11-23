@@ -1,0 +1,9 @@
+<view class="page">
+  <text class="doc-title">{{title}}</text>
+  <text class="doc-meta">更新日期：2026-11-23</text>
+  <view wx:for="{{sections}}" wx:key="h" class="sec">
+    <text class="sec-h">{{item.h}}</text>
+    <text class="sec-p">{{item.p}}</text>
+  </view>
+  <text class="doc-foot">必火 AI 员工</text>
+</view>

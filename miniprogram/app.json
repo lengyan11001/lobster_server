@@ -34,7 +34,8 @@
     "pages/ip-recognize/ip-recognize",
     "pages/topic-recommend/topic-recommend",
     "pages/template-edit/template-edit",
-    "pages/mc-spike/mc-spike"
+    "pages/legal/legal",
+    "pages/report/report"
   ],
   "window": {
     "navigationBarTitleText": "龙虾AI员工",

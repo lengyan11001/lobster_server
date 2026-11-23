@@ -103,6 +103,11 @@
       <text>建议 2-30 秒，可上传本地视频或选择上方样例</text>
     </view>
 
+    <view class="agree-row" bindtap="toggleAgree">
+      <view class="agree-box {{agree ? 'on' : ''}}">{{agree ? '✓' : ''}}</view>
+      <text class="agree-text">我确认已获得视频及图片中人物的明确授权，仅用于本人或授权范围，不用于冒充他人、造谣或侵权。</text>
+    </view>
+
     <button class="submit-btn" loading="{{submitting}}" bindtap="submitTask">
       <text>立即生成</text>
       <text>{{costHint}}</text>

@@ -62,6 +62,7 @@
     </view>
     <text class="hint">{{speechStatus}}</text>
 
+    <block wx:if="{{bgmEnabled}}">
     <text class="label">背景音乐（可选，与口播双音轨同时播放）</text>
     <view wx:if="{{!bgmItems.length}}" class="hint">背景音乐加载中…</view>
     <scroll-view wx:else scroll-x class="tpl-scroll">
@@ -80,6 +81,8 @@
       <button class="ghost half" bindtap="previewBgm">试听</button>
       <button class="ghost half" bindtap="clearBgm">移除</button>
     </view>
+
+    </block>
 
     <view class="tpl-row2">
       <text class="label tpl-label">套用闪剪模板</text>

@@ -32,7 +32,7 @@
         <view class="balance-label"><text>算力余额</text><image class="info-ic" src="/assets/icons/ic-info-gray.png" /></view>
         <text class="balance-num">{{creditsText}}</text>
       </view>
-      <view class="recharge-btn" bindtap="goRecharge" hover-class="press"><image class="plus-ic" src="/assets/icons/ic-plus.png" /><text>充值</text></view>
+      <view wx:if="{{!iosBlocked}}" class="recharge-btn" bindtap="goRecharge" hover-class="press"><image class="plus-ic" src="/assets/icons/ic-plus.png" /><text>充值</text></view>
     </view>
     <view class="stats">
       <view class="stat" bindtap="loadDevices" hover-class="press">
@@ -43,7 +43,7 @@
         <text class="stat-num">作品</text>
         <text class="stat-label">内容记录</text>
       </view>
-      <view class="stat" bindtap="copyDiagnostics" hover-class="press">
+      <view wx:if="{{devMode}}" class="stat" bindtap="copyDiagnostics" hover-class="press">
         <text class="stat-num">诊断</text>
         <text class="stat-label">复制信息</text>
       </view>
@@ -73,7 +73,7 @@
       <text class="link" bindtap="showSmsBind">短信验证码绑定</text>
     </view>
 
-    <view wx:if="{{loginDebug || lastError}}" class="debug">
+    <view wx:if="{{devMode && (loginDebug || lastError)}}" class="debug">
       <text wx:if="{{loginDebug}}" class="debug-line">{{loginDebug}}</text>
       <text wx:if="{{lastError}}" class="debug-error">{{lastError}}</text>
       <text class="debug-copy" bindtap="copyDiagnostics">复制诊断信息</text>
@@ -136,7 +136,7 @@
         <image wx:else class="chevron-ic" src="/assets/icons/ic-caret-gray.png" />
       </view>
     </view>
-    <view class="row" bindtap="copyDiagnostics" hover-class="press">
+    <view wx:if="{{devMode}}" class="row" bindtap="copyDiagnostics" hover-class="press">
       <view class="row-ic ic-diag"><image class="row-ic-img" src="/assets/icons/ic-diag.png" /></view>
       <text class="row-label">诊断信息</text>
       <view class="row-right">
@@ -165,6 +165,30 @@
       <view class="device-pill {{item.online ? 'on' : ''}}">{{item.online ? '在线' : '离线'}}</view>
     </view>
     <view wx:if="{{onlineDevices.length === 0}}" class="device-empty">在电脑上启动 online 客户端后，设备会自动出现在这里</view>
+  </view>
+
+  <view class="account-card">
+    <text class="card-title">关于与服务</text>
+    <view class="row" bindtap="goAgreement" hover-class="press">
+      <text class="row-label">用户协议</text>
+      <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
+    </view>
+    <view class="row" bindtap="goPrivacy" hover-class="press">
+      <text class="row-label">隐私政策</text>
+      <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
+    </view>
+    <view class="row" bindtap="goReport" hover-class="press">
+      <text class="row-label">举报与投诉</text>
+      <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
+    </view>
+    <view class="row" bindtap="requestDeleteAccount" hover-class="press">
+      <text class="row-label">注销账号</text>
+      <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
+    </view>
+    <button class="row" open-type="contact" hover-class="press">
+      <text class="row-label">联系客服</text>
+      <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
+    </button>
   </view>
 
   <view class="footer">

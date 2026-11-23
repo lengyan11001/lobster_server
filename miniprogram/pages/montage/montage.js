@@ -65,6 +65,7 @@ Page({
     useTemplate: false,
     templateTitle: "",
     templateContent: "",
+    bgmEnabled: false,
     bgmItems: [],
     bgmIndex: -1,
     ttsLoading: false,
@@ -138,6 +139,7 @@ Page({
   },
 
   onLoad() {
+    this.setData({ bgmEnabled: !!config.FEATURE_BGM });
     this.polls = 0;
     this.timer = null;
     this.loadTemplates("realMan");
@@ -155,6 +157,7 @@ Page({
   },
 
   loadBgm() {
+    if (!this.data.bgmEnabled) return;
     app.request({ url: "/api/montage/bgm", timeout: 20000 })
       .then((data) => {
         const items = ((data && data.items) || [])
@@ -441,9 +444,9 @@ Page({
         content: String(this.data.templateContent || ""),
         template_style_id: String(tpl.styleId || ""),
         template_name: String(tpl.name || ""),
-        bgm_url: String(bgm.url || ""),
-        bgm_name: String(bgm.name || ""),
-        bgm_volume: Number(bgm.volume || 0.24)
+        bgm_url: this.data.bgmEnabled ? String(bgm.url || "") : "",
+        bgm_name: this.data.bgmEnabled ? String(bgm.name || "") : "",
+        bgm_volume: this.data.bgmEnabled ? Number(bgm.volume || 0.24) : 0
       };
       wx.setStorageSync("lobster_montage_last_payload", payload);
       app.request({

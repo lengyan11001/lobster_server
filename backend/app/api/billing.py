@@ -875,6 +875,7 @@ def get_credit_ledger(
 
 
 class RechargeCreateBody(BaseModel):
+    platform: Optional[str] = None
     package_index: Optional[int] = None
     price_yuan: Optional[int] = None
     credits: Optional[int] = None
@@ -1094,6 +1095,9 @@ async def create_fuiou_recharge_order(
 ):
     if not _use_independent_recharge():
         raise HTTPException(status_code=400, detail="当前未启用自有充值")
+    if str(body.platform or "").strip().lower() == "ios":
+        # 微信小程序 iOS 端不得提供虚拟商品支付
+        raise HTTPException(status_code=403, detail="iOS 端暂不支持在线充值")
     brand_mark = user_brand_mark(current_user)
     if not fuiou_configured(brand_mark):
         logger.error("[recharge] fuiou not configured brand=%s", brand_mark)

@@ -155,7 +155,7 @@ Page({
     selectedProfileId: "", selectedVoiceId: "", selectedTemplateStyleId: "",
     templateKeyword: "", templatePageSize: 20,
     headerSwitch: true, subtitleSwitch: true, keywordSwitch: true,
-    materialSwitch: true, materialSoundSwitch: false, watermarkSwitch: false,
+    materialSwitch: true, materialSoundSwitch: false, watermarkSwitch: true,
     matchWayNames: MATCH_WAY_NAMES, matchWayIndex: 0,
     materials: [], assetTab: "image", assets: [], assetsAll: [], assetsLoading: false,
     assetKeyword: "",
@@ -358,6 +358,8 @@ Page({
     Object.keys(switchMap).forEach((key) => {
       if (typeof params[key] === "boolean") patch[switchMap[key]] = params[key];
     });
+    // AI 生成内容标识强制开启，不允许关闭
+    patch.watermarkSwitch = true;
     this.setData(patch);
     if (this.data.assetsAll.length) {
       const picked = (useMaterials ? materials : []).map((row) => row.asset_id);
@@ -1229,7 +1231,7 @@ Page({
         body.material_match_way = MATCH_WAY_VALUES[this.data.matchWayIndex] || "fuzzyMatch";
         body.resource_preprocess_method = this.data.preprocessValues[this.data.preprocessIndex] || "roughCut";
         body.material_composition = this.data.compositionValues[this.data.compositionIndex] || "random";
-        body.watermark_show = Boolean(this.data.watermarkSwitch);
+        body.watermark_show = true;
         if (this.data.materials.length) {
           body.materials = this.data.materials.map((m) => ({
             asset_id: m.asset_id, type: m.type, fileUrl: m.fileUrl, name: m.name

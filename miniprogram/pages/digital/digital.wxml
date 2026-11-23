@@ -191,7 +191,7 @@
       <view class="switch-row"><text>自动字幕</text><switch checked="{{subtitleSwitch}}" color="#2563eb" data-key="subtitleSwitch" bindchange="onSwitch" /></view>
       <view class="switch-row"><text>关键词高亮</text><switch checked="{{keywordSwitch}}" color="#2563eb" data-key="keywordSwitch" bindchange="onSwitch" /></view>
       <view class="switch-row"><text>保留素材原声</text><switch checked="{{materialSoundSwitch}}" color="#2563eb" data-key="materialSoundSwitch" bindchange="onSwitch" /></view>
-      <view class="switch-row"><text>显示水印</text><switch checked="{{watermarkSwitch}}" color="#2563eb" data-key="watermarkSwitch" bindchange="onSwitch" /></view>
+      <view class="switch-row"><text>AI 生成标识（强制开启）</text><text class="switch-fixed">已开启</text></view>
 
       <view class="switch-row"><text>素材匹配</text>
         <picker mode="selector" range="{{matchWayNames}}" value="{{matchWayIndex}}" bindchange="pickMatchWay">

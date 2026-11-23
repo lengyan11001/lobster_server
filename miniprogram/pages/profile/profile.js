@@ -23,6 +23,8 @@ Page({
     loginBusy: false,
     loginDebug: "",
     lastError: "",
+    iosBlocked: false,
+    devMode: false,
     scheduledRuns: [],
     runsLoading: false
   },
@@ -34,6 +36,17 @@ Page({
       this.getTabBar().setData({ selected: 3 });
     }
     share.showShareMenu();
+    let platform = "";
+    let envVersion = "release";
+    try {
+      const info = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
+      platform = String((info && info.platform) || "").toLowerCase();
+    } catch (e) {}
+    try {
+      const acc = wx.getAccountInfoSync ? wx.getAccountInfoSync() : {};
+      envVersion = String(((acc && acc.miniProgram) || {}).envVersion || "release");
+    } catch (e) {}
+    this.setData({ iosBlocked: platform === "ios", devMode: envVersion !== "release" });
     app.restoreSession();
     this.refreshState();
     if (app.globalData.token) {
@@ -46,11 +59,38 @@ Page({
   },
 
   goRecharge() {
+    if (this.data.iosBlocked) {
+      wx.showToast({ title: "iOS 端暂不支持在线充值", icon: "none" });
+      return;
+    }
     if (!app.globalData.token) {
       this.focusLogin();
       return;
     }
     wx.navigateTo({ url: "/pages/recharge/recharge" });
+  },
+
+  goAgreement() {
+    wx.navigateTo({ url: "/pages/legal/legal?type=agreement" });
+  },
+
+  goPrivacy() {
+    wx.navigateTo({ url: "/pages/legal/legal?type=privacy" });
+  },
+
+  goReport() {
+    wx.navigateTo({ url: "/pages/report/report" });
+  },
+
+  requestDeleteAccount() {
+    wx.showModal({
+      title: "注销账号",
+      content: "注销后账号、素材与作品记录将无法恢复。请通过在线客服提交注销申请，我们将在 15 个工作日内处理。",
+      confirmText: "联系客服",
+      success: (res) => {
+        if (res.confirm) wx.navigateTo({ url: "/pages/report/report?type=delete" });
+      }
+    });
   },
 
   focusLogin() {

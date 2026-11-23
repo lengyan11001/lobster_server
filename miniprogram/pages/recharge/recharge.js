@@ -2,10 +2,22 @@ const app = getApp();
 const api = require("../../utils/api");
 
 Page({
-  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "", balanceText: "--", payAmount: "0.00" },
+  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "", balanceText: "--", payAmount: "0.00", iosBlocked: false },
 
   onShow() {
     app.restoreSession();
+    let platform = "";
+    try {
+      const info = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
+      platform = String((info && info.platform) || "").toLowerCase();
+    } catch (e) {}
+    const iosBlocked = platform === "ios";
+    this.setData({ iosBlocked });
+    if (iosBlocked) {
+      // iOS 不得提供虚拟商品支付
+      this.setData({ statusText: "iOS 端暂不支持在线充值" });
+      return;
+    }
     this.load();
     this.loadBalance();
   },
@@ -52,6 +64,10 @@ Page({
   onCustomAmount(e) { this.setData({ customAmount: e.detail.value }, () => this.syncPayAmount()); },
 
   pay() {
+    if (this.data.iosBlocked) {
+      wx.showToast({ title: "iOS 端暂不支持在线充值", icon: "none" });
+      return;
+    }
     const pkg = this.data.packages[this.data.selected];
     if (this.data.mode === "package" && !pkg) return wx.showToast({ title: "请选择套餐", icon: "none" });
     if (this.data.mode === "custom" && !(Number(this.data.customAmount) > 0)) return wx.showToast({ title: "请输入充值金额", icon: "none" });
@@ -68,6 +84,7 @@ Page({
       ? { package_index: pkg.index }
       : { price_yuan: Math.max(1, Math.round(Number(this.data.customAmount) || 0)) };
     payload.code = code;
+    payload.platform = this.data.iosBlocked ? "ios" : "android";
     app.request({
       method: "POST",
       url: "/api/recharge/fuiou-jsapi",
