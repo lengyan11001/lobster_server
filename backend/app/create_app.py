@@ -1755,6 +1755,8 @@ def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     with _startup_db_lock():
         Base.metadata.create_all(bind=engine)
+        # 新列必须先补，后面任何 ORM 查询 User 都会 select 它。
+        _migrate_agent_fund_downline()
         ensure_asset_library_indexes(engine)
         try:
             backfill_generation_records_to_assets(engine)
@@ -1791,7 +1793,6 @@ def create_app() -> FastAPI:
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_user_password_version()
         _migrate_user_groups()
-        _migrate_agent_fund_downline()
         _migrate_canvas_project_category()
         _migrate_douyin_imitation_task_columns()
         _migrate_capability_configs_extra_config()
