@@ -36,9 +36,9 @@
 }
 
 .topbar {
-  display: grid;
-  grid-template-columns: 76rpx 1fr auto;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   height: 78rpx;
 }
 
@@ -56,7 +56,7 @@
 }
 
 .page-title {
-  text-align: center;
+  text-align: left;
   font-size: 34rpx;
   font-weight: 900;
 }
@@ -644,3 +644,5 @@
 .job-dl { font-size: 24rpx; color: #0f766e; }
 
 .top-action { position: relative; z-index: 1; font-size: 26rpx; color: #1957E8; background: transparent; border: 0; padding: 0 8rpx; line-height: 1.2; }
+
+.top-actions { display: flex; align-items: center; gap: 18rpx; }

@@ -2,7 +2,6 @@
   <view style="margin:12rpx 0;padding:12rpx 16rpx;border-radius:10rpx;background:#fff7ed;color:#9a3412;font-size:22rpx;line-height:1.6;">AI 生成内容，请注意甄别；生成结果仅供参考。</view>
 
   <view class="head">
-    <button class="back" bindtap="goBack">‹</button>
     <view class="head-copy">
       <text class="title">热门跟创</text>
       <text class="sub">上传或粘贴原视频 + 一张参考图，按原片节奏生成同款</text>
