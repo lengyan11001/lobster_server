@@ -2,7 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 
-const CHAT_MODEL = "gpt-5.5";
+const CHAT_MODEL = "gpt-4.1-mini";
 
 function pickContent(data) {
   const choice = data && data.choices && data.choices[0];
