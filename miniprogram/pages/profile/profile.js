@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const share = require("../../utils/share");
+const config = require("../../config");
 
 Page({
   data: {
@@ -25,6 +26,7 @@ Page({
     lastError: "",
     iosBlocked: false,
     devMode: false,
+    rechargeEnabled: false,
     scheduledRuns: [],
     runsLoading: false
   },
@@ -46,7 +48,7 @@ Page({
       const acc = wx.getAccountInfoSync ? wx.getAccountInfoSync() : {};
       envVersion = String(((acc && acc.miniProgram) || {}).envVersion || "release");
     } catch (e) {}
-    this.setData({ iosBlocked: platform === "ios", devMode: envVersion !== "release" });
+    this.setData({ iosBlocked: platform === "ios", devMode: envVersion !== "release", rechargeEnabled: !!config.FEATURE_RECHARGE });
     app.restoreSession();
     this.refreshState();
     if (app.globalData.token) {

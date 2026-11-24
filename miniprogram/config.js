@@ -34,6 +34,8 @@ module.exports = {
   API_BASE: "https://bhzn.top",
   // 提审期间隐藏背景音乐（版权待补），补齐后改回 true
   FEATURE_BGM: false,
+  // 小程序审核：虚拟商品购买需接入官方「小程序虚拟支付」，未接入前隐藏充值入口
+  FEATURE_RECHARGE: false,
   APP_NAME: BRAND.appName,
   BRAND_MARK,
   BRAND,

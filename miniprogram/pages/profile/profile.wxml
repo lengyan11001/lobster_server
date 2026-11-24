@@ -32,7 +32,7 @@
         <view class="balance-label"><text>算力余额</text><image class="info-ic" src="/assets/icons/ic-info-gray.png" /></view>
         <text class="balance-num">{{creditsText}}</text>
       </view>
-      <view wx:if="{{!iosBlocked}}" class="recharge-btn" bindtap="goRecharge" hover-class="press"><image class="plus-ic" src="/assets/icons/ic-plus.png" /><text>充值</text></view>
+      <view wx:if="{{!iosBlocked && rechargeEnabled}}" class="recharge-btn" bindtap="goRecharge" hover-class="press"><image class="plus-ic" src="/assets/icons/ic-plus.png" /><text>充值</text></view>
     </view>
     <view class="stats">
       <view class="stat" bindtap="loadDevices" hover-class="press">
@@ -169,7 +169,7 @@
 
   <view class="account-card">
     <text class="card-title">关于与服务</text>
-    <view class="row" bindtap="goOrders" hover-class="press">
+    <view wx:if="{{rechargeEnabled}}" class="row" bindtap="goOrders" hover-class="press">
       <text class="row-label">订单中心</text>
       <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
     </view>

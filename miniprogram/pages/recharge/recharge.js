@@ -1,11 +1,17 @@
 const app = getApp();
 const api = require("../../utils/api");
+const config = require("../../config");
 
 Page({
-  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "", balanceText: "--", payAmount: "0.00", iosBlocked: false },
+  data: { packages: [], selected: 0, mode: "package", customAmount: "", paying: false, statusText: "", balanceText: "--", payAmount: "0.00", iosBlocked: false, payEnabled: true },
 
   onShow() {
     app.restoreSession();
+    if (!config.FEATURE_RECHARGE) {
+      this.setData({ payEnabled: false, statusText: "当前版本暂不支持在线充值" });
+      return;
+    }
+    this.setData({ payEnabled: true });
     let platform = "";
     try {
       const info = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
@@ -68,6 +74,10 @@ Page({
   onCustomAmount(e) { this.setData({ customAmount: e.detail.value }, () => this.syncPayAmount()); },
 
   pay() {
+    if (!this.data.payEnabled) {
+      wx.showToast({ title: "当前版本暂不支持在线充值", icon: "none" });
+      return;
+    }
     if (this.data.iosBlocked) {
       wx.showToast({ title: "iOS 端暂不支持在线充值", icon: "none" });
       return;
