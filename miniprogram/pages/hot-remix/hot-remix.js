@@ -39,6 +39,9 @@ Page({
     pendingTask: null,
     resultUrl: "",
     resultTitle: "",
+    previewOpen: false,
+    previewUrl: "",
+    previewTitle: "",
     modes: [
       { label: "复刻人物（换人）", value: "person_swap" },
       { label: "复刻特效", value: "effect_copy" },
@@ -306,7 +309,7 @@ Page({
     const row = this.data.jobList[Number(e.currentTarget.dataset.index || 0)];
     if (!row) return;
     if (row.videoUrl) {
-      this.setData({ resultUrl: row.videoUrl, resultTitle: row.title || "跟创成片" });
+      this.setData({ previewOpen: true, previewUrl: row.videoUrl, previewTitle: row.title || "跟创成片" });
       return;
     }
     if (row.taskId) {
@@ -323,6 +326,27 @@ Page({
     wx.showLoading({ title: "下载中", mask: true });
     wx.downloadFile({
       url: row.videoUrl,
+      success: (res) => {
+        if (Number(res.statusCode || 0) >= 400) { wx.showToast({ title: "下载失败", icon: "none" }); return; }
+        wx.saveVideoToPhotosAlbum({
+          filePath: res.tempFilePath,
+          success: () => wx.showToast({ title: "已保存到相册", icon: "success" }),
+          fail: () => wx.showToast({ title: "保存失败，请检查相册权限", icon: "none" })
+        });
+      },
+      fail: () => wx.showToast({ title: "下载失败", icon: "none" }),
+      complete: () => wx.hideLoading()
+    });
+  },
+
+  closePreview() { this.setData({ previewOpen: false, previewUrl: "", previewTitle: "" }); },
+
+  savePreview() {
+    const url = String(this.data.previewUrl || "");
+    if (!url) return;
+    wx.showLoading({ title: "下载中", mask: true });
+    wx.downloadFile({
+      url,
       success: (res) => {
         if (Number(res.statusCode || 0) >= 400) { wx.showToast({ title: "下载失败", icon: "none" }); return; }
         wx.saveVideoToPhotosAlbum({

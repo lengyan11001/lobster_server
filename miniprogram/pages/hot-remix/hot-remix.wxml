@@ -38,8 +38,6 @@
       </view>
     </view>
 
-    <video wx:if="{{resultUrl}}" class="result" src="{{resultUrl}}" controls object-fit="contain"></video>
-    <button wx:if="{{resultUrl}}" class="ghost" bindtap="saveResult">保存到相册</button>
     <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
   </block>
 
@@ -102,4 +100,12 @@
     <button class="primary" loading="{{submitting}}" bindtap="submit">开始跟创</button>
     <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
   </block>
+  <view wx:if="{{previewOpen}}" class="preview-mask" catchtap="closePreview">
+    <view class="preview-head">
+      <text class="preview-back" catchtap="closePreview">‹ 返回</text>
+      <text class="preview-title">{{previewTitle}}</text>
+      <text class="preview-save" catchtap="savePreview">保存</text>
+    </view>
+    <video wx:if="{{previewUrl}}" class="preview-video" src="{{previewUrl}}" controls autoplay object-fit="contain"></video>
+  </view>
 </view>

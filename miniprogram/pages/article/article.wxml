@@ -37,17 +37,6 @@
     <button class="primary" loading="{{loading}}" disabled="{{loading}}" bindtap="generate">{{rewriteMode ? '复刻改写并生成' : '生成公众号文案'}}</button>
   </view>
 
-  <view wx:if="{{title || body}}" class="panel">
-    <text class="label">标题</text>
-    <view class="title-box">{{title}}</view>
-    <text class="label">摘要</text>
-    <view class="summary-box">{{summary}}</view>
-    <text class="label">正文</text>
-    <text class="body" user-select="{{true}}">{{body}}</text>
-    <button class="ghost" bindtap="copyAll">复制标题 + 正文</button>
-    <button class="ghost" bindtap="reset">重新生成</button>
-  </view>
-
   <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
 
   <topic-prefill id="topicPrefill" target="article" bind:pick="onPrefillPick" />

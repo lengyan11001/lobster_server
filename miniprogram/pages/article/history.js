@@ -2,6 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const { createPoller } = require("../../utils/task-poll");
+const articleGen = require("../../utils/article-gen");
 
 const CONFIG = {
   article: { title: "公众号文章", create: "/pages/article/article" },
@@ -54,19 +55,17 @@ Page({
 
   resumeArticleTasks() {
     if (this.data.feature !== "article") return;
-    if (this.articlePoller) return;
-    const processing = (hist.list("article") || []).some((row) => row.status === "processing");
-    if (!processing) return;
-    this.articlePoller = createPoller(
-      () => Promise.resolve(hist.list("article")),
-      (rows) => {
-        this.refresh();
-        return !(rows || []).some((row) => row.status === "processing");
-      },
-      () => {}
-    );
-    this.articlePoller.start(true);
+    if (this.articleRunning) return;
+    const pending = (hist.list("article") || []).find((row) => row.status === "processing" && row.payload);
+    if (!pending) return;
+    this.articleRunning = true;
+    articleGen.runTask(pending.id, pending.payload).then(() => {
+      this.articleRunning = false;
+      this.refresh();
+      this.resumeArticleTasks();
+    });
   },
+
 
   goCreate() {
     wx.navigateTo({ url: this.data.createUrl });
