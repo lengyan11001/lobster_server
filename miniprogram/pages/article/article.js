@@ -2,7 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 
-const CHAT_MODEL = "gpt-4.1-mini";
+const CHAT_MODEL = "deepseek-chat";
 
 function pickContent(data) {
   const choice = data && data.choices && data.choices[0];
@@ -154,7 +154,7 @@ Page({
     this.setData({ loading: true, progressText: source ? "正在复刻改写…" : "正在撰写…", title: "", summary: "", body: "" });
     app.request({
       method: "POST",
-      url: "/api/comfly-proxy/v1/chat/completions",
+      url: "/api/sutui-chat/completions",
       data: { model: CHAT_MODEL, temperature: 0.7, messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       timeout: 300000
     })
