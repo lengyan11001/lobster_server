@@ -31,6 +31,23 @@ function parseArticle(raw) {
   }
 }
 
+function extractUrls(data) {
+  const urls = [];
+  const push = (v) => {
+    const t = String(v || "").trim();
+    if (/^https?:/i.test(t) && urls.indexOf(t) < 0) urls.push(t);
+  };
+  const rows = (data && (data.data || data.items || data.images || data.results)) || [];
+  if (Array.isArray(rows)) {
+    rows.forEach((row) => {
+      if (typeof row === "string") push(row);
+      else if (row && typeof row === "object") push(row.url || row.image_url || row.source_url || (row.image_urls && row.image_urls[0]));
+    });
+  }
+  push(data && (data.url || data.image_url));
+  return urls;
+}
+
 Page({
   data: {
     topic: "", points: "", audience: "", tone: "专业观点",
@@ -162,16 +179,57 @@ Page({
         const raw = pickContent(data);
         if (!raw) throw new Error("模型没有返回内容");
         const article = parseArticle(raw);
-        this.setData({ title: article.title, summary: article.summary, body: article.body, progressText: "" });
-        hist.save("article", { title: article.title, summary: article.summary, content: article.body, status: "completed" });
-        wx.showToast({ title: "已生成", icon: "success" });
-        setTimeout(() => wx.navigateBack({ delta: 1, fail: () => {} }), 600);
+        const histId = hist.save("article", { title: article.title, summary: article.summary, content: article.body, status: "completed" });
+        this.setData({ title: article.title, summary: article.summary, body: article.body, progressText: "\u6b63\u5728\u751f\u6210\u914d\u56fe 0/3\u2026" });
+        return this.generateArticleImages(histId, article).then(() => {
+          this.setData({ progressText: "" });
+          wx.showToast({ title: "\u5df2\u751f\u6210", icon: "success" });
+          setTimeout(() => wx.navigateBack({ delta: 1, fail: () => {} }), 600);
+        });
       })
       .catch((err) => {
         this.setData({ progressText: "" });
         wx.showToast({ title: api.errorMessage(err), icon: "none" });
       })
       .then(() => this.setData({ loading: false }));
+  },
+
+  generateArticleImages(histId, article) {
+    const title = String(article.title || this.data.topic || "\u516c\u4f17\u53f7\u6587\u7ae0").slice(0, 60);
+    const summary = String(article.summary || "").slice(0, 120);
+    const prompts = [
+      "\u516c\u4f17\u53f7\u6587\u7ae0\u5c01\u9762\u56fe\uff0c\u4e3b\u9898\uff1a" + title + "\u3002\u7b80\u6d01\u9ad8\u7ea7\u7684\u5546\u4e1a\u6444\u5f71\u8d28\u611f\uff0c\u6784\u56fe\u5e72\u51c0\uff0c\u4e0d\u8981\u6587\u5b57\u3001\u4e0d\u8981 logo\u3001\u4e0d\u8981\u6c34\u5370\u3002",
+      "\u516c\u4f17\u53f7\u6587\u7ae0\u914d\u56fe\uff0c\u573a\u666f\u5316\u8868\u8fbe\uff1a" + (summary || title) + "\u3002\u771f\u5b9e\u81ea\u7136\u3001\u6709\u751f\u6d3b\u611f\uff0c\u9002\u5408\u516c\u4f17\u53f7\u9605\u8bfb\uff0c\u4e0d\u8981\u6587\u5b57\u3001\u4e0d\u8981 logo\u3002",
+      "\u516c\u4f17\u53f7\u6587\u7ae0\u914d\u56fe\uff0c\u7ec6\u8282\u7279\u5199/\u4fe1\u606f\u56fe\u98ce\u683c\uff0c\u4e3b\u9898\uff1a" + title + "\u3002\u73b0\u4ee3\u3001\u4e13\u4e1a\u3001\u6709\u5c42\u6b21\uff0c\u4e0d\u8981\u6587\u5b57\u3001\u4e0d\u8981 logo\u3002"
+    ];
+    const images = [];
+    let done = 0;
+    const tasks = prompts.map((prompt, index) => app.request({
+      method: "POST",
+      url: "/api/comfly-proxy/v1/images/generations",
+      data: { model: "gpt-image-2", prompt, image_size: "3:2", aspect_ratio: "3:2", ratio: "3:2", num_images: 1, n: 1, response_format: "url" },
+      timeout: 180000
+    })
+      .then((data) => {
+        const url = extractUrls(data)[0];
+        if (!url) throw new Error("\u6ca1\u6709\u8fd4\u56de\u56fe\u7247");
+        return app.request({
+          method: "POST",
+          url: "/api/assets/save-url",
+          data: { url, media_type: "image", tags: "article,miniprogram", prompt, model: "gpt-image-2" },
+          timeout: 120000
+        }).catch(() => null).then(() => url);
+      })
+      .then((url) => { images[index] = url; })
+      .catch(() => null)
+      .then(() => {
+        done += 1;
+        this.setData({ progressText: "\u6b63\u5728\u751f\u6210\u914d\u56fe " + done + "/3\u2026" });
+      }));
+    return Promise.all(tasks).then(() => {
+      const list = images.filter(Boolean);
+      hist.update(histId, { images: list, image_url: list[0] || "" });
+    });
   },
 
   copyAll() {
