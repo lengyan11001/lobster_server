@@ -3,6 +3,13 @@ const api = require("../../utils/api");
 
 const STATUS_TEXT = { SUCCESS: "已完成", RUNNING: "生成中", FAILED: "失败" };
 
+function extractShareUrl(raw) {
+  const text = String(raw || "").replace(/\\_/g, "_");
+  const match = text.match(/https?:\/\/[A-Za-z0-9\-._~:\/?#@!$&'*+,;=%]+/i);
+  if (!match) return "";
+  return match[0].replace(/[。，,.;)）\]】」》]+$/g, "");
+}
+
 Page({
   data: {
     modes: [
@@ -72,10 +79,15 @@ Page({
     });
   },
 
-  onShareInput(e) { this.setData({ shareText: e.detail.value }); },
+  onShareInput(e) {
+    const raw = String(e.detail.value || "");
+    const url = extractShareUrl(raw);
+    // 粘贴完整分享文案时自动只保留链接
+    this.setData({ shareText: url || raw });
+  },
 
   resolveShare() {
-    const text = String(this.data.shareText || "").trim();
+    const text = extractShareUrl(this.data.shareText) || String(this.data.shareText || "").trim();
     if (!text) return wx.showToast({ title: "先粘贴分享文案或链接", icon: "none" });
     if (this.data.resolving) return;
     this.setData({ resolving: true, shareStatus: "正在解析并下载视频…" });

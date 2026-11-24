@@ -420,7 +420,7 @@ async def search_douyin_platform_information_desk(
 # 热门视频跟创：分享链接解析（抖音 / 视频号 / 快手等，与 Online 同一个解析服务）
 _VIRAL_SHARE_API = "https://watermark-api.hlyphp.top/Watermark/Index"
 _VIRAL_SHARE_APPID = "682e90c19520118284FGb2"
-_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\u4e00-\u9fff]+", re.I)
+_URL_IN_TEXT_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+,;=%]+", re.I)
 
 
 class ShareVideoResolveBody(BaseModel):
@@ -434,11 +434,11 @@ async def resolve_viral_share_video(
     db: Session = Depends(get_db),
 ):
     _require_information_desk_access(current_user, db)
-    text = str(body.share_text or "").strip()
+    text = str(body.share_text or "").strip().replace("\\_", "_")
     match = _URL_IN_TEXT_RE.search(text)
     if not match:
         raise HTTPException(status_code=400, detail="未识别到分享链接，请粘贴包含 http/https 的完整分享文案")
-    share_url = match.group(0).rstrip("，。,.);）]")
+    share_url = match.group(0).rstrip("，。,.);）]】」》")
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, trust_env=False) as client:
             resp = await client.get(
@@ -469,7 +469,7 @@ async def resolve_viral_share_video(
         detail = mapping.get(code) or str((payload or {}).get("msg") or "视频解析失败")
         raise HTTPException(status_code=502, detail=detail)
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    direct = str(data.get("videoSrc") or "").strip()
+    direct = str(data.get("videoSrc") or data.get("videourl") or "").strip()
     if not direct.startswith(("http://", "https://")):
         raise HTTPException(status_code=502, detail="解析成功但没有返回可用的视频地址")
     # 下载并转存 TOS，避免抖音/视频号 CDN 的 Referer 限制，后续跟创提交也快
