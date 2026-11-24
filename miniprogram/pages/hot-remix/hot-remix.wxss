@@ -37,3 +37,10 @@
 .h-title { display: block; font-size: 26rpx; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-meta { display: block; margin-top: 6rpx; font-size: 22rpx; color: #94a3b8; }
 .h-action { font-size: 24rpx; color: #1957E8; margin-left: 16rpx; }
+
+.head-btns { margin-left: auto; }
+.small { min-width: 150rpx; height: 62rpx; line-height: 62rpx; padding: 0 20rpx; font-size: 24rpx; border-radius: 12rpx; }
+.count { font-size: 22rpx; color: #94a3b8; }
+.job-row { display: flex; align-items: center; justify-content: space-between; padding: 18rpx 0; border-bottom: 1rpx solid #f1f5f9; }
+.job-row.pending { background: #f0f9ff; border-radius: 12rpx; padding: 18rpx 16rpx; margin-bottom: 8rpx; }
+.h-dl { font-size: 24rpx; color: #1957E8; margin-left: 18rpx; }
