@@ -154,7 +154,7 @@ Page({
       .then((data) => {
         const rows = ((data && data.items) || [])
           .filter((row) => String(row.group_id || "") === gid)
-          .slice(0, 3);
+          .slice(0, 1);
         const ids = rows.map((row) => row.record_id).filter(Boolean);
         if (!ids.length) return;
         return app.request({
@@ -204,7 +204,7 @@ Page({
     })
       .then((data) => {
         const gid = String((data && data.group_id) || "");
-        this.queueMomentImages(gid);
+        if (count <= 1) this.queueMomentImages(gid);
         this.finishMomentTask(histId, true, gid ? ("已生成 · " + gid.slice(0, 6)) : "已生成");
       })
       .catch((err) => {
