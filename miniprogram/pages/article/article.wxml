@@ -12,6 +12,7 @@
   <view class="head-actions">
     <button class="ghost mini" bindtap="openMemory">IP记忆生成</button>
     <button class="ghost mini" bindtap="openRecording">录音生成</button>
+    <button class="ghost mini" bindtap="openPrefillHistory">历史</button>
   </view>
 
   <view class="panel">

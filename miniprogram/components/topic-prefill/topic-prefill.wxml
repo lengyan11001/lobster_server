@@ -5,7 +5,6 @@
         <text class="pf-title">{{mode === 'recording' ? '录音生成选题' : 'IP记忆生成选题'}}</text>
         <text class="pf-sub">九宫格选题法 · 5 条 · 参数一次填好</text>
       </view>
-      <text class="pf-link" bindtap="openHistory">历史</text>
       <text class="pf-close" catchtap="close">✕</text>
     </view>
 

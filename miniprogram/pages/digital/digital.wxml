@@ -14,6 +14,7 @@
     <view wx:if="{{viewMode === 'create'}}" class="head-actions">
       <button class="ghost small" bindtap="openMemoryPrefill">IP记忆生成</button>
       <button class="ghost small" bindtap="openRecordingPrefill">录音生成</button>
+      <button class="ghost small" bindtap="openPrefillHistory">历史</button>
     </view>
   </view>
 

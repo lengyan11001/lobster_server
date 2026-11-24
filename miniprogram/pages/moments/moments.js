@@ -99,6 +99,7 @@ Page({
 
   openTopicRecommend() { wx.navigateTo({ url: "/pages/topic-recommend?target=moments" }); },
   openMemory() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("memory"); },
+  openPrefillHistory() { const d = this.selectComponent("#topicPrefill"); if (d) d.openHistory(); },
   openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
 
   onPrefillPick(evt) {

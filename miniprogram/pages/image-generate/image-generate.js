@@ -551,6 +551,7 @@ Page({
   noop() {},
 
   openMemory() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("memory"); },
+  openPrefillHistory() { const d = this.selectComponent("#topicPrefill"); if (d) d.openHistory(); },
   openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
   onPrefillPick(evt) {
     const item = (evt && evt.detail && evt.detail.item) || {};
