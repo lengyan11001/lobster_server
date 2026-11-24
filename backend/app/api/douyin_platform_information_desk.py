@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from decimal import Decimal
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import desc
@@ -412,3 +415,91 @@ async def search_douyin_platform_information_desk(
         "provider_cost_usd": live.get("provider_cost_usd"),
     }
     return payload
+
+
+# 热门视频跟创：分享链接解析（抖音 / 视频号 / 快手等，与 Online 同一个解析服务）
+_VIRAL_SHARE_API = "https://watermark-api.hlyphp.top/Watermark/Index"
+_VIRAL_SHARE_APPID = "682e90c19520118284FGb2"
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\u4e00-\u9fff]+", re.I)
+
+
+class ShareVideoResolveBody(BaseModel):
+    share_text: str = Field(..., min_length=1, max_length=4000)
+
+
+@router.post("/api/viral-video-remix/share-video/resolve", summary="解析抖音/视频号分享链接为视频直链")
+async def resolve_viral_share_video(
+    body: ShareVideoResolveBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_information_desk_access(current_user, db)
+    text = str(body.share_text or "").strip()
+    match = _URL_IN_TEXT_RE.search(text)
+    if not match:
+        raise HTTPException(status_code=400, detail="未识别到分享链接，请粘贴包含 http/https 的完整分享文案")
+    share_url = match.group(0).rstrip("，。,.);）]")
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, trust_env=False) as client:
+            resp = await client.get(
+                _VIRAL_SHARE_API,
+                params={"appid": _VIRAL_SHARE_APPID, "link": share_url},
+                headers={"Accept": "application/json"},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="视频解析超时，请稍后重试") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[viral-share] request failed user_id=%s", current_user.id)
+        raise HTTPException(status_code=502, detail=f"视频解析请求失败：{exc}") from exc
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"视频解析服务 HTTP {resp.status_code}")
+    try:
+        payload = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="视频解析服务返回格式异常") from exc
+    if not isinstance(payload, dict) or payload.get("code") != 1:
+        code = payload.get("code") if isinstance(payload, dict) else None
+        mapping = {
+            -1: "该账号已被禁用",
+            -100: "当前 IP 不在解析服务白名单",
+            109: "解析套餐次数不足",
+            301: "未检测到链接，请检查分享文案是否完整",
+            400: "提取链接无效或暂不支持该平台",
+        }
+        detail = mapping.get(code) or str((payload or {}).get("msg") or "视频解析失败")
+        raise HTTPException(status_code=502, detail=detail)
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    direct = str(data.get("videoSrc") or "").strip()
+    if not direct.startswith(("http://", "https://")):
+        raise HTTPException(status_code=502, detail="解析成功但没有返回可用的视频地址")
+    # 下载并转存 TOS，避免抖音/视频号 CDN 的 Referer 限制，后续跟创提交也快
+    source_url = direct
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=20.0), follow_redirects=True, trust_env=False) as client:
+            video_resp = await client.get(
+                direct,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+                    "Referer": "https://www.douyin.com/",
+                },
+            )
+        if video_resp.status_code == 200 and video_resp.content:
+            import asyncio as _asyncio
+            import secrets as _secrets
+            from .assets import _upload_to_tos as _tos_upload
+
+            key = "assets/share_%s.mp4" % _secrets.token_hex(8)
+            stored = await _asyncio.to_thread(_tos_upload, video_resp.content, key, "video/mp4")
+            if stored:
+                source_url = stored
+    except Exception:  # noqa: BLE001 - 转存失败时回退到直链
+        logger.warning("[viral-share] tos store failed, fallback to direct url", exc_info=True)
+    return {
+        "ok": True,
+        "share_url": share_url,
+        "direct_video_url": direct,
+        "source_url": source_url,
+        "url": source_url,
+        "title": str(data.get("title") or ""),
+        "cover_url": str(data.get("imageSrc") or ""),
+    }

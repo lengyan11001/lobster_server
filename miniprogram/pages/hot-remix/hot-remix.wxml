@@ -1,0 +1,85 @@
+<view class="page">
+  <view class="head">
+    <button class="back" bindtap="goBack">‹</button>
+    <view class="head-copy">
+      <text class="title">热门视频跟创</text>
+      <text class="sub">上传或粘贴原视频 + 一张参考图，按原片节奏生成同款</text>
+    </view>
+  </view>
+
+  <view class="card">
+    <text class="card-title">1. 原视频</text>
+    <view class="video-row">
+      <view class="video-box" bindtap="chooseVideo">
+        <video wx:if="{{videoPreview}}" src="{{videoPreview}}" class="video-thumb" muted object-fit="cover"></video>
+        <view wx:else class="video-empty">+ 上传本地视频</view>
+      </view>
+      <view class="video-meta">
+        <text class="ok">{{videoUrl ? '视频已就绪' : '未选择'}}</text>
+        <text class="hint">{{videoName}}</text>
+      </view>
+    </view>
+    <text class="or">或粘贴抖音 / 视频号分享文案</text>
+    <textarea class="textarea" value="{{shareText}}" bindinput="onShareInput" placeholder="粘贴包含链接的完整分享文案" maxlength="1000" auto-height />
+    <button class="ghost" loading="{{resolving}}" bindtap="resolveShare">解析链接</button>
+    <text wx:if="{{shareStatus}}" class="hint">{{shareStatus}}</text>
+  </view>
+
+  <view class="card">
+    <text class="card-title">2. 参考图片 *</text>
+    <view class="image-row">
+      <view class="image-box" bindtap="chooseImage">
+        <image wx:if="{{imagePreview}}" src="{{imagePreview}}" mode="aspectFill" class="image-thumb" />
+        <view wx:else class="image-empty">+ 上传图片</view>
+      </view>
+      <text class="hint">{{uploadingImage ? '上传中…' : '用于替换原视频中的人物 / 产品'}}</text>
+    </view>
+  </view>
+
+  <view class="card">
+    <text class="card-title">3. 参数</text>
+    <view class="param">
+      <text class="param-label">跟创模式</text>
+      <picker mode="selector" range="{{modeLabels}}" value="{{modeIndex}}" bindchange="pickMode">
+        <view class="picker">{{modeLabels[modeIndex]}}</view>
+      </picker>
+    </view>
+    <view class="param">
+      <text class="param-label">分辨率</text>
+      <picker mode="selector" range="{{resolutions}}" value="{{resIndex}}" bindchange="pickRes">
+        <view class="picker">{{resolutions[resIndex]}}</view>
+      </picker>
+    </view>
+    <view class="param">
+      <text class="param-label">成片时长</text>
+      <picker mode="selector" range="{{durationLabels}}" value="{{durIndex}}" bindchange="pickDur">
+        <view class="picker">{{durationLabels[durIndex]}}</view>
+      </picker>
+    </view>
+    <text class="param-label block">提示词（可选）</text>
+    <textarea class="textarea small" value="{{prompt}}" bindinput="onPrompt" placeholder="例如：画面保持原节奏，人物换成参考图形象" maxlength="500" auto-height />
+    <text class="param-label block">标题（可选）</text>
+    <input class="input" value="{{title}}" bindinput="onTitle" placeholder="作品标题" maxlength="60" />
+  </view>
+
+  <button class="primary" loading="{{submitting}}" bindtap="submit">开始跟创</button>
+  <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
+
+  <video wx:if="{{resultUrl}}" class="result" src="{{resultUrl}}" controls object-fit="contain"></video>
+  <button wx:if="{{resultUrl}}" class="ghost" bindtap="saveResult">保存到相册</button>
+
+  <view class="card">
+    <view class="card-head">
+      <text class="card-title">最近跟创</text>
+      <text class="refresh" bindtap="loadHistory">刷新</text>
+    </view>
+    <view wx:if="{{!history.length}}" class="empty">还没有记录</view>
+    <view wx:for="{{history}}" wx:key="id" class="history-row" data-index="{{index}}" bindtap="openHistory">
+      <view class="h-main">
+        <text class="h-title">{{item.title || item.desc || '跟创任务'}}</text>
+        <text class="h-meta">{{item.timeText}} · {{item.statusText}}</text>
+      </view>
+      <text class="h-action">{{item.videoUrl ? '播放' : '状态'}}</text>
+    </view>
+  </view>
+</view>

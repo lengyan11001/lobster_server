@@ -595,7 +595,7 @@ Page({
   },
 
   goTrending() {
-    wx.navigateTo({ url: "/pages/video-inspiration/video-inspiration" });
+    wx.navigateTo({ url: "/pages/hot-remix/hot-remix" });
   },
 
   goSecretary() {
