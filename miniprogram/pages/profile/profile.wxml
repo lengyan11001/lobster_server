@@ -169,6 +169,10 @@
 
   <view class="account-card">
     <text class="card-title">关于与服务</text>
+    <view class="row" bindtap="goOrders" hover-class="press">
+      <text class="row-label">订单中心</text>
+      <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>
+    </view>
     <view class="row" bindtap="goAgreement" hover-class="press">
       <text class="row-label">用户协议</text>
       <view class="row-right"><image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" /></view>

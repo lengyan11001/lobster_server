@@ -35,7 +35,8 @@
     "pages/topic-recommend/topic-recommend",
     "pages/template-edit/template-edit",
     "pages/legal/legal",
-    "pages/report/report"
+    "pages/report/report",
+    "pages/orders/orders"
   ],
   "window": {
     "navigationBarTitleText": "龙虾AI员工",

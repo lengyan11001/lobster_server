@@ -55,3 +55,5 @@ page { background: #f8f9fa; color: #0f172a; }
 .status { display: block; margin-top: 16rpx; text-align: center; color: #0891b2; font-size: 23rpx; }
 
 .ios-notice { margin: 24rpx 0; padding: 24rpx; border-radius: 16rpx; background: #fff7ed; color: #9a3412; font-size: 26rpx; line-height: 1.6; }
+
+.order-link { display: block; margin-top: 8rpx; font-size: 24rpx; color: #1957E8; }

@@ -22,6 +22,10 @@ Page({
     this.loadBalance();
   },
 
+  goOrders() {
+    wx.navigateTo({ url: "/pages/orders/orders" });
+  },
+
   loadBalance() {
     if (!app.globalData.token) {
       this.setData({ balanceText: "--" });

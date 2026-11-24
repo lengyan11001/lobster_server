@@ -1,0 +1,14 @@
+.page { padding: 32rpx 32rpx 80rpx; background: #f8fafc; min-height: 100vh; }
+.head { margin-bottom: 24rpx; }
+.title { display: block; font-size: 40rpx; font-weight: 700; color: #0f172a; }
+.sub { display: block; margin-top: 8rpx; font-size: 24rpx; color: #64748b; }
+.empty { padding: 120rpx 0; text-align: center; font-size: 26rpx; color: #94a3b8; }
+.order { background: #fff; border-radius: 20rpx; padding: 26rpx; margin-bottom: 20rpx; }
+.order-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12rpx; }
+.amount { font-size: 34rpx; font-weight: 700; color: #0f172a; }
+.status { font-size: 24rpx; color: #1957E8; }
+.line { display: block; font-size: 24rpx; line-height: 1.8; color: #475569; }
+.order-no { display: flex; justify-content: space-between; margin-top: 12rpx; padding-top: 12rpx; border-top: 1rpx solid #f1f5f9; }
+.no { font-size: 22rpx; color: #94a3b8; }
+.copy { font-size: 22rpx; color: #1957E8; }
+.primary { margin-top: 20rpx; background: #1957E8; color: #fff; border-radius: 14rpx; font-size: 28rpx; }

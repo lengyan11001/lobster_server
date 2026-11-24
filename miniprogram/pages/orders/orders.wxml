@@ -1,0 +1,25 @@
+<view class="page">
+  <view class="head">
+    <text class="title">订单中心</text>
+    <text class="sub">充值订单与支付记录</text>
+  </view>
+
+  <view wx:if="{{loading && !items.length}}" class="empty">加载中…</view>
+  <view wx:elif="{{!items.length}}" class="empty">暂无订单</view>
+
+  <view wx:for="{{items}}" wx:key="id" class="order">
+    <view class="order-top">
+      <text class="amount">¥{{item.amount}}</text>
+      <text class="status">{{item.statusText}}</text>
+    </view>
+    <text class="line">算力：{{item.credits}}</text>
+    <text class="line">下单时间：{{item.timeText}}</text>
+    <text wx:if="{{item.paidText}}" class="line">支付时间：{{item.paidText}}</text>
+    <view class="order-no" bindtap="copyOrder" data-no="{{item.orderNo}}">
+      <text class="no">订单号：{{item.orderNo}}</text>
+      <text class="copy">复制</text>
+    </view>
+  </view>
+
+  <button class="primary" bindtap="goRecharge">去充值</button>
+</view>

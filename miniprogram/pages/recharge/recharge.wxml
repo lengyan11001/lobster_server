@@ -3,6 +3,7 @@
   <view class="head">
     <text class="title">充值算力</text>
     <text class="sub">微信支付 · 支付后自动到账</text>
+    <text class="order-link" bindtap="goOrders">订单记录 ›</text>
   </view>
 
   <view wx:if="{{iosBlocked}}" class="ios-notice">iOS 端暂不支持在线充值，请在安卓微信中操作。</view>

@@ -70,6 +70,10 @@ Page({
     wx.navigateTo({ url: "/pages/recharge/recharge" });
   },
 
+  goOrders() {
+    wx.navigateTo({ url: "/pages/orders/orders" });
+  },
+
   goAgreement() {
     wx.navigateTo({ url: "/pages/legal/legal?type=agreement" });
   },
