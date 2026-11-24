@@ -15,13 +15,16 @@
 
     <block wx:if="{{openId === item.id}}">
       <text wx:if="{{item.summary}}" class="summary">{{item.summary}}</text>
+      <view wx:if="{{item.images.length}}" class="img-grid">
+        <image wx:for="{{item.images}}" wx:for-item="img" wx:key="*this" src="{{img}}" mode="aspectFill" class="img" data-url="{{img}}" data-id="{{item.id}}" catchtap="previewImage" />
+      </view>
       <text wx:if="{{item.content}}" class="content">{{item.content}}</text>
       <view wx:if="{{item.images.length}}" class="img-grid">
         <image wx:for="{{item.images}}" wx:for-item="img" wx:key="*this" src="{{img}}" mode="aspectFill" class="img" data-url="{{img}}" data-id="{{item.id}}" catchtap="previewImage" />
       </view>
       <video wx:if="{{item.videoUrl}}" src="{{item.videoUrl}}" class="video" controls></video>
       <view class="actions">
-        <button wx:if="{{item.content}}" class="ghost mini" catchtap="copyText" data-id="{{item.id}}">复制</button>
+        <button wx:if="{{item.content}}" class="ghost mini" catchtap="copyArticle" data-id="{{item.id}}">{{item.images.length ? '复制文字+保存图片' : '复制'}}</button>
         <button wx:if="{{item.taskId && item.status === 'processing'}}" class="ghost mini" catchtap="refreshStatus" data-id="{{item.id}}">刷新状态</button>
         <button class="ghost mini danger" catchtap="remove" data-id="{{item.id}}">删除</button>
       </view>

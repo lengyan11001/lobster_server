@@ -149,11 +149,44 @@ Page({
     wx.previewImage({ current: url, urls: item.images || [url] });
   },
 
-  copyText(e) {
+  copyArticle(e) {
     const item = this.data.items.find((x) => x.id === e.currentTarget.dataset.id);
     if (!item) return;
-    wx.setClipboardData({ data: String(item.content || ""), success: () => wx.showToast({ title: "已复制", icon: "success" }) });
+    const images = (item.images || []).filter(Boolean);
+    const text = [item.title, "", item.summary, "", item.content].filter(Boolean).join("\n");
+    wx.setClipboardData({
+      data: text,
+      success: () => {
+        if (!images.length) {
+          wx.showToast({ title: "已复制", icon: "success" });
+          return;
+        }
+        wx.showLoading({ title: "保存图片", mask: true });
+        let ok = 0;
+        const finish = () => {
+          wx.hideLoading();
+          wx.showToast({ title: "已复制文字，图片保存 " + ok + "/" + images.length, icon: "none" });
+        };
+        const step = (i) => {
+          if (i >= images.length) { finish(); return; }
+          wx.downloadFile({
+            url: images[i],
+            success: (res) => {
+              if (Number(res.statusCode || 0) >= 400) { step(i + 1); return; }
+              wx.saveImageToPhotosAlbum({
+                filePath: res.tempFilePath,
+                success: () => { ok += 1; step(i + 1); },
+                fail: () => step(i + 1)
+              });
+            },
+            fail: () => step(i + 1)
+          });
+        };
+        step(0);
+      }
+    });
   },
+
 
   refreshStatus(e) {
     const item = this.data.items.find((x) => x.id === e.currentTarget.dataset.id);

@@ -6098,6 +6098,12 @@ async def _generate_and_save_ip_content_records(
         }
         if failed_batches and isinstance(failed_batches[0].get("upstream_check"), dict):
             failure_detail["upstream_check"] = failed_batches[0].get("upstream_check")
+        logger.warning(
+            "[ip-content] generation failed user_id=%s task=%s detail=%s",
+            int(current_user.id),
+            record_task,
+            json.dumps(failure_detail, ensure_ascii=False)[:1500],
+        )
         raise HTTPException(status_code=502, detail=failure_detail)
     _emit_schedule_progress(
         progress,
@@ -6570,7 +6576,7 @@ async def run_ip_content_daily_scheduled(
             fallback_sources=moment_fallback_sources,
             count=1 if demo_light else min(max(int(opts.moments_count or 20), 1), 20),
             extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
-            batch_size=1 if demo_light else _env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
+            batch_size=1 if demo_light else _env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 3, minimum=1, maximum=20),
             reference_image_urls=template_reference_image_urls,
         )
 

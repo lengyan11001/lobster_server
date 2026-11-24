@@ -103,6 +103,14 @@ async def create_information_desk_imitation(
                                      resolution=body.resolution,
                                      duration_seconds=body.duration_seconds)
     if not result.get("ok"):
+        logger.warning(
+            "[douyin-imitation] submit failed user_id=%s item_id=%s video=%s image=%s error=%s",
+            int(current_user.id),
+            str(body.item_id or "")[:64],
+            str(body.video_url or "")[:160],
+            str(body.image_url or "")[:160],
+            str(result.get("error") or "")[:500],
+        )
         raise HTTPException(status_code=502, detail=result.get("error") or "做同款提交失败")
     # 计费口径：输入视频秒数 + 输出视频秒数（上游就是这么计的）。用户选了成片时长时，
     # 输出按用户选的算；没选就按输入等长（跟老逻辑一致）。
