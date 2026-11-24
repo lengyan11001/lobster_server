@@ -10183,3 +10183,43 @@ async def ip_topic_keyword_metrics(
         "note": "抖音没有公开的关键词难度接口；这里抓的是每个关键词的真实搜索结果首页（约 7-20 条），据此算需求和竞争",
         "metrics": metrics,
     }
+
+
+class MomentImageGenerateBody(BaseModel):
+    record_ids: list[str] = Field(default_factory=list)
+
+
+async def _run_moment_image_bg(record_pk: int, user_id: int) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        record = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.id == int(record_pk)).first()
+        if not user or not record:
+            return
+        await _generate_workflow_first_moment_images(db=db, current_user=user, record=record, run_id="")
+    except Exception:  # noqa: BLE001
+        logger.exception("[moment-image] background generation failed record_pk=%s", record_pk)
+    finally:
+        db.close()
+
+
+@router.post("/api/ip-content/moments/images/generate", summary="为朋友圈文案生成配图（后台）")
+async def generate_moment_images(
+    body: MomentImageGenerateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    ids = [str(x).strip() for x in (body.record_ids or []) if str(x).strip()][:5]
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择要配图的朋友圈文案")
+    rows = (
+        db.query(IPContentDraftRecord)
+        .filter(IPContentDraftRecord.user_id == int(owner.id), IPContentDraftRecord.record_id.in_(ids))
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="文案记录不存在")
+    for row in rows:
+        asyncio.create_task(_run_moment_image_bg(int(row.id), int(owner.id)))
+    return {"ok": True, "queued": len(rows)}

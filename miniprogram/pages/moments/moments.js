@@ -147,27 +147,29 @@ Page({
     this.setData({ images: rows });
   },
 
-  attachImagesToGroup(groupId) {
-    const images = (this.data.images || []).map((row, i) => ({ image_url: row.url, index: i + 1 }));
+  queueMomentImages(groupId) {
     const gid = String(groupId || "");
-    if (!gid || !images.length) {
-      this.setData({ images: [] });
-      return Promise.resolve();
-    }
-    return app.request({ url: "/api/ip-content/draft-records?task=moments_candidate&limit=200", timeout: 30000 })
+    if (!gid) return;
+    app.request({ url: "/api/ip-content/draft-records?task=moments_candidate&limit=200", timeout: 30000 })
       .then((data) => {
-        const rows = ((data && data.items) || []).filter((row) => String(row.group_id || "") === gid);
-        const tasks = rows.map((row) => app.request({
+        const rows = ((data && data.items) || [])
+          .filter((row) => String(row.group_id || "") === gid)
+          .slice(0, 3);
+        const ids = rows.map((row) => row.record_id).filter(Boolean);
+        if (!ids.length) return;
+        return app.request({
           method: "POST",
-          url: "/api/ip-content/draft-records/" + encodeURIComponent(row.record_id) + "/image",
-          data: { image_url: images[0].image_url, selected: true, meta: { images } },
+          url: "/api/ip-content/moments/images/generate",
+          data: { record_ids: ids },
           timeout: 30000
-        }).catch(() => null));
-        return Promise.all(tasks);
+        });
       })
-      .then(() => this.setData({ images: [] }))
       .catch(() => {});
+    // 图片后台生成，稍后刷新两次把配图拉回来
+    setTimeout(() => this.load(), 20000);
+    setTimeout(() => this.load(), 45000);
   },
+
 
   onTopic(e) { this.setData({ topic: e.detail.value }); },
   onReq(e) { this.setData({ copyRequirement: e.detail.value }); },
@@ -202,7 +204,7 @@ Page({
     })
       .then((data) => {
         const gid = String((data && data.group_id) || "");
-        this.attachImagesToGroup(gid);
+        this.queueMomentImages(gid);
         this.finishMomentTask(histId, true, gid ? ("已生成 · " + gid.slice(0, 6)) : "已生成");
       })
       .catch((err) => {

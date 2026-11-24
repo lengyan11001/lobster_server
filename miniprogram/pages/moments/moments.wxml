@@ -51,14 +51,6 @@
       </view>
       <text class="label">文案要求（可选）</text>
       <textarea class="input small" value="{{copyRequirement}}" bindinput="onReq" placeholder="例如：短句、多换行、不要硬性导流" auto-height maxlength="200" />
-      <text class="label">配图（可选，最多 6 张）</text>
-      <view class="img-row">
-        <view wx:for="{{images}}" wx:key="url" class="img-item">
-          <image src="{{item.local || item.url}}" mode="aspectFill" class="img" />
-          <text class="img-del" data-index="{{index}}" catchtap="removeImage">×</text>
-        </view>
-        <view wx:if="{{images.length < 6}}" class="img-add" bindtap="chooseImages">{{uploadingImage ? '上传中' : '+'}}</view>
-      </view>
       <button class="primary" loading="{{generating}}" disabled="{{generating}}" bindtap="submitCreate">创建并返回列表</button>
     </view>
   </block>
