@@ -87,12 +87,42 @@ Page({
   },
 
   requestDeleteAccount() {
+    if (!app.globalData.token) {
+      this.focusLogin();
+      return;
+    }
     wx.showModal({
       title: "注销账号",
-      content: "注销后账号、素材与作品记录将无法恢复。请通过在线客服提交注销申请，我们将在 15 个工作日内处理。",
-      confirmText: "联系客服",
+      editable: true,
+      placeholderText: "输入「注销」确认",
+      content: "",
       success: (res) => {
-        if (res.confirm) wx.navigateTo({ url: "/pages/report/report?type=delete" });
+        if (!res.confirm) return;
+        if (String(res.content || "").trim() !== "注销") {
+          wx.showToast({ title: "请输入「注销」确认", icon: "none" });
+          return;
+        }
+        wx.showLoading({ title: "正在注销", mask: true });
+        app.request({
+          method: "POST",
+          url: "/api/mobile/account/delete",
+          data: { confirm: "注销" },
+          timeout: 30000
+        })
+          .then(() => {
+            wx.hideLoading();
+            app.clearSession();
+            wx.showModal({
+              title: "已注销",
+              content: "账号已注销，个人身份信息、素材与内容记录已清理。",
+              showCancel: false,
+              success: () => wx.switchTab({ url: "/pages/index/index" })
+            });
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            wx.showToast({ title: api.errorMessage(err), icon: "none" });
+          });
       }
     });
   },

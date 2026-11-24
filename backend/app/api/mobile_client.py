@@ -25,6 +25,7 @@ from ..models import (
     ScheduledTaskRun,
     SkillUnlock,
     User,
+    UserContentRecord,
 )
 from ..core.config import settings
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
@@ -995,3 +996,44 @@ def mobile_downloads(
         items = [x for x in items if x.get("media_type") == wanted]
     items = sorted(items, key=lambda x: x.get("created_at") or "", reverse=True)[:limit]
     return {"ok": True, "total": len(items), "items": items}
+
+
+class AccountDeleteBody(BaseModel):
+    confirm: str = ""
+
+
+@router.post("/api/mobile/account/delete", summary="手机端：自助注销账号（匿名化并清理个人内容）")
+def delete_my_account(
+    body: AccountDeleteBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if str(body.confirm or "").strip() not in ("注销", "DELETE"):
+        raise HTTPException(status_code=400, detail="请输入「注销」确认")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if user.is_agent or db.query(User).filter(User.parent_user_id == user.id).first():
+        raise HTTPException(status_code=400, detail="代理账号或有下级账号，请联系客服处理注销")
+    uid = int(user.id)
+    # 身份信息匿名化，使旧 token 全部失效
+    user.email = "deleted_%s_%s@deleted.local" % (uid, secrets.token_hex(4))
+    user.hashed_password = get_password_hash(secrets.token_urlsafe(24))
+    user.password_initialized = False
+    user.password_version = int(user.password_version or 0) + 1
+    user.wechat_openid = None
+    user.wecom_userid = None
+    user.sutui_token = None
+    user.credits = Decimal("0")
+    user.admin_remark = "用户自助注销"
+    db.query(MobileDeviceBinding).filter(MobileDeviceBinding.user_id == uid).delete(synchronize_session=False)
+    db.query(UserContentRecord).filter(UserContentRecord.user_id == uid).delete(synchronize_session=False)
+    assets = db.query(Asset).filter(Asset.user_id == uid).all()
+    for row in assets:
+        meta = dict(row.meta) if isinstance(row.meta, dict) else {}
+        meta["content_visibility"] = "hidden"
+        meta["library_visibility"] = "hidden"
+        row.meta = meta
+    db.commit()
+    logger.info("[account-delete] user_id=%s assets_hidden=%s", uid, len(assets))
+    return {"ok": True, "message": "账号已注销，素材与内容记录已清理"}

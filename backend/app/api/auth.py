@@ -508,6 +508,8 @@ async def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    if str(user.email or "").endswith("@deleted.local"):
+        raise credentials_exception
     assert_token_password_version(payload, user)
     validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
     try:
@@ -538,6 +540,8 @@ async def get_current_user_id_from_token(
         user_id = int(payload.get("sub"))
         user = db.query(User).filter(User.id == user_id).first()
         if user is None:
+            raise credentials_exception
+        if str(user.email or "").endswith("@deleted.local"):
             raise credentials_exception
         assert_token_password_version(payload, user)
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
