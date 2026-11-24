@@ -757,6 +757,21 @@ def _normalize_image_prompts(item: dict[str, Any], fallback: str = "") -> list[s
     return prompts[:3]
 
 
+_MOMENTS_MAX_CHARS = 260
+
+
+def _clamp_moments_text(text: str, limit: int = _MOMENTS_MAX_CHARS) -> str:
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    cut = value[:limit]
+    for sep in ("\n\n", "\n", "\u3002", "\uff01", "\uff1f", "\uff1b", ".", "!", "?"):
+        idx = cut.rfind(sep)
+        if idx >= int(limit * 0.6):
+            return cut[: idx + len(sep)].rstrip()
+    return cut.rstrip()
+
+
 def _is_moments_task(task: str) -> bool:
     return (task or "").strip().lower() in {"task2_moments", "moments_candidate"}
 
@@ -2316,6 +2331,7 @@ def _draft_requirements(task: str, platform: str, count: int, target_seconds: in
             f"任务二：生成 {count} 条朋友圈文案。"
             "每条要自然、有生活场景、有专业可信度，可作为个人 IP 账号持续更新的素材；但表达风格要更像私域社群爆款发售体。"
             "排版必须规整：短句分行，2 到 4 行形成一个小段落，段落之间空一行；拒绝大段文字。"
+            f"每条正文控制在 80-220 字之间，最多不超过 220 字（含 Emoji），超出必须直接删减到上限。"
             "允许并鼓励精准使用 Emoji，例如 💥、🔥、🎯、💯、😲、😎、🚀、👇、💸、🌟；每条正文建议 4 到 8 个，但不要堆到每一句都有。"
             "语言要短、狠、直给，用大白话打痛点、给结果、造紧迫感；围绕降本、增收、流量、获客、效率、赚钱这些老板关心的结果。"
             "结构建议：强开场；痛点或趋势；结合记忆资料里的产品/服务给出解决方案；最后用观点、判断或结果感自然收住，不要导流动作。"
@@ -5628,7 +5644,8 @@ def _save_draft_records(
             image_prompts = []
             image_prompt = None
         elif is_moments:
-            content = _strip_moments_comment_bait(_strip_embedded_image_prompt(content or "", 8000), 8000) or content
+            content = _clamp_moments_text(_strip_moments_comment_bait(_strip_embedded_image_prompt(content or "", 8000), 8000) or content or "")
+            content = content or None
         meta = {
             "group_id": group_id,
             "batch_index": max(0, int(batch_index or 0)),
