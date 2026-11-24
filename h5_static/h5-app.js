@@ -16453,6 +16453,12 @@ async function api(path, options = {}) {
       const title = String(asset.title || "").trim() || (video.source === "local_bestseller" ? "同城爆款视频" : "最新视频");
       const description = String(asset.description || "").trim() || (video.source === "local_bestseller" ? "同城爆款上新，欢迎到店体验。" : "最新作品，欢迎观看。");
       const installationId = String(account.installation_id || liveExecutorSelectedInstallationId() || "").trim();
+      const publishOptions = { content_source: video.source };
+      if (meta.key === "wechat_channels") {
+        // 演示发的是同城爆款成片，不声明原创；避免卡在「原创权益」弹窗的条款勾选上
+        publishOptions.wechat_channels_original = false;
+        publishOptions.wechat_channels_original_notice_no_remind = true;
+      }
       return {
         title: `${meta.label}发布 · ${title}`.slice(0, 60),
         taskKind: "client_workflow",
@@ -16476,7 +16482,7 @@ async function api(path, options = {}) {
             description,
             tags: "",
             ai_publish_copy: false,
-            options: { content_source: video.source },
+            options: publishOptions,
           },
         },
       };
