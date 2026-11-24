@@ -1626,6 +1626,27 @@ class ScheduledTaskRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class TaskWakeEvent(Base):
+    """Cross-worker wake row for the H5 live executor SSE stream.
+
+    The API runs with multiple uvicorn workers, so an in-process event cannot
+    reach the worker that holds a device's stream. Task creation appends a row
+    in the same transaction; every worker tails this table once per second.
+    """
+
+    __tablename__ = "task_wake_events"
+    __table_args__ = (
+        Index("ix_task_wake_events_user_install_id", "user_id", "installation_id", "id"),
+        Index("ix_task_wake_events_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), default="scheduled_task", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class H5WorkflowTemplate(Base):
     """H5 24 小时工作流模板：一组按每天固定时间触发的任务节点。"""
 

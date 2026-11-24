@@ -67,7 +67,8 @@ def test_live_executor_moments_creates_auto_publish_child():
     assert 'platform: "wechat_moments"' in script
     assert 'account_nickname: "本机微信"' in script
     assert "scheduledTaskId: data.task && data.task.id" in script
-    assert "tasks.some((task) => task.runId || task.scheduledTaskId)" in script
+    assert script.count("async function refreshLiveExecutorTasks()") == 1
+    assert "task.runId || task.scheduledTaskId || task.recordId" in script
 
 
 def test_live_executor_actions_are_wired_and_grid_fits_six_buttons():
@@ -130,3 +131,12 @@ def test_live_executor_clears_stuck_waiting_publish_task():
     assert "等待父任务超时，发布已取消" in script
     assert "/api/scheduled-tasks/tasks?" in script
     assert 'rowStatus === "cancelled"' in script
+
+
+
+def test_live_executor_uses_sse_wake_stream():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert 'apiUrl("/api/scheduled-tasks/stream")' in script
+    assert "startLiveExecutorEventStream().catch(() => {});" in script
+    assert "scheduleLiveExecutorWakeRefresh" in script
+    assert script.count("async function refreshLiveExecutorTasks()") == 1

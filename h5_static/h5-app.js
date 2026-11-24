@@ -16813,45 +16813,6 @@ async function api(path, options = {}) {
       handleLiveExecutorAction(action, { fromConfig: true }).catch((err) => toast(err.message || "执行失败"));
     }
 
-    async function refreshLiveExecutorTasks() {
-      const live = liveExecutorState();
-      const tasks = Array.isArray(live.tasks) ? live.tasks : [];
-      if (!tasks.length) return;
-      const hasRunTasks = tasks.some((task) => task.runId || task.scheduledTaskId);
-      if (hasRunTasks) {
-        await loadRuns({ reset: true, limit: 80, compact: false, preserveExisting: true, silent: true }).catch(() => {});
-        tasks.forEach((task) => {
-          let run = liveExecutorTaskRun(task);
-          if (!run && task.scheduledTaskId) {
-            run = (state.runs || []).find((row) => String(row && row.task_id || "") === String(task.scheduledTaskId)) || null;
-            if (run) liveExecutorUpdateTask(task, { runId: String(run.id || "") });
-          }
-          if (!run) return;
-          const status = isActiveRun(run) ? "processing" : String(run.status || "").toLowerCase();
-          liveExecutorUpdateTask(task, {
-            status: status || task.status,
-            detail: isActiveRun(run) ? (runProgressText(run) || "执行中") : (runDisplayResult(run) || "执行完成"),
-            error: String(run.error || ""),
-          });
-        });
-      }
-      const secretaryTasks = tasks.filter((task) => task.type === "secretary" && task.recordId && !["completed", "failed"].includes(String(task.status || "")));
-      await Promise.all(secretaryTasks.map(async (task) => {
-        try {
-          const row = await api(`/api/h5/recorder/files/${encodeURIComponent(task.recordId)}`, { blocking: false });
-          const nextStatus = String(row.status || "").toLowerCase();
-          liveExecutorUpdateTask(task, {
-            status: nextStatus === "completed" ? "completed" : (nextStatus === "failed" ? "failed" : "processing"),
-            result: row,
-            detail: nextStatus === "completed" ? (row.summary_text || "秘书整理完成") : (row.error_message || "正在生成秘书摘要..."),
-            error: row.error_message || "",
-          });
-        } catch (err) {
-          liveExecutorUpdateTask(task, { detail: err.message || "秘书记录刷新失败" });
-        }
-      }));
-    }
-
     function startLiveExecutorPolling() {
       const live = liveExecutorState();
       if (live.poller) return;
@@ -30510,9 +30471,68 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       renderLiveExecutorTasks();
     }
 
+    let liveExecutorWakeTimer = 0;
+
+    function scheduleLiveExecutorWakeRefresh() {
+      if (liveExecutorWakeTimer) return;
+      liveExecutorWakeTimer = setTimeout(() => {
+        liveExecutorWakeTimer = 0;
+        refreshLiveExecutorTasks().catch(() => {});
+      }, 250);
+    }
+
+    async function startLiveExecutorEventStream() {
+      const live = liveExecutorState();
+      if (live.eventAbort) {
+        try { live.eventAbort.abort(); } catch (_) {}
+      }
+      if (!state.token) return;
+      const ctrl = new AbortController();
+      live.eventAbort = ctrl;
+      // Browser watches the whole account: executor tasks may target any of
+      // the user's devices, and the selected device can change without a reload.
+      const headers = { ...authHeaders() };
+      delete headers["X-Installation-Id"];
+      let retryMs = 3000;
+      try {
+        const resp = await fetch(apiUrl("/api/scheduled-tasks/stream"), {
+          method: "GET",
+          headers,
+          cache: "no-store",
+          signal: ctrl.signal,
+        });
+        if (!resp.ok || !resp.body) {
+          retryMs = resp.status === 401 ? 30000 : 5000;
+          throw new Error(`stream ${resp.status}`);
+        }
+        retryMs = 3000;
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx = buffer.indexOf("\n\n");
+          while (idx >= 0) {
+            const chunk = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            if (/^event:\s*wake/m.test(chunk)) scheduleLiveExecutorWakeRefresh();
+            idx = buffer.indexOf("\n\n");
+          }
+        }
+      } catch (err) {
+        if (ctrl.signal.aborted) return;
+      }
+      if (!ctrl.signal.aborted) {
+        setTimeout(() => startLiveExecutorEventStream().catch(() => {}), retryMs);
+      }
+    }
+
     function loadLiveExecutorPage() {
       liveExecutorV3Restore();
       renderLiveExecutorDeviceSelect();
+      startLiveExecutorEventStream().catch(() => {});
       renderLiveExecutorImage();
       renderLiveExecutorTasks();
       decorateVoiceFillFields($("liveExecutorView") || document);

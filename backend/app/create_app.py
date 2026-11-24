@@ -2096,6 +2096,13 @@ def create_app() -> FastAPI:
             logger.info("[启动] 服务端素材混剪执行器已注册（LOBSTER_SERVER_EXEC_ACTIONS 开启）")
     except Exception as exc:  # noqa: BLE001
         logger.warning("[启动] 服务端素材混剪执行器未启动: %s", exc)
+
+    @app.on_event("startup")
+    async def _start_task_wake_poller() -> None:
+        from .services import task_wake
+
+        task_wake.start_background_poller()
+
     return app
 
 

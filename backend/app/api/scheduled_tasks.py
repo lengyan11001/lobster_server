@@ -6,6 +6,7 @@ import threading
 import asyncio
 import copy
 import ipaddress
+import json
 import logging
 import os
 import uuid
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, update
 from sqlalchemy.orm import Session, defer
@@ -46,7 +48,12 @@ from ..models import (
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
-from .auth import get_current_user, get_current_user_id_from_token, request_auth_session_id
+from .auth import (
+    get_current_user,
+    get_current_user_id_from_stream_token,
+    get_current_user_id_from_token,
+    request_auth_session_id,
+)
 from .ip_content_studio import (
     _current_template_id_from_meta,
     _draft_record_payload,
@@ -71,7 +78,7 @@ from .social_leads import (
 from .wechat_channels_transcript import run_wechat_channels_transcript_payload_to_completion
 from .installation_slots import ensure_installation_slot, installation_slot_id_for_user
 from .mobile_identity import online_user_for_mobile_user
-from ..services import dispatch_devices
+from ..services import dispatch_devices, task_wake
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from ..services.exec_routing import executor_for_payload
 from ..services.device_presence import is_device_online
@@ -4114,6 +4121,13 @@ def _create_run_for_target(
         updated_at=now,
     )
     db.add(run)
+    if _executor_wake_enabled(task):
+        task_wake.record(
+            db,
+            user_id=task.user_id,
+            installation_id=installation_id or "",
+            kind="scheduled_task",
+        )
     _clear_pending_empty_for_target("run", task.user_id, installation_id)
     system_session = ensure_system_task_session(db, task.user_id, now=now, backfill=False)
     system_session.last_message_at = now
@@ -5685,6 +5699,18 @@ def _is_demo_once_payload(payload: Any, schedule_type: Any, created_by_role: Any
     return source == "personal_current"
 
 
+def _executor_wake_enabled(task: Any) -> bool:
+    """Only H5 live-executor runs wake devices for now.
+
+    Normal workflow runs keep the existing 90s poll until the executor path has
+    been stable in production for a while.
+    """
+    payload = getattr(task, "payload", None)
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("live_executor"))
+
+
 def _is_demo_once_task(task: Any) -> bool:
     return _is_demo_once_payload(
         getattr(task, "payload", None),
@@ -6409,6 +6435,9 @@ def pending_scheduled_task_runs(
 ):
     xi = _header_installation_id(request)
     client_process_id = _header_client_process_id(request)
+    # An SSE wake must bypass the 20s per-process empty cache: the task may
+    # have been written by a different uvicorn worker whose cache is still hot.
+    woke = str(request.headers.get("X-Lobster-Wake") or "").strip() == "1"
     now = datetime.utcnow()
     assert_installation_slot_owner(
         db,
@@ -6476,7 +6505,7 @@ def pending_scheduled_task_runs(
     _enqueue_due_tasks(db, current_user_id, xi)
     _expire_workflow_node_runs(db, now, user_id=current_user_id, installation_id=xi)
     pending_key = _pending_cache_key("run", current_user_id, xi)
-    if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
+    if not woke and _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
     if xi:
         _touch_installation_slot_lazy(db, current_user_id, xi)
@@ -6613,6 +6642,15 @@ def pending_scheduled_task_runs(
                 msg.updated_at = now
         _add_h5_event(db, row.h5_message_id, row.user_id, "claimed", {"installation_id": xi or ""})
         rows.append(row)
+        if _executor_wake_enabled(row):
+            # Tell the H5 card (and the device's own stream) that the run moved
+            # from pending to processing, so the UI flips without waiting 4s.
+            task_wake.record(
+                db,
+                user_id=row.user_id,
+                installation_id=row.installation_id or xi or "",
+                kind="claimed",
+            )
         if serial_key:
             claimed_serial_keys.add(serial_key)
         # Never hand one device more than one run per poll. The next run is
@@ -6624,6 +6662,50 @@ def pending_scheduled_task_runs(
     else:
         _mark_pending_empty(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS)
     return {"ok": True, "items": [_serialize_run(r) for r in rows]}
+
+
+@router.get("/api/scheduled-tasks/stream", summary="执行台任务唤醒长连接（SSE）")
+async def stream_scheduled_task_events(
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id_from_stream_token),
+):
+    """Push a wake event when an H5 executor run is queued.
+
+    The client still claims through ``/api/scheduled-tasks/pending``; this
+    stream only removes the 90s poll latency. Normal workflow runs are not
+    recorded yet, so their behaviour is unchanged.
+    """
+    installation_id = _header_installation_id(request)
+
+    async def event_source():
+        queue = await task_wake.subscribe(current_user_id, installation_id)
+        started = time.monotonic()
+        try:
+            yield "retry: 3000\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                if time.monotonic() - started > 20 * 60:
+                    yield "event: reconnect\ndata: {}\n\n"
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                yield "event: wake\ndata: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+        finally:
+            await task_wake.unsubscribe(current_user_id, installation_id, queue)
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/api/scheduled-tasks/runs/{run_id}/publish-request", summary="提交定时任务结果发布请求")

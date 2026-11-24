@@ -554,6 +554,25 @@ async def get_current_user_id_from_token(
         raise credentials_exception
 
 
+async def get_current_user_id_from_stream_token(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+) -> int:
+    """Validate a bearer token for an SSE stream without pinning a DB session.
+
+    Normal endpoints keep their dependency session until the response is sent.
+    A stream can live for minutes/hours, so open a short session here, validate,
+    and return it to the pool before the generator starts.
+    """
+    from ..db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return await get_current_user_id_from_token(request, token=token, db=db)
+    finally:
+        db.close()
+
+
 async def get_messenger_user_id(
     request: Request,
     token: str = Depends(oauth2_scheme),
