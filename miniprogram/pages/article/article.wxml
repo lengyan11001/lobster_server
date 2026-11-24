@@ -9,9 +9,8 @@
     <button class="ghost mini" bindtap="goBackList">返回列表</button>
   </view>
 
-  <view class="prefill-row">
-    <button class="ghost mini" bindtap="openTopicRecommend">选题</button>
-    <button class="ghost mini" bindtap="openMemory">IP生成</button>
+  <view class="head-actions">
+    <button class="ghost mini" bindtap="openMemory">IP记忆生成</button>
     <button class="ghost mini" bindtap="openRecording">录音生成</button>
   </view>
 

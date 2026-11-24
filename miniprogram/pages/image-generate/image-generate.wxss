@@ -646,3 +646,6 @@
 .top-action { position: relative; z-index: 1; font-size: 26rpx; color: #1957E8; background: transparent; border: 0; padding: 0 8rpx; line-height: 1.2; }
 
 .top-actions { display: flex; align-items: center; gap: 18rpx; }
+
+.head-actions { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }
+.head-actions .ghost.mini { margin-top: 0; height: 60rpx; line-height: 60rpx; padding: 0 24rpx; font-size: 24rpx; color: #1957E8; background: #eff6ff; border-radius: 16rpx; }

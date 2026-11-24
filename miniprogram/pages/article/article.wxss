@@ -32,3 +32,5 @@
 
 .prefill-row { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }
 .hint { display: block; margin-top: 10rpx; font-size: 22rpx; color: #64748b; line-height: 1.6; }
+
+.head-actions { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }

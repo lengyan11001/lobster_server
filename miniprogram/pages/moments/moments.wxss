@@ -45,3 +45,12 @@
 
 .prefill-row { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }
 .hint { display: block; margin-top: 10rpx; font-size: 22rpx; color: #64748b; line-height: 1.6; }
+
+.head-actions { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }
+.head-actions .ghost.mini { margin-top: 0; height: 60rpx; line-height: 60rpx; padding: 0 24rpx; font-size: 24rpx; color: #1957E8; background: #eff6ff; border-radius: 16rpx; }
+
+.img-row { display: flex; flex-wrap: wrap; gap: 14rpx; margin: 8rpx 0 16rpx; }
+.img-item { position: relative; width: 150rpx; height: 150rpx; }
+.img { width: 150rpx; height: 150rpx; border-radius: 12rpx; }
+.img-del { position: absolute; top: -10rpx; right: -10rpx; width: 36rpx; height: 36rpx; line-height: 34rpx; text-align: center; font-size: 24rpx; color: #fff; background: #ef4444; border-radius: 50%; }
+.img-add { width: 150rpx; height: 150rpx; line-height: 150rpx; text-align: center; font-size: 44rpx; color: #64748b; background: #f8fafc; border: 2rpx dashed #cbd5e1; border-radius: 12rpx; }

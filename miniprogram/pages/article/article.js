@@ -60,6 +60,7 @@ Page({
   openTopicRecommend() { wx.navigateTo({ url: "/pages/topic-recommend?target=article" }); },
   openMemory() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("memory"); },
   openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
+  openPrefillHistory() { const d = this.selectComponent("#topicPrefill"); if (d) d.openHistory(); },
 
   onPrefillPick(evt) {
     const item = (evt && evt.detail && evt.detail.item) || {};

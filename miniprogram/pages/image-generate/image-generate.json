@@ -3,5 +3,8 @@
   "navigationBarBackgroundColor": "#f8f9fa",
   "navigationBarTextStyle": "black",
   "backgroundColor": "#f8f9fa",
-  "backgroundTextStyle": "dark"
+  "backgroundTextStyle": "dark",
+  "usingComponents": {
+    "topic-prefill": "/components/topic-prefill/topic-prefill"
+  }
 }

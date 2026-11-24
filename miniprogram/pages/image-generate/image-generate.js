@@ -550,6 +550,15 @@ Page({
 
   noop() {},
 
+  openMemory() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("memory"); },
+  openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
+  onPrefillPick(evt) {
+    const item = (evt && evt.detail && evt.detail.item) || {};
+    const text = String(item.script || item.title || "");
+    this.setData({ prompt: text, promptLength: text.length });
+    wx.showToast({ title: "已填入选题", icon: "none" });
+  },
+
   onPromptInput(evt) {
     const prompt = evt.detail.value || "";
     this.setData({ prompt, promptLength: prompt.length });

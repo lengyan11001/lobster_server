@@ -7,9 +7,13 @@
       <button wx:if="{{viewMode === 'list'}}" class="top-action" bindtap="openCreate">＋ 新建</button>
       <block wx:else>
         <button class="top-action" bindtap="goBack">返回列表</button>
-        <button class="top-action" bindtap="openAudioPicker">录音生成</button>
       </block>
     </view>
+  </view>
+
+  <view wx:if="{{viewMode === 'create'}}" class="head-actions">
+    <button class="ghost mini" bindtap="openMemory">IP记忆生成</button>
+    <button class="ghost mini" bindtap="openRecording">录音生成</button>
   </view>
 
   <view wx:if="{{viewMode === 'list'}}" class="panel">
@@ -191,3 +195,5 @@
   </view>
   </block>
 </view>
+
+<topic-prefill id="topicPrefill" target="storyboard" bind:pick="onPrefillPick" />

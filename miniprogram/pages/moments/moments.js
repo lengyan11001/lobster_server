@@ -111,6 +111,64 @@ Page({
     wx.showToast({ title: "已填入选题", icon: "none" });
   },
 
+  chooseImages() {
+    if (this.data.uploadingImage) return;
+    wx.chooseMedia({
+      count: 6 - (this.data.images || []).length,
+      mediaType: ["image"],
+      sourceType: ["album", "camera"],
+      success: (res) => {
+        const files = (res.tempFiles || []).slice(0, 6 - (this.data.images || []).length);
+        if (!files.length) return;
+        this.setData({ uploadingImage: true });
+        const rows = (this.data.images || []).slice();
+        let done = 0;
+        files.reduce((chain, file) => chain.then(() => api.uploadFile({
+          url: "/api/assets/upload",
+          filePath: file.tempFilePath,
+          name: "file",
+          formData: { media_type: "image", tags: "moments,miniprogram" },
+          token: app.globalData.token || ""
+        }).then((data) => {
+          const url = String((data && (data.source_url || data.url)) || "").trim();
+          if (url) rows.push({ url, local: file.tempFilePath });
+        }).catch(() => {}).then(() => {
+          done += 1;
+          this.setData({ images: rows.slice(0, 6) });
+        })), Promise.resolve()).then(() => this.setData({ uploadingImage: false }));
+      }
+    });
+  },
+
+  removeImage(e) {
+    const idx = Number(e.currentTarget.dataset.index || 0);
+    const rows = (this.data.images || []).slice();
+    rows.splice(idx, 1);
+    this.setData({ images: rows });
+  },
+
+  attachImagesToGroup(groupId) {
+    const images = (this.data.images || []).map((row, i) => ({ image_url: row.url, index: i + 1 }));
+    const gid = String(groupId || "");
+    if (!gid || !images.length) {
+      this.setData({ images: [] });
+      return Promise.resolve();
+    }
+    return app.request({ url: "/api/ip-content/draft-records?task=moments_candidate&limit=200", timeout: 30000 })
+      .then((data) => {
+        const rows = ((data && data.items) || []).filter((row) => String(row.group_id || "") === gid);
+        const tasks = rows.map((row) => app.request({
+          method: "POST",
+          url: "/api/ip-content/draft-records/" + encodeURIComponent(row.record_id) + "/image",
+          data: { image_url: images[0].image_url, selected: true, meta: { images } },
+          timeout: 30000
+        }).catch(() => null));
+        return Promise.all(tasks);
+      })
+      .then(() => this.setData({ images: [] }))
+      .catch(() => {});
+  },
+
   onTopic(e) { this.setData({ topic: e.detail.value }); },
   onReq(e) { this.setData({ copyRequirement: e.detail.value }); },
   setCopyCount(e) { this.setData({ copyCount: Number(e.currentTarget.dataset.value || 10) }); },
@@ -144,6 +202,7 @@ Page({
     })
       .then((data) => {
         const gid = String((data && data.group_id) || "");
+        this.attachImagesToGroup(gid);
         this.finishMomentTask(histId, true, gid ? ("已生成 · " + gid.slice(0, 6)) : "已生成");
       })
       .catch((err) => {
