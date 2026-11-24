@@ -27771,6 +27771,13 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
     }
 
     async function submitPublishDraftClientTask(body) {
+      const publishOptions = Object.assign({}, (body.options && typeof body.options === "object") ? body.options : {});
+      if (!publishOptions.content_language) {
+        try {
+          const tplLang = currentPersonalTemplateLanguage();
+          if (tplLang) publishOptions.content_language = tplLang;
+        } catch (e) {}
+      }
       const params = {
         asset_id: body.asset_id || "",
         url: body.source_url || body.url || "",
@@ -27787,7 +27794,7 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         tags: body.tags || "",
         ai_publish_copy: !!body.ai_publish_copy,
         source_prompt: body.source_prompt || "",
-        options: body.options || {},
+        options: publishOptions,
       };
       if (Array.isArray(body.images) && body.images.length) {
         params.images = body.images;
