@@ -69,10 +69,6 @@ Page({
   },
 
   goCreate() {
-    if (this.data.feature === "article") {
-      this.setData({ modalOpen: true, topic: "", points: "", audience: "", tone: "专业观点" });
-      return;
-    }
     wx.navigateTo({ url: this.data.createUrl });
   },
 

@@ -1,11 +1,25 @@
 <view class="page">
   <view style="margin:12rpx 0;padding:12rpx 16rpx;border-radius:10rpx;background:#fff7ed;color:#9a3412;font-size:22rpx;line-height:1.6;">AI 生成内容，请注意甄别；生成结果仅供参考。</view>
+
   <view class="head">
     <view class="head-text">
       <text class="title">公众号文案</text>
-      <text class="sub">一次生成标题、摘要和正文，可直接复制到公众号后台</text>
+      <text class="sub">选题/录音/IP 生成，或粘贴公众号链接复刻改写</text>
     </view>
-    <button class="ghost mini" bindtap="openAudioPicker">录音生成</button>
+    <button class="ghost mini" bindtap="goBackList">返回列表</button>
+  </view>
+
+  <view class="prefill-row">
+    <button class="ghost mini" bindtap="openTopicRecommend">选题</button>
+    <button class="ghost mini" bindtap="openMemory">IP生成</button>
+    <button class="ghost mini" bindtap="openRecording">录音生成</button>
+  </view>
+
+  <view class="panel">
+    <text class="label">复刻公众号文章（可选）</text>
+    <input class="input" value="{{sourceUrl}}" bindinput="onSourceUrl" placeholder="粘贴 mp.weixin.qq.com/s/... 文章链接" />
+    <button class="ghost" loading="{{fetchingSource}}" bindtap="fetchSource">抓取原文并改写</button>
+    <text wx:if="{{rewriteMode}}" class="hint">{{sourceTitle ? '已抓取：' + sourceTitle : '已抓取原文，生成时会按原文改写'}}</text>
   </view>
 
   <view class="panel">
@@ -21,7 +35,7 @@
         <view wx:for="{{tones}}" wx:key="*this" class="chip {{tone === item ? 'active' : ''}}" data-value="{{item}}" bindtap="setTone">{{item}}</view>
       </view>
     </view>
-    <button class="primary" loading="{{loading}}" disabled="{{loading}}" bindtap="generate">生成公众号文案</button>
+    <button class="primary" loading="{{loading}}" disabled="{{loading}}" bindtap="generate">{{rewriteMode ? '复刻改写并生成' : '生成公众号文案'}}</button>
   </view>
 
   <view wx:if="{{title || body}}" class="panel">
@@ -37,18 +51,5 @@
 
   <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
 
-  <view wx:if="{{pickerOpen}}" class="overlay" catchtap="closePicker">
-    <view class="sheet" catchtap="noop">
-      <view class="sheet-head">
-        <text class="sheet-title">选一条已转写的录音</text>
-        <text class="sheet-close" catchtap="closePicker">×</text>
-      </view>
-      <view wx:if="{{pickerLoading}}" class="empty">加载中…</view>
-      <view wx:elif="{{!pickerItems.length}}" class="empty">没有可用的录音（需转写完成）</view>
-      <view wx:for="{{pickerItems}}" wx:key="id" class="pick" data-index="{{index}}" bindtap="pickRecording">
-        <text class="pick-name">{{item.name}}</text>
-        <text class="pick-meta">{{item.time}}</text>
-      </view>
-    </view>
-  </view>
+  <topic-prefill id="topicPrefill" target="article" bind:pick="onPrefillPick" />
 </view>

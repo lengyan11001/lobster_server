@@ -29,3 +29,6 @@
 .pick { padding: 22rpx 0; border-top: 2rpx solid #f1f5f9; }
 .pick-name { display: block; font-size: 28rpx; color: #0f172a; }
 .pick-meta { display: block; margin-top: 6rpx; font-size: 22rpx; color: #64748b; }
+
+.prefill-row { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }
+.hint { display: block; margin-top: 10rpx; font-size: 22rpx; color: #64748b; line-height: 1.6; }

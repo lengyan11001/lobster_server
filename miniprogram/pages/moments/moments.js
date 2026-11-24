@@ -97,6 +97,20 @@ Page({
     this.load();
   },
 
+  openTopicRecommend() { wx.navigateTo({ url: "/pages/topic-recommend?target=moments" }); },
+  openMemory() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("memory"); },
+  openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
+
+  onPrefillPick(evt) {
+    const item = (evt && evt.detail && evt.detail.item) || {};
+    const text = String(item.script || item.content || item.body || "");
+    this.setData({
+      topic: String(item.title || text || "").slice(0, 200),
+      copyRequirement: text ? text.slice(0, 200) : this.data.copyRequirement
+    });
+    wx.showToast({ title: "已填入选题", icon: "none" });
+  },
+
   onTopic(e) { this.setData({ topic: e.detail.value }); },
   onReq(e) { this.setData({ copyRequirement: e.detail.value }); },
   setCopyCount(e) { this.setData({ copyCount: Number(e.currentTarget.dataset.value || 10) }); },

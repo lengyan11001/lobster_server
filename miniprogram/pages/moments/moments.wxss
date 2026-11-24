@@ -42,3 +42,6 @@
 .chip.failed { background: #fef2f2; color: #dc2626; }
 
 .head-action { font-size: 26rpx; color: #1957E8; padding: 10rpx 0 10rpx 20rpx; white-space: nowrap; }
+
+.prefill-row { display: flex; gap: 16rpx; margin: 0 0 16rpx; flex-wrap: wrap; }
+.hint { display: block; margin-top: 10rpx; font-size: 22rpx; color: #64748b; line-height: 1.6; }

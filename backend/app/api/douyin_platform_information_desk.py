@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from html import unescape
+from html.parser import HTMLParser
 from decimal import Decimal
 
 import httpx
@@ -502,4 +504,88 @@ async def resolve_viral_share_video(
         "url": source_url,
         "title": str(data.get("title") or ""),
         "cover_url": str(data.get("imageSrc") or ""),
+    }
+
+
+# 公众号文章复刻：抓取 mp.weixin.qq.com 正文
+class WechatArticleFetchBody(BaseModel):
+    url: str = Field("", max_length=2000)
+
+
+class _WechatArticleParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.in_content = False
+        self.in_title = False
+        self.title_parts = []
+        self.content_parts = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "div" and attrs.get("id") == "js_content":
+            self.in_content = True
+        if tag == "title":
+            self.in_title = True
+        if self.in_content and tag in ("p", "br", "div", "section", "h1", "h2", "h3", "li", "blockquote", "tr"):
+            self.content_parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self.in_title = False
+        if self.in_content and tag in ("p", "div", "section", "h1", "h2", "h3", "li", "blockquote", "tr"):
+            self.content_parts.append("\n")
+
+    def handle_data(self, data):
+        text = str(data or "").strip()
+        if not text:
+            return
+        if self.in_title:
+            self.title_parts.append(text)
+        if self.in_content:
+            self.content_parts.append(text)
+
+
+@router.post("/api/wechat-article/fetch", summary="抓取公众号文章正文（复刻用）")
+async def fetch_wechat_article_body(
+    body: WechatArticleFetchBody,
+    current_user: User = Depends(get_current_user),
+):
+    url = str(body.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="请粘贴完整的公众号文章链接")
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, trust_env=False) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+                                  "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                },
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[wechat-article] fetch failed user_id=%s", current_user.id)
+        raise HTTPException(status_code=502, detail=f"抓取文章失败：{exc}") from exc
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"抓取文章失败：HTTP {resp.status_code}")
+    html_text = resp.text or ""
+    parser = _WechatArticleParser()
+    try:
+        parser.feed(html_text)
+    except Exception:  # noqa: BLE001
+        pass
+    content = re.sub(r"\n{3,}", "\n\n", "".join(parser.content_parts)).strip()
+    title = "".join(parser.title_parts).strip()
+    if not title:
+        match = re.search(r'property="og:title"\s+content="([^"]+)"', html_text)
+        if match:
+            title = unescape(match.group(1)).strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="没有从这篇文章里读到正文，请确认链接是公众号文章页")
+    return {
+        "ok": True,
+        "url": url,
+        "title": title,
+        "content": content[:12000],
+        "length": len(content),
     }

@@ -14,6 +14,7 @@ function fmtTime(v) {
 Page({
   data: {
     viewMode: "list",
+    target: "",
     jobList: [],
     currentJobTitle: "",
     running: false,
@@ -33,8 +34,10 @@ Page({
     hasPlan: false
   },
 
-  onLoad() {
+  onLoad(query) {
     app.restoreSession();
+    this.target = String((query && query.target) || "");
+    this.setData({ target: this.target });
     this.topicPoller = null;
     this.topicActive = null;
     this.latestPlan = null;
@@ -364,10 +367,13 @@ Page({
     const id = Number(e.currentTarget.dataset.id || 0);
     const row = (this.data.topics || []).find((item) => item.id === id);
     if (!row) return;
-    wx.setStorageSync("lobster_digital_prefill", {
-      title: row.title || "",
-      text: row.script || row.hook || row.title || ""
-    });
+    const payload = { title: row.title || "", text: row.script || row.hook || row.title || "" };
+    if (this.target === "article" || this.target === "moments") {
+      wx.setStorageSync(this.target === "article" ? "lobster_article_prefill" : "lobster_moments_prefill", payload);
+      wx.navigateBack({ delta: 1 });
+      return;
+    }
+    wx.setStorageSync("lobster_digital_prefill", payload);
     wx.navigateTo({ url: "/pages/digital/digital" });
   },
 

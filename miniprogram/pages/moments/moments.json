@@ -1,5 +1,7 @@
 {
   "navigationBarTitleText": "朋友圈图文",
   "enablePullDownRefresh": false,
-  "usingComponents": {}
+  "usingComponents": {
+    "topic-prefill": "/components/topic-prefill/topic-prefill"
+  }
 }

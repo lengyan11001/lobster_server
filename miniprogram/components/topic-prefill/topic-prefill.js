@@ -28,6 +28,11 @@ Component({
   methods: {
     noop() {},
 
+    apiTarget() {
+      const t = String(this.data.target || "");
+      return (t === "article" || t === "moments") ? "storyboard" : t;
+    },
+
     open(mode) {
       if (!(app.globalData.token && app.globalData.phone)) {
         wx.showToast({ title: "请先到「我的」登录授权", icon: "none" });
@@ -126,7 +131,7 @@ Component({
       app.request({
         method: "POST",
         url: "/api/ip-prefill/generate",
-        data: Object.assign({ target: this.data.target, count: 5 }, payload),
+        data: Object.assign({ target: this.apiTarget(), count: 5 }, payload),
         timeout: 240000
       })
         .then((data) => {
@@ -201,7 +206,7 @@ Component({
       });
       setTimeout(() => this.measureBody(), 60);
       app.request({
-        url: "/api/ip-prefill/records?target=" + encodeURIComponent(this.data.target) + "&limit=20",
+        url: "/api/ip-prefill/records?target=" + encodeURIComponent(this.apiTarget()) + "&limit=20",
         timeout: 30000
       })
         .then((data) => this.setData({ history: ((data && data.items) || []) }))

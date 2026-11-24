@@ -1,5 +1,6 @@
 <view class="page">
   <view style="margin:12rpx 0;padding:12rpx 16rpx;border-radius:10rpx;background:#fff7ed;color:#9a3412;font-size:22rpx;line-height:1.6;">AI 生成内容，请注意甄别；生成结果仅供参考。</view>
+
   <view class="head">
     <view>
       <text class="title">朋友圈文案</text>
@@ -37,6 +38,11 @@
   </block>
 
   <block wx:if="{{viewMode === 'create'}}">
+    <view class="prefill-row">
+      <button class="ghost mini" bindtap="openTopicRecommend">选题</button>
+      <button class="ghost mini" bindtap="openMemory">IP生成</button>
+      <button class="ghost mini" bindtap="openRecording">录音生成</button>
+    </view>
     <view class="panel create-panel">
       <text class="label">主题 / 卖点</text>
       <textarea class="input" value="{{topic}}" bindinput="onTopic" placeholder="例如：小户型收纳神器，99 元三件套" auto-height maxlength="200" />
@@ -49,4 +55,6 @@
       <button class="primary" loading="{{generating}}" disabled="{{generating}}" bindtap="submitCreate">创建并返回列表</button>
     </view>
   </block>
+
+<topic-prefill id="topicPrefill" target="moments" bind:pick="onPrefillPick" />
 </view>

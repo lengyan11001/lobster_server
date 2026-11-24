@@ -134,7 +134,7 @@
         <view class="tp-script"><text class="tp-k">口播</text><text class="tp-v">{{item.script}}</text></view>
         <view class="tp-acts">
           <view class="btn mini" data-id="{{item.id}}" catchtap="copyTopic">一键复制</view>
-          <view class="btn mini primary" data-id="{{item.id}}" catchtap="toDigital">带入数字人</view>
+          <view class="btn mini primary" data-id="{{item.id}}" catchtap="toDigital">{{target === 'article' ? '填入文章' : (target === 'moments' ? '填入朋友圈' : '带入数字人')}}</view>
         </view>
       </view>
     </view>
