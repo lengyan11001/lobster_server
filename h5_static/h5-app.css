@@ -11313,3 +11313,24 @@
       .live-executor-v3 .live-executor-simple-records { padding: 12px !important; border-radius: 16px !important; }
       .live-executor-v3 .live-executor-simple-section-head { align-items: flex-start; }
     }
+
+
+/* 执行台入口：下发中禁用 + 确认弹窗 */
+#liveExecutorView [data-live-action]:disabled,
+#liveExecutorView [data-live-action].is-busy {
+  opacity: .55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.live-executor-confirm-panel {
+  max-width: 460px;
+}
+.live-executor-confirm-panel .live-executor-config-head {
+  margin-bottom: 10px;
+}
+.live-executor-confirm-panel .live-executor-config-actions {
+  margin-top: 16px;
+}
+.live-executor-confirm-panel .live-executor-config-actions button {
+  min-width: 124px;
+}

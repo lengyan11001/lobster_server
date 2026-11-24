@@ -16033,7 +16033,7 @@ async function api(path, options = {}) {
         return;
       }
       closeLiveExecutorConfigModal();
-      await handleLiveExecutorAction(action, { fromConfig: true });
+      await runLiveExecutorAction(action, { fromConfig: true, confirm: false });
     }
 
     function revokeLiveExecutorImagePreview() {
@@ -16654,6 +16654,11 @@ async function api(path, options = {}) {
           return;
         }
         throw new Error("这个现场动作暂不支持");
+      }).then(() => {
+        if (String(task.status || "").toLowerCase() === "failed") {
+          throw new Error(task.error || "下发失败");
+        }
+        return task;
       });
     }
 
@@ -16810,7 +16815,8 @@ async function api(path, options = {}) {
         return;
       }
       closeLiveExecutorConfigModal();
-      handleLiveExecutorAction(action, { fromConfig: true }).catch((err) => toast(err.message || "执行失败"));
+      runLiveExecutorAction(action, { fromConfig: true, confirm: false })
+        .catch((err) => toast(err.message || "执行失败"));
     }
 
     function startLiveExecutorPolling() {
@@ -30629,6 +30635,109 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       renderLiveExecutorConfigModal();
     }
 
+    let liveExecutorConfirmResolve = null;
+    let liveExecutorActionBusy = false;
+
+    function liveExecutorActionLabel(action) {
+      const map = {
+        douyin_nurture: "抖音养号",
+        douyin_leads: "抖音获客",
+        moments_content: "朋友圈图文",
+        douyin_publish: "抖音发布",
+        channels_publish: "视频号发布",
+        wechat_takeover: "微信接管",
+      };
+      return map[String(action || "").trim()] || "现场任务";
+    }
+
+    function liveExecutorActionConfirmText(action) {
+      const key = String(action || "").trim();
+      const map = {
+        douyin_nurture: "将自动浏览、点赞、关注，执行一轮养号。",
+        douyin_leads: "将按同城方向搜索并采集线索。",
+        moments_content: "将生成一条朋友圈图文 + 3 张配图，并自动发布到朋友圈。",
+        douyin_publish: "将使用同城爆款最近一次成片发布到抖音。",
+        channels_publish: "将使用同城爆款最近一次成片发布到视频号。",
+        wechat_takeover: "将执行一轮个人微信私信接管。",
+      };
+      return map[key] || "将立即下发到当前在线设备。";
+    }
+
+    function closeLiveExecutorConfirm(result) {
+      const modal = $("liveExecutorConfirmModal");
+      if (modal) {
+        modal.classList.add("hidden");
+        modal.setAttribute("aria-hidden", "true");
+      }
+      const resolve = liveExecutorConfirmResolve;
+      liveExecutorConfirmResolve = null;
+      if (resolve) resolve(!!result);
+    }
+
+    function askLiveExecutorConfirm(action) {
+      const modal = $("liveExecutorConfirmModal");
+      if (!modal) return Promise.resolve(true);
+      const selected = String(liveExecutorSelectedInstallationId() || "").trim();
+      const device = (state.devices || []).find((row) => String(row.installation_id || "") === selected);
+      const name = device ? liveExecutorDeviceLabel(device) : "未选择在线设备";
+      const title = $("liveExecutorConfirmTitle");
+      const desc = $("liveExecutorConfirmDesc");
+      const deviceEl = $("liveExecutorConfirmDevice");
+      if (title) title.textContent = `确认执行「${liveExecutorActionLabel(action)}」？`;
+      if (desc) desc.textContent = liveExecutorActionConfirmText(action);
+      if (deviceEl) deviceEl.textContent = `下发设备：${name}`;
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      return new Promise((resolve) => {
+        liveExecutorConfirmResolve = resolve;
+      });
+    }
+
+    function setLiveExecutorActionsBusy(busy) {
+      liveExecutorActionBusy = !!busy;
+      document.querySelectorAll("#liveExecutorView [data-live-action]").forEach((btn) => {
+        btn.disabled = !!busy;
+        btn.classList.toggle("is-busy", !!busy);
+      });
+      const ok = $("liveExecutorConfirmOk");
+      if (ok) {
+        ok.disabled = !!busy;
+        ok.textContent = busy ? "下发中..." : "确认执行";
+      }
+    }
+
+    async function runLiveExecutorAction(action, options = {}) {
+      if (liveExecutorActionBusy) {
+        toast("正在下发上一个任务，请稍候");
+        return null;
+      }
+      const actionKey = String(action || "").trim();
+      if (actionKey !== "secretary") {
+        const selected = String(liveExecutorSelectedInstallationId() || "").trim();
+        const online = liveExecutorOnlineRows().some((row) => String(row.installation_id || "") === selected);
+        if (!selected || !online) {
+          toast("请先选择在线设备");
+          return null;
+        }
+      }
+      if (options.confirm !== false) {
+        const ok = await askLiveExecutorConfirm(action);
+        if (!ok) return null;
+      }
+      setLiveExecutorActionsBusy(true);
+      try {
+        const task = await handleLiveExecutorAction(action, options);
+        if (task) {
+          const where = task.deviceName ? `到 ${task.deviceName}` : "";
+          toast(`已下发${where}：${task.title || liveExecutorActionLabel(action)}，等待设备领取`);
+          refreshLiveExecutorTasks().catch(() => {});
+        }
+        return task;
+      } finally {
+        setLiveExecutorActionsBusy(false);
+      }
+    }
+
     function renderLiveExecutorTasks() {
       const list = $("liveExecutorTaskList");
       if (!list) return;
@@ -30645,6 +30754,10 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
         toast("设备状态已刷新");
       }).catch((err) => toast(err.message || "设备刷新失败"));
     });
+    $("liveExecutorConfirmOk")?.addEventListener("click", () => closeLiveExecutorConfirm(true));
+    $("liveExecutorConfirmCancel")?.addEventListener("click", () => closeLiveExecutorConfirm(false));
+    $("liveExecutorConfirmClose")?.addEventListener("click", () => closeLiveExecutorConfirm(false));
+    $("liveExecutorConfirmBackdrop")?.addEventListener("click", () => closeLiveExecutorConfirm(false));
     $("liveExecutorDeviceSelect")?.addEventListener("change", (evt) => {
       setSelectedInstallationId(evt.currentTarget.value || "");
       renderLiveExecutorDeviceSelect();
@@ -30719,7 +30832,8 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       }
       const actionBtn = evt.target.closest("[data-live-action]");
       if (actionBtn) {
-        handleLiveExecutorAction(actionBtn.dataset.liveAction || "").catch((err) => toast(err.message || "执行失败"));
+        runLiveExecutorAction(actionBtn.dataset.liveAction || "", { confirm: true })
+          .catch((err) => toast(err.message || "执行失败"));
         return;
       }
       const taskCard = evt.target.closest("[data-live-task-id]");

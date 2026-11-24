@@ -26,12 +26,12 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20261124-live-executor-sse" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20261124-live-executor-confirm" />
   <link rel="stylesheet" href="/h5-static/moments-coach.css?v=20260905-idea-samples-v1" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20261015-ratio-cards-v4" />
   <link rel="stylesheet" href="/h5-static/rich-content.css?v=20260910-rich-content-v1" />
   <link rel="stylesheet" href="/h5-static/task-center.css?v=20260821-task-center-round-v3" />
-  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261124-live-executor-sse" />
+  <link rel="preload" as="script" href="/h5-static/h5-app.js?v=20261124-live-executor-confirm" />
 </head>
 <body>
   <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
@@ -2248,6 +2248,23 @@
     </div>
   </div>
 
+  <div class="employee-modal live-executor-config-modal live-executor-confirm-modal hidden" id="liveExecutorConfirmModal" role="dialog" aria-modal="true" aria-labelledby="liveExecutorConfirmTitle" aria-hidden="true">
+    <button class="employee-modal-backdrop" type="button" id="liveExecutorConfirmBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover live-executor-config-panel live-executor-confirm-panel">
+      <button class="employee-popover-close" type="button" id="liveExecutorConfirmClose" aria-label="关闭">×</button>
+      <div class="live-executor-config-head">
+        <span>CONFIRM</span>
+        <strong id="liveExecutorConfirmTitle">确认执行</strong>
+        <p id="liveExecutorConfirmDesc">将立即下发到当前在线设备。</p>
+      </div>
+      <div class="live-executor-config-device" id="liveExecutorConfirmDevice">下发设备：未选择</div>
+      <div class="live-executor-config-actions">
+        <button class="ghost" type="button" id="liveExecutorConfirmCancel">取消</button>
+        <button type="button" id="liveExecutorConfirmOk">确认执行</button>
+      </div>
+    </div>
+  </div>
+
   <div class="employee-modal upload-dialog hidden" id="assetVoiceModal" role="dialog" aria-modal="true" aria-labelledby="assetVoiceTitle">
     <button class="employee-modal-backdrop" type="button" id="assetVoiceBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover asset-action-popover">
@@ -2901,7 +2918,7 @@
 
   <script src="/h5-static/h5-i18n-generated.js?v=20260822-i18n-full-v2"></script>
   <script src="/h5-static/h5-i18n.js?v=20260824-personal-digital-resource-picker-v2"></script>
-  <script src="/h5-static/h5-app.js?v=20261124-live-executor-sse"></script>
+  <script src="/h5-static/h5-app.js?v=20261124-live-executor-confirm"></script>
   <script src="/h5-static/task-center.js?v=20260831-auth-gated-v1"></script>
 </body>
 </html>

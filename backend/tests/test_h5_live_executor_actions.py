@@ -140,3 +140,17 @@ def test_live_executor_uses_sse_wake_stream():
     assert "startLiveExecutorEventStream().catch(() => {});" in script
     assert "scheduleLiveExecutorWakeRefresh" in script
     assert script.count("async function refreshLiveExecutorTasks()") == 1
+
+
+def test_live_executor_actions_confirm_duplicate_guard_and_success_toast():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    assert 'id="liveExecutorConfirmModal"' in html
+    assert 'id="liveExecutorConfirmOk"' in html
+    assert 'id="liveExecutorConfirmCancel"' in html
+    assert "live-executor-confirm" in html
+    assert "runLiveExecutorAction(actionBtn.dataset.liveAction" in script
+    assert "setLiveExecutorActionsBusy" in script
+    assert "正在下发上一个任务" in script
+    assert "等待设备领取" in script
+    assert "确认执行「" in script
