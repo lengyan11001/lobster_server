@@ -30486,7 +30486,10 @@ if (systemDeviceModeActive() && OWN_DEVICE_ONLY_DEPARTMENTS.includes(String(item
       if (live.eventAbort) {
         try { live.eventAbort.abort(); } catch (_) {}
       }
-      if (!state.token) return;
+      if (!state.token) {
+        setTimeout(() => startLiveExecutorEventStream().catch(() => {}), 3000);
+        return;
+      }
       const ctrl = new AbortController();
       live.eventAbort = ctrl;
       // Browser watches the whole account: executor tasks may target any of
