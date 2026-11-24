@@ -8,7 +8,6 @@
       </view>
       <view class="head-acts">
         <button wx:if="{{viewMode === 'list'}}" class="act-btn primary" bindtap="openCreate">＋ 新建</button>
-        <button wx:else class="act-btn ghost" bindtap="backToList">返回列表</button>
       </view>
     </view>
     <view wx:if="{{viewMode === 'create'}}" class="head-actions">

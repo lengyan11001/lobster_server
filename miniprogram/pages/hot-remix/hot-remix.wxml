@@ -8,7 +8,6 @@
     </view>
     <view class="head-btns">
       <button wx:if="{{viewMode === 'list'}}" class="primary small" bindtap="openCreate">＋ 新建</button>
-      <button wx:else class="ghost small" bindtap="backToList">返回列表</button>
     </view>
   </view>
 

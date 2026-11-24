@@ -6,7 +6,6 @@
       <text class="title">公众号文案</text>
       <text class="sub">选题/录音/IP 生成，或粘贴公众号链接复刻改写</text>
     </view>
-    <button class="ghost mini" bindtap="goBackList">返回列表</button>
   </view>
 
   <view class="head-actions">

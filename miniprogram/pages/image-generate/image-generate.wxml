@@ -6,7 +6,6 @@
     <view class="top-actions">
       <button wx:if="{{viewMode === 'list'}}" class="top-action" bindtap="openCreate">＋ 新建</button>
       <block wx:else>
-        <button class="top-action" bindtap="goBack">返回列表</button>
       </block>
     </view>
   </view>

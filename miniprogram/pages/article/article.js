@@ -164,6 +164,8 @@ Page({
         const article = parseArticle(raw);
         this.setData({ title: article.title, summary: article.summary, body: article.body, progressText: "" });
         hist.save("article", { title: article.title, summary: article.summary, content: article.body, status: "completed" });
+        wx.showToast({ title: "已生成", icon: "success" });
+        setTimeout(() => wx.navigateBack({ delta: 1, fail: () => {} }), 600);
       })
       .catch((err) => {
         this.setData({ progressText: "" });
