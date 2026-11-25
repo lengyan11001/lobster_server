@@ -89,7 +89,7 @@ Page({
   },
 
   openCreate() {
-    this.setData({ viewMode: "create", topic: "", copyRequirement: "", copyCount: 10, generating: false });
+    this.setData({ viewMode: "create", topic: "", copyRequirement: "", copyCount: 1, generating: false });
   },
 
   backToList() {
@@ -184,7 +184,8 @@ Page({
       return wx.showToast({ title: "已有朋友圈任务在生成", icon: "none" });
     }
     const requirement = [topic, String(this.data.copyRequirement || "").trim()].filter(Boolean).join("\n");
-    const count = Math.max(1, Math.min(20, Number(this.data.copyCount || 10)));
+    // 按标题写 1 条，然后自动配 3 张图（配图数量由服务端固定 3 张）
+    const count = 1;
     const histId = hist.save(FEATURE, {
       title: topic.slice(0, 24),
       topic,
@@ -205,7 +206,7 @@ Page({
     })
       .then((data) => {
         const gid = String((data && data.group_id) || "");
-        if (count <= 1) this.queueMomentImages(gid);
+        this.queueMomentImages(gid);
         this.finishMomentTask(histId, true, gid ? ("已生成 · " + gid.slice(0, 6)) : "已生成");
       })
       .catch((err) => {
