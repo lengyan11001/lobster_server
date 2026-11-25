@@ -32,7 +32,7 @@
         <view class="balance-label"><text>算力余额</text><image class="info-ic" src="/assets/icons/ic-info-gray.png" /></view>
         <text class="balance-num">{{creditsText}}</text>
       </view>
-      <view wx:if="{{!iosBlocked && rechargeEnabled}}" class="recharge-btn" bindtap="goRecharge" hover-class="press"><image class="plus-ic" src="/assets/icons/ic-plus.png" /><text>充值</text></view>
+      <view wx:if="{{rechargeEnabled}}" class="recharge-btn" bindtap="goRecharge" hover-class="press"><image class="plus-ic" src="/assets/icons/ic-plus.png" /><text>充值</text></view>
     </view>
     <view class="stats">
       <view class="stat" bindtap="loadDevices" hover-class="press">

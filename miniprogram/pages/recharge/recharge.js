@@ -11,32 +11,15 @@ Page({
       this.setData({ payEnabled: false, statusText: "当前版本暂不支持在线充值" });
       return;
     }
-    this.setData({ payEnabled: true });
-    let platform = "";
-    try {
-      const info = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
-      platform = String((info && info.platform) || "").toLowerCase();
-    } catch (e) {}
-    const iosBlocked = platform === "ios";
-    this.setData({ iosBlocked });
-    if (iosBlocked) {
-      // iOS 不得提供虚拟商品支付
-      this.setData({ statusText: "iOS 端暂不支持在线充值" });
-      return;
-    }
+    this.setData({ payEnabled: true, iosBlocked: false });
     this.load();
     this.loadBalance();
   },
 
-  goOrders() {
-    wx.navigateTo({ url: "/pages/orders/orders" });
-  },
+  goOrders() { wx.navigateTo({ url: "/pages/orders/orders" }); },
 
   loadBalance() {
-    if (!app.globalData.token) {
-      this.setData({ balanceText: "--" });
-      return;
-    }
+    if (!app.globalData.token) { this.setData({ balanceText: "--" }); return; }
     app.request({ url: "/auth/me", timeout: 20000 })
       .then((data) => {
         const credits = Number((data && data.credits) || 0);
@@ -48,9 +31,7 @@ Page({
 
   syncPayAmount() {
     const pkg = this.data.packages[this.data.selected];
-    const amount = this.data.mode === "package"
-      ? Number((pkg && pkg.price) || 0)
-      : Number(this.data.customAmount || 0);
+    const amount = this.data.mode === "package" ? Number((pkg && pkg.price) || 0) : Number(this.data.customAmount || 0);
     this.setData({ payAmount: amount.toFixed(2) });
   },
 
@@ -58,12 +39,15 @@ Page({
     app.request({ url: "/api/recharge/packages", timeout: 20000 })
       .then((data) => {
         const rows = (data && (data.packages || data.items)) || [];
-        const packages = (Array.isArray(rows) ? rows : []).map((row, i) => ({
-          index: Number(row.index != null ? row.index : i),
-          price: Number(row.price_yuan || row.price || 0),
-          credits: Number(row.credits || 0),
-          label: String(row.label || row.name || (row.price_yuan ? row.price_yuan + " 元" : "套餐"))
-        }));
+        const packages = (Array.isArray(rows) ? rows : []).map((row, i) => {
+          const price = Number(row.price_yuan || row.price || 0);
+          return {
+            index: Number(row.index != null ? row.index : i),
+            price,
+            credits: price * 100,
+            label: price + " 元 = " + (price * 100) + " 算力"
+          };
+        });
         this.setData({ packages }, () => this.syncPayAmount());
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
@@ -74,74 +58,63 @@ Page({
   onCustomAmount(e) { this.setData({ customAmount: e.detail.value }, () => this.syncPayAmount()); },
 
   pay() {
-    if (!this.data.payEnabled) {
-      wx.showToast({ title: "当前版本暂不支持在线充值", icon: "none" });
-      return;
-    }
-    if (this.data.iosBlocked) {
-      wx.showToast({ title: "iOS 端暂不支持在线充值", icon: "none" });
-      return;
-    }
+    if (!this.data.payEnabled) return wx.showToast({ title: "当前版本暂不支持在线充值", icon: "none" });
     const pkg = this.data.packages[this.data.selected];
     if (this.data.mode === "package" && !pkg) return wx.showToast({ title: "请选择套餐", icon: "none" });
     if (this.data.mode === "custom" && !(Number(this.data.customAmount) > 0)) return wx.showToast({ title: "请输入充值金额", icon: "none" });
     if (this.data.paying) return;
+    const yuan = Math.max(1, Math.round(this.data.mode === "package" ? Number(pkg.price || 0) : Number(this.data.customAmount || 0)));
     this.setData({ paying: true, statusText: "正在创建订单…" });
     wx.login({
-      success: (loginRes) => this.doPay(pkg, loginRes.code || ""),
-      fail: () => this.doPay(pkg, "")
+      success: (res) => this.startVirtualPay(yuan, res.code || ""),
+      fail: () => this.setData({ paying: false, statusText: "微信登录失败，请重试" })
     });
   },
 
-  doPay(pkg, code) {
-    const payload = this.data.mode === "package"
-      ? { package_index: pkg.index }
-      : { price_yuan: Math.max(1, Math.round(Number(this.data.customAmount) || 0)) };
-    payload.code = code;
-    payload.platform = this.data.iosBlocked ? "ios" : "android";
+  startVirtualPay(yuan, code) {
+    if (!code) { this.setData({ paying: false, statusText: "微信登录失败，请重试" }); return; }
     app.request({
       method: "POST",
-      url: "/api/recharge/fuiou-jsapi",
-      data: payload,
-      timeout: 60000
+      url: "/api/virtual-pay/prepare",
+      data: { code, yuan },
+      timeout: 30000
     })
       .then((data) => {
-        const pay = (data && data.pay_params) || {};
-        if (!pay.paySign || !pay.package) throw new Error("没有拿到支付参数");
-        this._orderNo = String(data.out_trade_no || "");
+        if (!data || !data.signData || !data.paySig || !data.signature) throw new Error("没有拿到虚拟支付参数");
+        this._orderNo = String(data.outTradeNo || "");
+        this._buyQuantity = Number(data.buyQuantity || yuan * 100);
         this.setData({ statusText: "正在调起支付…" });
-        wx.requestPayment({
-          timeStamp: pay.timeStamp,
-          nonceStr: pay.nonceStr,
-          package: pay.package,
-          signType: pay.signType || "MD5",
-          paySign: pay.paySign,
-          success: () => this.poll(),
-          fail: (err) => this.setData({ paying: false, statusText: (err && err.errMsg) || "支付取消" })
+        wx.requestVirtualPayment({
+          signData: data.signData,
+          paySig: data.paySig,
+          signature: data.signature,
+          mode: data.mode || "short_series_coin",
+          success: () => this.confirmVirtualPay(),
+          fail: (err) => this.setData({ paying: false, statusText: (err && (err.errMsg || err.message)) || "支付取消" })
         });
       })
-      .catch((err) => { this.setData({ paying: false, statusText: "" }); wx.showToast({ title: api.errorMessage(err), icon: "none" }); });
+      .catch((err) => {
+        this.setData({ paying: false, statusText: "" });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   },
 
-  poll() {
-    const tries = 8;
-    let n = 0;
-    const tick = () => {
-      n += 1;
-      app.request({ url: `/api/recharge/fuiou-query?out_trade_no=${encodeURIComponent(this._orderNo)}`, timeout: 20000 })
-        .then((data) => {
-          const status = String((data && data.status) || "");
-          if (status === "paid" || status === "completed") {
-            this.setData({ paying: false, statusText: "充值成功" });
-            wx.showToast({ title: "充值成功", icon: "success" });
-            this.loadBalance();
-            return;
-          }
-          if (n < tries) setTimeout(tick, 2000);
-          else this.setData({ paying: false, statusText: "支付结果确认中，稍后到账" });
-        })
-        .catch(() => { if (n < tries) setTimeout(tick, 2000); else this.setData({ paying: false }); });
-    };
-    tick();
+  confirmVirtualPay() {
+    app.request({
+      method: "POST",
+      url: "/api/virtual-pay/confirm",
+      data: { out_trade_no: this._orderNo || "", buy_quantity: this._buyQuantity || 0 },
+      timeout: 30000
+    })
+      .then((data) => {
+        const credits = Number((data && data.credits) || 0);
+        this.setData({ paying: false, statusText: "充值成功，到账 " + credits + " 算力" });
+        wx.showToast({ title: "充值成功", icon: "success" });
+        this.loadBalance();
+      })
+      .catch((err) => {
+        this.setData({ paying: false, statusText: "" });
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   }
 });

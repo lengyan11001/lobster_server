@@ -1,4 +1,6 @@
 """算力配置与展示：技能解锁价格、算力套餐（算力兑换比例）；自有充值订单；富友 PC 主扫支付。"""
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -12,6 +14,8 @@ from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from io import BytesIO
+
+import httpx
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -1393,4 +1397,124 @@ async def create_fuiou_jsapi_order(
         "credits": order.credits,
         "pay_params": result.get("pay_params") or {},
         "status": order.status,
+    }
+
+
+class VirtualPayPrepareBody(BaseModel):
+    code: str = ""
+    yuan: int = 1
+
+
+class VirtualPayConfirmBody(BaseModel):
+    out_trade_no: str = ""
+    buy_quantity: int = 0
+
+
+def _virtual_pay_conf(key: str, default: str) -> str:
+    return (os.environ.get(key) or default).strip()
+
+
+@router.post("/api/virtual-pay/prepare", summary="小程序虚拟支付：生成 signData/paySig/signature")
+async def prepare_virtual_pay(
+    body: VirtualPayPrepareBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    yuan = max(1, min(int(body.yuan or 1), 10000))
+    code = str(body.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少 wx.login code")
+    app_id = (getattr(settings, "wechat_app_id", None) or os.environ.get("WECHAT_APP_ID") or "").strip()
+    app_secret = (getattr(settings, "wechat_app_secret", None) or os.environ.get("WECHAT_APP_SECRET") or "").strip()
+    if not app_id or not app_secret:
+        raise HTTPException(status_code=503, detail="服务器未配置小程序 AppID/AppSecret")
+    try:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
+            resp = await client.get(
+                "https://api.weixin.qq.com/sns/jscode2session",
+                params={"appid": app_id, "secret": app_secret, "js_code": code, "grant_type": "authorization_code"},
+            )
+        payload = resp.json() if resp.content else {}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"微信登录失败：{exc}") from exc
+    if payload.get("errcode"):
+        raise HTTPException(status_code=400, detail=payload.get("errmsg") or "微信登录失败")
+    session_key = str(payload.get("session_key") or "").strip()
+    if not session_key:
+        raise HTTPException(status_code=400, detail="微信未返回 session_key，请重试")
+
+    env = int(_virtual_pay_conf("WECHAT_VIRTUAL_PAY_ENV", "0") or "0")
+    offer_id = _virtual_pay_conf("WECHAT_VIRTUAL_PAY_OFFER_ID", "1450737810")
+    app_key = _virtual_pay_conf("WECHAT_VIRTUAL_PAY_APPKEY", "z0EgYKuIPQpdi3wqZVwhCnGvRhLYnzqK")
+    buy_quantity = yuan * 100
+    out_trade_no = "vp" + uuid.uuid4().hex[:20]
+    sign_obj = {
+        "offerId": offer_id,
+        "buyQuantity": buy_quantity,
+        "env": env,
+        "currencyType": "CNY",
+        "outTradeNo": out_trade_no,
+        "attach": str(current_user.id),
+    }
+    sign_data = json.dumps(sign_obj, ensure_ascii=False, separators=(",", ":"))
+    pay_sig = hmac.new(app_key.encode("utf-8"), ("requestVirtualPayment&" + sign_data).encode("utf-8"), hashlib.sha256).hexdigest()
+    signature = hmac.new(session_key.encode("utf-8"), sign_data.encode("utf-8"), hashlib.sha256).hexdigest()
+    db.add(
+        RechargeOrder(
+            user_id=int(current_user.id),
+            amount_yuan=yuan,
+            amount_fen=yuan * 100,
+            credits=buy_quantity,
+            status="pending",
+            out_trade_no=out_trade_no,
+            payment_method="wechat_virtual",
+            brand_mark=user_brand_mark(current_user),
+        )
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "signData": sign_data,
+        "paySig": pay_sig,
+        "signature": signature,
+        "mode": "short_series_coin",
+        "outTradeNo": out_trade_no,
+        "buyQuantity": buy_quantity,
+        "yuan": yuan,
+    }
+
+
+@router.post("/api/virtual-pay/confirm", summary="小程序虚拟支付：支付成功后到账")
+def confirm_virtual_pay(
+    body: VirtualPayConfirmBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    order_no = str(body.out_trade_no or "").strip()
+    if not order_no:
+        raise HTTPException(status_code=400, detail="缺少订单号")
+    order = (
+        db.query(RechargeOrder)
+        .filter(RechargeOrder.out_trade_no == order_no, RechargeOrder.user_id == int(current_user.id))
+        .with_for_update()
+        .first()
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if order.status == "paid":
+        return {"ok": True, "already_paid": True, "credits": int(order.credits or 0)}
+    if int(body.buy_quantity or 0) and int(body.buy_quantity) != int(order.credits or 0):
+        raise HTTPException(status_code=400, detail="充值数量与订单不一致")
+    user = db.query(User).filter(User.id == int(current_user.id)).with_for_update().first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    amount = Decimal(int(order.credits or 0))
+    user.credits = (user.credits or Decimal("0")) + amount
+    order.status = "paid"
+    order.paid_at = datetime.utcnow()
+    db.commit()
+    return {
+        "ok": True,
+        "credits": int(order.credits or 0),
+        "balance": credits_json_float(user.credits or 0),
     }

@@ -61,10 +61,6 @@ Page({
   },
 
   goRecharge() {
-    if (this.data.iosBlocked) {
-      wx.showToast({ title: "iOS 端暂不支持在线充值", icon: "none" });
-      return;
-    }
     if (!app.globalData.token) {
       this.focusLogin();
       return;
