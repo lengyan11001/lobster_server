@@ -162,8 +162,11 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .idea-mask {
   position: absolute;
-  inset: 0;
-  background: #f8f9fa;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(15,23,42,0) 42%, rgba(15,23,42,0.68) 100%);
 }
 
 .idea-copy {
@@ -175,18 +178,20 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .idea-title {
   display: block;
-  color: #0f172a;
+  color: #ffffff;
   font-size: 30rpx;
   font-weight: 950;
+  text-shadow: 0 2rpx 10rpx rgba(0,0,0,0.5);
 }
 
 .idea-author,
 .idea-plays {
   display: block;
   margin-top: 8rpx;
-  color: #64748b;
+  color: rgba(255,255,255,0.88);
   font-size: 21rpx;
   font-weight: 800;
+  text-shadow: 0 2rpx 8rpx rgba(0,0,0,0.5);
 }
 
 .idea-plays {
