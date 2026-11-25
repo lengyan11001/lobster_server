@@ -297,6 +297,14 @@ def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
         if key:
             base = (getattr(settings, "deepseek_api_base", None) or "https://api.deepseek.com").rstrip("/")
             return {"api_base": base, "api_key": key, "provider": "deepseek"}
+    # 阿里云百炼（千问）OpenAI 兼容端点：DeepSeek 之后的第一兜底。
+    if _dashscope_chat_configured() and mid == _dashscope_chat_model_id():
+        base = (
+            getattr(settings, "dashscope_api_base", None)
+            or os.environ.get("DASHSCOPE_BASE_URL")
+            or "https://dashscope.aliyuncs.com"
+        ).rstrip("/") + "/compatible-mode"
+        return {"api_base": base, "api_key": _dashscope_chat_key(), "provider": "dashscope"}
     return None
 
 
@@ -309,6 +317,24 @@ def _yyapi_chat_configured() -> bool:
     """
     key = (getattr(settings, "yyapi_api_key", None) or os.environ.get("YYAPI_API_KEY") or "").strip()
     return bool(key)
+
+
+def _dashscope_chat_key() -> str:
+    return (
+        getattr(settings, "dashscope_api_key", None)
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or os.environ.get("ALIYUN_DASHSCOPE_API_KEY")
+        or ""
+    ).strip()
+
+
+def _dashscope_chat_configured() -> bool:
+    return bool(_dashscope_chat_key())
+
+
+def _dashscope_chat_model_id() -> str:
+    raw = (os.environ.get("DASHSCOPE_CHAT_MODEL") or "qwen-plus").strip()
+    return _strip_provider_prefix(raw) or "qwen-plus"
 
 
 def _deepseek_chat_configured() -> bool:
@@ -1326,6 +1352,9 @@ def _sutui_chat_model_candidates(
         add(_PRIMARY_DEEPSEEK_MODEL)
     if not has_images:
         add(_TEXT_FALLBACK_MODEL)
+    # DeepSeek 之后兜底：阿里云百炼千问（文本；图片请求仍走后面的多模态通道）
+    if not has_images and _dashscope_chat_configured():
+        add(_dashscope_chat_model_id())
     if change2pro_model:
         add(change2pro_model)
     if yyapi_model:
@@ -1433,6 +1462,9 @@ def _sutui_chat_attempts_for_models(
                 # 官方直连覆盖的 id：直连失败后直接进入下一个候选，不叠加 xskill 的
                 # deepseek 通道（xskill 侧依赖 fal 账号池，只会多耗一跳并报
                 # "No available fal accounts"）。
+                continue
+            if dr.get("provider") == "dashscope":
+                # 千问只走百炼官方兼容端点，不再叠加 xskill 的同名候选。
                 continue
         if _is_deepseek_model_id(mid):
             # DeepSeek 的 id 只认官方直连（上面的 direct:deepseek）。没有直连 key 的
