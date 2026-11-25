@@ -69,6 +69,7 @@ class ImitationIn(BaseModel):
     # 2026-10-05：成片时长放给用户选（秒）。0 = 跟输入视频一样长；
     # 上游/手册限制：有视频输入时「输入 + 输出 ≤ 30 秒」，最短 2 秒。
     duration_seconds: int = 0
+    video_seconds: float = 0
     title: str = ""
     prompt: str = ""
 
@@ -87,7 +88,13 @@ async def create_information_desk_imitation(
     # 上游按「输入视频 + 输出视频」秒数计费，这里先按裁剪后的秒数预扣，失败全额退
     # 2026-10-05：改成按「原视频实际时长」计费 —— 先只按上限校验余额（不扣），
     # 等 prepare 探到真实时长后再按实际秒数扣费（失败/提交不成功不扣）。
-    cap_plan = billing.estimate_imitation(_max_seconds(), body.resolution)
+    input_guess = float(body.video_seconds or 0)
+    if input_guess > 0:
+        output_guess = float(body.duration_seconds or 0) or input_guess
+        cap_seconds = min(float(_max_seconds()), input_guess) + output_guess
+    else:
+        cap_seconds = float(_max_seconds())
+    cap_plan = billing.estimate_imitation(cap_seconds, body.resolution, sides=billing.Decimal("1"))
     billing.check_balance(db, current_user, billing.Decimal(str(cap_plan["credits"])))
     # 2026-11-07 线上事故：check_balance 会开启一个只读事务，随后 prepare_imitation
     # 下载/裁剪/上传原视频可能耗时 1-3 分钟；Postgres 的

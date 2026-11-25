@@ -25,7 +25,8 @@ function mapRows(data) {
       desc: String(row.source_desc || ""),
       status: status,
       statusText: STATUS_TEXT[status] || status,
-      meta: fmtTime(row.created_at) + " · " + (STATUS_TEXT[status] || status),
+      credits: Number(row.credits_charged || 0),
+      meta: fmtTime(row.created_at) + " · " + (STATUS_TEXT[status] || status) + (Number(row.credits_charged || 0) > 0 ? (" · 扣 " + Number(row.credits_charged) + " 算力") : ""),
       videoUrl: String(row.video_url || "")
     };
   });
@@ -59,7 +60,7 @@ Page({
     ],
     durationLabels: ["跟原视频", "5 秒", "10 秒", "15 秒"],
     durIndex: 0,
-    videoUrl: "", videoPreview: "", videoName: "",
+    videoUrl: "", videoPreview: "", videoName: "", videoSeconds: 0,
     shareText: "", shareStatus: "", resolving: false,
     imageUrl: "", imagePreview: "", uploadingImage: false,
     prompt: "", title: "",
@@ -184,7 +185,7 @@ Page({
           .then((data) => {
             const url = String((data && (data.source_url || data.url)) || "").trim();
             if (!url) throw new Error("上传失败：没有拿到视频地址");
-            this.setData({ videoUrl: url, videoPreview: file.tempFilePath, videoName: "已上传的视频", shareStatus: "" });
+            this.setData({ videoUrl: url, videoPreview: file.tempFilePath, videoName: "已上传的视频", videoSeconds: Number(file.duration || 0), shareStatus: "" });
             wx.showToast({ title: "视频已就绪", icon: "success" });
           })
           .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
@@ -216,6 +217,7 @@ Page({
         this.setData({
           videoUrl: url,
           videoPreview: url,
+          videoSeconds: 0,
           videoName: String((data && data.title) || "分享视频"),
           shareStatus: "视频已就绪，可以开始跟创"
         });
@@ -275,6 +277,7 @@ Page({
         mode: mode.value,
         resolution: this.data.resolutions[this.data.resIndex] || "720P",
         duration_seconds: Number(duration.value || 0),
+        video_seconds: Number(this.data.videoSeconds || 0),
         prompt: String(this.data.prompt || "").trim(),
         title: String(this.data.title || "").trim()
       },
