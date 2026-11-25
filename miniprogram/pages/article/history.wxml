@@ -15,10 +15,11 @@
 
     <block wx:if="{{openId === item.id}}">
       <text wx:if="{{item.summary}}" class="summary">{{item.summary}}</text>
-      <view wx:if="{{item.images.length}}" class="img-grid">
-        <image wx:for="{{item.images}}" wx:for-item="img" wx:key="*this" src="{{img}}" mode="aspectFill" class="img" data-url="{{img}}" data-id="{{item.id}}" catchtap="previewImage" />
-      </view>
-      <text wx:if="{{item.content}}" class="content">{{item.content}}</text>
+      <block wx:for="{{item.blocks}}" wx:key="key" wx:for-item="blk">
+        <text wx:if="{{blk.type === 'text'}}" class="content">{{blk.text}}</text>
+        <image wx:else class="inline-img" src="{{blk.url}}" mode="widthFix" data-url="{{blk.url}}" data-id="{{item.id}}" catchtap="previewImage" />
+      </block>
+      <text wx:if="{{!item.blocks.length && item.content}}" class="content">{{item.content}}</text>
       <view wx:if="{{item.images.length}}" class="img-grid">
         <image wx:for="{{item.images}}" wx:for-item="img" wx:key="*this" src="{{img}}" mode="aspectFill" class="img" data-url="{{img}}" data-id="{{item.id}}" catchtap="previewImage" />
       </view>

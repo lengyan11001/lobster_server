@@ -12,6 +12,25 @@ const CONFIG = {
 
 function fmt(v) { const d = new Date(Number(v || 0)); const p = (n) => (n < 10 ? "0" + n : "" + n); return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 
+function buildBlocks(content, images) {
+  const text = String(content || "").trim();
+  const rows = (images || []).filter(Boolean);
+  if (!text) return rows.map((url, i) => ({ type: "image", url, key: "i" + i }));
+  const paras = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  if (!rows.length) return paras.map((line, i) => ({ type: "text", text: line, key: "t" + i }));
+  const positions = {};
+  rows.forEach((url, k) => {
+    const at = Math.max(1, Math.round(((k + 1) * paras.length) / (rows.length + 1)));
+    positions[Math.min(at, paras.length - 1)] = url;
+  });
+  const blocks = [];
+  paras.forEach((line, i) => {
+    blocks.push({ type: "text", text: line, key: "t" + i });
+    if (positions[i]) blocks.push({ type: "image", url: positions[i], key: "i" + i });
+  });
+  return blocks;
+}
+
 Page({
   data: { feature: "article", title: "", createUrl: "", items: [], openId: "", modalOpen: false, topic: "", points: "", tone: "专业观点", audience: "", generating: false },
 
@@ -47,7 +66,8 @@ Page({
       }
       return Object.assign({}, row, {
         timeText: fmt(row.at),
-        statusText: row.status_text || (row.status === "processing" ? "生成中" : (row.status === "failed" ? "失败" : "已完成"))
+        statusText: row.status_text || (row.status === "processing" ? "生成中" : (row.status === "failed" ? "失败" : "已完成")),
+        blocks: buildBlocks(row.content, row.images)
       });
     });
     this.setData({ items });
