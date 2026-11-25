@@ -150,7 +150,9 @@ const IDEAS = [
 ];
 
 IDEAS.forEach((item) => {
-  item.coverFallback = String(item.cover || "").replace("/thumb-home-video-", "/home-video-");
+  const file = String(item.cover || "").split("/").pop();
+  item.coverFallback = SERVER_STATIC_BASE + "/home_covers/" + file;
+  item.cover = SERVER_STATIC_BASE.replace("/client/miniprogram", "") + "/api/media/thumb?url=" + encodeURIComponent(item.coverFallback);
 });
 
 const CATEGORIES = [
