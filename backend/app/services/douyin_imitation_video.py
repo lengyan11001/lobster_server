@@ -17,15 +17,17 @@
         提交 200 → 86 秒 SUCCEEDED，usage={duration:20.07, input_video_duration:15.07,
         output_video_duration:5.0, SR:480, fps:30, ratio:9:16}。
 
-主链路（用独立 wan key）：
-  POST {DOUYIN_IMITATION_HOST | DASHSCOPE_WAN_MAAS_HOST | 默认 MaaS 工作空间端点}
+主链路（默认标准 DashScope 端点 + DASHSCOPE_API_KEY）：
+  POST {DOUYIN_IMITATION_HOST | DASHSCOPE_WAN_MAAS_HOST | https://dashscope.aliyuncs.com}
        /api/v1/services/aigc/video-generation/video-synthesis
-  {"model":"wan3.0-video-prime",
+  {"model":"wan3.0-video",
    "input":{"prompt":"将视频中的人物替换为图片中的人物","media":[{"type":"reference_video","url":..},{"type":"reference_image","url":..}]},
    "parameters":{"resolution":"720P","ratio":"adaptive","duration":15,"prompt_extend":true,"watermark":false}}
   查询 GET {host}/api/v1/tasks/{task_id}
-  Key 必须用独立的 wan key（DASHSCOPE_WAN30_API_KEY，116 位）；拿 DASHSCOPE_API_KEY 会被
-  "Endpoint.AccessDenied: Workspace endpoint access denied." 拒掉。
+  2026-11-25 实测（生产账号）：标准端点 + DASHSCOPE_API_KEY 提交 200，480P/5 秒 108 秒 SUCCEEDED；
+  同一账号的 DASHSCOPE_WAN30_API_KEY（MaaS 工作空间 key）无论配 MaaS 端点还是标准端点都返回
+  403 AccessDenied.Unpurchased（该工作空间没有这个模型），所以默认不再使用工作空间 key。
+  只有显式配置 DOUYIN_IMITATION_HOST/DASHSCOPE_WAN_MAAS_HOST 指向 MaaS 端点时才用 wan key。
 
 兜底链路：wan2.2-animate-mix（DASHSCOPE_API_KEY + image2video/video-synthesis，需单人图）。
 
@@ -60,8 +62,12 @@ logger = logging.getLogger(__name__)
 DASHSCOPE_BASE = "https://dashscope.aliyuncs.com"
 ANIMATE_ENDPOINT = "/api/v1/services/aigc/image2video/video-synthesis"
 VIDEOEDIT_ENDPOINT = "/api/v1/services/aigc/video-generation/video-synthesis"
-DEFAULT_VIDEOEDIT_HOST = "https://ws-ommi5yczus66lm97.cn-beijing.maas.aliyuncs.com"
-DEFAULT_MODEL = "wan3.0-video-prime"   # 3.0 视频编辑（全能参考），2.7 见 LEGACY_MODEL
+# 2026-11-25 实测：wan3.0-video + 标准 DashScope 端点 + DASHSCOPE_API_KEY 正常出片
+# （480P/5 秒，108 秒 SUCCEEDED）；同一账号的 MaaS 工作空间 key 调 3.0 反而 403
+# AccessDenied.Unpurchased，所以默认走标准端点；只有显式配置 DOUYIN_IMITATION_HOST /
+# DASHSCOPE_WAN_MAAS_HOST 才走 MaaS 工作空间（那时用独立 wan key）。
+DEFAULT_VIDEOEDIT_HOST = DASHSCOPE_BASE
+DEFAULT_MODEL = "wan3.0-video"   # 3.0 视频编辑（全能参考），2.7 见 LEGACY_MODEL
 LEGACY_MODEL = "wan2.7-videoedit"        # 老链路：media 用 type=video
 
 
@@ -165,6 +171,7 @@ SOURCE_ENDPOINTS = (
 
 FAIL_HINTS = {
     "Endpoint.AccessDenied": "服务端 wan key 没这个工作空间端点的权限，请联系管理员",
+    "AccessDenied.Unpurchased": "上游模型没开通（AccessDenied.Unpurchased），请管理员开通 wan3.0-video",
     "InvalidImage.NoHuman": "这张图里没有检测到人物，请换一张只有一个人的清晰照片",
     "InvalidParameter.DataInspection": "素材没通过内容审核，请换一张图片或换一条视频",
 }
@@ -218,8 +225,19 @@ def _provider() -> str:
 
 def _videoedit_host() -> str:
     host = (os.environ.get("DOUYIN_IMITATION_HOST") or os.environ.get("DASHSCOPE_WAN_MAAS_HOST")
-            or DEFAULT_VIDEOEDIT_HOST).strip().rstrip("/")
+            or _dashscope_base()).strip().rstrip("/")
     return host
+
+
+def _videoedit_key(host: str = "") -> str:
+    """按端点选 key：MaaS 工作空间端点用独立 wan key，标准 DashScope 端点用 DASHSCOPE_API_KEY。"""
+    explicit = (os.environ.get("DOUYIN_IMITATION_API_KEY") or "").strip()
+    if explicit:
+        return explicit
+    target = (host or _videoedit_host()).lower()
+    if "maas.aliyuncs.com" in target:
+        return _wan_key() or _dashscope_key()
+    return _dashscope_key() or _wan_key()
 
 
 def _model() -> str:
@@ -464,9 +482,10 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
         return {"ok": False, "error": "素材地址无效"}
     provider = _provider()
     if provider == "videoedit":
-        key = _wan_key()
+        host = _videoedit_host()
+        key = _videoedit_key(host)
         if not key:
-            return {"ok": False, "error": "服务端未配置独立 wan key（DASHSCOPE_WAN30_API_KEY）"}
+            return {"ok": False, "error": "服务端未配置 DASHSCOPE_API_KEY（或 DOUYIN_IMITATION_API_KEY）"}
         edit_model = str(model or _model()).strip() or DEFAULT_MODEL
         source_media_type = video_media_type(edit_model)
         parameters: Dict[str, Any] = {"resolution": normalize_resolution(resolution),
@@ -483,7 +502,7 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
                                 {"type": "reference_image", "url": image}]},
             "parameters": parameters,
         }
-        url = _videoedit_host() + VIDEOEDIT_ENDPOINT
+        url = host + VIDEOEDIT_ENDPOINT
     else:
         key = _dashscope_key()
         if not key:
@@ -540,10 +559,14 @@ async def query_imitation(task_id: str) -> Dict[str, Any]:
     if not clean_id:
         return {"ok": False, "error": "缺少任务号"}
     provider = _provider()
-    key = _wan_key() if provider == "videoedit" else _dashscope_key()
+    if provider == "videoedit":
+        host = _videoedit_host()
+        key = _videoedit_key(host)
+    else:
+        host = _dashscope_base()
+        key = _dashscope_key()
     if not key:
         return {"ok": False, "error": "服务端未配置做同款所需的模型 Key"}
-    host = _videoedit_host() if provider == "videoedit" else _dashscope_base()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0), trust_env=False) as client:
             resp = await client.get(host + "/api/v1/tasks/" + clean_id,

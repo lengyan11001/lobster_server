@@ -427,11 +427,14 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
     monkeypatch.delenv("DOUYIN_IMITATION_HOST", raising=False)
 
     assert imitation._provider() == "videoedit"
-    assert imitation._model() == "wan3.0-video-prime"
+    assert imitation._model() == "wan3.0-video"
     assert imitation.video_media_type("wan3.0-video-prime") == "reference_video"
     assert imitation.video_media_type("wan2.7-videoedit") == "video"
     assert "替换" in imitation.default_prompt()
-    assert imitation._videoedit_host().startswith("https://ws-")
+    # 2026-11-25：默认标准 DashScope 端点（MaaS 工作空间 key 调 3.0 会 403 Unpurchased）
+    assert imitation._videoedit_host() == "https://dashscope.aliyuncs.com"
+    assert "开通" in imitation.friendly_error(
+        "AccessDenied.Unpurchased", "Access to model denied.")
     assert "工作空间端点" in imitation.friendly_error(
         "Endpoint.AccessDenied", "Workspace endpoint access denied.")
 
@@ -467,7 +470,7 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
     assert out["ok"] is True and out["task_id"] == "vid-1" and out["provider"] == "videoedit"
     assert captured["url"].endswith("/api/v1/services/aigc/video-generation/video-synthesis")
     assert captured["headers"]["Authorization"] == "Bearer wan-key"
-    assert captured["body"]["model"] == "wan3.0-video-prime"
+    assert captured["body"]["model"] == "wan3.0-video"
     media = captured["body"]["input"]["media"]
     assert media == [{"type": "reference_video", "url": "https://tos.test/v.mp4"},
                      {"type": "reference_image", "url": "https://tos.test/a.png"}]
@@ -486,6 +489,17 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
     assert captured["body"]["input"]["media"][0] == {"type": "video", "url": "https://tos.test/v.mp4"}
     assert "duration" not in captured["body"]["parameters"]
     assert "ratio" not in captured["body"]["parameters"]
+
+    # key 选择：标准端点用 DASHSCOPE_API_KEY，MaaS 工作空间端点才用独立 wan key
+    monkeypatch.delenv("DOUYIN_IMITATION_API_KEY", raising=False)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "ds-key")
+    monkeypatch.setenv("DASHSCOPE_WAN30_API_KEY", "wan-key-116")
+    monkeypatch.delenv("DOUYIN_IMITATION_HOST", raising=False)
+    monkeypatch.delenv("DASHSCOPE_WAN_MAAS_HOST", raising=False)
+    assert imitation._videoedit_key() == "ds-key"
+    monkeypatch.setenv("DOUYIN_IMITATION_HOST", "https://ws-test.cn-beijing.maas.aliyuncs.com")
+    assert imitation._videoedit_key() == "wan-key-116"
+    monkeypatch.delenv("DOUYIN_IMITATION_HOST", raising=False)
 
     # 切回 animate 兜底时走 image2video 端点 + DASHSCOPE_API_KEY
     monkeypatch.setenv("DOUYIN_IMITATION_PROVIDER", "animate")
