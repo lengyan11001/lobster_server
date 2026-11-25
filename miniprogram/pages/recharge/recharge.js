@@ -90,7 +90,14 @@ Page({
           signature: data.signature,
           mode: data.mode || "short_series_coin",
           success: () => this.confirmVirtualPay(),
-          fail: (err) => this.setData({ paying: false, statusText: (err && (err.errMsg || err.message)) || "支付取消" })
+          fail: (err) => {
+            const raw = String((err && (err.errMsg || err.message)) || "");
+            let tip = raw || "支付取消";
+            if (raw.indexOf("COIN_OR_PRODUCT_ID_CREATED_IN_RECENTLY") >= 0) tip = "微信侧代币刚创建、尚未生效，请稍后再试（通常几小时）";
+            else if (raw.indexOf("SIGNATURE") >= 0 || raw.indexOf("15005") >= 0) tip = "用户态签名校验失败，请重新登录后再试";
+            else if (raw.indexOf("15006") >= 0) tip = "支付签名校验失败，请联系客服";
+            this.setData({ paying: false, statusText: tip });
+          }
         });
       })
       .catch((err) => {
