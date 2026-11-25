@@ -20,9 +20,7 @@
         <image wx:else class="inline-img" src="{{blk.url}}" mode="widthFix" data-url="{{blk.url}}" data-id="{{item.id}}" catchtap="previewImage" />
       </block>
       <text wx:if="{{!item.blocks.length && item.content}}" class="content">{{item.content}}</text>
-      <view wx:if="{{item.images.length}}" class="img-grid">
-        <image wx:for="{{item.images}}" wx:for-item="img" wx:key="*this" src="{{img}}" mode="aspectFill" class="img" data-url="{{img}}" data-id="{{item.id}}" catchtap="previewImage" />
-      </view>
+      
       <video wx:if="{{item.videoUrl}}" src="{{item.videoUrl}}" class="video" controls></video>
       <view class="actions">
         <button wx:if="{{item.content}}" class="ghost mini" catchtap="copyArticle" data-id="{{item.id}}">{{item.images.length ? '复制文字+保存图片' : '复制'}}</button>

@@ -18,16 +18,27 @@ function buildBlocks(content, images) {
   if (!text) return rows.map((url, i) => ({ type: "image", url, key: "i" + i }));
   const paras = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
   if (!rows.length) return paras.map((line, i) => ({ type: "text", text: line, key: "t" + i }));
-  const positions = {};
-  rows.forEach((url, k) => {
-    const at = Math.max(1, Math.round(((k + 1) * paras.length) / (rows.length + 1)));
-    positions[Math.min(at, paras.length - 1)] = url;
-  });
+  const positions = [];
+  for (let k = 1; k <= rows.length; k++) {
+    let at = Math.round((k * paras.length) / (rows.length + 1)) - 1;
+    at = Math.max(0, Math.min(paras.length - 1, at));
+    while (positions.indexOf(at) >= 0 && at < paras.length - 1) at += 1;
+    positions.push(at);
+  }
+  positions.sort((a, b) => a - b);
   const blocks = [];
+  let imgIdx = 0;
   paras.forEach((line, i) => {
     blocks.push({ type: "text", text: line, key: "t" + i });
-    if (positions[i]) blocks.push({ type: "image", url: positions[i], key: "i" + i });
+    while (imgIdx < rows.length && positions[imgIdx] === i) {
+      blocks.push({ type: "image", url: rows[imgIdx], key: "i" + imgIdx });
+      imgIdx += 1;
+    }
   });
+  while (imgIdx < rows.length) {
+    blocks.push({ type: "image", url: rows[imgIdx], key: "i" + imgIdx });
+    imgIdx += 1;
+  }
   return blocks;
 }
 
