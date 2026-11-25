@@ -22,7 +22,7 @@
 
     <view class="idea-grid">
       <view wx:for="{{filteredIdeas}}" wx:key="id" class="idea-card" data-id="{{item.id}}" bindtap="openPreview">
-        <image class="idea-cover" src="{{item.cover}}" mode="aspectFill" />
+        <image class="idea-cover" src="{{item.cover}}" mode="aspectFill" data-index="{{index}}" binderror="onCoverError" />
         <view class="idea-mask"></view>
         <view class="idea-copy">
           <text class="idea-title">{{item.title}}</text>

@@ -23,7 +23,7 @@ const IDEAS = [
     title: "线下门店获客",
     author: "龙虾精选",
     plays: "8.6w",
-    cover: `${SERVER_STATIC_BASE}/home_covers/home-video-store-acquisition.jpg`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-store-acquisition.jpg`,
     prompt: "竖屏9:16，真实线下门店获客短视频。画面在明亮、有质感的本地门店内，店主自然出镜向顾客介绍产品，旁边有手机支架正在拍摄。镜头先展示门店环境和热销产品，再切到店主讲解卖点、顾客体验和到店福利。人物表情真实亲切，光线自然明亮，画面高级但不夸张，适合本地生活、零售门店、实体店获客。",
     desc: "适合实体店、本地生活、零售门店，用真实门店和真人讲解提升到店咨询。"
   },
@@ -33,7 +33,7 @@ const IDEAS = [
     title: "产品种草",
     author: "龙虾精选",
     plays: "7.4w",
-    cover: `${SERVER_STATIC_BASE}/home_covers/home-video-product-seeding.jpg`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-product-seeding.jpg`,
     prompt: "竖屏9:16，真实自然的产品种草短视频。年轻女性创作者在明亮家居工作室对镜头展示产品，手持产品讲解使用感、核心卖点和适合人群。镜头包含人物口播、产品近景、使用动作和桌面细节，整体清新干净、真实可信，不要硬广感。节奏适合短视频平台种草，引导用户评论或私信咨询。",
     desc: "适合美妆、日化、数码、小家电和消费品，用真人体验和产品细节做转化。"
   },
@@ -43,7 +43,7 @@ const IDEAS = [
     title: "工厂带货获客",
     author: "龙虾精选",
     plays: "6.9w",
-    cover: `${SERVER_STATIC_BASE}/home_covers/home-video-factory-live.jpg`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-factory-live.jpg`,
     prompt: "竖屏9:16，真实工厂带货获客短视频。女主播站在干净现代的工厂车间里，手拿产品样品对手机镜头讲解，背景能看到生产线、工人操作和整齐包装。镜头从产品特写开始，切到车间规模、生产细节、质检和库存，再回到主播强调厂家直供、交付稳定、支持定制。画面自然真实、明亮专业，有信任感，适合源头工厂、代工厂、批发招商获客。",
     desc: "适合源头工厂、批发、代工和招商，用车间实力、真人讲解和产品样品建立信任。"
   },
@@ -53,7 +53,7 @@ const IDEAS = [
     title: "鞋厂探货",
     author: "索影",
     plays: "3.8w",
-    cover: `${COVER_BASE}/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-store-acquisition.jpg`,
     prompt: "竖屏9:16，真实工厂探访风格。镜头从手拿一双白色运动鞋开始，切到流水线、材料检测、工人细节操作。年轻女主播自然出镜讲解鞋面材质、脚感和工厂直发优势，语气真实、有信任感。画面干净明亮，轻微手持感，适合短视频获客。",
     desc: "工厂源头、产品细节、真人讲解，适合鞋服箱包等源头工厂获客。"
   },
@@ -63,7 +63,7 @@ const IDEAS = [
     title: "木材工厂",
     author: "索影",
     plays: "2.1w",
-    cover: `${COVER_BASE}/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-product-seeding.jpg`,
     prompt: "竖屏9:16，工业工厂实拍质感。大型木材加工车间，传送带、切割设备、堆放整齐的板材，镜头缓慢推进。男主播边走边介绍材料等级、加工能力和交付周期，强调厂家直供、质量稳定。自然环境声，画面真实可信。",
     desc: "适合制造业、建材、机械设备，用工厂实力建立信任。"
   },
@@ -73,7 +73,7 @@ const IDEAS = [
     title: "工厂带货",
     author: "索影",
     plays: "6.2w",
-    cover: `${COVER_BASE}/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-factory-live.jpg`,
     prompt: "竖屏9:16，年轻女性在户外景区或展厅前自然讲解产品，背景有品牌展板和开阔环境。她对镜头介绍产品使用场景、价格优势和售后服务，表情亲切专业。傍晚柔和光线，画面高级但真实，适合本地生活和产品带货。",
     desc: "真人口播结合场景展示，适合本地生活、旅游、展厅和产品推广。"
   },
@@ -83,7 +83,7 @@ const IDEAS = [
     title: "家居装修",
     author: "龙虾精选",
     plays: "2.0w",
-    cover: `${COVER_BASE}/photo-1556228453-efd6c1ff04f6?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-store-acquisition.jpg`,
     prompt: "竖屏9:16，家居装修带货短视频。男主播站在整洁家电和装修材料旁，开场直接提出痛点：装修怕踩坑、预算超支。随后展示产品细节、安装前后对比和真实使用场景。语气专业、有成交感，画面明亮干净。",
     desc: "适合家装、家电、建材门店，突出痛点和解决方案。"
   },
@@ -93,7 +93,7 @@ const IDEAS = [
     title: "美妆直播",
     author: "创意库",
     plays: "4.7w",
-    cover: `${COVER_BASE}/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-product-seeding.jpg`,
     prompt: "竖屏9:16，美妆产品种草视频。干净桌面上摆放护肤品，女性主播拿起产品展示质地、上脸效果和适合人群。镜头有特写、试用、包装细节，整体明亮柔和，有直播切片的真实感。字幕节奏强，适合引导咨询。",
     desc: "适合美妆、护肤、日化产品，用试用细节提升转化。"
   },
@@ -103,7 +103,7 @@ const IDEAS = [
     title: "餐饮探店",
     author: "创意库",
     plays: "5.6w",
-    cover: `${COVER_BASE}/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-factory-live.jpg`,
     prompt: "竖屏9:16，餐饮探店短视频。镜头从门头进入，展示后厨出餐、招牌菜特写、顾客用餐氛围。主播自然介绍套餐价格、口味特色和到店福利。画面热气腾腾、色彩诱人，节奏快，适合同城获客。",
     desc: "适合同城餐饮、门店活动，用环境和菜品刺激到店。"
   },
@@ -113,7 +113,7 @@ const IDEAS = [
     title: "品牌开场",
     author: "品牌组",
     plays: "1.9w",
-    cover: `${COVER_BASE}/photo-1633409361618-c73427e4e206?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-store-acquisition.jpg`,
     prompt: "竖屏9:16，高级品牌宣传开场。产品或品牌标识在干净背景中出现，镜头用柔和推近和光影扫过，随后出现真实使用场景和一句强卖点文案。整体现代、明亮、有高级商业广告感，不要暗黑风。",
     desc: "适合品牌首屏、企业宣传、产品发布开场。"
   },
@@ -123,7 +123,7 @@ const IDEAS = [
     title: "产品演示",
     author: "创意库",
     plays: "3.4w",
-    cover: `${COVER_BASE}/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-product-seeding.jpg`,
     prompt: "竖屏9:16，科技产品带货视频。产品放在明亮桌面，主播用手演示核心功能，镜头穿插细节特写、使用前后对比和应用场景。节奏清晰，突出一个痛点、一个亮点、一个行动引导。",
     desc: "适合数码、工具、智能硬件，用演示说明价值。"
   },
@@ -133,7 +133,7 @@ const IDEAS = [
     title: "知识获客",
     author: "脚本组",
     plays: "2.8w",
-    cover: `${COVER_BASE}/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-factory-live.jpg`,
     prompt: "竖屏9:16，专业知识分享短视频。人物在办公室或工作室对镜头讲解，开头用一句行业痛点吸引注意，中段给出三条实用建议，结尾引导评论咨询。画面稳定、可信、干净，适合老板IP和服务业获客。",
     desc: "适合咨询、培训、招商、服务业，用专业内容拿线索。"
   },
@@ -143,11 +143,15 @@ const IDEAS = [
     title: "前后对比",
     author: "转化组",
     plays: "7.2w",
-    cover: `${COVER_BASE}/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=640&q=80`,
+    cover: `${SERVER_STATIC_BASE}/home_covers/thumb-home-video-store-acquisition.jpg`,
     prompt: "竖屏9:16，强转化前后对比视频。前半段展示用户痛点和混乱状态，后半段展示使用产品或服务后的整洁、高效、满意状态。镜头切换明确，人物表情自然，字幕突出变化和结果，适合广告投放素材。",
     desc: "适合服务、清洁、装修、教育、美业，用结果制造购买理由。"
   }
 ];
+
+IDEAS.forEach((item) => {
+  item.coverFallback = String(item.cover || "").replace("/thumb-home-video-", "/home-video-");
+});
 
 const CATEGORIES = [
   { id: "all", label: "全部" },
@@ -382,6 +386,15 @@ Page({
     }
     if (getCurrentPages().length > 1) wx.navigateBack();
     else wx.switchTab({ url: "/pages/index/index" });
+  },
+
+  onCoverError(e) {
+    const i = Number((e.currentTarget.dataset && e.currentTarget.dataset.index) || 0);
+    const rows = (this.data.filteredIdeas || []).slice();
+    const row = rows[i];
+    if (!row || !row.coverFallback) return;
+    rows[i] = Object.assign({}, row, { cover: row.coverFallback, coverFallback: "" });
+    this.setData({ filteredIdeas: rows });
   },
 
   filterIdeas() {
