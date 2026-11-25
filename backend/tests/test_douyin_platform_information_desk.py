@@ -431,6 +431,11 @@ def test_videoedit_submit_payload_and_provider_switch(monkeypatch):
     assert imitation.video_media_type("wan3.0-video-prime") == "reference_video"
     assert imitation.video_media_type("wan2.7-videoedit") == "video"
     assert "替换" in imitation.default_prompt()
+    # 3 个模式提示词：官方「视频参考图编辑」写法 —— 编辑视频开头 + 视频1/图片1 引用 + 时长可控
+    for _mode, _text in imitation.MODE_PROMPTS.items():
+        assert _text.startswith("编辑视频，")
+        assert "视频1" in _text and "图片1" in _text
+        assert len(_text) <= 600
     # 2026-11-25：默认标准 DashScope 端点（MaaS 工作空间 key 调 3.0 会 403 Unpurchased）
     assert imitation._videoedit_host() == "https://dashscope.aliyuncs.com"
     assert "开通" in imitation.friendly_error(
