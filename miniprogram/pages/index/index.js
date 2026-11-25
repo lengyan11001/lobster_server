@@ -583,7 +583,7 @@ Page({
   },
 
   goDrama() {
-    wx.showToast({ title: "AI短剧广场 敬请期待", icon: "none" });
+    wx.navigateTo({ url: "/pages/video-inspiration/video-inspiration" });
   },
 
   goMix() {
