@@ -24,7 +24,7 @@ def _user(credits: str = "100.0000"):
     )
 
 
-def test_sutui_chat_balance_precheck_requires_min_10(db_session, monkeypatch):
+def test_sutui_chat_balance_precheck_only_requires_positive_balance(db_session, monkeypatch):
     from fastapi import HTTPException
 
     from backend.app.api import sutui_chat_proxy
@@ -33,24 +33,28 @@ def test_sutui_chat_balance_precheck_requires_min_10(db_session, monkeypatch):
     monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
     monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
 
-    user = _user("9.0000")
-    db_session.add(user)
+    ok_user = _user("0.5000")
+    db_session.add(ok_user)
     db_session.commit()
-    db_session.refresh(user)
+    db_session.refresh(ok_user)
+    # 余额 0.5 也要放行（不再有「单次最低 10」）
+    sutui_chat_proxy._require_balance_before_upstream_chat(
+        db_session, ok_user, "gpt-4o", {"messages": [{"role": "user", "content": "hi"}]}
+    )
 
+    poor = _user("0.0000")
+    db_session.add(poor)
+    db_session.commit()
+    db_session.refresh(poor)
     with pytest.raises(HTTPException) as exc:
         sutui_chat_proxy._require_balance_before_upstream_chat(
-            db_session,
-            user,
-            "gpt-4o",
-            {"messages": [{"role": "user", "content": "hi"}]},
+            db_session, poor, "gpt-4o", {"messages": [{"role": "user", "content": "hi"}]}
         )
 
     assert exc.value.status_code == 402
-    assert "最低需 10" in str(exc.value.detail)
 
 
-def test_sutui_chat_deduct_has_min_10_charge(db_session, monkeypatch):
+def test_sutui_chat_deduct_applies_x1_5_markup(db_session, monkeypatch):
     from backend.app.api import sutui_chat_proxy
     from backend.app.core.config import settings
     from backend.app.models import CreditLedger, User
@@ -78,17 +82,19 @@ def test_sutui_chat_deduct_has_min_10_charge(db_session, monkeypatch):
     )
 
     db_session.refresh(user)
-    assert user.credits == Decimal("90.0000")
+    assert user.credits == Decimal("95.5000")
     row = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
-    assert row.delta == Decimal("-10.0000")
+    assert row.delta == Decimal("-4.5000")
     assert row.entry_type == "sutui_chat"
-    assert row.meta["deduct_credits"] == 10.0
+    assert row.meta["deduct_credits"] == 4.5
     assert row.meta["raw_computed_credits"] == 3.0
-    assert row.meta["min_charge_credits"] == 10.0
-    assert row.meta["billing_src"] == "test_low_price+min_10"
+    assert row.meta["min_charge_credits"] == 0
+    assert row.meta["min_charge_applied"] is False
+    assert row.meta["credit_markup"] == 1.5
+    assert row.meta["billing_src"] == "test_low_price+x1.5"
 
 
-def test_sutui_chat_deduct_keeps_price_above_min(db_session, monkeypatch):
+def test_sutui_chat_deduct_markup_on_higher_price(db_session, monkeypatch):
     from backend.app.api import sutui_chat_proxy
     from backend.app.core.config import settings
     from backend.app.models import CreditLedger
@@ -116,12 +122,12 @@ def test_sutui_chat_deduct_keeps_price_above_min(db_session, monkeypatch):
     )
 
     db_session.refresh(user)
-    assert user.credits == Decimal("87.5000")
+    assert user.credits == Decimal("81.2500")
     row = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
-    assert row.delta == Decimal("-12.5000")
-    assert row.meta["deduct_credits"] == 12.5
+    assert row.delta == Decimal("-18.7500")
+    assert row.meta["deduct_credits"] == 18.75
     assert row.meta["raw_computed_credits"] == 12.5
-    assert row.meta["billing_src"] == "test_high_price"
+    assert row.meta["billing_src"] == "test_high_price+x1.5"
 
 
 def test_sutui_chat_turn_precharged_requires_internal_key(monkeypatch):
@@ -185,11 +191,12 @@ def test_charge_chat_turn_once_is_idempotent(db_session, monkeypatch):
     db_session.refresh(user)
     assert first["charged"] is True
     assert second["charged"] is True
-    assert user.credits == Decimal("90.0000")
+    assert first["credits_charged"] == 0
+    assert first["pricing_deferred"] is True
+    assert first["billing_rule"] == "chat_turn_actual_x1.5"
+    assert user.credits == Decimal("100.0000")
     rows = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).all()
-    assert len(rows) == 1
-    assert rows[0].entry_type == "chat_turn"
-    assert rows[0].delta == Decimal("-10.0000")
+    assert rows == []
 
 
 def test_charge_chat_turn_accepts_legacy_long_source(db_session, monkeypatch):
@@ -214,10 +221,10 @@ def test_charge_chat_turn_accepts_legacy_long_source(db_session, monkeypatch):
 
     db_session.refresh(user)
     assert out["charged"] is True
-    assert user.credits == Decimal("90.0000")
-    row = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
-    assert row.meta["source"] == "online_chat_stream_task_status_f"
-    assert len(row.meta["source"]) == 32
+    assert out["credits_charged"] == 0
+    assert out["pricing_deferred"] is True
+    assert user.credits == Decimal("100.0000")
+    assert db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).count() == 0
 
 
 @pytest.mark.asyncio

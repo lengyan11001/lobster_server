@@ -79,7 +79,8 @@ def test_daily_limit_status_and_update(db_session, db_session_factory, monkeypat
     assert resp.json()["remaining_today"] == 10.0
 
 
-def test_chat_turn_pre_deduct_blocks_over_daily_limit(db_session, monkeypatch):
+def test_chat_deduct_blocks_over_daily_limit(db_session, monkeypatch):
+    """轮次预扣不再扣钱，日上限在应答结束后的实际扣费里拦。"""
     from fastapi import HTTPException
 
     from backend.app.api import sutui_chat_proxy
@@ -88,6 +89,11 @@ def test_chat_turn_pre_deduct_blocks_over_daily_limit(db_session, monkeypatch):
 
     monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
     monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    monkeypatch.setattr(
+        sutui_chat_proxy,
+        "_credits_for_sutui_chat",
+        lambda *args, **kwargs: (Decimal("4.0000"), "test_price"),
+    )
 
     from backend.tests.test_sutui_chat_billing import _user
 
@@ -107,8 +113,16 @@ def test_chat_turn_pre_deduct_blocks_over_daily_limit(db_session, monkeypatch):
     db_session.commit()
     db_session.refresh(user)
 
+    # 4 x 1.5 = 6；已用 10 + 6 > 15
     with pytest.raises(HTTPException) as exc:
-        sutui_chat_proxy.charge_chat_turn_once(db_session, user, "turn-over-limit")
+        sutui_chat_proxy._apply_chat_deduct(
+            db_session,
+            user,
+            "gpt-4o",
+            {"prompt_tokens": 1, "completion_tokens": 1},
+            {"usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+            trace_id="turn-over-limit",
+        )
 
     assert exc.value.status_code == 429
     assert "每日算力消耗上限" in str(exc.value.detail)

@@ -1774,9 +1774,12 @@ def _should_deduct_credits() -> bool:
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
 
 
-_SUTUI_CHAT_MIN_CHARGE_CREDITS = quantize_credits(Decimal("10"))
+# 2026-11-25 用户口径：对话取消「单次最低 10 积分」，改成按上游实际消耗 x1.5 计费。
+_SUTUI_CHAT_MIN_CHARGE_CREDITS = quantize_credits(Decimal("0"))
+_SUTUI_CHAT_CREDIT_MARKUP = Decimal("1.5")
 _CHAT_TURN_PRE_DEDUCT_ENDPOINT = "chat_turn"
-_CHAT_TURN_CHARGE_CREDITS = _SUTUI_CHAT_MIN_CHARGE_CREDITS
+# 轮次预扣只做余额闸门/幂等，不再先扣 10；实际扣费在应答结束后按 usage x1.5 结算。
+_CHAT_TURN_CHARGE_CREDITS = Decimal("0")
 
 
 def _yyapi_pricing_enabled() -> bool:
@@ -1923,16 +1926,11 @@ def charge_chat_turn_once(
 
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
-    if bal < _CHAT_TURN_CHARGE_CREDITS:
+    if bal <= 0:
         raise HTTPException(
             status_code=402,
-            headers={"X-Lobster-Min-Charge-Credits": str(_CHAT_TURN_CHARGE_CREDITS)},
-            detail=(
-                f"积分不足：对话本轮需 {_CHAT_TURN_CHARGE_CREDITS} 算力，"
-                f"当前余额 {bal}。请先充值后再试。"
-            ),
+            detail=f"积分不足：当前余额 {bal}。请先充值后再试。",
         )
-    assert_daily_limit_allows(db, current_user.id, _CHAT_TURN_CHARGE_CREDITS, action_label="本轮对话")
 
     idem_row = BillingIdempotency(
         user_id=current_user.id,
@@ -1950,53 +1948,30 @@ def charge_chat_turn_once(
             return cached
         raise HTTPException(status_code=409, detail="对话轮次正在扣费，请稍后重试")
 
-    current_user.credits = bal - _CHAT_TURN_CHARGE_CREDITS
-    bal_after = quantize_credits(current_user.credits)
     source_clean = (source or "chat").strip()[:32] or "chat"
-    meta = {
-        "turn_id": tid,
-        "source": source_clean,
-        "session_id": (session_id or "").strip()[:128] or None,
-        "context_id": (context_id or "").strip()[:128] or None,
-        "message_id": (message_id or "").strip()[:128] or None,
-        "deduct_credits": credits_json_float(_CHAT_TURN_CHARGE_CREDITS),
-        "billing_rule": "chat_turn_flat_10",
-    }
-    if trace_id:
-        meta["trace_id"] = trace_id
-    append_credit_ledger(
-        db,
-        current_user.id,
-        -_CHAT_TURN_CHARGE_CREDITS,
-        "chat_turn",
-        bal_after,
-        description="对话轮次扣费",
-        ref_type="chat_turn",
-        ref_id=tid,
-        meta={k: v for k, v in meta.items() if v is not None},
-    )
     payload = {
         "ok": True,
         "turn_id": tid,
         "charged": True,
-        "credits_charged": credits_json_float(_CHAT_TURN_CHARGE_CREDITS),
-        "balance_after": credits_json_float(bal_after),
+        "credits_charged": 0,
+        "pricing_deferred": True,
+        "billing_rule": "chat_turn_actual_x1.5",
+        "balance_after": credits_json_float(bal),
     }
     idem_row.response_json = json.dumps(payload, ensure_ascii=False, default=str)
     db.commit()
     logger.info(
-        "[chat_trace] trace_id=%s path=chat_turn_pre_deduct result=ok user_id=%s turn_id=%s source=%s credits=%s balance_after=%s",
+        "[chat_trace] trace_id=%s path=chat_turn_pre_deduct result=deferred user_id=%s turn_id=%s source=%s balance=%s rule=actual_x1.5",
         trace_id or "-",
         current_user.id,
         tid,
         source_clean,
-        _CHAT_TURN_CHARGE_CREDITS,
-        bal_after,
+        bal,
     )
     return payload
 
 
-@router.post("/api/sutui-chat/turn-pre-deduct", summary="对话轮次预扣 10 算力（内部调用）")
+@router.post("/api/sutui-chat/turn-pre-deduct", summary="对话轮次余额闸门（不预扣，应答后按实际 x1.5 结算）")
 def sutui_chat_turn_pre_deduct(
     body: ChatTurnPreDeductIn,
     request: Request,
@@ -2111,23 +2086,15 @@ def _require_balance_before_upstream_chat(
     """
     if not _should_deduct_credits():
         return
+    if not apply_min_charge:
+        # 内部调用（openclaw 内部 LLM）不计费，也不拦余额
+        return
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
-    if not apply_min_charge:
-        if bal <= 0:
-            raise HTTPException(
-                status_code=402,
-                detail=f"积分不足：当前余额 {bal}。请先充值后再试。",
-            )
-        return
-    if bal < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
+    if bal <= 0:
         raise HTTPException(
             status_code=402,
-            headers={"X-Lobster-Min-Charge-Credits": str(_SUTUI_CHAT_MIN_CHARGE_CREDITS)},
-            detail=(
-                f"积分不足：LLM 对话单次最低需 {_SUTUI_CHAT_MIN_CHARGE_CREDITS} 算力，"
-                f"当前余额 {bal}。请先充值后再试。"
-            ),
+            detail=f"积分不足：当前余额 {bal}。请先充值后再试。",
         )
 
 
@@ -2239,9 +2206,9 @@ def _apply_chat_deduct(
         provider=provider,
     )
     raw_computed_credits = credits
-    if apply_min_charge and credits < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
-        credits = _SUTUI_CHAT_MIN_CHARGE_CREDITS
-        billing_src = f"{billing_src}+min_10"
+    if apply_min_charge and credits > 0:
+        credits = quantize_credits(credits * _SUTUI_CHAT_CREDIT_MARKUP)
+        billing_src = f"{billing_src}+x1.5"
     snap = extract_upstream_billing_snapshot(response_body if isinstance(response_body, dict) else None)
     try:
         snap_json = json.dumps(snap, ensure_ascii=False, default=str)
@@ -2283,8 +2250,9 @@ def _apply_chat_deduct(
         "usage": usage,
         "deduct_credits": credits_json_float(credits),
         "raw_computed_credits": credits_json_float(raw_computed_credits),
-        "min_charge_credits": credits_json_float(_SUTUI_CHAT_MIN_CHARGE_CREDITS) if apply_min_charge else 0,
-        "min_charge_applied": bool(apply_min_charge),
+        "min_charge_credits": 0,
+        "min_charge_applied": False,
+        "credit_markup": float(_SUTUI_CHAT_CREDIT_MARKUP) if apply_min_charge else 0,
         "billing_mode": billing_mode,
         "trace_id": tid,
         "billing_src": billing_src,
@@ -2464,7 +2432,7 @@ async def sutui_chat_completions(
         current_user,
         model_id,
         body,
-        apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
+        apply_min_charge=not openclaw_internal_llm,
     )
 
     user_bal_str = "-"
@@ -2760,28 +2728,19 @@ async def sutui_chat_completions(
                 body,
                 usage_raw if isinstance(usage_raw, dict) else None,
             )
-            if chat_turn_precharged and not _yyapi_pricing_enabled():
-                logger.info(
-                    "[chat_trace] trace_id=%s path=sutui_chat_deduct result=skipped reason=chat_turn_precharged "
-                    "turn_id=%s model=%s",
-                    trace_id,
-                    chat_turn_id or "-",
-                    winning_model,
-                )
-            else:
-                _apply_chat_deduct(
-                    db,
-                    current_user,
-                    winning_model,
-                    usage_bill,
-                    data if isinstance(data, dict) else None,
-                    billing_recon=chat_billing_recon,
-                    trace_id=trace_id,
-                    is_direct_api=winning_is_direct,
-                    provider=winning_provider,
-                    apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
-                    billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
-                )
+            _apply_chat_deduct(
+                db,
+                current_user,
+                winning_model,
+                usage_bill,
+                data if isinstance(data, dict) else None,
+                billing_recon=chat_billing_recon,
+                trace_id=trace_id,
+                is_direct_api=winning_is_direct,
+                provider=winning_provider,
+                apply_min_charge=not openclaw_internal_llm,
+                billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
+            )
         else:
             logger.info(
                 "[chat_trace] trace_id=%s deduct=skipped_nonstream reason=%s http=%s model=%r route=%s",
@@ -3110,15 +3069,6 @@ async def sutui_chat_completions(
                     yield f"data: {err}\n\n".encode("utf-8")
         finally:
             bill_model = billing_model_holder[0]
-            if chat_turn_precharged and not _yyapi_pricing_enabled():
-                logger.info(
-                    "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped reason=chat_turn_precharged "
-                    "turn_id=%s model=%s",
-                    trace_id,
-                    chat_turn_id or "-",
-                    bill_model or "-",
-                )
-                return
             if not stream_completed_ok or not bill_model or not _should_deduct_credits():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped stream_ok=%s model_id=%r "
@@ -3153,7 +3103,7 @@ async def sutui_chat_completions(
                         trace_id=trace_id,
                         is_direct_api=billing_is_direct_holder[0],
                         provider=billing_provider_holder[0],
-                        apply_min_charge=not (openclaw_internal_llm or (chat_turn_precharged and not _yyapi_pricing_enabled())),
+                        apply_min_charge=not openclaw_internal_llm,
                         billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                     )
             except HTTPException as exc:
