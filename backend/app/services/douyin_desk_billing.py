@@ -1,12 +1,14 @@
-"""抖音信息台计费：做同款（视频编辑，2026-10-05 起上游用 wan3.0-video-prime）与榜单搜索。
+"""抖音信息台计费：做同款（视频编辑，2026-11-25 起上游用 wan3.0-video）与榜单搜索。
 
-上游价（2026-09-27 取的官方文档 / 价目表原文）：
-- 阿里云百炼「万相-视频编辑」：**输入视频和输出视频都计费，按视频秒数**，
-  （2026-10-05 上游模型换成 wan3.0-video-prime —— 实测 usage 同样是 duration=输入+输出秒数，
-   480P 也能跑（SR=480）；下面这套 720P/1080P 秒单价还是照 2.7 的价目表收的，
-   3.0 的采购价等确认后按同一倍率 1.5 覆盖 DOUYIN_VIDEOEDIT_*_YUAN_PER_SECOND 即可。）
-  wan2.7-videoedit 720P = 0.6 元/秒、1080P = 1 元/秒（华北2 北京，50 秒免费额度，失败不计费）。
-  计费公式：计费秒数 = 输入秒数 + 输出秒数。
+上游价（2026-11-25 官方《模型调用计费》原文，华北2 北京）：
+- 万相3.0-视频生成 计费规则：**输入视频和输出视频均按视频秒数计费**；
+  请求失败不产生费用；**无免费额度**（所有地域）。
+  计费公式：计费时长 = 输入视频时长 + 输出视频时长。
+- wan3.0-video（我们用的标准版）：
+    480P = 0.3 元/秒、720P = 0.6 元/秒、1080P = 1.2 元/秒（原价，限时 7 折 → 0.21/0.42/0.84）
+- wan3.0-video-prime（优先版，能力对齐标准版，资源紧张时按标准速率计费）：
+    480P = 0.45 元/秒、720P = 0.9 元/秒、1080P = 1.8 元/秒
+  我们按**原价**计成本，这样限时折扣结束后不会亏。
 - TikHub：我们每天采集的 10 个抖音榜单端点，每个 0.001 USD，合计 0.01 USD/天（≈0.075 元/天）；
   做同款取原视频 fetch_one_video_v2 = 0.001 USD/次；
   **2026-10-11 起：信息台搜索默认改成拿用户关键词实时问 TikHub**（`POST /api/v1/douyin/search/fetch_video_search_v2`，
@@ -31,9 +33,9 @@ from .credit_ledger import append_credit_ledger
 from .credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 
 CREDITS_PER_YUAN = Decimal("100")
-_DEFAULT_480P_YUAN_PER_SECOND = Decimal("0.3")   # 480P（3.0 新增档位；采购价待确认，先按 720P 的一半）
+_DEFAULT_480P_YUAN_PER_SECOND = Decimal("0.3")   # 3.0 北京 480P 原价 0.3 元/秒
 _DEFAULT_YUAN_PER_SECOND = Decimal("0.6")     # 720P 输入+输出单价
-_DEFAULT_1080P_YUAN_PER_SECOND = Decimal("1")  # 1080P 输入+输出单价（官方档位只有 720P/1080P，没有 480P）
+_DEFAULT_1080P_YUAN_PER_SECOND = Decimal("1.2")  # 3.0 北京 1080P 原价 1.2 元/秒（3.0 有 480P 档）
 _DEFAULT_BILLABLE_SIDES = Decimal("2")        # 输入 1 + 输出 1
 _DEFAULT_MARKUP = Decimal("1.5")              # 与 wan_role 一致的加价倍率
 _DEFAULT_SEARCH_CREDITS = Decimal("1")        # 每次搜索
@@ -60,7 +62,7 @@ def normalize_resolution(raw: object) -> str:
 
 
 def yuan_per_second(resolution: object = DEFAULT_RESOLUTION) -> Decimal:
-    """按分辨率取单价：480P 0.3 元/秒、720P 0.6 元/秒、1080P 1 元/秒（输入+输出都按这个价）。"""
+    """按分辨率取单价：480P 0.3 元/秒、720P 0.6 元/秒、1080P 1.2 元/秒（wan3.0-video 原价，输入+输出都按这个价）。"""
     normalized = normalize_resolution(resolution)
     if normalized == "1080P":
         return _decimal_env("DOUYIN_VIDEOEDIT_1080P_YUAN_PER_SECOND", _DEFAULT_1080P_YUAN_PER_SECOND)

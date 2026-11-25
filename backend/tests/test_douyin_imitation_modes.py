@@ -22,8 +22,8 @@ def test_mode_prompts_are_distinct_and_normalized():
     assert normalize_mode("ACTION_COPY") == "action_copy"
     assert normalize_mode("谁也不是") == "person_swap"
 
-    assert prompt_for_mode("effect_copy") == "编辑视频，把视频1中的特效应用到图片1中的人物身上，场景、镜头与节奏跟随视频1，画面其余部分保持不变。"
-    assert prompt_for_mode("action_copy") == "编辑视频，让图片1中的人物做出视频1中人物的动作，视频1的镜头、节奏与场景保持不变。"
+    assert prompt_for_mode("effect_copy") == MODE_PROMPTS["effect_copy"]
+    assert prompt_for_mode("action_copy") == MODE_PROMPTS["action_copy"]
     assert prompt_for_mode("person_swap") == MODE_PROMPTS["person_swap"]
     # 用户自己填了就用他的
     assert prompt_for_mode("effect_copy", "  我的提示词  ") == "我的提示词"
@@ -106,7 +106,7 @@ def test_prepare_imitation_resolves_douyin_page_link_through_tikhub(monkeypatch)
     assert seen["item_id"] == "7688685833386071653"
     # _download 还会被用来取参考图，这里只确认「抖音作品页链接」没走直链下载
     assert seen.get("direct_download") != "https://www.douyin.com/video/7688685833386071653"
-    assert result["prompt"] == "编辑视频，让图片1中的人物做出视频1中人物的动作，视频1的镜头、节奏与场景保持不变。"
+    assert result["prompt"] == MODE_PROMPTS["action_copy"]
     assert result["mode_label"] == "复刻单人动作"
 
 
@@ -128,7 +128,7 @@ def test_prepare_imitation_rejects_html_for_direct_links(monkeypatch):
 
 
 def test_resolution_option_changes_price_and_supports_480p():
-    """分辨率放给用户选：480P 0.3、720P 0.6、1080P 1 元/秒（2026-10-05 起上游 3.0 支持 480P）。"""
+    """分辨率放给用户选：480P 0.3、720P 0.6、1080P 1.2 元/秒（wan3.0-video 官方原价）。"""
     from backend.app.services.douyin_desk_billing import estimate_imitation, normalize_resolution
     from backend.app.services.douyin_imitation_video import normalize_resolution as svc_norm
 
@@ -140,8 +140,8 @@ def test_resolution_option_changes_price_and_supports_480p():
     assert p480["billable_seconds"] == 12 and p480["credits"] == 540
     assert p720["billable_seconds"] == 12 and p720["credits"] == 1080
     assert p720["yuan_per_second"] == 0.6
-    assert p1080["resolution"] == "1080P" and p1080["yuan_per_second"] == 1.0
-    assert p1080["credits"] == 1800, p1080
+    assert p1080["resolution"] == "1080P" and p1080["yuan_per_second"] == 1.2
+    assert p1080["credits"] == 2160, p1080   # 12 秒 × 1.2 元 × 1.5 × 100
 
     assert normalize_resolution("480p") == "480P"
     assert normalize_resolution("1080p") == "1080P"
