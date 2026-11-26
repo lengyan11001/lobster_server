@@ -1365,8 +1365,21 @@ def _image_generation_model_attempts_for_user(
     return attempts
 
 
+# 垫图（/v1/images/edits）实测：gaisc 通道 multipart 持续 ReadError，sutui 没有该路由（404）。
+# 生成（/v1/images/generations）两个通道仍保留；这里只对 edit 请求过滤，避免每次白跑两跳。
+_IMAGE_EDIT_UNSUPPORTED_TOKEN_GROUPS = {"gaisc", "sutui"}
+
+
 def _image_edit_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
-    return _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
+    attempts = _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
+    out: List[str] = []
+    for attempt_model in attempts:
+        entry = lookup_comfly_model(attempt_model) or {}
+        group = str(entry.get("token_group") or "").strip().lower()
+        if group in _IMAGE_EDIT_UNSUPPORTED_TOKEN_GROUPS:
+            continue
+        out.append(attempt_model)
+    return out or [model]
 
 
 def _openai_official_image_first_for_user(user_id: int) -> bool:
@@ -1836,9 +1849,13 @@ def _openmind_image_fallback_enabled() -> bool:
     return _env_bool("OPENMIND_IMAGE_FALLBACK_ENABLED", False) and bool((os.environ.get("OPENMIND_API_KEY") or "").strip())
 
 
-def _openmind_image_url() -> str:
+def _openmind_image_base_url() -> str:
     base = (os.environ.get("OPENMIND_API_BASE") or "https://www.openmindapi.com").strip().rstrip("/")
-    return (base or "https://www.openmindapi.com") + "/v1/images/generations"
+    return base or "https://www.openmindapi.com"
+
+
+def _openmind_image_url() -> str:
+    return _openmind_image_base_url() + "/v1/images/generations"
 
 
 def _openmind_image_headers() -> Dict[str, str]:

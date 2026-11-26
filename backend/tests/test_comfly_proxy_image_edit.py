@@ -118,7 +118,7 @@ def test_image_edit_falls_back_to_next_channel_after_comfly_busy(monkeypatch):
     def _fake_require_model_entry(model):
         return {
             "gpt-image-2": {"comfly_model": "gpt-image-2"},
-            "gpt-image-2-gaisc": {"comfly_model": "gpt-image-2", "token_group": "gaisc"},
+            "gpt-image-2-comfyui-official": {"comfly_model": "gpt-image-2", "token_group": "comfyui_official"},
         }[model]
 
     monkeypatch.setenv("COMFLY_IMAGE_EDIT_RETRY_ATTEMPTS", "1")
@@ -127,7 +127,8 @@ def test_image_edit_falls_back_to_next_channel_after_comfly_busy(monkeypatch):
     monkeypatch.setattr(
         comfly_proxy,
         "_image_generation_model_attempts_for_user",
-        lambda _model, openai_official_first=False: ["gpt-image-2", "gpt-image-2-gaisc"],
+        # 垫图请求不再走 gaisc（multipart 一直 ReadError）——用 comfyui-official 作为后备通道验证
+        lambda _model, openai_official_first=False: ["gpt-image-2", "gpt-image-2-comfyui-official"],
     )
     monkeypatch.setattr(comfly_proxy, "user_has_feature", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(comfly_proxy, "SessionLocal", lambda: None)
@@ -176,14 +177,14 @@ def test_image_edit_falls_back_to_next_channel_after_comfly_busy(monkeypatch):
     assert response.json()["data"][0]["url"] == "https://example.com/fallback.png"
     assert [call[0] for call in captured["calls"]] == [
         "https://upstream.test/gpt-image-2/v1/images/edits",
-        "https://upstream.test/gpt-image-2-gaisc/v1/images/edits",
+        "https://upstream.test/gpt-image-2-comfyui-official/v1/images/edits",
     ]
     assert [deduct[1]["model"] for deduct in captured["pre_deducts"]] == ["gpt-image-2"]
-    assert captured["settles"][0]["model"] == "gpt-image-2-gaisc"
+    assert captured["settles"][0]["model"] == "gpt-image-2-comfyui-official"
     assert captured["settles"][0]["actual"] == 66
     assert captured["refunds"] == 0
     assert any(event == "image_edit_channel_attempt_failed" for event, _ in captured["audits"])
-    assert any(event == "image_edit_ok" and data["model"] == "gpt-image-2-gaisc" for event, data in captured["audits"])
+    assert any(event == "image_edit_ok" and data["model"] == "gpt-image-2-comfyui-official" for event, data in captured["audits"])
 
 
 def test_image_edit_openmind_api_channel_uses_openmind_multipart_route(monkeypatch):
