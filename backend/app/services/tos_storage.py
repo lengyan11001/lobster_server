@@ -36,14 +36,46 @@ def reload_configs() -> None:
     _configs.cache_clear()
 
 
+def _env_value(name: str) -> str:
+    """os.environ 优先；后台进程并未把 .env 注入 environ，因此再读一次根目录 .env。"""
+    value = str(os.environ.get(name) or "").strip()
+    if value:
+        return value
+    env_file = _ROOT / ".env"
+    if not env_file.is_file():
+        return ""
+    try:
+        for raw in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, item = line.split("=", 1)
+            if key.strip() == name:
+                return item.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+def _configured_public_base() -> str:
+    value = _env_value("PUBLIC_BASE_URL")
+    if value:
+        return value
+    try:
+        from ..core.config import settings
+
+        return str(getattr(settings, "public_base_url", "") or "").strip()
+    except Exception:
+        return ""
+
+
 def is_overseas_server() -> bool:
-    flag = str(os.environ.get("LOBSTER_SERVER_REGION") or "").strip().lower()
+    flag = _env_value("LOBSTER_SERVER_REGION").lower()
     if flag in _OVERSEAS_FLAGS:
         return True
     if flag in _DOMESTIC_FLAGS:
         return False
-    public_base = str(os.environ.get("PUBLIC_BASE_URL") or "").strip().lower()
-    return "bhos.online" in public_base
+    return "bhos.online" in _configured_public_base().lower()
 
 
 def _valid(cfg: Any) -> bool:
