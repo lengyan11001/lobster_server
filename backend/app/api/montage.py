@@ -30,7 +30,9 @@ FFPROBE = os.environ.get("FFPROBE_BIN", "ffprobe")
 
 
 # Online 同款背景音乐库（TOS 公共素材，直接下载后与口播双音轨混音）
-_BGM_BASE = "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/"
+from ..services.tos_storage import rewrite_tos_url, tos_public_base
+
+_BGM_BASE = (tos_public_base() or "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com") + "/assets/"
 _MONTAGE_BGM = [
     ("\u7231\u4e0d\u91ca\u624b", "c8877058895c"),
     ("\u4e4c\u5170\u5df4\u6258\u7684\u591c", "f69fd79514c8"),
@@ -135,7 +137,7 @@ def _bgm_items() -> list[dict[str, Any]]:
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
-            url = str(row.get("url") or "").strip()
+            url = rewrite_tos_url(str(row.get("url") or "").strip())
             if not url.startswith(("http://", "https://")):
                 continue
             items.append({

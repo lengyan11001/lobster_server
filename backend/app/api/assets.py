@@ -82,17 +82,13 @@ def ensure_asset_library_indexes(bind) -> None:
 
 
 def _get_tos_config() -> Optional[dict]:
-    """从 custom_configs.json 读取 TOS_CONFIG，用于上传到 TOS 并得到公网 URL。"""
-    if not _CUSTOM_CONFIGS_FILE.exists():
-        return None
-    try:
-        data = json.loads(_CUSTOM_CONFIGS_FILE.read_text(encoding="utf-8"))
-        cfg = (data.get("configs") or {}).get("TOS_CONFIG")
-        if isinstance(cfg, dict) and cfg.get("access_key") and cfg.get("secret_key"):
-            return cfg
-    except Exception as e:
-        logger.debug("[TOS] 读取 TOS_CONFIG 失败: %s", e)
-    return None
+    """读取当前地域生效的 TOS 配置（海外实例优先 TOS_CONFIG_OVERSEAS）。"""
+    from ..services.tos_storage import get_tos_config
+
+    cfg = get_tos_config()
+    if not cfg:
+        logger.debug("[TOS] 未读取到可用的 TOS 配置")
+    return cfg
 
 
 def _tos_object_headers(content_type: str, object_key: str) -> tuple[str, str]:

@@ -376,19 +376,11 @@ def _stale_single_slot_for_rebind(
 
 
 def _read_server_tos_config_dict() -> Optional[Dict[str, Any]]:
-    """Read server-side TOS_CONFIG for status checks; never return AK/SK to clients."""
-    if not _CUSTOM_CONFIGS_FILE.exists():
-        return None
+    """Read the region-effective TOS config for status checks; never return AK/SK to clients."""
     try:
-        data = json.loads(_CUSTOM_CONFIGS_FILE.read_text(encoding="utf-8"))
-        cfg = (data.get("configs") or {}).get("TOS_CONFIG")
-        if not isinstance(cfg, dict):
-            return None
-        ak = str(cfg.get("access_key", "")).strip()
-        sk = str(cfg.get("secret_key", "")).strip()
-        if not ak or not sk:
-            return None
-        return cfg
+        from ..services.tos_storage import get_tos_config
+
+        return get_tos_config()
     except Exception:
         return None
 

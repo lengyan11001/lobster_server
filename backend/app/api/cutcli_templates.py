@@ -15,6 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..services.tos_storage import tos_public_base
+
+_TOS = tos_public_base() or "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com"
+
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -646,14 +650,14 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "target_height": 2276,
             "fit": "cover",
             "font_family": "阿里巴巴普惠体 3.0 105 Heavy",
-            "font_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
+            "font_url": f"{_TOS}/assets/cutcli_templates/fonts/AlibabaPuHuiTi-3-105-Heavy.otf",
             "font_filename": "AlibabaPuHuiTi-3-105-Heavy.otf",
             "font_sha256": "f2e848f94ac746f5a51ef1d71caea5cc268c920a9a63740423ee61abeac89bd6",
-            "preview_poster_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/product_case/product_case_x72_v1.jpg",
+            "preview_poster_url": f"{_TOS}/assets/cutcli_templates/product_case/product_case_x72_v1.jpg",
             "style_version": 2,
         },
         "quality_label": "顶部三级标题 + 底部标语（时长跟随素材）",
-        "sample_video_url": "https://lobster-online-assets-2103871705.tos-cn-guangzhou.volces.com/assets/cutcli_templates/product_case/product_case_x72_v1.mp4",
+        "sample_video_url": f"{_TOS}/assets/cutcli_templates/product_case/product_case_x72_v1.mp4",
         "overlay_fields": _overlay_fields(
             _overlay_field("top_text", "赛事级 电子路书", max_length=16),
             _overlay_field("title", "HUGEROCK X72", max_length=24),
