@@ -411,6 +411,7 @@ def upload_bundle_to_remote_tos(
     remote_zip: str,
     bundle_name: str,
     region: str = "cn",
+    config_key: str = "TOS_CONFIG",
 ) -> str:
     object_name = canonical_bundle_object_name(bundle_name, region)
     object_key = f"assets/client-code/bundles/{object_name}"
@@ -420,7 +421,7 @@ import json
 
 cfg_path = Path({json.dumps(remote_repo + "/custom_configs.json")})
 cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
-tc = (cfg_data.get("configs") or {{}}).get("TOS_CONFIG") or {{}}
+tc = (cfg_data.get("configs") or {{}}).get({json.dumps(config_key)}) or {{}}
 ak = str(tc.get("access_key") or "").strip()
 sk = str(tc.get("secret_key") or "").strip()
 endpoint = str(tc.get("endpoint") or "").strip()
@@ -594,6 +595,11 @@ def main() -> int:
         default="",
         help="explicit HTTPS URL already uploaded to OSS/TOS/CDN; if provided, manifest uses this directly",
     )
+    ap.add_argument(
+        "--bundle-url-alt",
+        default="",
+        help="备用下载地址；主源下载失败/SHA 不符时客户端自动切换",
+    )
     args = ap.parse_args()
 
     zip_path = args.zip_path.resolve()
@@ -710,6 +716,7 @@ def main() -> int:
                 remote_zip=remote_zip,
                 bundle_name=bundle_name,
                 region=region,
+                config_key="TOS_CONFIG_OVERSEAS" if region == "overseas" else "TOS_CONFIG",
             )
         if not bundle_url:
             bundle_url = f"{args.public_base.rstrip('/')}/client/client-code/bundles/{bundle_name}"
@@ -729,6 +736,14 @@ def main() -> int:
             "paths": manifest_paths_for_zip(zip_path),
             "note": f"OTA {bundle_name}; ordinary client-code paths",
         }
+        alt_url = (args.bundle_url_alt or "").strip()
+        if alt_url:
+            manifest["bundle_url_alt"] = append_cache_bust_query(
+                alt_url,
+                version=args.version,
+                build=args.build,
+                sha256=digest,
+            )
         if is_encrypted_ota_zip(zip_path):
             manifest["encrypted"] = True
             manifest["note"] = f"OTA {bundle_name}; encrypted client-code paths"
