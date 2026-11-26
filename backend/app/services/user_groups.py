@@ -65,7 +65,13 @@ def all_package_permissions() -> list[str]:
         return []
 
 
-def permissions_for_group_code(db: Session, code: str) -> Optional[list[str]]:
+def permissions_for_group_code(
+    db: Session, code: str, *, is_overseas: bool = False
+) -> Optional[list[str]]:
+    """分组权限：分组一旦确定，就以分组为准，不再回落到个人权限。
+
+    未显式配置时：高级=全部；基础/中级=该环境的默认基线。
+    """
     clean = normalize_group_code(code)
     if not clean:
         return None
@@ -73,16 +79,18 @@ def permissions_for_group_code(db: Session, code: str) -> Optional[list[str]]:
     if row is None or row.permissions is None:
         if clean == "advanced":
             return all_package_permissions()
-        return None
+        return default_permissions(is_overseas=is_overseas)
     return [str(item).strip() for item in (row.permissions or []) if str(item).strip()]
 
 
 def group_permissions(db: Session, user: User) -> Optional[list[str]]:
-    """返回该用户分组的权限列表；None 表示「未分组/未配置」，调用方应回落到个人权限。"""
+    """返回该用户分组的权限列表；未分组才返回 None（回落到个人权限）。"""
     code = normalize_group_code(getattr(user, "group_code", ""))
     if not code:
         return None
-    return permissions_for_group_code(db, code)
+    return permissions_for_group_code(
+        db, code, is_overseas=bool(getattr(user, "is_overseas_user", False))
+    )
 
 
 def default_permissions(is_overseas: bool = False) -> list[str]:
