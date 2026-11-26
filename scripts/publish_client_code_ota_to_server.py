@@ -381,10 +381,11 @@ def append_cache_bust_query(url: str, *, version: str, build: int, sha256: str) 
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
 
 
-def load_deploy() -> dict[str, str]:
+def load_deploy(env_path: Path | None = None) -> dict[str, str]:
     root = Path(__file__).resolve().parents[1]
     data: dict[str, str] = {}
-    for line in (root / ".env.deploy").read_text(encoding="utf-8").splitlines():
+    path = env_path or (root / ".env.deploy")
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -576,6 +577,7 @@ def main() -> int:
     _require_user_deploy_confirmation()
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path", type=Path, help="local OTA zip")
+    ap.add_argument("--env", type=Path, default=None, help="deploy env file (default .env.deploy)")
     ap.add_argument("--approved-version", default="", help="用户明确批准的版本号（必须与包内版本一致）")
     ap.add_argument("--version", default="1.0.5", help="manifest.version")
     ap.add_argument("--build", type=int, default=5, help="manifest.build")
@@ -644,10 +646,11 @@ def main() -> int:
     _gui_release_confirm('发布', summary=summary)
     _require_release_approval(str(zip_path), args.approved_version, write_ledger=True)
 
-    env = load_deploy()
+    env = load_deploy(args.env)
     host = env["LOBSTER_DEPLOY_HOST"]
     user, _, hostname = host.partition("@")
-    key_path = norm_key(env["LOBSTER_DEPLOY_SSH_KEY"])
+    key_path = norm_key(env.get("LOBSTER_DEPLOY_SSH_KEY", ""))
+    password = env.get("LOBSTER_DEPLOY_PASSWORD", "")
     remote_root = env.get("LOBSTER_DEPLOY_REMOTE_DIR", "/root/lobster_server").rstrip("/")
     passphrase = env.get("LOBSTER_SSH_KEY_PASSPHRASE", "").encode()
 
@@ -660,19 +663,25 @@ def main() -> int:
     import paramiko
 
     pkey = None
-    for key_cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
-        try:
-            pkey = key_cls.from_private_key_file(key_path, password=passphrase or None)
-            break
-        except Exception:
-            continue
-    if not pkey:
-        print("could not load key:", key_path, file=sys.stderr)
+    if key_path:
+        for key_cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+            try:
+                pkey = key_cls.from_private_key_file(key_path, password=passphrase or None)
+                break
+            except Exception:
+                continue
+    if not pkey and not password:
+        print("could not load key and no password:", key_path, file=sys.stderr)
         return 1
 
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh_client.connect(hostname=hostname, username=user, pkey=pkey, timeout=45)
+    connect_kwargs = {"hostname": hostname, "username": user, "timeout": 45}
+    if pkey:
+        connect_kwargs["pkey"] = pkey
+    else:
+        connect_kwargs["password"] = password
+    ssh_client.connect(**connect_kwargs)
 
     try:
         _, stdout, stderr = ssh_client.exec_command(f"mkdir -p {remote_bundles}", timeout=60)
