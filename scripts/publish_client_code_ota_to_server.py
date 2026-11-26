@@ -351,7 +351,7 @@ def is_encrypted_ota_zip(zip_path: Path) -> bool:
         return True
 
 
-def canonical_bundle_object_name(bundle_name: str) -> str:
+def canonical_bundle_object_name(bundle_name: str, region: str = "cn") -> str:
     name = (bundle_name or "").strip().lower()
     variants: list[str] = []
     for token in (
@@ -365,7 +365,8 @@ def canonical_bundle_object_name(bundle_name: str) -> str:
         if token in name:
             variants.append(token)
     suffix = "_" + "_".join(variants) if variants else ""
-    return f"lobster_online_client_code_ota{suffix}_latest.zip"
+    prefix = "_overseas" if str(region or "").strip().lower() == "overseas" else ""
+    return f"lobster_online_client_code_ota{prefix}{suffix}_latest.zip"
 
 
 def append_cache_bust_query(url: str, *, version: str, build: int, sha256: str) -> str:
@@ -409,8 +410,9 @@ def upload_bundle_to_remote_tos(
     remote_root: str,
     remote_zip: str,
     bundle_name: str,
+    region: str = "cn",
 ) -> str:
-    object_name = canonical_bundle_object_name(bundle_name)
+    object_name = canonical_bundle_object_name(bundle_name, region)
     object_key = f"assets/client-code/bundles/{object_name}"
     remote_repo = remote_root.rstrip("/")
     remote_py = f"""from pathlib import Path
@@ -581,6 +583,7 @@ def main() -> int:
     ap.add_argument("--approved-version", default="", help="用户明确批准的版本号（必须与包内版本一致）")
     ap.add_argument("--version", default="1.0.5", help="manifest.version")
     ap.add_argument("--build", type=int, default=5, help="manifest.build")
+    ap.add_argument("--region", choices=["cn", "overseas"], default="", help="TOS object region prefix")
     ap.add_argument(
         "--public-base",
         default="https://bhzn.top",
@@ -700,11 +703,13 @@ def main() -> int:
         if explicit_bundle_url:
             bundle_url = explicit_bundle_url
         else:
+            region = args.region or ("overseas" if "bhos.online" in args.public_base else "cn")
             bundle_url = upload_bundle_to_remote_tos(
                 ssh_client,
                 remote_root=remote_root,
                 remote_zip=remote_zip,
                 bundle_name=bundle_name,
+                region=region,
             )
         if not bundle_url:
             bundle_url = f"{args.public_base.rstrip('/')}/client/client-code/bundles/{bundle_name}"
