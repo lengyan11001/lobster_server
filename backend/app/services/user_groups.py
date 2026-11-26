@@ -47,15 +47,42 @@ def ensure_user_groups(db: Session) -> None:
         db.rollback()
 
 
+def all_package_permissions() -> list[str]:
+    """高级分组未显式配置时，按「全功能」返回技能商店全部包。"""
+    try:
+        from ..api.skills import _expand_group_visibility, _load_registry
+
+        ids: set[str] = set()
+        for pkg in (_load_registry().get("packages") or []):
+            if isinstance(pkg, dict):
+                pid = str(pkg.get("id") or pkg.get("package_id") or "").strip()
+            else:
+                pid = str(pkg).strip()
+            if pid:
+                ids.add(pid)
+        return sorted(_expand_group_visibility(ids))
+    except Exception:
+        return []
+
+
+def permissions_for_group_code(db: Session, code: str) -> Optional[list[str]]:
+    clean = normalize_group_code(code)
+    if not clean:
+        return None
+    row = db.query(UserGroup).filter(UserGroup.code == clean).first()
+    if row is None or row.permissions is None:
+        if clean == "advanced":
+            return all_package_permissions()
+        return None
+    return [str(item).strip() for item in (row.permissions or []) if str(item).strip()]
+
+
 def group_permissions(db: Session, user: User) -> Optional[list[str]]:
     """返回该用户分组的权限列表；None 表示「未分组/未配置」，调用方应回落到个人权限。"""
     code = normalize_group_code(getattr(user, "group_code", ""))
     if not code:
         return None
-    row = db.query(UserGroup).filter(UserGroup.code == code).first()
-    if row is None or row.permissions is None:
-        return None
-    return [str(item).strip() for item in (row.permissions or []) if str(item).strip()]
+    return permissions_for_group_code(db, code)
 
 
 def default_permissions(is_overseas: bool = False) -> list[str]:

@@ -2322,13 +2322,18 @@ def admin_list_user_groups(
     groups = []
     for row in rows:
         perms = None if row.permissions is None else [str(x) for x in (row.permissions or []) if str(x).strip()]
-        effective = sorted(_expand_group_visibility(set(perms))) if perms is not None else default_perms
+        effective_perms = group_service.permissions_for_group_code(db, row.code)
+        effective = (
+            sorted(_expand_group_visibility(set(effective_perms)))
+            if effective_perms is not None
+            else default_perms
+        )
         groups.append(
             {
                 "code": row.code,
                 "name": row.name,
                 "description": row.description,
-                "configured": perms is not None,
+                "configured": perms is not None or effective_perms is not None,
                 "permissions": perms,
                 "effective_permissions": effective,
                 "member_count": int(counts.get(row.code, 0) or 0),
