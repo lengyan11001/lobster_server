@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from ..models import UserSkillVisibility
+from ..models import UserGroup, UserSkillVisibility
 
 DOUYIN_LEADS_FEATURE_ID = "douyin_leads"
 DOUYIN_LEADS_ACCESS_KEY = "douyin_leads_access"
@@ -467,6 +467,15 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             .all()
         }
 
+    is_full_access = False
+    try:
+        code = str(getattr(user, "group_code", "") or "").strip().lower() if user is not None else ""
+        if code == "advanced":
+            group_row = db.query(UserGroup).filter(UserGroup.code == "advanced").first()
+            is_full_access = group_row is None or group_row.permissions is None
+    except Exception:
+        is_full_access = False
+
     user_role = ""
     try:
         user_role = str(getattr(user, "role", "") or "").strip().lower()
@@ -485,6 +494,16 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
             flags.setdefault(feature_key, False)
     for package_id in RETIRED_PACKAGE_IDS:
         flags.setdefault(package_id, False)
+    if is_full_access:
+        for package in FEATURE_FLAG_PACKAGES:
+            pid = str(package.get("id") or "").strip()
+            fkey = str(package.get("feature_key") or "").strip()
+            if pid:
+                flags[pid] = True
+            if fkey:
+                flags[fkey] = True
+        for fid in HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS:
+            flags[str(fid)] = True
     if user_role == "admin":
         # 管理员全显示：首页功能包 + 该账号显式可见的包 + 技能商店目录里的全部技能包。
         # 注意不能只放行 FEATURE_FLAG_PACKAGES，否则会把管理员原本能看到的
