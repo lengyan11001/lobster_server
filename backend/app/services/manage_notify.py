@@ -28,7 +28,19 @@ from . import feishu_bot, integration_secrets
 logger = logging.getLogger(__name__)
 
 BEIJING = timezone(timedelta(hours=8))
-MANAGE_HOME = "https://manage.bhzn.top"
+def _manage_home() -> str:
+    try:
+        from ..core.config import settings
+
+        base = str(getattr(settings, "public_base_url", "") or "").strip().lower()
+        if "bhos.online" in base:
+            return "https://manage.bhos.online"
+    except Exception:
+        pass
+    return "https://manage.bhzn.top"
+
+
+MANAGE_HOME = _manage_home()
 FEISHU_KIND = "feishu"
 DONE_STATUSES = {"completed", "done", "cancelled"}
 # 与 manage.py 同一口径：只有「已确认/有变更」的项目才算派活

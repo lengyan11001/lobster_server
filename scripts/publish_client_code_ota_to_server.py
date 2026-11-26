@@ -576,6 +576,43 @@ def _gui_release_confirm(action: str = "发布", summary: str = "") -> None:
         raise SystemExit(6)
 
 
+def _zip_edition(zip_path: Path) -> str:
+    """The pack script stamps CLIENT_CODE_EDITION.json; legacy zips have none."""
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            raw = zf.read("CLIENT_CODE_EDITION.json")
+        data = json.loads(raw.decode("utf-8"))
+        return str(data.get("edition") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _host_region(host: str) -> str:
+    value = (host or "").lower()
+    if "43.162.111.36" in value or "bhos.online" in value:
+        return "overseas"
+    if "42.194.209.150" in value or "bhzn.top" in value:
+        return "cn"
+    return ""
+
+
+def _resolve_publish_region(args, host: str, zip_path: Path) -> str:
+    env_region = _host_region(host)
+    requested = str(args.region or "").strip().lower()
+    if requested and env_region and requested != env_region:
+        raise SystemExit(
+            f"[BLOCKED] --region={requested} 与部署环境（{env_region}: {host}）不一致，拒绝发布。"
+        )
+    region = requested or env_region or ("overseas" if "bhos.online" in args.public_base else "cn")
+    edition = _zip_edition(zip_path)
+    if edition and edition != region:
+        raise SystemExit(
+            f"[BLOCKED] 包内版本标记为 {edition} 版，不能发到 {region} 环境；"
+            f"请用对应版本重新打包。"
+        )
+    return region
+
+
 def main() -> int:
     _require_user_deploy_confirmation()
     ap = argparse.ArgumentParser()
@@ -657,6 +694,8 @@ def main() -> int:
 
     env = load_deploy(args.env)
     host = env["LOBSTER_DEPLOY_HOST"]
+    publish_region = _resolve_publish_region(args, host, zip_path)
+    print(f"[region] publish target = {publish_region} (host={host})")
     user, _, hostname = host.partition("@")
     key_path = norm_key(env.get("LOBSTER_DEPLOY_SSH_KEY", ""))
     password = env.get("LOBSTER_DEPLOY_PASSWORD", "")
@@ -709,7 +748,7 @@ def main() -> int:
         if explicit_bundle_url:
             bundle_url = explicit_bundle_url
         else:
-            region = args.region or ("overseas" if "bhos.online" in args.public_base else "cn")
+            region = publish_region
             bundle_url = upload_bundle_to_remote_tos(
                 ssh_client,
                 remote_root=remote_root,

@@ -81,7 +81,19 @@ _H5_INDEX_HEADERS = {
     "Expires": "0",
 }
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
-_H5_WEBCLIP_URL = "https://h5.bhzn.top/"
+def _h5_webclip_url() -> str:
+    try:
+        from ..core.config import settings
+
+        base = str(getattr(settings, "public_base_url", "") or "").strip().lower()
+        if "bhos.online" in base:
+            return "https://h5.bhos.online/"
+    except Exception:
+        pass
+    return "https://h5.bhzn.top/"
+
+
+_H5_WEBCLIP_URL = _h5_webclip_url()
 _HIKONG_WEBCLIP_URL = "https://h5.hikongai.cn/"
 _H5_WEBCLIP_LABEL = "必火AI员工"
 _VALID_MODES = {"direct"}

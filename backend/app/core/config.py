@@ -175,7 +175,16 @@ class Settings(BaseSettings):
     # The relay process and data remain isolated on port 38080. The public
     # controller uses the dedicated ToDesk hostname so admin links do not
     # fall through the main site's /remote route.
-    remote_support_public_url: str = "https://todesk.bhzn.top"
+    remote_support_public_url: str = ""
+
+    @field_validator("remote_support_public_url", mode="after")
+    @classmethod
+    def _default_remote_support_public_url(cls, value: str, info) -> str:
+        current = str(value or "").strip().rstrip("/")
+        base = str((getattr(info, "data", {}) or {}).get("public_base_url") or "").strip().lower()
+        if not current or current == "https://todesk.bhzn.top":
+            return "https://todesk.bhos.online" if "bhos.online" in base else "https://todesk.bhzn.top"
+        return current
     """HiFly 默认 API Token；用户不显式传 token 时，服务端用它访问 HiFly。"""
     hifly_default_token: Optional[str] = None
     """HiFly 消费者站 JWT；用于调用 hifly.cc 内部接口（如声音 preview），过期需手动更新。"""
