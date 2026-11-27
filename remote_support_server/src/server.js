@@ -57,7 +57,7 @@ const RTC_TURN_TTL_SECONDS = Math.max(60, Number(process.env.RTC_TURN_TTL_SECOND
 // change the explicitly authorised device list.
 const MAIN_API_BASE = String(process.env.LOBSTER_REMOTE_MAIN_API_BASE || "http://127.0.0.1:8000").replace(/\/$/, "");
 const REMOTE_SERVICE_KEY = String(process.env.LOBSTER_REMOTE_SERVICE_KEY || process.env.REMOTE_SUPPORT_SERVICE_KEY || "");
-const PUBLIC_BASE_PATH = String(process.env.LOBSTER_REMOTE_PUBLIC_BASE_PATH || "/remote").replace(/\/$/, "");
+const PUBLIC_BASE_PATH = String(process.env.LOBSTER_REMOTE_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
 const ALLOW_SELF_SERVICE = String(process.env.LOBSTER_REMOTE_ALLOW_SELF_SERVICE || "false").toLowerCase() === "true";
 const MAIN_ADMIN_USER_ID = "lobster-main-admin";
 const RELAY_QUALITY_PROFILE = Object.freeze({
