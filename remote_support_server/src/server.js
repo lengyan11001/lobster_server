@@ -1386,6 +1386,14 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/api/releases/windows-agent", (req, res) => {
+  // 2026-11-27 用户要求：agent 的自更新会 `cmd /C start "" ...update.cmd` 弹黑窗，
+  // 而且一旦版本号与二进制不符就会无限重试。默认彻底关闭这条自更新通道，
+  // agent 版本改由客户端 OTA 包里的 desktop/BHZN-ToDesk-Agent.exe 更新。
+  // 需要临时恢复时把 WINDOWS_AGENT_MANIFEST_ENABLED 设为 1。
+  if (String(process.env.WINDOWS_AGENT_MANIFEST_ENABLED || "0").trim() !== "1") {
+    res.status(404).json({ error: "release_not_found", auto_update: "disabled" });
+    return;
+  }
   const filePath = path.join(PUBLIC_DIR, "downloads", WINDOWS_AGENT_FILE);
   if (!fs.existsSync(filePath)) {
     res.status(404).json({ error: "release_not_found" });
