@@ -183,10 +183,10 @@ function maybeStartRequestedDevice() {
 }
 
 const qualityProfiles = {
-  data: { profile: "data", label: "省流量", maxSide: 1280, fps: 10, jpegQuality: 42, bitrateKbps: 1200 },
-  balanced: { profile: "balanced", label: "平衡", maxSide: 1920, fps: 18, jpegQuality: 58, bitrateKbps: 3000 },
-  hd: { profile: "hd", label: "高清", maxSide: 2560, fps: 24, jpegQuality: 66, bitrateKbps: 6000 },
-  lan: { profile: "lan", label: "局域网", maxSide: 3840, fps: 30, jpegQuality: 74, bitrateKbps: 12000 }
+  data: { profile: "data", label: "省流量", maxSide: 1280, fps: 20, jpegQuality: 50, bitrateKbps: 1500 },
+  balanced: { profile: "balanced", label: "平衡", maxSide: 1600, fps: 24, jpegQuality: 62, bitrateKbps: 3000 },
+  hd: { profile: "hd", label: "高清", maxSide: 1920, fps: 24, jpegQuality: 70, bitrateKbps: 6000 },
+  lan: { profile: "lan", label: "局域网", maxSide: 1920, fps: 30, jpegQuality: 78, bitrateKbps: 10000 }
 };
 
 function devicePlatform(device) {
@@ -264,7 +264,12 @@ function setQualityProfile(profile, restart = false) {
       pendingControlIntents.delete(activeDeviceId);
       requestControlSession(device);
     } else if (sessionId) {
-      activeMeta.textContent = "中转模式固定为省流量档";
+      const previousRelaySessionId = sessionId;
+      ws.send(JSON.stringify({ type: "stop-control", sessionId: previousRelaySessionId }));
+      sessionId = "";
+      activeMeta.textContent = `正在切换到${currentQualityProfile().label}档`;
+      pendingControlIntents.delete(activeDeviceId);
+      requestControlSession(device, { relayFallback: true });
     }
   }
 }
@@ -1449,6 +1454,7 @@ function requestControlSession(device, options = {}) {
       type: "control",
       deviceId: device.id,
       mode: "control",
+      quality: currentQualityProfile(),
       relayFallback: Boolean(options.relayFallback),
       reason: options.reason || ""
     }));
@@ -1501,6 +1507,7 @@ function fallbackToRelay(reason = "fallback") {
     type: "control",
     deviceId,
     mode: "control",
+    quality: currentQualityProfile(),
     relayFallback: true,
     reason: `rtc_fallback:${reason}`
   }));
@@ -1623,10 +1630,22 @@ async function handleRtcReady(msg) {
   }
 }
 
+function tuneRtcReceiver(pc) {
+  try {
+    const receiver = pc.getReceivers().find((item) => item.track && item.track.kind === "video");
+    if (!receiver) return;
+    if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 60;
+    if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0.06;
+  } catch (e) {
+    // Optional low-latency hints; ignore unsupported browsers.
+  }
+}
+
 async function handleRtcAnswer(msg) {
   if (!rtcState || rtcState.sessionId !== msg.sessionId || !rtcState.pc) return;
   try {
     await rtcState.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+    tuneRtcReceiver(rtcState.pc);
   } catch {
     fallbackToRelay("answer_failed");
   }
@@ -2026,6 +2045,28 @@ function hideRemoteCursor() {
   remoteCursor.classList.add("hidden");
 }
 
+let hoverMoveFrame = 0;
+let hoverMoveLastSentAt = 0;
+let hoverMovePoint = null;
+
+function queueHoverMove(event) {
+  if (!sessionId || !inputReady) return;
+  const activeDevice = devices.find((item) => item.id === activeDeviceId);
+  if (!isDesktopDevice(activeDevice)) return;
+  updateRemoteCursor(event);
+  hoverMovePoint = canvasPoint(event);
+  if (hoverMoveFrame) return;
+  hoverMoveFrame = requestAnimationFrame(() => {
+    hoverMoveFrame = 0;
+    const now = performance.now();
+    if (!hoverMovePoint || now - hoverMoveLastSentAt < 33) return;
+    const point = hoverMovePoint;
+    hoverMovePoint = null;
+    hoverMoveLastSentAt = now;
+    sendInput({ action: "move", x: point.x, y: point.y });
+  });
+}
+
 function sendInput(payload) {
   if (!screenOpen || !sessionId || !inputReady || !ws || ws.readyState !== WebSocket.OPEN) {
     if (screenOpen && !sessionId) resumeActiveControl();
@@ -2033,6 +2074,10 @@ function sendInput(payload) {
       const activeDevice = devices.find((item) => item.id === activeDeviceId);
       activeMeta.textContent = `当前仅可观看：${controlBlockReason(activeDevice) || "控制未就绪"}`;
     }
+    return;
+  }
+  if ((payload.action === "move" || payload.action === "dragMove")
+      && rtcState?.controlChannel?.bufferedAmount > 128 * 1024) {
     return;
   }
   const message = { type: "input", sessionId, inputId: `h5-${Date.now()}-${++inputSerial}`, ...payload };
@@ -2257,12 +2302,15 @@ canvas.addEventListener("pointerdown", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
-  if (!dragStart || !dragLast) return;
+  if (!dragStart || !dragLast) {
+    queueHoverMove(event);
+    return;
+  }
   event.preventDefault();
   const now = performance.now();
   const activeDevice = devices.find((item) => item.id === activeDeviceId);
   const desktopDrag = isDesktopDevice(activeDevice);
-  const minInterval = desktopDrag ? 10 : 55;
+  const minInterval = desktopDrag ? 16 : 55;
   if (now - dragLastSentAt < minInterval) return;
   const point = canvasPoint(event);
   updateRemoteCursor(event);
@@ -2415,7 +2463,7 @@ wallControlCanvas.addEventListener("pointermove", (event) => {
   const now = performance.now();
   const activeDevice = devices.find((item) => item.id === wallActiveDeviceId);
   const desktopDrag = isDesktopDevice(activeDevice);
-  const minInterval = desktopDrag ? 10 : 55;
+  const minInterval = desktopDrag ? 16 : 55;
   if (now - wallDragLastSentAt < minInterval) return;
   const point = wallCanvasPoint(event);
   const dxTotal = Math.abs(point.x - wallDragStart.x);

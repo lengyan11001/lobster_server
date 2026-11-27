@@ -249,15 +249,29 @@ function qualityProfileFromValue(value, fallback = "balanced") {
   if (typeof value === "object" && value) value = value.profile || value.name || "";
   const profile = String(value || fallback).toLowerCase();
   if (profile === "lan") {
-    return { profile: "lan", maxSide: 3840, fps: 30, jpegQuality: 74, bitrateKbps: 12000 };
+    return { profile: "lan", maxSide: 1920, fps: 30, jpegQuality: 78, bitrateKbps: 10000 };
   }
   if (profile === "hd") {
-    return { profile: "hd", maxSide: 2560, fps: 24, jpegQuality: 66, bitrateKbps: 6000 };
+    return { profile: "hd", maxSide: 1920, fps: 24, jpegQuality: 70, bitrateKbps: 6000 };
   }
   if (profile === "data") {
-    return { profile: "data", maxSide: 1280, fps: 10, jpegQuality: 42, bitrateKbps: 1200 };
+    return { profile: "data", maxSide: 1280, fps: 20, jpegQuality: 50, bitrateKbps: 1500 };
   }
-  return { profile: "balanced", maxSide: 1920, fps: 18, jpegQuality: 58, bitrateKbps: 3000 };
+  return { profile: "balanced", maxSide: 1600, fps: 24, jpegQuality: 62, bitrateKbps: 3000 };
+}
+
+function relayQualityProfileFromValue(value) {
+  const profile = qualityProfileFromValue(value, "balanced").profile;
+  if (profile === "data") {
+    return { profile: "data", maxSide: 1280, fps: 12, jpegQuality: 50, bitrateKbps: 1500 };
+  }
+  if (profile === "hd") {
+    return { profile: "hd", maxSide: 1600, fps: 18, jpegQuality: 65, bitrateKbps: 3000 };
+  }
+  if (profile === "lan") {
+    return { profile: "lan", maxSide: 1920, fps: 20, jpegQuality: 70, bitrateKbps: 4000 };
+  }
+  return { profile: "balanced", maxSide: 1280, fps: 15, jpegQuality: 58, bitrateKbps: 2000 };
 }
 
 function sanitizeSessionMode(value) {
@@ -1258,7 +1272,9 @@ function attachController(device, ws, options = {}) {
     }
   }
   const sessionId = makeSessionId();
-  const relayQuality = { ...RELAY_QUALITY_PROFILE };
+  const relayQuality = options.quality
+    ? relayQualityProfileFromValue(options.quality)
+    : { ...RELAY_QUALITY_PROFILE };
   const expiresAt = now() + RELAY_SESSION_TTL_MS;
   controllers.set(sessionId, {
     sessionId,
@@ -2201,7 +2217,8 @@ wss.on("connection", (ws) => {
         ws.allowRtcRelayFallback = Boolean(msg.relayFallback || msg.allowRelayFallback);
         attachController(device, ws, {
           mode: sanitizeSessionMode(msg.mode),
-          reason: msg.reason || ""
+          reason: msg.reason || "",
+          quality: msg.quality || msg.qualityProfile
         });
         return;
       }
