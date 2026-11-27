@@ -2478,6 +2478,9 @@ def admin_get_user_skill_visibility(
         "is_admin": _skill_store_admin(user),
         "registration_is_overseas_user": bool(getattr(user, "is_overseas_user", False)),
         "has_custom_visibility": _user_has_custom_visibility(db, user_id),
+        "personal_row_count": int(
+            db.query(UserSkillVisibility.id).filter(UserSkillVisibility.user_id == user_id).count()
+        ),
         "group_code": (getattr(user, "group_code", "") or "").strip(),
         "permission_source": permission_source,
         "visible_ids": sorted(visible),

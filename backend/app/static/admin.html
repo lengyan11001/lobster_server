@@ -5023,6 +5023,22 @@ function renderImageChannelSection(u, featureFlags) {
 async function saveUserGroup(userId) {
   const sel = document.getElementById('userGroupSelect');
   const code = sel ? String(sel.value || '') : '';
+  if (code) {
+    // 入组后只看分组权限：该用户自己的额外授权会失效，先摆明数量再确认。
+    try {
+      const vis = await api('/admin/api/user-skill-visibility/' + userId);
+      const own = Number(vis.personal_row_count || 0) || (vis.visible_ids || []).length;
+      if (vis.has_custom_visibility && own > 0) {
+        const g = ((userGroupData && userGroupData.groups) || []).find(x => x.code === code) || {};
+        const gCount = (g.effective_permissions || []).length;
+        const ok = confirm(
+          '该用户当前有 ' + own + ' 项个人权限。\n加入「' + (userGroupLabel(code) || code) +
+          '」后只按分组权限生效（约 ' + gCount + ' 项），个人额外授权会被覆盖。\n\n继续？'
+        );
+        if (!ok) return;
+      }
+    } catch (e) { /* 查询失败不阻断，后端仍按规则执行 */ }
+  }
   try {
     await api('/admin/api/user/' + userId + '/group', {
       method: 'POST',
@@ -5502,7 +5518,7 @@ async function saveGroupPerms() {
 }
 
 async function resetGroupPerms() {
-  if (!confirm('恢复成「未配置」？该组用户会暂时回落到自己的个人权限。')) return;
+  if (!confirm('恢复成「未配置」？该组用户会改为按默认基线（不是个人权限）生效。')) return;
   try {
     await api('/admin/api/user-groups/' + currentGroupCode, { method: 'PUT', body: JSON.stringify({ reset: true }) });
     toast('已恢复为未配置');
