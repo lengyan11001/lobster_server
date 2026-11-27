@@ -1532,10 +1532,6 @@ async function handleRtcReady(msg) {
     setInputReady(canControlDevice(device));
   }
   const pc = new RTCPeerConnection({ iceServers: msg.iceServers || [] });
-  const controlChannel = pc.createDataChannel("control", { ordered: true });
-  const pointerChannel = device?.rtcCapabilities?.pointerChannel
-    ? pc.createDataChannel("pointer", { ordered: false, maxRetransmits: 0 })
-    : null;
   const wantsVideoTrack = Boolean(device?.rtcCapabilities?.video);
   if (!wantsVideoTrack) {
     if (msg.sessionId && ws?.readyState === WebSocket.OPEN) {
@@ -1544,7 +1540,14 @@ async function handleRtcReady(msg) {
     fallbackToRelay("video_track_unavailable");
     return;
   }
+  // Video m-line must be created before the data channels.  Otherwise the
+  // browser's offer puts the application m-line first, and the Rust answerer
+  // creates a second video m-line (mid:1) instead of attaching to video mid:0.
   pc.addTransceiver("video", { direction: "sendrecv" });
+  const controlChannel = pc.createDataChannel("control", { ordered: true });
+  const pointerChannel = device?.rtcCapabilities?.pointerChannel
+    ? pc.createDataChannel("pointer", { ordered: false, maxRetransmits: 0 })
+    : null;
   rtcState = {
     pc,
     controlChannel,
