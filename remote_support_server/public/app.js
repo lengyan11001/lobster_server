@@ -1469,6 +1469,7 @@ function closeRtc(reason = "closed", notify = true) {
   clearInterval(state?.statsTimer);
   try {
     state?.controlChannel?.close();
+  state?.pointerChannel?.close();
   } catch {
     // Best effort close.
   }
@@ -1532,6 +1533,9 @@ async function handleRtcReady(msg) {
   }
   const pc = new RTCPeerConnection({ iceServers: msg.iceServers || [] });
   const controlChannel = pc.createDataChannel("control", { ordered: true });
+  const pointerChannel = device?.rtcCapabilities?.pointerChannel
+    ? pc.createDataChannel("pointer", { ordered: false, maxRetransmits: 0 })
+    : null;
   const wantsVideoTrack = Boolean(device?.rtcCapabilities?.video);
   if (!wantsVideoTrack) {
     if (msg.sessionId && ws?.readyState === WebSocket.OPEN) {
@@ -1544,6 +1548,7 @@ async function handleRtcReady(msg) {
   rtcState = {
     pc,
     controlChannel,
+    pointerChannel,
     sessionId: msg.sessionId,
     deviceId: msg.deviceId,
     connected: false,
@@ -2084,14 +2089,17 @@ function sendInput(payload) {
     }
     return;
   }
-  if ((payload.action === "move" || payload.action === "dragMove")
-      && rtcState?.controlChannel?.bufferedAmount > 128 * 1024) {
+  const pointerAction = payload.action === "move" || payload.action === "dragMove";
+  const dataChannel = pointerAction && rtcState?.pointerChannel?.readyState === "open"
+    ? rtcState.pointerChannel
+    : rtcState?.controlChannel;
+  if (pointerAction && dataChannel?.bufferedAmount > 128 * 1024) {
     return;
   }
   const message = { type: "input", sessionId, inputId: `h5-${Date.now()}-${++inputSerial}`, ...payload };
   if (rtcState?.sessionId === sessionId) {
-    if (rtcState.controlChannel?.readyState === "open") {
-      rtcState.controlChannel.send(JSON.stringify(message));
+    if (dataChannel?.readyState === "open") {
+      dataChannel.send(JSON.stringify(message));
     } else {
       activeMeta.textContent = "直连控制通道连接中";
     }

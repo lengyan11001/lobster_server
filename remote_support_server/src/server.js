@@ -413,6 +413,7 @@ function publicRtcCapabilities(device) {
     video: Boolean(capabilities.video),
     dataChannel: Boolean(capabilities.dataChannel),
     frameChannel: Boolean(capabilities.frameChannel),
+    pointerChannel: Boolean(capabilities.pointerChannel),
     localNetwork: capabilities.localNetwork !== false,
     codecs: Array.isArray(capabilities.codecs) ? capabilities.codecs.slice(0, 8).map(String) : [],
     maxFps: Number.isFinite(Number(capabilities.maxFps)) ? Math.max(0, Math.min(120, Number(capabilities.maxFps))) : 0,
