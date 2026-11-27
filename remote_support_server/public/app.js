@@ -1544,7 +1544,7 @@ async function handleRtcReady(msg) {
     fallbackToRelay("video_track_unavailable");
     return;
   }
-  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.addTransceiver("video", { direction: "sendrecv" });
   rtcState = {
     pc,
     controlChannel,
