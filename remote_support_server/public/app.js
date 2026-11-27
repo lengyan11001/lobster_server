@@ -1647,8 +1647,8 @@ function tuneRtcReceiver(pc) {
   try {
     const receiver = pc.getReceivers().find((item) => item.track && item.track.kind === "video");
     if (!receiver) return;
-    if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 60;
-    if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0.06;
+    if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 45;
+    if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0.045;
   } catch (e) {
     // Optional low-latency hints; ignore unsupported browsers.
   }
@@ -2072,7 +2072,7 @@ function queueHoverMove(event) {
   hoverMoveFrame = requestAnimationFrame(() => {
     hoverMoveFrame = 0;
     const now = performance.now();
-    if (!hoverMovePoint || now - hoverMoveLastSentAt < 33) return;
+    if (!hoverMovePoint || now - hoverMoveLastSentAt < 16) return;
     const point = hoverMovePoint;
     hoverMovePoint = null;
     hoverMoveLastSentAt = now;
