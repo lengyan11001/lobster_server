@@ -3468,7 +3468,8 @@ function renderUserTable(users, containerId, title) {
   }
   let html = title ? `<h3>${title}（${users.length} 条）</h3>` : '';
   html += `<div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>品牌</th><th>积分</th><th>角色</th>`;
-  if (isAdmin()) html += `<th>分组</th><th>代理</th>`;
+  if (isAdmin() || isLevel1Agent()) html += `<th>分组</th>`;
+  if (isAdmin()) html += `<th>代理</th>`;
   html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
@@ -3484,9 +3485,11 @@ function renderUserTable(users, containerId, title) {
       <td><strong>${escapeHtml(brandName)}</strong><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(u.brand_mark || '-')}</div></td>
       <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
-    if (isAdmin()) {
+    if (isAdmin() || isLevel1Agent()) {
       const gLabel = u.group_code ? (userGroupLabel(u.group_code) || u.group_code) : '';
       html += `<td>${gLabel ? '<span class="badge badge-green">' + escapeHtml(gLabel) + '</span>' : '<span style="font-size:11px;color:var(--text-secondary)">未分组</span>'}</td>`;
+    }
+    if (isAdmin()) {
       html += `<td>${u.is_agent ? '<span class="badge badge-yellow">' + agentLabel + '</span>' : '-'}</td>`;
     }
     html += `<td style="font-size:11px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '-'}</td>
@@ -4884,7 +4887,7 @@ async function showUserDetail(userId) {
         </div>
       `;
     }
-    if (isAdmin()) {
+    if (isAdmin() || isLevel1Agent()) {
       const groupOptions = USER_GROUP_DEFS.map(g =>
         '<option value="' + g.code + '" ' + ((u.group_code || '') === g.code ? 'selected' : '') + '>' + g.name + '</option>'
       ).join('');
