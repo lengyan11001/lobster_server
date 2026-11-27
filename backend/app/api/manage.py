@@ -2780,6 +2780,46 @@ def _remote_support_call(method: str, path: str, body: Optional[dict] = None) ->
     return data if isinstance(data, dict) else {}
 
 
+def _find_presence_by_device(db: Session, device_id: str):
+    """按远程设备号找最近一次心跳，返回 (presence, remote_support)。"""
+    wanted = (device_id or "").strip().upper()
+    if not wanted:
+        return None
+    for cand in (db.query(H5ChatDevicePresence)
+                 .order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(500).all()):
+        payload = cand.account_payload if isinstance(cand.account_payload, dict) else {}
+        remote = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
+        if str(remote.get("device_id") or "").strip().upper() == wanted:
+            return cand, remote
+    return None
+
+
+def _invalidate_relay_cache() -> None:
+    _RELAY_ONLINE_CACHE["at"] = 0.0
+
+
+def _bind_remote_device(device_id: str, verification_code: str, label: str = "") -> tuple[bool, str]:
+    """把设备绑定到远程中继；成功返回 (True, "")，失败返回 (False, 原因)。"""
+    did = (device_id or "").strip().upper()
+    code = (verification_code or "").strip()
+    if not did:
+        return False, "缺少设备号"
+    if not code:
+        return False, "设备还没上报验证码"
+    try:
+        _remote_support_call("POST", "/api/remote-admin/devices", {
+            "deviceId": did,
+            "verificationCode": code,
+            "label": (label or "").strip()[:80],
+        })
+    except HTTPException as exc:
+        return False, str(exc.detail)[:200]
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)[:200]
+    _invalidate_relay_cache()
+    return True, ""
+
+
 def _dispatch_agg(db: Session, company_id: int, ai_id: int, since) -> Dict[str, Any]:
     """一台设备在时间窗内的派活汇总（不从头累计）。"""
     q = db.query(MDispatch).filter(MDispatch.company_id == company_id,
@@ -2880,8 +2920,8 @@ def _ai_row_json(db: Session, company: MCompany, row: MAiEmployee, since,
             "owner_label": ("属于 " + member.display_name) if member else "",
             "remote_enabled": bool(remote.get("enabled")),
             "remote_running": bool(remote.get("running")),
-            "remote_bound": bool(device_id),
-            "can_remote": bool(device_id),
+            "remote_bound": bool(device_id and device_id in (relay_map or {})),
+            "can_remote": bool(device_id and device_id in (relay_map or {})),
             "dispatched": agg["dispatched"], "succeeded": agg["succeeded"],
             "failed": agg["failed"], "running": agg["running"],
             "last_at": agg["last_at"], "last_node": agg["last_node"],
@@ -2948,14 +2988,7 @@ def create_ai_employee(body: AiEmployeeIn, user: Any = Depends(current_actor),
     code = (body.verification_code or "").strip()
     source = "slot"
     if device_id:
-        hit = None
-        for cand in (db.query(H5ChatDevicePresence)
-                     .order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(500).all()):
-            payload = cand.account_payload if isinstance(cand.account_payload, dict) else {}
-            remote = payload.get("remote_support") if isinstance(payload.get("remote_support"), dict) else {}
-            if str(remote.get("device_id") or "").strip().upper() == device_id:
-                hit = (cand, remote)
-                break
+        hit = _find_presence_by_device(db, device_id)
         if hit is None:
             raise HTTPException(status_code=404,
                                 detail="没找到设备号 " + device_id + "：该设备要先运行远程客户端并上报过心跳")
@@ -2998,13 +3031,10 @@ def create_ai_employee(body: AiEmployeeIn, user: Any = Depends(current_actor),
             existing.capabilities = [str(x).strip() for x in body.capabilities if str(x).strip()]
         action = "ai_employee.update"
     remote_bound, remote_error = False, ""
-    if device_id and source == "device":
-        try:
-            _remote_support_call("POST", "/api/remote-admin/devices",
-                                 {"deviceId": device_id, "verificationCode": code, "label": existing.name})
-            remote_bound = True
-        except HTTPException as exc:
-            remote_error = str(exc.detail)[:200]
+    if device_id:
+        # 两种添加方式都要绑定：设备号方式用用户填的验证码，槽位号方式用该设备心跳上报的验证码。
+        bind_code = code if source == "device" else str(remote.get("verification_code") or "").strip()
+        remote_bound, remote_error = _bind_remote_device(device_id, bind_code, existing.name)
     _audit(db, company.id, getattr(user, "id", 0), action, "ai_employee", existing.id,
            {"slot": slot, "device_id": device_id, "source": source, "remote_bound": remote_bound})
     db.commit()
@@ -3034,9 +3064,25 @@ def ai_employee_remote_session(ai_id: int, user: Any = Depends(current_actor),
             bound = item
             break
     if bound is None:
+        # 槽位号方式添加的老记录可能还没绑定；这里用设备心跳里的验证码自动补绑一次。
+        bind_code = str(remote.get("verification_code") or "").strip()
+        if not bind_code and device_id:
+            # 槽位号可能已过期（换账号/重装），再按设备号兜底找一次验证码。
+            hit = _find_presence_by_device(db, device_id)
+            if hit:
+                bind_code = str(hit[1].get("verification_code") or "").strip()
+        if bind_code:
+            bound_ok, _bind_error = _bind_remote_device(device_id, bind_code, row.name)
+            if bound_ok:
+                devices = _remote_support_call("GET", "/api/remote-admin/devices")
+                for item in (devices.get("devices") or []):
+                    if str(item.get("deviceId") or item.get("id") or "").strip().upper() == device_id:
+                        bound = item
+                        break
+    if bound is None:
         raise HTTPException(status_code=409, detail=(
-            "这台设备的远程客户端还没连上中继（设备号 " + device_id
-            + "）：让对方打开远程客户端，或者用「设备号 + 验证码」重新添加一次"))
+            "这台设备还没在远程中继绑定（设备号 " + device_id
+            + "）：请用「设备号 + 验证码」重新添加一次，或让对方打开远程客户端后重试"))
     if not _relay_device_online(bound):
         raise HTTPException(status_code=409, detail=(
             "远程客户端当前不在线（设备号 " + device_id
@@ -3057,6 +3103,9 @@ class AiEmployeePatchIn(BaseModel):
     note: Optional[str] = None
     capabilities: Optional[List[str]] = None
     status: Optional[str] = None
+    installation_id: Optional[str] = None
+    device_id: Optional[str] = None
+    verification_code: Optional[str] = None
 
 
 class DeviceLabelIn(BaseModel):
@@ -3136,6 +3185,37 @@ def update_ai_employee(ai_id: int, body: AiEmployeePatchIn, user: Any = Depends(
         raise HTTPException(status_code=404, detail="虚拟员工不存在")
     company = _require_company(db, row.company_id, user)
     _require_plan_admin(db, company, user)
+
+    bind_device, bind_code = "", ""
+    if body.device_id is not None and body.device_id.strip():
+        did = body.device_id.strip().upper()
+        hit = _find_presence_by_device(db, did)
+        if hit is None:
+            raise HTTPException(status_code=404,
+                                detail="没找到设备号 " + did + "：该设备要先运行远程客户端并上报过心跳")
+        cand, remote = hit
+        code = (body.verification_code or "").strip()
+        if not code:
+            raise HTTPException(status_code=400, detail="填了设备号就要填验证码")
+        if str(remote.get("verification_code") or "").strip() != code:
+            raise HTTPException(status_code=403, detail="验证码不对：请填该设备远程窗口上当前显示的验证码")
+        row.installation_id = cand.installation_id
+        row.device_id = did
+        row.source = "device"
+        bind_device, bind_code = did, code
+    elif body.installation_id is not None and body.installation_id.strip():
+        inst = body.installation_id.strip()
+        presence, remote, _online, _last_seen = _slot_presence(db, inst)
+        if presence is None:
+            raise HTTPException(status_code=404,
+                                detail="槽位号不存在：该设备要先登录客户端上报过心跳")
+        did = str(remote.get("device_id") or "").strip().upper()
+        row.installation_id = inst
+        if did:
+            row.device_id = did
+        row.source = "slot"
+        bind_device, bind_code = did, str(remote.get("verification_code") or "").strip()
+
     if body.name is not None:
         row.name = body.name.strip() or row.name
     if body.capabilities is not None:
@@ -3145,7 +3225,14 @@ def update_ai_employee(ai_id: int, body: AiEmployeePatchIn, user: Any = Depends(
     if body.status is not None:
         row.status = body.status
     db.commit()
-    return {"ok": True}
+
+    remote_bound, remote_error = False, ""
+    if bind_device:
+        remote_bound, remote_error = _bind_remote_device(bind_device, bind_code, row.name)
+    elif row.device_id:
+        remote_bound = bool(str(row.device_id).strip().upper() in _relay_online_map())
+    return {"ok": True, "device_id": row.device_id, "source": row.source,
+            "remote_bound": remote_bound, "remote_error": remote_error}
 
 
 @router.delete("/ai-employees/{ai_id}")

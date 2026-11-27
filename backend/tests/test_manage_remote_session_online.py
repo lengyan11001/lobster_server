@@ -80,13 +80,17 @@ def patch_remote(monkeypatch, db_session):
     def _fake_call(method, path, body=None):
         calls.append((method, path))
         if path == "/api/remote-admin/devices":
+            if method == "POST":
+                box["devices"] = [_live_device()]
+                return {"ok": True, "device": _live_device()}
             return {"devices": box["devices"]}
         if path == "/api/remote-admin/controller-session":
             return {"token": "relay-token-123", "expiresAt": "2026-09-17T10:00:00Z"}
         raise AssertionError(f"unexpected relay call: {path}")
 
     monkeypatch.setattr(manage_api, "_remote_support_call", _fake_call)
-    monkeypatch.setattr(manage_api, "_slot_presence", lambda db, inst: (None, {}, True, "2026-09-17T01:21:20"))
+    monkeypatch.setattr(manage_api, "_slot_presence",
+                        lambda db, inst: box.get("presence") or (None, {}, True, "2026-09-17T01:21:20"))
     class _Company:
         id = 1
 
@@ -158,4 +162,15 @@ def test_remote_session_reports_unbound_device(db_session, patch_remote):
     with pytest.raises(HTTPException) as err:
         _session(db_session, _Admin(), box["employee_id"])
     assert err.value.status_code == 409
-    assert "还没连上中继" in str(err.value.detail)
+    assert "还没在远程中继绑定" in str(err.value.detail)
+
+
+def test_remote_session_auto_binds_unbound_device(db_session, patch_remote):
+    """槽位号方式添加、中继里还没绑定的设备：点远程时应先用心跳验证码补绑，再开会话。"""
+    box, calls = patch_remote
+    box["devices"] = []
+    box["presence"] = (None, {"device_id": DEVICE_ID, "verification_code": "679953"},
+                       True, "2026-09-17T01:21:20")
+    result = _session(db_session, _Admin(), box["employee_id"])
+    assert result["ok"] is True
+    assert ("POST", "/api/remote-admin/devices") in calls
