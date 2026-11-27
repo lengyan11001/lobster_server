@@ -1588,6 +1588,14 @@ async function handleRtcReady(msg) {
       rtcVideo.classList.remove("hidden");
       viewer.classList.add("rtc-active", "rtc-video-active", "has-frame");
       rtcVideo.play().catch(() => {});
+      const clearFirstFrameTimer = () => {
+        if (rtcState?.sessionId !== msg.sessionId) return;
+        clearTimeout(rtcState.fallbackTimer);
+        rtcState.fallbackTimer = 0;
+        activeMeta.textContent = "WebRTC 已出画面";
+      };
+      rtcVideo.addEventListener("loadeddata", clearFirstFrameTimer, { once: true });
+      rtcVideo.addEventListener("playing", clearFirstFrameTimer, { once: true });
     });
   }
   pc.addEventListener("icecandidate", (event) => {
