@@ -2459,6 +2459,15 @@ def admin_get_user_skill_visibility(
         user,
         is_overseas_client=bool(getattr(user, "is_overseas_user", False)),
     )
+    from ..services import user_groups as _group_service
+
+    group_perms = _group_service.group_permissions(db, user)
+    if group_perms is not None:
+        permission_source = "group"
+    elif _user_has_custom_visibility(db, user_id):
+        permission_source = "personal"
+    else:
+        permission_source = "baseline"
     unlocked = {
         row[0]
         for row in db.query(SkillUnlock.package_id).filter(SkillUnlock.user_id == user_id).all()
@@ -2470,6 +2479,7 @@ def admin_get_user_skill_visibility(
         "registration_is_overseas_user": bool(getattr(user, "is_overseas_user", False)),
         "has_custom_visibility": _user_has_custom_visibility(db, user_id),
         "group_code": (getattr(user, "group_code", "") or "").strip(),
+        "permission_source": permission_source,
         "visible_ids": sorted(visible),
         "unlocked_ids": sorted(unlocked),
         "all_packages": all_pkgs,
