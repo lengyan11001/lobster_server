@@ -4244,5 +4244,36 @@ function closeTimeline(){
   if (poster) poster.style.opacity = "1";
 })();
 </script>
+<script data-remoteModalDragV1="1">
+(function(){
+  const modal = document.getElementById('remoteModal');
+  if (!modal) return;
+  const card = modal.querySelector('.rmCard');
+  const head = modal.querySelector('.rmHead');
+  if (!card || !head) return;
+  let drag = null;
+  const reset = () => { card.style.left = '0px'; card.style.top = '0px'; };
+  new MutationObserver(() => { if (!modal.classList.contains('hide')) reset(); })
+    .observe(modal, { attributes: true, attributeFilter: ['class'] });
+  head.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('button, input, select, textarea, a')) return;
+    card.style.position = 'relative';
+    drag = { x: e.clientX, y: e.clientY };
+    head.setPointerCapture(e.pointerId);
+    head.style.cursor = 'grabbing';
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    card.style.left = (e.clientX - drag.x) + 'px';
+    card.style.top = (e.clientY - drag.y) + 'px';
+  });
+  const end = () => { drag = null; head.style.cursor = 'grab'; };
+  head.addEventListener('pointerup', end);
+  head.addEventListener('pointercancel', end);
+  head.style.cursor = 'grab';
+})();
+</script>
+
 </body>
 </html>

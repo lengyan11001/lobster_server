@@ -184,9 +184,9 @@ function maybeStartRequestedDevice() {
 
 const qualityProfiles = {
   data: { profile: "data", label: "省流量", maxSide: 1280, fps: 20, jpegQuality: 50, bitrateKbps: 1500 },
-  balanced: { profile: "balanced", label: "平衡", maxSide: 1600, fps: 24, jpegQuality: 62, bitrateKbps: 3000 },
-  hd: { profile: "hd", label: "高清", maxSide: 1920, fps: 24, jpegQuality: 70, bitrateKbps: 6000 },
-  lan: { profile: "lan", label: "局域网", maxSide: 1920, fps: 30, jpegQuality: 78, bitrateKbps: 10000 }
+  balanced: { profile: "balanced", label: "平衡", maxSide: 2560, fps: 24, jpegQuality: 66, bitrateKbps: 6000 },
+  hd: { profile: "hd", label: "高清", maxSide: 2560, fps: 30, jpegQuality: 72, bitrateKbps: 10000 },
+  lan: { profile: "lan", label: "局域网", maxSide: 2560, fps: 30, jpegQuality: 78, bitrateKbps: 14000 }
 };
 
 function devicePlatform(device) {

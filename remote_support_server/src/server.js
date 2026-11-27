@@ -249,15 +249,15 @@ function qualityProfileFromValue(value, fallback = "balanced") {
   if (typeof value === "object" && value) value = value.profile || value.name || "";
   const profile = String(value || fallback).toLowerCase();
   if (profile === "lan") {
-    return { profile: "lan", maxSide: 1920, fps: 30, jpegQuality: 78, bitrateKbps: 10000 };
+    return { profile: "lan", maxSide: 2560, fps: 30, jpegQuality: 78, bitrateKbps: 14000 };
   }
   if (profile === "hd") {
-    return { profile: "hd", maxSide: 1920, fps: 24, jpegQuality: 70, bitrateKbps: 6000 };
+    return { profile: "hd", maxSide: 2560, fps: 30, jpegQuality: 72, bitrateKbps: 10000 };
   }
   if (profile === "data") {
     return { profile: "data", maxSide: 1280, fps: 20, jpegQuality: 50, bitrateKbps: 1500 };
   }
-  return { profile: "balanced", maxSide: 1600, fps: 24, jpegQuality: 62, bitrateKbps: 3000 };
+  return { profile: "balanced", maxSide: 2560, fps: 24, jpegQuality: 66, bitrateKbps: 6000 };
 }
 
 function relayQualityProfileFromValue(value) {
