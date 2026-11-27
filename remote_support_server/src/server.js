@@ -1188,6 +1188,14 @@ function forwardRtcSignal(ws, msg) {
       send(ws, { type: "error", error: "bad_rtc_sdp", sessionId: session.sessionId });
       return;
     }
+    const sdpLines = sdp
+      .split(/\r?\n/)
+      .filter((line) => /^(m=video|a=mid|a=send|a=recv|a=rtpmap|a=fmtp)/.test(line));
+    relayLog("rtc.sdp", {
+      sessionId: session.sessionId,
+      direction: msg.type,
+      lines: sdpLines.slice(0, 24)
+    });
     send(target, { ...base, sdp });
     return;
   }
