@@ -2457,7 +2457,7 @@ def admin_get_user_skill_visibility(
     visible = _user_visible_package_ids(
         db,
         user,
-        is_overseas_client=False,
+        is_overseas_client=bool(getattr(user, "is_overseas_user", False)),
     )
     unlocked = {
         row[0]

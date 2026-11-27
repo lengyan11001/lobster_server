@@ -68,9 +68,12 @@ def all_package_permissions() -> list[str]:
 def permissions_for_group_code(
     db: Session, code: str, *, is_overseas: bool = False
 ) -> Optional[list[str]]:
-    """分组权限：分组一旦确定，就以分组为准，不再回落到个人权限。
+    """分组权限：显式配置过的分组，以分组为准；未配置时按分组语义回落。
 
-    未显式配置时：高级=全部；基础/中级=该环境的默认基线。
+    - advanced 未配置：全功能；
+    - basic / intermediate 未配置：返回 None，让调用方回落到用户个人权限
+      （老用户一直只按个人授权走，分组只是新用户的默认落点，不能因为建了分组
+       就把他们的历史授权抹掉；没有个人记录的新用户仍会落到默认基线）。
     """
     clean = normalize_group_code(code)
     if not clean:
@@ -79,7 +82,7 @@ def permissions_for_group_code(
     if row is None or row.permissions is None:
         if clean == "advanced":
             return all_package_permissions()
-        return default_permissions(is_overseas=is_overseas)
+        return None
     return [str(item).strip() for item in (row.permissions or []) if str(item).strip()]
 
 
