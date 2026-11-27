@@ -1592,10 +1592,6 @@ async function handleRtcReady(msg) {
     pc.addEventListener("track", (event) => {
       if (rtcState?.sessionId !== msg.sessionId) return;
       const stream = event.streams[0] || new MediaStream([event.track]);
-      rtcVideo.srcObject = stream;
-      rtcVideo.classList.remove("hidden");
-      viewer.classList.add("rtc-active", "rtc-video-active", "has-frame");
-      rtcVideo.play().catch(() => {});
       const clearFirstFrameTimer = () => {
         if (rtcState?.sessionId !== msg.sessionId) return;
         clearTimeout(rtcState.fallbackTimer);
@@ -1604,6 +1600,10 @@ async function handleRtcReady(msg) {
       };
       rtcVideo.addEventListener("loadeddata", clearFirstFrameTimer, { once: true });
       rtcVideo.addEventListener("playing", clearFirstFrameTimer, { once: true });
+      rtcVideo.srcObject = stream;
+      rtcVideo.classList.remove("hidden");
+      viewer.classList.add("rtc-active", "rtc-video-active", "has-frame");
+      rtcVideo.play().catch(() => {});
     });
   }
   pc.addEventListener("icecandidate", (event) => {
@@ -1733,6 +1733,7 @@ async function updateRtcStats() {
     let bytesReceived = 0;
     let bytesSent = 0;
     let packetsLost = 0;
+    let framesDecoded = 0;
     stats.forEach((report) => {
       if (report.type === "candidate-pair" && (report.selected || report.nominated || report.state === "succeeded")) {
         candidatePair = report;
@@ -1740,6 +1741,7 @@ async function updateRtcStats() {
       if (report.type === "inbound-rtp" && report.kind === "video") {
         bytesReceived += Number(report.bytesReceived || 0);
         packetsLost += Number(report.packetsLost || 0);
+        framesDecoded += Number(report.framesDecoded || 0);
       }
       if (report.type === "data-channel") {
         bytesReceived += Number(report.bytesReceived || 0);
@@ -1764,7 +1766,18 @@ async function updateRtcStats() {
     rtcState.bytesReceived = bytesReceived;
     rtcState.bytesSent = bytesSent;
     rtcState.packetsLost = packetsLost;
+    rtcState.framesDecoded = framesDecoded;
     rtcState.selectedCandidateType = localCandidate?.candidateType || rtcState.selectedCandidateType || "unknown";
+    if (framesDecoded > 0 && !rtcState.videoActive) {
+      rtcState.videoActive = true;
+      if (rtcState.fallbackTimer) {
+        clearTimeout(rtcState.fallbackTimer);
+        rtcState.fallbackTimer = 0;
+      }
+      activeMeta.textContent = "WebRTC 已出画面";
+      reportRtcState("video_active");
+      return;
+    }
     reportRtcState(rtcState.pc.connectionState || "connected");
   } catch {
     // Stats are best effort; media/control can continue without them.
