@@ -299,7 +299,7 @@ def merchant_register(body: MerchantRegisterReq, db: Session = Depends(get_db)) 
     exists = db.query(User).filter(User.email == email).first()
     if exists is not None:
         raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
-    user = User(email=email, hashed_password=get_password_hash(body.password), role=MERCHANT_ROLE, credits=0)
+    user = User(email=email, hashed_password=get_password_hash(body.password), role=MERCHANT_ROLE, credits=0, group_code="basic")
     db.add(user)
     db.flush()
     merchant = ShopMerchant(

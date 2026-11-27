@@ -65,3 +65,13 @@ def test_configured_group_wins_over_baseline(monkeypatch):
 
 def test_ungrouped_returns_none_so_caller_uses_personal_permissions():
     assert ug.permissions_for_group_code(_db_with(["ignored"]), "") is None
+
+
+
+def test_new_user_defaults_to_basic_group():
+    """新注册用户默认进基础分组（ORM 插入默认值）；历史行不会被改写。"""
+    from backend.app.models import User
+
+    col = User.__table__.c.group_code
+    assert col.default is not None and col.default.arg == "basic"
+    assert col.server_default is None or str(col.server_default.arg or "") == ""

@@ -146,6 +146,7 @@ def _get_or_create_phone_user(db: Session, mobile: str, brand_mark: str) -> tupl
         password_initialized=True,
         credits=REGISTER_INITIAL_CREDITS,
         role="user",
+        group_code="basic",
         preferred_model="sutui",
         brand_mark=brand_mark,
     )
@@ -169,6 +170,7 @@ def _new_wechat_user(db: Session, openid: str, brand_mark: str) -> User:
         hashed_password=get_password_hash(f"wechat-{openid}"),
         credits=Decimal("0"),
         role="user",
+        group_code="basic",
         preferred_model="sutui",
         brand_mark=brand_mark,
         wechat_openid=openid,
