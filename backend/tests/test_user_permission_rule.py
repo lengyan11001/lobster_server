@@ -75,3 +75,23 @@ def test_new_user_defaults_to_basic_group():
     col = User.__table__.c.group_code
     assert col.default is not None and col.default.arg == "basic"
     assert col.server_default is None or str(col.server_default.arg or "") == ""
+
+
+def test_groups_are_scoped_per_brand():
+    """必火与 OEM 的分组互不影响：同名 code 各自独立配置。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from backend.app.models import Base, UserGroup
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[UserGroup.__table__])
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add(UserGroup(brand_mark="bihuo", code="basic", name="基础", permissions=["bihuo_pkg"]))
+        db.add(UserGroup(brand_mark="daka", code="basic", name="基础", permissions=["daka_pkg"]))
+        db.commit()
+        assert ug.permissions_for_group_code(db, "basic", brand_mark="bihuo") == ["bihuo_pkg"]
+        assert ug.permissions_for_group_code(db, "basic", brand_mark="daka") == ["daka_pkg"]
+    finally:
+        db.close()

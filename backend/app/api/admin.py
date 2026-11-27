@@ -2313,16 +2313,20 @@ def admin_list_user_groups(
     from .skills import _expand_group_visibility
     from ..services import user_groups as group_service
 
-    group_service.ensure_user_groups(db)
-    rows = db.query(UserGroup).order_by(UserGroup.id).all()
+    brand = normalize_brand_mark(ctx.brand_mark, strict=False)
+    group_service.ensure_user_groups(db, brand)
+    rows = db.query(UserGroup).filter(UserGroup.brand_mark == brand).order_by(UserGroup.id).all()
     counts = dict(
-        db.query(User.group_code, func.count(User.id)).group_by(User.group_code).all()
+        db.query(User.group_code, func.count(User.id))
+        .filter(User.brand_mark == brand)
+        .group_by(User.group_code)
+        .all()
     )
     default_perms = group_service.default_permissions()
     groups = []
     for row in rows:
         perms = None if row.permissions is None else [str(x) for x in (row.permissions or []) if str(x).strip()]
-        effective_perms = group_service.permissions_for_group_code(db, row.code)
+        effective_perms = group_service.permissions_for_group_code(db, row.code, brand_mark=brand)
         effective = (
             sorted(_expand_group_visibility(set(effective_perms)))
             if effective_perms is not None
@@ -2340,6 +2344,7 @@ def admin_list_user_groups(
             }
         )
     return {
+        "brand_mark": brand,
         "groups": groups,
         "all_packages": _manageable_packages(),
         "default_permissions": default_perms,
@@ -2358,8 +2363,13 @@ def admin_update_user_group(
     clean = group_service.normalize_group_code(code)
     if not clean:
         raise HTTPException(status_code=400, detail="分组不存在")
-    group_service.ensure_user_groups(db)
-    row = db.query(UserGroup).filter(UserGroup.code == clean).first()
+    brand = normalize_brand_mark(ctx.brand_mark, strict=False)
+    group_service.ensure_user_groups(db, brand)
+    row = (
+        db.query(UserGroup)
+        .filter(UserGroup.brand_mark == brand, UserGroup.code == clean)
+        .first()
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="分组不存在")
     if body.reset:
@@ -2404,6 +2414,16 @@ def admin_set_user_group(
     code = group_service.normalize_group_code(raw) if raw else ""
     if raw and not code:
         raise HTTPException(status_code=400, detail="分组不存在")
+    if code:
+        brand = user_brand_mark(user)
+        group_service.ensure_user_groups(db, brand)
+        exists = (
+            db.query(UserGroup)
+            .filter(UserGroup.brand_mark == brand, UserGroup.code == code)
+            .first()
+        )
+        if exists is None:
+            raise HTTPException(status_code=400, detail="该品牌下没有这个分组")
     user.group_code = code
     db.commit()
     return {"ok": True, "user_id": user_id, "group_code": code}

@@ -5447,7 +5447,7 @@ function selectUserGroup(code) {
   renderGroupTabs();
   const meta = document.getElementById('groupMeta');
   if (meta) {
-    meta.innerHTML = '<span class="badge badge-blue">' + escapeHtml(g.name) + '</span> <span style="font-size:12px;color:var(--text-secondary);margin-left:6px">' + escapeHtml(g.description || '') + '</span> '
+    meta.innerHTML = '<span class="badge badge-blue">' + escapeHtml((userGroupData && userGroupData.brand_mark) || '') + '</span> <span class="badge badge-blue">' + escapeHtml(g.name) + '</span> <span style="font-size:12px;color:var(--text-secondary);margin-left:6px">' + escapeHtml(g.description || '') + '</span> '
       + (g.configured
         ? '<span class="badge badge-green" style="margin-left:8px">已配置</span>'
         : '<span class="badge badge-yellow" style="margin-left:8px">未配置（暂按默认权限）</span>');

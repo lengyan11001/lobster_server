@@ -272,11 +272,50 @@ def _migrate_user_groups():
                     conn.execute(text("ALTER TABLE users ADD COLUMN group_code VARCHAR(32) NOT NULL DEFAULT ''"))
                 logger.info("Migration users.group_code ok")
         Base.metadata.create_all(bind=engine, tables=[models.UserGroup.__table__])
+        # 分组按 OEM 品牌隔离：老表补 brand_mark，默认归必火；code 的全局唯一改成 (brand_mark, code)。
+        if insp.has_table("user_groups"):
+            gcols = [c["name"] for c in insp.get_columns("user_groups")]
+            if "brand_mark" not in gcols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE user_groups ADD COLUMN brand_mark VARCHAR(32) "
+                            "NOT NULL DEFAULT 'bihuo'"
+                        )
+                    )
+                logger.info("Migration user_groups.brand_mark ok")
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS ix_user_groups_code"))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS uq_user_group_brand_code"))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_group_brand_code "
+                        "ON user_groups (brand_mark, code)"
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Migration user_groups unique index skipped: %s", exc)
+            try:
+                conn.execute(
+                    text(
+                        "UPDATE user_groups SET brand_mark = 'bihuo' "
+                        "WHERE brand_mark IS NULL OR brand_mark = ''"
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Migration user_groups brand backfill skipped: %s", exc)
         from .services.user_groups import ensure_user_groups
 
         db = SessionLocal()
         try:
-            ensure_user_groups(db)
+            ensure_user_groups(db, "bihuo")
         finally:
             db.close()
         logger.info("Migration user_groups ok")

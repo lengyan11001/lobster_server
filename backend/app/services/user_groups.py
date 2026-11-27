@@ -31,19 +31,39 @@ def normalize_group_code(value: Any) -> str:
     return code if code in GROUP_CODES else ""
 
 
-def ensure_user_groups(db: Session) -> None:
-    """保证三条分组记录存在；已存在的不覆盖后台配置。"""
+def _brand_of(value: Any) -> str:
+    brand = str(value or "").strip().lower()
+    return brand or "bihuo"
+
+
+def ensure_user_groups(db: Session, brand_mark: str = "bihuo") -> None:
+    """保证该品牌的三条分组记录存在；已存在的不覆盖后台配置。
+
+    分组按 OEM 品牌隔离：必火改自己的三组，OEM 各改各自的。
+    """
+    brand = _brand_of(brand_mark)
     try:
-        existing = {str(row[0]).strip().lower() for row in db.query(UserGroup.code).all()}
+        existing = {
+            str(row[0]).strip().lower()
+            for row in db.query(UserGroup.code).filter(UserGroup.brand_mark == brand).all()
+        }
         added = False
         for code, name, description in GROUP_DEFS:
             if code in existing:
                 continue
-            db.add(UserGroup(code=code, name=name, description=description, permissions=None))
+            db.add(
+                UserGroup(
+                    brand_mark=brand,
+                    code=code,
+                    name=name,
+                    description=description,
+                    permissions=None,
+                )
+            )
             added = True
         if added:
             db.commit()
-        materialize_group_permissions(db)
+        materialize_group_permissions(db, brand_mark=brand)
     except Exception:  # noqa: BLE001
         db.rollback()
 
@@ -57,7 +77,7 @@ def _server_is_overseas() -> bool:
         return False
 
 
-def materialize_group_permissions(db: Session) -> int:
+def materialize_group_permissions(db: Session, brand_mark: str = "bihuo") -> int:
     """把「未配置」的分组落成显式清单。
 
     后台展示的勾选必须就是真正生效的分组权限：permissions 为 NULL 时后台
@@ -66,7 +86,8 @@ def materialize_group_permissions(db: Session) -> int:
     """
     changed = 0
     overseas = _server_is_overseas()
-    for row in db.query(UserGroup).all():
+    brand = _brand_of(brand_mark)
+    for row in db.query(UserGroup).filter(UserGroup.brand_mark == brand).all():
         if row.permissions is not None:
             continue
         code = normalize_group_code(row.code)
@@ -100,7 +121,7 @@ def all_package_permissions() -> list[str]:
 
 
 def permissions_for_group_code(
-    db: Session, code: str, *, is_overseas: bool = False
+    db: Session, code: str, *, is_overseas: bool = False, brand_mark: str = "bihuo"
 ) -> Optional[list[str]]:
     """分组权限（唯一口径，2026-11-27 用户再次确认）：
 
@@ -111,7 +132,11 @@ def permissions_for_group_code(
     clean = normalize_group_code(code)
     if not clean:
         return None
-    row = db.query(UserGroup).filter(UserGroup.code == clean).first()
+    row = (
+        db.query(UserGroup)
+        .filter(UserGroup.brand_mark == _brand_of(brand_mark), UserGroup.code == clean)
+        .first()
+    )
     if row is None or row.permissions is None:
         if clean == "advanced":
             return all_package_permissions()
@@ -124,8 +149,17 @@ def group_permissions(db: Session, user: User) -> Optional[list[str]]:
     code = normalize_group_code(getattr(user, "group_code", ""))
     if not code:
         return None
+    try:
+        from ..services.brand_context import user_brand_mark
+
+        brand = user_brand_mark(user)
+    except Exception:
+        brand = str(getattr(user, "brand_mark", "") or "bihuo")
     return permissions_for_group_code(
-        db, code, is_overseas=bool(getattr(user, "is_overseas_user", False))
+        db,
+        code,
+        is_overseas=bool(getattr(user, "is_overseas_user", False)),
+        brand_mark=brand,
     )
 
 

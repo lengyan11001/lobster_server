@@ -55,13 +55,18 @@ class UserGroup(Base):
     __tablename__ = "user_groups"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    brand_mark: Mapped[str] = mapped_column(String(32), default="bihuo", server_default="bihuo", index=True, nullable=False)
+    code: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     description: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     """技能可见性包 ID 列表；NULL = 尚未配置（该组用户暂时回落到个人权限）。"""
     permissions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("brand_mark", "code", name="uq_user_group_brand_code"),
+    )
 
 
 class BrandConfig(Base):
