@@ -43,8 +43,42 @@ def ensure_user_groups(db: Session) -> None:
             added = True
         if added:
             db.commit()
+        materialize_group_permissions(db)
     except Exception:  # noqa: BLE001
         db.rollback()
+
+
+def _server_is_overseas() -> bool:
+    try:
+        from .tos_storage import is_overseas_server
+
+        return bool(is_overseas_server())
+    except Exception:
+        return False
+
+
+def materialize_group_permissions(db: Session) -> int:
+    """把「未配置」的分组落成显式清单。
+
+    后台展示的勾选必须就是真正生效的分组权限：permissions 为 NULL 时后台
+    只能展示默认基线，用户会误以为已经保存。这里在分组创建/启动时把它写成
+    显式列表（基础/中级=本环境默认基线，高级=全部），之后看到的勾选即生效。
+    """
+    changed = 0
+    overseas = _server_is_overseas()
+    for row in db.query(UserGroup).all():
+        if row.permissions is not None:
+            continue
+        code = normalize_group_code(row.code)
+        if not code:
+            continue
+        row.permissions = (
+            all_package_permissions() if code == "advanced" else default_permissions(is_overseas=overseas)
+        )
+        changed += 1
+    if changed:
+        db.commit()
+    return changed
 
 
 def all_package_permissions() -> list[str]:

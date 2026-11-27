@@ -5443,7 +5443,7 @@ function selectUserGroup(code) {
   currentGroupCode = code;
   const g = ((userGroupData && userGroupData.groups) || []).find(x => x.code === code);
   if (!g) return;
-  groupPermDraft = new Set(g.effective_permissions || []);
+  groupPermDraft = new Set(g.permissions || g.effective_permissions || []);
   renderGroupTabs();
   const meta = document.getElementById('groupMeta');
   if (meta) {
@@ -5502,7 +5502,8 @@ function filterGroupPerms() {
 async function saveGroupPerms() {
   const msg = document.getElementById('groupPermMsg');
   const groupLabel = userGroupLabel(currentGroupCode) || currentGroupCode;
-  if (!confirm('保存「' + groupLabel + '」分组权限？该组所有用户的技能权限会立即按这份配置生效。')) return;
+  const gRow = ((userGroupData && userGroupData.groups) || []).find(x => x.code === currentGroupCode) || {};
+  if (!confirm('保存「' + groupLabel + '」分组权限？该组 ' + (gRow.member_count || 0) + ' 个用户的技能权限会立即按这份配置生效。')) return;
   try {
     const data = await api('/admin/api/user-groups/' + currentGroupCode, {
       method: 'PUT',
@@ -5541,7 +5542,13 @@ async function loadSkillVisibility(userId) {
       section.innerHTML = '<div class="empty">暂无可管理技能包</div>';
       return;
     }
-    let html = '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">可见：控制用户技能商店能看到什么；解锁：控制付费技能/能力是否可用。</div>';
+    const grouped = !!visData.group_code;
+    let html = '';
+    if (grouped) {
+      html += '<div style="margin-bottom:10px;padding:10px 12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px;font-size:12px;line-height:1.7;color:#8a5a00">'
+        + '该用户属于「' + escapeHtml(userGroupLabel(visData.group_code) || visData.group_code) + '」分组，技能权限<b>完全由分组决定</b>，下面只是当前生效结果（只读）。要调整请到「用户分组与技能权限」里改该分组的权限，或把用户改为「未分组」。</div>';
+    }
+    html += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">可见：控制用户技能商店能看到什么；解锁：控制付费技能/能力是否可用。</div>';
     html += '<div class="table-wrap"><table><thead><tr><th>技能</th><th>类型/价格</th><th>能力数</th><th>可见</th><th>解锁/权限</th></tr></thead><tbody>';
     for (const pkg of allPackages) {
       const active = visibleIds.has(pkg.id);
@@ -5551,15 +5558,16 @@ async function loadSkillVisibility(userId) {
       const price = pkg.unlock_price_credits ? (pkg.unlock_price_credits + ' 积分') : (pkg.unlock_price_yuan ? (pkg.unlock_price_yuan + ' 元') : '免费/默认');
       const pkgId = escapeHtml(pkg.id);
       const visibilityToggle = 'toggleSkillVisibility(' + userId + ',\'' + pkgId + '\',this.checked)';
+      const visibilityAttrs = grouped ? ' disabled' : (' onchange="' + visibilityToggle + '"');
       const visibleText = isFeatureFlag ? (active ? '已开放' : '未开放') : (active ? '可见' : '隐藏');
       const permissionCell = isFeatureFlag
-        ? '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + (active ? '已开通权限' : '开通权限') + '</span></label>'
-        : '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label>';
+        ? '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + visibilityAttrs + '> <span>' + (active ? '已开通权限' : '开通权限') + '</span></label>'
+        : '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + (grouped ? ' disabled' : ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"') + '> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label>';
       html += '<tr data-skill-group="' + skillVisibilityGroup(pkg) + '" data-skill-search="' + escapeHtml(String(pkg.name || '') + ' ' + pkg.id).toLowerCase() + '" data-skill-enabled="' + (active ? '1' : '0') + '">' 
          + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + pkgId + '</div></td>'
         + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(price) + '</div></td>'
         + '<td>' + (pkg.capabilities_count || 0) + '</td>'
-        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="' + visibilityToggle + '"> <span>' + visibleText + '</span></label></td>'
+        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + visibilityAttrs + '> <span>' + visibleText + '</span></label></td>'
         + '<td>' + permissionCell + '</td>'
         + '</tr>';
     }
