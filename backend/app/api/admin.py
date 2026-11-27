@@ -138,6 +138,28 @@ def _require_admin(ctx: AdminContext = Depends(_verify_admin_token)) -> AdminCon
     """仅允许管理员角色。"""
     if ctx.role != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可执行此操作")
+
+
+def _require_group_admin(
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+) -> AdminContext:
+    """分组配置：平台管理员，或该品牌的 1 级代理（OEM 负责人自己配置）。
+
+    分组按品牌隔离，所以 OEM 的 1 级代理改的只会是自己品牌的三个分组。
+    """
+    if ctx.role == "admin":
+        return ctx
+    if ctx.role == "agent" and ctx.user_id:
+        user = db.query(User).filter(User.id == ctx.user_id).first()
+        if (
+            user is not None
+            and bool(getattr(user, "is_agent", False))
+            and int(getattr(user, "agent_level", 0) or 0) == 1
+            and user_brand_mark(user) == ctx.brand_mark
+        ):
+            return ctx
+    raise HTTPException(status_code=403, detail="只有品牌管理员可以配置用户分组")
     return ctx
 
 
@@ -2307,7 +2329,7 @@ class UserGroupAssignBody(BaseModel):
 
 @router.get("/admin/api/user-groups")
 def admin_list_user_groups(
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_require_group_admin),
     db: Session = Depends(get_db),
 ):
     from .skills import _expand_group_visibility
@@ -2355,7 +2377,7 @@ def admin_list_user_groups(
 def admin_update_user_group(
     code: str,
     body: UserGroupUpdateBody,
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_require_group_admin),
     db: Session = Depends(get_db),
 ):
     from ..services import user_groups as group_service
@@ -2401,7 +2423,7 @@ def admin_update_user_group(
 def admin_set_user_group(
     user_id: int,
     body: UserGroupAssignBody,
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_require_group_admin),
     db: Session = Depends(get_db),
 ):
     _assert_can_manage_user(db, ctx, user_id)

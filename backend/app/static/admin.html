@@ -2619,7 +2619,7 @@ function showDashboard() {
   const remoteTab = document.getElementById('remoteSupportNavTab');
   if (remoteTab) remoteTab.style.display = isAdmin() ? '' : 'none';
   const userGroupsTab = document.getElementById('userGroupsNavTab');
-  if (userGroupsTab) userGroupsTab.style.display = isAdmin() ? '' : 'none';
+  if (userGroupsTab) userGroupsTab.style.display = (isAdmin() || isLevel1Agent()) ? '' : 'none';
   const merchantTab = document.getElementById('merchantsNavTab');
   const dispatchDevicesTab = document.getElementById('dispatchDevicesNavTab');
   if (dispatchDevicesTab) dispatchDevicesTab.style.display = isAdmin() ? '' : 'none';
@@ -2914,7 +2914,7 @@ function switchNav(nav) {
   if (nav === 'merchants' && !isAdmin()) nav = 'stats';
   if (nav === 'dispatchDevices' && !isAdmin()) nav = 'stats';
   if (nav === 'wechatContacts' && !isAdmin()) nav = 'stats';
-  if (nav === 'userGroups' && !isAdmin()) nav = 'stats';
+  if (nav === 'userGroups' && !(isAdmin() || isLevel1Agent())) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   const title = document.getElementById('topbarTitle');
