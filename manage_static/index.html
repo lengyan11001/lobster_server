@@ -3373,7 +3373,7 @@ h1{font-size:clamp(36px,3.5vw,52px);line-height:1.14}
       // viewer=1：只嵌「远程窗口」本身。设备列表 / 添加设备 / 页签都在本后台里另做了，
       // 不再把 BHZN 远程控制台的完整界面（设备架、舞台页签、页头）一起嵌进来。
       var url = String(r.public_url || "").replace(/\/$/, "") + "/?admin_session=" + encodeURIComponent(r.token)
-        + "&device=" + encodeURIComponent(r.device_id) + "&viewer=1";
+        + "&device=" + encodeURIComponent(r.device_id) + "&viewer=1&v=" + Date.now();
       document.getElementById("remoteTitle").textContent = "远程 · " + (r.name || a.name) + " · " + r.device_id;
       document.getElementById("remoteMeta").textContent = (r.online ? "设备在线" : "设备离线（上线后画面才会通）")
         + " · 会话到期 " + String(r.expires_at || "").slice(0, 16).replace("T", " ");
