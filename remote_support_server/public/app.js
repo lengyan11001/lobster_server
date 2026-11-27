@@ -1516,6 +1516,9 @@ function fallbackToRelay(reason = "fallback") {
 
 async function handleRtcReady(msg) {
   if (msg.deviceId !== activeDeviceId || !screenOpen) return;
+  // Idempotent: a repeated rtc-ready for the session we already run must not
+  // tear down and rebuild the peer connection (that caused a renegotiation storm).
+  if (rtcState?.sessionId === msg.sessionId && rtcState.pc) return;
   if (!window.RTCPeerConnection) {
     if (msg.sessionId && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "rtc-stop", sessionId: msg.sessionId, deviceId: msg.deviceId, reason: "rtc_unsupported" }));

@@ -1120,6 +1120,7 @@ function startRtcSession(ws, msg) {
       if (existingSession.mode === mode && existingSession.quality?.profile === quality.profile) {
         existingSession.expiresAt = now() + RTC_SESSION_TTL_MS;
         existingSession.updatedAt = now();
+        relayLog("rtc.dup_start", { sessionId: existingSessionId, deviceId: id, userId: ws.userId });
         send(ws, { type: "rtc-ready", ...rtcSessionView(existingSession), device: deviceView(device) });
         return;
       }
