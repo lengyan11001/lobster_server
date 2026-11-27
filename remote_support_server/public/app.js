@@ -1623,6 +1623,11 @@ async function handleRtcReady(msg) {
       startRtcStats();
       rtcState.connected = true;
       activeMeta.textContent = "WebRTC 传输已连接，等待视频轨道";
+      setTimeout(() => {
+        if (rtcState?.sessionId === msg.sessionId) {
+          reportRtcState(`dc_${controlChannel.readyState}_${pointerChannel ? pointerChannel.readyState : "off"}`);
+        }
+      }, 2500);
     }
     if (state === "failed") fallbackToRelay("rtc_failed");
     if (state === "closed") closeRtc("rtc_closed", false);
@@ -2113,14 +2118,11 @@ function sendInput(payload) {
     return;
   }
   const message = { type: "input", sessionId, inputId: `h5-${Date.now()}-${++inputSerial}`, ...payload };
-  if (rtcState?.sessionId === sessionId) {
-    if (dataChannel?.readyState === "open") {
-      dataChannel.send(JSON.stringify(message));
-    } else {
-      activeMeta.textContent = "直连控制通道连接中";
-    }
+  if (rtcState?.sessionId === sessionId && dataChannel?.readyState === "open") {
+    dataChannel.send(JSON.stringify(message));
     return;
   }
+  // Never swallow input: if the direct channel is not open yet, ride the relay.
   ws.send(JSON.stringify(message));
 }
 
