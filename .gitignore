@@ -80,3 +80,6 @@ client_static/client_code/cutcli_templates/designer/
 client_static/client_code/cutcli_templates/fonts/
 client_static/client_code/cutcli_templates/*.mp4
 data/cutcli_templates/designer_templates.local.json
+
+.env.deploy*
+tmp_diag_*/
