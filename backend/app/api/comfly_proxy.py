@@ -407,6 +407,7 @@ def _start_image_proxy_job(
             "updated_at_ts": now,
         },
     )
+    _remember_image_proxy_job(job_id, [request_user_id, billing_user_id])
     return job_id
 
 
@@ -414,6 +415,63 @@ def _update_image_proxy_job(job_id: str, **updates: Any) -> None:
     job = _load_image_proxy_job(job_id) or {"job_id": job_id, "created_at_ts": int(time.time())}
     job.update(updates)
     _store_image_proxy_job(job_id, job)
+
+
+_IMAGE_PROXY_USER_INDEX_MAX = 60
+
+
+def _image_proxy_user_index_key(user_id: int) -> str:
+    return f"comfly:image-proxy-user-jobs:{int(user_id)}"
+
+
+def _remember_image_proxy_job(job_id: str, user_ids: Any) -> None:
+    for raw_uid in {str(uid) for uid in (user_ids or [])}:
+        if not raw_uid.strip().isdigit():
+            continue
+        uid = int(raw_uid)
+        key = _image_proxy_user_index_key(uid)
+        try:
+            ids = json.loads(cache_get(key) or "[]")
+        except Exception:
+            ids = []
+        if not isinstance(ids, list):
+            ids = []
+        ids = [str(item) for item in ids if str(item or "") and str(item) != job_id]
+        ids.insert(0, job_id)
+        cache_set(key, json.dumps(ids[:_IMAGE_PROXY_USER_INDEX_MAX]), ttl_seconds=_IMAGE_PROXY_JOB_TTL_SECONDS)
+
+
+def list_image_proxy_jobs_for_user(user_id: int, *, active_only: bool = True) -> List[Dict[str, Any]]:
+    """List image-proxy jobs that belong to one user (newest first)."""
+    uid = int(user_id)
+    try:
+        ids = json.loads(cache_get(_image_proxy_user_index_key(uid)) or "[]")
+    except Exception:
+        ids = []
+    if not isinstance(ids, list):
+        return []
+    jobs: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_id in ids[:_IMAGE_PROXY_USER_INDEX_MAX]:
+        job_id = str(raw_id or "")
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        job = _load_image_proxy_job(job_id)
+        if not job:
+            continue
+        owner_ids: set[int] = set()
+        for value in (job.get("request_user_id"), job.get("billing_user_id")):
+            text = str(value or "").strip()
+            if text.isdigit():
+                owner_ids.add(int(text))
+        if uid not in owner_ids:
+            continue
+        status = str(job.get("status") or "").strip().lower()
+        if active_only and status not in {"queued", "running"}:
+            continue
+        jobs.append(job)
+    return jobs
 
 
 def _job_error_detail(exc: BaseException) -> str:

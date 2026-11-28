@@ -3,7 +3,6 @@ const api = require("../../utils/api");
 const config = require("../../config");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
-const pend = require("../../utils/pending-works");
 
 const TABS = [
   { key: "all", label: "全部" },
@@ -35,7 +34,9 @@ const CATEGORY_LABEL = {
   h5_workflow: "热门跟创",
   canvas: "画布",
   online_wechat_article: "公众号",
-  ip_daily: "朋友圈"
+  ip_daily: "朋友圈",
+  douyin_imitation: "热门跟创",
+  comfly_image: "图片"
 };
 
 const PAGE_SIZE = 20;
@@ -62,8 +63,6 @@ Page({
     tab: "all",
     skeletons: [1, 2, 3],
     items: [],
-    pendingItems: [],
-    pendingItems: [],
     offset: 0,
     loading: false,
     loadingMore: false,
@@ -78,10 +77,13 @@ Page({
     }
     app.restoreSession();
     this.setData({ phoneBound: Boolean(app.globalData.token && app.globalData.phone) });
-    this.loadPending();
     this.refresh();
-    this.startPendingTimer();
+    this.startInflightTimer();
   },
+
+  onHide() { this.stopInflightTimer(); },
+
+  onUnload() { this.stopInflightTimer(); },
 
   onPullDownRefresh() {
     this.setData({ phoneBound: Boolean(app.globalData.token && app.globalData.phone) });
@@ -122,30 +124,46 @@ Page({
         timeout: 30000
       }).catch(() => ({ items: [], pagination: {}, __error: true }))
     );
+    if (offset === 0) {
+      const kindParam = this.data.tab === "all" ? "" : "&kind=" + encodeURIComponent(this.data.tab);
+      requests.push(
+        app.request({
+          url: "/api/content-records/inflight?limit=40" + kindParam,
+          timeout: 15000
+        }).catch(() => ({ items: [], __inflight_error: true }))
+      );
+    }
     return Promise.all(requests)
       .then((lists) => {
         let hasNext = false;
         let failed = 0;
-        const seen = {};
-        const merged = [];
+        const contentLists = offset === 0 ? lists.slice(0, -1) : lists;
+        const inflightList = offset === 0 ? lists[lists.length - 1] : null;
+        const byKey = {};
         (replace ? [] : this.data.items).forEach((row) => {
           if (!row || !row.key) return;
-          seen[row.key] = true;
-          merged.push(row);
+          byKey[row.key] = row;
         });
-        lists.forEach((data) => {
+        contentLists.forEach((data) => {
           if (data && data.__error) failed += 1;
           const rows = (data && data.items) || [];
           if (data && data.pagination && data.pagination.has_next) hasNext = true;
           rows.forEach((row) => {
             const item = this.mapRow(row);
-            if (!item.key || seen[item.key]) return;
-            seen[item.key] = true;
-            merged.push(item);
+            if (!item.key) return;
+            byKey[item.key] = item;
           });
         });
+        if (inflightList) {
+          ((inflightList && inflightList.items) || []).forEach((row) => {
+            const item = this.mapInflight(row);
+            if (!item.key) return;
+            byKey[item.key] = item;
+          });
+        }
+        const merged = Object.keys(byKey).map((key) => byKey[key]);
         merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-        if (failed && failed === lists.length) {
+        if (failed && failed === contentLists.length) {
           wx.showToast({ title: "加载失败，请稍后重试", icon: "none" });
           hasNext = false;
         }
@@ -155,6 +173,44 @@ Page({
         wx.showToast({ title: api.errorMessage(err), icon: "none" });
       })
       .then(() => this.setData({ loading: false, loadingMore: false }));
+  },
+
+  refreshInflight() {
+    if (!app.globalData.token) return Promise.resolve();
+    const kindParam = this.data.tab === "all" ? "" : "&kind=" + encodeURIComponent(this.data.tab);
+    return app.request({
+      url: "/api/content-records/inflight?limit=40" + kindParam,
+      timeout: 15000
+    })
+      .then((data) => {
+        const byKey = {};
+        this.data.items.filter((row) => row && !row.pending).forEach((row) => {
+          byKey[row.key] = row;
+        });
+        ((data && data.items) || []).forEach((row) => {
+          const item = this.mapInflight(row);
+          if (item.key) byKey[item.key] = item;
+        });
+        const merged = Object.keys(byKey).map((key) => byKey[key]);
+        merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        this.setData({ items: merged });
+      })
+      .catch(() => {});
+  },
+
+  startInflightTimer() {
+    this.stopInflightTimer();
+    this.inflightTimer = setInterval(() => {
+      if (!this.data.items.some((row) => row && row.pending)) return;
+      this.refreshInflight();
+    }, 10000);
+  },
+
+  stopInflightTimer() {
+    if (this.inflightTimer) {
+      clearInterval(this.inflightTimer);
+      this.inflightTimer = null;
+    }
   },
 
   loadMore() {
@@ -179,14 +235,37 @@ Page({
       time: fmtTime(source.created_at),
       createdAt: String(source.created_at || ""),
       thumb: thumbSource ? mediaUrl(thumbSource, "thumb") : "",
-      isVideo: kind === "video"
+      isVideo: kind === "video",
+      pending: false
+    };
+  },
+
+  mapInflight(row) {
+    const source = row || {};
+    const kind = String(source.kind || "article");
+    const createdAt = String(source.created_at || "");
+    return {
+      key: String(source.source || "x") + ":" + String(source.source_id || ""),
+      source: String(source.source || ""),
+      sourceId: String(source.source_id || ""),
+      kind,
+      kindLabel: KIND_LABEL[kind] || "内容",
+      categoryLabel: CATEGORY_LABEL[String(source.source || "")] || "",
+      title: String(source.title || "生成中的作品"),
+      summary: String(source.summary || "正在生成，完成后自动出现在作品里"),
+      time: fmtTime(createdAt),
+      createdAt,
+      thumb: "",
+      isVideo: kind === "video",
+      pending: true,
+      status: String(source.status || "running")
     };
   },
 
   openDetail(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
     const row = this.data.items[index];
-    if (!row) return;
+    if (!row || row.pending) return;
     wx.showLoading({ title: "加载中", mask: true });
     app.request({
       url: "/api/content-records/detail?source=" + encodeURIComponent(row.source) +

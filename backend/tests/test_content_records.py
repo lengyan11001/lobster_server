@@ -21,10 +21,18 @@ from backend.app.api.content_records import (
     delete_content_record,
     get_content_record_detail,
     list_content_records,
+    list_inflight_content_records,
     request_content_record_publish,
     sync_content_records,
 )
-from backend.app.models import IPContentDraftRecord, ScheduledTaskRun, UserContentRecord
+from backend.app.models import (
+    DouyinImitationTask,
+    IPContentDraftRecord,
+    MontageJob,
+    ScheduledTaskRun,
+    ShanjianDigitalHumanVideoTask,
+    UserContentRecord,
+)
 
 
 def test_sync_content_records_is_idempotent(db_session, test_user):
@@ -522,3 +530,145 @@ def test_sync_records_device_identity(db_session, test_user):
     meta = row.meta or {}
     assert meta.get("installation_id") == "u31-deviceabc001"
     assert meta.get("machine_instance_id") == "mw25testmachine0001"
+
+
+def test_inflight_aggregates_running_tasks(db_session, test_user):
+    """作品页 inflight：六类任务表里的 queued/running 行都要聚合出来。"""
+    from backend.app.api import comfly_proxy
+
+    now = datetime.utcnow()
+    db_session.add(
+        ShanjianDigitalHumanVideoTask(
+            user_id=test_user.id,
+            title="数字人待生成",
+            status="processing",
+            task_id="dh-inflight-1",
+        )
+    )
+    db_session.add(
+        MontageJob(
+            user_id=test_user.id,
+            status="running",
+            params={"title": "混剪待生成"},
+        )
+    )
+    db_session.add(
+        DouyinImitationTask(
+            user_id=test_user.id,
+            task_id="imitation-inflight-1",
+            title="跟创待生成",
+            status="RUNNING",
+        )
+    )
+    db_session.add(
+        IPContentDraftRecord(
+            record_id="moments-inflight-1",
+            user_id=test_user.id,
+            task="moments_candidate",
+            platform="wechat_moments",
+            title="朋友圈待配图",
+            meta={"image_status": "processing", "image_progress": "1/3"},
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.add(
+        UserContentRecord(
+            user_id=test_user.id,
+            source="online_wechat_article",
+            source_id="article-inflight-1",
+            kind="article",
+            title="公众号待生成",
+            status="running",
+            source_created_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    # 终态记录不能被当成 inflight
+    db_session.add(
+        UserContentRecord(
+            user_id=test_user.id,
+            source="online_wechat_article",
+            source_id="article-done-1",
+            kind="article",
+            title="公众号已完成",
+            status="completed",
+            source_created_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+
+    job_id = comfly_proxy._start_image_proxy_job(
+        kind="generation",
+        request_user_id=test_user.id,
+        billing_user_id=test_user.id,
+        requested_model="gpt-image-2",
+    )
+    try:
+        result = list_inflight_content_records(kind="", limit=40, current_user=test_user, db=db_session)
+        sources = {item["source"] for item in result["items"]}
+        assert sources == {
+            "shanjian_digital_human",
+            "montage",
+            "douyin_imitation",
+            "comfly_image",
+            "ip_daily",
+            "online_wechat_article",
+        }
+        assert all(item["inflight"] is True for item in result["items"])
+        assert "article-done-1" not in {item["source_id"] for item in result["items"]}
+
+        videos = list_inflight_content_records(kind="video", limit=40, current_user=test_user, db=db_session)
+        assert {item["source"] for item in videos["items"]} == {
+            "shanjian_digital_human",
+            "montage",
+            "douyin_imitation",
+        }
+
+        articles = list_inflight_content_records(kind="article", limit=40, current_user=test_user, db=db_session)
+        assert {item["source"] for item in articles["items"]} == {"ip_daily", "online_wechat_article"}
+
+        images = list_inflight_content_records(kind="image", limit=40, current_user=test_user, db=db_session)
+        assert [item["source_id"] for item in images["items"]] == [job_id]
+    finally:
+        comfly_proxy.cache_delete(comfly_proxy._image_proxy_user_index_key(test_user.id))
+        comfly_proxy.cache_delete(comfly_proxy._image_proxy_job_key(job_id))
+
+
+def test_inflight_endpoint_route(db_session, test_user):
+    """HTTP 路由本身要能挂上，并且按 kind 过滤。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.app.api.auth import get_current_user
+    from backend.app.api.content_records import router as content_records_router
+    from backend.app.db import get_db
+
+    app = FastAPI()
+    app.include_router(content_records_router, prefix="")
+    app.dependency_overrides[get_current_user] = lambda: test_user
+    app.dependency_overrides[get_db] = lambda: db_session
+
+    now = datetime.utcnow()
+    db_session.add(
+        ShanjianDigitalHumanVideoTask(
+            user_id=test_user.id,
+            title="路由数字人",
+            status="processing",
+            task_id="dh-route-1",
+        )
+    )
+    db_session.commit()
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/content-records/inflight", params={"kind": "video"})
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()
+            assert payload["ok"] is True
+            assert [item["source_id"] for item in payload["items"]] == ["dh-route-1"]
+            assert payload["items"][0]["inflight"] is True
+    finally:
+        app.dependency_overrides.clear()

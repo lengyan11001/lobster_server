@@ -139,3 +139,4 @@ page { background: #f8f9fa; color: #0f172a; }
 .top-bg, .top-bg-img, .top-bg-mask { display: none; }
 
 .chip.cat { background: #eef2ff; color: #3730a3; }
+.chip.pending { background: #fff7ed; color: #c2410c; border: 1rpx solid #fed7aa; }

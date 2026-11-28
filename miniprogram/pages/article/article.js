@@ -1,5 +1,4 @@
 const app = getApp();
-const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 
@@ -137,7 +136,6 @@ Page({
       started_at: Date.now()
     });
     wx.showToast({ title: "已创建，正在生成", icon: "none" });
-    pend.add({ id: "article-" + Date.now(), kind: "article", category: "公众号", title: (topic || "公众号文章") });
     wx.hideLoading();
     setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
   }

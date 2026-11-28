@@ -10219,6 +10219,20 @@ async def _run_moment_image_bg(record_pk: int, user_id: int) -> None:
         record = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.id == int(record_pk)).first()
         if not user or not record:
             return
+        # 作品页用 /api/content-records/inflight 看「朋友圈配图生成中」，
+        # 后台任务开始时先打一个 processing 标记，结束后再写 completed/partial。
+        meta = dict(record.meta or {}) if isinstance(record.meta, dict) else {}
+        if str(meta.get("image_status") or "").lower() not in {"completed", "partial"}:
+            meta["image_status"] = "processing"
+            meta.setdefault("image_progress", f"{len(meta.get('images') or [])}/3")
+            meta["image_updated_at"] = _utcnow().isoformat()
+            record.meta = meta
+            record.updated_at = _utcnow()
+            db.add(record)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
         await _generate_workflow_first_moment_images(db=db, current_user=user, record=record, run_id="")
     except Exception:  # noqa: BLE001
         logger.exception("[moment-image] background generation failed record_pk=%s", record_pk)

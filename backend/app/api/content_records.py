@@ -15,7 +15,15 @@ from sqlalchemy.orm import Session
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from ..db import get_db
-from ..models import IPContentDraftRecord, ScheduledTaskRun, User, UserContentRecord
+from ..models import (
+    DouyinImitationTask,
+    IPContentDraftRecord,
+    MontageJob,
+    ScheduledTaskRun,
+    ShanjianDigitalHumanVideoTask,
+    User,
+    UserContentRecord,
+)
 
 
 router = APIRouter()
@@ -37,6 +45,208 @@ _IP_TASK_LABELS = {
     "wechat_article": "公众号文章",
     "article": "IP日更文章",
 }
+
+
+# 2026-11-28：「作品」页不再依赖本地 pending-works，改为聚合各任务表里
+# queued/running 的行。状态口径统一小写，前端只认 inflight=true 渲染成「生成中」。
+_INFLIGHT_STATUSES = {
+    "queued",
+    "pending",
+    "running",
+    "processing",
+    "submitting",
+    "waiting",
+    "created",
+}
+_INFLIGHT_KIND_ALIASES = {"wechat_article": "article"}
+
+
+def _inflight_status(value: Any) -> str:
+    return _clean_text(value, 32).lower() or "running"
+
+
+def _inflight_item(
+    *,
+    source: str,
+    source_id: Any,
+    kind: str,
+    title: Any,
+    status: Any,
+    created_at: Any,
+    summary: str = "",
+    meta: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    created_iso = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at or "")
+    return {
+        "source": source,
+        "source_id": str(source_id or ""),
+        "kind": kind,
+        "title": _clean_text(title, 200) or "生成中的作品",
+        "summary": summary or "正在生成，完成后自动出现在作品里",
+        "status": _inflight_status(status),
+        "created_at": created_iso,
+        "inflight": True,
+        "meta": meta or {},
+    }
+
+
+def _collect_inflight(db: Session, owner: User, *, limit: int) -> list[dict[str, Any]]:
+    uid = int(owner.id)
+    statuses = tuple(_INFLIGHT_STATUSES)
+    items: list[dict[str, Any]] = []
+
+    # 数字人：shanjian_digital_human_video_tasks
+    rows = (
+        db.query(ShanjianDigitalHumanVideoTask)
+        .filter(
+            ShanjianDigitalHumanVideoTask.user_id == uid,
+            func.lower(ShanjianDigitalHumanVideoTask.status).in_(statuses),
+        )
+        .order_by(ShanjianDigitalHumanVideoTask.id.desc())
+        .limit(limit)
+        .all()
+    )
+    for row in rows:
+        items.append(
+            _inflight_item(
+                source="shanjian_digital_human",
+                source_id=row.task_id,
+                kind="video",
+                title=row.title,
+                status=row.status,
+                created_at=row.created_at,
+                meta={"task_id": row.task_id, "profile_id": row.profile_id},
+            )
+        )
+
+    # 混剪：montage_jobs
+    rows = (
+        db.query(MontageJob)
+        .filter(MontageJob.user_id == uid, func.lower(MontageJob.status).in_(statuses))
+        .order_by(MontageJob.id.desc())
+        .limit(limit)
+        .all()
+    )
+    for row in rows:
+        params = row.params if isinstance(row.params, dict) else {}
+        items.append(
+            _inflight_item(
+                source="montage",
+                source_id=row.id,
+                kind="video",
+                title=params.get("title") or "混剪成片",
+                status=row.status,
+                created_at=row.created_at,
+            )
+        )
+
+    # 热门跟创：douyin_imitation_task（状态大写 RUNNING/SUCCESS/FAILED）
+    rows = (
+        db.query(DouyinImitationTask)
+        .filter(
+            DouyinImitationTask.user_id == uid,
+            func.lower(DouyinImitationTask.status).in_(statuses),
+        )
+        .order_by(DouyinImitationTask.id.desc())
+        .limit(limit)
+        .all()
+    )
+    for row in rows:
+        items.append(
+            _inflight_item(
+                source="douyin_imitation",
+                source_id=row.task_id or row.id,
+                kind="video",
+                title=row.title or "热门跟创",
+                status=row.status,
+                created_at=row.created_at,
+                meta={"task_id": row.task_id, "progress": row.progress or ""},
+            )
+        )
+
+    # 图片：comfly 异步生图任务（缓存在 runtime_cache，按用户索引）
+    try:
+        from .comfly_proxy import list_image_proxy_jobs_for_user  # noqa: PLC0415
+
+        for job in list_image_proxy_jobs_for_user(uid):
+            created_ts = job.get("created_at_ts")
+            try:
+                created_at = datetime.utcfromtimestamp(float(created_ts)) if created_ts else datetime.utcnow()
+            except (TypeError, ValueError, OSError):
+                created_at = datetime.utcnow()
+            items.append(
+                _inflight_item(
+                    source="comfly_image",
+                    source_id=job.get("job_id"),
+                    kind="image",
+                    title="AI图片生成",
+                    status=job.get("status"),
+                    created_at=created_at,
+                    meta={
+                        "model": job.get("requested_model") or "",
+                        "stage": job.get("stage") or "",
+                    },
+                )
+            )
+    except Exception:  # noqa: BLE001 图片队列不可用不影响其它任务
+        logger.warning("content inflight: image jobs unavailable", exc_info=True)
+
+    # 朋友圈：IP 日更文案的配图还在生成（meta.image_status=processing）
+    rows = (
+        db.query(IPContentDraftRecord)
+        .filter(
+            IPContentDraftRecord.user_id == uid,
+            IPContentDraftRecord.task == "moments_candidate",
+        )
+        .order_by(IPContentDraftRecord.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        image_status = _inflight_status(meta.get("image_status"))
+        if image_status not in {"queued", "pending", "running", "processing"}:
+            continue
+        progress = _clean_text(meta.get("image_progress"), 16)
+        items.append(
+            _inflight_item(
+                source="ip_daily",
+                source_id=row.record_id,
+                kind="article",
+                title=row.title or _IP_TASK_LABELS.get(row.task, "朋友圈"),
+                status=image_status,
+                created_at=row.created_at,
+                summary=("正在生成朋友圈配图 " + progress) if progress else "正在生成朋友圈配图",
+                meta={"task": row.task, "image_progress": progress, "image_status": image_status},
+            )
+        )
+
+    # 公众号：客户端同步进来的进行中文章（source 可自定义，kind=article/wechat_article）
+    rows = (
+        db.query(UserContentRecord)
+        .filter(
+            UserContentRecord.user_id == uid,
+            func.lower(UserContentRecord.status).in_(statuses),
+            func.lower(UserContentRecord.kind).in_(("article", "wechat_article")),
+        )
+        .order_by(UserContentRecord.source_created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for row in rows:
+        items.append(
+            _inflight_item(
+                source=row.source or "online_wechat_article",
+                source_id=row.source_id,
+                kind="article",
+                title=row.title,
+                status=row.status,
+                created_at=row.source_created_at or row.created_at,
+                summary=row.summary or "正在生成公众号文章",
+            )
+        )
+
+    return items
 
 
 class ContentRecordSyncItem(BaseModel):
@@ -551,6 +761,25 @@ def sync_content_records(
     for row in rows:
         db.refresh(row)
     return {"ok": True, "created": created, "updated": updated, "items": [_synced_payload(row) for row in rows]}
+
+
+@router.get("/api/content-records/inflight", summary="List queued/running content tasks")
+def list_inflight_content_records(
+    kind: str = Query("", max_length=32),
+    limit: int = Query(40, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    owner = online_user_for_mobile_user(db, current_user)
+    normalized_kind = _clean_text(kind, 32).lower()
+    if normalized_kind and normalized_kind not in _CONTENT_KINDS and normalized_kind not in {"all"}:
+        raise HTTPException(status_code=400, detail="内容类型无效")
+    items = _collect_inflight(db, owner, limit=limit)
+    if normalized_kind and normalized_kind != "all":
+        wanted = _INFLIGHT_KIND_ALIASES.get(normalized_kind, normalized_kind)
+        items = [item for item in items if item.get("kind") == wanted]
+    items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {"ok": True, "items": items[:limit], "next_poll_seconds": 10}
 
 
 @router.get("/api/content-records", summary="List shared Online and IP daily content")

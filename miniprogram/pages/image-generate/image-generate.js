@@ -1,5 +1,4 @@
 const app = getApp();
-const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
@@ -812,7 +811,6 @@ Page({
         const jobId = String((data && data.job_id) || "").trim();
         if (!jobId) throw new Error("没有拿到任务号");
         hist.update(histId, { job_id: jobId, status_text: "排队中" });
-        pend.add({ id: "image-" + jobId, kind: "image", category: "图片", title: prompt.slice(0, 24) });
         this.loadJobs();
         wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
         setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);

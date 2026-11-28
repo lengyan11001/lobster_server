@@ -1,5 +1,4 @@
 const app = getApp();
-const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const { createPoller } = require("../../utils/task-poll");
 const hist = require("../../utils/gen-history");
@@ -491,7 +490,6 @@ Page({
           if (!jobId) throw new Error("没有拿到任务号");
           wx.setStorageSync("lobster_montage_job", jobId);
           this.addPendingMontageJob(jobId);
-          pend.add({ id: "montage-" + jobId, kind: "video", category: "混剪", title: "混剪成片" });
           this.setData({ localStatus: "已提交，渲染中…" });
           this.pollMontageJob(jobId, started);
           wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
