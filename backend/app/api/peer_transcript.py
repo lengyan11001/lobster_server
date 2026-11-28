@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -29,10 +30,12 @@ from ..models import CreativeGenerationJob, User
 from ..services.douyin_imitation_video import extract_douyin_item_id, resolve_source_video
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
 from .auth import create_access_token, access_token_claims, get_current_user
-from .cutcli_templates import _load_sutui_token_for_stt
+from .cutcli_templates import _load_sutui_token_for_stt, _upload_job_file_to_tos
 from .h5_recorder_extract import _extract_json_object
 from .ip_content_studio import _execute_query_with_retry
 from .wechat_channels_transcript import _normalize_video, _process_one_video
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -79,6 +82,7 @@ def _job_payload(row: CreativeGenerationJob, transcript: str = "", source: str =
         "stage": row.stage or "",
         "progress": int(row.progress or 0),
         "transcript": str(meta.get("transcript") or transcript or ""),
+        "video_url": str(meta.get("video_url") or ""),
         "source": str(meta.get("source") or source or ""),
         "error": row.error or "",
     }
@@ -188,6 +192,21 @@ async def _run_peer_job_inner(job_id: str) -> None:
         if not text:
             raise RuntimeError("转写结果为空，换一条链接再试")
 
+        # 把源视频传到 TOS，前端「保存视频」直接下载到相册（平台直链会过期/防盗链）。
+        video_public = ""
+        source_file = job_dir / "item_001" / "source.mp4"
+        try:
+            if source_file.is_file() and 0 < source_file.stat().st_size <= 200 * 1024 * 1024:
+                video_public = await asyncio.to_thread(
+                    _upload_job_file_to_tos,
+                    source_file,
+                    object_key=f"assets/digital_peer/{job_id}/source.mp4",
+                    content_type="video/mp4",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[peer] 保存源视频失败 job=%s err=%s", job_id, str(exc)[:200])
+            video_public = ""
+
         with SessionLocal() as db:
             row = (
                 db.query(CreativeGenerationJob)
@@ -197,7 +216,9 @@ async def _run_peer_job_inner(job_id: str) -> None:
             )
             if row:
                 meta = dict(row.meta or {})
-                meta.update({"transcript": text, "audio_url": (item or {}).get("audio_url") or ""})
+                meta.update({"transcript": text,
+                             "audio_url": (item or {}).get("audio_url") or "",
+                             "video_url": video_public})
                 row.meta = meta
                 row.status = "completed"
                 row.stage = "completed"

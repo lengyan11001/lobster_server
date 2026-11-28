@@ -136,7 +136,7 @@ function dataUriToTempFile(dataUri) {
 Page({
   data: {
     phoneBound: false, maskedPhone: "", errText: "",
-    peerOpen: false, peerLink: "", peerText: "", peerBusy: false, peerProgressText: "",
+    peerOpen: false, peerLink: "", peerText: "", peerVideoUrl: "", peerBusy: false, peerProgressText: "",
     peerScript: "", peerTitleDraft: "", peerScriptBusy: false,
     profiles: [], profileIndex: -1, profilesLoading: false,
     voices: [], voiceNames: [], voiceIndex: -1, voicesLoading: false,
@@ -314,7 +314,7 @@ Page({
 
   openPeer() {
     this.setData({
-      peerOpen: true, peerLink: "", peerText: "", peerBusy: false, peerProgressText: "",
+      peerOpen: true, peerLink: "", peerText: "", peerVideoUrl: "", peerBusy: false, peerProgressText: "",
       peerScript: "", peerTitleDraft: "", peerScriptBusy: false
     });
   },
@@ -332,7 +332,7 @@ Page({
     const link = String(this.data.peerLink || "").trim();
     if (!link) return wx.showToast({ title: "先粘贴同行链接", icon: "none" });
     if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
-    this.setData({ peerBusy: true, peerText: "", peerScript: "", peerTitleDraft: "", peerProgressText: "正在解析链接…" });
+    this.setData({ peerBusy: true, peerText: "", peerVideoUrl: "", peerScript: "", peerTitleDraft: "", peerProgressText: "正在解析链接…" });
     app.request({ method: "POST", url: "/api/digital-human/peer-jobs", data: { url: link }, timeout: 30000 })
       .then((data) => {
         const jobId = String((data && data.job_id) || "");
@@ -353,7 +353,12 @@ Page({
       (data) => {
         const status = String((data && data.status) || "");
         if (status === "completed") {
-          this.setData({ peerText: String((data && data.transcript) || ""), peerBusy: false, peerProgressText: "" });
+          this.setData({
+            peerText: String((data && data.transcript) || ""),
+            peerVideoUrl: String((data && data.video_url) || ""),
+            peerBusy: false,
+            peerProgressText: ""
+          });
           wx.showToast({ title: "转写完成", icon: "success" });
           return true;
         }
@@ -374,6 +379,14 @@ Page({
     const text = String(this.data.peerText || "").trim();
     if (!text) return;
     wx.setClipboardData({ data: text, success: () => wx.showToast({ title: "已复制", icon: "success" }) });
+  },
+
+  savePeerVideo() {
+    const url = String(this.data.peerVideoUrl || "").trim();
+    if (!url) return wx.showToast({ title: "没有可保存的视频", icon: "none" });
+    media.saveToAlbum({ url, media_type: "video", title: "同行视频" })
+      .then(() => wx.showToast({ title: "已保存到相册", icon: "success" }))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err) || "保存失败", icon: "none" }));
   },
 
   writePeerScript() {
