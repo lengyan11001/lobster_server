@@ -19,7 +19,7 @@
       <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
     </view>
     <view class="btn-row">
-      <button class="primary" bindtap="nextStep">下一步</button>
+      <button class="step-next" bindtap="nextStep">下一步</button>
     </view>
     <text class="hint">下一步再设置复刻链接、目标读者、要点和风格</text>
   </view>

@@ -73,7 +73,7 @@
     </view>
 
     <view class="btn-row">
-      <button class="primary" bindtap="nextStep">下一步</button>
+      <button class="step-next" bindtap="nextStep">下一步</button>
     </view>
     </block>
 
