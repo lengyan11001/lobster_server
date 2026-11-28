@@ -135,6 +135,6 @@ Page({
       started_at: Date.now()
     });
     wx.showToast({ title: "已创建，正在生成", icon: "none" });
-    setTimeout(() => wx.navigateBack({ delta: 1, fail: () => {} }), 300);
+    setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
   }
 });

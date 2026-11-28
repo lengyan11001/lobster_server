@@ -14,7 +14,7 @@ Page({
     step: 1,
     groups: [],
     loading: false,
-    viewMode: "list",
+    viewMode: "create",
     topic: "",
     copyCount: 10,
     copyRequirement: "",
@@ -223,9 +223,11 @@ Page({
       status: "processing",
       status_text: "生成中"
     });
-    this.setData({ viewMode: "list", generating: true });
+    this.setData({ viewMode: "create", generating: true });
     this.refreshTaskRows();
     this.startMomentPolling(histId);
+    wx.showToast({ title: "已创建，去作品页查看", icon: "success" });
+    setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
     app.request({
       method: "POST",
       url: "/api/ip-content/generate/moments-candidates",

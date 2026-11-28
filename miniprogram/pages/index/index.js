@@ -607,7 +607,7 @@ Page({
   },
 
   goArticle() {
-    wx.navigateTo({ url: "/pages/article/history?feature=article" });
+    wx.navigateTo({ url: "/pages/article/article" });
   },
 
   goRecords() {

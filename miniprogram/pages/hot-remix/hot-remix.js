@@ -35,7 +35,7 @@ function mapRows(data) {
 Page({
   data: {
     step: 1,
-    viewMode: "list",
+    viewMode: "create",
     jobList: [],
     jobsLoading: false,
     pendingTask: null,
@@ -302,7 +302,7 @@ Page({
         if (!taskId) throw new Error("没有拿到任务号");
         try { wx.setStorageSync("lobster_hot_remix_task", { taskId: taskId, created_at: Date.now() }); } catch (e) {}
         this.setData({
-          viewMode: "list",
+          viewMode: "create",
           submitting: false,
           statusText: "",
           pendingTask: { taskId: taskId, statusText: "生成中…" },
@@ -315,6 +315,8 @@ Page({
         });
         this.startTaskPoll(taskId);
         this.loadJobs();
+        wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
+        setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
       })
       .catch((err) => {
         this.setData({ submitting: false, statusText: "" });
