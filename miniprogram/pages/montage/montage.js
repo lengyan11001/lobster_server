@@ -207,6 +207,24 @@ Page({
     if (drawer) drawer.open("memory");
   },
 
+  openPeerLink() {
+    const c = this.selectComponent("#peerLink");
+    if (c) c.open();
+  },
+
+  onPeerApply(e) {
+    const d = (e && e.detail) || {};
+    const script = String(d.script || "");
+    const title = String(d.title || "");
+    this.setData({
+      viewMode: "create",
+      content: script,
+      speechText: script,
+      templateTitle: title
+    });
+    wx.showToast({ title: "已填入文案", icon: "success" });
+  },
+
   onPrefillPick(evt) {
     const item = (evt && evt.detail && evt.detail.item) || {};
     const params = item.params || {};

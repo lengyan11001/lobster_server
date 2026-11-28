@@ -1,6 +1,7 @@
 {
   "navigationBarTitleText": "公众号文案",
   "usingComponents": {
-    "topic-prefill": "/components/topic-prefill/topic-prefill"
+    "topic-prefill": "/components/topic-prefill/topic-prefill",
+    "peer-link": "/components/peer-link/peer-link"
   }
 }

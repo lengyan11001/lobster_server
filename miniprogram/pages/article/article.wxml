@@ -8,11 +8,12 @@
     </view>
   </view>
 
-  <view class="head-actions">
-    <button class="ghost mini" bindtap="openMemory">IP记忆生成</button>
-    <button class="ghost mini" bindtap="openRecording">录音生成</button>
-    <button class="ghost mini" bindtap="openPrefillHistory">历史</button>
-  </view>
+    <view class="quick-actions">
+      <button class="quick-btn primary" bindtap="openMemory">IP记忆生成</button>
+      <button class="quick-btn primary" bindtap="openRecording">录音生成</button>
+      <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
+      <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
+    </view>
 
   <view class="panel">
     <text class="label">复刻公众号文章（可选）</text>
@@ -39,5 +40,6 @@
 
   <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>
 
-  <topic-prefill id="topicPrefill" target="article" bind:pick="onPrefillPick" />
+  <peer-link id="peerLink" bind:apply="onPeerApply" />
+<topic-prefill id="topicPrefill" target="article" bind:pick="onPrefillPick" />
 </view>

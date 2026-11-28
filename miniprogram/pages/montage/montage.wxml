@@ -10,10 +10,11 @@
         <button wx:if="{{viewMode === 'list'}}" class="act-btn primary" bindtap="openCreate">＋ 新建</button>
       </view>
     </view>
-    <view wx:if="{{viewMode === 'create'}}" class="head-actions">
-      <button class="act-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
-      <button class="act-btn ghost" bindtap="openRecordingPrefill">录音生成</button>
-      <button class="act-btn ghost" bindtap="openPrefillHistory">历史</button>
+    <view wx:if="{{viewMode === 'create'}}" class="quick-actions">
+      <button class="quick-btn primary" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="quick-btn primary" bindtap="openRecordingPrefill">录音生成</button>
+      <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
+      <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
     </view>
   </view>
 
@@ -158,4 +159,5 @@
     <video class="video-preview-body" src="{{previewUrl}}" controls autoplay object-fit="contain"></video>
   </view>
 
+<peer-link id="peerLink" bind:apply="onPeerApply" />
 <topic-prefill id="topicPrefill" target="montage" bind:pick="onPrefillPick" />

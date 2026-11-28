@@ -307,6 +307,17 @@ Page({
     if (drawer) drawer.open("recording");
   },
 
+  openPeerLink() {
+    const c = this.selectComponent("#peerLink");
+    if (c) c.open();
+  },
+
+  onPeerApply(e) {
+    const d = (e && e.detail) || {};
+    this.setData({ text: String(d.script || ""), videoTitle: String(d.title || "") });
+    wx.showToast({ title: "已填入文案", icon: "success" });
+  },
+
   openPrefillHistory() {
     const drawer = this.selectComponent("#topicPrefill");
     if (drawer) drawer.openHistory();

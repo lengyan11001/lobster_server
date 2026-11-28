@@ -553,6 +553,18 @@ Page({
   openMemory() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("memory"); },
   openPrefillHistory() { const d = this.selectComponent("#topicPrefill"); if (d) d.openHistory(); },
   openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
+  openPeerLink() {
+    const c = this.selectComponent("#peerLink");
+    if (c) c.open();
+  },
+
+  onPeerApply(e) {
+    const d = (e && e.detail) || {};
+    const prompt = String(d.script || d.title || "");
+    this.setData({ prompt, promptLength: prompt.length });
+    wx.showToast({ title: "已填入文案", icon: "success" });
+  },
+
   onPrefillPick(evt) {
     const item = (evt && evt.detail && evt.detail.item) || {};
     const text = String(item.script || item.title || "");

@@ -102,6 +102,22 @@ Page({
   openPrefillHistory() { const d = this.selectComponent("#topicPrefill"); if (d) d.openHistory(); },
   openRecording() { const d = this.selectComponent("#topicPrefill"); if (d) d.open("recording"); },
 
+  openPeerLink() {
+    const c = this.selectComponent("#peerLink");
+    if (c) c.open();
+  },
+
+  onPeerApply(e) {
+    const d = (e && e.detail) || {};
+    const script = String(d.script || "");
+    const title = String(d.title || "");
+    this.setData({
+      topic: (title || script).slice(0, 200),
+      copyRequirement: script.slice(0, 200)
+    });
+    wx.showToast({ title: "已填入文案", icon: "success" });
+  },
+
   onPrefillPick(evt) {
     const item = (evt && evt.detail && evt.detail.item) || {};
     const text = String(item.script || item.content || item.body || "");

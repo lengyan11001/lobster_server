@@ -1,0 +1,16 @@
+.peer-mask { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: rgba(15, 23, 42, 0.45); z-index: 999; display: flex; align-items: flex-end; }
+.peer-panel { width: 100%; max-height: 84vh; overflow-y: auto; background: #ffffff; border-radius: 24rpx 24rpx 0 0; padding: 28rpx 24rpx 40rpx; box-sizing: border-box; }
+.peer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16rpx; }
+.peer-title { font-size: 32rpx; font-weight: 600; color: #0f172a; }
+.peer-close { font-size: 44rpx; line-height: 1; color: #94a3b8; padding: 0 10rpx; }
+.peer-label { display: block; margin: 12rpx 0 10rpx; font-size: 24rpx; color: #475569; }
+.peer-input { width: 100%; min-height: 120rpx; padding: 18rpx; box-sizing: border-box; background: #f8fafc; border: 1rpx solid #e2e8f0; border-radius: 14rpx; font-size: 26rpx; color: #0f172a; }
+.peer-choose { display: flex; gap: 16rpx; margin-top: 16rpx; }
+.peer-btn { flex: 1; margin: 0; height: 82rpx; line-height: 82rpx; border-radius: 16rpx; font-size: 27rpx; font-weight: 600; color: #ffffff; background: linear-gradient(135deg, #1957E8, #00B3A0); }
+.peer-progress { display: block; margin-top: 12rpx; font-size: 24rpx; color: #64748b; }
+.peer-box { max-height: 360rpx; background: #f8fafc; border-radius: 12rpx; padding: 16rpx; box-sizing: border-box; }
+.peer-text { font-size: 26rpx; color: #334155; line-height: 1.7; white-space: pre-wrap; }
+.peer-actions { display: flex; gap: 16rpx; margin: 16rpx 0 8rpx; }
+.peer-mini { flex: 1; margin: 0; height: 72rpx; line-height: 72rpx; border-radius: 14rpx; font-size: 25rpx; color: #0f766e; background: #ecfdf5; border: 1rpx solid #99f6e4; }
+.peer-script-title { font-size: 28rpx; font-weight: 600; color: #0f172a; padding: 4rpx 0 12rpx; }
+.peer-primary { margin-top: 18rpx; height: 84rpx; line-height: 84rpx; border-radius: 16rpx; font-size: 28rpx; color: #ffffff; background: linear-gradient(135deg, #1957E8, #00B3A0); }

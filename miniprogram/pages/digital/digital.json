@@ -2,6 +2,7 @@
   "navigationBarTitleText": "数字人口播",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "topic-prefill": "/components/topic-prefill/topic-prefill"
+    "topic-prefill": "/components/topic-prefill/topic-prefill",
+    "peer-link": "/components/peer-link/peer-link"
   }
 }

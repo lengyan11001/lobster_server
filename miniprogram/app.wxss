@@ -168,3 +168,9 @@ button::after {
   font-size: 27rpx;
 }
 
+
+.quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; margin: 18rpx 0 8rpx; }
+.quick-btn { height: 88rpx; line-height: 88rpx; padding: 0; margin: 0; border-radius: 18rpx; font-size: 28rpx; font-weight: 600; text-align: center; }
+.quick-btn.primary { color: #ffffff; background: linear-gradient(135deg, #1957E8, #00B3A0); }
+.quick-btn.ghost { color: #0f766e; background: #ecfdf5; border: 1rpx solid #99f6e4; }
+.quick-btn::after { border: none; }

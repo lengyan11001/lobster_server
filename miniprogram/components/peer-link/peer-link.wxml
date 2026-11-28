@@ -1,0 +1,30 @@
+<view wx:if="{{open}}" class="peer-mask" catchtap="close">
+  <view class="peer-panel" catchtap="noop">
+    <view class="peer-head">
+      <text class="peer-title">同行链接</text>
+      <text class="peer-close" bindtap="close">×</text>
+    </view>
+    <text class="peer-label">同行链接</text>
+    <textarea class="peer-input" value="{{link}}" bindinput="onLink" placeholder="粘贴作品链接或分享文案（带链接的整段也行）" auto-height maxlength="2000" />
+    <view class="peer-choose">
+      <button class="peer-btn" loading="{{busy}}" disabled="{{busy}}" bindtap="extractText">解析并转写</button>
+      <button class="peer-btn" loading="{{busy}}" disabled="{{busy}}" bindtap="downloadVideo">保存视频</button>
+    </view>
+    <text wx:if="{{progressText}}" class="peer-progress">{{progressText}}</text>
+    <block wx:if="{{text}}">
+      <text class="peer-label">转写文本</text>
+      <scroll-view scroll-y class="peer-box"><text class="peer-text">{{text}}</text></scroll-view>
+      <view class="peer-actions">
+        <button class="peer-mini" bindtap="copyText">复制</button>
+        <button class="peer-mini" loading="{{scriptBusy}}" disabled="{{scriptBusy}}" bindtap="writeScript">转写</button>
+      </view>
+    </block>
+    <block wx:if="{{script}}">
+      <text class="peer-label">标题</text>
+      <view class="peer-script-title">{{titleDraft}}</view>
+      <text class="peer-label">文案</text>
+      <scroll-view scroll-y class="peer-box"><text class="peer-text">{{script}}</text></scroll-view>
+      <button class="peer-primary" bindtap="applyScript">确认填充</button>
+    </block>
+  </view>
+</view>

@@ -5,6 +5,7 @@
   "backgroundColor": "#f8f9fa",
   "backgroundTextStyle": "dark",
   "usingComponents": {
-    "topic-prefill": "/components/topic-prefill/topic-prefill"
+    "topic-prefill": "/components/topic-prefill/topic-prefill",
+    "peer-link": "/components/peer-link/peer-link"
   }
 }
