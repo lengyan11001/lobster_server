@@ -39,7 +39,6 @@
     </view>
 
     <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
-    </block>
   </block>
 
   <block wx:else>
@@ -110,6 +109,7 @@
       <button class="primary" loading="{{submitting}}" bindtap="submit">开始跟创</button>
     </view>
     <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
+    </block>
   </block>
   <view wx:if="{{previewOpen}}" class="preview-mask" catchtap="closePreview">
     <view class="preview-head">
