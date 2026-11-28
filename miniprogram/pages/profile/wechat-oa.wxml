@@ -6,7 +6,7 @@
 
   <view class="card">
     <text class="card-title">服务器 IP 白名单</text>
-    <text class="hint">先到 公众平台 → 开发 → 基本配置 → IP白名单，添加下面这些服务器 IP，否则会报 40164。</text>
+    <text class="hint">先到 公众平台 → 开发 → 基本配置 → IP白名单，添加下面的服务器 IP，否则会报 40164。</text>
     <view class="ip-list">
       <view wx:for="{{serverIps}}" wx:key="*this" class="ip-row">
         <text class="ip">{{item}}</text>

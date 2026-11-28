@@ -131,3 +131,10 @@ def test_clean_content_text_removes_html_and_suggestions():
     assert cleaned.strip() == cleaned
     images = wechat_oa_publish._extract_content_images(raw)
     assert images == ["https://img.example.test/a.jpg"]
+
+def test_default_server_ips_only_domestic(monkeypatch):
+    from backend.app.api import wechat_oa_publish
+
+    monkeypatch.delenv('WECHAT_OA_SERVER_IPS', raising=False)
+    assert wechat_oa_publish._server_ips() == ['42.194.209.150']
+

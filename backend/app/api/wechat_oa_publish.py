@@ -22,7 +22,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _WECHAT_API = "https://api.weixin.qq.com"
-_DEFAULT_SERVER_IPS = ("42.194.209.150", "43.162.111.36")
+_DEFAULT_SERVER_IPS = ("42.194.209.150",)
 _TOKEN_CACHE: dict[str, tuple[str, float]] = {}
 
 
