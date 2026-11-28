@@ -43,5 +43,16 @@
         <image class="card-img" src="/assets/home2/article.jpg" mode="aspectFill" />
       </view>
     </view>
+
+    <view class="extract-entry" bindtap="openPeerLink" hover-class="extract-press">
+      <view class="extract-icon">提</view>
+      <view class="extract-main">
+        <text class="extract-title">作品提取</text>
+        <text class="extract-sub">粘贴同行链接，下载视频或提取文案</text>
+      </view>
+      <text class="extract-arrow">›</text>
+    </view>
   </view>
+
+  <peer-link id="peerLink" heading="作品提取" link-label="作品链接" bind:apply="onPeerApply" />
 </view>
