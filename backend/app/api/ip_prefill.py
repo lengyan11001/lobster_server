@@ -199,7 +199,7 @@ _KEYWORD_SYSTEM = (
 _TARGET_RULES = {
     "digital": (
         "这是数字人口播任务，每条要给完整参数："
-        '{"title":"≤20字","hook":"前3秒钩子≤20字","script":"口播文案120-260字，第一人称可直接念","keyword":"","inner":"","outer":"",'
+        '{"title":"≤20字","hook":"前3秒钩子≤20字","script":"口播文案180-220字（200字左右），第一人称可直接念","keyword":"","inner":"","outer":"",'
         '"params":{"duration_seconds":30,"use_materials":true,"material_group":"","template_name":"","match_way":"fuzzyMatch",'
         '"composition":"random","preprocess":"roughCut","emotion":"happy","speed":1.0,"header_switch":true,"subtitle_switch":true,'
         '"keyword_switch":true,"material_sound_switch":false,"watermark_switch":false}}'
@@ -217,7 +217,7 @@ _TARGET_RULES = {
     ),
     "storyboard": (
         "这是创意分镜任务，每条要给完整分镜："
-        '{"title":"≤20字","hook":"≤20字","script":"整条口播文案 100-220 字","keyword":"","inner":"","outer":"",'
+        '{"title":"≤20字","hook":"≤20字","script":"整条口播文案 180-220 字（200字左右）","keyword":"","inner":"","outer":"",'
         '"params":{"aspect":"9:16","duration":10},"shots":[{"no":1,"seconds":3,"voice":"这一镜的口播","visual":"这一镜的画面描述"}]}'
         "；shots 必须 4-6 镜，seconds 合计等于 duration（总时长 10-30 秒）；"
         "visual 要具体到可生成：画面主体、景别、动作、光线、场景，不要写抽象词；voice 是这一镜对应的口播片段。"

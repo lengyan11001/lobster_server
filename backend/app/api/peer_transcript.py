@@ -329,7 +329,7 @@ async def peer_script(
         "只输出严格 JSON：{\"title\":\"12-20字标题\",\"script\":\"口播文案\"}。"
         "要求：script 用第一人称、口语化，保留原文的核心观点/信息/案例，去掉原作者的自我称呼和无关寒暄，"
         "开头 3 秒抓人，句子短、有节奏，不要 Markdown、不要表情符号、不要分镜说明、不要编造原文没有的数据；"
-        "script 长度 180-400 字。"
+        "script 长度 200 字左右（180-220 字）。"
     )
     user_prompt = "【同行转写文本】\n" + text[:20000]
     headers = {"Content-Type": "application/json"}

@@ -217,7 +217,7 @@ async def extract_digital_human_params(
         '"template_name":"","match_way":"fuzzyMatch","composition":"random","preprocess":"roughCut",'
         '"emotion":"happy","speed":1.0,"header_switch":true,"subtitle_switch":true,"keyword_switch":true,'
         '"material_sound_switch":false,"watermark_switch":false}。'
-        "规则：标题不超过 20 字；口播文案 120-260 字，口语化、开头有钩子、结尾有行动引导；"
+        "规则：标题不超过 20 字；口播文案 200 字左右（180-220 字），口语化、开头有钩子、结尾有行动引导；"
         "要结合【个人记忆】里的产品、客户、优势来写；duration_seconds 按文案长度估 15-120 秒；"
         "use_materials 由你自己判断这条口播要不要插混剪素材垫画面：讲到产品、场景、案例、数据就要 true，纯观点或情绪口述填 false；"
         "use_materials 为 true 时，从【可用素材分组】里挑最贴合的一组填 material_group，没有合适分组填空字符串；"
