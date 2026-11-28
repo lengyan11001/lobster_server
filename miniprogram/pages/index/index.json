@@ -4,8 +4,5 @@
   "navigationBarTextStyle": "black",
   "backgroundColor": "#f8f9fa",
   "backgroundTextStyle": "dark",
-  "enablePullDownRefresh": false,
-  "usingComponents": {
-    "peer-link": "/components/peer-link/peer-link"
-  }
+  "enablePullDownRefresh": false
 }

@@ -610,24 +610,8 @@ Page({
     wx.navigateTo({ url: "/pages/article/article" });
   },
 
-  openPeerLink() {
-    const comp = this.selectComponent("#peerLink");
-    if (comp) comp.open();
-  },
-
-  onPeerApply(evt) {
-    const detail = (evt && evt.detail) || {};
-    const title = String(detail.title || "").trim();
-    const script = String(detail.script || "").trim();
-    if (!script) return;
-    try {
-      wx.setStorageSync("lobster_article_prefill", {
-        title: title || script.slice(0, 40),
-        text: script
-      });
-    } catch (err) {}
-    wx.showToast({ title: "已填入公众号创作", icon: "success" });
-    setTimeout(() => wx.navigateTo({ url: "/pages/article/article" }), 500);
+  goContentExtract() {
+    wx.navigateTo({ url: "/pages/content-extract/content-extract" });
   },
 
   goRecords() {

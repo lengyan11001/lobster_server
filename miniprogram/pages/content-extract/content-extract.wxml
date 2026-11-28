@@ -1,0 +1,39 @@
+<view class="page">
+  <view class="head">
+    <text class="title">作品提取</text>
+    <text class="sub">粘贴同行作品链接，下载视频或提取文案转写</text>
+  </view>
+
+  <view class="card">
+    <text class="label">作品链接</text>
+    <textarea class="input" value="{{link}}" bindinput="onLink" placeholder="粘贴作品链接，或带链接的整段分享文案" auto-height maxlength="2000" />
+    <view class="actions">
+      <button class="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="extractText">提取文案转写</button>
+      <button class="secondary" loading="{{busy}}" disabled="{{busy}}" bindtap="downloadVideo">下载视频</button>
+    </view>
+    <text wx:if="{{progressText}}" class="progress">{{progressText}}</text>
+  </view>
+
+  <view wx:if="{{videoUrl}}" class="card">
+    <text class="label">视频已准备好</text>
+    <text class="hint">已尝试保存到相册，失败可再点一次。</text>
+    <button class="secondary" bindtap="saveToAlbum">保存视频到相册</button>
+  </view>
+
+  <view wx:if="{{text}}" class="card">
+    <view class="row">
+      <text class="label">转写文本</text>
+      <text class="copy" bindtap="copyText">复制</text>
+    </view>
+    <scroll-view scroll-y class="box"><text class="body-text">{{text}}</text></scroll-view>
+    <button class="ghost" loading="{{scriptBusy}}" disabled="{{scriptBusy}}" bindtap="writeScript">转写成口播文案</button>
+  </view>
+
+  <view wx:if="{{script}}" class="card">
+    <text class="label">标题</text>
+    <view class="script-title">{{titleDraft || '未命名文案'}}</view>
+    <text class="label">口播文案</text>
+    <scroll-view scroll-y class="box"><text class="body-text">{{script}}</text></scroll-view>
+    <button class="primary" bindtap="applyScript">确认填充到公众号创作</button>
+  </view>
+</view>
