@@ -220,6 +220,68 @@ def _upload_cover_material(token: str, data: bytes, filename: str, content_type:
     return media_id
 
 
+_IMG_MD_RE = re.compile(r"!\[[^\]]*\]\(\s*<?(https?://[^\s)>]+)>?\s*\)", re.IGNORECASE)
+_IMG_HTML_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(https?://.*?)\1[^>]*>", re.IGNORECASE)
+_IMG_BARE_RE = re.compile(r"https?://[^\s<>\"')]+\.(?:png|jpe?g|webp|gif)(?:\?[^\s<>\"')]*)?", re.IGNORECASE)
+
+
+def _extract_content_images(content: str) -> list[str]:
+    text = str(content or "")
+    urls: list[str] = []
+    for regex in (_IMG_MD_RE, _IMG_HTML_RE, _IMG_BARE_RE):
+        for match in regex.finditer(text):
+            if regex is _IMG_HTML_RE:
+                value = str(match.group(2) or "").strip()
+            elif regex is _IMG_MD_RE:
+                value = str(match.group(1) or "").strip()
+            else:
+                value = str(match.group(0) or "").strip()
+            if value.startswith(("http://", "https://")) and value not in urls:
+                urls.append(value)
+    return urls
+
+
+def _clean_content_text(content: str) -> str:
+    text = str(content or "")
+    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</(p|div|section|article|h[1-6]|li|tr|blockquote|pre)>", "\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = _IMG_MD_RE.sub("", text)
+    text = _IMG_HTML_RE.sub("", text)
+    text = _IMG_BARE_RE.sub("", text)
+    lines: list[str] = []
+    skipping = False
+    for raw in text.splitlines():
+        trimmed = raw.strip()
+        if re.match(r"^(配图建议|封面建议|排版建议|图片建议|建议配图|头图建议|插图建议|配图说明|图片素材|标签建议|标题建议)\s*[：:]?", trimmed) or re.match(r"^(配图|封面图?|排版)\s*[：:]", trimmed):
+            skipping = True
+            continue
+        if skipping:
+            if not trimmed:
+                skipping = False
+                continue
+            if re.match(r"^(\d+[.、)]|[-*•])\s*", trimmed):
+                continue
+            if len(trimmed) <= 80:
+                continue
+            skipping = False
+        if re.match(r"^以下是.*(文章|正文|内容)", trimmed):
+            continue
+        lines.append(raw)
+    text = "\n".join(lines)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _build_content_html(content: str, images: list[str]) -> str:
     text = str(content or "").strip()
     paras = [line.strip() for line in re.split(r"\n+", text) if line.strip()]
@@ -260,7 +322,7 @@ def send_wechat_oa_draft(
     token = _get_access_token(row.app_id, app_secret, force=True)
     images: list[str] = []
     seen: set[str] = set()
-    for url in body.images or []:
+    for url in list(body.images or []) + _extract_content_images(body.content):
         clean = str(url or "").strip()
         if clean.startswith(("http://", "https://")) and clean not in seen:
             seen.add(clean)
@@ -278,11 +340,12 @@ def send_wechat_oa_draft(
         else:
             data, content_type, filename = _download_image(url)
         content_images.append(_upload_content_image(token, data, filename, content_type))
+    content_text = _clean_content_text(body.content)
     article = {
         "title": str(body.title or "").strip()[:64],
         "author": str(body.author or "").strip()[:8],
         "digest": str(body.digest or "").strip()[:120],
-        "content": _build_content_html(body.content, content_images),
+        "content": _build_content_html(content_text, content_images),
         "content_source_url": str(body.source_url or "").strip()[:1024],
         "thumb_media_id": thumb_media_id,
         "need_open_comment": 0,

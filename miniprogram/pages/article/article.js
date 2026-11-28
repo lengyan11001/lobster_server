@@ -2,6 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const articleGen = require("../../utils/article-gen");
+const articleText = require("../../utils/article-text");
 
 Page({
   data: {
@@ -174,7 +175,7 @@ Page({
         wx.showToast({ title: String(row.error || "生成失败").slice(0, 30), icon: "none" });
         return;
       }
-      const images = (row.images || []).filter(Boolean);
+      const parsed = articleText.parseArticleContent(row.content || "", (row.images || []).filter(Boolean));
       try {
         await this.syncContentRecord({
           source: inflight.source,
@@ -182,11 +183,11 @@ Page({
           kind: "article",
           title: String(row.title || topic || "公众号文章").slice(0, 200),
           summary: String(row.summary || "").slice(0, 400),
-          content: String(row.content || ""),
-          cover_url: images[0] || "",
+          content: parsed.text,
+          cover_url: parsed.images[0] || "",
           status: "completed",
           source_created_at: new Date().toISOString(),
-          meta: { images }
+          meta: { images: parsed.images }
         });
       } catch (syncErr) {
         wx.showToast({ title: "文章已生成，但作品同步失败", icon: "none" });

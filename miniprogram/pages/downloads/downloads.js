@@ -4,6 +4,7 @@ const config = require("../../config");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
 const hist = require("../../utils/gen-history");
+const articleText = require("../../utils/article-text");
 
 const TABS = [
   { key: "all", label: "全部" },
@@ -319,6 +320,11 @@ Page({
             if (local.content) content = String(local.content);
             if (!rawImageUrls.length && Array.isArray(local.images)) rawImageUrls = local.images.filter(Boolean);
           }
+        }
+        if (kind === "article" || kind === "wechat_article") {
+          const parsed = articleText.parseArticleContent(content, rawImageUrls);
+          content = parsed.text;
+          rawImageUrls = parsed.images;
         }
         const images = [];
         rawImageUrls.forEach((u) => {

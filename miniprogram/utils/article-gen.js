@@ -1,5 +1,6 @@
 const app = getApp();
 const hist = require("./gen-history");
+const articleText = require("./article-text");
 
 const CHAT_MODEL = "deepseek-chat";
 
@@ -125,7 +126,7 @@ function runTask(histId, payload) {
       hist.update(histId, {
         title: article.title || String(payload.topic || "").slice(0, 24),
         summary: article.summary,
-        content: article.body,
+        content: articleText.cleanArticleText(article.body),
         status: "completed",
         status_text: "已完成"
       });

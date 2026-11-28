@@ -3,6 +3,7 @@ const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const { createPoller } = require("../../utils/task-poll");
 const articleGen = require("../../utils/article-gen");
+const articleText = require("../../utils/article-text");
 
 const CONFIG = {
   article: { title: "公众号文章", create: "/pages/article/article" },
@@ -82,11 +83,13 @@ Page({
       const old = previous[row.id];
       let images = Array.isArray(row.images) && row.images.length ? row.images : ((old && old.images) || []);
       if (!images.length && row.image_url) images = [row.image_url];
+      const parsed = articleText.parseArticleContent(row.content || "", images);
       return Object.assign({}, row, {
-        images,
+        content: parsed.text,
+        images: parsed.images,
         timeText: fmt(row.at),
         statusText: row.status_text || (row.status === "processing" ? "生成中" : (row.status === "failed" ? "失败" : "已完成")),
-        blocks: buildBlocks(row.content, images)
+        blocks: buildBlocks(parsed.text, parsed.images)
       });
     });
     this.setData({ items });
@@ -221,16 +224,16 @@ Page({
       wx.showToast({ title: "文章还没有正文", icon: "none" });
       return;
     }
-    const images = (item.images || []).filter(Boolean);
+    const parsed = articleText.parseArticleContent(item.content || "", (item.images || []).filter(Boolean));
     wx.showLoading({ title: "发送草稿中", mask: true });
     app.request({
       method: "POST",
       url: "/api/wechat-oa/draft",
       data: {
         title: String(item.title || "公众号文章"),
-        content: String(item.content || ""),
+        content: parsed.text,
         digest: String(item.summary || ""),
-        images
+        images: parsed.images
       },
       timeout: 120000
     })

@@ -118,3 +118,16 @@ def test_send_draft_builds_and_posts(db_session, test_user, monkeypatch):
     posted = fake.calls[-1]["json"]
     assert posted["articles"][0]["thumb_media_id"] == "thumb-1"
     assert "https://wx.example.test/a.png" in posted["articles"][0]["content"]
+
+def test_clean_content_text_removes_html_and_suggestions():
+    from backend.app.api import wechat_oa_publish
+
+    raw = '<div>&nbsp;</div><p>第一段正文</p><p><img src="https://img.example.test/a.jpg" /></p><p>配图建议：<br>1. 封面用人物图<br>2. 第二张用场景图</p><p>第二段正文</p>'
+    cleaned = wechat_oa_publish._clean_content_text(raw)
+    assert "<" not in cleaned
+    assert "配图建议" not in cleaned
+    assert "第一段正文" in cleaned
+    assert "第二段正文" in cleaned
+    assert cleaned.strip() == cleaned
+    images = wechat_oa_publish._extract_content_images(raw)
+    assert images == ["https://img.example.test/a.jpg"]
