@@ -114,10 +114,13 @@ Page({
     return this.fetchPage(0, true);
   },
 
-  fetchPage(offset, replace) {
+  fetchPage(offset, replace, silent) {
     const keys = this.keys();
-    if (replace) this.setData({ loading: true });
-    else this.setData({ loadingMore: true });
+    if (replace) {
+      if (!silent) this.setData({ loading: true });
+    } else {
+      this.setData({ loadingMore: true });
+    }
     const requests = keys.map((kind) =>
       app.request({
         url: "/api/content-records?kind=" + encodeURIComponent(kind) +
@@ -141,7 +144,10 @@ Page({
         const contentLists = offset === 0 ? lists.slice(0, -1) : lists;
         const inflightList = offset === 0 ? lists[lists.length - 1] : null;
         const byKey = {};
-        (replace ? [] : this.data.items).forEach((row) => {
+        const baseItems = replace
+          ? (silent ? this.data.items.filter((row) => row && !row.pending) : [])
+          : this.data.items;
+        baseItems.forEach((row) => {
           if (!row || !row.key) return;
           byKey[row.key] = row;
         });
@@ -159,7 +165,7 @@ Page({
           ((inflightList && inflightList.items) || []).forEach((row) => {
             const item = this.mapInflight(row);
             if (!item.key) return;
-            byKey[item.key] = item;
+            this.mergeInflightItem(byKey, item);
           });
         }
         const merged = Object.keys(byKey).map((key) => byKey[key]);
@@ -173,7 +179,22 @@ Page({
       .catch((err) => {
         wx.showToast({ title: api.errorMessage(err), icon: "none" });
       })
-      .then(() => this.setData({ loading: false, loadingMore: false }));
+      .then(() => {
+        if (!silent) this.setData({ loading: false, loadingMore: false });
+      });
+  },
+
+  mergeInflightItem(byKey, item) {
+    const prev = byKey[item.key];
+    if (prev) {
+      // 生成中记录本身没有缩略图；覆盖已完成记录时保留原来的图和标题，
+      // 避免作品列表里图片先出现、轮询到 inflight 后又消失。
+      if (!item.thumb && prev.thumb) item.thumb = prev.thumb;
+      if ((!item.title || item.title === "生成中的作品") && prev.title) item.title = prev.title;
+      if ((!item.summary || item.summary === "正在生成，完成后自动出现在作品里") && prev.summary) item.summary = prev.summary;
+      if (!item.categoryLabel && prev.categoryLabel) item.categoryLabel = prev.categoryLabel;
+    }
+    byKey[item.key] = item;
   },
 
   refreshInflight() {
@@ -191,7 +212,7 @@ Page({
         });
         ((data && data.items) || []).forEach((row) => {
           const item = this.mapInflight(row);
-          if (item.key) byKey[item.key] = item;
+          if (item.key) this.mergeInflightItem(byKey, item);
         });
         const merged = Object.keys(byKey).map((key) => byKey[key]);
         merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -199,7 +220,8 @@ Page({
         // 任务刚完成时 inflight 会消失，立即整页刷新把新生成的内容记录拉回来，
         // 避免作品卡片先消失、等用户手动刷新才出现。
         if (hadPending && !merged.some((row) => row && row.pending)) {
-          return this.refresh();
+          // 静默重拉内容记录：不清空当前列表，避免任务刚完成时图片先消失再出现。
+          return this.fetchPage(0, true, true);
         }
       })
       .catch(() => {});
@@ -269,12 +291,8 @@ Page({
     };
   },
 
-  onThumbError(e) {
-    const index = Number((e.currentTarget.dataset && e.currentTarget.dataset.index) || 0);
-    const items = this.data.items.slice();
-    if (!items[index]) return;
-    items[index] = Object.assign({}, items[index], { thumb: "" });
-    this.setData({ items });
+  onThumbError() {
+    // 缩略图失败时保留底层占位，不要把已经显示的图清掉，避免列表里闪一下又消失。
   },
   openDetail(e) {
     const index = Number(e.currentTarget.dataset.index || 0);

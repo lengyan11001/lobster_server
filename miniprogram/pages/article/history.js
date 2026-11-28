@@ -69,16 +69,24 @@ Page({
 
   refresh() {
     const now = Date.now();
+    const previous = {};
+    (this.data.items || []).forEach((row) => {
+      if (row && row.id) previous[row.id] = row;
+    });
     const items = hist.list(this.data.feature).map((x) => {
       let row = x;
       if (row.status === "processing" && now - Number(row.started_at || row.at || 0) > 15 * 60 * 1000) {
         hist.update(row.id, { status: "failed", status_text: "已中断", error: "页面已关闭，任务没有继续执行" });
         row = Object.assign({}, row, { status: "failed", status_text: "已中断" });
       }
+      const old = previous[row.id];
+      let images = Array.isArray(row.images) && row.images.length ? row.images : ((old && old.images) || []);
+      if (!images.length && row.image_url) images = [row.image_url];
       return Object.assign({}, row, {
+        images,
         timeText: fmt(row.at),
         statusText: row.status_text || (row.status === "processing" ? "生成中" : (row.status === "failed" ? "失败" : "已完成")),
-        blocks: buildBlocks(row.content, row.images)
+        blocks: buildBlocks(row.content, images)
       });
     });
     this.setData({ items });
