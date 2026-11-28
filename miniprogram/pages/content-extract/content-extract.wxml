@@ -31,7 +31,7 @@
 
   <view wx:if="{{script}}" class="card">
     <text class="label">标题</text>
-    <view class="script-title">{{titleDraft || '未命名文案'}}</view>
+    <view class="script-title">{{titleDraft}}</view>
     <text class="label">口播文案</text>
     <scroll-view scroll-y class="box"><text class="body-text">{{script}}</text></scroll-view>
     <button class="primary" bindtap="applyScript">确认填充到公众号创作</button>

@@ -106,7 +106,7 @@ Page({
     app.request({ method: "POST", url: "/api/digital-human/peer-script", data: { transcript }, timeout: 180000 })
       .then((data) => {
         this.setData({
-          titleDraft: String((data && data.title) || ""),
+          titleDraft: String((data && data.title) || "未命名文案"),
           script: String((data && data.script) || "")
         });
       })

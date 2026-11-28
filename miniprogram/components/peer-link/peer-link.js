@@ -3,11 +3,6 @@ const media = require("../../utils/media");
 const { createPoller } = require("../../utils/task-poll");
 
 Component({
-  properties: {
-    heading: { type: String, value: "同行链接" },
-    linkLabel: { type: String, value: "同行链接" }
-  },
-
   data: {
     open: false,
     link: "",

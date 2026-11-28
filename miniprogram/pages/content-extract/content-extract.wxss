@@ -33,7 +33,8 @@ page { background: #f8f9fa; }
   color: #0f172a;
 }
 
-.actions { display: flex; gap: 16rpx; margin-top: 20rpx; }
+.actions { display: flex; margin-top: 20rpx; }
+.actions .secondary { margin-left: 16rpx; }
 
 .primary, .secondary, .ghost {
   flex: 1;
