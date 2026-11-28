@@ -213,7 +213,7 @@ Page({
             content: msg,
             confirmText: "去配置",
             success: (res) => {
-              if (res.confirm) wx.navigateTo({ url: "/pages/wechat-oa/wechat-oa" });
+              if (res.confirm) wx.navigateTo({ url: "/pages/profile/wechat-oa" });
             }
           });
         } else {

@@ -88,7 +88,7 @@ Page({
   },
 
   goWechatOa() {
-    wx.navigateTo({ url: "/pages/wechat-oa/wechat-oa" });
+    wx.navigateTo({ url: "/pages/profile/wechat-oa" });
   },
 
   goAgreement() {
