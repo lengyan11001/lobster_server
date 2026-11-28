@@ -113,6 +113,6 @@ page { background: #f8f9fa; }
 .wides .card + .card { margin-top: 24rpx; }
 
 .ip-entry { position: absolute; right: 8%; top: 18%; z-index: 3; display: flex; flex-direction: column; align-items: center; }
-.ip-entry-ico { width: 74rpx; height: 74rpx; line-height: 74rpx; text-align: center; border-radius: 50%; background: rgba(255, 255, 255, 0.94); color: #1957E8; font-size: 26rpx; font-weight: 800; box-shadow: 0 8rpx 22rpx rgba(15, 23, 42, 0.18); }
+.ip-entry-ico { width: 80rpx; height: 80rpx; border-radius: 26rpx; box-shadow: 0 10rpx 24rpx rgba(15, 23, 42, 0.20); }
 .ip-entry-label { margin-top: 6rpx; padding: 2rpx 14rpx; border-radius: 999rpx; background: rgba(255, 255, 255, 0.88); color: #334155; font-size: 20rpx; font-weight: 600; }
 .ip-entry-press { opacity: 0.85; }

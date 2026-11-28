@@ -3,7 +3,7 @@
     <image class="top-visual-img" src="/assets/home2/hero.jpg" mode="widthFix" />
     <text class="hero-slogan">必火智能 · 让企业AI落地更简单</text>
     <view class="ip-entry" bindtap="goIpProfile" hover-class="ip-entry-press">
-      <view class="ip-entry-ico">IP</view>
+      <image class="ip-entry-ico" src="/assets/home2/ip-entry.png" mode="aspectFit" />
       <text class="ip-entry-label">IP人设</text>
     </view>
     <view class="secretary-hit" bindtap="goSecretary" hover-class="none"></view>
