@@ -10,12 +10,7 @@
         <button wx:if="{{viewMode === 'list'}}" class="primary small" bindtap="openCreate">＋ 新建</button>
       </view>
     </view>
-    <view wx:if="{{viewMode === 'create'}}" class="quick-actions">
-      <button class="quick-btn primary" bindtap="openMemoryPrefill">IP记忆生成</button>
-      <button class="quick-btn primary" bindtap="openRecordingPrefill">录音生成</button>
-      <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
-      <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
-    </view>
+
   </view>
 
   <view wx:if="{{viewMode === 'list'}}" class="panel">
@@ -50,9 +45,15 @@
   </view>
 
   <block wx:if="{{step === 1}}">
-  <view class="panel">
+  <view class="panel step1-panel">
     <text class="label">口播文案</text>
-    <textarea class="textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" auto-height maxlength="2000" />
+    <textarea class="textarea step1-textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" maxlength="2000" />
+    <view wx:if="{{viewMode === 'create'}}" class="quick-actions">
+      <button class="quick-btn primary" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="quick-btn primary" bindtap="openRecordingPrefill">录音生成</button>
+      <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
+      <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
+    </view>
     <view class="btn-row">
       <button class="primary" bindtap="nextStep">下一步</button>
     </view>
