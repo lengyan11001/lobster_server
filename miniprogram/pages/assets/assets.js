@@ -67,7 +67,9 @@ Page({
       return;
     }
     if (key === "digital") {
-      wx.navigateTo({ url: "/pages/digital/digital" });
+      // 打开素材库自己的「形象分身」列表（可切到「声音分身」tab），不是数字人生成记录
+      this.setData({ viewMode: "list", tabIndex: 3, isDigital: true, tabCount: 0, currentCount: 0 });
+      this.loadDigital();
       return;
     }
     if (key === "image" || key === "video") {
