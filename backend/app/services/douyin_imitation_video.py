@@ -386,6 +386,27 @@ async def _download_first(urls: list, limit: int = MAX_SOURCE_BYTES) -> Tuple[Op
     return None, "", last
 
 
+async def store_generated_video_bytes(data: bytes, *, title: str = "") -> Dict[str, Any]:
+    """把成片字节转存到 TOS，返回和 store_generated_video 相同的结构。"""
+    if not data:
+        return {"ok": False, "error": "成片为空"}
+    from ..api.assets import _run_asset_upload_io, _save_upload_file_or_tos
+
+    import io as _io
+
+    handle = _io.BytesIO(data)
+    handle.name = "douyin-imitation.mp4"
+    asset_id, object_key, file_size, public_url = await _run_asset_upload_io(
+        _save_upload_file_or_tos, handle, ".mp4", "video/mp4"
+    )
+    if not public_url:
+        return {"ok": False, "error": "成片转存失败：存储没返回公网地址"}
+    size = int(file_size or len(data))
+    logger.info("[douyin-imitation] stored bytes title=%s asset=%s size=%s", str(title)[:40], asset_id, size)
+    return {"ok": True, "public_url": public_url, "asset_id": asset_id,
+            "file_size": int(file_size or len(data)), "object_key": object_key}
+
+
 async def store_generated_video(video_url: str, *, title: str = "") -> Dict[str, Any]:
     """把上游成片转存到我们自己的 TOS（阿里云出的 OSS 链接带 Expires，过期就打不开了）。
 
@@ -397,20 +418,7 @@ async def store_generated_video(video_url: str, *, title: str = "") -> Dict[str,
     data, err = await _download(source, limit=MAX_SOURCE_BYTES)
     if err:
         return {"ok": False, "error": f"下载成片失败：{err}"}
-    from ..api.assets import _run_asset_upload_io, _save_upload_file_or_tos
-
-    import io as _io
-
-    handle = _io.BytesIO(data)
-    handle.name = "douyin-imitation.mp4"     # assets 上传助手会取 name/suffix
-    asset_id, object_key, file_size, public_url = await _run_asset_upload_io(
-        _save_upload_file_or_tos, handle, ".mp4", "video/mp4"
-    )
-    if not public_url:
-        return {"ok": False, "error": "成片转存失败：存储没返回公网地址"}
-    logger.info("[douyin-imitation] stored title=%s asset=%s size=%s", str(title)[:40], asset_id, file_size)
-    return {"ok": True, "public_url": public_url, "asset_id": asset_id,
-            "file_size": int(file_size or len(data)), "object_key": object_key}
+    return await store_generated_video_bytes(data, title=title)
 
 
 async def fetch_video_bytes(video_url: str, limit: int = MAX_SOURCE_BYTES) -> Tuple[Optional[bytes], str]:
@@ -438,6 +446,82 @@ async def _upload_tos(data: bytes, suffix: str, content_type: str) -> Tuple[str,
     if not public_url:
         return "", "素材上传失败：TOS 没返回公网地址"
     return public_url, ""
+
+
+def _atempo_chain(ratio: float) -> list[str]:
+    """把播放倍率拆成 ffmpeg atempo 支持的 0.5-2.0 段。"""
+    value = max(0.01, float(ratio or 1.0))
+    out: list[str] = []
+    while value > 2.0:
+        out.append("atempo=2.0")
+        value /= 2.0
+    while value < 0.5:
+        out.append("atempo=0.5")
+        value /= 0.5
+    out.append("atempo=%.6f" % value)
+    return out
+
+
+def build_voice_mix_filter(video_seconds: float, audio_seconds: float) -> str:
+    """生成「把配音铺满视频时长」的 ffmpeg filter。
+
+    - 配音比视频长：加速；配音比视频短：放慢；
+    - 最后 apad + atrim，保证和视频时长严格一致。
+    """
+    target = max(0.1, float(video_seconds or 0.0))
+    audio = max(0.0, float(audio_seconds or 0.0))
+    if audio <= 0:
+        return "[1:a]apad,atrim=0:%.3f[a]" % target
+    ratio = audio / target
+    filters = _atempo_chain(ratio)
+    filters.append("apad")
+    filters.append("atrim=0:%.3f" % target)
+    return "[1:a]" + ",".join(filters) + "[a]"
+
+
+async def apply_voice_to_video(video_url: str, audio_url: str, *, title: str = "") -> Dict[str, Any]:
+    """下载成片和配音，用 ffmpeg 替换音轨，再转存 TOS。"""
+    video_src = str(video_url or "").strip()
+    audio_src = str(audio_url or "").strip()
+    if not video_src.startswith(("http://", "https://")) or not audio_src.startswith(("http://", "https://")):
+        return {"ok": False, "error": "成片或配音地址无效"}
+    video_bytes, err = await _download(video_src, limit=MAX_SOURCE_BYTES)
+    if err or not video_bytes:
+        return {"ok": False, "error": "下载成片失败：%s" % (err or "空文件")}
+    audio_bytes, err = await _download(audio_src, limit=60 * 1024 * 1024)
+    if err or not audio_bytes:
+        return {"ok": False, "error": "下载配音失败：%s" % (err or "空文件")}
+    video_seconds = await asyncio.to_thread(probe_video_seconds, video_bytes)
+    audio_seconds = await asyncio.to_thread(probe_video_seconds, audio_bytes)
+    if video_seconds <= 0:
+        return {"ok": False, "error": "读不到成片时长，无法对齐配音"}
+    filter_complex = build_voice_mix_filter(video_seconds, audio_seconds)
+    with tempfile.TemporaryDirectory() as folder:
+        vpath = pathlib.Path(folder) / "video.mp4"
+        apath = pathlib.Path(folder) / "voice.mp3"
+        outpath = pathlib.Path(folder) / "out.mp4"
+        vpath.write_bytes(video_bytes)
+        apath.write_bytes(audio_bytes)
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(vpath), "-i", str(apath),
+            "-filter_complex", filter_complex,
+            "-map", "0:v:0", "-map", "[a]",
+            "-c:v", "copy", "-c:a", "aac",
+            "-t", "%.3f" % video_seconds,
+            "-movflags", "+faststart", str(outpath),
+        ]
+        try:
+            done = subprocess.run(cmd, capture_output=True, timeout=300)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": "配音替换失败：%s" % exc}
+        if done.returncode != 0 or not outpath.exists() or outpath.stat().st_size <= 0:
+            detail = (done.stderr or b"")[:300].decode("utf-8", "ignore").strip()
+            return {"ok": False, "error": "配音替换失败：%s" % (detail or "ffmpeg 未生成输出")}
+        processed = outpath.read_bytes()
+    stored = await store_generated_video_bytes(processed, title=title)
+    stored.update({"video_seconds": round(video_seconds, 2), "audio_seconds": round(audio_seconds, 2)})
+    return stored
 
 
 def probe_video_seconds(data: bytes) -> float:
@@ -492,7 +576,7 @@ def normalize_resolution(raw: object) -> str:
 
 async def submit_imitation(image_url: str, source_video_url: str, *, mode: str = "wan-std",
                            prompt: str = "", resolution: str = "720P", model: str = "",
-                           duration_seconds: int = 0) -> Dict[str, Any]:
+                           duration_seconds: int = 0, reference_audio_url: str = "") -> Dict[str, Any]:
     """提交做同款任务：返回 {ok, task_id, ...} 或 {ok: False, error}。"""
     image = str(image_url or "").strip()
     video = str(source_video_url or "").strip()
@@ -513,11 +597,16 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
             parameters["ratio"] = "adaptive"
             if int(duration_seconds or 0) > 0:
                 parameters["duration"] = int(duration_seconds)
+        media = [{"type": source_media_type, "url": video},
+                 {"type": "reference_image", "url": image}]
+        if str(reference_audio_url or "").strip():
+            # 3.0 支持 reference_audio：让模型按选定声音的口型/节奏生成；
+            # 不支持时下面会自动去掉这个媒体再提交一次，成片仍由后处理换轨兜底。
+            media.append({"type": "reference_audio", "url": str(reference_audio_url).strip()})
         body = {
             "model": edit_model,
             "input": {"prompt": str(prompt or "").strip()[:600] or default_prompt(),
-                      "media": [{"type": source_media_type, "url": video},
-                                {"type": "reference_image", "url": image}]},
+                      "media": media},
             "parameters": parameters,
         }
         url = host + VIDEOEDIT_ENDPOINT
@@ -539,6 +628,24 @@ async def submit_imitation(image_url: str, source_video_url: str, *, mode: str =
                 headers={"Authorization": f"Bearer {key}", "X-DashScope-Async": "enable",
                          "Content-Type": "application/json"},
             )
+            if resp.status_code != 200 and provider == "videoedit" and str(reference_audio_url or "").strip():
+                # 老账号/老模型可能不认 reference_audio：去掉它重提一次，别让整个任务失败
+                retry_body = {
+                    **body,
+                    "input": {
+                        **body["input"],
+                        "media": [m for m in body["input"]["media"] if m.get("type") != "reference_audio"],
+                    },
+                }
+                retry = await client.post(
+                    url,
+                    json=retry_body,
+                    headers={"Authorization": f"Bearer {key}", "X-DashScope-Async": "enable",
+                             "Content-Type": "application/json"},
+                )
+                if retry.status_code == 200:
+                    body = retry_body
+                    resp = retry
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"提交做同款任务失败：{exc}"}
     if resp.status_code != 200:
@@ -649,9 +756,110 @@ def resolve_output_seconds(raw: object, input_seconds: float) -> int:
     return max(MIN_OUTPUT_SECONDS, min(want, ceiling))
 
 
+async def prepare_voice_audio_for_video(
+    video_url: str,
+    *,
+    voice_id: str,
+    voice_source: str,
+    db: Any,
+    user_id: int,
+) -> Dict[str, Any]:
+    """用跟创真正送去生成的裁剪后视频转写，再用选定声音生成配音。"""
+    clean_voice = str(voice_id or "").strip()
+    if not clean_voice:
+        return {"ok": False, "error": "没有选择声音"}
+    if db is None or not int(user_id or 0):
+        return {"ok": False, "error": "声音跟创缺少账号上下文"}
+    try:
+        from ..api.cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
+        from ..api.wechat_channels_transcript import _process_one_video  # noqa: PLC0415
+
+        token, token_source = _load_sutui_token_for_stt(db, int(user_id))
+        if not token:
+            return {"ok": False, "error": "文案转写服务未配置，暂时不能选声音跟创"}
+        # 转写/合成可能几十秒，先取完数据并释放数据库事务，避免 Postgres
+        # idle_in_transaction_session_timeout 在慢调用期间把连接杀掉。
+        voice_row = None
+        if str(voice_source or "").strip().lower() != "system":
+            from ..models import UserHiflyVoiceAsset  # noqa: PLC0415
+
+            voice_row = (
+                db.query(UserHiflyVoiceAsset)
+                .filter(
+                    UserHiflyVoiceAsset.user_id == int(user_id),
+                    UserHiflyVoiceAsset.hifly_voice_id == clean_voice,
+                    UserHiflyVoiceAsset.status == "success",
+                )
+                .first()
+            )
+            if voice_row is None:
+                return {"ok": False, "error": "这个声音不存在或不属于当前账号，请重新选择"}
+            db.expunge(voice_row)
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+        with tempfile.TemporaryDirectory(prefix="imitation_voice_") as folder:
+            item = await asyncio.to_thread(
+                _process_one_video,
+                job_id="imitation_voice_" + os.urandom(4).hex(),
+                item={"video_url": video_url},
+                index=0,
+                token=token,
+                token_source=token_source,
+                job_dir=pathlib.Path(folder),
+            )
+        text = str((item or {}).get("transcript") or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[douyin-imitation] 声音跟创转写失败: %s", exc)
+        return {"ok": False, "error": "原视频文案提取失败：%s" % str(exc)[:200]}
+    if not text:
+        return {"ok": False, "error": "原视频没有可转写的口播文案，改选原声再试"}
+
+    if str(voice_source or "").strip().lower() == "system":
+        try:
+            from . import device_tts  # noqa: PLC0415
+
+            audio_url = await asyncio.to_thread(
+                device_tts.synthesize, text, token=token, voice_id=clean_voice
+            )
+            audio_bytes, err = await _download(audio_url, limit=60 * 1024 * 1024)
+            if err or not audio_bytes:
+                return {"ok": False, "error": "系统声音配音下载失败：%s" % (err or "空文件")}
+            audio_tos, err = await _upload_tos(audio_bytes, ".mp3", "audio/mpeg")
+            if err:
+                return {"ok": False, "error": err}
+            return {"ok": True, "audio_url": audio_tos, "text": text}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[douyin-imitation] 系统声音配音失败: %s", exc)
+            return {"ok": False, "error": "系统声音配音失败：%s" % str(exc)[:200]}
+
+    try:
+        from ..api.hifly_assets import _preview_tts_audio, _voice_provider  # noqa: PLC0415
+
+        result = await _preview_tts_audio(
+            provider=_voice_provider(voice_row),
+            row=voice_row,
+            text=text,
+            rate=1.0,
+            volume=1.0,
+            pitch=0,
+            emotion="happy",
+        )
+        audio_tos, err = await _upload_tos(result["audio_bytes"], ".mp3", "audio/mpeg")
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "audio_url": audio_tos, "text": text}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[douyin-imitation] 我的声音配音失败: %s", exc)
+        return {"ok": False, "error": "我的声音配音失败：%s" % str(exc)[:200]}
+
+
 async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "", *,
                             video_url: str = "", mode: str = "person_swap",
-                            resolution: str = "720P", duration_seconds: int = 0) -> Dict[str, Any]:
+                            resolution: str = "720P", duration_seconds: int = 0,
+                            voice_id: str = "", voice_source: str = "",
+                            db: Any = None, user_id: int = 0) -> Dict[str, Any]:
     """把素材准备好并提交：用户图 + 原视频都转到 TOS，再按模式提交。
 
     2026-10-05：视频来源支持两种 —— 榜单作品（item_id）或用户自己给的视频地址
@@ -718,10 +926,27 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
     image_tos, err = await _upload_tos(image_bytes, suffix, "image/png" if suffix == ".png" else "image/jpeg")
     if err:
         return {"ok": False, "error": err}
+    voice_audio_url = ""
+    voice_text = ""
+    if str(voice_id or "").strip():
+        voice_prep = await prepare_voice_audio_for_video(
+            video_tos,
+            voice_id=str(voice_id or ""),
+            voice_source=str(voice_source or ""),
+            db=db,
+            user_id=user_id,
+        )
+        if not voice_prep.get("ok"):
+            return voice_prep
+        voice_audio_url = str(voice_prep.get("audio_url") or "")
+        voice_text = str(voice_prep.get("text") or "")
     final_prompt = prompt_for_mode(mode, prompt)
-    output_seconds = resolve_output_seconds(duration_seconds, effective_seconds)
+    # 选声音时配音是按裁剪后的原视频转写生成的，成片必须跟原视频同长，
+    # 否则把 15 秒文案硬压进 5 秒会明显变速、对不上口型。
+    output_seconds = int(effective_seconds) if str(voice_id or "").strip() else resolve_output_seconds(duration_seconds, effective_seconds)
     result = await submit_imitation(image_tos, video_tos, prompt=final_prompt, resolution=resolution,
-                                    duration_seconds=int(output_seconds))
+                                    duration_seconds=int(output_seconds),
+                                    reference_audio_url=voice_audio_url)
     if not result.get("ok"):
         return result
     result.update({"source_desc": source.get("desc") or "",
@@ -733,5 +958,7 @@ async def prepare_imitation(image_url: str, item_id: str = "", prompt: str = "",
                    "image_url": image_tos, "video_url": video_tos,
                    "mode": normalize_mode(mode), "mode_label": mode_label(mode),
                    "resolution": normalize_resolution(result.get("resolution") or resolution),
-                   "prompt": final_prompt})
+                   "prompt": final_prompt,
+                   "voice_audio_url": voice_audio_url,
+                   "voice_text": voice_text})
     return result

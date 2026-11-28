@@ -351,6 +351,19 @@ def _migrate_douyin_imitation_task_columns():
                 conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN upstream_request TEXT"))
             if "upstream_response" not in cols:
                 conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN upstream_response TEXT"))
+            # 2026-11-28：跟创声音选择 / 成片替换音轨
+            if "voice_mode" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN voice_mode VARCHAR(16) NOT NULL DEFAULT 'original'"))
+            if "voice_id" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN voice_id VARCHAR(128) NOT NULL DEFAULT ''"))
+            if "voice_source" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN voice_source VARCHAR(16) NOT NULL DEFAULT ''"))
+            if "voice_audio_url" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN voice_audio_url TEXT"))
+            if "voice_text" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN voice_text TEXT"))
+            if "voice_applied" not in cols:
+                conn.execute(text("ALTER TABLE douyin_imitation_task ADD COLUMN voice_applied BOOLEAN NOT NULL DEFAULT FALSE"))
         logger.info("Migration douyin_imitation_task billing columns ok")
     except Exception as e:  # noqa: BLE001
         logger.warning("Migration douyin_imitation_task billing columns skipped: %s", e)

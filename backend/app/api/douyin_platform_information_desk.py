@@ -72,6 +72,10 @@ class ImitationIn(BaseModel):
     video_seconds: float = 0
     title: str = ""
     prompt: str = ""
+    # 2026-11-28：声音选择。original=保留原视频声音；clone=用声音控件里的声音重配
+    voice_mode: str = "original"
+    voice_id: str = ""
+    voice_source: str = ""
 
 
 @router.post("/api/douyin/platform-information-desk/imitation", summary="抖音信息台做同款：一张参考图生成同款风格视频")
@@ -85,6 +89,12 @@ async def create_information_desk_imitation(
         raise HTTPException(status_code=400, detail="请先填视频链接、上传本地视频，或从榜单里点「跟创」")
     if not str(body.image_url or "").strip():
         raise HTTPException(status_code=400, detail="请上传一张参考图（不传的话先在「IP人设定位」里放一张形象照）")
+    voice_mode = str(body.voice_mode or "original").strip().lower()
+    if voice_mode not in {"original", "clone"}:
+        voice_mode = "original"
+    voice_id = str(body.voice_id or "").strip()
+    if voice_mode == "clone" and not voice_id:
+        raise HTTPException(status_code=400, detail="选声音跟创需要选择一个声音，请重试或改选原声")
     # 上游按「输入视频 + 输出视频」秒数计费，这里先按裁剪后的秒数预扣，失败全额退
     # 2026-10-05：改成按「原视频实际时长」计费 —— 先只按上限校验余额（不扣），
     # 等 prepare 探到真实时长后再按实际秒数扣费（失败/提交不成功不扣）。
@@ -108,7 +118,10 @@ async def create_information_desk_imitation(
     result = await prepare_imitation(body.image_url, body.item_id, body.prompt,
                                      video_url=body.video_url, mode=body.mode,
                                      resolution=body.resolution,
-                                     duration_seconds=body.duration_seconds)
+                                     duration_seconds=body.duration_seconds,
+                                     voice_id=str(body.voice_id or "") if voice_mode == "clone" else "",
+                                     voice_source=str(body.voice_source or ""),
+                                     db=db, user_id=int(current_user.id))
     if not result.get("ok"):
         logger.warning(
             "[douyin-imitation] submit failed user_id=%s item_id=%s video=%s image=%s error=%s",
@@ -157,6 +170,11 @@ async def create_information_desk_imitation(
         source_video_url=str(result.get("video_url") or ""),
         billable_seconds=int(plan["billable_seconds"]),
         credits_charged=charged,
+        voice_mode=voice_mode,
+        voice_id=voice_id[:128],
+        voice_source=str(body.voice_source or "")[:16],
+        voice_audio_url=str(result.get("voice_audio_url") or ""),
+        voice_text=str(result.get("voice_text") or "")[:4000],
     )
     db.add(row)
     db.commit()
@@ -189,6 +207,10 @@ def _task_payload(row: DouyinImitationTask) -> dict:
         "billable_seconds": int(row.billable_seconds or 0),
         "credits_charged": credits_json_float(row.credits_charged or 0),
         "credits_refunded": credits_json_float(row.credits_refunded or 0),
+        "voice_mode": row.voice_mode or "original",
+        "voice_id": row.voice_id or "",
+        "voice_source": row.voice_source or "",
+        "voice_applied": bool(row.voice_applied),
     }
 
 
@@ -236,7 +258,18 @@ async def _store_task_video(db: Session, user: User, row: DouyinImitationTask) -
     source = str(row.stored_url or row.video_url or "").strip()
     if not source or row.asset_id:
         return {"ok": bool(row.asset_id), "url": row.stored_url or row.video_url, "asset_id": row.asset_id}
-    stored = await store_generated_video(source, title=row.title or row.task_id)
+    stored: dict = {}
+    if (row.voice_mode or "original") == "clone" and row.voice_audio_url and not row.voice_applied:
+        from ..services.douyin_imitation_video import apply_voice_to_video  # noqa: PLC0415
+
+        stored = await apply_voice_to_video(source, row.voice_audio_url, title=row.title or row.task_id)
+        if stored.get("ok"):
+            row.voice_applied = True
+        else:
+            logger.warning("[douyin-imitation] 配音替换失败，回退原声 task=%s err=%s",
+                           row.task_id, stored.get("error"))
+    if not stored.get("ok"):
+        stored = await store_generated_video(source, title=row.title or row.task_id)
     if not stored.get("ok"):
         return {"ok": False, "error": stored.get("error") or "成片入库失败"}
     public_url = str(stored.get("public_url") or "")

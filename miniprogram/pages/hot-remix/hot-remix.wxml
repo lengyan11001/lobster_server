@@ -86,6 +86,13 @@
         </picker>
       </view>
       <view class="param">
+        <text class="param-label">声音</text>
+        <picker mode="selector" range="{{voiceNames}}" value="{{voiceIndex}}" bindchange="pickVoice">
+          <view class="picker">{{voiceNames[voiceIndex] || '原声（保留视频原声）'}}</view>
+        </picker>
+      </view>
+      <text class="hint">原声：保留原视频声音；选声音：按原视频时长重新配音并对齐</text>
+      <view class="param">
         <text class="param-label">分辨率</text>
         <picker mode="selector" range="{{resolutions}}" value="{{resIndex}}" bindchange="pickRes">
           <view class="picker">{{resolutions[resIndex]}}</view>

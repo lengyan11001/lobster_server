@@ -65,12 +65,14 @@ Page({
     shareText: "", shareStatus: "", resolving: false,
     imageUrl: "", imagePreview: "", uploadingImage: false,
     prompt: "", title: "",
+    voiceOptions: [], voiceNames: [], voiceIndex: 0, voicesLoading: false,
     submitting: false, statusText: ""
   },
 
   onShow() {
     if (!app.globalData.token) return;
     if (this.data.viewMode === "list") this.loadJobs();
+    this.loadVoices();
     this.resumePending();
   },
 
@@ -93,6 +95,7 @@ Page({
 
   openCreate() {
     this.setData({ viewMode: "create", step: 1, statusText: "", resultUrl: "", resultTitle: "" });
+    this.loadVoices();
   },
 
   nextStep() {
@@ -268,60 +271,96 @@ Page({
     });
   },
 
+  loadVoices() {
+    if (!app.globalData.token || this.data.voicesLoading) return Promise.resolve();
+    this.setData({ voicesLoading: true });
+    return app.request({ url: "/api/hifly/voice/options", timeout: 45000 })
+      .then((data) => {
+        const rows = [{ id: "", name: "原声（保留视频原声）", source: "original", provider: "" }];
+        ((data && (data.items || data.mine || [])) || []).forEach((row) => {
+          const id = String(row.voice || row.id || "").trim();
+          if (!id) return;
+          const source = String(row.source || "").toLowerCase() === "system" ? "system" : "mine";
+          const label = String(row.title || row.name || "声音");
+          rows.push({
+            id,
+            name: (source === "system" ? "系统声音 · " : "我的声音 · ") + label,
+            source,
+            provider: String(row.provider || (source === "system" ? "minimax" : ""))
+          });
+        });
+        const selectedId = String(((this.data.voiceOptions || [])[this.data.voiceIndex] || {}).id || "");
+        let index = rows.findIndex((row) => row.id === selectedId);
+        if (index < 0) index = 0;
+        this.setData({ voiceOptions: rows, voiceNames: rows.map((row) => row.name), voiceIndex: index });
+      })
+      .catch(() => {})
+      .then(() => this.setData({ voicesLoading: false }));
+  },
+
+  pickVoice(e) { this.setData({ voiceIndex: Number((e.detail && e.detail.value) || 0) }); },
+
   pickMode(e) { this.setData({ modeIndex: Number((e.detail && e.detail.value) || 0) }); },
   pickRes(e) { this.setData({ resIndex: Number((e.detail && e.detail.value) || 0) }); },
   pickDur(e) { this.setData({ durIndex: Number((e.detail && e.detail.value) || 0) }); },
   onPrompt(e) { this.setData({ prompt: e.detail.value }); },
   onTitle(e) { this.setData({ title: e.detail.value }); },
 
-  submit() {
+  async submit() {
     if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
     if (!this.data.videoUrl) return wx.showToast({ title: "先上传视频或解析链接", icon: "none" });
     if (!this.data.imageUrl) return wx.showToast({ title: "先上传一张参考图", icon: "none" });
     if (this.data.submitting) return;
     const mode = this.data.modes[this.data.modeIndex] || this.data.modes[0];
     const duration = this.data.durations[this.data.durIndex] || this.data.durations[0];
+    const voice = (this.data.voiceOptions || [])[this.data.voiceIndex] || { source: "original" };
+    const useVoice = voice.source !== "original" && !!voice.id;
     this.setData({ submitting: true, statusText: "正在提交跟创任务…" });
-    app.request({
-      method: "POST",
-      url: "/api/douyin/platform-information-desk/imitation",
-      data: {
-        image_url: this.data.imageUrl,
-        video_url: this.data.videoUrl,
-        mode: mode.value,
-        resolution: this.data.resolutions[this.data.resIndex] || "720P",
-        duration_seconds: Number(duration.value || 0),
-        video_seconds: Number(this.data.videoSeconds || 0),
-        prompt: String(this.data.prompt || "").trim(),
-        title: String(this.data.title || "").trim()
-      },
-      timeout: 60000
-    })
-      .then((data) => {
-        const taskId = String((data && data.task_id) || "");
-        if (!taskId) throw new Error("没有拿到任务号");
-        try { wx.setStorageSync("lobster_hot_remix_task", { taskId: taskId, created_at: Date.now() }); } catch (e) {}
-        this.setData({
-          viewMode: "create",
-          submitting: false,
-          statusText: "",
-          pendingTask: { taskId: taskId, statusText: "生成中…" },
-          resultUrl: "",
-          resultTitle: "",
-          videoUrl: "", videoPreview: "", videoName: "",
-          shareText: "", shareStatus: "",
-          imageUrl: "", imagePreview: "",
-          prompt: "", title: ""
-        });
-        this.startTaskPoll(taskId);
-        this.loadJobs();
-        wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
-        setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
-      })
-      .catch((err) => {
-        this.setData({ submitting: false, statusText: "" });
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+    try {
+      if (useVoice) {
+        this.setData({ statusText: "正在提取原视频文案并生成配音，约 1-3 分钟…" });
+      }
+      const data = await app.request({
+        method: "POST",
+        url: "/api/douyin/platform-information-desk/imitation",
+        data: {
+          image_url: this.data.imageUrl,
+          video_url: this.data.videoUrl,
+          mode: mode.value,
+          resolution: this.data.resolutions[this.data.resIndex] || "720P",
+          duration_seconds: Number(duration.value || 0),
+          video_seconds: Number(this.data.videoSeconds || 0),
+          prompt: String(this.data.prompt || "").trim(),
+          title: String(this.data.title || "").trim(),
+          voice_mode: useVoice ? "clone" : "original",
+          voice_id: useVoice ? voice.id : "",
+          voice_source: useVoice ? voice.source : ""
+        },
+        timeout: useVoice ? 600000 : 60000
       });
+      const taskId = String((data && data.task_id) || "");
+      if (!taskId) throw new Error("没有拿到任务号");
+      try { wx.setStorageSync("lobster_hot_remix_task", { taskId: taskId, created_at: Date.now() }); } catch (e) {}
+      this.setData({
+        viewMode: "create",
+        submitting: false,
+        statusText: "",
+        pendingTask: { taskId: taskId, statusText: "生成中…" },
+        resultUrl: "",
+        resultTitle: "",
+        videoUrl: "", videoPreview: "", videoName: "",
+        shareText: "", shareStatus: "",
+        imageUrl: "", imagePreview: "",
+        prompt: "", title: ""
+      });
+      this.startTaskPoll(taskId);
+      this.loadJobs();
+      wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
+      setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
+    } catch (err) {
+      this.setData({ submitting: false, statusText: "" });
+      wx.showToast({ title: api.errorMessage(err), icon: "none" });
+    }
   },
 
   openJob(e) {

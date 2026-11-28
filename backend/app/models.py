@@ -2443,6 +2443,14 @@ class DouyinImitationTask(Base):
     file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     credits_charged: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
     credits_refunded: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
+    # 2026-11-28：跟创可选「原声」或「声音控件里的声音」。
+    # 选声音时客户端先用选定音色生成配音，成片后再用配音替换音轨并按视频时长对齐。
+    voice_mode: Mapped[str] = mapped_column(String(16), default="original", nullable=False)
+    voice_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    voice_source: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    voice_audio_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    voice_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    voice_applied: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
