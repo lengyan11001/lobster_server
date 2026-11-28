@@ -62,3 +62,5 @@
 .entry-body { display: flex; flex-direction: column; }
 .entry-title { font-size: 30rpx; font-weight: 700; color: #ffffff; }
 .entry-sub { margin-top: 8rpx; font-size: 21rpx; line-height: 1.45; color: rgba(255, 255, 255, 0.86); }
+
+.sec-head { display: block; margin: 26rpx 0 14rpx; font-size: 26rpx; font-weight: 700; color: #0f172a; }

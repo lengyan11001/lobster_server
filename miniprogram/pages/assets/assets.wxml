@@ -41,7 +41,7 @@
     <view class="head-row">
       <view class="head-copy">
         <text class="back" bindtap="backHome">‹ 素材库</text>
-        <text class="title">{{tabs[tabIndex]}}</text>
+        <text class="title">{{pageTitle}}</text>
         <text class="sub">{{tabCount}} 个</text>
       </view>
       <button class="primary small" bindtap="upload">{{isDigital ? '新建' : '上传'}}</button>
@@ -49,15 +49,16 @@
     <input wx:if="{{!isDigital}}" class="search" value="{{keyword}}" bindinput="onKeyword" placeholder="搜索文件名" />
   </view>
 
-  <view class="tabs">
+  <view wx:if="{{!scope}}" class="tabs">
     <view wx:for="{{tabs}}" wx:key="*this" class="tab {{tabIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="switchTab">{{item}}</view>
   </view>
 
   <view wx:if="{{loading && !currentCount}}" class="empty">加载中…</view>
-  <view wx:elif="{{!currentCount}}" class="empty">暂无{{tabs[tabIndex]}}</view>
 
-  <view wx:if="{{!isDigital}}" class="grid-hint">点素材预览；点右侧「⋯」可编辑分组/标签、加入分组、视频切片</view>
-  <view wx:if="{{!isDigital}}" class="grid">
+  <block wx:if="{{showUploads}}">
+  <view wx:if="{{!currentCount}}" class="empty">暂无{{pageTitle}}</view>
+  <view class="grid-hint">点素材预览；点右侧「⋯」可编辑分组/标签、加入分组、视频切片</view>
+  <view class="grid">
     <view wx:for="{{items}}" wx:key="asset_id" class="cell" data-index="{{index}}" bindtap="preview" bindlongpress="onAssetMenu">
       <image class="thumb" src="{{item.thumb}}" mode="aspectFill" />
       <view wx:if="{{item.media_type !== 'image'}}" class="badge">{{item.media_type === 'video' ? '▶' : '♪'}}</view>
@@ -67,8 +68,12 @@
       <text wx:if="{{item.tags}}" class="tags">{{item.tags}}</text>
     </view>
   </view>
+  </block>
 
-  <view wx:elif="{{tabIndex === 3}}" class="grid">
+  <block wx:if="{{showAvatars}}">
+  <text wx:if="{{scope === 'digital'}}" class="sec-head">形象分身 · {{avatars.length}}</text>
+  <view wx:if="{{scope === 'digital' && !avatars.length}}" class="empty">还没有形象分身</view>
+  <view class="grid">
     <view wx:for="{{avatars}}" wx:key="id" class="cell" data-index="{{index}}" bindtap="previewAvatar">
       <image wx:if="{{item.thumb}}" class="thumb" src="{{item.thumb}}" mode="aspectFill" />
       <view wx:else class="thumb thumb-empty">形象</view>
@@ -78,8 +83,12 @@
       <text class="status {{item.ok ? 'ok' : ''}}">{{item.statusText}}</text>
     </view>
   </view>
+  </block>
 
-  <view wx:else class="voice-list">
+  <block wx:if="{{showVoices}}">
+  <text wx:if="{{scope === 'digital'}}" class="sec-head">声音分身 · {{voices.length}}</text>
+  <view wx:if="{{scope === 'digital' && !voices.length}}" class="empty">还没有声音分身</view>
+  <view class="voice-list">
     <view wx:for="{{voices}}" wx:key="id" class="voice" data-index="{{index}}">
       <view class="voice-main" bindtap="playVoice">
         <text class="voice-title">{{item.title}}</text>
@@ -91,6 +100,7 @@
       </view>
     </view>
   </view>
+  </block>
   <view wx:if="{{labelOpen}}" class="label-mask" catchtap="closeLabelEditor">
     <view class="label-sheet" catchtap="labelNoop">
       <text class="label-title">编辑分组 / 标签</text>

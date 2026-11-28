@@ -33,6 +33,11 @@ function askTitle(title, placeholder) {
 Page({
   data: {
     viewMode: "home",
+    scope: "",
+    pageTitle: "图片",
+    showUploads: true,
+    showAvatars: false,
+    showVoices: false,
     tabs: TABS,
     tabIndex: 0,
     isDigital: false,
@@ -67,21 +72,35 @@ Page({
       return;
     }
     if (key === "digital") {
-      // 打开素材库自己的「形象分身」列表（可切到「声音分身」tab），不是数字人生成记录
-      this.setData({ viewMode: "list", tabIndex: 3, isDigital: true, tabCount: 0, currentCount: 0 });
-      this.loadDigital();
+      // 只展示素材库里的形象分身 + 声音分身，不再给 tab，也不进生成记录
+      this.setData({
+        viewMode: "list", scope: "digital", pageTitle: "数字人分身",
+        isDigital: true, tabIndex: 3,
+        showUploads: false, showAvatars: true, showVoices: true,
+        tabCount: 0, currentCount: 0
+      });
+      this.loadDigital("avatar");
+      this.loadDigital("voice");
       return;
     }
     if (key === "image" || key === "video") {
       const index = key === "image" ? 0 : 1;
-      this.setData({ viewMode: "list", tabIndex: index, isDigital: false, tabCount: 0, currentCount: 0 });
+      this.setData({
+        viewMode: "list", scope: key, pageTitle: key === "image" ? "图片" : "视频",
+        tabIndex: index, isDigital: false,
+        showUploads: true, showAvatars: false, showVoices: false,
+        tabCount: 0, currentCount: 0
+      });
       this.loadUploads();
       return;
     }
   },
 
   backHome() {
-    this.setData({ viewMode: "home", keyword: "" });
+    this.setData({
+      viewMode: "home", scope: "", keyword: "",
+      showUploads: true, showAvatars: false, showVoices: false
+    });
   },
 
   applyWantedTab(raw) {
@@ -89,7 +108,11 @@ Page({
     const wanted = String(raw || "").toLowerCase();
     const index = map[wanted];
     if (index == null) return false;
-    this.setData({ tabIndex: index, isDigital: index >= 3 });
+    this.setData({
+      tabIndex: index, isDigital: index >= 3, scope: "",
+      pageTitle: TABS[index],
+      showUploads: index < 3, showAvatars: index === 3, showVoices: index === 4
+    });
     return true;
   },
 
@@ -103,8 +126,16 @@ Page({
       if (this.applyWantedTab(wanted)) this.setData({ viewMode: "list" });
     }
     if (this.data.viewMode !== "list") return;
+    if (this.data.scope === "digital") {
+      this.loadDigital("avatar");
+      this.loadDigital("voice");
+      return;
+    }
+    if (this.data.isDigital) {
+      this.loadDigital(this.data.tabIndex === 3 ? "avatar" : "voice");
+      return;
+    }
     this.loadUploads();
-    if (this.data.isDigital) this.loadDigital();
   },
 
   onPullDownRefresh() {
@@ -112,7 +143,14 @@ Page({
       wx.stopPullDownRefresh();
       return;
     }
-    const job = this.data.isDigital ? this.loadDigital() : this.loadUploads();
+    let job;
+    if (this.data.scope === "digital") {
+      job = Promise.all([this.loadDigital("avatar"), this.loadDigital("voice")]);
+    } else if (this.data.isDigital) {
+      job = this.loadDigital(this.data.tabIndex === 3 ? "avatar" : "voice");
+    } else {
+      job = this.loadUploads();
+    }
     job.then(() => wx.stopPullDownRefresh()).catch(() => wx.stopPullDownRefresh());
   },
 
@@ -145,8 +183,8 @@ Page({
       .then(() => this.setData({ loading: false }));
   },
 
-  loadDigital() {
-    const kind = this.data.tabIndex === 3 ? "avatar" : "voice";
+  loadDigital(kindOverride) {
+    const kind = kindOverride || (this.data.tabIndex === 3 ? "avatar" : "voice");
     this.setData({ loading: true });
     return app.request({ url: `/api/h5/assets/digital-library?kind=${kind}&page=1&size=100&include_pending=1`, timeout: 30000 })
       .then((data) => {
@@ -173,7 +211,12 @@ Page({
               message: String(row.message || "")
             };
           });
-          this.setData({ avatars, tabCount: avatars.length, currentCount: avatars.length });
+          const withVoices = this.data.scope === "digital";
+          this.setData({
+            avatars,
+            tabCount: withVoices ? avatars.length + (this.data.voices || []).length : avatars.length,
+            currentCount: withVoices ? avatars.length + (this.data.voices || []).length : avatars.length
+          });
           this.refreshPendingAvatars(avatars);
         } else {
           const voices = rows.map((row, i) => {
@@ -188,7 +231,12 @@ Page({
               statusText: String(row.status_text || status || "未知")
             };
           });
-          this.setData({ voices, tabCount: voices.length, currentCount: voices.length });
+          const withAvatars = this.data.scope === "digital";
+          this.setData({
+            voices,
+            tabCount: withAvatars ? (this.data.avatars || []).length + voices.length : voices.length,
+            currentCount: withAvatars ? (this.data.avatars || []).length + voices.length : voices.length
+          });
         }
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
@@ -207,8 +255,12 @@ Page({
   switchTab(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
     const isDigital = index >= 3;
-    this.setData({ tabIndex: index, isDigital, tabCount: 0, currentCount: 0 });
-    if (isDigital) this.loadDigital();
+    this.setData({
+      tabIndex: index, isDigital, scope: "", pageTitle: TABS[index],
+      showUploads: !isDigital, showAvatars: index === 3, showVoices: index === 4,
+      tabCount: 0, currentCount: 0
+    });
+    if (isDigital) this.loadDigital(index === 3 ? "avatar" : "voice");
     else this.applyFilter(this.data.all, index, this.data.keyword);
   },
 
