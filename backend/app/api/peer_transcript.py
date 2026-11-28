@@ -136,68 +136,92 @@ async def _run_peer_job(job_id: str) -> None:
 
 async def _run_peer_job_inner(job_id: str) -> None:
     job_dir = _JOBS_DIR / job_id
-    with SessionLocal() as db:
-        row = (
-            db.query(CreativeGenerationJob)
-            .filter(CreativeGenerationJob.job_id == job_id,
-                    CreativeGenerationJob.feature_type == _FEATURE_TYPE)
-            .first()
-        )
-        if not row:
-            return
-        user = db.query(User).filter(User.id == row.user_id).first()
-        if not user:
-            row.status = "failed"
-            row.stage = "failed"
-            row.error = "用户不存在"
-            db.commit()
-            return
-        try:
+    try:
+        # 第一段：短事务里解析链接、拿 STT token；随后立刻释放数据库连接，
+        # 转写可能要几分钟，不能一直占着连接池（否则触发 idle-in-transaction 超时）。
+        with SessionLocal() as db:
+            row = (
+                db.query(CreativeGenerationJob)
+                .filter(CreativeGenerationJob.job_id == job_id,
+                        CreativeGenerationJob.feature_type == _FEATURE_TYPE)
+                .first()
+            )
+            if not row:
+                return
+            user_id = int(row.user_id)
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                row.status = "failed"
+                row.stage = "failed"
+                row.error = "用户不存在"
+                db.commit()
+                return
+            payload = dict(row.request_payload or {}) if isinstance(row.request_payload, dict) else {}
             row.status = "running"
             row.stage = "resolving"
             row.progress = 5
             db.commit()
-            payload = row.request_payload if isinstance(row.request_payload, dict) else {}
             video_url, source, extra = await _resolve_video_url(db, user, str(payload.get("url") or ""))
             if not video_url:
                 raise RuntimeError("拿不到可下载的视频地址")
-            row.stage = "transcribing"
-            row.progress = 25
             meta = dict(row.meta or {})
             meta.update({"source": source, "video_url": video_url, **extra})
             row.meta = meta
+            row.stage = "transcribing"
+            row.progress = 25
+            db.commit()
+            token, token_source = _load_sutui_token_for_stt(db, user_id)
             db.commit()
 
-            token, token_source = _load_sutui_token_for_stt(db, int(user.id))
-            db.commit()
-            job_dir.mkdir(parents=True, exist_ok=True)
-            item = await asyncio.to_thread(
-                _process_one_video,
-                job_id=job_id,
-                item={"video_url": video_url, "source": source},
-                index=0,
-                token=token,
-                token_source=token_source,
-                job_dir=job_dir,
+        # 第二段：不持有数据库连接，下载 + 抽音频 + STT。
+        job_dir.mkdir(parents=True, exist_ok=True)
+        item = await asyncio.to_thread(
+            _process_one_video,
+            job_id=job_id,
+            item={"video_url": video_url, "source": source},
+            index=0,
+            token=token,
+            token_source=token_source,
+            job_dir=job_dir,
+        )
+        text = str((item or {}).get("transcript") or "").strip()
+        if not text:
+            raise RuntimeError("转写结果为空，换一条链接再试")
+
+        with SessionLocal() as db:
+            row = (
+                db.query(CreativeGenerationJob)
+                .filter(CreativeGenerationJob.job_id == job_id,
+                        CreativeGenerationJob.feature_type == _FEATURE_TYPE)
+                .first()
             )
-            text = str((item or {}).get("transcript") or "").strip()
-            if not text:
-                raise RuntimeError("转写结果为空，换一条链接再试")
-            meta = dict(row.meta or {})
-            meta.update({"transcript": text, "audio_url": (item or {}).get("audio_url") or ""})
-            row.meta = meta
-            row.status = "completed"
-            row.stage = "completed"
-            row.progress = 100
-            row.error = ""
-            db.commit()
-        except Exception as exc:  # noqa: BLE001
-            row.status = "failed"
-            row.stage = "failed"
-            row.error = str(exc)[:800]
-            db.commit()
-        finally:
-            shutil.rmtree(job_dir, ignore_errors=True)
+            if row:
+                meta = dict(row.meta or {})
+                meta.update({"transcript": text, "audio_url": (item or {}).get("audio_url") or ""})
+                row.meta = meta
+                row.status = "completed"
+                row.stage = "completed"
+                row.progress = 100
+                row.error = ""
+                db.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            with SessionLocal() as db:
+                row = (
+                    db.query(CreativeGenerationJob)
+                    .filter(CreativeGenerationJob.job_id == job_id,
+                            CreativeGenerationJob.feature_type == _FEATURE_TYPE)
+                    .first()
+                )
+                if row:
+                    row.status = "failed"
+                    row.stage = "failed"
+                    row.error = str(exc)[:800]
+                    db.commit()
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 
 @router.post("/api/digital-human/peer-jobs", summary="同行链接解析 + 语音转写（异步）")
