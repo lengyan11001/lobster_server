@@ -65,3 +65,8 @@
 .kw-chip { padding: 10rpx 20rpx; border-radius: 999rpx; font-size: 24rpx; color: #475569; background: #f1f5f9; border: 1rpx solid #e2e8f0; }
 .kw-chip.on { color: #0f766e; background: #ccfbf1; border-color: #5eead4; font-weight: 600; }
 .keyword-sheet { max-height: 80vh; overflow-y: auto; }
+
+.pager { display: flex; align-items: center; justify-content: center; gap: 28rpx; margin-top: 18rpx; }
+.pager-btn { font-size: 24rpx; color: #1957E8; padding: 8rpx 14rpx; }
+.pager-btn.disabled { color: #cbd5e1; }
+.pager-info { font-size: 22rpx; color: #64748b; }

@@ -25,6 +25,13 @@ const FIELD_DEFS = [
   { key: "advantages", label: "比同行好在哪（资历/案例/服务/价格）", multiline: true }
 ];
 
+function pageSlice(rows, page, size) {
+  const list = Array.isArray(rows) ? rows : [];
+  const pages = Math.max(1, Math.ceil(list.length / size));
+  const current = Math.min(Math.max(1, Number(page) || 1), pages);
+  return { page: current, pages, items: list.slice((current - 1) * size, current * size) };
+}
+
 function askInput(title, placeholder, value) {
   return new Promise((resolve) => {
     wx.showModal({
@@ -60,10 +67,19 @@ Page({
     editorSaving: false,
     memoryLoading: false,
     memoryDocs: [],
+    memoryItems: [],
+    memoryPage: 1,
+    memoryPages: 1,
     keywordLoading: false,
     keywords: [],
+    keywordItems: [],
+    keywordPage: 1,
+    keywordPages: 1,
     competitorLoading: false,
     competitors: [],
+    competitorItems: [],
+    competitorPage: 1,
+    competitorPages: 1,
     templateLoading: false,
     templates: [],
     doc: null,
@@ -157,6 +173,32 @@ Page({
       }
       return Object.assign({}, def, { value: String(value || "") });
     });
+  },
+
+  applyPaging(kind, page) {
+    if (kind === "memory") {
+      const res = pageSlice(this.data.memoryDocs, page || this.data.memoryPage, 5);
+      this.setData({ memoryItems: res.items, memoryPage: res.page, memoryPages: res.pages });
+      return;
+    }
+    if (kind === "keyword") {
+      const res = pageSlice(this.data.keywords, page || this.data.keywordPage, 5);
+      this.setData({ keywordItems: res.items, keywordPage: res.page, keywordPages: res.pages });
+      return;
+    }
+    if (kind === "competitor") {
+      const res = pageSlice(this.data.competitors, page || this.data.competitorPage, 5);
+      this.setData({ competitorItems: res.items, competitorPage: res.page, competitorPages: res.pages });
+    }
+  },
+
+  changePage(e) {
+    const kind = String(e.currentTarget.dataset.kind || "");
+    const dir = Number(e.currentTarget.dataset.dir || 0);
+    const map = { memory: "memoryPage", keyword: "keywordPage", competitor: "competitorPage" };
+    const key = map[kind];
+    if (!key) return;
+    this.applyPaging(kind, Number(this.data[key] || 1) + dir);
   },
 
   onProfileField(e) {
@@ -347,6 +389,7 @@ Page({
           notes: String(row.notes || "")
         })).filter((row) => row.doc_id);
         this.setData({ memoryDocs: docs });
+        this.applyPaging("memory", 1);
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ memoryLoading: false }));
@@ -454,7 +497,7 @@ Page({
 
   openDoc(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
-    const row = this.data.memoryDocs[index];
+    const row = this.data.memoryItems[index];
     if (!row) return;
     wx.showLoading({ title: "加载中" });
     app.request({ url: `/api/personal-settings/memory-documents/${encodeURIComponent(row.doc_id)}/preview`, header: this.iidHeader(), timeout: 30000 })
@@ -479,6 +522,7 @@ Page({
           status: String(row.status || "")
         })).filter((row) => row.id);
         this.setData({ keywords: rows });
+        this.applyPaging("keyword", 1);
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ keywordLoading: false }));
@@ -547,7 +591,7 @@ Page({
 
   keywordMenu(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
-    const row = this.data.keywords[index];
+    const row = this.data.keywordItems[index];
     if (!row) return;
     wx.showActionSheet({
       itemList: ["立即同步", "删除"],
@@ -590,6 +634,7 @@ Page({
           status: String(row.status || "")
         })).filter((row) => row.id);
         this.setData({ competitors: rows });
+        this.applyPaging("competitor", 1);
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => this.setData({ competitorLoading: false }));
@@ -622,7 +667,7 @@ Page({
 
   competitorMenu(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
-    const row = this.data.competitors[index];
+    const row = this.data.competitorItems[index];
     if (!row) return;
     wx.showActionSheet({
       itemList: ["立即同步", "删除"],

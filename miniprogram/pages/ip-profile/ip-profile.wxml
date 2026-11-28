@@ -23,11 +23,16 @@
     </view>
     <view wx:if="{{memoryLoading}}" class="empty">加载中…</view>
     <view wx:elif="{{!memoryDocs.length}}" class="empty">还没有个人记忆文件</view>
-    <view wx:for="{{memoryDocs}}" wx:key="doc_id" class="row" data-index="{{index}}" bindtap="openDoc">
+    <view wx:for="{{memoryItems}}" wx:key="doc_id" class="row" data-index="{{index}}" bindtap="openDoc">
       <view class="row-main">
         <text class="row-title">{{item.title}}</text>
         <text class="row-meta">{{item.notes || '记忆文件'}}</text>
       </view>
+    </view>
+    <view wx:if="{{memoryPages > 1}}" class="pager">
+      <text class="pager-btn {{memoryPage <= 1 ? 'disabled' : ''}}" data-kind="memory" data-dir="-1" bindtap="changePage">上一页</text>
+      <text class="pager-info">{{memoryPage}} / {{memoryPages}}</text>
+      <text class="pager-btn {{memoryPage >= memoryPages ? 'disabled' : ''}}" data-kind="memory" data-dir="1" bindtap="changePage">下一页</text>
     </view>
   </view>
 
@@ -39,11 +44,16 @@
     <button class="primary small" bindtap="openKeywordModal">新增关键词</button>
     <view wx:if="{{keywordLoading}}" class="empty">加载中…</view>
     <view wx:elif="{{!keywords.length}}" class="empty">还没有关键词</view>
-    <view wx:for="{{keywords}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="keywordMenu">
+    <view wx:for="{{keywordItems}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="keywordMenu">
       <view class="row-main">
         <text class="row-title">{{item.display_name || item.keyword}}</text>
         <text class="row-meta">{{item.status || ''}} · 长按操作</text>
       </view>
+    </view>
+    <view wx:if="{{keywordPages > 1}}" class="pager">
+      <text class="pager-btn {{keywordPage <= 1 ? 'disabled' : ''}}" data-kind="keyword" data-dir="-1" bindtap="changePage">上一页</text>
+      <text class="pager-info">{{keywordPage}} / {{keywordPages}}</text>
+      <text class="pager-btn {{keywordPage >= keywordPages ? 'disabled' : ''}}" data-kind="keyword" data-dir="1" bindtap="changePage">下一页</text>
     </view>
   </view>
 
@@ -55,11 +65,16 @@
     <button class="primary small" bindtap="addCompetitor">新增同行</button>
     <view wx:if="{{competitorLoading}}" class="empty">加载中…</view>
     <view wx:elif="{{!competitors.length}}" class="empty">还没有同行账号</view>
-    <view wx:for="{{competitors}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="competitorMenu">
+    <view wx:for="{{competitorItems}}" wx:key="id" class="row" data-index="{{index}}" bindlongpress="competitorMenu">
       <view class="row-main">
         <text class="row-title">{{item.display_name || item.account_key}}</text>
         <text class="row-meta">{{item.platform}} · {{item.status || ''}} · 长按操作</text>
       </view>
+    </view>
+    <view wx:if="{{competitorPages > 1}}" class="pager">
+      <text class="pager-btn {{competitorPage <= 1 ? 'disabled' : ''}}" data-kind="competitor" data-dir="-1" bindtap="changePage">上一页</text>
+      <text class="pager-info">{{competitorPage}} / {{competitorPages}}</text>
+      <text class="pager-btn {{competitorPage >= competitorPages ? 'disabled' : ''}}" data-kind="competitor" data-dir="1" bindtap="changePage">下一页</text>
     </view>
   </view>
 
