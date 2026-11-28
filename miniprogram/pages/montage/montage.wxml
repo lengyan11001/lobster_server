@@ -37,8 +37,8 @@
     <text class="label">口播文案</text>
     <textarea class="textarea step1-textarea" value="{{speechText}}" bindinput="onSpeechInput" placeholder="输入口播文案，下一步再选音色、模板和素材" maxlength="1200" />
     <view wx:if="{{viewMode === 'create'}}" class="quick-actions">
-      <button class="quick-btn primary" bindtap="openMemoryPrefill">IP记忆生成</button>
-      <button class="quick-btn primary" bindtap="openRecordingPrefill">录音生成</button>
+      <button class="quick-btn ghost" bindtap="openMemoryPrefill">IP记忆生成</button>
+      <button class="quick-btn ghost" bindtap="openRecordingPrefill">录音生成</button>
       <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
       <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
     </view>

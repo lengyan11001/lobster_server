@@ -13,8 +13,8 @@
     <text class="label">文章主题</text>
     <textarea class="textarea step1-textarea" value="{{topic}}" bindinput="onTopicInput" placeholder="例如：小户型收纳的三个反常识" maxlength="200" />
     <view class="quick-actions">
-      <button class="quick-btn primary" bindtap="openMemory">IP记忆生成</button>
-      <button class="quick-btn primary" bindtap="openRecording">录音生成</button>
+      <button class="quick-btn ghost" bindtap="openMemory">IP记忆生成</button>
+      <button class="quick-btn ghost" bindtap="openRecording">录音生成</button>
       <button class="quick-btn ghost" bindtap="openPeerLink">同行链接</button>
       <button class="quick-btn ghost" bindtap="openPrefillHistory">历史</button>
     </view>
