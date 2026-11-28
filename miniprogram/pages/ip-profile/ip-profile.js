@@ -76,6 +76,14 @@ Page({
     keywordPage: 1,
     keywordPages: 1,
     competitorLoading: false,
+    compOpen: false,
+    compPlatform: "douyin",
+    compKeyword: "",
+    compTags: "",
+    compSearching: false,
+    compAdding: false,
+    compSearched: false,
+    compResults: [],
     competitors: [],
     competitorItems: [],
     competitorPage: 1,
@@ -631,7 +639,9 @@ Page({
           platform: String(row.platform || ""),
           account_key: String(row.account_key || ""),
           display_name: String(row.display_name || ""),
-          status: String(row.status || "")
+          status: String(row.status || ""),
+          industry_tags: String(row.industry_tags || ""),
+          last_fetch_at: String(row.last_fetch_at || "").replace("T", " ").slice(0, 16)
         })).filter((row) => row.id);
         this.setData({ competitors: rows });
         this.applyPaging("competitor", 1);
@@ -640,29 +650,144 @@ Page({
       .then(() => this.setData({ competitorLoading: false }));
   },
 
-  addCompetitor() {
-    wx.showActionSheet({
-      itemList: ["抖音", "视频号"],
-      success: (res) => {
-        const platform = res.tapIndex === 1 ? "wechat_channels" : "douyin";
-        askInput("新增同行", platform === "douyin" ? "输入抖音号或主页链接" : "输入视频号 ID").then((key) => {
-          if (!key) return;
-          wx.showLoading({ title: "保存中" });
-          app.request({
-            method: "POST",
-            url: "/api/ip-content/competitors",
-            data: { platform, account_key: key, display_name: key },
-            timeout: 30000
-          })
-            .then(() => {
-              wx.showToast({ title: "已添加", icon: "success" });
-              this.loadCompetitors();
-            })
-            .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-            .then(() => wx.hideLoading());
-        });
-      }
-    });
+  openCompetitorModal() {
+    this.setData({ compOpen: true, compKeyword: "", compTags: "", compResults: [], compSearched: false, compSearching: false, compAdding: false });
+  },
+
+  closeCompetitorModal() {
+    this.setData({ compOpen: false });
+  },
+
+  setCompPlatform(e) {
+    const p = String(e.currentTarget.dataset.p || "douyin");
+    if (p === this.data.compPlatform) return;
+    this.setData({ compPlatform: p, compResults: [], compSearched: false });
+  },
+
+  onCompKeyword(e) { this.setData({ compKeyword: e.detail.value || "" }); },
+  onCompTags(e) { this.setData({ compTags: e.detail.value || "" }); },
+
+  searchCompetitor() {
+    const q = String(this.data.compKeyword || "").trim();
+    if (!q) return wx.showToast({ title: "先输入昵称或账号", icon: "none" });
+    if (this.data.compSearching) return;
+    const platform = this.data.compPlatform;
+    const url = platform === "wechat_channels"
+      ? "/api/ip-content/wechat-channels/users/search?q=" + encodeURIComponent(q)
+      : "/api/ip-content/douyin/users/search?q=" + encodeURIComponent(q);
+    this.setData({ compSearching: true, compSearched: false, compResults: [] });
+    app.request({ url, timeout: 120000 })
+      .then((data) => {
+        const rows = ((data && data.items) || []).map((item, idx) => this.normalizeCandidate(item, platform, idx));
+        this.setData({ compResults: rows, compSearched: true });
+      })
+      .catch((err) => {
+        this.setData({ compSearched: true });
+        wx.showToast({ title: api.errorMessage(err) || "搜索失败", icon: "none" });
+      })
+      .then(() => this.setData({ compSearching: false }));
+  },
+
+  normalizeCandidate(item, platform, idx) {
+    const raw = item || {};
+    const name = String(raw.display_name || raw.nickname || raw.unique_id || raw.username || "账号").trim();
+    const bits = [];
+    if (platform === "wechat_channels") {
+      const u = String(raw.username || raw.finder_username || "").trim();
+      if (u) bits.push("username：" + u);
+    } else {
+      const uid = String(raw.unique_id || "").trim();
+      if (uid) bits.push("抖音号：" + uid);
+    }
+    if (raw.follower_count) bits.push("粉丝：" + raw.follower_count);
+    if (raw.aweme_count) bits.push("作品：" + raw.aweme_count);
+    if (raw.verify_info) bits.push(String(raw.verify_info));
+    return {
+      key: String(raw.sec_user_id || raw.sec_uid || raw.username || raw.finder_username || raw.id || idx),
+      name,
+      initial: name.slice(0, 1),
+      avatar: String(raw.avatar_url || raw.avatar || ""),
+      meta: bits.join(" · "),
+      raw
+    };
+  },
+
+  addCompetitorCandidate(e) {
+    if (this.data.compAdding) return;
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.compResults[index];
+    if (!row) return;
+    const platform = this.data.compPlatform;
+    const c = row.raw || {};
+    const accountKey = String(platform === "wechat_channels"
+      ? (c.username || c.finder_username || c.id || "")
+      : (c.sec_user_id || c.sec_uid || c.id || "")).trim();
+    if (!accountKey) return wx.showToast({ title: "这个账号缺少可用的账号 ID", icon: "none" });
+    this.setData({ compAdding: true });
+    app.request({
+      method: "POST",
+      url: "/api/ip-content/competitors",
+      data: {
+        platform,
+        account_key: accountKey,
+        display_name: row.name,
+        homepage_url: String(c.homepage_url || ""),
+        industry_tags: String(this.data.compTags || "").trim(),
+        meta: {
+          source: platform === "wechat_channels" ? "wechat_channels_user_search" : "douyin_user_search",
+          unique_id: c.unique_id || "",
+          username: c.username || c.finder_username || "",
+          uid: c.uid || "",
+          nickname: c.nickname || row.name,
+          follower_count: c.follower_count || 0,
+          aweme_count: c.aweme_count || 0,
+          like_count: c.like_count || 0,
+          avatar_url: row.avatar
+        }
+      },
+      timeout: 60000
+    })
+      .then(() => {
+        wx.showToast({ title: "已添加", icon: "success" });
+        this.setData({ compOpen: false });
+        this.loadCompetitors();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ compAdding: false }));
+  },
+
+  addCompetitorByChannel() {
+    const value = String(this.data.compKeyword || "").trim();
+    if (!value) return wx.showToast({ title: "先粘贴 ID 或作品链接", icon: "none" });
+    if (this.data.compAdding) return;
+    this.setData({ compAdding: true });
+    app.request({
+      method: "POST",
+      url: "/api/ip-content/wechat-channels/competitors/by-channel-id",
+      data: { channel_id: value, industry_tags: String(this.data.compTags || "").trim() },
+      timeout: 120000
+    })
+      .then(() => {
+        wx.showToast({ title: "已添加", icon: "success" });
+        this.setData({ compOpen: false });
+        this.loadCompetitors();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => this.setData({ compAdding: false }));
+  },
+
+  syncCompetitorRow(e) {
+    const index = Number(e.currentTarget.dataset.index || 0);
+    const row = this.data.competitorItems[index];
+    if (!row || !row.id) return;
+    wx.showLoading({ title: "同步中" });
+    app.request({ method: "POST", url: `/api/ip-content/competitors/${row.id}/sync`, data: { count: 20 }, timeout: 180000 })
+      .then(() => {
+        wx.showToast({ title: "已同步", icon: "success" });
+        this.loadCompetitors();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .then(() => wx.hideLoading());
   },
 
   competitorMenu(e) {
