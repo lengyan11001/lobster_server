@@ -2,7 +2,7 @@
   <view class="section">
     <view class="sec-head">
       <text class="sec-title">资料调查</text>
-      <text class="sec-sub">填好后点底部「保存资料」</text>
+      
     </view>
     <view wx:for="{{profileFields}}" wx:key="key" class="field">
       <text class="label">{{item.label}}</text>
@@ -38,7 +38,7 @@
   <view class="section">
     <view class="sec-head">
       <text class="sec-title">关键词</text>
-      <text class="sec-sub">输入一个词，让 AI 推荐相关词再挑选</text>
+      
     </view>
     <button class="primary small" bindtap="openKeywordModal">新增关键词</button>
     <view wx:if="{{keywordLoading}}" class="empty">加载中…</view>
@@ -59,7 +59,7 @@
   <view class="section">
     <view class="sec-head">
       <text class="sec-title">同行</text>
-      <text class="sec-sub">对标账号，用于选题参考</text>
+      
     </view>
     <button class="primary small" bindtap="openCompetitorModal">新增同行</button>
     <view wx:if="{{competitorLoading}}" class="empty">加载中…</view>

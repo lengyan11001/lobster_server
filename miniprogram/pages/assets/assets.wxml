@@ -2,7 +2,7 @@
   <block wx:if="{{viewMode === 'home'}}">
     <view class="head">
       <text class="title">素材库</text>
-      <text class="sub">IP人设 · 数字人声音 · 图片 · 视频</text>
+      
     </view>
     <view class="entry-grid">
       <view class="entry-card ip" data-key="ip" bindtap="goEntry" hover-class="entry-press">
@@ -57,7 +57,7 @@
 
   <block wx:if="{{showUploads}}">
   <view wx:if="{{!currentCount}}" class="empty">暂无{{pageTitle}}</view>
-  <view class="grid-hint">点素材预览；点右侧「⋯」可编辑分组/标签、加入分组、视频切片</view>
+  
   <view class="grid">
     <view wx:for="{{items}}" wx:key="asset_id" class="cell" data-index="{{index}}" bindtap="preview" bindlongpress="onAssetMenu">
       <image class="thumb" src="{{item.thumb}}" mode="aspectFill" />

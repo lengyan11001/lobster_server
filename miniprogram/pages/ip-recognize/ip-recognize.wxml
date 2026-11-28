@@ -7,7 +7,7 @@
       <view class="hero-copy">
         <text class="kicker">IP PROFILE</text>
         <text class="title">个人 IP</text>
-        <text class="sub">录音提炼 · 12 维档案 · 百问百答</text>
+        
       </view>
       <view class="hero-actions">
         <view class="act primary" bindtap="startPickRecording" hover-class="press">选择录音</view>

@@ -3,7 +3,7 @@
   <view class="head">
     <view class="head-text">
       <text class="title">朋友圈图文</text>
-      <text class="sub">这里只生成文案，配图到详情里按条生成</text>
+      
     </view>
     <button class="ghost mini" bindtap="openAudioPicker">录音生成</button>
   </view>
@@ -28,7 +28,7 @@
       <text class="candidate-text">{{item.text}}</text>
     </view>
     <button class="ghost" bindtap="copySelected" disabled="{{selectedIndex < 0}}">复制文案</button>
-    <text class="hint">配图请在「历史 → 批次详情」里按条生成</text>
+    
   </view>
 
   <view wx:if="{{progressText}}" class="progress">{{progressText}}</view>

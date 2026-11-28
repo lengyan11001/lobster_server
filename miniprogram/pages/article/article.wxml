@@ -4,7 +4,7 @@
   <view class="head">
     <view class="head-text">
       <text class="title">公众号文案</text>
-      <text class="sub">选题/录音/IP 生成，或粘贴公众号链接复刻改写</text>
+      
     </view>
   </view>
 
@@ -21,7 +21,7 @@
     <view class="btn-row">
       <button class="step-next" bindtap="nextStep">下一步</button>
     </view>
-    <text class="hint">下一步再设置复刻链接、目标读者、要点和风格</text>
+    
   </view>
   </block>
 

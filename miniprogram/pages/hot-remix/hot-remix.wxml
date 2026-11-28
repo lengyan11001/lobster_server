@@ -4,7 +4,7 @@
   <view class="head">
     <view class="head-copy">
       <text class="title">热门跟创</text>
-      <text class="sub">上传或粘贴原视频 + 一张参考图，按原片节奏生成同款</text>
+      
     </view>
     <view class="head-btns">
       <button wx:if="{{viewMode === 'list'}}" class="primary small" bindtap="openCreate">＋ 新建</button>
@@ -68,7 +68,7 @@
           <image wx:if="{{imagePreview}}" src="{{imagePreview}}" mode="aspectFill" class="image-thumb" />
           <view wx:else class="image-empty">+ 上传图片</view>
         </view>
-        <text class="hint">{{uploadingImage ? '上传中…' : '用于替换原视频中的人物 / 产品'}}</text>
+        <text class="hint">{{uploadingImage ? }}</text>
       </view>
     </view>
 

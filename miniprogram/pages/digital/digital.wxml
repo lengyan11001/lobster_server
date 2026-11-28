@@ -4,7 +4,7 @@
     <view class="head-row">
       <view class="head-copy">
         <text class="title">数字人口播</text>
-        <text class="sub">对齐 H5「AI营销 · 数字人口播视频」</text>
+        
       </view>
       <view class="head-btns">
         <button wx:if="{{viewMode === 'list'}}" class="primary small" bindtap="openCreate">＋ 新建</button>
@@ -57,7 +57,7 @@
     <view class="btn-row">
       <button class="step-next" bindtap="nextStep">下一步</button>
     </view>
-    <text class="hint">下一步再选数字人、声音、模板等参数</text>
+    
   </view>
   </block>
 

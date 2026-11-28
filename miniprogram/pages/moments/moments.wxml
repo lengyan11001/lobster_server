@@ -4,7 +4,7 @@
   <view class="head">
     <view>
       <text class="title">朋友圈文案</text>
-      <text class="sub">按批次查看生成记录，点进去看文案和配图</text>
+      
     </view>
     <view wx:if="{{viewMode === 'list'}}" class="head-action" bindtap="openCreate">＋ 新建</view>
   </view>
@@ -50,7 +50,7 @@
       <view class="btn-row">
         <button class="step-next" bindtap="nextStep">下一步</button>
       </view>
-      <text class="hint">下一步再设置文案要求</text>
+      
     </view>
     </block>
 
@@ -58,8 +58,8 @@
     <view class="panel create-panel">
       <text class="label">文案要求（可选）</text>
       <textarea class="input small" value="{{copyRequirement}}" bindinput="onReq" placeholder="例如：短句、多换行、不要硬性导流" auto-height maxlength="200" />
-      <text class="label">生成内容</text>
-      <view class="hint">按标题生成 1 条文案 + 3 张配图，创建后回列表看进度</view>
+      
+      
       <view class="btn-row">
         <button class="ghost" bindtap="prevStep">上一步</button>
         <button class="primary" loading="{{generating}}" disabled="{{generating}}" bindtap="submitCreate">创建并返回列表</button>

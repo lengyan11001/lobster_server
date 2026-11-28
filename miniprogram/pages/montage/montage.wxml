@@ -4,7 +4,7 @@
     <view class="head-top">
       <view>
         <text class="title">素材混剪</text>
-        <text class="sub">上传素材 + 文案，选模板和声音，自动混剪成片</text>
+        
       </view>
       <view class="head-acts">
         <button wx:if="{{viewMode === 'list'}}" class="act-btn primary" bindtap="openCreate">＋ 新建</button>
@@ -45,7 +45,7 @@
     <view class="btn-row">
       <button class="step-next" bindtap="nextStep">下一步</button>
     </view>
-    <text class="hint">下一步再设置音色、模板、素材分组等参数</text>
+    
   </view>
   </block>
 
