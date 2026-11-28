@@ -61,6 +61,7 @@ from .api.runtime_monitor import router as runtime_monitor_router
 from .api.shop import cms_router as shop_cms_router, router as shop_router
 from .api.aliyun_wan_role import router as aliyun_wan_role_router
 from .api.wechat_oa import router as wechat_oa_router
+from .api.wechat_oa_publish import router as wechat_oa_publish_router
 from .api.messenger import router as messenger_router
 from .api.twilio_whatsapp import router as twilio_whatsapp_router
 from .api.privacy_policy import router as privacy_policy_router
@@ -2037,6 +2038,7 @@ def create_app() -> FastAPI:
     app.include_router(aliyun_wan_role_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
+    app.include_router(wechat_oa_publish_router, prefix="")
     app.include_router(messenger_router, prefix="")
     app.include_router(twilio_whatsapp_router, prefix="")
     app.include_router(meta_social_publish_router, prefix="")

@@ -985,6 +985,22 @@ class PublishAccount(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserWechatOfficialAccount(Base):
+    """用户自己的微信公众号配置：AppID + 加密后的 AppSecret。"""
+
+    __tablename__ = "user_wechat_official_accounts"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_wechat_oa_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    app_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    app_secret_enc: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    nickname: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    last_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class WecomConfig(Base):
     """企业微信应用配置：支持多应用，每应用一个回调 path，用于验签与加解密。"""
     __tablename__ = "wecom_configs"

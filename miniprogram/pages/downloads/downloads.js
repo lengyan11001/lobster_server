@@ -35,6 +35,7 @@ const CATEGORY_LABEL = {
   canvas: "画布",
   online_wechat_article: "公众号",
   ip_daily: "朋友圈",
+  ip_moments: "朋友圈",
   douyin_imitation: "热门跟创",
   comfly_image: "图片"
 };

@@ -204,6 +204,24 @@ Page({
   onReq(e) { this.setData({ copyRequirement: e.detail.value }); },
   setCopyCount(e) { this.setData({ copyCount: Number(e.currentTarget.dataset.value || 10) }); },
 
+  syncInflightRecord(record) {
+    return app.request({
+      method: "POST",
+      url: "/api/content-records/sync",
+      data: { records: [record] },
+      timeout: 30000
+    }).catch(() => null);
+  },
+
+  removeInflightRecord(record) {
+    if (!record) return Promise.resolve();
+    return app.request({
+      method: "DELETE",
+      url: "/api/content-records?source=" + encodeURIComponent(record.source) + "&source_id=" + encodeURIComponent(record.source_id),
+      timeout: 20000
+    }).catch(() => null);
+  },
+
   submitCreate() {
     const topic = String(this.data.topic || "").trim();
     if (!topic) return wx.showToast({ title: "先填主题或卖点", icon: "none" });
@@ -223,13 +241,19 @@ Page({
       status: "processing",
       status_text: "生成中"
     });
-    wx.showLoading({ title: "提交中", mask: true });
+    const inflight = {
+      source: "ip_moments",
+      source_id: "moments-" + histId,
+      kind: "article",
+      title: topic.slice(0, 60),
+      status: "running",
+      source_created_at: new Date().toISOString()
+    };
+    this.syncInflightRecord(inflight);
+    wx.showLoading({ title: "正在生成朋友圈文案", mask: true });
     this.setData({ viewMode: "create", generating: true });
     this.refreshTaskRows();
     this.startMomentPolling(histId);
-    wx.showToast({ title: "已创建，去作品页查看", icon: "success" });
-    wx.hideLoading();
-    setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
     app.request({
       method: "POST",
       url: "/api/ip-content/generate/moments-candidates",
@@ -238,11 +262,17 @@ Page({
     })
       .then((data) => {
         const gid = String((data && data.group_id) || "");
+        this.removeInflightRecord(inflight);
         this.queueMomentImages(gid);
         this.finishMomentTask(histId, true, gid ? ("已生成 · " + gid.slice(0, 6)) : "已生成");
+        wx.hideLoading();
+        wx.showToast({ title: "已生成，去作品页查看", icon: "success" });
+        setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
       })
       .catch((err) => {
+        this.removeInflightRecord(inflight);
         this.finishMomentTask(histId, false, api.errorMessage(err) || "生成失败");
+        wx.hideLoading();
       });
   },
 

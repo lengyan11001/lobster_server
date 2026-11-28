@@ -21,6 +21,7 @@
     "pages/hot-remix/hot-remix",
     "pages/image-generate/image-generate",
     "pages/content-extract/content-extract",
+    "pages/wechat-oa/wechat-oa",
     "pages/role-transfer/role-transfer",
     "pages/digital/digital",
     "pages/avatar-templates/avatar-templates",

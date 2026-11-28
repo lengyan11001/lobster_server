@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Any, Optional
 
@@ -222,12 +222,14 @@ def _collect_inflight(db: Session, owner: User, *, limit: int) -> list[dict[str,
         )
 
     # 公众号：客户端同步进来的进行中文章（source 可自定义，kind=article/wechat_article）
+    cutoff = datetime.utcnow() - timedelta(hours=2)
     rows = (
         db.query(UserContentRecord)
         .filter(
             UserContentRecord.user_id == uid,
             func.lower(UserContentRecord.status).in_(statuses),
             func.lower(UserContentRecord.kind).in_(("article", "wechat_article")),
+            UserContentRecord.source_created_at >= cutoff,
         )
         .order_by(UserContentRecord.source_created_at.desc())
         .limit(limit)
@@ -799,6 +801,8 @@ def list_content_records(
         UserContentRecord.user_id == owner.id,
         UserContentRecord.kind == normalized_kind,
         UserContentRecord.status != "deleted",
+        # 生成中的记录只由 /inflight 返回，别混进已完成内容列表
+        ~UserContentRecord.status.in_(("running", "queued", "processing", "pending")),
     )
     synced_total = synced_query.with_entities(func.count(UserContentRecord.id)).scalar() or 0
     fetch_size = offset + limit

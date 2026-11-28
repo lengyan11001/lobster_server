@@ -127,6 +127,14 @@
         <image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" />
       </view>
     </view>
+    <view class="row" bindtap="goWechatOa" hover-class="press">
+      <view class="row-ic ic-wechat"><image class="row-ic-img" src="/assets/icons/ic-wechat.png" /></view>
+      <text class="row-label">公众号配置</text>
+      <view class="row-right">
+        <text class="row-value {{wechatOaConfigured ? 'ok' : ''}}">{{wechatOaConfigured ? (wechatOaNickname || '已配置') : '未配置'}}</text>
+        <image class="chevron-ic" src="/assets/icons/ic-caret-gray.png" />
+      </view>
+    </view>
     <view class="row">
       <view class="row-ic ic-phone"><image class="row-ic-img" src="/assets/icons/ic-phone.png" /></view>
       <text class="row-label">绑定手机</text>

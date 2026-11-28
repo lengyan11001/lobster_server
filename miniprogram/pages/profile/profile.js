@@ -28,7 +28,9 @@ Page({
     devMode: false,
     rechargeEnabled: false,
     scheduledRuns: [],
-    runsLoading: false
+    runsLoading: false,
+    wechatOaConfigured: false,
+    wechatOaNickname: ""
   },
 
   smsTimer: null,
@@ -53,6 +55,7 @@ Page({
     this.refreshState();
     if (app.globalData.token) {
       this.loadDevices(true);
+      this.loadWechatOaConfig();
     }
   },
 
@@ -70,6 +73,22 @@ Page({
 
   goOrders() {
     wx.navigateTo({ url: "/pages/orders/orders" });
+  },
+
+  loadWechatOaConfig() {
+    if (!app.globalData.token) return Promise.resolve();
+    return app.request({ url: "/api/wechat-oa/config", timeout: 20000 })
+      .then((data) => {
+        this.setData({
+          wechatOaConfigured: Boolean(data && data.configured),
+          wechatOaNickname: String((data && data.nickname) || "")
+        });
+      })
+      .catch(() => {});
+  },
+
+  goWechatOa() {
+    wx.navigateTo({ url: "/pages/wechat-oa/wechat-oa" });
   },
 
   goAgreement() {

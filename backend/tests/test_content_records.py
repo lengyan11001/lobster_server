@@ -672,3 +672,27 @@ def test_inflight_endpoint_route(db_session, test_user):
             assert payload["items"][0]["inflight"] is True
     finally:
         app.dependency_overrides.clear()
+
+
+def test_running_content_record_hidden_from_completed_list(db_session, test_user):
+    now = datetime.utcnow()
+    db_session.add(
+        UserContentRecord(
+            user_id=test_user.id,
+            source="online_wechat_article",
+            source_id="article-running-1",
+            kind="article",
+            title="生成中的公众号文章",
+            status="running",
+            source_created_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+
+    completed = list_content_records(kind="article", limit=20, offset=0, current_user=test_user, db=db_session)
+    assert all(item["source_id"] != "article-running-1" for item in completed["items"])
+
+    inflight = list_inflight_content_records(kind="article", limit=20, current_user=test_user, db=db_session)
+    assert any(item["source_id"] == "article-running-1" for item in inflight["items"])

@@ -24,6 +24,7 @@
       <video wx:if="{{item.videoUrl}}" src="{{item.videoUrl}}" class="video" controls></video>
       <view class="actions">
         <button wx:if="{{item.content}}" class="ghost mini" catchtap="copyArticle" data-id="{{item.id}}">{{item.images.length ? '复制文字+保存图片' : '复制'}}</button>
+        <button wx:if="{{feature === 'article' && item.content}}" class="ghost mini" catchtap="sendToDraft" data-id="{{item.id}}">发到公众号草稿</button>
         <button wx:if="{{item.taskId && item.status === 'processing'}}" class="ghost mini" catchtap="refreshStatus" data-id="{{item.id}}">刷新状态</button>
         <button class="ghost mini danger" catchtap="remove" data-id="{{item.id}}">删除</button>
       </view>

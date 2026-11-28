@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
+const articleGen = require("../../utils/article-gen");
 
 Page({
   data: {
@@ -109,7 +110,24 @@ Page({
     return true;
   },
 
-  generate() {
+  syncContentRecord(record) {
+    return app.request({
+      method: "POST",
+      url: "/api/content-records/sync",
+      data: { records: [record] },
+      timeout: 30000
+    });
+  },
+
+  deleteContentRecord(source, sourceId) {
+    return app.request({
+      method: "DELETE",
+      url: "/api/content-records?source=" + encodeURIComponent(source) + "&source_id=" + encodeURIComponent(sourceId),
+      timeout: 20000
+    }).catch(() => null);
+  },
+
+  async generate() {
     const topic = String(this.data.topic || "").trim();
     const source = String(this.data.sourceContent || "").trim();
     if (!topic && !source) {
@@ -117,7 +135,6 @@ Page({
       return;
     }
     if (!this.ensureAuth()) return;
-    wx.showLoading({ title: "提交中", mask: true });
     const payload = {
       topic,
       points: String(this.data.points || "").trim(),
@@ -125,7 +142,7 @@ Page({
       tone: this.data.tone || "专业观点",
       sourceContent: source
     };
-    hist.save("article", {
+    const histId = hist.save("article", {
       title: (topic || "公众号文章").slice(0, 24),
       summary: "",
       content: "",
@@ -135,8 +152,54 @@ Page({
       payload,
       started_at: Date.now()
     });
-    wx.showToast({ title: "已创建，正在生成", icon: "none" });
-    wx.hideLoading();
-    setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
+    const sourceId = "article-" + histId;
+    const inflight = {
+      source: "online_wechat_article",
+      source_id: sourceId,
+      kind: "article",
+      title: (topic || "公众号文章").slice(0, 60),
+      status: "running",
+      source_created_at: new Date().toISOString()
+    };
+    this.syncContentRecord(inflight).catch(() => {});
+    this.setData({ loading: true, progressText: "正在生成公众号文章…" });
+    wx.showLoading({ title: "生成文章中", mask: true });
+    try {
+      await articleGen.runTask(histId, payload);
+      const row = hist.get(histId) || {};
+      if (row.status === "failed") {
+        await this.deleteContentRecord(inflight.source, sourceId);
+        this.setData({ loading: false, progressText: "" });
+        wx.hideLoading();
+        wx.showToast({ title: String(row.error || "生成失败").slice(0, 30), icon: "none" });
+        return;
+      }
+      const images = (row.images || []).filter(Boolean);
+      try {
+        await this.syncContentRecord({
+          source: inflight.source,
+          source_id: sourceId,
+          kind: "article",
+          title: String(row.title || topic || "公众号文章").slice(0, 200),
+          summary: String(row.summary || "").slice(0, 400),
+          content: String(row.content || ""),
+          cover_url: images[0] || "",
+          status: "completed",
+          source_created_at: new Date().toISOString(),
+          meta: { images }
+        });
+      } catch (syncErr) {
+        wx.showToast({ title: "文章已生成，但作品同步失败", icon: "none" });
+      }
+      this.setData({ loading: false, progressText: "" });
+      wx.hideLoading();
+      wx.showToast({ title: "已生成，去作品页查看", icon: "success" });
+      setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
+    } catch (err) {
+      await this.deleteContentRecord(inflight.source, sourceId);
+      this.setData({ loading: false, progressText: "" });
+      wx.hideLoading();
+      wx.showToast({ title: (api.errorMessage(err) || "生成失败").slice(0, 30), icon: "none" });
+    }
   }
 });

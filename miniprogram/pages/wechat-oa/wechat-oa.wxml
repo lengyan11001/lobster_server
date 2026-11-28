@@ -1,0 +1,36 @@
+<view class="page">
+  <view class="head">
+    <text class="title">公众号配置</text>
+    <text class="sub">配置后可以把生成的文章直接发送到公众号草稿箱。</text>
+  </view>
+
+  <view class="card">
+    <text class="card-title">服务器 IP 白名单</text>
+    <text class="hint">先到 公众平台 → 开发 → 基本配置 → IP白名单，添加下面这些服务器 IP，否则会报 40164。</text>
+    <view class="ip-list">
+      <view wx:for="{{serverIps}}" wx:key="*this" class="ip-row">
+        <text class="ip">{{item}}</text>
+        <text class="copy" data-ip="{{item}}" bindtap="copyIp">复制</text>
+      </view>
+      <view wx:if="{{!serverIps.length}}" class="hint">正在读取服务器 IP…</view>
+    </view>
+  </view>
+
+  <view wx:if="{{configured}}" class="card ok-card">
+    <text class="card-title">当前已配置</text>
+    <view class="kv"><text class="k">公众号</text><text class="v">{{nickname || appIdMasked || '已配置'}}</text></view>
+    <view class="kv"><text class="k">AppID</text><text class="v mono">{{appIdMasked || appId}}</text></view>
+    <view class="kv"><text class="k">AppSecret</text><text class="v mono">{{secretMask || '已保存'}}</text></view>
+  </view>
+
+  <view class="card">
+    <text class="card-title">填写公众号凭证</text>
+    <text class="label">AppID</text>
+    <input class="input" value="{{appId}}" bindinput="onAppId" placeholder="wx 开头的公众号 AppID" maxlength="64" />
+    <text class="label">AppSecret</text>
+    <input class="input" password value="{{appSecret}}" bindinput="onAppSecret" placeholder="公众号后台 开发 → 基本配置 里的 AppSecret" maxlength="128" />
+    <text class="hint">AppSecret 会加密保存在服务器，接口不会回显明文；重新保存需要再填一次。</text>
+    <button class="primary" loading="{{saving}}" disabled="{{saving || loading}}" bindtap="save">保存并验证</button>
+    <text wx:if="{{statusText}}" class="status">{{statusText}}</text>
+  </view>
+</view>

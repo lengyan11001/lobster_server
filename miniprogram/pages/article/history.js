@@ -180,6 +180,48 @@ Page({
     wx.previewImage({ current: url, urls: item.images || [url] });
   },
 
+  sendToDraft(e) {
+    const id = String((e.currentTarget.dataset && e.currentTarget.dataset.id) || "");
+    const item = (this.data.items || []).find((row) => row.id === id);
+    if (!item || !String(item.content || "").trim()) {
+      wx.showToast({ title: "文章还没有正文", icon: "none" });
+      return;
+    }
+    const images = (item.images || []).filter(Boolean);
+    wx.showLoading({ title: "发送草稿中", mask: true });
+    app.request({
+      method: "POST",
+      url: "/api/wechat-oa/draft",
+      data: {
+        title: String(item.title || "公众号文章"),
+        content: String(item.content || ""),
+        digest: String(item.summary || ""),
+        images
+      },
+      timeout: 120000
+    })
+      .then(() => {
+        wx.hideLoading();
+        wx.showToast({ title: "已发送到公众号草稿箱", icon: "success" });
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        const msg = api.errorMessage(err) || "发送失败";
+        if (msg.indexOf("公众号配置") >= 0 || msg.indexOf("AppID") >= 0 || msg.indexOf("白名单") >= 0 || msg.indexOf("40164") >= 0) {
+          wx.showModal({
+            title: "先配置公众号",
+            content: msg,
+            confirmText: "去配置",
+            success: (res) => {
+              if (res.confirm) wx.navigateTo({ url: "/pages/wechat-oa/wechat-oa" });
+            }
+          });
+        } else {
+          wx.showToast({ title: msg.slice(0, 30), icon: "none" });
+        }
+      });
+  },
+
   copyArticle(e) {
     const item = this.data.items.find((x) => x.id === e.currentTarget.dataset.id);
     if (!item) return;
