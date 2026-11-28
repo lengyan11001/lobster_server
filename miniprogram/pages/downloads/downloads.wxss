@@ -140,3 +140,6 @@ page { background: #f8f9fa; color: #0f172a; }
 
 .chip.cat { background: #eef2ff; color: #3730a3; }
 .chip.pending { background: #fff7ed; color: #c2410c; border: 1rpx solid #fed7aa; }
+
+.sheet-empty { display: block; padding: 30rpx 0; text-align: center; color: #94a3b8; font-size: 24rpx; }
+.sheet-draft { width: 100%; flex: none; margin: 24rpx 0 0; }

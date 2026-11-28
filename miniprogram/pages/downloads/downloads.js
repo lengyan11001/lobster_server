@@ -3,6 +3,7 @@ const api = require("../../utils/api");
 const config = require("../../config");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
+const hist = require("../../utils/gen-history");
 
 const TABS = [
   { key: "all", label: "全部" },
@@ -308,8 +309,19 @@ Page({
         const item = (data && data.item) || {};
         const kind = String(item.kind || row.kind);
         const raw = String(item.file_url || item.source_url || "");
+        let content = String(item.content || item.summary || "");
+        let rawImageUrls = (item.image_urls || []).map((u) => String(u || "")).filter(Boolean);
+        if (!content && (kind === "article" || kind === "wechat_article")) {
+          const sourceId = String(row.sourceId || "");
+          const histId = sourceId.indexOf("article-") === 0 ? sourceId.slice(8) : "";
+          const local = histId ? hist.get(histId) : null;
+          if (local) {
+            if (local.content) content = String(local.content);
+            if (!rawImageUrls.length && Array.isArray(local.images)) rawImageUrls = local.images.filter(Boolean);
+          }
+        }
         const images = [];
-        (item.image_urls || []).forEach((u) => {
+        rawImageUrls.forEach((u) => {
           if (u) images.push(mediaUrl(u, "thumb"));
         });
         if (kind === "image" && raw && images.length === 0) images.push(mediaUrl(raw, "thumb"));
@@ -321,8 +333,9 @@ Page({
             kindLabel: KIND_LABEL[kind] || row.kindLabel,
             title: String(item.title || row.title),
             time: fmtTime(item.created_at) || row.time,
-            content: String(item.content || item.summary || ""),
+            content,
             images,
+            rawImages: rawImageUrls,
             videoUrl: kind === "video" && raw ? mediaUrl(raw, "proxy") : "",
             saveable: Boolean(raw && (kind === "video" || kind === "image")),
             saveUrl: raw ? mediaUrl(raw, "proxy") : "",
@@ -332,6 +345,47 @@ Page({
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .then(() => wx.hideLoading());
+  },
+
+  sendDetailDraft() {
+    const detail = this.data.detail;
+    if (!detail) return;
+    if (!String(detail.content || "").trim()) {
+      wx.showToast({ title: "这条没有正文，不能发草稿", icon: "none" });
+      return;
+    }
+    wx.showLoading({ title: "发送草稿中", mask: true });
+    app.request({
+      method: "POST",
+      url: "/api/wechat-oa/draft",
+      data: {
+        title: String(detail.title || "公众号文章"),
+        content: String(detail.content || ""),
+        digest: "",
+        images: detail.rawImages || []
+      },
+      timeout: 120000
+    })
+      .then(() => {
+        wx.hideLoading();
+        wx.showToast({ title: "已发送到公众号草稿箱", icon: "success" });
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        const msg = api.errorMessage(err) || "发送失败";
+        if (msg.indexOf("公众号配置") >= 0 || msg.indexOf("AppID") >= 0 || msg.indexOf("白名单") >= 0 || msg.indexOf("40164") >= 0) {
+          wx.showModal({
+            title: "先配置公众号",
+            content: msg,
+            confirmText: "去配置",
+            success: (res) => {
+              if (res.confirm) wx.navigateTo({ url: "/pages/profile/wechat-oa" });
+            }
+          });
+        } else {
+          wx.showToast({ title: msg.slice(0, 30), icon: "none" });
+        }
+      });
   },
 
   closeDetail() {

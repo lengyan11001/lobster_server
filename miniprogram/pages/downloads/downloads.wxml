@@ -91,6 +91,8 @@
         <text wx:if="{{detail.content}}" class="sheet-content" user-select="{{true}}">{{detail.content}}</text>
       </scroll-view>
 
+      <text wx:if="{{!detail.content && !detail.images.length && !detail.videoUrl}}" class="sheet-empty">这条记录没有保存正文，可能是在旧版本生成的。</text>
+      <button wx:if="{{detail.kind === 'article' || detail.kind === 'wechat_article'}}" class="act primary sheet-draft" bindtap="sendDetailDraft">发到公众号草稿</button>
       <view class="sheet-actions">
         <button class="act ghost" bindtap="copyContent">复制文字</button>
         <button wx:if="{{detail.saveable}}" class="act primary" bindtap="saveDetail">保存</button>

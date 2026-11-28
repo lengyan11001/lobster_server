@@ -33,3 +33,8 @@
 .head-action { font-size: 26rpx; color: #1957E8; padding: 10rpx 0 10rpx 20rpx; white-space: nowrap; }
 
 .inline-img { display: block; width: 100%; margin: 16rpx 0; border-radius: 12rpx; }
+
+.card-top-right { display: flex; align-items: center; gap: 12rpx; flex: none; }
+.draft-link { font-size: 22rpx; color: #1957E8; padding: 8rpx 0 8rpx 12rpx; white-space: nowrap; }
+.missing-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: #b45309; }
+.missing-btn { margin-top: 10rpx; }

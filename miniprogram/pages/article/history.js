@@ -188,6 +188,32 @@ Page({
     wx.previewImage({ current: url, urls: item.images || [url] });
   },
 
+  regenerate(e) {
+    const id = String((e.currentTarget.dataset && e.currentTarget.dataset.id) || "");
+    const row = hist.get(id);
+    if (!row || !row.payload) {
+      wx.showToast({ title: "这条没有可补生成的参数", icon: "none" });
+      return;
+    }
+    if (this.articleRunning) {
+      wx.showToast({ title: "正在生成，请稍候", icon: "none" });
+      return;
+    }
+    this.articleRunning = true;
+    wx.showLoading({ title: "生成正文中", mask: true });
+    articleGen.runTask(id, row.payload).then(() => {
+      this.articleRunning = false;
+      wx.hideLoading();
+      this.refresh();
+      const updated = hist.get(id);
+      wx.showToast({ title: updated && updated.content ? "正文已生成" : "生成失败", icon: updated && updated.content ? "success" : "none" });
+    }).catch(() => {
+      this.articleRunning = false;
+      wx.hideLoading();
+      this.refresh();
+    });
+  },
+
   sendToDraft(e) {
     const id = String((e.currentTarget.dataset && e.currentTarget.dataset.id) || "");
     const item = (this.data.items || []).find((row) => row.id === id);
