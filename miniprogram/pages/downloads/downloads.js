@@ -183,6 +183,7 @@ Page({
       timeout: 15000
     })
       .then((data) => {
+        const hadPending = this.data.items.some((row) => row && row.pending);
         const byKey = {};
         this.data.items.filter((row) => row && !row.pending).forEach((row) => {
           byKey[row.key] = row;
@@ -194,6 +195,11 @@ Page({
         const merged = Object.keys(byKey).map((key) => byKey[key]);
         merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
         this.setData({ items: merged });
+        // 任务刚完成时 inflight 会消失，立即整页刷新把新生成的内容记录拉回来，
+        // 避免作品卡片先消失、等用户手动刷新才出现。
+        if (hadPending && !merged.some((row) => row && row.pending)) {
+          return this.refresh();
+        }
       })
       .catch(() => {});
   },
