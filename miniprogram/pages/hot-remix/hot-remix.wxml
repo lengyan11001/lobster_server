@@ -68,7 +68,6 @@
           <image wx:if="{{imagePreview}}" src="{{imagePreview}}" mode="aspectFill" class="image-thumb" />
           <view wx:else class="image-empty">+ 上传图片</view>
         </view>
-        <text class="hint">{{uploadingImage ? }}</text>
       </view>
     </view>
 
