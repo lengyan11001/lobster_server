@@ -1,4 +1,5 @@
 const app = getApp();
+const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 
@@ -117,6 +118,7 @@ Page({
       return;
     }
     if (!this.ensureAuth()) return;
+    wx.showLoading({ title: "提交中", mask: true });
     const payload = {
       topic,
       points: String(this.data.points || "").trim(),
@@ -135,6 +137,8 @@ Page({
       started_at: Date.now()
     });
     wx.showToast({ title: "已创建，正在生成", icon: "none" });
+    pend.add({ id: "article-" + Date.now(), kind: "article", category: "公众号", title: (topic || "公众号文章") });
+    wx.hideLoading();
     setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
   }
 });

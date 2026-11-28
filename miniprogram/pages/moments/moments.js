@@ -1,4 +1,5 @@
 const app = getApp();
+const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const { createPoller } = require("../../utils/task-poll");
@@ -223,10 +224,13 @@ Page({
       status: "processing",
       status_text: "生成中"
     });
+    wx.showLoading({ title: "提交中", mask: true });
     this.setData({ viewMode: "create", generating: true });
     this.refreshTaskRows();
     this.startMomentPolling(histId);
+    pend.add({ id: "moments-" + histId, kind: "article", category: "朋友圈", title: topic });
     wx.showToast({ title: "已创建，去作品页查看", icon: "success" });
+    wx.hideLoading();
     setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
     app.request({
       method: "POST",

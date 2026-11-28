@@ -1,4 +1,5 @@
 const app = getApp();
+const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const hist = require("../../utils/gen-history");
 const share = require("../../utils/share");
@@ -775,6 +776,7 @@ Page({
       })
       .then(() => {
         this.stopPipelineClaim();
+        pend.add({ id: "vi-" + localTaskId, kind: "video", category: "视频追梦", title: prompt.slice(0, 24) });
         wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
         setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
       })

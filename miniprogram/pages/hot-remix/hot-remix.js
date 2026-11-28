@@ -1,4 +1,5 @@
 const app = getApp();
+const pend = require("../../utils/pending-works");
 const api = require("../../utils/api");
 const { createPoller } = require("../../utils/task-poll");
 
@@ -314,6 +315,7 @@ Page({
           prompt: "", title: ""
         });
         this.startTaskPoll(taskId);
+        pend.add({ id: "hot-" + taskId, kind: "video", category: "热门跟创", title: this.data.title || "热门跟创" });
         this.loadJobs();
         wx.showToast({ title: "已提交，去作品页查看", icon: "success" });
         setTimeout(() => wx.switchTab({ url: "/pages/downloads/downloads" }), 900);
