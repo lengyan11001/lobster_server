@@ -73,19 +73,27 @@ function normalizeProfiles(items) {
 
 function normalizeVoices(items) {
   const out = [];
+  const seen = {};
   (items || []).forEach((row) => {
     const styles = Array.isArray(row && row.styles) && row.styles.length ? row.styles : [row || {}];
     const baseTitle = String((row && (row.title || row.name || row.voice)) || "");
     const params = (row && row.voice_params) || {};
+    const isSystem = Boolean(String((row && row.source) || "").toLowerCase() === "system" || (row && row.is_mine === false));
+    const sourceLabel = String((row && row.section_label) || (isSystem ? "系统声音" : "我的声音"));
     const fallback = styles.find((s) => s && s.voice && !isPreviewVoice(s.voice)) || styles[0] || {};
     styles.forEach((style) => {
       const voice = String((style && style.voice) || (fallback && fallback.voice) || (row && row.voice) || "").trim();
-      if (!voice || isPreviewVoice(voice)) return;
+      if (!voice || isPreviewVoice(voice) || seen[voice]) return;
+      seen[voice] = true;
       const label = style && style.label && style.label !== "默认风格" ? `${baseTitle} - ${style.label}` : (baseTitle || voice);
       out.push({
+        id: voice,
         voice,
-        title: label,
-        provider: String((row && row.provider) || ""),
+        title: sourceLabel + " · " + label,
+        source: isSystem ? "system" : "mine",
+        sourceLabel,
+        provider: String((row && row.provider) || (isSystem ? "minimax" : "")),
+        demo_url: String((style && style.demo_url) || (row && row.demo_url) || ""),
         rate: (style && style.rate) || params.rate || (row && row.rate) || "",
         volume: (style && style.volume) || params.volume || (row && row.volume) || "",
         pitch: (style && style.pitch) || params.pitch || (row && row.pitch) || "",
@@ -139,7 +147,7 @@ Page({
     peerOpen: false, peerLink: "", peerText: "", peerVideoUrl: "", peerMode: "transcript", peerBusy: false, peerProgressText: "",
     peerScript: "", peerTitleDraft: "", peerScriptBusy: false,
     profiles: [], profileIndex: -1, profilesLoading: false,
-    voices: [], voiceNames: [], voiceIndex: -1, voicesLoading: false,
+    voices: [], voiceNames: [], voiceIndex: -1, voicesLoading: false, voiceIsSystem: false,
     trainOpen: false, trainMode: "image", trainFileName: "", trainFile: "",
     trainTitle: "", trainAuth: "", trainAgree: false, trainSubmitting: false, trainStatus: "",
     cloneOpen: false, cloneFileName: "", cloneFile: "", cloneTitle: "",
@@ -803,9 +811,9 @@ Page({
     if (!app.globalData.token) return Promise.resolve();
     const hadVoices = (this.data.voices || []).length > 0;
     this.setData({ voicesLoading: true });
-    return app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
+    return app.request({ url: "/api/hifly/voice/options", timeout: 45000 })
       .then((data) => {
-        const rows = normalizeVoices((data && (data.items || data.results)) || []);
+        const rows = normalizeVoices((data && (data.items || data.mine || data.results)) || []);
         let index = rows.findIndex((row) => String(row.id || "") === String(this.data.selectedVoiceId || ""));
         if (index < 0) index = rows.length ? 0 : -1;
         const selected = index >= 0 ? rows[index] : null;
@@ -813,6 +821,7 @@ Page({
           voices: rows,
           voiceNames: rows.map((r) => r.title),
           voiceIndex: index,
+          voiceIsSystem: Boolean(selected && selected.source === "system"),
           selectedVoiceId: selected ? String(selected.id || "") : ""
         });
         if (selected && !hadVoices) this.applyVoiceDefaults(selected);
@@ -1043,7 +1052,11 @@ Page({
   audition() {
     const voice = this.data.voices[this.data.voiceIndex];
     if (!voice) return;
-    const payload = {
+    const isSystem = voice.source === "system";
+    const payload = isSystem ? {
+      text: "你好，这是当前声音的试听效果。",
+      voice_id: voice.voice
+    } : {
       voice: voice.voice,
       text: "你好，这是当前声音的试听效果。",
       rate: String(this.data.speed || 1),
@@ -1051,10 +1064,10 @@ Page({
       pitch: String(this.data.pitch),
       emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
     };
-    if (String(this.data.instructions || "").trim()) payload.instructions = String(this.data.instructions).trim();
-    if (voice.provider === "minimax" || voice.provider === "qwen") payload.voice_provider = voice.provider;
+    if (!isSystem && String(this.data.instructions || "").trim()) payload.instructions = String(this.data.instructions).trim();
+    if (!isSystem && (voice.provider === "minimax" || voice.provider === "qwen")) payload.voice_provider = voice.provider;
     wx.showLoading({ title: "试听生成" });
-    app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: payload, header: this.iidHeader(), timeout: 120000 })
+    app.request({ method: "POST", url: isSystem ? "/api/montage/tts" : "/api/hifly/my/voice/preview-tts", data: payload, header: this.iidHeader(), timeout: 120000 })
       .then((data) => {
         const url = findAudioUrl(data);
         if (!url) throw new Error("没有返回试听音频");
@@ -1202,7 +1215,7 @@ Page({
   selectVoice(e) {
     const index = Number(e.detail.value || 0);
     const row = (this.data.voices || [])[index];
-    this.setData({ voiceIndex: index, selectedVoiceId: row ? String(row.id || "") : "", speedTouched: false });
+    this.setData({ voiceIndex: index, selectedVoiceId: row ? String(row.id || "") : "", speedTouched: false, voiceIsSystem: Boolean(row && row.source === "system") });
     this.applyVoiceDefaults(row);
   },
 
@@ -1421,7 +1434,11 @@ Page({
     }
 
     this.setData({ statusText: "正在合成配音…" });
-    const ttsPayload = {
+    const isSystemVoice = voice.source === "system";
+    const ttsPayload = isSystemVoice ? {
+      text: String(this.data.text || "").trim(),
+      voice_id: voice.voice
+    } : {
       voice: voice.voice,
       text: String(this.data.text || "").trim(),
       rate: String(this.data.speed || 1),
@@ -1429,10 +1446,10 @@ Page({
       pitch: String(this.data.pitch),
       emotion: EMOTION_VALUES[this.data.emotionIndex] || "happy"
     };
-    if (String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
-    if (voice.provider === "minimax" || voice.provider === "qwen") ttsPayload.voice_provider = voice.provider;
+    if (!isSystemVoice && String(this.data.instructions || "").trim()) ttsPayload.instructions = String(this.data.instructions).trim();
+    if (!isSystemVoice && (voice.provider === "minimax" || voice.provider === "qwen")) ttsPayload.voice_provider = voice.provider;
 
-    app.request({ method: "POST", url: "/api/hifly/my/voice/preview-tts", data: ttsPayload, header: this.iidHeader(), timeout: 300000 })
+    app.request({ method: "POST", url: isSystemVoice ? "/api/montage/tts" : "/api/hifly/my/voice/preview-tts", data: ttsPayload, header: this.iidHeader(), timeout: 300000 })
       .then((data) => {
         const audioUrl = findAudioUrl(data);
         if (!audioUrl) throw new Error("配音生成失败，没有返回音频地址");

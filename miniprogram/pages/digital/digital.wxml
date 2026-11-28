@@ -86,7 +86,7 @@
     </view>
 
     <block wx:if="{{mode === 'tts'}}">
-      <text class="label">声音</text>
+      <text class="label">声音（我的 / 系统）</text>
       <view wx:if="{{voicesLoading}}" class="empty">加载声音中…</view>
       <view wx:elif="{{!voices.length}}" class="empty">没有可用声音。</view>
       <view wx:else class="voice-row">
@@ -95,6 +95,7 @@
         </picker>
         <button class="ghost mini" bindtap="audition">试听</button>
       </view>
+      <text wx:if="{{voiceIsSystem}}" class="hint">系统声音暂不支持语速/音调/情绪调节</text>
       <text class="label">口播文案</text>
       <textarea class="textarea" value="{{text}}" bindinput="onTextInput" placeholder="输入这条视频要念的内容" auto-height maxlength="2000" />
       <view class="param-grid">

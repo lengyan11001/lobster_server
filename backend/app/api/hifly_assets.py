@@ -2392,6 +2392,92 @@ async def hifly_voice_library(body: HiflyTokenBody, request: Request):
     }
 
 
+@router.get("/api/hifly/voice/options", summary="我的声音 + 上游系统声音（数字人/混剪选择用）")
+def hifly_voice_options(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """一次返回「我的声音」和上游可用的系统声音，客户端不用再拼两个接口。"""
+    current_user = online_user_for_mobile_user(db, current_user)
+    rows = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.user_id == int(current_user.id),
+            UserHiflyVoiceAsset.status == "success",
+            UserHiflyVoiceAsset.hifly_voice_id.isnot(None),
+            UserHiflyVoiceAsset.hifly_voice_id != "",
+        )
+        .order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
+        .limit(100)
+        .all()
+    )
+    mine: List[Dict[str, Any]] = []
+    mine_ids: set[str] = set()
+    for row in rows:
+        item = _normalize_voice_asset(row, request)
+        voice_id = str(item.get("voice") or "").strip()
+        if not voice_id or voice_id in mine_ids:
+            continue
+        mine_ids.add(voice_id)
+        item["source"] = "mine"
+        item["section"] = "mine"
+        item["section_label"] = "我的声音"
+        item["is_mine"] = True
+        mine.append(item)
+
+    system: List[Dict[str, Any]] = []
+    system_error = ""
+    try:
+        from .cutcli_templates import _load_sutui_token_for_stt  # noqa: PLC0415
+        from ..services import device_tts  # noqa: PLC0415
+
+        token, _source = _load_sutui_token_for_stt(db, int(current_user.id))
+        if token:
+            seen = set(mine_ids)
+            for voice in device_tts.list_voices(token):
+                voice_id = str(voice.get("id") or "").strip()
+                if not voice_id or voice_id in seen:
+                    continue
+                seen.add(voice_id)
+                title = str(voice.get("name") or "系统音色").strip()[:40] or "系统音色"
+                system.append({
+                    "id": voice_id,
+                    "voice": voice_id,
+                    "title": title,
+                    "name": title,
+                    "source": "system",
+                    "section": "system",
+                    "section_label": "系统声音",
+                    "provider": "minimax",
+                    "is_mine": False,
+                    "status": "success",
+                    "styles": [{
+                        "voice": voice_id,
+                        "title": title,
+                        "label": "默认风格",
+                        "provider": "minimax",
+                    }],
+                })
+    except Exception as exc:  # noqa: BLE001 系统音色拉取失败不能影响我的声音
+        system_error = str(exc)[:200]
+        logger.warning("[voice-options] system voice list failed user_id=%s: %s", current_user.id, system_error)
+
+    items = mine + system
+    default_id = mine[0]["voice"] if mine else (system[0]["voice"] if system else "")
+    return {
+        "ok": True,
+        "provider": "minimax",
+        "items": items,
+        "mine": mine,
+        "system": system,
+        "mine_count": len(mine),
+        "system_count": len(system),
+        "default_id": default_id,
+        "system_error": system_error,
+    }
+
+
 @router.post("/api/hifly/my/avatar/create-by-image-upload")
 async def create_my_avatar_by_image_upload(
     request: Request,

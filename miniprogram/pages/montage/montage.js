@@ -323,14 +323,20 @@ Page({
 
   loadMontageVoices() {
     if (!(app.globalData.token && app.globalData.phone)) return;
-    app.request({ url: "/api/hifly/my/voice/list?page=1&size=100", timeout: 30000 })
+    app.request({ url: "/api/hifly/voice/options", timeout: 45000 })
       .then((data) => {
-        const items = ((data && data.items) || [])
-          .map((row) => ({
-            id: String(row.voice || row.voice_id || ""),
-            name: String(row.title || row.name || "音色"),
-            provider: String(row.provider || row.voice_provider || "")
-          }))
+        const items = ((data && (data.items || data.mine || [])) || [])
+          .map((row) => {
+            const source = String(row.source || "").toLowerCase() === "system" ? "system" : "mine";
+            const id = String(row.voice || row.id || row.voice_id || "").trim();
+            const label = String(row.title || row.name || "音色");
+            return {
+              id,
+              name: (source === "system" ? "系统声音 · " : "我的声音 · ") + label,
+              source,
+              provider: String(row.provider || row.voice_provider || (source === "system" ? "minimax" : ""))
+            };
+          })
           .filter((row) => !!row.id);
         this.setData({ voices: items, voiceNames: items.map((row) => row.name), voiceIndex: items.length ? 0 : -1 });
         if (items.length) this.applySpeechVoiceParams(items[0]);
@@ -392,15 +398,20 @@ Page({
     if (!text) return wx.showToast({ title: "先写口播文案", icon: "none" });
     if (this.data.ttsLoading) return Promise.resolve("");
     this.setData({ ttsLoading: true, speechStatus: "正在合成语音…" });
-    const voice = (this.data.voices[this.data.voiceIndex] || {}).id || "";
+    const voiceRow = this.data.voices[this.data.voiceIndex] || {};
+    const voice = String(voiceRow.id || "");
+    const isSystem = voiceRow.source === "system";
     if (!voice) {
-      this.setData({ ttsLoading: false, speechStatus: "还没有自己的音色，先去素材库创建声音" });
+      this.setData({ ttsLoading: false, speechStatus: "还没有可用音色，先去素材库创建声音" });
       return Promise.resolve("");
     }
     return app.request({
       method: "POST",
-      url: "/api/hifly/my/voice/preview-tts",
-      data: {
+      url: isSystem ? "/api/montage/tts" : "/api/hifly/my/voice/preview-tts",
+      data: isSystem ? {
+        text,
+        voice_id: voice
+      } : {
         text,
         voice,
         rate: String(this.data.speechRate || 1),
