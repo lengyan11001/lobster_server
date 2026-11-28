@@ -294,8 +294,17 @@ Page({
     };
   },
 
-  onThumbError() {
-    // 缩略图失败时保留底层占位，不要把已经显示的图清掉，避免列表里闪一下又消失。
+  onThumbError(e) {
+    // 失败先加时间戳重试一次（破掉历史失败缓存），仍失败则隐藏，避免列表里反复报错
+    const index = Number((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.index) || 0);
+    const item = this.data.items[index];
+    if (!item || !item.thumb) return;
+    if (String(item.thumb).indexOf('_retry=') >= 0) {
+      this.setData({ ['items[' + index + '].thumb']: '' });
+      return;
+    }
+    const sep = String(item.thumb).indexOf('?') >= 0 ? '&' : '?';
+    this.setData({ ['items[' + index + '].thumb']: item.thumb + sep + '_retry=' + Date.now() });
   },
   openDetail(e) {
     const index = Number(e.currentTarget.dataset.index || 0);
