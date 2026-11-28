@@ -27,6 +27,23 @@
   </view>
 
   <block wx:else>
+    <view wx:if="{{pendingItems.length}}" class="list">
+      <view wx:for="{{pendingItems}}" wx:key="key" class="work-card" bindtap="openPending" hover-class="press">
+        <view class="card-body">
+          <view class="thumb"><view class="thumb-empty">生成中</view></view>
+          <view class="card-main">
+            <view class="card-top">
+              <text class="chip">生成中</text>
+              <text wx:if="{{item.category}}" class="chip cat">{{item.category}}</text>
+              <text class="time">{{item.time}}</text>
+            </view>
+            <text class="card-title">{{item.title}}</text>
+            <text class="card-summary">正在生成，完成后自动出现在作品里</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
     <view wx:if="{{loading && items.length === 0}}" class="skeleton">
       <view wx:for="{{skeletons}}" wx:key="*this" class="sk-row">
         <view class="sk-thumb"></view>
@@ -38,7 +55,7 @@
       </view>
     </view>
 
-    <view wx:elif="{{items.length === 0}}" class="empty">
+    <view wx:elif="{{items.length === 0 && pendingItems.length === 0}}" class="empty">
       <view class="empty-ic">▤</view>
       <text class="empty-title">还没有内容记录</text>
       <text class="empty-desc">在首页创作的数字人、图片、文章会自动汇总到这里</text>

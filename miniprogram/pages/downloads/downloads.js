@@ -3,6 +3,7 @@ const api = require("../../utils/api");
 const config = require("../../config");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
+const pend = require("../../utils/pending-works");
 
 const TABS = [
   { key: "all", label: "全部" },
@@ -61,6 +62,8 @@ Page({
     tab: "all",
     skeletons: [1, 2, 3],
     items: [],
+    pendingItems: [],
+    pendingItems: [],
     offset: 0,
     loading: false,
     loadingMore: false,
@@ -75,7 +78,9 @@ Page({
     }
     app.restoreSession();
     this.setData({ phoneBound: Boolean(app.globalData.token && app.globalData.phone) });
+    this.loadPending();
     this.refresh();
+    this.startPendingTimer();
   },
 
   onPullDownRefresh() {

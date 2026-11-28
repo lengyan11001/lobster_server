@@ -5,6 +5,7 @@ const share = require("../../utils/share");
 const config = require("../../config");
 const { createPoller } = require("../../utils/task-poll");
 const { formatDateTime } = require("../../utils/datetime");
+const pend = require("../../utils/pending-works");
 
 const POLL_MS = 6000;
 const MAX_POLLS = 80;
@@ -1399,6 +1400,7 @@ Page({
   },
 
   doGenerate() {
+    wx.showLoading({ title: "提交中", mask: true });
     const profile = this.data.profiles[this.data.profileIndex];
     const voice = this.data.voices[this.data.voiceIndex];
     if (!profile || !profile.ready) return wx.showToast({ title: "请选择已训练完成的数字人", icon: "none" });
@@ -1442,6 +1444,7 @@ Page({
         });
       })
       .catch((err) => {
+        wx.hideLoading();
         this.setData({ statusText: "", submitting: false });
         wx.showToast({ title: api.errorMessage(err), icon: "none" });
       });
@@ -1474,6 +1477,8 @@ Page({
         const taskId = String((data && (data.task_id || (data.record && data.record.task_id))) || "").trim();
         if (!taskId) throw new Error("没有拿到任务号");
         this.rememberDigitalJob(taskId, this.lastTitle || "数字人口播");
+        pend.add({ id: "digital-" + taskId, kind: "video", category: "数字人", title: this.lastTitle || "数字人口播" });
+        wx.hideLoading();
         this.setData({ statusText: "已提交，排队生成中…", submitting: false });
         this.loadJobs();
         this.startPolling(taskId);
