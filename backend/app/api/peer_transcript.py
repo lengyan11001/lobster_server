@@ -33,7 +33,7 @@ from .auth import create_access_token, access_token_claims, get_current_user
 from .cutcli_templates import _load_sutui_token_for_stt, _upload_job_file_to_tos
 from .h5_recorder_extract import _extract_json_object
 from .ip_content_studio import _execute_query_with_retry
-from .wechat_channels_transcript import _normalize_video, _process_one_video
+from .wechat_channels_transcript import _download_video, _normalize_video, _process_one_video
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,8 @@ _TERMINAL = {"completed", "failed"}
 
 class PeerJobBody(BaseModel):
     url: str = Field(min_length=3, max_length=4000)
+    # transcript = 提取文案（解析→音频→STT）；video = 只保存视频（不转写）
+    mode: str = Field(default="transcript", pattern="^(transcript|video)$")
 
 
 class PeerScriptBody(BaseModel):
@@ -142,7 +144,7 @@ async def _run_peer_job_inner(job_id: str) -> None:
     job_dir = _JOBS_DIR / job_id
     try:
         # 第一段：短事务里解析链接、拿 STT token；随后立刻释放数据库连接，
-        # 转写可能要几分钟，不能一直占着连接池（否则触发 idle-in-transaction 超时）。
+        # 转写/上传可能要几分钟，不能一直占着连接池。
         with SessionLocal() as db:
             row = (
                 db.query(CreativeGenerationJob)
@@ -161,6 +163,9 @@ async def _run_peer_job_inner(job_id: str) -> None:
                 db.commit()
                 return
             payload = dict(row.request_payload or {}) if isinstance(row.request_payload, dict) else {}
+            mode = str(payload.get("mode") or "transcript").strip().lower()
+            if mode not in {"transcript", "video"}:
+                mode = "transcript"
             row.status = "running"
             row.stage = "resolving"
             row.progress = 5
@@ -169,43 +174,48 @@ async def _run_peer_job_inner(job_id: str) -> None:
             if not video_url:
                 raise RuntimeError("拿不到可下载的视频地址")
             meta = dict(row.meta or {})
-            meta.update({"source": source, "video_url": video_url, **extra})
+            meta.update({"source": source, "video_url": video_url, "mode": mode, **extra})
             row.meta = meta
-            row.stage = "transcribing"
-            row.progress = 25
+            row.stage = "downloading" if mode == "video" else "transcribing"
+            row.progress = 15 if mode == "video" else 25
             db.commit()
-            token, token_source = _load_sutui_token_for_stt(db, user_id)
-            db.commit()
+            token = ""
+            token_source = ""
+            if mode != "video":
+                token, token_source = _load_sutui_token_for_stt(db, user_id)
+                db.commit()
 
-        # 第二段：不持有数据库连接，下载 + 抽音频 + STT。
-        job_dir.mkdir(parents=True, exist_ok=True)
-        item = await asyncio.to_thread(
-            _process_one_video,
-            job_id=job_id,
-            item={"video_url": video_url, "source": source},
-            index=0,
-            token=token,
-            token_source=token_source,
-            job_dir=job_dir,
-        )
-        text = str((item or {}).get("transcript") or "").strip()
-        if not text:
-            raise RuntimeError("转写结果为空，换一条链接再试")
-
-        # 把源视频传到 TOS，前端「保存视频」直接下载到相册（平台直链会过期/防盗链）。
-        video_public = ""
-        source_file = job_dir / "item_001" / "source.mp4"
-        try:
-            if source_file.is_file() and 0 < source_file.stat().st_size <= 200 * 1024 * 1024:
-                video_public = await asyncio.to_thread(
-                    _upload_job_file_to_tos,
-                    source_file,
-                    object_key=f"assets/digital_peer/{job_id}/source.mp4",
-                    content_type="video/mp4",
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[peer] 保存源视频失败 job=%s err=%s", job_id, str(exc)[:200])
+        # 第二段：不持有数据库连接。
+        if mode == "video":
+            # 只保存视频：下载原片 → 传 TOS，不做 STT。
+            job_dir.mkdir(parents=True, exist_ok=True)
+            video_path = job_dir / "source.mp4"
+            await asyncio.to_thread(_download_video, video_url, video_path)
+            video_public = await asyncio.to_thread(
+                _upload_job_file_to_tos,
+                video_path,
+                object_key=f"assets/digital_peer/{job_id}/source.mp4",
+                content_type="video/mp4",
+            )
+            text = ""
+            audio_url = ""
+        else:
+            # 提取文案：下载 → 抽音频 → 传 TOS → STT（不额外保存视频）。
+            job_dir.mkdir(parents=True, exist_ok=True)
+            item = await asyncio.to_thread(
+                _process_one_video,
+                job_id=job_id,
+                item={"video_url": video_url, "source": source},
+                index=0,
+                token=token,
+                token_source=token_source,
+                job_dir=job_dir,
+            )
+            text = str((item or {}).get("transcript") or "").strip()
+            audio_url = str((item or {}).get("audio_url") or "")
             video_public = ""
+            if not text:
+                raise RuntimeError("转写结果为空，换一条链接再试")
 
         with SessionLocal() as db:
             row = (
@@ -216,9 +226,7 @@ async def _run_peer_job_inner(job_id: str) -> None:
             )
             if row:
                 meta = dict(row.meta or {})
-                meta.update({"transcript": text,
-                             "audio_url": (item or {}).get("audio_url") or "",
-                             "video_url": video_public})
+                meta.update({"transcript": text, "audio_url": audio_url, "video_url": video_public})
                 row.meta = meta
                 row.status = "completed"
                 row.stage = "completed"
@@ -263,9 +271,9 @@ async def create_peer_job(
         status="queued",
         stage="queued",
         progress=0,
-        title="同行文案提取",
+        title="同行链接",
         prompt=raw[:500],
-        request_payload={"url": raw},
+        request_payload={"url": raw, "mode": str(body.mode or "transcript")},
         result_payload={},
         meta={},
     )

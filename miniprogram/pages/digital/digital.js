@@ -136,7 +136,7 @@ function dataUriToTempFile(dataUri) {
 Page({
   data: {
     phoneBound: false, maskedPhone: "", errText: "",
-    peerOpen: false, peerLink: "", peerText: "", peerVideoUrl: "", peerBusy: false, peerProgressText: "",
+    peerOpen: false, peerLink: "", peerText: "", peerVideoUrl: "", peerMode: "transcript", peerBusy: false, peerProgressText: "",
     peerScript: "", peerTitleDraft: "", peerScriptBusy: false,
     profiles: [], profileIndex: -1, profilesLoading: false,
     voices: [], voiceNames: [], voiceIndex: -1, voicesLoading: false,
@@ -328,46 +328,58 @@ Page({
 
   onPeerLink(e) { this.setData({ peerLink: e.detail.value }); },
 
-  parsePeer() {
+  extractPeerText() { this.startPeerJob("transcript"); },
+
+  downloadPeerVideo() { this.startPeerJob("video"); },
+
+  startPeerJob(mode) {
     const link = String(this.data.peerLink || "").trim();
     if (!link) return wx.showToast({ title: "先粘贴同行链接", icon: "none" });
     if (!app.globalData.token) return wx.showToast({ title: "请先登录", icon: "none" });
-    this.setData({ peerBusy: true, peerText: "", peerVideoUrl: "", peerScript: "", peerTitleDraft: "", peerProgressText: "正在解析链接…" });
-    app.request({ method: "POST", url: "/api/digital-human/peer-jobs", data: { url: link }, timeout: 30000 })
+    const isVideo = mode === "video";
+    this.setData({
+      peerBusy: true, peerMode: mode, peerText: "", peerVideoUrl: "",
+      peerScript: "", peerTitleDraft: "", peerProgressText: isVideo ? "正在准备视频…" : "正在解析链接…"
+    });
+    app.request({ method: "POST", url: "/api/digital-human/peer-jobs", data: { url: link, mode }, timeout: 30000 })
       .then((data) => {
         const jobId = String((data && data.job_id) || "");
         if (!jobId) throw new Error("没有返回任务号");
-        this.setData({ peerProgressText: "正在下载音频并转写…" });
-        this.startPeerPolling(jobId);
+        this.setData({ peerProgressText: isVideo ? "正在准备视频…" : "正在下载音频并转写…" });
+        this.startPeerPolling(jobId, mode);
       })
       .catch((err) => {
         this.setData({ peerBusy: false, peerProgressText: "" });
-        wx.showToast({ title: api.errorMessage(err) || "解析失败", icon: "none" });
+        wx.showToast({ title: api.errorMessage(err) || "处理失败", icon: "none" });
       });
   },
 
-  startPeerPolling(jobId) {
+  startPeerPolling(jobId, mode) {
+    const isVideo = mode === "video";
     if (this.peerPoller) this.peerPoller.stop();
     this.peerPoller = createPoller(
       () => app.request({ url: "/api/digital-human/peer-jobs/" + encodeURIComponent(jobId), timeout: 30000 }),
       (data) => {
         const status = String((data && data.status) || "");
         if (status === "completed") {
-          this.setData({
-            peerText: String((data && data.transcript) || ""),
-            peerVideoUrl: String((data && data.video_url) || ""),
-            peerBusy: false,
-            peerProgressText: ""
-          });
-          wx.showToast({ title: "转写完成", icon: "success" });
+          if (isVideo) {
+            const videoUrl = String((data && data.video_url) || "");
+            this.setData({ peerVideoUrl: videoUrl, peerBusy: false, peerProgressText: "" });
+            if (videoUrl) this.savePeerVideo();
+            else wx.showToast({ title: "视频没准备好", icon: "none" });
+          } else {
+            this.setData({ peerText: String((data && data.transcript) || ""), peerBusy: false, peerProgressText: "" });
+            wx.showToast({ title: "转写完成", icon: "success" });
+          }
           return true;
         }
         if (status === "failed") {
           this.setData({ peerBusy: false, peerProgressText: "" });
-          wx.showToast({ title: String((data && data.error) || "解析失败").slice(0, 40), icon: "none" });
+          wx.showToast({ title: String((data && data.error) || "处理失败").slice(0, 40), icon: "none" });
           return true;
         }
-        this.setData({ peerProgressText: String((data && data.stage) || "") === "transcribing" ? "正在转写音频…" : "正在解析链接…" });
+        const stage = String((data && data.stage) || "");
+        this.setData({ peerProgressText: isVideo ? "正在准备视频…" : (stage === "transcribing" ? "正在转写音频…" : "正在解析链接…") });
         return false;
       },
       () => {}

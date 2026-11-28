@@ -155,3 +155,6 @@
 .peer-text { font-size: 26rpx; color: #334155; line-height: 1.7; white-space: pre-wrap; }
 .peer-actions { display: flex; gap: 16rpx; margin: 16rpx 0 8rpx; }
 .peer-script-title { font-size: 28rpx; font-weight: 600; color: #0f172a; padding: 4rpx 0 16rpx; }
+
+.peer-choose { display: flex; gap: 16rpx; margin-top: 8rpx; }
+.peer-btn { flex: 1; }

@@ -270,14 +270,16 @@
     </view>
     <text class="label">同行链接</text>
     <textarea class="input small" value="{{peerLink}}" bindinput="onPeerLink" placeholder="粘贴作品链接或分享文案（带链接的整段也行）" auto-height maxlength="2000" />
-    <button class="ghost" loading="{{peerBusy}}" disabled="{{peerBusy}}" bindtap="parsePeer">{{peerBusy ? '解析转写中…' : '解析并转写'}}</button>
+    <view class="peer-choose">
+      <button class="ghost peer-btn" loading="{{peerBusy}}" disabled="{{peerBusy}}" bindtap="extractPeerText">解析并转写</button>
+      <button class="ghost peer-btn" loading="{{peerBusy}}" disabled="{{peerBusy}}" bindtap="downloadPeerVideo">保存视频</button>
+    </view>
     <text wx:if="{{peerProgressText}}" class="peer-progress">{{peerProgressText}}</text>
     <block wx:if="{{peerText}}">
       <text class="label">转写文本</text>
       <scroll-view scroll-y class="peer-text-box"><text class="peer-text">{{peerText}}</text></scroll-view>
       <view class="peer-actions">
         <button class="ghost mini" bindtap="copyPeerText">复制</button>
-        <button wx:if="{{peerVideoUrl}}" class="ghost mini" bindtap="savePeerVideo">保存视频</button>
         <button class="ghost mini" loading="{{peerScriptBusy}}" disabled="{{peerScriptBusy}}" bindtap="writePeerScript">转写</button>
       </view>
     </block>
